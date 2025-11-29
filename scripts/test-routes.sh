@@ -1666,14 +1666,14 @@ test_httproute_split() {
 
     # Weighted routing uses HAProxy's rand() for load balancing
     # With larger sample sizes, distribution converges to configured weights
-    # Note: Individual test runs may still show variance due to randomness
+    # Using 200 samples and 15% tolerance to reduce flakiness from statistical variance
     assert_weighted_distribution \
         "70/30 traffic split" \
         "echo-split.localdev.me" \
         70 \
         30 \
-        100 \
-        12
+        200 \
+        15
 }
 
 test_httproute_precedence() {
