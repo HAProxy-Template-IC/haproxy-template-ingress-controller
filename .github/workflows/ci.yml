@@ -82,15 +82,56 @@ jobs:
 
   test-acceptance:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        total: [4]
+        index: [0, 1, 2, 3]
+    name: test-acceptance (shard ${{ matrix.index }}/${{ matrix.total }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - run: make test-acceptance-parallel
+
+      # Use helm/kind-action for optimized cluster setup
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: acceptance-${{ matrix.index }}
+          wait: 120s
+          node_image: kindest/node:v1.32.0
+
+      # Build and load controller image
+      - name: Build and load controller image
+        run: |
+          docker build -t haproxy-template-ic:test .
+          kind load docker-image haproxy-template-ic:test --name acceptance-${{ matrix.index }}
+
+      # Install CRD
+      - name: Install HAProxyTemplateConfig CRD
+        run: |
+          kubectl apply -f charts/haproxy-template-ic/crds/haproxy-template-ic.github.io_haproxytemplateconfigs.yaml
+          kubectl wait --for=condition=Established crd/haproxytemplateconfigs.haproxy-template-ic.github.io --timeout=60s
+
+      # Determine which tests this shard runs (exclude TestAllAcceptanceParallel)
+      - uses: hashicorp-forge/go-test-split-action@v1
+        id: test-split
+        with:
+          index: ${{ matrix.index }}
+          total: ${{ matrix.total }}
+          packages: ./tests/acceptance
+          flags: "-tags=acceptance"
+
+      # Run tests sequentially (no -parallel flag to avoid resource contention)
+      - name: Run acceptance tests (shard ${{ matrix.index }})
+        run: |
+          go test -tags=acceptance -v -timeout 15m \
+            -run "${{ steps.test-split.outputs.run }}" \
+            ./tests/acceptance/...
         env:
-          PARALLEL: 4
+          # Skip parallel test runner - we run individual tests via sharding
+          SKIP_PARALLEL_RUNNER: "true"
 
   validate-helm-libraries:
     runs-on: ubuntu-latest
