@@ -151,6 +151,30 @@ func (dc *DebugClient) GetRenderedConfig(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("rendered config not found in response")
 }
 
+// GetRenderedConfigWithRetry retrieves the rendered HAProxy configuration with retry logic.
+// This is useful in parallel test execution where port-forward connections may be transiently unavailable.
+func (dc *DebugClient) GetRenderedConfigWithRetry(ctx context.Context, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		config, err := dc.GetRenderedConfig(ctx)
+		if err == nil {
+			return config, nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(1 * time.Second):
+			// Retry after 1 second
+		}
+	}
+
+	return "", fmt.Errorf("timeout waiting for rendered config: %w", lastErr)
+}
+
 // GetEvents retrieves recent events from the debug server.
 func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]interface{}, error) {
 	url := fmt.Sprintf("http://localhost:%d/debug/vars/events", dc.localPort)
@@ -354,6 +378,30 @@ func (dc *DebugClient) GetPipelineStatus(ctx context.Context) (*PipelineStatus, 
 	}
 
 	return &status, nil
+}
+
+// GetPipelineStatusWithRetry retrieves the pipeline status with retry logic.
+// This is useful in parallel test execution where port-forward connections may be transiently unavailable.
+func (dc *DebugClient) GetPipelineStatusWithRetry(ctx context.Context, timeout time.Duration) (*PipelineStatus, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		status, err := dc.GetPipelineStatus(ctx)
+		if err == nil {
+			return status, nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(1 * time.Second):
+			// Retry after 1 second
+		}
+	}
+
+	return nil, fmt.Errorf("timeout waiting for pipeline status: %w", lastErr)
 }
 
 // GetValidatedConfig retrieves the last successfully validated HAProxy configuration.

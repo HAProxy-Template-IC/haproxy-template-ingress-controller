@@ -201,7 +201,7 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			}
 
 			// Get initial rendered config for comparison
-			initialConfig, err := debugClient.GetRenderedConfig(ctx)
+			initialConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
 			require.NoError(t, err)
 			t.Logf("Initial config length: %d bytes", len(initialConfig))
 
@@ -218,7 +218,7 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			err = debugClient.WaitForValidationStatus(ctx, "failed", 30*time.Second)
 			if err != nil {
 				// If timeout, check pipeline status for diagnostics
-				pipeline, pipelineErr := debugClient.GetPipelineStatus(ctx)
+				pipeline, pipelineErr := debugClient.GetPipelineStatusWithRetry(ctx, 10*time.Second)
 				if pipelineErr == nil && pipeline != nil {
 					t.Logf("Pipeline status: validation=%+v", pipeline.Validation)
 				}
@@ -231,7 +231,7 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			require.NoError(t, err, "Controller should still be running after invalid config")
 
 			// Use debug endpoint to verify validation failure
-			pipeline, err := debugClient.GetPipelineStatus(ctx)
+			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
 			if err == nil && pipeline != nil && pipeline.Validation != nil {
 				t.Logf("Validation status: %s", pipeline.Validation.Status)
 				if pipeline.Validation.Status == "failed" {
@@ -286,7 +286,7 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			}
 
 			// Verify controller recovered
-			restoredConfig, err := debugClient.GetRenderedConfig(ctx)
+			restoredConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
 			require.NoError(t, err)
 			assert.Contains(t, restoredConfig, "backend test-backend", "Config should be restored")
 
@@ -463,7 +463,7 @@ func buildCredentialsMissingFeature() types.Feature {
 			require.NoError(t, err, "Controller should have config after credentials provided")
 
 			// Use debug endpoint to verify pipeline is healthy after recovery
-			pipeline, err := debugClient.GetPipelineStatus(ctx)
+			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
 			if err == nil && pipeline != nil {
 				t.Log("Pipeline status retrieved after credentials recovery")
 
@@ -813,7 +813,7 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 			time.Sleep(3 * time.Second)
 
 			// Verify the final version is deployed
-			renderedConfig, err := debugClient.GetRenderedConfig(ctx)
+			renderedConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
 			require.NoError(t, err)
 
 			// Debouncing is non-deterministic, so verify a late version is deployed.
@@ -830,7 +830,7 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 				"Final config should have a late version marker (7-10), indicating debouncing worked")
 
 			// Use debug endpoint to verify pipeline completed successfully after debouncing
-			pipeline, err := debugClient.GetPipelineStatus(ctx)
+			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
 			if err == nil && pipeline != nil {
 				t.Log("Pipeline status retrieved for debounce verification")
 
@@ -1199,7 +1199,7 @@ func buildDataplaneUnreachableFeature() types.Feature {
 			require.NoError(t, err, "Controller should still be running with no HAProxy endpoints")
 
 			// Use debug endpoint to verify pipeline status
-			pipeline, err := debugClient.GetPipelineStatus(ctx)
+			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
 			if err == nil && pipeline != nil {
 				t.Logf("Pipeline status retrieved successfully")
 
@@ -1777,7 +1777,7 @@ func buildTransactionConflictFeature() types.Feature {
 			require.NoError(t, err, "Controller should remain healthy after rapid updates")
 
 			// Verify final state is consistent
-			renderedConfig, err := debugClient.GetRenderedConfig(ctx)
+			renderedConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
 			require.NoError(t, err)
 
 			// Should have version 105 (last update) - may have different version due to debouncing
@@ -1785,7 +1785,7 @@ func buildTransactionConflictFeature() types.Feature {
 			assert.True(t, hasVersionMarker, "Config should have a version marker (debouncing may coalesce)")
 
 			// Use debug endpoint to verify pipeline completed successfully
-			pipeline, err := debugClient.GetPipelineStatus(ctx)
+			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
 			if err == nil && pipeline != nil {
 				t.Log("Pipeline status retrieved for transaction conflict verification")
 
@@ -1985,7 +1985,7 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			require.NoError(t, err, "Failed to start refreshed debug client")
 
 			// Verify config is tracked correctly
-			renderedConfig, err := debugClient.GetRenderedConfig(ctx)
+			renderedConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
 			require.NoError(t, err)
 
 			// Should have latest version marker
@@ -1993,7 +1993,7 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 				"Config should reflect updates even with no deployment targets")
 
 			// Use debug endpoint to verify pipeline status for partial deployment
-			pipeline, err := debugClient.GetPipelineStatus(ctx)
+			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
 			if err == nil && pipeline != nil {
 				t.Log("Pipeline status retrieved for partial deployment verification")
 
