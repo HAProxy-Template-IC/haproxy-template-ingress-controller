@@ -40,9 +40,6 @@ import (
 )
 
 const (
-	// MetricsPort is the port for the Prometheus metrics endpoint.
-	MetricsPort = 9090
-
 	// LeaderElectionLeaseName is the default lease name for leader election.
 	LeaderElectionLeaseName = "haproxy-template-ic-leader"
 )

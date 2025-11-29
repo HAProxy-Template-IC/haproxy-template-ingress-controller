@@ -34,6 +34,9 @@ import (
 //   - events: Recent events (default: last 100)
 //   - state: Full state dump (use carefully - large response)
 //   - uptime: Time since controller started
+//   - pipeline: Reconciliation pipeline status (trigger, render, validate, deploy)
+//   - validated: Last successfully validated HAProxy config
+//   - errors: Aggregated error summary across all phases
 //
 // Example:
 //
@@ -66,6 +69,11 @@ func RegisterVariables(
 		provider:    provider,
 		eventBuffer: eventBuffer,
 	})
+
+	// Pipeline status (for testing and debugging)
+	registry.Publish("pipeline", &PipelineVar{provider: provider})
+	registry.Publish("validated", &ValidatedVar{provider: provider})
+	registry.Publish("errors", &ErrorsVar{provider: provider})
 
 	// Uptime (computed on-demand)
 	startTime := time.Now()

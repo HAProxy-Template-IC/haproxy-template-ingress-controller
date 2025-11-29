@@ -802,3 +802,367 @@ func NewInvalidIngress(namespace, name string) *networkingv1.Ingress {
 		},
 	}
 }
+
+// BlocklistServerName is the name of the blocklist server deployment.
+const BlocklistServerName = "blocklist-server"
+
+// BlocklistContentConfigMapName is the name of the ConfigMap containing the blocklist.
+const BlocklistContentConfigMapName = "blocklist-content"
+
+// ValidBlocklistContent contains valid IP addresses in CIDR notation.
+const ValidBlocklistContent = `192.168.1.0/24
+10.0.0.0/8`
+
+// UpdatedBlocklistContent contains different valid IP addresses.
+const UpdatedBlocklistContent = `172.16.0.0/12
+192.168.0.0/16`
+
+// InvalidBlocklistContent contains invalid content that will fail HAProxy validation.
+const InvalidBlocklistContent = `not-an-ip-address
+invalid-cidr`
+
+// NewBlocklistContentConfigMap creates a ConfigMap with blocklist content.
+func NewBlocklistContentConfigMap(namespace, content string) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      BlocklistContentConfigMapName,
+			Namespace: namespace,
+		},
+		Data: map[string]string{
+			"blocklist.txt": content,
+		},
+	}
+}
+
+// NewBlocklistServerDeployment creates an nginx deployment serving the blocklist ConfigMap.
+func NewBlocklistServerDeployment(namespace string) *appsv1.Deployment {
+	replicas := int32(1)
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      BlocklistServerName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app": BlocklistServerName,
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": BlocklistServerName,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": BlocklistServerName,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "nginx",
+							Image: "nginx:alpine",
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 80,
+									Protocol:      corev1.ProtocolTCP,
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "content",
+									MountPath: "/usr/share/nginx/html",
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "content",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: BlocklistContentConfigMapName,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// NewBlocklistService creates a Service for the blocklist server.
+func NewBlocklistService(namespace string) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      BlocklistServerName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app": BlocklistServerName,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeClusterIP,
+			Ports: []corev1.ServicePort{
+				{
+					Port:       80,
+					TargetPort: intstr.FromInt(80),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+			Selector: map[string]string{
+				"app": BlocklistServerName,
+			},
+		},
+	}
+}
+
+// NewInvalidBackendHAProxyTemplateConfig creates a HAProxyTemplateConfig with an invalid
+// configuration that references a non-existent backend. This should fail HAProxy validation
+// (haproxy -c) but the template renders successfully.
+func NewInvalidBackendHAProxyTemplateConfig(namespace, name, secretName string) *haproxyv1alpha1.HAProxyTemplateConfig {
+	enabled := false
+
+	config := &haproxyv1alpha1.HAProxyTemplateConfig{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "haproxy-template-ic.github.io/v1alpha1",
+			Kind:       "HAProxyTemplateConfig",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
+			CredentialsSecretRef: haproxyv1alpha1.SecretReference{
+				Name: secretName,
+			},
+			PodSelector: haproxyv1alpha1.PodSelector{
+				MatchLabels: map[string]string{
+					"app":       "haproxy",
+					"component": "loadbalancer",
+				},
+			},
+			Controller: haproxyv1alpha1.ControllerConfig{
+				HealthzPort: 8080,
+				MetricsPort: 9090,
+				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
+					Enabled:       &enabled,
+					LeaseName:     "haproxy-template-ic-leader",
+					LeaseDuration: "15s",
+					RenewDeadline: "10s",
+					RetryPeriod:   "2s",
+				},
+			},
+			Logging: haproxyv1alpha1.LoggingConfig{
+				Verbose: 2,
+			},
+			Dataplane: haproxyv1alpha1.DataplaneConfig{
+				Port:              5555,
+				MapsDir:           "/tmp/haproxy-validation/maps",
+				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
+				GeneralStorageDir: "/tmp/haproxy-validation/general",
+				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
+			},
+			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
+				"ingresses": {
+					APIVersion: "networking.k8s.io/v1",
+					Resources:  "ingresses",
+					IndexBy:    []string{"metadata.namespace", "metadata.name"},
+				},
+			},
+			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{
+				// This config is syntactically valid but semantically invalid:
+				// The frontend references "nonexistent_backend" which doesn't exist
+				Template: `global
+  maxconn 2000
+
+defaults
+  mode http
+  timeout connect 5000ms
+  timeout client 50000ms
+  timeout server 50000ms
+
+frontend http_front
+  bind :8080
+  # This references a backend that doesn't exist - HAProxy will reject this
+  default_backend nonexistent_backend
+
+backend test-backend
+  server test-server 127.0.0.1:8080
+`,
+			},
+		},
+	}
+
+	return config
+}
+
+// NewHAProxyTemplateConfigWithVersion creates a HAProxyTemplateConfig with a version marker
+// in the template. Used for testing rapid config updates and debouncing.
+func NewHAProxyTemplateConfigWithVersion(namespace, name, secretName string, version int) *haproxyv1alpha1.HAProxyTemplateConfig {
+	enabled := false
+
+	config := &haproxyv1alpha1.HAProxyTemplateConfig{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "haproxy-template-ic.github.io/v1alpha1",
+			Kind:       "HAProxyTemplateConfig",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
+			CredentialsSecretRef: haproxyv1alpha1.SecretReference{
+				Name: secretName,
+			},
+			PodSelector: haproxyv1alpha1.PodSelector{
+				MatchLabels: map[string]string{
+					"app":       "haproxy",
+					"component": "loadbalancer",
+				},
+			},
+			Controller: haproxyv1alpha1.ControllerConfig{
+				HealthzPort: 8080,
+				MetricsPort: 9090,
+				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
+					Enabled:       &enabled,
+					LeaseName:     "haproxy-template-ic-leader",
+					LeaseDuration: "15s",
+					RenewDeadline: "10s",
+					RetryPeriod:   "2s",
+				},
+			},
+			Logging: haproxyv1alpha1.LoggingConfig{
+				Verbose: 2,
+			},
+			Dataplane: haproxyv1alpha1.DataplaneConfig{
+				Port:              5555,
+				MapsDir:           "/tmp/haproxy-validation/maps",
+				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
+				GeneralStorageDir: "/tmp/haproxy-validation/general",
+				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
+			},
+			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
+				"ingresses": {
+					APIVersion: "networking.k8s.io/v1",
+					Resources:  "ingresses",
+					IndexBy:    []string{"metadata.namespace", "metadata.name"},
+				},
+			},
+			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{
+				Template: fmt.Sprintf(`global
+  maxconn 2000
+  # version %d
+
+defaults
+  mode http
+  timeout connect 5000ms
+  timeout client 50000ms
+  timeout server 50000ms
+
+frontend test-frontend
+  bind :8080
+  default_backend test-backend
+
+backend test-backend
+  server test-server 127.0.0.1:8080
+`, version),
+			},
+		},
+	}
+
+	return config
+}
+
+// NewHTTPStoreHAProxyTemplateConfig creates a HAProxyTemplateConfig that uses http.Fetch()
+// to fetch a blocklist from an HTTP server. The template creates an ACL file that triggers
+// HAProxy validation - invalid content (non-CIDR IPs) will cause validation to fail.
+func NewHTTPStoreHAProxyTemplateConfig(namespace, name, secretName string, leaderElection bool) *haproxyv1alpha1.HAProxyTemplateConfig {
+	enabled := leaderElection
+
+	// Build the blocklist URL using the namespace
+	blocklistURL := fmt.Sprintf("http://%s.%s.svc:80/blocklist.txt", BlocklistServerName, namespace)
+
+	config := &haproxyv1alpha1.HAProxyTemplateConfig{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "haproxy-template-ic.github.io/v1alpha1",
+			Kind:       "HAProxyTemplateConfig",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
+			CredentialsSecretRef: haproxyv1alpha1.SecretReference{
+				Name: secretName,
+			},
+			PodSelector: haproxyv1alpha1.PodSelector{
+				MatchLabels: map[string]string{
+					"app":       "haproxy",
+					"component": "loadbalancer",
+				},
+			},
+			Controller: haproxyv1alpha1.ControllerConfig{
+				HealthzPort: 8080,
+				MetricsPort: 9090,
+				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
+					Enabled:       &enabled,
+					LeaseName:     "haproxy-template-ic-leader",
+					LeaseDuration: "15s",
+					RenewDeadline: "10s",
+					RetryPeriod:   "2s",
+				},
+			},
+			Logging: haproxyv1alpha1.LoggingConfig{
+				Verbose: 2, // DEBUG level for tests
+			},
+			Dataplane: haproxyv1alpha1.DataplaneConfig{
+				Port:              5555,
+				MapsDir:           "/tmp/haproxy-validation/maps",
+				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
+				GeneralStorageDir: "/tmp/haproxy-validation/general",
+				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
+			},
+			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
+				"ingresses": {
+					APIVersion: "networking.k8s.io/v1",
+					Resources:  "ingresses",
+					IndexBy:    []string{"metadata.namespace", "metadata.name"},
+				},
+			},
+			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{
+				Template: `global
+  maxconn 2000
+
+defaults
+  mode http
+  timeout connect 5000ms
+  timeout client 50000ms
+  timeout server 50000ms
+
+frontend http_front
+  bind :8080
+  # ACL using the blocklist file - HAProxy validates CIDR syntax
+  acl blocked_ips src -f {{ pathResolver.GetPath("blocked-ips.acl", "file") }}
+  http-request deny if blocked_ips
+  default_backend http_back
+
+backend http_back
+  server test-server 127.0.0.1:8080
+`,
+			},
+			Files: map[string]haproxyv1alpha1.GeneralFile{
+				"blocked-ips.acl": {
+					Template: fmt.Sprintf(`{%%- set blocklist = http.Fetch("%s", {"critical": true, "delay": "5s"}) -%%}
+{{ blocklist }}`, blocklistURL),
+				},
+			},
+		},
+	}
+
+	return config
+}

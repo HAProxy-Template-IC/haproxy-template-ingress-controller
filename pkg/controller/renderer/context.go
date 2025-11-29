@@ -16,6 +16,7 @@ package renderer
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"haproxy-template-ic/pkg/controller/httpstore"
@@ -143,12 +144,17 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 
 	// Add HTTP store wrapper if available
 	if c.httpStoreComponent != nil {
-		templateContext["http"] = httpstore.NewHTTPStoreWrapper(
+		httpWrapper := httpstore.NewHTTPStoreWrapper(
 			c.httpStoreComponent,
 			c.logger,
 			isValidation,
 			ctx,
 		)
+		c.logger.Info("http object added to template context",
+			"http_wrapper_type", fmt.Sprintf("%T", httpWrapper))
+		templateContext["http"] = httpWrapper
+	} else {
+		c.logger.Warn("httpStoreComponent is nil, http.Fetch() will not be available in templates")
 	}
 
 	// Merge extraContext variables into top-level context

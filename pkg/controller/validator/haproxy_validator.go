@@ -140,12 +140,13 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	// Publish validation started event
 	v.eventBus.Publish(events.NewValidationStartedEvent())
 
-	// Extract auxiliary files from event
+	// Extract validation auxiliary files from event
+	// These contain pending HTTP content (for testing new content before promotion)
 	// Type-assert from interface{} to *dataplane.AuxiliaryFiles
-	auxiliaryFiles, ok := event.AuxiliaryFiles.(*dataplane.AuxiliaryFiles)
+	auxiliaryFiles, ok := event.ValidationAuxiliaryFiles.(*dataplane.AuxiliaryFiles)
 	if !ok {
 		v.publishValidationFailure(
-			[]string{"failed to extract auxiliary files from event"},
+			[]string{"failed to extract validation auxiliary files from event"},
 			time.Since(startTime).Milliseconds(),
 		)
 		return

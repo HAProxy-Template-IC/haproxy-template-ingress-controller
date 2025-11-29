@@ -30,6 +30,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/e2e-framework/klient"
@@ -241,6 +244,48 @@ func GetAllControllerPods(ctx context.Context, client klient.Client, namespace s
 	return podList.Items, nil
 }
 
+// WaitForNewPodReady waits for a ready pod that has a different UID than the original pod.
+// This is useful when testing pod restart scenarios where we need to ensure the old pod
+// has been replaced by a new one.
+func WaitForNewPodReady(ctx context.Context, client klient.Client, namespace, labelSelector, originalUID string, timeout time.Duration) (*corev1.Pod, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timeout waiting for new pod (different from UID %s) to be ready", originalUID)
+
+		case <-ticker.C:
+			var podList corev1.PodList
+			res := client.Resources(namespace)
+
+			// List pods with label selector
+			if err := res.List(ctx, &podList, resources.WithLabelSelector(labelSelector)); err != nil {
+				continue
+			}
+
+			// Check if any pod is ready AND has a different UID
+			for i := range podList.Items {
+				pod := &podList.Items[i]
+				// Skip pods with the original UID
+				if string(pod.UID) == originalUID {
+					continue
+				}
+				// Check if this new pod is ready
+				for _, condition := range pod.Status.Conditions {
+					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+						return pod, nil
+					}
+				}
+			}
+		}
+	}
+}
+
 // GetLeaseHolder queries the Lease resource and returns the holder identity.
 // Returns empty string if Lease doesn't exist or has no holder.
 func GetLeaseHolder(ctx context.Context, restConfig *rest.Config, namespace, leaseName string) (string, error) {
@@ -366,5 +411,226 @@ func WaitForCondition(ctx context.Context, description string, timeout, pollInte
 			}
 			// Keep polling on error or unsatisfied condition
 		}
+	}
+}
+
+// MetricsPort is the port for Prometheus metrics.
+const MetricsPort = 9090
+
+// GetAuxiliaryFiles retrieves the auxiliary files from the debug endpoint.
+func (dc *DebugClient) GetAuxiliaryFiles(ctx context.Context) (map[string]interface{}, error) {
+	url := fmt.Sprintf("http://localhost:%d/debug/vars/auxfiles", dc.localPort)
+	return dc.getJSON(ctx, url)
+}
+
+// GetGeneralFileContent retrieves the content of a specific general file from auxiliary files.
+// Returns the content string and any error encountered.
+func (dc *DebugClient) GetGeneralFileContent(ctx context.Context, fileName string) (string, error) {
+	auxFiles, err := dc.GetAuxiliaryFiles(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get auxiliary files: %w", err)
+	}
+
+	files, ok := auxFiles["files"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("files field not found or wrong type")
+	}
+
+	// The struct field is GeneralFiles (not general_files) - Go JSON serialization uses struct field names
+	generalFiles, ok := files["GeneralFiles"].([]interface{})
+	if !ok {
+		return "", fmt.Errorf("GeneralFiles field not found or wrong type")
+	}
+
+	for _, file := range generalFiles {
+		fileMap, ok := file.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// The struct field is Filename (not Name)
+		name, ok := fileMap["Filename"].(string)
+		if !ok {
+			continue
+		}
+		if name == fileName {
+			content, ok := fileMap["Content"].(string)
+			if !ok {
+				return "", fmt.Errorf("content field not found or wrong type for file %s", fileName)
+			}
+			return content, nil
+		}
+	}
+
+	return "", fmt.Errorf("file %s not found in auxiliary files", fileName)
+}
+
+// WaitForAuxFileContains waits until a specific auxiliary file contains the expected content.
+func (dc *DebugClient) WaitForAuxFileContains(ctx context.Context, fileName, expectedContent string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastContent string
+	var lastError error
+
+	for {
+		select {
+		case <-ctx.Done():
+			if lastError != nil {
+				return fmt.Errorf("timeout waiting for file %s to contain %q (last error: %w)", fileName, expectedContent, lastError)
+			}
+			return fmt.Errorf("timeout waiting for file %s to contain %q (last content: %q)", fileName, expectedContent, lastContent)
+
+		case <-ticker.C:
+			content, err := dc.GetGeneralFileContent(ctx, fileName)
+			if err != nil {
+				lastError = err
+				continue // Retry on error
+			}
+			lastContent = content
+
+			if strings.Contains(content, expectedContent) {
+				return nil
+			}
+		}
+	}
+}
+
+// WaitForAuxFileNotContains waits until a specific auxiliary file does NOT contain the specified content.
+// This is useful for verifying that invalid content was rejected.
+func (dc *DebugClient) WaitForAuxFileNotContains(ctx context.Context, fileName, unexpectedContent string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastContent string
+	var lastError error
+
+	for {
+		select {
+		case <-ctx.Done():
+			if lastError != nil {
+				return fmt.Errorf("timeout: file %s still contains %q or error occurred (last error: %w)", fileName, unexpectedContent, lastError)
+			}
+			return fmt.Errorf("timeout: file %s still contains %q (last content: %q)", fileName, unexpectedContent, lastContent)
+
+		case <-ticker.C:
+			content, err := dc.GetGeneralFileContent(ctx, fileName)
+			if err != nil {
+				lastError = err
+				continue // Retry on error
+			}
+			lastContent = content
+
+			if !strings.Contains(content, unexpectedContent) {
+				return nil
+			}
+		}
+	}
+}
+
+// WaitForAuxFileContentStable waits and verifies that the file content stays unchanged for the duration.
+// This is useful for verifying that invalid updates are rejected and old content is preserved.
+func (dc *DebugClient) WaitForAuxFileContentStable(ctx context.Context, fileName string, expectedContent string, stableDuration time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, stableDuration+5*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	stableStart := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout while verifying content stability for file %s", fileName)
+
+		case <-ticker.C:
+			content, err := dc.GetGeneralFileContent(ctx, fileName)
+			if err != nil {
+				return fmt.Errorf("error getting file content: %w", err)
+			}
+
+			if !strings.Contains(content, expectedContent) {
+				return fmt.Errorf("file content changed unexpectedly, expected to contain %q but got %q", expectedContent, content)
+			}
+
+			if time.Since(stableStart) >= stableDuration {
+				// Content has been stable for the required duration
+				return nil
+			}
+		}
+	}
+}
+
+// UpdateHAProxyTemplateConfigTemplate fetches the current HAProxyTemplateConfig from the cluster
+// and replaces its spec.haproxyConfig.template with the new template, preserving resourceVersion.
+// This is necessary because Kubernetes requires resourceVersion for optimistic concurrency control.
+// The function includes retry logic to handle conflicts during rapid updates.
+func UpdateHAProxyTemplateConfigTemplate(ctx context.Context, client klient.Client, namespace, name, newTemplate string) error {
+	// Use dynamic client to get and update the HAProxyTemplateConfig
+	dynamicClient, err := getDynamicClient(client.RESTConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	gvr := haproxyTemplateConfigGVR()
+
+	// Retry loop for optimistic concurrency conflicts
+	maxRetries := 5
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Get the existing resource (fresh on each attempt to get latest resourceVersion)
+		existing, err := dynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get existing HAProxyTemplateConfig: %w", err)
+		}
+
+		// Verify resourceVersion is present
+		rv, found, _ := unstructured.NestedString(existing.Object, "metadata", "resourceVersion")
+		if !found || rv == "" {
+			return fmt.Errorf("existing resource has no resourceVersion")
+		}
+
+		// Set the new template at spec.haproxyConfig.template
+		if err := unstructured.SetNestedField(existing.Object, newTemplate, "spec", "haproxyConfig", "template"); err != nil {
+			return fmt.Errorf("failed to set spec.haproxyConfig.template: %w", err)
+		}
+
+		// Update the resource (resourceVersion is already set from Get)
+		_, err = dynamicClient.Resource(gvr).Namespace(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+		if err != nil {
+			// Check if it's a conflict error (optimistic concurrency)
+			if strings.Contains(err.Error(), "Conflict") || strings.Contains(err.Error(), "conflict") ||
+				strings.Contains(err.Error(), "resourceVersion") || strings.Contains(err.Error(), "modified") {
+				lastErr = err
+				time.Sleep(time.Duration(attempt*100) * time.Millisecond) // Exponential backoff
+				continue
+			}
+			return fmt.Errorf("failed to update HAProxyTemplateConfig: %w", err)
+		}
+
+		// Success
+		return nil
+	}
+
+	return fmt.Errorf("failed to update HAProxyTemplateConfig after %d retries: %w", maxRetries, lastErr)
+}
+
+// getDynamicClient creates a dynamic Kubernetes client.
+func getDynamicClient(config *rest.Config) (dynamic.Interface, error) {
+	return dynamic.NewForConfig(config)
+}
+
+// haproxyTemplateConfigGVR returns the GroupVersionResource for HAProxyTemplateConfig.
+func haproxyTemplateConfigGVR() schema.GroupVersionResource {
+	return schema.GroupVersionResource{
+		Group:    "haproxy-template-ic.github.io",
+		Version:  "v1alpha1",
+		Resource: "haproxytemplateconfigs",
 	}
 }

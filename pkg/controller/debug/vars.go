@@ -233,3 +233,77 @@ func (v *FullStateVar) Get() (interface{}, error) {
 		"snapshot_time": time.Now(),
 	}, nil
 }
+
+// PipelineVar exposes the reconciliation pipeline status.
+//
+// Returns a JSON object containing the status of each pipeline phase:
+//   - last_trigger: what triggered the reconciliation
+//   - rendering: template rendering status
+//   - validation: HAProxy validation status
+//   - deployment: deployment to HAProxy instances status
+//
+// Example response:
+//
+//	{
+//	  "last_trigger": {"timestamp": "2025-01-15T10:30:45Z", "reason": "config_change"},
+//	  "rendering": {"status": "succeeded", ...},
+//	  "validation": {"status": "failed", "errors": [...]},
+//	  "deployment": {"status": "skipped", "reason": "validation_failed"}
+//	}
+type PipelineVar struct {
+	provider StateProvider
+}
+
+// Get implements introspection.Var.
+func (v *PipelineVar) Get() (interface{}, error) {
+	return v.provider.GetPipelineStatus()
+}
+
+// ValidatedVar exposes the last successfully validated HAProxy configuration.
+//
+// Unlike RenderedVar, this only shows configs that passed validation.
+// This is useful to see what config is actually safe to deploy.
+//
+// Example response:
+//
+//	{
+//	  "config": "global\n  maxconn 2000\n...",
+//	  "timestamp": "2025-01-15T10:30:45Z",
+//	  "config_bytes": 4567,
+//	  "validation_duration_ms": 200
+//	}
+type ValidatedVar struct {
+	provider StateProvider
+}
+
+// Get implements introspection.Var.
+func (v *ValidatedVar) Get() (interface{}, error) {
+	return v.provider.GetValidatedConfig()
+}
+
+// ErrorsVar exposes an aggregated view of recent errors across all phases.
+//
+// Returns a JSON object containing errors from each phase:
+//   - config_parse_error: config parsing errors
+//   - template_render_error: template rendering errors
+//   - haproxy_validation_error: HAProxy validation errors
+//   - deployment_errors: per-endpoint deployment errors
+//   - last_error_timestamp: when the most recent error occurred
+//
+// Example response:
+//
+//	{
+//	  "haproxy_validation_error": {
+//	    "timestamp": "2025-01-15T10:30:47Z",
+//	    "errors": ["[ALERT] parsing [haproxy.cfg:3] : unknown keyword..."]
+//	  },
+//	  "last_error_timestamp": "2025-01-15T10:30:47Z"
+//	}
+type ErrorsVar struct {
+	provider StateProvider
+}
+
+// Get implements introspection.Var.
+func (v *ErrorsVar) Get() (interface{}, error) {
+	return v.provider.GetErrors()
+}

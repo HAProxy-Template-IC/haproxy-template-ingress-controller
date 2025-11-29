@@ -74,14 +74,15 @@ type Component struct {
 	ctx                context.Context // Context from Start() for HTTP requests
 
 	// State protected by mutex (for leadership transition replay and capabilities)
-	mu                   sync.RWMutex
-	lastHAProxyConfig    string
-	lastValidationConfig string
-	lastValidationPaths  interface{} // dataplane.ValidationPaths
-	lastAuxiliaryFiles   *dataplane.AuxiliaryFiles
-	lastAuxFileCount     int
-	lastRenderDurationMs int64
-	hasRenderedConfig    bool
+	mu                           sync.RWMutex
+	lastHAProxyConfig            string
+	lastValidationConfig         string
+	lastValidationPaths          interface{} // dataplane.ValidationPaths
+	lastAuxiliaryFiles           *dataplane.AuxiliaryFiles
+	lastValidationAuxiliaryFiles *dataplane.AuxiliaryFiles
+	lastAuxFileCount             int
+	lastRenderDurationMs         int64
+	hasRenderedConfig            bool
 
 	// capabilities defines which features are available for the local HAProxy version.
 	// Determined from local HAProxy version at construction time via CapabilitiesFromVersion().
@@ -350,7 +351,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 	}
 
 	validationDynamicFiles := validationFileRegistry.GetFiles()
-	_ = MergeAuxiliaryFiles(validationStaticFiles, validationDynamicFiles) // Not needed for event, only production files are deployed
+	validationAuxiliaryFiles := MergeAuxiliaryFiles(validationStaticFiles, validationDynamicFiles)
 
 	// Calculate metrics
 	durationMs := time.Since(startTime).Milliseconds()
@@ -370,6 +371,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 	c.lastValidationConfig = validationHAProxyConfig
 	c.lastValidationPaths = validationPaths
 	c.lastAuxiliaryFiles = productionAuxiliaryFiles
+	c.lastValidationAuxiliaryFiles = validationAuxiliaryFiles
 	c.lastAuxFileCount = auxFileCount
 	c.lastRenderDurationMs = durationMs
 	c.hasRenderedConfig = true
@@ -381,6 +383,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 		validationHAProxyConfig,
 		validationPaths,
 		productionAuxiliaryFiles,
+		validationAuxiliaryFiles,
 		auxFileCount,
 		durationMs,
 	))
@@ -400,6 +403,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	validationConfig := c.lastValidationConfig
 	validationPaths := c.lastValidationPaths
 	auxiliaryFiles := c.lastAuxiliaryFiles
+	validationAuxiliaryFiles := c.lastValidationAuxiliaryFiles
 	auxFileCount := c.lastAuxFileCount
 	durationMs := c.lastRenderDurationMs
 	c.mu.RUnlock()
@@ -420,6 +424,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 		validationConfig,
 		validationPaths,
 		auxiliaryFiles,
+		validationAuxiliaryFiles,
 		auxFileCount,
 		durationMs,
 	))
