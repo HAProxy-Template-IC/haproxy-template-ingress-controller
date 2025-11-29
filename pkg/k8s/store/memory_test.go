@@ -358,9 +358,10 @@ func TestMemoryStore_UpdateWithNonUniqueKeys(t *testing.T) {
 		metadata := r["metadata"].(map[string]interface{})
 		name := metadata["name"].(string)
 
-		if name == "nginx-slice-1" {
+		switch name {
+		case "nginx-slice-1":
 			foundSlice1 = &r
-		} else if name == "nginx-slice-2" {
+		case "nginx-slice-2":
 			foundSlice2 = &r
 		}
 	}

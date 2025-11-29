@@ -123,9 +123,9 @@ func verifyOperationOrdering(t *testing.T, operations []Operation) {
 	}
 }
 
-func findOperationIndex(operations []Operation, sections ...string) int {
+func findOperationIndex(operations []Operation, sectionNames ...string) int {
 	for i, op := range operations {
-		for _, section := range sections {
+		for _, section := range sectionNames {
 			if op.Section() == section {
 				return i
 			}

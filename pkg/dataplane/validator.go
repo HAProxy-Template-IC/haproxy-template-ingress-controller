@@ -589,7 +589,7 @@ func clearValidationDirectories(paths *ValidationPaths) error {
 
 	for _, dir := range dirs {
 		// Create directory if it doesn't exist
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 
@@ -609,7 +609,7 @@ func clearValidationDirectories(paths *ValidationPaths) error {
 
 	// Create config directory if it doesn't exist
 	// (No need to clear it - we already cleared the specific validation directories above)
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create config directory %s: %w", configDir, err)
 	}
 
@@ -646,7 +646,7 @@ func resolveAuxiliaryFilePath(filePath, configDir, fallbackDir string) string {
 // writeFileWithDir writes a file to disk, creating parent directories if needed.
 func writeFileWithDir(path, content, fileType string) error {
 	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("failed to create directory for %s: %w", fileType, err)
 	}
 

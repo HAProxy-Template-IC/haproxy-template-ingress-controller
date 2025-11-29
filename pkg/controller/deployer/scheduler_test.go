@@ -32,7 +32,7 @@ import (
 
 // testSchedulerLogger creates a logger for scheduler tests.
 func testSchedulerLogger() *slog.Logger {
-	var w io.Writer = io.Discard
+	var w = io.Discard
 	if testing.Verbose() {
 		w = os.Stderr
 	}

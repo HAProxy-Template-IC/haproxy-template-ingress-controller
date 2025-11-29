@@ -129,6 +129,7 @@ linters:
     gosec:
       excludes:
         - G114 # Use of net/http serve functions without timeouts - handled at infrastructure level
+        - G204 # Subprocess launched with variable - safe when path comes from exec.LookPath with constant binary name
         - G404 # Use of weak random - not used for security purposes
 
     godot:
@@ -150,10 +151,10 @@ linters:
       - comments
       - std-error-handling
     paths:
-      - vendor
-      - third_party
-      - charts # Helm charts directory
-      - pkg/generated # Generated code (DataPlane API clients, K8s clientsets)
+      - ^vendor/
+      - ^third_party/
+      - ^charts/ # Helm charts directory
+      - ^pkg/generated/ # Generated code (DataPlane API clients, K8s clientsets)
     rules:
       # Exclude generated code
       - path: codegen/.*\.gen\.go$
@@ -219,6 +220,13 @@ linters:
       - path: pkg/controller/dryrunvalidator/component.go
         linters:
           - godot
+
+      # Allow "types" package name in pkg/k8s/types - this is a well-organized
+      # package containing interface definitions used across the k8s subpackages
+      - path: pkg/k8s/types/
+        text: "var-naming: avoid meaningless package names"
+        linters:
+          - revive
 
 issues:
   max-issues-per-linter: 0

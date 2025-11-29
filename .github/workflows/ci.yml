@@ -25,16 +25,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.6.2
-      - name: Run arch-go
-        run: go run github.com/arch-go/arch-go
-      - name: Run event immutability checker
-        run: |
-          mkdir -p bin
-          cd tools/linters/eventimmutability && go build -o ../../../bin/eventimmutability ./cmd/eventimmutability
-          ./bin/eventimmutability ./...
+      - run: make lint
 
   audit:
     runs-on: ubuntu-latest

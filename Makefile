@@ -7,7 +7,8 @@
 
 # Variables
 GO := go
-GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+GOLANGCI_LINT_VERSION := v2.6.2
+GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck
 ARCH_GO := $(shell which arch-go 2>/dev/null || echo "$(GO) run github.com/arch-go/arch-go")
 OAPI_CODEGEN := $(GO) run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
@@ -37,7 +38,7 @@ version: ## Display version information
 
 lint: ## Run all linters (golangci-lint + arch-go + eventimmutability)
 	@echo "Running golangci-lint..."
-	$(GOLANGCI_LINT) run
+	$(GOLANGCI_LINT) run ./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... ./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... ./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
 	@echo "Running arch-go..."
 	$(ARCH_GO)
 	@echo "Running event immutability checker..."
@@ -47,7 +48,7 @@ lint: ## Run all linters (golangci-lint + arch-go + eventimmutability)
 
 lint-fix: ## Run golangci-lint with auto-fix
 	@echo "Running golangci-lint with auto-fix..."
-	$(GOLANGCI_LINT) run --fix
+	$(GOLANGCI_LINT) run --fix ./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... ./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... ./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
 
 ## Security & vulnerability scanning
 
@@ -289,7 +290,7 @@ vet: ## Run go vet
 
 install-tools: ## Install/sync all tool dependencies (from go.mod tools section)
 	@echo "Installing tool dependencies..."
-	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	$(GO) install golang.org/x/vuln/cmd/govulncheck
 	$(GO) install github.com/arch-go/arch-go
 	$(GO) install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen

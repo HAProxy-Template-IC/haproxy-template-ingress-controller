@@ -212,10 +212,10 @@ func sortSnippetsByPriority(snippets map[string]config.TemplateSnippet) []string
 // instead of wrapping them in a "config" object.
 //
 // If extraContext is nil or empty, the context is left unchanged.
-func MergeExtraContextInto(context map[string]interface{}, cfg *config.Config) {
+func MergeExtraContextInto(renderCtx map[string]interface{}, cfg *config.Config) {
 	if cfg.TemplatingSettings.ExtraContext != nil {
 		for key, value := range cfg.TemplatingSettings.ExtraContext {
-			context[key] = value
+			renderCtx[key] = value
 		}
 	}
 }

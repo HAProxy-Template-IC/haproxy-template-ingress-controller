@@ -307,8 +307,11 @@ func outputTemplateTrace(engine *templating.TemplateEngine) {
 
 // loadConfigFromFile loads a HAProxyTemplateConfig from a YAML file.
 func loadConfigFromFile(filePath string) (*v1alpha1.HAProxyTemplateConfigSpec, error) {
+	// Clean the file path to prevent path traversal attacks
+	cleanPath := filepath.Clean(filePath)
+
 	// Read file
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
@@ -419,7 +422,7 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	// Convert CRD spec to internal config format to get dataplane configuration with defaults applied
 	cfg, err := conversion.ConvertSpec(configSpec)
 	if err != nil {
-		os.RemoveAll(tempDir)
+		_ = os.RemoveAll(tempDir)
 		return nil, dataplane.Capabilities{}, nil, fmt.Errorf("failed to convert config spec: %w", err)
 	}
 
@@ -444,14 +447,14 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	}
 
 	for _, dir := range dirsToCreate {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			os.RemoveAll(tempDir)
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			_ = os.RemoveAll(tempDir)
 			return nil, dataplane.Capabilities{}, nil, fmt.Errorf("failed to create directory: %w", err)
 		}
 	}
 
 	cleanup = func() {
-		os.RemoveAll(tempDir)
+		_ = os.RemoveAll(tempDir)
 	}
 
 	return resolvedPaths.ToValidationPaths(), capabilities, cleanup, nil
