@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
+	"sigs.k8s.io/e2e-framework/pkg/types"
 )
 
 // Template strings for CRD updates
@@ -95,8 +96,9 @@ backend test-backend
 `, version)
 }
 
-// TestInvalidHAProxyConfig tests that syntactically valid but semantically invalid HAProxy
-// configuration is rejected by validation and the previous valid config is preserved.
+// buildInvalidHAProxyConfigFeature builds a feature that tests syntactically valid but
+// semantically invalid HAProxy configuration is rejected by validation and the previous
+// valid config is preserved.
 //
 // Scenario:
 // 1. Deploy controller with valid initial config
@@ -104,8 +106,8 @@ backend test-backend
 // 3. Verify HAProxy binary validation fails
 // 4. Verify previous valid config is preserved
 // 5. Verify controller doesn't crash and continues watching
-func TestInvalidHAProxyConfig(t *testing.T) {
-	feature := features.New("Error Scenarios - Invalid HAProxy Config").
+func buildInvalidHAProxyConfigFeature() types.Feature {
+	return features.New("Error Scenarios - Invalid HAProxy Config").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-invalid-cfg", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -321,11 +323,15 @@ func TestInvalidHAProxyConfig(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestCredentialsMissing tests that the controller handles missing credentials Secret gracefully.
+// TestInvalidHAProxyConfig runs the invalid HAProxy config test.
+func TestInvalidHAProxyConfig(t *testing.T) {
+	testEnv.Test(t, buildInvalidHAProxyConfigFeature())
+}
+
+// buildCredentialsMissingFeature builds a feature that tests the controller handles
+// missing credentials Secret gracefully.
 //
 // Scenario:
 // 1. Create HAProxyTemplateConfig referencing a credentials Secret
@@ -334,8 +340,8 @@ func TestInvalidHAProxyConfig(t *testing.T) {
 // 4. Verify controller starts but waits for credentials
 // 5. Create the Secret
 // 6. Verify controller picks it up and proceeds
-func TestCredentialsMissing(t *testing.T) {
-	feature := features.New("Error Scenarios - Credentials Missing").
+func buildCredentialsMissingFeature() types.Feature {
+	return features.New("Error Scenarios - Credentials Missing").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-creds-miss", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -523,11 +529,15 @@ func TestCredentialsMissing(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestControllerCrashRecovery tests that the controller recovers cleanly after a crash.
+// TestCredentialsMissing runs the credentials missing test.
+func TestCredentialsMissing(t *testing.T) {
+	testEnv.Test(t, buildCredentialsMissingFeature())
+}
+
+// buildControllerCrashRecoveryFeature builds a feature that tests the controller
+// recovers cleanly after a crash.
 //
 // Scenario:
 // 1. Deploy controller with valid config
@@ -536,8 +546,8 @@ func TestCredentialsMissing(t *testing.T) {
 // 4. Wait for Pod restart
 // 5. Verify controller re-discovers state
 // 6. Verify subsequent config changes work normally
-func TestControllerCrashRecovery(t *testing.T) {
-	feature := features.New("Error Scenarios - Controller Crash Recovery").
+func buildControllerCrashRecoveryFeature() types.Feature {
+	return features.New("Error Scenarios - Controller Crash Recovery").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-crash-rec", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -690,19 +700,23 @@ func TestControllerCrashRecovery(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestRapidConfigUpdates tests that rapid configuration updates are debounced properly.
+// TestControllerCrashRecovery runs the controller crash recovery test.
+func TestControllerCrashRecovery(t *testing.T) {
+	testEnv.Test(t, buildControllerCrashRecoveryFeature())
+}
+
+// buildRapidConfigUpdatesFeature builds a feature that tests rapid configuration
+// updates are debounced properly.
 //
 // Scenario:
 // 1. Deploy controller with valid config
 // 2. Update ConfigMap 10 times in rapid succession
 // 3. Verify only the final version is deployed to HAProxy
 // 4. Verify no transaction conflicts from rapid changes
-func TestRapidConfigUpdates(t *testing.T) {
-	feature := features.New("Error Scenarios - Rapid Config Updates").
+func buildRapidConfigUpdatesFeature() types.Feature {
+	return features.New("Error Scenarios - Rapid Config Updates").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-rapid-cfg", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -878,19 +892,23 @@ func TestRapidConfigUpdates(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestGracefulShutdown tests that the controller shuts down gracefully.
+// TestRapidConfigUpdates runs the rapid config updates test.
+func TestRapidConfigUpdates(t *testing.T) {
+	testEnv.Test(t, buildRapidConfigUpdatesFeature())
+}
+
+// buildGracefulShutdownFeature builds a feature that tests the controller shuts
+// down gracefully.
 //
 // Scenario:
 // 1. Deploy controller with valid config
 // 2. Send SIGTERM to controller pod (kubectl delete with grace period)
 // 3. Verify controller terminates within grace period
 // 4. Verify next controller instance starts cleanly
-func TestGracefulShutdown(t *testing.T) {
-	feature := features.New("Error Scenarios - Graceful Shutdown").
+func buildGracefulShutdownFeature() types.Feature {
+	return features.New("Error Scenarios - Graceful Shutdown").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-shutdown", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -1058,11 +1076,15 @@ func TestGracefulShutdown(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestDataplaneUnreachable tests that the controller handles HAProxy being unreachable.
+// TestGracefulShutdown runs the graceful shutdown test.
+func TestGracefulShutdown(t *testing.T) {
+	testEnv.Test(t, buildGracefulShutdownFeature())
+}
+
+// buildDataplaneUnreachableFeature builds a feature that tests the controller handles
+// HAProxy being unreachable.
 //
 // Scenario:
 // 1. Deploy controller with valid config
@@ -1075,8 +1097,8 @@ func TestGracefulShutdown(t *testing.T) {
 //
 // Note: This test requires actual HAProxy pods which acceptance tests don't deploy.
 // The controller will log errors about no HAProxy endpoints - we verify it doesn't crash.
-func TestDataplaneUnreachable(t *testing.T) {
-	feature := features.New("Error Scenarios - Dataplane Unreachable").
+func buildDataplaneUnreachableFeature() types.Feature {
+	return features.New("Error Scenarios - Dataplane Unreachable").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-dp-unreach", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -1249,12 +1271,15 @@ func TestDataplaneUnreachable(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestLeadershipDuringReconciliation tests that leadership transitions during operation
-// are handled correctly.
+// TestDataplaneUnreachable runs the dataplane unreachable test.
+func TestDataplaneUnreachable(t *testing.T) {
+	testEnv.Test(t, buildDataplaneUnreachableFeature())
+}
+
+// buildLeadershipDuringReconciliationFeature builds a feature that tests leadership
+// transitions during operation are handled correctly.
 //
 // Scenario:
 // 1. Deploy controller with 2 replicas and leader election enabled
@@ -1263,8 +1288,8 @@ func TestDataplaneUnreachable(t *testing.T) {
 // 4. Delete leader pod mid-reconciliation
 // 5. Verify new leader is elected
 // 6. Verify config eventually converges
-func TestLeadershipDuringReconciliation(t *testing.T) {
-	feature := features.New("Error Scenarios - Leadership During Reconciliation").
+func buildLeadershipDuringReconciliationFeature() types.Feature {
+	return features.New("Error Scenarios - Leadership During Reconciliation").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-leader-rec", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -1460,11 +1485,15 @@ func TestLeadershipDuringReconciliation(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestWatchReconnection tests that the controller reconnects and resyncs after watch interruption.
+// TestLeadershipDuringReconciliation runs the leadership during reconciliation test.
+func TestLeadershipDuringReconciliation(t *testing.T) {
+	testEnv.Test(t, buildLeadershipDuringReconciliationFeature())
+}
+
+// buildWatchReconnectionFeature builds a feature that tests the controller reconnects
+// and resyncs after watch interruption.
 //
 // Scenario:
 // 1. Deploy controller
@@ -1472,8 +1501,8 @@ func TestLeadershipDuringReconciliation(t *testing.T) {
 // 3. Restart controller Pod (disrupts watch connection)
 // 4. Update CRD while pod restarting
 // 5. Verify new Pod reconnects and processes update
-func TestWatchReconnection(t *testing.T) {
-	feature := features.New("Error Scenarios - Watch Reconnection").
+func buildWatchReconnectionFeature() types.Feature {
+	return features.New("Error Scenarios - Watch Reconnection").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-watch-rec", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -1628,11 +1657,15 @@ func TestWatchReconnection(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestTransactionConflict tests that the controller handles version conflicts during deployment.
+// TestWatchReconnection runs the watch reconnection test.
+func TestWatchReconnection(t *testing.T) {
+	testEnv.Test(t, buildWatchReconnectionFeature())
+}
+
+// buildTransactionConflictFeature builds a feature that tests the controller handles
+// version conflicts during deployment.
 //
 // Note: This test is more theoretical as we don't have real HAProxy instances in acceptance tests.
 // In a full deployment scenario, if external changes modify HAProxy config while controller
@@ -1643,8 +1676,8 @@ func TestWatchReconnection(t *testing.T) {
 // 2. Verify it handles the "no endpoints" case gracefully
 // 3. Multiple rapid config updates (which could cause internal conflicts)
 // 4. Verify controller state remains consistent
-func TestTransactionConflict(t *testing.T) {
-	feature := features.New("Error Scenarios - Transaction Conflict Handling").
+func buildTransactionConflictFeature() types.Feature {
+	return features.New("Error Scenarios - Transaction Conflict Handling").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-tx-conf", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -1822,12 +1855,15 @@ func TestTransactionConflict(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestPartialDeploymentFailure tests controller behavior when deploying to multiple
-// HAProxy instances and some fail.
+// TestTransactionConflict runs the transaction conflict test.
+func TestTransactionConflict(t *testing.T) {
+	testEnv.Test(t, buildTransactionConflictFeature())
+}
+
+// buildPartialDeploymentFailureFeature builds a feature that tests controller behavior
+// when deploying to multiple HAProxy instances and some fail.
 //
 // Note: This test is limited in acceptance tests since we don't deploy actual HAProxy instances.
 // Instead, we test the controller's behavior when there are no HAProxy endpoints (partial = 0/0).
@@ -1840,8 +1876,8 @@ func TestTransactionConflict(t *testing.T) {
 // 1. Controller handles no endpoints gracefully
 // 2. Controller reports status appropriately
 // 3. Controller remains operational for future deployments
-func TestPartialDeploymentFailure(t *testing.T) {
-	feature := features.New("Error Scenarios - Partial Deployment Failure").
+func buildPartialDeploymentFailureFeature() types.Feature {
+	return features.New("Error Scenarios - Partial Deployment Failure").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-part-fail", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -2037,6 +2073,9 @@ func TestPartialDeploymentFailure(t *testing.T) {
 			return ctx
 		}).
 		Feature()
+}
 
-	testEnv.Test(t, feature)
+// TestPartialDeploymentFailure runs the partial deployment failure test.
+func TestPartialDeploymentFailure(t *testing.T) {
+	testEnv.Test(t, buildPartialDeploymentFailureFeature())
 }

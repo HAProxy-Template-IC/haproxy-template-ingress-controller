@@ -29,6 +29,7 @@ import (
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
+	"sigs.k8s.io/e2e-framework/pkg/types"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,7 +37,8 @@ import (
 	"k8s.io/client-go/transport/spdy"
 )
 
-// TestMetrics verifies that the controller exposes Prometheus metrics correctly.
+// buildMetricsFeature builds a feature that verifies the controller exposes
+// Prometheus metrics correctly.
 //
 // This test validates:
 //  1. Metrics server is accessible on the configured port (9090)
@@ -53,8 +55,8 @@ import (
 //  6. Verify metrics are updated with correct values
 //
 //nolint:revive // High complexity expected in E2E test scenarios
-func TestMetrics(t *testing.T) {
-	feature := features.New("Metrics Endpoint").
+func buildMetricsFeature() types.Feature {
+	return features.New("Metrics Endpoint").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			t.Helper()
 			t.Log("Setting up metrics test")
@@ -452,8 +454,11 @@ func TestMetrics(t *testing.T) {
 			return ctx
 		}).
 		Feature()
+}
 
-	testEnv.Test(t, feature)
+// TestMetrics runs the metrics endpoint test.
+func TestMetrics(t *testing.T) {
+	testEnv.Test(t, buildMetricsFeature())
 }
 
 // setupPortForward sets up port-forwarding to a pod.

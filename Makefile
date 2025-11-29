@@ -1,5 +1,5 @@
 .PHONY: help version lint lint-fix audit check-all \
-        test test-integration test-acceptance build-integration-test test-coverage \
+        test test-integration test-acceptance test-acceptance-parallel build-integration-test test-coverage \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         tidy verify generate clean fmt vet install-tools dev
 
@@ -86,6 +86,14 @@ test-acceptance: docker-build-test ## Run acceptance tests (builds image, create
 	@echo "Environment variables:"
 	@echo "  KIND_NODE_IMAGE - Kind node image (default: kindest/node:v1.32.0)"
 	$(GO) test -tags=acceptance -v -timeout 15m ./tests/acceptance/...
+
+test-acceptance-parallel: docker-build-test ## Run acceptance tests in parallel (faster, shared cluster)
+	@echo "Running acceptance tests in parallel..."
+	@echo "Note: Tests share a single Kind cluster with namespace isolation"
+	@echo "Environment variables:"
+	@echo "  KIND_NODE_IMAGE - Kind node image (default: kindest/node:v1.32.0)"
+	@echo "  PARALLEL        - Max concurrent tests (default: 4)"
+	$(GO) test -tags=acceptance -v -timeout 30m -parallel $${PARALLEL:-4} -run TestAllAcceptanceParallel ./tests/acceptance/...
 
 build-integration-test: ## Build integration test binary (without running)
 	@echo "Building integration test binary..."

@@ -29,9 +29,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
+	"sigs.k8s.io/e2e-framework/pkg/types"
 )
 
-// TestHTTPStoreValidUpdate tests that valid HTTP content updates are applied correctly.
+// buildHTTPStoreValidUpdateFeature builds a feature that tests valid HTTP content
+// updates are applied correctly.
 // Steps:
 // 1. Deploy blocklist server with valid IP content
 // 2. Deploy controller with HTTP Store template
@@ -39,8 +41,8 @@ import (
 // 4. Update blocklist content with new valid IPs
 // 5. Wait for refresh interval
 // 6. Verify HAProxy config updated with new IPs
-func TestHTTPStoreValidUpdate(t *testing.T) {
-	feature := features.New("HTTP Store - Valid Update").
+func buildHTTPStoreValidUpdateFeature() types.Feature {
+	return features.New("HTTP Store - Valid Update").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-http-valid", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -249,11 +251,15 @@ func TestHTTPStoreValidUpdate(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestHTTPStoreInvalidUpdate tests that invalid HTTP content is rejected and old content is preserved.
+// TestHTTPStoreValidUpdate runs the valid HTTP Store update test.
+func TestHTTPStoreValidUpdate(t *testing.T) {
+	testEnv.Test(t, buildHTTPStoreValidUpdateFeature())
+}
+
+// buildHTTPStoreInvalidUpdateFeature builds a feature that tests invalid HTTP content
+// is rejected and old content is preserved.
 // Steps:
 // 1. Deploy blocklist server with valid IP content
 // 2. Deploy controller with HTTP Store template
@@ -262,8 +268,8 @@ func TestHTTPStoreValidUpdate(t *testing.T) {
 // 5. Wait for refresh interval and validation attempt
 // 6. Verify HAProxy config still contains old valid content
 // 7. Verify invalid content was rejected
-func TestHTTPStoreInvalidUpdate(t *testing.T) {
-	feature := features.New("HTTP Store - Invalid Update Cache Preservation").
+func buildHTTPStoreInvalidUpdateFeature() types.Feature {
+	return features.New("HTTP Store - Invalid Update Cache Preservation").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-http-invalid", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -469,11 +475,15 @@ func TestHTTPStoreInvalidUpdate(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestHTTPStoreFailover tests that HTTP Store continues working after controller failover.
+// TestHTTPStoreInvalidUpdate runs the invalid HTTP Store update test.
+func TestHTTPStoreInvalidUpdate(t *testing.T) {
+	testEnv.Test(t, buildHTTPStoreInvalidUpdateFeature())
+}
+
+// buildHTTPStoreFailoverFeature builds a feature that tests HTTP Store continues
+// working after controller failover.
 // Steps:
 // 1. Deploy blocklist server with valid IP content
 // 2. Deploy controller with 2 replicas and leader election
@@ -483,8 +493,8 @@ func TestHTTPStoreInvalidUpdate(t *testing.T) {
 // 6. Wait for new leader election
 // 7. Update blocklist content with new valid IPs
 // 8. Verify new leader processes the update correctly
-func TestHTTPStoreFailover(t *testing.T) {
-	feature := features.New("HTTP Store - Controller Failover").
+func buildHTTPStoreFailoverFeature() types.Feature {
+	return features.New("HTTP Store - Controller Failover").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			namespace := envconf.RandomName("test-http-failover", 32)
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -738,6 +748,9 @@ func TestHTTPStoreFailover(t *testing.T) {
 			return ctx
 		}).
 		Feature()
+}
 
-	testEnv.Test(t, feature)
+// TestHTTPStoreFailover runs the HTTP Store failover test.
+func TestHTTPStoreFailover(t *testing.T) {
+	testEnv.Test(t, buildHTTPStoreFailoverFeature())
 }
