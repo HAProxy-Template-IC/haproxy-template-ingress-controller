@@ -510,7 +510,7 @@ assert_path_rewrite() {
 
 # Verify cluster is accessible
 verify_cluster() {
-    if ! kind get clusters 2>/dev/null | grep -q "$CLUSTER_NAME"; then
+    if ! kind get clusters 2>/dev/null | grep "$CLUSTER_NAME" >/dev/null; then
         echo -e "${RED}Error:${NC} Kind cluster '$CLUSTER_NAME' not found"
         echo "Start the dev environment with: ./scripts/start-dev-env.sh"
         exit 1
@@ -1369,7 +1369,7 @@ test_ingress_scale_slots() {
     # Verify server slots in HAProxy config
     # This is a capacity planning feature - verify it's configured correctly
     local haproxy_pod
-    haproxy_pod=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer -o name 2>/dev/null | head -n1)
+    haproxy_pod=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer -o name 2>/dev/null | awk 'NR==1')
 
     if [[ -n "$haproxy_pod" ]]; then
         local backend_config
