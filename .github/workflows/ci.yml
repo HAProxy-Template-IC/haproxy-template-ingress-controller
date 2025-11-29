@@ -88,9 +88,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - run: make test-acceptance-parallel
-        env:
-          PARALLEL: 4
+      - run: make test-acceptance
 
   validate-helm-libraries:
     runs-on: ubuntu-latest
