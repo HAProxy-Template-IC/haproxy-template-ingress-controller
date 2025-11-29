@@ -1938,6 +1938,15 @@ func TestPartialDeploymentFailure(t *testing.T) {
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 30*time.Second)
 			require.NoError(t, err, "Controller should remain operational with no endpoints")
 
+			// Refresh debug client in case pod restarted during config updates
+			debugClient.Stop()
+			pod, err = GetControllerPod(ctx, client, namespace)
+			require.NoError(t, err, "Failed to get controller pod after config updates")
+
+			debugClient = NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
+			err = debugClient.Start(ctx)
+			require.NoError(t, err, "Failed to start refreshed debug client")
+
 			// Verify config is tracked correctly
 			renderedConfig, err := debugClient.GetRenderedConfig(ctx)
 			require.NoError(t, err)
