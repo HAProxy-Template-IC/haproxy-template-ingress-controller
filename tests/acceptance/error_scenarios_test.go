@@ -1939,7 +1939,8 @@ func TestPartialDeploymentFailure(t *testing.T) {
 			require.NoError(t, err, "Controller should remain operational with no endpoints")
 
 			// Refresh debug client in case pod restarted during config updates
-			debugClient.Stop()
+			// Note: Don't call debugClient.Stop() here - the defer will handle cleanup
+			// and since we're reassigning debugClient, defer will stop the new one
 			pod, err = GetControllerPod(ctx, client, namespace)
 			require.NoError(t, err, "Failed to get controller pod after config updates")
 
