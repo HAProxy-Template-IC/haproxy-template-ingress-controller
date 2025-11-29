@@ -7,7 +7,7 @@
 
 # Variables
 GO := go
-GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/cmd/golangci-lint
+GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck
 ARCH_GO := $(shell which arch-go 2>/dev/null || echo "$(GO) run github.com/arch-go/arch-go")
 OAPI_CODEGEN := $(GO) run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
@@ -289,7 +289,7 @@ vet: ## Run go vet
 
 install-tools: ## Install/sync all tool dependencies (from go.mod tools section)
 	@echo "Installing tool dependencies..."
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 	$(GO) install golang.org/x/vuln/cmd/govulncheck
 	$(GO) install github.com/arch-go/arch-go
 	$(GO) install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
