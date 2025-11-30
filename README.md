@@ -5,7 +5,7 @@
 </p>
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://github.com/phihos/haproxy-template-ingress-controller/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/phihos/haproxy-template-ingress-controller/actions/workflows/ci.yml)
+[![Build Status](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/actions/workflows/ci.yml)
 
 ## Overview
 
