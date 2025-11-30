@@ -17,6 +17,7 @@
 package acceptance
 
 import (
+	"os"
 	"testing"
 
 	"sigs.k8s.io/e2e-framework/pkg/types"
@@ -44,6 +45,11 @@ import (
 // - Cluster-scoped resources (ClusterRole, ClusterRoleBinding) use namespace-prefixed names
 // - Tests are independent and should not rely on any shared state
 func TestAllAcceptanceParallel(t *testing.T) {
+	// Skip when running in CI sharding mode - individual tests run via matrix
+	if os.Getenv("SKIP_PARALLEL_RUNNER") == "true" {
+		t.Skip("Skipping parallel runner in CI sharding mode - tests run individually via matrix")
+	}
+
 	// Collect all feature builders
 	features := []types.Feature{
 		// Error scenarios tests
