@@ -186,11 +186,18 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			pod, err := GetControllerPod(ctx, client, namespace)
 			require.NoError(t, err)
 
-			// Start debug client
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
+			// Start debug client - track it for cleanup
+			// Note: debugClient may be reassigned during error scenarios,
+			// so we track the current one and stop it in cleanup
+			var debugClient *DebugClient
+			debugClient = NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
 			err = debugClient.Start(ctx)
 			require.NoError(t, err)
-			defer debugClient.Stop()
+			defer func() {
+				if debugClient != nil {
+					debugClient.Stop()
+				}
+			}()
 
 			// Wait for initial config to be loaded
 			t.Log("Waiting for initial config to be ready...")
@@ -213,64 +220,96 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			err = UpdateHAProxyTemplateConfigTemplate(ctx, client, namespace, ControllerCRDName, InvalidSyntaxTemplate)
 			require.NoError(t, err)
 
-			// Wait for validation to fail using the debug endpoint
-			t.Log("Waiting for validation to reject invalid config...")
-			err = debugClient.WaitForValidationStatus(ctx, "failed", 30*time.Second)
-			if err != nil {
-				// If timeout, check pipeline status for diagnostics
-				pipeline, pipelineErr := debugClient.GetPipelineStatusWithRetry(ctx, 10*time.Second)
-				if pipelineErr == nil && pipeline != nil {
-					t.Logf("Pipeline status: validation=%+v", pipeline.Validation)
-				}
-				// Fall back to log checking if debug endpoint not available
-				t.Log("Debug endpoint wait timed out, checking logs...")
-			}
-
-			// Verify controller is still running (didn't crash)
+			// Verify controller is still running (didn't crash) - check this first
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 30*time.Second)
 			require.NoError(t, err, "Controller should still be running after invalid config")
 
+			// Refresh debug client in case pod restarted
+			debugClient.Stop()
+			debugClient, err = EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			if err != nil {
+				t.Logf("Warning: failed to refresh debug client: %v", err)
+				// Continue with log-based verification if debug client unavailable
+			}
+
+			// Wait for validation to fail using the debug endpoint
+			t.Log("Waiting for validation to reject invalid config...")
+			if debugClient != nil {
+				err = debugClient.WaitForValidationStatus(ctx, "failed", 30*time.Second)
+				if err != nil {
+					// If timeout, check pipeline status for diagnostics
+					pipeline, pipelineErr := debugClient.GetPipelineStatusWithRetry(ctx, 10*time.Second)
+					if pipelineErr == nil && pipeline != nil {
+						t.Logf("Pipeline status: validation=%+v", pipeline.Validation)
+					}
+					// Fall back to log checking if debug endpoint not available
+					t.Log("Debug endpoint wait timed out, checking logs...")
+				}
+			}
+
 			// Use debug endpoint to verify validation failure
-			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
-			if err == nil && pipeline != nil && pipeline.Validation != nil {
-				t.Logf("Validation status: %s", pipeline.Validation.Status)
-				if pipeline.Validation.Status == "failed" {
-					t.Log("Controller correctly rejected invalid HAProxy config (validation failed)")
-					if len(pipeline.Validation.Errors) > 0 {
-						t.Logf("Validation errors: %v", pipeline.Validation.Errors)
-						// Verify error contains expected message about invalid directive
-						hasExpectedError := false
-						for _, errMsg := range pipeline.Validation.Errors {
-							if strings.Contains(errMsg, "unknown keyword") ||
-								strings.Contains(errMsg, "invalid_directive_xyz") ||
-								strings.Contains(errMsg, "parsing") {
-								hasExpectedError = true
-								break
+			if debugClient != nil {
+				pipeline, pipelineErr := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
+				if pipelineErr == nil && pipeline != nil && pipeline.Validation != nil {
+					t.Logf("Validation status: %s", pipeline.Validation.Status)
+					if pipeline.Validation.Status == "failed" {
+						t.Log("Controller correctly rejected invalid HAProxy config (validation failed)")
+						if len(pipeline.Validation.Errors) > 0 {
+							t.Logf("Validation errors: %v", pipeline.Validation.Errors)
+							// Verify error contains expected message about invalid directive
+							hasExpectedError := false
+							for _, errMsg := range pipeline.Validation.Errors {
+								if strings.Contains(errMsg, "unknown keyword") ||
+									strings.Contains(errMsg, "invalid_directive_xyz") ||
+									strings.Contains(errMsg, "parsing") {
+									hasExpectedError = true
+									break
+								}
+							}
+							assert.True(t, hasExpectedError,
+								"Validation errors should mention the invalid directive")
+						}
+					} else {
+						// Validation didn't fail as expected - check logs for more info
+						pod, _ = GetControllerPod(ctx, client, namespace)
+						if pod != nil {
+							logs, logErr := GetPodLogs(ctx, client, pod, 200)
+							if logErr == nil {
+								t.Logf("Unexpected validation status. Logs (last 500 chars): %s",
+									logs[max(0, len(logs)-500):])
 							}
 						}
-						assert.True(t, hasExpectedError,
-							"Validation errors should mention the invalid directive")
+						t.Errorf("Expected validation status 'failed', got '%s'", pipeline.Validation.Status)
 					}
 				} else {
-					// Validation didn't fail as expected - check logs for more info
-					logs, logErr := GetPodLogs(ctx, client, pod, 200)
-					if logErr == nil {
-						t.Logf("Unexpected validation status. Logs (last 500 chars): %s",
-							logs[max(0, len(logs)-500):])
+					// Fall back to log-based verification if debug endpoint unavailable
+					t.Log("Pipeline status unavailable, falling back to log verification")
+					pod, _ = GetControllerPod(ctx, client, namespace)
+					if pod != nil {
+						logs, logErr := GetPodLogs(ctx, client, pod, 200)
+						if logErr == nil {
+							hasValidationFailure := strings.Contains(logs, "validation failed") ||
+								strings.Contains(logs, "unknown keyword") ||
+								strings.Contains(logs, "invalid_directive_xyz")
+							assert.True(t, hasValidationFailure,
+								"Controller logs should show HAProxy validation failure")
+						}
 					}
-					t.Errorf("Expected validation status 'failed', got '%s'", pipeline.Validation.Status)
 				}
 			} else {
-				// Fall back to log-based verification if debug endpoint unavailable
-				t.Log("Pipeline status unavailable, falling back to log verification")
-				logs, logErr := GetPodLogs(ctx, client, pod, 200)
-				require.NoError(t, logErr, "Should be able to get pod logs")
-
-				hasValidationFailure := strings.Contains(logs, "validation failed") ||
-					strings.Contains(logs, "unknown keyword") ||
-					strings.Contains(logs, "invalid_directive_xyz")
-				assert.True(t, hasValidationFailure,
-					"Controller logs should show HAProxy validation failure")
+				// Fall back to log-based verification if debug client unavailable
+				t.Log("Debug client unavailable, falling back to log verification")
+				pod, _ = GetControllerPod(ctx, client, namespace)
+				if pod != nil {
+					logs, logErr := GetPodLogs(ctx, client, pod, 200)
+					if logErr == nil {
+						hasValidationFailure := strings.Contains(logs, "validation failed") ||
+							strings.Contains(logs, "unknown keyword") ||
+							strings.Contains(logs, "invalid_directive_xyz")
+						assert.True(t, hasValidationFailure,
+							"Controller logs should show HAProxy validation failure")
+					}
+				}
 			}
 
 			// Restore valid config
@@ -278,11 +317,17 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			err = UpdateHAProxyTemplateConfigTemplate(ctx, client, namespace, ControllerCRDName, ValidTemplate)
 			require.NoError(t, err)
 
+			// Refresh debug client before checking restore
+			if debugClient != nil {
+				debugClient.Stop()
+			}
+			debugClient, err = EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			require.NoError(t, err, "Debug client should be available after config restore")
+
 			// Wait for successful validation after restore
 			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
 			if err != nil {
 				t.Logf("Warning: validation status wait timed out after restore: %v", err)
-				time.Sleep(5 * time.Second) // Fall back to fixed wait
 			}
 
 			// Verify controller recovered
@@ -1949,10 +1994,15 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			pod, err := GetControllerPod(ctx, client, namespace)
 			require.NoError(t, err)
 
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
+			var debugClient *DebugClient
+			debugClient = NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
 			err = debugClient.Start(ctx)
 			require.NoError(t, err)
-			defer debugClient.Stop()
+			defer func() {
+				if debugClient != nil {
+					debugClient.Stop()
+				}
+			}()
 
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)
@@ -1975,14 +2025,9 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			require.NoError(t, err, "Controller should remain operational with no endpoints")
 
 			// Refresh debug client in case pod restarted during config updates
-			// Note: Don't call debugClient.Stop() here - the defer will handle cleanup
-			// and since we're reassigning debugClient, defer will stop the new one
-			pod, err = GetControllerPod(ctx, client, namespace)
-			require.NoError(t, err, "Failed to get controller pod after config updates")
-
-			debugClient = NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
-			require.NoError(t, err, "Failed to start refreshed debug client")
+			debugClient.Stop()
+			debugClient, err = EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			require.NoError(t, err, "Failed to refresh debug client")
 
 			// Verify config is tracked correctly
 			renderedConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
