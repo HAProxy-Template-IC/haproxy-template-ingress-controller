@@ -128,6 +128,38 @@ func (dc *DebugClient) Stop() {
 	}
 }
 
+// StartWithRetry starts the port-forward with retry logic for transient failures.
+// This is useful when the controller pod may have restarted and the connection
+// needs time to become available.
+func (dc *DebugClient) StartWithRetry(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	backoff := 1 * time.Second
+
+	for time.Now().Before(deadline) {
+		err := dc.Start(ctx)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		// Reset channels for retry (Start() may have partially initialized them)
+		dc.Stop()
+		dc.stopChannel = nil
+		dc.readyChannel = nil
+		dc.portForwarder = nil
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+			backoff = min(backoff*2, 5*time.Second)
+		}
+	}
+
+	return fmt.Errorf("failed to start debug client after retries: %w", lastErr)
+}
+
 // GetConfig retrieves the current controller configuration from the debug server.
 func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]interface{}, error) {
 	url := fmt.Sprintf("http://localhost:%d/debug/vars/config", dc.localPort)

@@ -634,3 +634,31 @@ func haproxyTemplateConfigGVR() schema.GroupVersionResource {
 		Resource: "haproxytemplateconfigs",
 	}
 }
+
+// EnsureDebugClientReady waits for the controller pod to be ready, then creates and starts
+// a debug client with retry logic. This is useful after operations that may cause pod restarts.
+// The function handles transient connection failures that may occur during pod restarts.
+func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Client, namespace string, timeout time.Duration) (*DebugClient, error) {
+	t.Helper()
+
+	// First wait for pod to be ready
+	err := WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, timeout)
+	if err != nil {
+		return nil, fmt.Errorf("pod not ready: %w", err)
+	}
+
+	// Get the current controller pod
+	pod, err := GetControllerPod(ctx, client, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get controller pod: %w", err)
+	}
+
+	// Create and start debug client with retry logic
+	debugClient := NewDebugClient(client.RESTConfig(), pod, DebugPort)
+	err = debugClient.StartWithRetry(ctx, timeout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start debug client: %w", err)
+	}
+
+	return debugClient, nil
+}
