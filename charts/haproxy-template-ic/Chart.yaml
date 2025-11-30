@@ -10,16 +10,16 @@ keywords:
   - controller
   - loadbalancer
   - template
-home: https://github.com/phihos/haproxy-template-ingress-controller
+home: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller
 sources:
-  - https://github.com/phihos/haproxy-template-ingress-controller
+  - https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller
 maintainers:
   - name: phihos
 annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: ghcr.io/phihos/haproxy-template-ic:0.1.0
+      image: ghcr.io/haproxy-template-ic/haproxy-template-ingress-controller:0.1.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -52,9 +52,9 @@ annotations:
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://github.com/phihos/haproxy-template-ingress-controller#readme
+      url: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller#readme
     - name: Issue Tracker
-      url: https://github.com/phihos/haproxy-template-ingress-controller/issues
+      url: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/issues
 
   # Recommendations
   artifacthub.io/recommendations: |

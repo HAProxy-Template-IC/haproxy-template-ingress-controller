@@ -40,7 +40,7 @@ replicaCount: 2
 
 # Controller image configuration
 image:
-  repository: ghcr.io/phihos/haproxy-template-ic
+  repository: ghcr.io/haproxy-template-ic/haproxy-template-ingress-controller
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion
   tag: ""

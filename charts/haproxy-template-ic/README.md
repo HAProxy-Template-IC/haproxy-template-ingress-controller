@@ -49,7 +49,7 @@ helm install my-controller ./charts/haproxy-template-ic \
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `replicaCount` | Number of controller replicas (2+ recommended for HA) | `2` |
-| `image.repository` | Controller image repository | `ghcr.io/phihos/haproxy-template-ic` |
+| `image.repository` | Controller image repository | `ghcr.io/haproxy-template-ic/haproxy-template-ingress-controller` |
 | `image.tag` | Controller image tag | Chart appVersion |
 | `controller.templateLibraries.ingress.enabled` | Enable Ingress resource support | `true` |
 | `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTPRoute, GRPCRoute) | `false` |

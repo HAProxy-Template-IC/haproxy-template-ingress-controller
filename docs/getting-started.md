@@ -196,7 +196,7 @@ Install the controller using Helm with default configuration:
 
 ```bash
 # Add the Helm repository (if published)
-# helm repo add haproxy-template-ic https://phihos.github.io/haproxy-template-ic
+# helm repo add haproxy-template-ic https://haproxy-template-ic.github.io/haproxy-template-ingress-controller
 # helm repo update
 
 # Install from local chart
