@@ -96,8 +96,26 @@ type ValidationTest struct {
 	// The map value is a list of resources in unstructured format.
 	Fixtures map[string][]interface{} `yaml:"fixtures"`
 
+	// HTTPFixtures contains mock HTTP responses for this test.
+	// When templates call http.Fetch() for a URL that matches a fixture,
+	// the fixture content is returned instead of making an actual HTTP request.
+	HTTPFixtures []HTTPResourceFixture `yaml:"httpResources,omitempty"`
+
 	// Assertions contains validation checks to run against the rendered config.
 	Assertions []ValidationAssertion `yaml:"assertions"`
+}
+
+// HTTPResourceFixture defines mock HTTP content for validation tests.
+//
+// This allows templates that use http.Fetch() to receive pre-defined content
+// during validation tests without making actual HTTP requests.
+type HTTPResourceFixture struct {
+	// URL is the HTTP URL that will be matched.
+	// When a template calls http.Fetch() with this URL, the fixture content is returned.
+	URL string `yaml:"url" json:"url"`
+
+	// Content is the response body to return when this URL is fetched.
+	Content string `yaml:"content" json:"content"`
 }
 
 // ValidationAssertion defines a single validation check.

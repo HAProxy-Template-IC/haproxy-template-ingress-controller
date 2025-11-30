@@ -94,6 +94,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		testHAProxyConfig, // validation config
 		nil,               // validation paths
 		nil,               // auxiliary files
+		nil,               // validation auxiliary files
 		0,                 // aux file count
 		100,               // duration ms
 	))

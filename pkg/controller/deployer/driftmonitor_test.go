@@ -31,7 +31,7 @@ import (
 
 // testDriftMonitorLogger creates a logger for drift monitor tests.
 func testDriftMonitorLogger() *slog.Logger {
-	var w io.Writer = io.Discard
+	var w = io.Discard
 	if testing.Verbose() {
 		w = os.Stderr
 	}

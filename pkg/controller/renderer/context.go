@@ -15,8 +15,11 @@
 package renderer
 
 import (
+	"context"
+	"fmt"
 	"sort"
 
+	"haproxy-template-ic/pkg/controller/httpstore"
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/templating"
 )
@@ -89,7 +92,7 @@ import (
 //	  # Enterprise WAF configuration
 //	  filter spoe engine modsecurity
 //	{%- endif %}
-func (c *Component) buildRenderingContext(pathResolver *templating.PathResolver) (map[string]interface{}, *FileRegistry) {
+func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *templating.PathResolver, isValidation bool) (map[string]interface{}, *FileRegistry) {
 	// Create resources map with wrapped stores
 	resources := make(map[string]interface{})
 
@@ -129,7 +132,7 @@ func (c *Component) buildRenderingContext(pathResolver *templating.PathResolver)
 		"snippet_count", len(snippetNames))
 
 	// Build final context
-	context := map[string]interface{}{
+	templateContext := map[string]interface{}{
 		"resources":         resources,
 		"controller":        controller,
 		"template_snippets": snippetNames,
@@ -139,15 +142,30 @@ func (c *Component) buildRenderingContext(pathResolver *templating.PathResolver)
 		"capabilities":      c.capabilitiesToMap(), // Add HAProxy/DataPlane API capabilities
 	}
 
+	// Add HTTP store wrapper if available
+	if c.httpStoreComponent != nil {
+		httpWrapper := httpstore.NewHTTPStoreWrapper(
+			c.httpStoreComponent,
+			c.logger,
+			isValidation,
+			ctx,
+		)
+		c.logger.Info("http object added to template context",
+			"http_wrapper_type", fmt.Sprintf("%T", httpWrapper))
+		templateContext["http"] = httpWrapper
+	} else {
+		c.logger.Warn("httpStoreComponent is nil, http.Fetch() will not be available in templates")
+	}
+
 	// Merge extraContext variables into top-level context
-	MergeExtraContextInto(context, c.config)
+	MergeExtraContextInto(templateContext, c.config)
 
 	if c.config.TemplatingSettings.ExtraContext != nil {
 		c.logger.Info("added extra context variables to template context",
 			"variable_count", len(c.config.TemplatingSettings.ExtraContext))
 	}
 
-	return context, fileRegistry
+	return templateContext, fileRegistry
 }
 
 // sortSnippetsByPriority sorts template snippet names by priority, then alphabetically.
@@ -194,10 +212,10 @@ func sortSnippetsByPriority(snippets map[string]config.TemplateSnippet) []string
 // instead of wrapping them in a "config" object.
 //
 // If extraContext is nil or empty, the context is left unchanged.
-func MergeExtraContextInto(context map[string]interface{}, cfg *config.Config) {
+func MergeExtraContextInto(renderCtx map[string]interface{}, cfg *config.Config) {
 	if cfg.TemplatingSettings.ExtraContext != nil {
 		for key, value := range cfg.TemplatingSettings.ExtraContext {
-			context[key] = value
+			renderCtx[key] = value
 		}
 	}
 }

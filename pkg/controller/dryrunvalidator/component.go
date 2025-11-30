@@ -282,16 +282,16 @@ func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
 // to simulate the proposed resource changes.
 func (c *Component) renderWithOverlayStores(overlayStores map[string]types.Store) (string, *dataplane.AuxiliaryFiles, error) {
 	// Build rendering context with overlay stores (similar to renderer.Component.buildRenderingContext)
-	context := c.buildRenderingContext(overlayStores)
+	renderCtx := c.buildRenderingContext(overlayStores)
 
 	// Render main HAProxy configuration
-	haproxyConfig, err := c.engine.Render("haproxy.cfg", context)
+	haproxyConfig, err := c.engine.Render("haproxy.cfg", renderCtx)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
 	}
 
 	// Render auxiliary files
-	auxiliaryFiles, err := c.renderAuxiliaryFiles(context)
+	auxiliaryFiles, err := c.renderAuxiliaryFiles(renderCtx)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to render auxiliary files: %w", err)
 	}
@@ -373,12 +373,12 @@ func (c *Component) sortSnippetsByPriority() []string {
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates).
-func (c *Component) renderAuxiliaryFiles(context map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+func (c *Component) renderAuxiliaryFiles(renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
 	// Render map files
 	for name := range c.config.Maps {
-		rendered, err := c.engine.Render(name, context)
+		rendered, err := c.engine.Render(name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render map file %s: %w", name, err)
 		}
@@ -391,7 +391,7 @@ func (c *Component) renderAuxiliaryFiles(context map[string]interface{}) (*datap
 
 	// Render general files
 	for name := range c.config.Files {
-		rendered, err := c.engine.Render(name, context)
+		rendered, err := c.engine.Render(name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render general file %s: %w", name, err)
 		}
@@ -404,7 +404,7 @@ func (c *Component) renderAuxiliaryFiles(context map[string]interface{}) (*datap
 
 	// Render SSL certificates
 	for name := range c.config.SSLCertificates {
-		rendered, err := c.engine.Render(name, context)
+		rendered, err := c.engine.Render(name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render SSL certificate %s: %w", name, err)
 		}

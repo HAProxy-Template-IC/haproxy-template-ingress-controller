@@ -20,6 +20,27 @@ controller:
       extraContext:
         debug: true  # Enable introspection headers for development
 
+    # HTTP Store Demo: Block requests based on header values from HTTP-fetched blocklist
+    maps:
+      header-blocklist.map:
+        template: |
+          {%- set blocklist_url = "http://blocklist-server.echo.svc:80/blocklist.txt" -%}
+          {%- set blocklist_content = http.Fetch(blocklist_url, {"critical": true, "delay": "60s"}) -%}
+          {%- for line in blocklist_content.split("\n") -%}
+          {%- set value = line | trim -%}
+          {%- if value != "" -%}
+          {{ value }} 1{{ "\n" }}
+          {%- endif -%}
+          {%- endfor %}
+
+    templateSnippets:
+      # Hook into frontend routing to check header against blocklist
+      # Uses "frontend-filters-*" naming convention to be auto-included by base.yaml
+      frontend-filters-http-store-demo:
+        template: |
+          # HTTP Store Demo: Block requests with blacklisted header values
+          http-request deny deny_status 403 if { req.hdr(X-Custom-Header) -m found } { req.hdr(X-Custom-Header),map({{ pathResolver.GetPath("header-blocklist.map", "map") }}) -m found }
+
 # HAProxy Service - expose externally via NodePort for dev/testing
 haproxy:
   service:

@@ -537,10 +537,45 @@ type ValidationTest struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Fixtures map[string][]runtime.RawExtension `json:"fixtures"`
 
+	// HTTPResources defines mock HTTP content for this test.
+	//
+	// These fixtures are used when templates call http.Fetch() to provide
+	// pre-defined content without making actual HTTP requests.
+	//
+	// Example:
+	//   httpResources:
+	//     - url: http://blocklist.example.com/list.txt
+	//       content: |
+	//         blocked-value-1
+	//         blocked-value-2
+	// +optional
+	HTTPResources []HTTPResourceFixture `json:"httpResources,omitempty"`
+
 	// Assertions defines the validation checks to perform.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	Assertions []ValidationAssertion `json:"assertions"`
+}
+
+// HTTPResourceFixture defines mock HTTP content for validation tests.
+//
+// When templates call http.Fetch() for the specified URL, the pre-defined
+// content is returned instead of making an actual HTTP request.
+type HTTPResourceFixture struct {
+	// URL is the HTTP URL to mock.
+	//
+	// When http.Fetch() is called with this URL during test execution,
+	// the Content field is returned instead of fetching from the network.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	URL string `json:"url"`
+
+	// Content is the mock response body to return.
+	//
+	// This content is returned when http.Fetch() is called with the
+	// matching URL during test execution.
+	// +kubebuilder:validation:Required
+	Content string `json:"content"`
 }
 
 // ValidationAssertion defines a single validation check.

@@ -170,9 +170,10 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	validationTests := make(map[string]config.ValidationTest, len(spec.ValidationTests))
 	for testName, test := range spec.ValidationTests {
 		validationTests[testName] = config.ValidationTest{
-			Description: test.Description,
-			Fixtures:    convertFixtures(test.Fixtures),
-			Assertions:  convertAssertions(test.Assertions),
+			Description:  test.Description,
+			Fixtures:     convertFixtures(test.Fixtures),
+			HTTPFixtures: convertHTTPFixtures(test.HTTPResources),
+			Assertions:   convertAssertions(test.Assertions),
 		}
 	}
 
@@ -248,6 +249,22 @@ func convertAssertions(crdAssertions []v1alpha1.ValidationAssertion) []config.Va
 		}
 	}
 	return assertions
+}
+
+// convertHTTPFixtures converts CRD HTTP resource fixtures to internal config format.
+func convertHTTPFixtures(crdHTTPFixtures []v1alpha1.HTTPResourceFixture) []config.HTTPResourceFixture {
+	if len(crdHTTPFixtures) == 0 {
+		return nil
+	}
+
+	httpFixtures := make([]config.HTTPResourceFixture, len(crdHTTPFixtures))
+	for i, f := range crdHTTPFixtures {
+		httpFixtures[i] = config.HTTPResourceFixture{
+			URL:     f.URL,
+			Content: f.Content,
+		}
+	}
+	return httpFixtures
 }
 
 // parseLabelSelector parses a label selector string into a map.

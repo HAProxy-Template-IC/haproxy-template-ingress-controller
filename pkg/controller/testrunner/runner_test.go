@@ -525,3 +525,183 @@ func TestTestResults_AllPassed(t *testing.T) {
 		})
 	}
 }
+
+func TestRunner_RunTests_WithHTTPFixtures(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Test with HTTP fixtures used in template
+	config := &v1alpha1.HAProxyTemplateConfigSpec{
+		HAProxyConfig: v1alpha1.HAProxyConfig{
+			Template: `global
+  maxconn 1000
+`,
+		},
+		Maps: map[string]v1alpha1.MapFile{
+			"blocklist.map": {
+				Template: `{%- set blocklist = http.Fetch("http://blocklist.example.com/list.txt") -%}
+{%- for line in blocklist.split("\n") -%}
+{%- set value = line | trim -%}
+{%- if value != "" -%}
+{{ value }} 1
+{% endif -%}
+{%- endfor %}`,
+			},
+		},
+		WatchedResources: map[string]v1alpha1.WatchedResource{
+			"services": {
+				APIVersion: "v1",
+				Resources:  "services",
+				IndexBy:    []string{"metadata.namespace", "metadata.name"},
+			},
+		},
+		ValidationTests: map[string]v1alpha1.ValidationTest{
+			"http-fixture-test": {
+				Description: "Test with HTTP fixture",
+				Fixtures: map[string][]runtime.RawExtension{
+					"services": {},
+				},
+				HTTPResources: []v1alpha1.HTTPResourceFixture{
+					{
+						URL:     "http://blocklist.example.com/list.txt",
+						Content: "blocked-value-1\nblocked-value-2\nblocked-value-3",
+					},
+				},
+				Assertions: []v1alpha1.ValidationAssertion{
+					{
+						Type:        "contains",
+						Target:      "map:blocklist.map",
+						Pattern:     "blocked-value-1",
+						Description: "Blocklist map should contain blocked-value-1",
+					},
+					{
+						Type:        "contains",
+						Target:      "map:blocklist.map",
+						Pattern:     "blocked-value-2",
+						Description: "Blocklist map should contain blocked-value-2",
+					},
+					{
+						Type:        "contains",
+						Target:      "map:blocklist.map",
+						Pattern:     "blocked-value-3",
+						Description: "Blocklist map should contain blocked-value-3",
+					},
+				},
+			},
+		},
+	}
+
+	// Create template engine
+	templates := map[string]string{
+		"haproxy.cfg":   config.HAProxyConfig.Template,
+		"blocklist.map": config.Maps["blocklist.map"].Template,
+	}
+	engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Convert CRD spec to internal config format
+	cfg, err := conversion.ConvertSpec(config)
+	require.NoError(t, err)
+
+	// Create test runner
+	runner := New(
+		cfg,
+		engine,
+		&dataplane.ValidationPaths{}, // Empty paths for unit tests
+		Options{
+			Logger: logger,
+		},
+	)
+
+	// Run tests
+	ctx := context.Background()
+	results, err := runner.RunTests(ctx, "")
+	require.NoError(t, err)
+
+	// Verify results
+	assert.Equal(t, 1, results.TotalTests, "should have 1 test")
+	assert.Equal(t, 1, results.PassedTests, "test should pass")
+	assert.Equal(t, 0, results.FailedTests, "no tests should fail")
+
+	// Verify rendered map contains all expected values
+	require.Len(t, results.TestResults, 1)
+	testResult := results.TestResults[0]
+	assert.True(t, testResult.Passed, "test should pass")
+	assert.Len(t, testResult.Assertions, 3, "should have 3 assertions")
+	for _, assertion := range testResult.Assertions {
+		assert.True(t, assertion.Passed, "assertion should pass: %s", assertion.Description)
+	}
+}
+
+func TestRunner_RunTests_HTTPFixtureMissing(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Test that missing HTTP fixture causes test failure
+	config := &v1alpha1.HAProxyTemplateConfigSpec{
+		HAProxyConfig: v1alpha1.HAProxyConfig{
+			Template: `{%- set content = http.Fetch("http://missing.example.com/data.txt") -%}
+global
+  maxconn 1000
+`,
+		},
+		WatchedResources: map[string]v1alpha1.WatchedResource{
+			"services": {
+				APIVersion: "v1",
+				Resources:  "services",
+				IndexBy:    []string{"metadata.namespace", "metadata.name"},
+			},
+		},
+		ValidationTests: map[string]v1alpha1.ValidationTest{
+			"missing-http-fixture": {
+				Description: "Test with missing HTTP fixture",
+				Fixtures: map[string][]runtime.RawExtension{
+					"services": {},
+				},
+				// No HTTPResources defined - should fail when http.Fetch is called
+				Assertions: []v1alpha1.ValidationAssertion{
+					{
+						Type:        "contains",
+						Target:      "haproxy.cfg",
+						Pattern:     "maxconn",
+						Description: "Config should contain maxconn",
+					},
+				},
+			},
+		},
+	}
+
+	// Create template engine
+	templates := map[string]string{
+		"haproxy.cfg": config.HAProxyConfig.Template,
+	}
+	engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Convert CRD spec to internal config format
+	cfg, err := conversion.ConvertSpec(config)
+	require.NoError(t, err)
+
+	// Create test runner
+	runner := New(
+		cfg,
+		engine,
+		&dataplane.ValidationPaths{}, // Empty paths for unit tests
+		Options{
+			Logger: logger,
+		},
+	)
+
+	// Run tests
+	ctx := context.Background()
+	results, err := runner.RunTests(ctx, "")
+	require.NoError(t, err)
+
+	// Verify test failed due to missing HTTP fixture
+	assert.Equal(t, 1, results.TotalTests, "should have 1 test")
+	assert.Equal(t, 0, results.PassedTests, "test should fail")
+	assert.Equal(t, 1, results.FailedTests, "1 test should fail")
+
+	require.Len(t, results.TestResults, 1)
+	testResult := results.TestResults[0]
+	assert.False(t, testResult.Passed, "test should fail")
+	assert.Contains(t, testResult.RenderError, "no fixture defined for URL")
+}

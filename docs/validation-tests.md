@@ -115,6 +115,87 @@ fixtures:
 - Test both common cases and edge cases
 - Keep fixtures minimal but complete
 
+### HTTP Fixtures
+
+For templates that use `http.Fetch()` to retrieve external content, you can provide mock HTTP responses using `httpResources`:
+
+```yaml
+validationTests:
+  test-http-blocklist:
+    description: Template should generate blocklist from HTTP-fetched content
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: my-ingress
+            namespace: default
+          # ...
+    httpResources:
+      - url: "http://blocklist.example.com/list.txt"
+        content: |
+          blocked-value-1
+          blocked-value-2
+          blocked-value-3
+    assertions:
+      - type: contains
+        target: map:blocklist.map
+        pattern: "blocked-value-1"
+        description: Blocklist map should contain fetched values
+```
+
+When a template calls `http.Fetch("http://blocklist.example.com/list.txt")`, it receives the fixture content instead of making an actual HTTP request.
+
+**Missing Fixture Error:**
+
+If a template calls `http.Fetch()` for a URL that doesn't have a matching fixture, the test **fails with an error**:
+
+```
+Error: http.Fetch: no fixture defined for URL: http://example.com/data.txt
+       (add an httpResources fixture for this URL)
+```
+
+This ensures all HTTP dependencies are explicitly mocked in tests.
+
+**Global HTTP Fixtures:**
+
+You can define HTTP fixtures in the `_global` test to share them across all tests:
+
+```yaml
+validationTests:
+  _global:
+    fixtures: {}
+    httpResources:
+      - url: "http://shared-config.example.com/config.json"
+        content: |
+          {"setting": "value"}
+    assertions: []
+
+  test-uses-shared-config:
+    description: Test that uses globally defined HTTP fixture
+    fixtures:
+      services:
+        - # ...
+    # httpResources from _global are automatically available
+    assertions:
+      - type: haproxy_valid
+```
+
+Test-specific HTTP fixtures override global fixtures for the same URL.
+
+**HTTP Fixture Properties:**
+
+| Property | Required | Description |
+|----------|----------|-------------|
+| `url` | Yes | The HTTP URL that will be matched when templates call `http.Fetch()` |
+| `content` | Yes | The response body content to return |
+
+**Notes:**
+
+- HTTP fixtures are matched by exact URL (no pattern matching)
+- Options passed to `http.Fetch()` (delay, timeout, auth) are ignored in test mode
+- Empty content is valid: `content: ""`
+
 ### Assertions
 
 Five assertion types are available:

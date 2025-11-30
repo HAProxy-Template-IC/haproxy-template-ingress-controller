@@ -53,6 +53,7 @@ import (
 	dryrunvalidator "haproxy-template-ic/pkg/controller/dryrunvalidator"
 	"haproxy-template-ic/pkg/controller/events"
 	"haproxy-template-ic/pkg/controller/executor"
+	"haproxy-template-ic/pkg/controller/httpstore"
 	"haproxy-template-ic/pkg/controller/indextracker"
 	leaderelectionctrl "haproxy-template-ic/pkg/controller/leaderelection"
 	"haproxy-template-ic/pkg/controller/metrics"
@@ -572,7 +573,7 @@ func setupConfigWatchers(
 
 	watcherGroup.Go(func() error {
 		if err := secretWatcher.WaitForSync(watcherCtx); err != nil {
-			return fmt.Errorf("Secret watcher sync failed: %w", err)
+			return fmt.Errorf("secret watcher sync failed: %w", err)
 		}
 		return nil
 	})
@@ -600,6 +601,7 @@ type reconciliationComponents struct {
 	deploymentScheduler *deployer.DeploymentScheduler
 	driftMonitor        *deployer.DriftPreventionMonitor
 	configPublisher     *ctrlconfigpublisher.Component
+	httpStore           *httpstore.Component   // HTTP resource fetcher for dynamic content
 	capabilities        dataplane.Capabilities // HAProxy/DataPlane API capabilities
 }
 
@@ -651,6 +653,11 @@ func createReconciliationComponents(
 		return nil, fmt.Errorf("failed to create renderer: %w", err)
 	}
 
+	// Create HTTPStore component for dynamic HTTP content fetching
+	// This component manages periodic refreshes and content validation coordination
+	httpStoreComponent := httpstore.New(bus, logger)
+	rendererComponent.SetHTTPStoreComponent(httpStoreComponent)
+
 	// Create HAProxy Validator
 	// Validation paths are now created per-render by the Renderer component for parallel validation support
 	haproxyValidatorComponent := validator.NewHAProxyValidator(bus, logger)
@@ -701,6 +708,7 @@ func createReconciliationComponents(
 		deploymentScheduler: deploymentSchedulerComponent,
 		driftMonitor:        driftMonitorComponent,
 		configPublisher:     configPublisherComponent,
+		httpStore:           httpStoreComponent,
 		capabilities:        capabilities,
 	}, nil
 }
@@ -754,8 +762,17 @@ func startReconciliationComponents(
 		}
 	}()
 
+	// Start httpstore in background (all replicas)
+	// Handles periodic HTTP content refresh and validation event coordination
+	go func() {
+		if err := components.httpStore.Start(iterCtx); err != nil {
+			logger.Error("httpstore failed", "error", err)
+			cancel()
+		}
+	}()
+
 	logger.Info("Reconciliation components started (all replicas)",
-		"components", "Reconciler, Renderer, HAProxyValidator, Executor, Discovery")
+		"components", "Reconciler, Renderer, HAProxyValidator, Executor, Discovery, HTTPStore")
 }
 
 // startLeaderOnlyComponents starts components that only the leader should run.
@@ -1317,7 +1334,7 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 		return nil, fmt.Errorf("failed to extract data field: %w", err)
 	}
 	if !found {
-		return nil, fmt.Errorf("Secret has no data field")
+		return nil, fmt.Errorf("secret has no data field")
 	}
 
 	// Convert map[string]interface{} to map[string][]byte
@@ -1332,7 +1349,7 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 			}
 			data[key] = decoded
 		} else {
-			return nil, fmt.Errorf("Secret data key %q has invalid type: %T", key, value)
+			return nil, fmt.Errorf("secret data key %q has invalid type: %T", key, value)
 		}
 	}
 
@@ -1353,19 +1370,19 @@ func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertif
 		return nil, fmt.Errorf("failed to extract data field: %w", err)
 	}
 	if !found {
-		return nil, fmt.Errorf("Secret has no data field")
+		return nil, fmt.Errorf("secret has no data field")
 	}
 
 	// Extract tls.crt (standard Kubernetes TLS Secret key)
 	tlsCertBase64, ok := dataRaw["tls.crt"]
 	if !ok {
-		return nil, fmt.Errorf("Secret data missing 'tls.crt' key")
+		return nil, fmt.Errorf("secret data missing 'tls.crt' key")
 	}
 
 	// Extract tls.key (standard Kubernetes TLS Secret key)
 	tlsKeyBase64, ok := dataRaw["tls.key"]
 	if !ok {
-		return nil, fmt.Errorf("Secret data missing 'tls.key' key")
+		return nil, fmt.Errorf("secret data missing 'tls.key' key")
 	}
 
 	// Decode base64 certificate

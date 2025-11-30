@@ -640,7 +640,7 @@ func TestBuildRenderingContext(t *testing.T) {
 		CRTListDir: "/etc/haproxy/ssl",
 		GeneralDir: "/etc/haproxy/general",
 	}
-	ctx, fileRegistry := renderer.buildRenderingContext(pathResolver)
+	ctx, fileRegistry := renderer.buildRenderingContext(context.Background(), pathResolver, false)
 
 	// Verify file registry was created
 	require.NotNil(t, fileRegistry)

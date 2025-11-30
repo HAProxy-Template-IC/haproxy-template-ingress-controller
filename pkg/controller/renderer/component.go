@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/httpstore"
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/dataplane"
 	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
@@ -62,23 +63,26 @@ const (
 // CRT-list file paths are resolved to the general files directory instead of the SSL
 // directory, ensuring the generated configuration matches where files are actually stored.
 type Component struct {
-	eventBus        *busevents.EventBus
-	eventChan       <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	engine          *templating.TemplateEngine
-	config          *config.Config
-	stores          map[string]types.Store
-	haproxyPodStore types.Store // HAProxy controller pods store for pod-maxconn calculations
-	logger          *slog.Logger
+	eventBus           *busevents.EventBus
+	eventChan          <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
+	engine             *templating.TemplateEngine
+	config             *config.Config
+	stores             map[string]types.Store
+	haproxyPodStore    types.Store          // HAProxy controller pods store for pod-maxconn calculations
+	httpStoreComponent *httpstore.Component // HTTP resource store for dynamic HTTP content fetching
+	logger             *slog.Logger
+	ctx                context.Context // Context from Start() for HTTP requests
 
 	// State protected by mutex (for leadership transition replay and capabilities)
-	mu                   sync.RWMutex
-	lastHAProxyConfig    string
-	lastValidationConfig string
-	lastValidationPaths  interface{} // dataplane.ValidationPaths
-	lastAuxiliaryFiles   *dataplane.AuxiliaryFiles
-	lastAuxFileCount     int
-	lastRenderDurationMs int64
-	hasRenderedConfig    bool
+	mu                           sync.RWMutex
+	lastHAProxyConfig            string
+	lastValidationConfig         string
+	lastValidationPaths          interface{} // dataplane.ValidationPaths
+	lastAuxiliaryFiles           *dataplane.AuxiliaryFiles
+	lastValidationAuxiliaryFiles *dataplane.AuxiliaryFiles
+	lastAuxFileCount             int
+	lastRenderDurationMs         int64
+	hasRenderedConfig            bool
 
 	// capabilities defines which features are available for the local HAProxy version.
 	// Determined from local HAProxy version at construction time via CapabilitiesFromVersion().
@@ -104,7 +108,7 @@ type Component struct {
 //   - Error if template compilation fails
 func New(
 	eventBus *busevents.EventBus,
-	config *config.Config,
+	cfg *config.Config,
 	stores map[string]types.Store,
 	haproxyPodStore types.Store,
 	capabilities dataplane.Capabilities,
@@ -119,10 +123,10 @@ func New(
 	}
 
 	// Extract all templates from config
-	templates := extractTemplates(config)
+	templates := extractTemplates(cfg)
 
 	// Extract post-processor configurations from config
-	postProcessorConfigs := extractPostProcessorConfigs(config)
+	postProcessorConfigs := extractPostProcessorConfigs(cfg)
 
 	// Register custom filters
 	// Note: pathResolver is now passed via rendering context, not as a filter
@@ -155,12 +159,18 @@ func New(
 		eventBus:        eventBus,
 		eventChan:       eventChan,
 		engine:          engine,
-		config:          config,
+		config:          cfg,
 		stores:          stores,
 		haproxyPodStore: haproxyPodStore,
 		logger:          logger,
 		capabilities:    capabilities,
 	}, nil
+}
+
+// SetHTTPStoreComponent sets the HTTP store component for dynamic HTTP resource fetching.
+// This must be called before Start() to enable http.Fetch() in templates.
+func (c *Component) SetHTTPStoreComponent(httpStoreComponent *httpstore.Component) {
+	c.httpStoreComponent = httpStoreComponent
 }
 
 // Start begins the renderer's event loop.
@@ -182,6 +192,9 @@ func New(
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
 	c.logger.Info("Renderer starting")
+
+	// Store context for HTTP requests during rendering
+	c.ctx = ctx
 
 	for {
 		select {
@@ -231,8 +244,8 @@ func (c *Component) setupValidationEnvironment() (*validationEnvironment, func()
 	}
 
 	for _, dir := range []string{env.mapsDir, env.sslDir, env.generalDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			os.RemoveAll(tmpDir)
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			_ = os.RemoveAll(tmpDir)
 			return nil, nil, fmt.Errorf("failed to create validation directory %s: %w", dir, err)
 		}
 	}
@@ -304,7 +317,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 
 	// RENDER 1: Production configuration (for deployment)
 	c.logger.Info("rendering production configuration")
-	productionContext, productionFileRegistry := c.buildRenderingContext(productionPathResolver)
+	productionContext, productionFileRegistry := c.buildRenderingContext(c.ctx, productionPathResolver, false)
 
 	productionHAProxyConfig, err := c.engine.Render("haproxy.cfg", productionContext)
 	if err != nil {
@@ -323,7 +336,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 
 	// RENDER 2: Validation configuration (for controller validation)
 	c.logger.Info("rendering validation configuration")
-	validationContext, validationFileRegistry := c.buildRenderingContext(validationPathResolver)
+	validationContext, validationFileRegistry := c.buildRenderingContext(c.ctx, validationPathResolver, true)
 
 	validationHAProxyConfig, err := c.engine.Render("haproxy.cfg", validationContext)
 	if err != nil {
@@ -338,7 +351,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 	}
 
 	validationDynamicFiles := validationFileRegistry.GetFiles()
-	_ = MergeAuxiliaryFiles(validationStaticFiles, validationDynamicFiles) // Not needed for event, only production files are deployed
+	validationAuxiliaryFiles := MergeAuxiliaryFiles(validationStaticFiles, validationDynamicFiles)
 
 	// Calculate metrics
 	durationMs := time.Since(startTime).Milliseconds()
@@ -358,6 +371,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 	c.lastValidationConfig = validationHAProxyConfig
 	c.lastValidationPaths = validationPaths
 	c.lastAuxiliaryFiles = productionAuxiliaryFiles
+	c.lastValidationAuxiliaryFiles = validationAuxiliaryFiles
 	c.lastAuxFileCount = auxFileCount
 	c.lastRenderDurationMs = durationMs
 	c.hasRenderedConfig = true
@@ -369,6 +383,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 		validationHAProxyConfig,
 		validationPaths,
 		productionAuxiliaryFiles,
+		validationAuxiliaryFiles,
 		auxFileCount,
 		durationMs,
 	))
@@ -388,6 +403,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	validationConfig := c.lastValidationConfig
 	validationPaths := c.lastValidationPaths
 	auxiliaryFiles := c.lastAuxiliaryFiles
+	validationAuxiliaryFiles := c.lastValidationAuxiliaryFiles
 	auxFileCount := c.lastAuxFileCount
 	durationMs := c.lastRenderDurationMs
 	c.mu.RUnlock()
@@ -408,18 +424,19 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 		validationConfig,
 		validationPaths,
 		auxiliaryFiles,
+		validationAuxiliaryFiles,
 		auxFileCount,
 		durationMs,
 	))
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates).
-func (c *Component) renderAuxiliaryFiles(context map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+func (c *Component) renderAuxiliaryFiles(renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
 	// Render map files
 	for name := range c.config.Maps {
-		rendered, err := c.engine.Render(name, context)
+		rendered, err := c.engine.Render(name, renderCtx)
 		if err != nil {
 			c.publishRenderFailure(name, err)
 			return nil, err
@@ -433,7 +450,7 @@ func (c *Component) renderAuxiliaryFiles(context map[string]interface{}) (*datap
 
 	// Render general files
 	for name := range c.config.Files {
-		rendered, err := c.engine.Render(name, context)
+		rendered, err := c.engine.Render(name, renderCtx)
 		if err != nil {
 			c.publishRenderFailure(name, err)
 			return nil, err
@@ -447,7 +464,7 @@ func (c *Component) renderAuxiliaryFiles(context map[string]interface{}) (*datap
 
 	// Render SSL certificates
 	for name := range c.config.SSLCertificates {
-		rendered, err := c.engine.Render(name, context)
+		rendered, err := c.engine.Render(name, renderCtx)
 		if err != nil {
 			c.publishRenderFailure(name, err)
 			return nil, err

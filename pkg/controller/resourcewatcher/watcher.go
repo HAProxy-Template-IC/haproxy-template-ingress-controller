@@ -209,12 +209,12 @@ func (r *ResourceWatcherComponent) Start(ctx context.Context) error {
 	for resourceTypeName, w := range r.watchers {
 		// Capture loop variables to avoid closure bug
 		name := resourceTypeName
-		watcher := w
+		resourceWatcher := w
 
 		go func() {
 			r.logger.Debug("starting watcher", "resource_type", name)
 
-			if err := watcher.Start(ctx); err != nil {
+			if err := resourceWatcher.Start(ctx); err != nil {
 				r.logger.Error("watcher failed",
 					"resource_type", name,
 					"error", err)

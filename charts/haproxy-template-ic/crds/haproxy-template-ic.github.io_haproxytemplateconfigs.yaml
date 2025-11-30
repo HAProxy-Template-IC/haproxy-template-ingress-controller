@@ -603,6 +603,46 @@ spec:
                                 name: test-ingress
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
+                    httpResources:
+                      description: |-
+                        HTTPResources defines mock HTTP content for this test.
+
+                        These fixtures are used when templates call http.Fetch() to provide
+                        pre-defined content without making actual HTTP requests.
+
+                        Example:
+                          httpResources:
+                            - url: http://blocklist.example.com/list.txt
+                              content: |
+                                blocked-value-1
+                                blocked-value-2
+                      items:
+                        description: |-
+                          HTTPResourceFixture defines mock HTTP content for validation tests.
+
+                          When templates call http.Fetch() for the specified URL, the pre-defined
+                          content is returned instead of making an actual HTTP request.
+                        properties:
+                          content:
+                            description: |-
+                              Content is the mock response body to return.
+
+                              This content is returned when http.Fetch() is called with the
+                              matching URL during test execution.
+                            type: string
+                          url:
+                            description: |-
+                              URL is the HTTP URL to mock.
+
+                              When http.Fetch() is called with this URL during test execution,
+                              the Content field is returned instead of fetching from the network.
+                            minLength: 1
+                            type: string
+                        required:
+                        - content
+                        - url
+                        type: object
+                      type: array
                   required:
                   - assertions
                   - fixtures

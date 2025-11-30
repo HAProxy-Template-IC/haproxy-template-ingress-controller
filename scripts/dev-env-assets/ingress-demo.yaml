@@ -937,3 +937,35 @@ spec:
                 name: echo-server
                 port:
                   number: 80
+
+---
+##############################################################################
+# 31. HTTP STORE DEMO - Header-based blocking from HTTP-fetched blocklist
+#
+# Demonstrates the http.Fetch() template function with critical: true
+# Blocks requests with X-Custom-Header values matching the blocklist
+# served by blocklist-server in the echo namespace.
+#
+# Test:
+#   curl -H 'Host: http-store-demo.localdev.me' http://localhost:30080  # 200 OK
+#   curl -H 'Host: http-store-demo.localdev.me' -H 'X-Custom-Header: bad-value' http://localhost:30080  # 403
+#   curl -H 'Host: http-store-demo.localdev.me' -H 'X-Custom-Header: normal-value' http://localhost:30080  # 200
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-http-store-demo
+  namespace: echo
+spec:
+  ingressClassName: haproxy-template-ic
+  rules:
+    - host: http-store-demo.localdev.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80

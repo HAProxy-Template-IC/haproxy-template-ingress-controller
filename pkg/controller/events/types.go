@@ -133,6 +133,11 @@ const (
 	EventTypeBecameLeader          = "leader.became"
 	EventTypeLostLeadership        = "leader.lost"
 	EventTypeNewLeaderObserved     = "leader.observed"
+
+	// HTTP resource event types.
+	EventTypeHTTPResourceUpdated  = "http.resource.updated"
+	EventTypeHTTPResourceAccepted = "http.resource.accepted"
+	EventTypeHTTPResourceRejected = "http.resource.rejected"
 )
 
 // -----------------------------------------------------------------------------
@@ -537,6 +542,10 @@ func (e *ReconciliationFailedEvent) Timestamp() time.Time { return e.timestamp }
 // - Validation version with temp directory paths for controller validation
 //
 // Both configurations are rendered from the same templates but with different PathResolver instances.
+//
+// The event also carries two versions of auxiliary files:
+// - Production version with accepted HTTP content only (for deployment)
+// - Validation version with pending HTTP content (for testing new content before promotion).
 type TemplateRenderedEvent struct {
 	// HAProxyConfig is the rendered main HAProxy configuration for production deployment.
 	// Contains absolute paths like /etc/haproxy/maps/host.map for HAProxy pods.
@@ -551,10 +560,17 @@ type TemplateRenderedEvent struct {
 	// Consumers should type-assert to dataplane.ValidationPaths.
 	ValidationPaths interface{}
 
-	// AuxiliaryFiles contains all rendered auxiliary files (maps, certificates, general files).
+	// AuxiliaryFiles contains all rendered auxiliary files (maps, certificates, general files)
+	// for production deployment. Uses accepted HTTP content only.
 	// Type: interface{} to avoid circular dependencies with pkg/dataplane.
 	// Consumers should type-assert to *dataplane.AuxiliaryFiles.
 	AuxiliaryFiles interface{}
+
+	// ValidationAuxiliaryFiles contains auxiliary files for validation.
+	// Uses pending HTTP content if available (for testing new content before promotion).
+	// Type: interface{} to avoid circular dependencies with pkg/dataplane.
+	// Consumers should type-assert to *dataplane.AuxiliaryFiles.
+	ValidationAuxiliaryFiles interface{}
 
 	// Metrics for observability
 	ConfigBytes           int   // Size of HAProxyConfig (production)
@@ -572,6 +588,7 @@ func NewTemplateRenderedEvent(
 	validationHAProxyConfig string,
 	validationPaths interface{},
 	auxiliaryFiles interface{},
+	validationAuxiliaryFiles interface{},
 	auxFileCount int,
 	durationMs int64,
 ) *TemplateRenderedEvent {
@@ -580,15 +597,16 @@ func NewTemplateRenderedEvent(
 	validationConfigBytes := len(validationHAProxyConfig)
 
 	return &TemplateRenderedEvent{
-		HAProxyConfig:           haproxyConfig,
-		ValidationHAProxyConfig: validationHAProxyConfig,
-		ValidationPaths:         validationPaths,
-		AuxiliaryFiles:          auxiliaryFiles,
-		ConfigBytes:             configBytes,
-		ValidationConfigBytes:   validationConfigBytes,
-		AuxiliaryFileCount:      auxFileCount,
-		DurationMs:              durationMs,
-		timestamp:               time.Now(),
+		HAProxyConfig:            haproxyConfig,
+		ValidationHAProxyConfig:  validationHAProxyConfig,
+		ValidationPaths:          validationPaths,
+		AuxiliaryFiles:           auxiliaryFiles,
+		ValidationAuxiliaryFiles: validationAuxiliaryFiles,
+		ConfigBytes:              configBytes,
+		ValidationConfigBytes:    validationConfigBytes,
+		AuxiliaryFileCount:       auxFileCount,
+		DurationMs:               durationMs,
+		timestamp:                time.Now(),
 	}
 }
 
@@ -1593,3 +1611,74 @@ func NewNewLeaderObservedEvent(newLeaderIdentity string, isSelf bool) *NewLeader
 
 func (e *NewLeaderObservedEvent) EventType() string    { return EventTypeNewLeaderObserved }
 func (e *NewLeaderObservedEvent) Timestamp() time.Time { return e.timestamp }
+
+// -----------------------------------------------------------------------------
+// HTTP Resource Events.
+// -----------------------------------------------------------------------------
+
+// HTTPResourceUpdatedEvent is published when HTTP resource content has changed.
+// This triggers a reconciliation cycle with the new content as "pending".
+// The content must pass validation before being promoted to "accepted".
+type HTTPResourceUpdatedEvent struct {
+	URL             string // The URL that was refreshed
+	ContentChecksum string // SHA256 checksum of new content
+	ContentSize     int    // Size of new content in bytes
+	timestamp       time.Time
+}
+
+// NewHTTPResourceUpdatedEvent creates a new HTTPResourceUpdatedEvent.
+func NewHTTPResourceUpdatedEvent(url, checksum string, size int) *HTTPResourceUpdatedEvent {
+	return &HTTPResourceUpdatedEvent{
+		URL:             url,
+		ContentChecksum: checksum,
+		ContentSize:     size,
+		timestamp:       time.Now(),
+	}
+}
+
+func (e *HTTPResourceUpdatedEvent) EventType() string    { return EventTypeHTTPResourceUpdated }
+func (e *HTTPResourceUpdatedEvent) Timestamp() time.Time { return e.timestamp }
+
+// HTTPResourceAcceptedEvent is published when pending HTTP content passes validation.
+// The content has been promoted from "pending" to "accepted" state.
+type HTTPResourceAcceptedEvent struct {
+	URL             string // The URL whose content was accepted
+	ContentChecksum string // SHA256 checksum of accepted content
+	ContentSize     int    // Size of accepted content in bytes
+	timestamp       time.Time
+}
+
+// NewHTTPResourceAcceptedEvent creates a new HTTPResourceAcceptedEvent.
+func NewHTTPResourceAcceptedEvent(url, checksum string, size int) *HTTPResourceAcceptedEvent {
+	return &HTTPResourceAcceptedEvent{
+		URL:             url,
+		ContentChecksum: checksum,
+		ContentSize:     size,
+		timestamp:       time.Now(),
+	}
+}
+
+func (e *HTTPResourceAcceptedEvent) EventType() string    { return EventTypeHTTPResourceAccepted }
+func (e *HTTPResourceAcceptedEvent) Timestamp() time.Time { return e.timestamp }
+
+// HTTPResourceRejectedEvent is published when pending HTTP content fails validation.
+// The old accepted content remains in use.
+type HTTPResourceRejectedEvent struct {
+	URL             string // The URL whose content was rejected
+	ContentChecksum string // SHA256 checksum of rejected content
+	Reason          string // Why the content was rejected
+	timestamp       time.Time
+}
+
+// NewHTTPResourceRejectedEvent creates a new HTTPResourceRejectedEvent.
+func NewHTTPResourceRejectedEvent(url, checksum, reason string) *HTTPResourceRejectedEvent {
+	return &HTTPResourceRejectedEvent{
+		URL:             url,
+		ContentChecksum: checksum,
+		Reason:          reason,
+		timestamp:       time.Now(),
+	}
+}
+
+func (e *HTTPResourceRejectedEvent) EventType() string    { return EventTypeHTTPResourceRejected }
+func (e *HTTPResourceRejectedEvent) Timestamp() time.Time { return e.timestamp }

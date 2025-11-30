@@ -32,7 +32,7 @@ import (
 
 // testSchedulerLogger creates a logger for scheduler tests.
 func testSchedulerLogger() *slog.Logger {
-	var w io.Writer = io.Discard
+	var w = io.Discard
 	if testing.Verbose() {
 		w = os.Stderr
 	}
@@ -76,6 +76,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 		"",                          // validationHAProxyConfig
 		nil,                         // validationPaths
 		&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
+		&dataplane.AuxiliaryFiles{}, // validationAuxiliaryFiles
 		2,                           // auxFileCount
 		50,                          // durationMs
 	)
@@ -423,6 +424,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 			"",                          // validationHAProxyConfig
 			nil,                         // validationPaths
 			&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
+			&dataplane.AuxiliaryFiles{}, // validationAuxiliaryFiles
 			2,                           // auxFileCount
 			50,                          // durationMs
 		)

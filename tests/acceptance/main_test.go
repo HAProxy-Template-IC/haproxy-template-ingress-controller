@@ -36,20 +36,83 @@ const (
 // TestMain is the entry point for acceptance tests.
 // It sets up the test environment with a kind cluster and ensures
 // all Setup/Finish actions are properly executed.
+//
+// When running in CI with sharding (detected via SKIP_PARALLEL_RUNNER=true),
+// the cluster is pre-created by helm/kind-action and this function only
+// configures the test environment to use the existing cluster.
 func TestMain(m *testing.M) {
 	fmt.Println("DEBUG: TestMain is running!")
 
+	// Create test environment
+	testEnv = env.New()
+	fmt.Println("DEBUG: testEnv created:", testEnv != nil)
+
+	// Check if running in CI sharding mode (cluster pre-created by helm/kind-action)
+	if os.Getenv("SKIP_PARALLEL_RUNNER") == "true" {
+		fmt.Println("DEBUG: CI sharding mode detected - using pre-created cluster")
+		setupForCISharding()
+	} else {
+		fmt.Println("DEBUG: Local mode - creating dedicated cluster")
+		setupForLocalDevelopment()
+	}
+
+	// Run tests
+	os.Exit(testEnv.Run(m))
+}
+
+// setupForCISharding configures the test environment to use an existing cluster
+// created by helm/kind-action in CI. The cluster, image, and CRD are already set up.
+func setupForCISharding() {
+	// In CI mode, KUBECONFIG is already set by helm/kind-action
+	// Just validate the cluster is accessible
+	testEnv.Setup(
+		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			// Use the kubeconfig from environment (set by helm/kind-action)
+			kubeconfigPath := os.Getenv("KUBECONFIG")
+			if kubeconfigPath == "" {
+				kubeconfigPath = os.Getenv("HOME") + "/.kube/config"
+			}
+			fmt.Printf("DEBUG: Using kubeconfig from CI: %s\n", kubeconfigPath)
+
+			cfg.WithKubeconfigFile(kubeconfigPath)
+
+			// Validate cluster is accessible
+			client, err := cfg.NewClient()
+			if err != nil {
+				return ctx, fmt.Errorf("failed to create client: %w", err)
+			}
+
+			var nodeList corev1.NodeList
+			if err := client.Resources().List(ctx, &nodeList); err != nil {
+				return ctx, fmt.Errorf("SAFETY CHECK FAILED: Cannot list nodes: %w", err)
+			}
+			if len(nodeList.Items) == 0 {
+				return ctx, fmt.Errorf("SAFETY CHECK FAILED: Cluster has no nodes")
+			}
+			fmt.Printf("DEBUG: Cluster accessible with %d nodes\n", len(nodeList.Items))
+
+			return ctx, nil
+		},
+	)
+
+	// No cleanup needed in CI - the workflow handles cluster deletion
+	testEnv.Finish(
+		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			fmt.Println("DEBUG: CI mode - skipping cluster cleanup (handled by workflow)")
+			return ctx, nil
+		},
+	)
+}
+
+// setupForLocalDevelopment creates a dedicated Kind cluster for local testing.
+// This is the original behavior for running `make test-acceptance` locally.
+func setupForLocalDevelopment() {
 	// SAFETY: Isolate kubeconfig to prevent production cluster access
-	// Set KUBECONFIG environment variable BEFORE creating any clusters
 	if err := os.Setenv("KUBECONFIG", TestKubeconfigPath); err != nil {
 		fmt.Printf("FATAL: Failed to set KUBECONFIG: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf("DEBUG: Using isolated kubeconfig: %s\n", TestKubeconfigPath)
-
-	// Create test environment
-	testEnv = env.New()
-	fmt.Println("DEBUG: testEnv created:", testEnv != nil)
 
 	// Use kind cluster for testing
 	kindClusterName := "haproxy-test"
@@ -71,14 +134,12 @@ func TestMain(m *testing.M) {
 			cfg.WithKubeconfigFile(kubeconfigPath)
 
 			// SAFETY: Verify context switched to kind cluster
-			// Kind clusters use localhost IP addresses, so we verify by checking
-			// that nodes exist in the cluster (empty production clusters would fail this)
 			client, err := cfg.NewClient()
 			if err != nil {
 				return ctx, fmt.Errorf("failed to create client: %w", err)
 			}
 
-			// Validate cluster has nodes (kind cluster just created should have nodes)
+			// Validate cluster has nodes
 			var nodeList corev1.NodeList
 			if err := client.Resources().List(ctx, &nodeList); err != nil {
 				return ctx, fmt.Errorf("SAFETY CHECK FAILED: Cannot list nodes: %w", err)
@@ -88,7 +149,6 @@ func TestMain(m *testing.M) {
 			}
 
 			fmt.Println("DEBUG: Loading controller image into kind cluster...")
-			// Load controller Docker image into kind cluster using kind CLI
 			cmd := exec.CommandContext(ctx, "kind", "load", "docker-image", "haproxy-template-ic:test", "--name", kindClusterName)
 			if output, err := cmd.CombinedOutput(); err != nil {
 				return ctx, fmt.Errorf("failed to load controller image into kind cluster: %w\nOutput: %s", err, string(output))
@@ -104,7 +164,7 @@ func TestMain(m *testing.M) {
 			}
 			fmt.Println("DEBUG: HAProxyTemplateConfig CRD installed successfully")
 
-			// Wait for CRD to be established (API server needs time to process)
+			// Wait for CRD to be established
 			cmd = exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
 				"--for=condition=Established",
 				"crd/haproxytemplateconfigs.haproxy-template-ic.github.io",
@@ -120,15 +180,12 @@ func TestMain(m *testing.M) {
 	// Finish: Cleanup resources
 	testEnv.Finish(
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			// Destroy kind cluster
 			if err := kindCluster.Destroy(ctx); err != nil {
-				// Log but don't fail on cleanup
 				fmt.Printf("Warning: failed to destroy kind cluster: %v\n", err)
 			}
 			return ctx, nil
 		},
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			// Remove isolated kubeconfig file
 			if err := os.Remove(TestKubeconfigPath); err != nil && !os.IsNotExist(err) {
 				fmt.Printf("Warning: failed to remove test kubeconfig %s: %v\n", TestKubeconfigPath, err)
 			} else {
@@ -137,9 +194,6 @@ func TestMain(m *testing.M) {
 			return ctx, nil
 		},
 	)
-
-	// Run tests
-	os.Exit(testEnv.Run(m))
 }
 
 // getKindNodeImage returns the Kind node image to use for acceptance tests.

@@ -30,6 +30,12 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("Error: %v", err)
+	}
+}
+
+func run() error {
 	// Configure connection to HAProxy Dataplane API
 	endpoint := dataplane.Endpoint{
 		URL:      getEnv("HAPROXY_URL", "http://localhost:5555/v2"),
@@ -45,7 +51,7 @@ func main() {
 	fmt.Println("Creating dataplane client...")
 	client, err := dataplane.NewClient(ctx, &endpoint)
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer client.Close()
 
@@ -86,21 +92,38 @@ backend web-servers
 	fmt.Println("Syncing HAProxy configuration...")
 	result, err := client.Sync(ctx, desiredConfig, nil, opts)
 	if err != nil {
-		// Handle sync errors with detailed information
-		var syncErr *dataplane.SyncError
-		if errors.As(err, &syncErr) {
-			log.Printf("Sync failed at stage '%s': %s\n", syncErr.Stage, syncErr.Message)
-			if len(syncErr.Hints) > 0 {
-				log.Println("\nTroubleshooting hints:")
-				for _, hint := range syncErr.Hints {
-					log.Printf("  - %s\n", hint)
-				}
-			}
-		}
-		log.Fatalf("Sync failed: %v", err)
+		return handleSyncError(err)
 	}
 
 	// Display sync results
+	displaySyncResults(result)
+
+	// Example: Preview changes without applying (dry run)
+	if err := runDryRunExample(ctx, client, desiredConfig); err != nil {
+		log.Printf("Dry run failed: %v", err)
+	}
+
+	fmt.Println("\nExample completed successfully!")
+	return nil
+}
+
+// handleSyncError processes and returns sync errors with detailed information.
+func handleSyncError(err error) error {
+	var syncErr *dataplane.SyncError
+	if errors.As(err, &syncErr) {
+		log.Printf("Sync failed at stage '%s': %s\n", syncErr.Stage, syncErr.Message)
+		if len(syncErr.Hints) > 0 {
+			log.Println("\nTroubleshooting hints:")
+			for _, hint := range syncErr.Hints {
+				log.Printf("  - %s\n", hint)
+			}
+		}
+	}
+	return fmt.Errorf("sync failed: %w", err)
+}
+
+// displaySyncResults prints the results of a successful sync operation.
+func displaySyncResults(result *dataplane.SyncResult) {
 	fmt.Println("\nSync completed successfully!")
 	fmt.Printf("Duration: %v\n", result.Duration)
 	fmt.Printf("Operations applied: %d\n", len(result.AppliedOperations))
@@ -126,15 +149,19 @@ backend web-servers
 			fmt.Printf("  %d. [%s] %s: %s\n", i+1, op.Type, op.Resource, op.Description)
 		}
 	}
+}
 
-	// Example: Preview changes without applying (dry run)
+// runDryRunExample demonstrates the dry-run functionality.
+func runDryRunExample(ctx context.Context, client *dataplane.Client, desiredConfig string) error {
 	fmt.Println("\n--- Dry Run Example ---")
 	modifiedConfig := desiredConfig + "\n    server web3 192.168.1.12:80 check inter 2s\n"
 
 	diff, err := client.DryRun(ctx, modifiedConfig)
 	if err != nil {
-		log.Printf("Dry run failed: %v", err)
-	} else if diff.HasChanges {
+		return err
+	}
+
+	if diff.HasChanges {
 		fmt.Printf("Would apply %d operations:\n", len(diff.PlannedOperations))
 		for i, op := range diff.PlannedOperations {
 			fmt.Printf("  %d. [%s] %s: %s\n", i+1, op.Type, op.Resource, op.Description)
@@ -143,10 +170,10 @@ backend web-servers
 		fmt.Println("No changes needed")
 	}
 
-	fmt.Println("\nExample completed successfully!")
+	return nil
 }
 
-// getEnv retrieves an environment variable with a fallback default value
+// getEnv retrieves an environment variable with a fallback default value.
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value

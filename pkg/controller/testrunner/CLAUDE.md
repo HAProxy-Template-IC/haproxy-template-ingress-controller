@@ -81,6 +81,22 @@ This package implements a pure test runner component that executes embedded vali
 - Extracts index keys using `indexer.ExtractKeys()`
 - Ensures resources have proper TypeMeta (APIVersion, Kind)
 
+### http_fixtures.go - HTTP Fixture Handling
+
+**Key Types:**
+- `FixtureHTTPStoreWrapper` - Template-callable wrapper for HTTP fixtures
+
+**Key Functions:**
+- `NewFixtureHTTPStoreWrapper()` - Creates wrapper with pre-loaded fixtures
+- `Fetch()` - Returns fixture content or error if URL not found
+- `createHTTPStoreFromFixtures()` - Creates HTTPStore with fixtures pre-loaded
+- `mergeHTTPFixtures()` - Merges global and test-specific HTTP fixtures
+
+**Behavior:**
+- Always returns fixture content for known URLs
+- Fails with descriptive error for unknown URLs (no network requests)
+- Test-specific fixtures override global fixtures for same URL
+
 ### assertions.go - Assertion Types
 
 Implements 5 assertion types:

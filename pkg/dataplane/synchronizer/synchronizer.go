@@ -281,10 +281,10 @@ type SyncOperationsResult struct {
 //	    result, err := synchronizer.SyncOperations(ctx, client, diff.Operations, tx)
 //	    return err
 //	})
-func SyncOperations(ctx context.Context, client *client.DataplaneClient, operations []comparator.Operation, tx *client.Transaction) (*SyncOperationsResult, error) {
+func SyncOperations(ctx context.Context, dpClient *client.DataplaneClient, operations []comparator.Operation, tx *client.Transaction) (*SyncOperationsResult, error) {
 	// Execute all operations within the provided transaction
 	for _, op := range operations {
-		if err := op.Execute(ctx, client, tx.ID); err != nil {
+		if err := op.Execute(ctx, dpClient, tx.ID); err != nil {
 			return nil, fmt.Errorf("operation %q failed: %w", op.Describe(), err)
 		}
 	}

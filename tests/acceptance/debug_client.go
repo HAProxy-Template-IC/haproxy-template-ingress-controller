@@ -151,6 +151,30 @@ func (dc *DebugClient) GetRenderedConfig(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("rendered config not found in response")
 }
 
+// GetRenderedConfigWithRetry retrieves the rendered HAProxy configuration with retry logic.
+// This is useful in parallel test execution where port-forward connections may be transiently unavailable.
+func (dc *DebugClient) GetRenderedConfigWithRetry(ctx context.Context, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		config, err := dc.GetRenderedConfig(ctx)
+		if err == nil {
+			return config, nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(1 * time.Second):
+			// Retry after 1 second
+		}
+	}
+
+	return "", fmt.Errorf("timeout waiting for rendered config: %w", lastErr)
+}
+
 // GetEvents retrieves recent events from the debug server.
 func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]interface{}, error) {
 	url := fmt.Sprintf("http://localhost:%d/debug/vars/events", dc.localPort)
@@ -254,6 +278,198 @@ func (dc *DebugClient) WaitForRenderedConfigContains(ctx context.Context, expect
 			}
 
 			if contains(rendered, expectedSubstring) {
+				return nil
+			}
+		}
+	}
+}
+
+// PipelineStatus represents the reconciliation pipeline status.
+type PipelineStatus struct {
+	LastTrigger *TriggerStatus    `json:"last_trigger"`
+	Rendering   *RenderingStatus  `json:"rendering"`
+	Validation  *ValidationStatus `json:"validation"`
+	Deployment  *DeploymentStatus `json:"deployment"`
+}
+
+// TriggerStatus represents what triggered the last reconciliation.
+type TriggerStatus struct {
+	Timestamp string `json:"timestamp"`
+	Reason    string `json:"reason"`
+}
+
+// RenderingStatus represents the template rendering phase status.
+type RenderingStatus struct {
+	Status      string `json:"status"`
+	Timestamp   string `json:"timestamp"`
+	DurationMs  int64  `json:"duration_ms"`
+	ConfigBytes int    `json:"config_bytes"`
+	Error       string `json:"error,omitempty"`
+}
+
+// ValidationStatus represents the HAProxy validation phase status.
+type ValidationStatus struct {
+	Status     string   `json:"status"`
+	Timestamp  string   `json:"timestamp"`
+	DurationMs int64    `json:"duration_ms"`
+	Errors     []string `json:"errors,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+}
+
+// DeploymentStatus represents the deployment phase status.
+type DeploymentStatus struct {
+	Status             string           `json:"status"`
+	Reason             string           `json:"reason,omitempty"`
+	Timestamp          string           `json:"timestamp"`
+	DurationMs         int64            `json:"duration_ms,omitempty"`
+	EndpointsTotal     int              `json:"endpoints_total"`
+	EndpointsSucceeded int              `json:"endpoints_succeeded"`
+	EndpointsFailed    int              `json:"endpoints_failed"`
+	FailedEndpoints    []FailedEndpoint `json:"failed_endpoints,omitempty"`
+}
+
+// FailedEndpoint contains details about a failed deployment endpoint.
+type FailedEndpoint struct {
+	URL   string `json:"url"`
+	Error string `json:"error"`
+}
+
+// ValidatedConfigInfo contains information about the last successfully validated config.
+type ValidatedConfigInfo struct {
+	Config               string `json:"config"`
+	Timestamp            string `json:"timestamp"`
+	ConfigBytes          int    `json:"config_bytes"`
+	ValidationDurationMs int64  `json:"validation_duration_ms"`
+}
+
+// ErrorSummary provides an aggregated view of recent errors.
+type ErrorSummary struct {
+	ConfigParseError       *ErrorInfo  `json:"config_parse_error,omitempty"`
+	TemplateRenderError    *ErrorInfo  `json:"template_render_error,omitempty"`
+	HAProxyValidationError *ErrorInfo  `json:"haproxy_validation_error,omitempty"`
+	DeploymentErrors       []ErrorInfo `json:"deployment_errors,omitempty"`
+	LastErrorTimestamp     string      `json:"last_error_timestamp,omitempty"`
+}
+
+// ErrorInfo contains details about a specific error.
+type ErrorInfo struct {
+	Timestamp string   `json:"timestamp"`
+	Errors    []string `json:"errors"`
+}
+
+// GetPipelineStatus retrieves the reconciliation pipeline status.
+func (dc *DebugClient) GetPipelineStatus(ctx context.Context) (*PipelineStatus, error) {
+	url := fmt.Sprintf("http://localhost:%d/debug/vars/pipeline", dc.localPort)
+
+	data, err := dc.getJSON(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-marshal and unmarshal to convert map to struct
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal pipeline status: %w", err)
+	}
+
+	var status PipelineStatus
+	if err := json.Unmarshal(jsonBytes, &status); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal pipeline status: %w", err)
+	}
+
+	return &status, nil
+}
+
+// GetPipelineStatusWithRetry retrieves the pipeline status with retry logic.
+// This is useful in parallel test execution where port-forward connections may be transiently unavailable.
+func (dc *DebugClient) GetPipelineStatusWithRetry(ctx context.Context, timeout time.Duration) (*PipelineStatus, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		status, err := dc.GetPipelineStatus(ctx)
+		if err == nil {
+			return status, nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(1 * time.Second):
+			// Retry after 1 second
+		}
+	}
+
+	return nil, fmt.Errorf("timeout waiting for pipeline status: %w", lastErr)
+}
+
+// GetValidatedConfig retrieves the last successfully validated HAProxy configuration.
+func (dc *DebugClient) GetValidatedConfig(ctx context.Context) (*ValidatedConfigInfo, error) {
+	url := fmt.Sprintf("http://localhost:%d/debug/vars/validated", dc.localPort)
+
+	data, err := dc.getJSON(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-marshal and unmarshal to convert map to struct
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal validated config: %w", err)
+	}
+
+	var info ValidatedConfigInfo
+	if err := json.Unmarshal(jsonBytes, &info); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal validated config: %w", err)
+	}
+
+	return &info, nil
+}
+
+// GetErrors retrieves the error summary.
+func (dc *DebugClient) GetErrors(ctx context.Context) (*ErrorSummary, error) {
+	url := fmt.Sprintf("http://localhost:%d/debug/vars/errors", dc.localPort)
+
+	data, err := dc.getJSON(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-marshal and unmarshal to convert map to struct
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal error summary: %w", err)
+	}
+
+	var summary ErrorSummary
+	if err := json.Unmarshal(jsonBytes, &summary); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal error summary: %w", err)
+	}
+
+	return &summary, nil
+}
+
+// WaitForValidationStatus waits for the validation status to match the expected value.
+func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for validation status %q", expected)
+
+		case <-ticker.C:
+			status, err := dc.GetPipelineStatus(ctx)
+			if err != nil {
+				continue // Retry on error
+			}
+
+			if status.Validation != nil && status.Validation.Status == expected {
 				return nil
 			}
 		}

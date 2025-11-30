@@ -859,6 +859,12 @@ deploy_ingress_demo() {
 		return 1
 	}
 
+	# Deploy blocklist-server for HTTP Store demo
+	kubectl apply -f "${ASSETS_DIR}/blocklist-server.yaml" >/dev/null || {
+		err "Failed to deploy blocklist server"
+		return 1
+	}
+
 	# Deploy comprehensive Ingress examples from ingress-demo.yaml
 	# This file demonstrates all supported haproxy.org/* annotations
 	kubectl apply -f "${ASSETS_DIR}/ingress-demo.yaml" >/dev/null || {

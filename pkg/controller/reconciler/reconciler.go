@@ -145,6 +145,12 @@ func (r *Reconciler) handleEvent(event busevents.Event) {
 
 	case *events.ConfigValidatedEvent:
 		r.handleConfigChange(e)
+
+	case *events.HTTPResourceUpdatedEvent:
+		r.handleHTTPResourceChange(e)
+
+	case *events.HTTPResourceAcceptedEvent:
+		r.handleHTTPResourceAccepted(e)
 	}
 }
 
@@ -203,6 +209,40 @@ func (r *Reconciler) handleConfigChange(event *events.ConfigValidatedEvent) {
 
 	// Trigger reconciliation immediately
 	r.triggerReconciliation("config_change")
+}
+
+// handleHTTPResourceChange processes HTTP resource update events.
+//
+// HTTP resource changes are debounced like other resource changes.
+// When external HTTP content changes (e.g., IP blocklists, API responses),
+// this triggers a re-render to incorporate the new content.
+func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedEvent) {
+	r.logger.Debug("HTTP resource change detected, resetting debounce timer",
+		"url", event.URL,
+		"content_size", event.ContentSize,
+		"debounce_interval", r.debounceInterval)
+
+	r.pendingTrigger = true
+	r.lastTriggerReason = "http_resource_change"
+	r.resetDebounceTimer()
+}
+
+// handleHTTPResourceAccepted processes HTTP resource accepted events.
+//
+// When HTTP content is promoted from pending to accepted (after validation succeeds),
+// we need to trigger a new reconciliation to re-render the production configuration
+// with the new accepted content. Without this, the production config would stay
+// with the old content until the next external trigger.
+func (r *Reconciler) handleHTTPResourceAccepted(event *events.HTTPResourceAcceptedEvent) {
+	r.logger.Info("HTTP resource accepted, triggering immediate reconciliation",
+		"url", event.URL,
+		"content_size", event.ContentSize)
+
+	// Stop pending debounce timer - accepted content should be deployed immediately
+	r.stopDebounceTimer()
+
+	// Trigger reconciliation immediately
+	r.triggerReconciliation("http_resource_accepted")
 }
 
 // resetDebounceTimer resets the debounce timer to the configured interval.

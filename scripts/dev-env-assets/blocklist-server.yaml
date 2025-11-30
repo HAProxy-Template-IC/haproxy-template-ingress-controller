@@ -1,0 +1,55 @@
+# HTTP Store Demo - Blocklist Server
+# nginx serving a simple blocklist file from ConfigMap
+# Used to demonstrate the http.Fetch() template function
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blocklist-data
+  namespace: echo
+data:
+  blocklist.txt: |
+    bad-value
+    evil-header
+    blocked-user-agent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blocklist-server
+  namespace: echo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blocklist-server
+  template:
+    metadata:
+      labels:
+        app: blocklist-server
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: blocklist
+          mountPath: /usr/share/nginx/html
+          readOnly: true
+      volumes:
+      - name: blocklist
+        configMap:
+          name: blocklist-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blocklist-server
+  namespace: echo
+spec:
+  selector:
+    app: blocklist-server
+  ports:
+  - port: 80
+    targetPort: 80

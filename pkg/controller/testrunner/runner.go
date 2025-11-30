@@ -326,7 +326,7 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 	}
 
 	for _, dir := range dirsToCreate {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			return nil, fmt.Errorf("failed to create test directory %s: %w", dir, err)
 		}
 	}
@@ -549,19 +549,24 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 
 	// 1. Merge global fixtures with test-specific fixtures
 	fixtures := test.Fixtures
+	httpFixtures := test.HTTPFixtures
 
 	// Check for global fixtures in validationTests._global
 	if globalTest, hasGlobal := r.config.ValidationTests["_global"]; hasGlobal {
 		r.logger.Debug("Merging global fixtures with test fixtures",
 			"test", testName,
 			"global_fixture_types", len(globalTest.Fixtures),
-			"test_fixture_types", len(test.Fixtures))
+			"test_fixture_types", len(test.Fixtures),
+			"global_http_fixtures", len(globalTest.HTTPFixtures),
+			"test_http_fixtures", len(test.HTTPFixtures))
 
 		fixtures = mergeFixtures(globalTest.Fixtures, test.Fixtures)
+		httpFixtures = mergeHTTPFixtures(globalTest.HTTPFixtures, test.HTTPFixtures)
 
 		r.logger.Debug("Fixture merge completed",
 			"test", testName,
-			"merged_fixture_types", len(fixtures))
+			"merged_fixture_types", len(fixtures),
+			"merged_http_fixtures", len(httpFixtures))
 	}
 
 	// 2. Create resource stores from merged fixtures
@@ -573,8 +578,16 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 		return result
 	}
 
-	// 2. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	haproxyConfig, auxiliaryFiles, err := r.renderWithStores(engine, stores, validationPaths)
+	// 3. Create HTTP store from HTTP fixtures
+	// Always create the wrapper so that http.Fetch() fails gracefully when a fixture is missing
+	store := createHTTPStoreFromFixtures(httpFixtures, r.logger)
+	httpStore := NewFixtureHTTPStoreWrapper(store, r.logger)
+	r.logger.Debug("Created HTTP fixture store",
+		"test", testName,
+		"fixture_count", len(httpFixtures))
+
+	// 4. Render HAProxy configuration and auxiliary files (using worker-specific engine)
+	haproxyConfig, auxiliaryFiles, err := r.renderWithStores(engine, stores, validationPaths, httpStore)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -593,10 +606,10 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 		r.storeAuxiliaryFiles(&result, auxiliaryFiles)
 	}
 
-	// 3. Build template context for JSONPath assertions
-	templateContext := r.buildRenderingContext(stores, validationPaths)
+	// 5. Build template context for JSONPath assertions
+	templateContext := r.buildRenderingContext(stores, validationPaths, httpStore)
 
-	// 4. Run all assertions (whether rendering succeeded or failed)
+	// 6. Run all assertions (whether rendering succeeded or failed)
 	r.executeAssertions(ctx, &result, &test, haproxyConfig, auxiliaryFiles, templateContext, validationPaths)
 
 	// Test passes if either:
@@ -675,24 +688,24 @@ func hasRenderingErrorAssertions(assertions []config.ValidationAssertion) bool {
 // renderWithStores renders HAProxy configuration using test fixture stores and worker-specific engine.
 //
 // This follows the same pattern as DryRunValidator.renderWithOverlayStores.
-func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths) (string, *dataplane.AuxiliaryFiles, error) {
+func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) (string, *dataplane.AuxiliaryFiles, error) {
 	// Build rendering context with fixture stores
-	context := r.buildRenderingContext(stores, validationPaths)
+	renderCtx := r.buildRenderingContext(stores, validationPaths, httpStore)
 
 	// Render main HAProxy configuration using worker-specific engine
-	haproxyConfig, err := engine.Render("haproxy.cfg", context)
+	haproxyConfig, err := engine.Render("haproxy.cfg", renderCtx)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
-	staticFiles, err := r.renderAuxiliaryFiles(engine, context)
+	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to render auxiliary files: %w", err)
 	}
 
 	// Extract dynamic files registered during template rendering
-	fileRegistry := context["file_registry"].(*renderer.FileRegistry)
+	fileRegistry := renderCtx["file_registry"].(*renderer.FileRegistry)
 	dynamicFiles := fileRegistry.GetFiles()
 
 	// Merge static (pre-declared) and dynamic (registered) files
@@ -714,7 +727,7 @@ func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[
 //
 // This mirrors DryRunValidator.buildRenderingContext and Renderer.buildRenderingContext.
 // The context includes resources (fixture stores), template snippets, file_registry, pathResolver, and controller configuration.
-func (r *Runner) buildRenderingContext(stores map[string]types.Store, validationPaths *dataplane.ValidationPaths) map[string]interface{} {
+func (r *Runner) buildRenderingContext(stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) map[string]interface{} {
 	// Create resources map with wrapped stores (excluding haproxy-pods)
 	resources := make(map[string]interface{})
 
@@ -756,7 +769,7 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 	fileRegistry := renderer.NewFileRegistry(pathResolver)
 
 	// Build final context
-	context := map[string]interface{}{
+	renderCtx := map[string]interface{}{
 		"resources":         resources,
 		"controller":        controller,
 		"template_snippets": snippetNames,
@@ -765,10 +778,13 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 		"dataplane":         r.config.Dataplane, // Add dataplane config for absolute path access
 	}
 
-	// Merge extraContext variables into top-level context
-	renderer.MergeExtraContextInto(context, r.config)
+	// Add HTTP store wrapper for http.Fetch() calls in templates
+	renderCtx["http"] = httpStore
 
-	return context
+	// Merge extraContext variables into top-level context
+	renderer.MergeExtraContextInto(renderCtx, r.config)
+
+	return renderCtx
 }
 
 // sortSnippetsByPriority sorts template snippets by their priority field (ascending),
@@ -809,12 +825,12 @@ func (r *Runner) sortSnippetsByPriority() []string {
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.
-func (r *Runner) renderAuxiliaryFiles(engine *templating.TemplateEngine, context map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+func (r *Runner) renderAuxiliaryFiles(engine *templating.TemplateEngine, renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
 	// Render map files using worker-specific engine
 	for name := range r.config.Maps {
-		rendered, err := engine.Render(name, context)
+		rendered, err := engine.Render(name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render map file %s: %w", name, err)
 		}
@@ -827,7 +843,7 @@ func (r *Runner) renderAuxiliaryFiles(engine *templating.TemplateEngine, context
 
 	// Render general files using worker-specific engine
 	for name := range r.config.Files {
-		rendered, err := engine.Render(name, context)
+		rendered, err := engine.Render(name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render general file %s: %w", name, err)
 		}
@@ -840,7 +856,7 @@ func (r *Runner) renderAuxiliaryFiles(engine *templating.TemplateEngine, context
 
 	// Render SSL certificates using worker-specific engine
 	for name := range r.config.SSLCertificates {
-		rendered, err := engine.Render(name, context)
+		rendered, err := engine.Render(name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render SSL certificate %s: %w", name, err)
 		}

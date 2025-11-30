@@ -510,7 +510,7 @@ assert_path_rewrite() {
 
 # Verify cluster is accessible
 verify_cluster() {
-    if ! kind get clusters 2>/dev/null | grep -q "$CLUSTER_NAME"; then
+    if ! kind get clusters 2>/dev/null | grep "$CLUSTER_NAME" >/dev/null; then
         echo -e "${RED}Error:${NC} Kind cluster '$CLUSTER_NAME' not found"
         echo "Start the dev environment with: ./scripts/start-dev-env.sh"
         exit 1
@@ -1182,6 +1182,64 @@ test_ingress_combined() {
     fi
 }
 
+test_ingress_http_store_demo() {
+    if ! should_test "echo-http-store-demo"; then
+        return 0
+    fi
+
+    print_section "Testing Ingress: echo-http-store-demo (HTTP Store header blocking)"
+
+    local host="http-store-demo.localdev.me"
+    local response
+
+    # Test 1: Request without X-Custom-Header should succeed
+    response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+        -H "Host: ${host}" \
+        "${BASE_URL}/")
+
+    if [[ "$response" == "200" ]]; then
+        ok "Request without X-Custom-Header returns 200"
+    else
+        err "Expected 200 without header, got ${response}"
+    fi
+
+    # Test 2: Request with normal (non-blocked) header value should succeed
+    response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+        -H "Host: ${host}" \
+        -H "X-Custom-Header: normal-value" \
+        "${BASE_URL}/")
+
+    if [[ "$response" == "200" ]]; then
+        ok "Request with normal header value returns 200"
+    else
+        err "Expected 200 for normal header, got ${response}"
+    fi
+
+    # Test 3: Request with blocked header value should be denied
+    response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+        -H "Host: ${host}" \
+        -H "X-Custom-Header: bad-value" \
+        "${BASE_URL}/")
+
+    if [[ "$response" == "403" ]]; then
+        ok "Request with blocked header value 'bad-value' returns 403"
+    else
+        err "Expected 403 for blocked header 'bad-value', got ${response}"
+    fi
+
+    # Test 4: Another blocked value from blocklist
+    response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+        -H "Host: ${host}" \
+        -H "X-Custom-Header: evil-header" \
+        "${BASE_URL}/")
+
+    if [[ "$response" == "403" ]]; then
+        ok "Request with blocked header value 'evil-header' returns 403"
+    else
+        err "Expected 403 for blocked header 'evil-header', got ${response}"
+    fi
+}
+
 test_ingress_backend_snippet() {
     if ! should_test "echo-backend-snippet"; then
         return 0
@@ -1311,7 +1369,7 @@ test_ingress_scale_slots() {
     # Verify server slots in HAProxy config
     # This is a capacity planning feature - verify it's configured correctly
     local haproxy_pod
-    haproxy_pod=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer -o name 2>/dev/null | head -n1)
+    haproxy_pod=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer -o name 2>/dev/null | awk 'NR==1')
 
     if [[ -n "$haproxy_pod" ]]; then
         local backend_config
@@ -1608,14 +1666,14 @@ test_httproute_split() {
 
     # Weighted routing uses HAProxy's rand() for load balancing
     # With larger sample sizes, distribution converges to configured weights
-    # Note: Individual test runs may still show variance due to randomness
+    # Using 200 samples and 15% tolerance to reduce flakiness from statistical variance
     assert_weighted_distribution \
         "70/30 traffic split" \
         "echo-split.localdev.me" \
         70 \
         30 \
-        100 \
-        12
+        200 \
+        15
 }
 
 test_httproute_precedence() {
@@ -1802,6 +1860,7 @@ main() {
         test_ingress_tls
         test_ingress_tls_multi
         test_ingress_tls_combined
+        test_ingress_http_store_demo
         test_ingress_combined
     fi
 

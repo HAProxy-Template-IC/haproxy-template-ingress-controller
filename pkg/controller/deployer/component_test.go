@@ -33,7 +33,7 @@ import (
 // Test helper to create a test deployer component.
 func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	// Create logger that writes to discard or stderr
-	var w io.Writer = io.Discard
+	var w = io.Discard
 	if testing.Verbose() {
 		w = os.Stderr
 	}

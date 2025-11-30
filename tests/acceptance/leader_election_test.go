@@ -29,6 +29,7 @@ import (
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
+	"sigs.k8s.io/e2e-framework/pkg/types"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -40,14 +41,12 @@ import (
 )
 
 const (
-	// MetricsPort is the port for the Prometheus metrics endpoint.
-	MetricsPort = 9090
-
 	// LeaderElectionLeaseName is the default lease name for leader election.
 	LeaderElectionLeaseName = "haproxy-template-ic-leader"
 )
 
-// TestLeaderElection_TwoReplicas verifies that two-replica deployment elects exactly one leader.
+// buildLeaderElectionTwoReplicasFeature builds a feature that verifies two-replica deployment
+// elects exactly one leader.
 //
 // This test validates:
 //  1. Two controller pods are deployed and become ready
@@ -57,8 +56,8 @@ const (
 //  5. The Lease holder matches the pod with is_leader=1
 //
 //nolint:revive // High complexity expected in E2E test scenarios
-func TestLeaderElection_TwoReplicas(t *testing.T) {
-	feature := features.New("Leader Election - Two Replicas").
+func buildLeaderElectionTwoReplicasFeature() types.Feature {
+	return features.New("Leader Election - Two Replicas").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			t.Helper()
 			t.Log("Setting up leader election two replicas test")
@@ -346,8 +345,11 @@ func TestLeaderElection_TwoReplicas(t *testing.T) {
 			return ctx
 		}).
 		Feature()
+}
 
-	testEnv.Test(t, feature)
+// TestLeaderElection_TwoReplicas runs the two replicas leader election test.
+func TestLeaderElection_TwoReplicas(t *testing.T) {
+	testEnv.Test(t, buildLeaderElectionTwoReplicasFeature())
 }
 
 // checkPodIsLeader checks if a pod reports itself as leader via metrics.
@@ -445,7 +447,8 @@ func checkPodIsLeader(ctx context.Context, t *testing.T, restConfig *rest.Config
 	return false, fmt.Errorf("leader election metric not found in metrics output")
 }
 
-// TestLeaderElection_Failover verifies automatic failover when leader fails.
+// buildLeaderElectionFailoverFeature builds a feature that verifies automatic failover
+// when leader fails.
 //
 // This test validates:
 //  1. Initial leader is elected
@@ -455,8 +458,8 @@ func checkPodIsLeader(ctx context.Context, t *testing.T, restConfig *rest.Config
 //  5. Only one leader exists after failover
 //
 //nolint:revive // High complexity expected in E2E test scenarios
-func TestLeaderElection_Failover(t *testing.T) {
-	feature := features.New("Leader Election - Failover").
+func buildLeaderElectionFailoverFeature() types.Feature {
+	return features.New("Leader Election - Failover").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			t.Helper()
 			t.Log("Setting up leader election failover test")
@@ -685,11 +688,15 @@ func TestLeaderElection_Failover(t *testing.T) {
 			return ctx
 		}).
 		Feature()
-
-	testEnv.Test(t, feature)
 }
 
-// TestLeaderElection_DisabledMode verifies single-replica mode without leader election.
+// TestLeaderElection_Failover runs the failover leader election test.
+func TestLeaderElection_Failover(t *testing.T) {
+	testEnv.Test(t, buildLeaderElectionFailoverFeature())
+}
+
+// buildLeaderElectionDisabledModeFeature builds a feature that verifies single-replica
+// mode without leader election.
 //
 // This test validates:
 //  1. Controller starts with leader_election.enabled=false
@@ -697,7 +704,7 @@ func TestLeaderElection_Failover(t *testing.T) {
 //  3. Controller operates normally
 //
 //nolint:revive // High complexity expected in E2E test scenarios
-func TestLeaderElection_DisabledMode(t *testing.T) {
+func buildLeaderElectionDisabledModeFeature() types.Feature {
 	// Config with leader election disabled
 	const DisabledLeaderElectionConfig = `
 pod_selector:
@@ -738,7 +745,7 @@ watched_resources:
       - metadata.name
 `
 
-	feature := features.New("Leader Election - Disabled Mode").
+	return features.New("Leader Election - Disabled Mode").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			t.Helper()
 			t.Log("Setting up leader election disabled mode test")
@@ -913,6 +920,9 @@ watched_resources:
 			return ctx
 		}).
 		Feature()
+}
 
-	testEnv.Test(t, feature)
+// TestLeaderElection_DisabledMode runs the disabled mode leader election test.
+func TestLeaderElection_DisabledMode(t *testing.T) {
+	testEnv.Test(t, buildLeaderElectionDisabledModeFeature())
 }

@@ -38,7 +38,7 @@ func createTestResource(namespace, name string) *unstructured.Unstructured {
 func TestNewCachedStore(t *testing.T) {
 	scheme := runtime.NewScheme()
 	client := fake.NewSimpleDynamicClient(scheme)
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -52,7 +52,7 @@ func TestNewCachedStore(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -73,7 +73,7 @@ func TestNewCachedStore(t *testing.T) {
 func TestNewCachedStore_Errors(t *testing.T) {
 	scheme := runtime.NewScheme()
 	client := fake.NewSimpleDynamicClient(scheme)
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 	gvr := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
 
 	tests := []struct {
@@ -87,7 +87,7 @@ func TestNewCachedStore_Errors(t *testing.T) {
 				NumKeys:  0,
 				Client:   client,
 				GVR:      gvr,
-				Indexer:  indexer,
+				Indexer:  testIndexer,
 				CacheTTL: 5 * time.Minute,
 			},
 			wantErr: true,
@@ -98,7 +98,7 @@ func TestNewCachedStore_Errors(t *testing.T) {
 				NumKeys:  2,
 				Client:   nil,
 				GVR:      gvr,
-				Indexer:  indexer,
+				Indexer:  testIndexer,
 				CacheTTL: 5 * time.Minute,
 			},
 			wantErr: true,
@@ -132,7 +132,7 @@ func TestCachedStore_AddAndGet(t *testing.T) {
 	resource := createTestResource("default", "test-cm")
 
 	client := fake.NewSimpleDynamicClient(scheme, resource)
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -146,7 +146,7 @@ func TestCachedStore_AddAndGet(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -193,7 +193,7 @@ func TestCachedStore_NonUniqueKeys(t *testing.T) {
 	}
 
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -207,7 +207,7 @@ func TestCachedStore_NonUniqueKeys(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -263,7 +263,7 @@ func TestCachedStore_UpdateWithNonUniqueKeys(t *testing.T) {
 	slice2.Object["version"] = "v1"
 
 	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -277,7 +277,7 @@ func TestCachedStore_UpdateWithNonUniqueKeys(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -343,7 +343,7 @@ func TestCachedStore_DeleteWithNonUniqueKeys(t *testing.T) {
 	slice2 := createTestResource("default", "nginx-slice-2")
 
 	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -357,7 +357,7 @@ func TestCachedStore_DeleteWithNonUniqueKeys(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -415,7 +415,7 @@ func TestCachedStore_List(t *testing.T) {
 	}
 
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -429,7 +429,7 @@ func TestCachedStore_List(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -479,7 +479,7 @@ func TestCachedStore_CacheTTL(t *testing.T) {
 	resource := createTestResource("default", "test-cm")
 
 	client := fake.NewSimpleDynamicClient(scheme, resource)
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -493,7 +493,7 @@ func TestCachedStore_CacheTTL(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -535,7 +535,7 @@ func TestCachedStore_Clear(t *testing.T) {
 	}
 
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1])
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -549,7 +549,7 @@ func TestCachedStore_Clear(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -596,7 +596,7 @@ func TestCachedStore_PartialMatch(t *testing.T) {
 	}
 
 	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2])
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -610,7 +610,7 @@ func TestCachedStore_PartialMatch(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
@@ -650,7 +650,7 @@ func TestCachedStore_TTLReset(t *testing.T) {
 	resource := createTestResource("default", "test-cm")
 
 	client := fake.NewSimpleDynamicClient(scheme, resource)
-	indexer := createTestIndexer()
+	testIndexer := createTestIndexer()
 
 	gvr := schema.GroupVersionResource{
 		Group:    "",
@@ -667,7 +667,7 @@ func TestCachedStore_TTLReset(t *testing.T) {
 		Client:    client,
 		GVR:       gvr,
 		Namespace: "",
-		Indexer:   indexer,
+		Indexer:   testIndexer,
 	}
 
 	store, err := NewCachedStore(cfg)
