@@ -140,6 +140,14 @@ jobs:
           wait: 120s
           node_image: kindest/node:v1.32.0
 
+      # Login to GHCR to pull the pre-built image
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Pull and load controller image from GHCR
       - name: Load controller image into kind
         run: |
