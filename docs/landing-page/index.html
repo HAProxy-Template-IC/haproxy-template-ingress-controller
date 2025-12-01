@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HAProxy Template IC Documentation</title>
-  <link rel="stylesheet" href="/shared/colors.css">
+  <link rel="stylesheet" href="./shared/colors.css">
   <style>
     * { box-sizing: border-box; }
     body {
@@ -32,7 +32,7 @@
     .versions { margin-top: 16px; }
     .versions h3 { font-size: 0.9em; color: var(--brand-text-muted); margin-bottom: 8px; }
     .version-list { display: flex; flex-wrap: wrap; gap: 8px; }
-    .version-badge {
+    .doc-card a.version-badge {
       display: inline-block;
       padding: 4px 12px;
       background: var(--brand-primary);
@@ -41,8 +41,7 @@
       text-decoration: none;
       font-size: 0.85em;
     }
-    .version-badge:hover { background: var(--brand-primary-light); }
-    .version-badge.alias { background: var(--brand-primary-light); }
+    .doc-card a.version-badge:hover { background: var(--brand-primary-light); }
     .quick-start {
       background: var(--brand-border);
       border-radius: 6px;
@@ -69,7 +68,7 @@
     <div class="doc-card">
       <h2>Controller Documentation</h2>
       <p>Architecture, configuration, templating, operations, and development guides.</p>
-      <p><a href="/controller/latest/">View latest documentation</a></p>
+      <p><a href="./controller/latest/">View latest documentation</a></p>
       <div class="versions">
         <h3>Available versions</h3>
         <div id="controller-versions" class="version-list">Loading...</div>
@@ -79,7 +78,7 @@
     <div class="doc-card">
       <h2>Helm Chart Documentation</h2>
       <p>Installation guide, Gateway API support, HAProxy annotations reference.</p>
-      <p><a href="/helm-chart/latest/">View latest documentation</a></p>
+      <p><a href="./helm-chart/latest/">View latest documentation</a></p>
       <div class="versions">
         <h3>Available versions</h3>
         <div id="helm-versions" class="version-list">Loading...</div>
@@ -90,14 +89,14 @@
   <script>
     async function loadVersions(prefix, elementId) {
       try {
-        const res = await fetch(`/${prefix}/versions.json`);
+        const res = await fetch(`./${prefix}/versions.json`);
         if (!res.ok) throw new Error('Not found');
         const versions = await res.json();
         const el = document.getElementById(elementId);
         el.innerHTML = versions.map(v => {
           const isAlias = v.aliases && v.aliases.length > 0;
           const label = isAlias ? `${v.version} (${v.aliases.join(', ')})` : v.version;
-          return `<a href="/${prefix}/${v.version}/" class="version-badge${isAlias ? ' alias' : ''}">${label}</a>`;
+          return `<a href="./${prefix}/${v.version}/" class="version-badge${isAlias ? ' alias' : ''}">${label}</a>`;
         }).join('');
       } catch (e) {
         document.getElementById(elementId).innerHTML = '<span style="color:#888">No versions published yet</span>';

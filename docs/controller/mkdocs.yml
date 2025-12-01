@@ -9,8 +9,8 @@ docs_dir: docs
 
 theme:
   name: material
-  logo: assets/logo.svg
-  favicon: assets/logo.svg
+  logo: assets/logo-icon.svg
+  favicon: assets/logo-icon.svg
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -93,7 +93,7 @@ extra:
     provider: mike
   alternate:
     - name: Helm Chart Docs
-      link: /helm-chart/latest/
+      link: https://haproxy-template-ic.github.io/helm-chart/latest/
       lang: helm
   social:
     - icon: fontawesome/brands/github

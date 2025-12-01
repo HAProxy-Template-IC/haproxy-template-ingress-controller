@@ -9,8 +9,8 @@ docs_dir: docs
 
 theme:
   name: material
-  logo: assets/logo.svg
-  favicon: assets/logo.svg
+  logo: assets/logo-icon.svg
+  favicon: assets/logo-icon.svg
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -58,7 +58,7 @@ extra:
     provider: mike
   alternate:
     - name: Controller Docs
-      link: /controller/latest/
+      link: https://haproxy-template-ic.github.io/controller/latest/
       lang: controller
   social:
     - icon: fontawesome/brands/github

@@ -1,7 +1,7 @@
 # HAProxy Template I(ngress)C(ontroller)
 
 <p align="center">
-  <img src="docs/assets/logo.svg" alt="HAProxy Template IC Logo" width="400">
+  <img src="docs/controller/docs/assets/logo.svg" alt="HAProxy Template IC Logo" width="400">
 </p>
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)

@@ -1,15 +1,17 @@
-/* Import shared brand colors */
-@import url('/shared/colors.css');
+/* Import shared brand colors (copied during build from docs/shared/colors.css) */
+@import url('./colors.css');
 
 /* Map brand colors to MkDocs Material variables */
-:root {
-  --md-primary-fg-color: var(--brand-primary);
+/* Light mode: light blue header */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #4a8bc2;
   --md-primary-fg-color--light: var(--brand-primary-light);
   --md-primary-fg-color--dark: var(--brand-primary-dark);
 }
 
-/* Dark mode: use lighter color for links */
+/* Dark mode: dark blue header to match logo, lighter links */
 [data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0b3a66;
   --md-typeset-a-color: var(--brand-primary-light);
 }
 

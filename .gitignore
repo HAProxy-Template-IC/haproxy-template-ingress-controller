@@ -69,3 +69,7 @@ __debug_bin
 
 # Air (live reload) temporary files
 tmp/
+
+# Copied shared CSS files (source of truth is docs/shared/colors.css)
+docs/controller/docs/stylesheets/colors.css
+charts/haproxy-template-ic/docs/stylesheets/colors.css
