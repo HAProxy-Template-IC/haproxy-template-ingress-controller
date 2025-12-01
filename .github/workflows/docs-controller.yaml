@@ -79,8 +79,8 @@ jobs:
           cd pages-repo
           git pull origin main
           cp ../docs/landing-page/index.html index.html
-          if ! git diff --quiet; then
-            git add index.html
+          git add index.html
+          if ! git diff --cached --quiet; then
             git commit -m "Update landing page"
             git push origin main
           fi
