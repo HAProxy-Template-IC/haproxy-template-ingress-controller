@@ -344,7 +344,7 @@ jobs:
 
   docs-preview:
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.docs == 'true' || needs.changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
     environment:
       name: pr-preview
