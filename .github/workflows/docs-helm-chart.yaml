@@ -61,10 +61,20 @@ jobs:
 
           VERSION="${{ steps.version.outputs.version }}"
           if [ "$VERSION" = "dev" ]; then
-            mike deploy --push \
-              --deploy-prefix helm-chart \
-              --branch main \
-              "$VERSION"
+            # Check if any non-dev versions exist
+            if [ -f helm-chart/versions.json ] && jq -e '.[] | select(.version != "dev")' helm-chart/versions.json > /dev/null 2>&1; then
+              # Other releases exist, don't alias dev as latest
+              mike deploy --push \
+                --deploy-prefix helm-chart \
+                --branch main \
+                "$VERSION"
+            else
+              # No releases yet, alias dev as latest
+              mike deploy --push --update-aliases \
+                --deploy-prefix helm-chart \
+                --branch main \
+                "$VERSION" latest
+            fi
           else
             mike deploy --push --update-aliases \
               --deploy-prefix helm-chart \
