@@ -1,0 +1,31 @@
+name: Release Helm Chart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'charts/haproxy-template-ic/**'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Publish Helm chart
+        uses: stefanprodan/helm-gh-pages@master
+        with:
+          token: ${{ secrets.PAGES_REPO_TOKEN }}
+          charts_dir: charts
+          charts_url: https://haproxy-template-ic.github.io/charts
+          owner: HAProxy-Template-IC
+          repository: haproxy-template-ic.github.io
+          branch: main
+          target_dir: charts
+          linting: "on"
