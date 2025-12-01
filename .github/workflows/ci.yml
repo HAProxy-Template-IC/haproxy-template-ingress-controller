@@ -370,6 +370,27 @@ jobs:
           cd charts/haproxy-template-ic
           mkdocs build -d ../../_site/helm-chart
 
+      - name: Create PR preview landing page
+        run: |
+          cat > _site/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>PR Preview - HAProxy Template IC Docs</title>
+            <style>
+              body { font-family: system-ui; max-width: 600px; margin: 50px auto; padding: 20px; }
+              a { display: block; margin: 10px 0; padding: 15px; background: #f0f0f0; text-decoration: none; border-radius: 4px; }
+              a:hover { background: #e0e0e0; }
+            </style>
+          </head>
+          <body>
+            <h1>PR Preview</h1>
+            <a href="./controller/">Controller Documentation</a>
+            <a href="./helm-chart/">Helm Chart Documentation</a>
+          </body>
+          </html>
+          EOF
+
       - uses: rossjrw/pr-preview-action@v1
         with:
           source-dir: _site/
