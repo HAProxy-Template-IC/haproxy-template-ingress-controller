@@ -1,0 +1,60 @@
+name: Deploy Helm Chart Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'charts/haproxy-template-ic/docs/**'
+      - 'charts/haproxy-template-ic/mkdocs.yml'
+    tags:
+      - 'helm-chart-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Chart version (e.g., 0.3.0)'
+        required: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - run: pip install mkdocs-material mike
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/helm-chart-* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/helm-chart-}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy with mike
+        working-directory: charts/haproxy-template-ic
+        run: |
+          if [ "${{ steps.version.outputs.version }}" = "dev" ]; then
+            mike deploy --push ${{ steps.version.outputs.version }} \
+              --deploy-prefix helm-chart \
+              --remote https://x-access-token:${{ secrets.PAGES_REPO_TOKEN }}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git \
+              --branch main
+          else
+            mike deploy --push --update-aliases ${{ steps.version.outputs.version }} latest \
+              --deploy-prefix helm-chart \
+              --remote https://x-access-token:${{ secrets.PAGES_REPO_TOKEN }}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git \
+              --branch main
+          fi

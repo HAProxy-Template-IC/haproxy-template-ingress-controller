@@ -1,0 +1,67 @@
+site_name: HAProxy Template IC - Helm Chart
+site_url: https://haproxy-template-ic.github.io/helm-chart/
+site_description: Helm chart for HAProxy Template IC
+
+repo_name: HAProxy-Template-IC/haproxy-template-ingress-controller
+repo_url: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller
+
+docs_dir: docs
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  palette:
+    - scheme: default
+      primary: custom
+      accent: light-blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: light-blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - search.highlight
+    - content.code.copy
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Installation: index.md
+  - Gateway API: gateway-api.md
+  - Annotations: annotations.md
+
+extra:
+  version:
+    provider: mike
+  alternate:
+    - name: Controller Docs
+      link: /controller/latest/
+      lang: controller
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HAProxy-Template-IC
+
+plugins:
+  - search
+  - mike

@@ -19,7 +19,7 @@ controller:
 **Important notes:**
 
 - Annotations apply to **Ingress resources only** (not Services)
-- Gateway API resources (HTTPRoute, GRPCRoute) use filters instead of annotations - see [Gateway API Support](./gateway-api-support.md)
+- Gateway API resources (HTTPRoute, GRPCRoute) use filters instead of annotations - see [Gateway API Support](gateway-api.md)
 - All annotations use the `haproxy.org/` prefix
 - Multiple ingresses can share the same annotation values (deduplication is handled automatically)
 

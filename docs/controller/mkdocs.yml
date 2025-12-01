@@ -1,0 +1,102 @@
+site_name: HAProxy Template IC
+site_url: https://haproxy-template-ic.github.io/controller/
+site_description: Template-driven HAProxy Ingress Controller for Kubernetes
+
+repo_name: HAProxy-Template-IC/haproxy-template-ingress-controller
+repo_url: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller
+
+docs_dir: docs
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  palette:
+    - scheme: default
+      primary: custom
+      accent: light-blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: light-blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - User Guide:
+    - Configuration: configuration.md
+    - Templating: templating.md
+    - CRD Reference: crd-reference.md
+    - Watching Resources: watching-resources.md
+    - Validation Tests: validation-tests.md
+    - Supported Configuration: supported-configuration.md
+  - Operations:
+    - High Availability: operations/high-availability.md
+    - Monitoring: operations/monitoring.md
+    - Security: operations/security.md
+    - Performance: operations/performance.md
+    - Debugging: operations/debugging.md
+    - Troubleshooting: troubleshooting.md
+  - Development:
+    - Design Overview: development/design.md
+    - Architecture:
+      - Overview: development/design/architecture-overview.md
+      - Package Structure: development/design/package-structure.md
+      - Sequence Diagrams: development/design/sequence-diagrams.md
+    - Components:
+      - Configuration: development/design/configuration.md
+      - Deployment: development/design/deployment.md
+      - Leader Election: development/design/leader-election.md
+      - Introspection: development/design/introspection.md
+    - CRD Validation: development/crd-validation-design.md
+    - Design Decisions: development/design/design-decisions.md
+    - Considerations: development/design/considerations.md
+    - Appendices: development/design/appendices.md
+    - Linting: development/linting.md
+
+extra:
+  version:
+    provider: mike
+  alternate:
+    - name: Helm Chart Docs
+      link: /helm-chart/latest/
+      lang: helm
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HAProxy-Template-IC
+
+plugins:
+  - search
+  - mike
