@@ -46,31 +46,38 @@ jobs:
           fi
 
       - name: Deploy with mike
-        working-directory: docs/controller
         env:
           PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
         run: |
-          # Remove GitHub Actions default credential helper that overrides URL credentials
-          git config --global --unset-all http.https://github.com/.extraheader || true
-          REMOTE="https://x-access-token:${PAGES_TOKEN}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git"
-          if [ "${{ steps.version.outputs.version }}" = "dev" ]; then
-            mike deploy --push ${{ steps.version.outputs.version }} \
+          # Clone target repo
+          git clone https://x-access-token:${PAGES_TOKEN}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git pages-repo
+          cd pages-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Copy mkdocs config to target repo
+          cp -r ../docs/controller/mkdocs.yml .
+          cp -r ../docs/controller/docs docs
+
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ "$VERSION" = "dev" ]; then
+            mike deploy --push \
               --deploy-prefix controller \
-              --remote "$REMOTE" \
-              --branch main
+              --branch main \
+              "$VERSION"
           else
-            mike deploy --push --update-aliases ${{ steps.version.outputs.version }} latest \
+            mike deploy --push --update-aliases \
               --deploy-prefix controller \
-              --remote "$REMOTE" \
-              --branch main
+              --branch main \
+              "$VERSION" latest
           fi
 
       - name: Update landing page
+        env:
+          PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
         run: |
-          git clone https://x-access-token:${{ secrets.PAGES_REPO_TOKEN }}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git target-repo
-          cd target-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cd pages-repo
+          git pull origin main
           cp ../docs/landing-page/index.html index.html
           if ! git diff --quiet; then
             git add index.html

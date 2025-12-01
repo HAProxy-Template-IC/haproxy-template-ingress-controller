@@ -46,21 +46,28 @@ jobs:
           fi
 
       - name: Deploy with mike
-        working-directory: charts/haproxy-template-ic
         env:
           PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
         run: |
-          # Remove GitHub Actions default credential helper that overrides URL credentials
-          git config --global --unset-all http.https://github.com/.extraheader || true
-          REMOTE="https://x-access-token:${PAGES_TOKEN}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git"
-          if [ "${{ steps.version.outputs.version }}" = "dev" ]; then
-            mike deploy --push ${{ steps.version.outputs.version }} \
+          # Clone target repo
+          git clone https://x-access-token:${PAGES_TOKEN}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git pages-repo
+          cd pages-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Copy mkdocs config to target repo
+          cp -r ../charts/haproxy-template-ic/mkdocs.yml .
+          cp -r ../charts/haproxy-template-ic/docs docs
+
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ "$VERSION" = "dev" ]; then
+            mike deploy --push \
               --deploy-prefix helm-chart \
-              --remote "$REMOTE" \
-              --branch main
+              --branch main \
+              "$VERSION"
           else
-            mike deploy --push --update-aliases ${{ steps.version.outputs.version }} latest \
+            mike deploy --push --update-aliases \
               --deploy-prefix helm-chart \
-              --remote "$REMOTE" \
-              --branch main
+              --branch main \
+              "$VERSION" latest
           fi
