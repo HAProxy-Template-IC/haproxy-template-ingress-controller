@@ -3,14 +3,14 @@
  * Only customize light mode - let theme handle dark mode properly
  */
 
-:root {
-  /* Brand color for header (light mode only) */
+/* Light mode: use brand navy */
+[data-md-color-scheme="default"] {
   --md-primary-fg-color: #0b3a66;
   --md-primary-fg-color--light: #1a5a96;
   --md-primary-fg-color--dark: #062744;
 }
 
-/* No dark mode overrides - theme handles accessibility correctly */
+/* Dark mode: no overrides - theme uses accessible defaults */
 
 /* Logo sizing */
 .md-header__button.md-logo img,
