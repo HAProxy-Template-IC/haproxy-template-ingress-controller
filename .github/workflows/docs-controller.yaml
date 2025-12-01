@@ -82,7 +82,7 @@ jobs:
               "$VERSION" latest
           fi
 
-      - name: Update landing page
+      - name: Update landing page and shared assets
         env:
           PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
         run: |
@@ -90,9 +90,13 @@ jobs:
           # Reset to clean state after mike's push to avoid including stale changes
           git fetch origin
           git reset --hard origin/main
+          # Deploy shared CSS
+          mkdir -p shared
+          cp ../docs/shared/colors.css shared/
+          # Deploy landing page
           cp ../docs/landing-page/index.html index.html
-          git add index.html
+          git add index.html shared/
           if ! git diff --cached --quiet; then
-            git commit -m "Update landing page"
+            git commit -m "Update landing page and shared assets"
             git push origin main
           fi

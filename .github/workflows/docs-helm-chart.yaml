@@ -81,3 +81,18 @@ jobs:
               --branch main \
               "$VERSION" latest
           fi
+
+      - name: Deploy shared assets
+        env:
+          PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
+        run: |
+          cd pages-repo
+          git fetch origin
+          git reset --hard origin/main
+          mkdir -p shared
+          cp ../docs/shared/colors.css shared/
+          git add shared/
+          if ! git diff --cached --quiet; then
+            git commit -m "Update shared assets"
+            git push origin main
+          fi
