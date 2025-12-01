@@ -65,7 +65,7 @@ jobs:
             echo "DEBUG: Checking controller/versions.json"
             ls -la controller/versions.json 2>&1 || echo "DEBUG: File does not exist"
             cat controller/versions.json 2>&1 || echo "DEBUG: Cannot read file"
-            jq -e '.[] | select(.version != "dev")' controller/versions.json; echo "DEBUG: jq exit code: $?"
+            jq -e '.[] | select(.version != "dev")' controller/versions.json || echo "DEBUG: jq exit code: $?"
 
             # Check if any non-dev versions exist
             if [ -f controller/versions.json ] && jq -e '.[] | select(.version != "dev")' controller/versions.json > /dev/null 2>&1; then
