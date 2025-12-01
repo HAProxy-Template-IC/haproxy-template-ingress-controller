@@ -29,15 +29,9 @@ jobs:
       - run: pip install mkdocs-material mike
 
       - name: Configure Git
-        env:
-          PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          # Remove GitHub Actions default credential helper and use PAT
-          git config --global --unset-all http.https://github.com/.extraheader || true
-          git config --global credential.helper store
-          echo "https://x-access-token:${PAGES_TOKEN}@github.com" > ~/.git-credentials
 
       - name: Determine version
         id: version
@@ -52,16 +46,19 @@ jobs:
 
       - name: Deploy with mike
         working-directory: docs/controller
+        env:
+          PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
         run: |
+          REMOTE="https://x-access-token:${PAGES_TOKEN}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git"
           if [ "${{ steps.version.outputs.version }}" = "dev" ]; then
             mike deploy --push ${{ steps.version.outputs.version }} \
               --deploy-prefix controller \
-              --remote https://github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git \
+              --remote "$REMOTE" \
               --branch main
           else
             mike deploy --push --update-aliases ${{ steps.version.outputs.version }} latest \
               --deploy-prefix controller \
-              --remote https://github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git \
+              --remote "$REMOTE" \
               --branch main
           fi
 
