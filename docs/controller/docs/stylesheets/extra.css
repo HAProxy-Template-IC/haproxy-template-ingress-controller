@@ -1,33 +1,18 @@
 /* HAProxy Template IC brand colors
- * Derived from docs/assets/logo.svg
- * Primary: #0b3a66 (dark navy blue)
- * Light text: #e8edf4 (for dark mode)
+ * Primary: #0b3a66 (dark navy blue from logo)
+ * Only customize light mode - let theme handle dark mode properly
  */
 
 :root {
-  /* Primary brand color from logo */
+  /* Brand color for header (light mode only) */
   --md-primary-fg-color: #0b3a66;
   --md-primary-fg-color--light: #1a5a96;
   --md-primary-fg-color--dark: #062744;
-
-  /* Accent color - complementary light blue */
-  --md-accent-fg-color: #4a90d9;
-
-  /* Typography color matching logo */
-  --md-typeset-color: #0b3a66;
 }
 
-/* Dark mode overrides (matches logo dark scheme) */
-[data-md-color-scheme="slate"] {
-  /* Dark mode uses navy background with light text */
-  --md-primary-fg-color: #0b3a66;
-  --md-primary-bg-color: #e8edf4;
+/* No dark mode overrides - theme handles accessibility correctly */
 
-  /* Header stays navy in dark mode */
-  --md-typeset-color: #e8edf4;
-}
-
-/* Ensure logo adapts (SVG already has prefers-color-scheme) */
+/* Logo sizing */
 .md-header__button.md-logo img,
 .md-header__button.md-logo svg {
   height: 1.6rem;
