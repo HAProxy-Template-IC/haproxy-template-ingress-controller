@@ -1,5 +1,5 @@
-/* Import shared brand colors */
-@import url('/shared/colors.css');
+/* Import shared brand colors (copied during build from docs/shared/colors.css) */
+@import url('./colors.css');
 
 /* Map brand colors to MkDocs Material variables */
 :root {

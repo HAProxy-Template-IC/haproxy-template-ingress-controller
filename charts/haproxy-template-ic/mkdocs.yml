@@ -58,7 +58,7 @@ extra:
     provider: mike
   alternate:
     - name: Controller Docs
-      link: /controller/latest/
+      link: https://haproxy-template-ic.github.io/controller/latest/
       lang: controller
   social:
     - icon: fontawesome/brands/github

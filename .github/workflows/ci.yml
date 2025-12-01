@@ -7,8 +7,9 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
   packages: write
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,7 +19,41 @@ env:
   GO_VERSION: '1.25'
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      helm: ${{ steps.filter.outputs.helm }}
+      docs: ${{ steps.filter.outputs.docs }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Makefile'
+              - 'Dockerfile'
+              - 'scripts/**'
+            helm:
+              - 'charts/**'
+              - '!charts/**/docs/**'
+              - '!charts/**/mkdocs.yml'
+            docs:
+              - 'docs/**'
+              - 'charts/**/docs/**'
+              - 'charts/**/mkdocs.yml'
+            ci:
+              - '.github/workflows/**'
+              - '.golangci.yml'
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +64,8 @@ jobs:
       - run: make lint
 
   audit:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +76,8 @@ jobs:
       - run: make audit
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +93,8 @@ jobs:
       - run: make test
 
   test-integration:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -82,6 +123,8 @@ jobs:
           KEEP_CLUSTER: "false"
 
   build-test-image:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.image-name.outputs.image }}
@@ -118,8 +161,9 @@ jobs:
             GIT_TAG=ci-${{ github.run_id }}
 
   test-acceptance:
+    needs: [changes, build-test-image]
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
-    needs: [build-test-image]
     strategy:
       fail-fast: false
       matrix:
@@ -181,6 +225,8 @@ jobs:
           SKIP_PARALLEL_RUNNER: "true"
 
   validate-helm-libraries:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.helm == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -240,6 +286,8 @@ jobs:
           ./bin/controller validate -f /tmp/merged-config.yaml
 
   test-routes:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.helm == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -281,9 +329,9 @@ jobs:
           kind delete cluster --name haproxy-template-ic-dev || true
 
   cleanup-ci-images:
+    needs: [changes, test-acceptance]
+    if: always() && (needs.changes.outputs.code == 'true' || needs.changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
-    needs: [test-acceptance]
-    if: always()
     permissions:
       packages: write
     steps:
@@ -293,3 +341,38 @@ jobs:
           include-tags: '^ci-.*$'
           keep-n-tagged: 5
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  docs-preview:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - run: pip install mkdocs-material
+
+      - name: Copy shared CSS to stylesheets dirs
+        run: |
+          cp docs/shared/colors.css docs/controller/docs/stylesheets/
+          cp docs/shared/colors.css charts/haproxy-template-ic/docs/stylesheets/
+
+      - name: Build controller docs
+        run: |
+          cd docs/controller
+          mkdocs build -d ../../_site/controller
+
+      - name: Build helm chart docs
+        run: |
+          cd charts/haproxy-template-ic
+          mkdocs build -d ../../_site/helm-chart
+
+      - uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: _site/
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: auto

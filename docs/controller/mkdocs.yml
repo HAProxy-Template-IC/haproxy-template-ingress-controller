@@ -93,7 +93,7 @@ extra:
     provider: mike
   alternate:
     - name: Helm Chart Docs
-      link: /helm-chart/latest/
+      link: https://haproxy-template-ic.github.io/helm-chart/latest/
       lang: helm
   social:
     - icon: fontawesome/brands/github

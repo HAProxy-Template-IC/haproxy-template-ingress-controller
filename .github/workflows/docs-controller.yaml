@@ -29,6 +29,9 @@ jobs:
 
       - run: pip install mkdocs-material mike
 
+      - name: Copy shared CSS to stylesheets
+        run: cp docs/shared/colors.css docs/controller/docs/stylesheets/
+
       - name: Configure Git
         run: |
           git config --global user.name "github-actions[bot]"
