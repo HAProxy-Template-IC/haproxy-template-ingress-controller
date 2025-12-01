@@ -61,22 +61,14 @@ jobs:
 
           VERSION="${{ steps.version.outputs.version }}"
           if [ "$VERSION" = "dev" ]; then
-            # Debug: Check versions.json state
-            echo "DEBUG: Checking controller/versions.json"
-            ls -la controller/versions.json 2>&1 || echo "DEBUG: File does not exist"
-            cat controller/versions.json 2>&1 || echo "DEBUG: Cannot read file"
-            jq -e '.[] | select(.version != "dev")' controller/versions.json || echo "DEBUG: jq exit code: $?"
-
             # Check if any non-dev versions exist
             if [ -f controller/versions.json ] && jq -e '.[] | select(.version != "dev")' controller/versions.json > /dev/null 2>&1; then
-              echo "DEBUG: Taking branch: releases exist"
               # Other releases exist, don't alias dev as latest
               mike deploy --push \
                 --deploy-prefix controller \
                 --branch main \
                 "$VERSION"
             else
-              echo "DEBUG: Taking branch: no releases, aliasing dev as latest"
               # No releases yet, alias dev as latest
               mike deploy --push --update-aliases \
                 --deploy-prefix controller \
