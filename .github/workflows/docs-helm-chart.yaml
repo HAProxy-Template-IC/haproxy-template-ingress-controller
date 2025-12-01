@@ -29,10 +29,13 @@ jobs:
       - run: pip install mkdocs-material mike
 
       - name: Configure Git
+        env:
+          PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global url."https://x-access-token:${{ secrets.PAGES_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          echo "https://x-access-token:${PAGES_TOKEN}@github.com" > ~/.git-credentials
 
       - name: Determine version
         id: version
