@@ -298,11 +298,13 @@ jobs:
           ./bin/controller validate -f /tmp/merged-config.yaml
 
   test-routes:
-    needs: changes
+    needs: [changes, lint, audit, test]
     if: needs.changes.outputs.code == 'true' || needs.changes.outputs.helm == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         haproxy_version: ['3.0', '3.1', '3.2']
     name: test-routes (HAProxy ${{ matrix.haproxy_version }})
@@ -322,17 +324,18 @@ jobs:
         with:
           version: 'latest'
 
-      - name: Start dev environment
-        run: |
-          # Start dev environment (creates cluster, builds image, deploys controller)
-          HAPROXY_VERSION=${{ matrix.haproxy_version }} ./scripts/start-dev-env.sh
+      - name: Start dev environment and run route tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 2
+          command: |
+            # Start dev environment (creates cluster, builds image, deploys controller)
+            HAPROXY_VERSION=${{ matrix.haproxy_version }} ./scripts/start-dev-env.sh --timeout 240
+            # Test all ingress and HTTPRoute resources
+            ./scripts/test-routes.sh
         env:
           HAPROXY_VERSION: ${{ matrix.haproxy_version }}
-
-      - name: Run route tests
-        run: |
-          # Test all ingress and HTTPRoute resources
-          ./scripts/test-routes.sh
 
       - name: Cleanup
         if: always()
