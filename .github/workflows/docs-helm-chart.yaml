@@ -34,6 +34,8 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          # Remove GitHub Actions default credential helper and use PAT
+          git config --global --unset-all http.https://github.com/.extraheader || true
           git config --global credential.helper store
           echo "https://x-access-token:${PAGES_TOKEN}@github.com" > ~/.git-credentials
 
