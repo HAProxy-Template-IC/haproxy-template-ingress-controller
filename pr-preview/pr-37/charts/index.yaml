@@ -1,0 +1,62 @@
+apiVersion: v1
+entries:
+  haproxy-template-ic:
+  - annotations:
+      artifacthub.io/changes: |
+        - kind: added
+          description: Security hardening with Pod Security Standards compliance
+        - kind: added
+          description: Health probes for controller and HAProxy pods
+        - kind: added
+          description: Support for priorityClassName and topologySpreadConstraints
+        - kind: added
+          description: PodDisruptionBudget enabled by default for high availability
+        - kind: changed
+          description: DRY principle for port configuration across all components
+        - kind: security
+          description: readOnlyRootFilesystem enabled for all containers
+        - kind: security
+          description: All capabilities dropped (no NET_BIND_SERVICE required)
+      artifacthub.io/images: |
+        - name: controller
+          image: ghcr.io/haproxy-template-ic/haproxy-template-ingress-controller:0.1.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+        - name: haproxy
+          image: haproxytech/haproxy-debian:3.2
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller#readme
+        - name: Issue Tracker
+          url: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/issues
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/cert-manager/cert-manager
+          description: Required for webhook TLS certificate management when webhook.certManager.enabled=true
+      haproxy.org/minimum-version: "3.0"
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2025-12-01T14:39:33.366533268Z"
+    description: HAProxy Template Ingress Controller
+    digest: 264aa155929ca4041fab67b6b68bef6717a8c7f0582078ef33e50f023ba46664
+    home: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller
+    keywords:
+    - haproxy
+    - ingress
+    - controller
+    - loadbalancer
+    - template
+    maintainers:
+    - name: phihos
+    name: haproxy-template-ic
+    sources:
+    - https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller
+    type: application
+    urls:
+    - https://haproxy-template-ic.github.io/charts/charts/haproxy-template-ic-0.1.0.tgz
+    version: 0.1.0
+generated: "2025-12-01T14:39:33.361813363Z"
