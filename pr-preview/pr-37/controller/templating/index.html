@@ -1,0 +1,3453 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Template-driven HAProxy Ingress Controller for Kubernetes">
+      
+      
+      
+        <link rel="canonical" href="https://haproxy-template-ic.github.io/controller/templating/">
+      
+      
+        <link rel="prev" href="../configuration/">
+      
+      
+        <link rel="next" href="../crd-reference/">
+      
+      
+        
+          <link rel="alternate" href="https://haproxy-template-ic.github.io/helm-chart/latest/" hreflang="helm">
+        
+      
+      
+      <link rel="icon" href="../assets/logo.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.0">
+    
+    
+      
+        <title>Templating - HAProxy Template IC</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.618322db.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="light-blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#templating-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="HAProxy Template IC" class="md-header__button md-logo" aria-label="HAProxy Template IC" data-md-component="logo">
+      
+  <img src="../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HAProxy Template IC
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Templating
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="light-blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="light-blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="https://haproxy-template-ic.github.io/helm-chart/latest/" hreflang="helm" class="md-select__link">
+              Helm Chart Docs
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HAProxy-Template-IC/haproxy-template-ingress-controller
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="HAProxy Template IC" class="md-nav__button md-logo" aria-label="HAProxy Template IC" data-md-component="logo">
+      
+  <img src="../assets/logo.svg" alt="logo">
+
+    </a>
+    HAProxy Template IC
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HAProxy-Template-IC/haproxy-template-ingress-controller
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Templating
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Templating
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-can-template" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What You Can Template
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What You Can Template">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HAProxy Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#map-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Map Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#general-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        General Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ssl-certificates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSL Certificates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-snippets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Snippets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#template-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Syntax
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Template Syntax">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#control-structures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Control Structures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#available-template-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Available Template Data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Available Template Data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-resources-variable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The resources Variable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-list-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using List() Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-get-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using Get() Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#index-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Index Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-template-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Template Variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Custom Template Variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accessing-custom-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accessing Custom Variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Cases
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supported-value-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Value Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication Annotations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication Annotations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basic-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic Authentication
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#creating-authentication-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating Authentication Secrets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#secret-sharing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secret Sharing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-demand-secret-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On-Demand Secret Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tips-tricks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tips &amp; Tricks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tips &amp; Tricks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reserved-server-slots-pattern-avoid-reloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reserved Server Slots Pattern (Avoid Reloads)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matching-resources-across-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matching Resources Across Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#safe-iteration-with-default-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Safe Iteration with default Filter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#filtering-with-selectattr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filtering with selectattr
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maintaining-variables-across-loop-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintaining Variables Across Loop Scopes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-snippet-composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Snippet Composition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indentation-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indentation Control
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#complete-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Complete Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Complete Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-1-simple-host-based-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 1: Simple Host-Based Routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-2-path-based-routing-with-maps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 2: Path-Based Routing with Maps
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-3-dynamic-backend-servers-with-cross-resource-lookups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 3: Dynamic Backend Servers with Cross-Resource Lookups
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crd-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CRD Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../watching-resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Watching Resources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../validation-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../supported-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/high-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    High Availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/architecture-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/package-structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/sequence-diagrams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sequence Diagrams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Components
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Components
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/leader-election/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Leader Election
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/introspection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introspection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/crd-validation-design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CRD Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/design-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/considerations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Considerations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/appendices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Appendices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/linting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Linting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-can-template" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What You Can Template
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What You Can Template">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HAProxy Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#map-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Map Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#general-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        General Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ssl-certificates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSL Certificates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-snippets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Snippets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#template-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Syntax
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Template Syntax">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#control-structures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Control Structures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#available-template-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Available Template Data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Available Template Data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-resources-variable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The resources Variable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-list-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using List() Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-get-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using Get() Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#index-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Index Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-template-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Template Variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Custom Template Variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accessing-custom-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accessing Custom Variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Cases
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supported-value-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Value Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication Annotations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication Annotations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basic-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic Authentication
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#creating-authentication-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating Authentication Secrets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#secret-sharing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secret Sharing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-demand-secret-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On-Demand Secret Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tips-tricks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tips &amp; Tricks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tips &amp; Tricks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reserved-server-slots-pattern-avoid-reloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reserved Server Slots Pattern (Avoid Reloads)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matching-resources-across-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matching Resources Across Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#safe-iteration-with-default-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Safe Iteration with default Filter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#filtering-with-selectattr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filtering with selectattr
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maintaining-variables-across-loop-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintaining Variables Across Loop Scopes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-snippet-composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Snippet Composition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indentation-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indentation Control
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#complete-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Complete Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Complete Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-1-simple-host-based-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 1: Simple Host-Based Routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-2-path-based-routing-with-maps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 2: Path-Based Routing with Maps
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-3-dynamic-backend-servers-with-cross-resource-lookups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 3: Dynamic Backend Servers with Cross-Resource Lookups
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="templating-guide">Templating Guide<a class="headerlink" href="#templating-guide" title="Permanent link">&para;</a></h1>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>The HAProxy Template Ingress Controller uses Gonja v2, a Jinja2-like template engine for Go, to generate HAProxy configurations from Kubernetes resources. You define templates that access watched Kubernetes resources, and the controller renders these templates whenever resources change, validates the output, and deploys it to HAProxy instances.</p>
+<p><strong>Why use templates:</strong>
+- Complete control over HAProxy configuration without annotation limitations
+- Access to all HAProxy features (ACLs, stick tables, rate limiting, custom error pages)
+- Define your own data model using any Kubernetes resources
+- Reusable template snippets for common patterns
+- Type-safe template rendering with early error detection</p>
+<p>Templates are rendered automatically when any watched resource changes, during initial synchronization, or periodically for drift detection.</p>
+<h2 id="what-you-can-template">What You Can Template<a class="headerlink" href="#what-you-can-template" title="Permanent link">&para;</a></h2>
+<p>The controller supports five types of templatable components, each serving a specific purpose in HAProxy configuration.</p>
+<h3 id="haproxy-configuration">HAProxy Configuration<a class="headerlink" href="#haproxy-configuration" title="Permanent link">&para;</a></h3>
+<p>The main <code>haproxy_config</code> template generates the complete HAProxy configuration file (<code>/etc/haproxy/haproxy.cfg</code>).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">haproxy_config</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="no">global</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">        </span><span class="no">log stdout len 4096 local0 info</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="no">daemon</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="no">maxconn 4096</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="no">defaults</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">        </span><span class="no">mode http</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="no">timeout connect 5s</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="no">timeout client 50s</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">        </span><span class="no">timeout server 50s</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">    </span><span class="no">frontend http</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="no">bind *:80</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">        </span><span class="no"># Use map files for routing</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">        </span><span class="no">use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath(&quot;host.map&quot;, &quot;map&quot;) }})]</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">    </span><span class="no">{% for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">    </span><span class="no">backend {{ ingress.metadata.name }}</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">        </span><span class="no">balance roundrobin</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">        </span><span class="no"># Backend configuration here</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">    </span><span class="no">{% endfor %}</span>
+</code></pre></div>
+<blockquote>
+<p>[!IMPORTANT]
+All auxiliary file references in HAProxy configuration must use <strong>absolute paths</strong> from <code>/etc/haproxy/</code>. For example, use <code>/etc/haproxy/maps/host.map</code> for map files, <code>/etc/haproxy/ssl/cert.pem</code> for SSL certificates, and <code>/etc/haproxy/general/error.http</code> for general files. This requirement exists because the HAProxy Dataplane API validation needs absolute paths to verify files exist before applying configuration changes.</p>
+</blockquote>
+<h3 id="map-files">Map Files<a class="headerlink" href="#map-files" title="Permanent link">&para;</a></h3>
+<p>Map files (<code>maps</code>) generate HAProxy map files for backend routing, ACL matching, and other lookup operations. Maps are stored in <code>/etc/haproxy/maps/</code> and referenced in HAProxy configuration using absolute paths like <code>/etc/haproxy/maps/host.map</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">maps</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">host.map</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="no"># Map host headers to normalized host values</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="no">{%- for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="no">{%- for rule in (ingress.spec.rules | default([]) | selectattr(&quot;http&quot;, &quot;defined&quot;)) %}</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="no">{{ rule.host }} {{ rule.host }}</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span><span class="nt">path-prefix.map</span><span class="p">:</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">      </span><span class="no"># Map host+path to backend names using prefix matching</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">      </span><span class="no">{%- for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">      </span><span class="no">{%- for rule in (ingress.spec.rules | default([])) %}</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">      </span><span class="no">{%- for path in (rule.http.paths | default([])) %}</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">      </span><span class="no">{{ rule.host }}{{ path.path }}/ backend_{{ ingress.metadata.name }}</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+</code></pre></div>
+<p><strong>Use maps for:</strong>
+- Host-based backend selection
+- Path-based routing with prefix or exact matching
+- ACL lookups for access control
+- Rate limiting based on client characteristics</p>
+<h3 id="general-files">General Files<a class="headerlink" href="#general-files" title="Permanent link">&para;</a></h3>
+<p>General files (<code>files</code>) generate auxiliary files like custom error pages. Files are stored in <code>/etc/haproxy/general/</code> and referenced in HAProxy configuration using absolute paths like <code>/etc/haproxy/general/503.http</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">files</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">503.http</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="no">HTTP/1.0 503 Service Unavailable</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="no">Cache-Control: no-cache</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="no">Connection: close</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="no">Content-Type: text/html</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">      </span><span class="no">&lt;html&gt;&lt;body&gt;&lt;h1&gt;503 Service Unavailable&lt;/h1&gt;</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">      </span><span class="no">&lt;p&gt;No server is available to handle this request.&lt;/p&gt;</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">      </span><span class="no">&lt;/body&gt;&lt;/html&gt;</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">  </span><span class="nt">maintenance.html</span><span class="p">:</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">      </span><span class="no">&lt;html&gt;&lt;body&gt;</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">      </span><span class="no">&lt;h1&gt;Maintenance Mode&lt;/h1&gt;</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">      </span><span class="no">&lt;p&gt;System will be back online at {{ maintenance_end_time }}.&lt;/p&gt;</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">      </span><span class="no">&lt;/body&gt;&lt;/html&gt;</span>
+</code></pre></div>
+<p><strong>Use general files for:</strong>
+- Custom error pages (400, 403, 404, 500, 503, etc.)
+- Maintenance mode pages
+- Health check responses
+- Static content served by HAProxy</p>
+<h3 id="ssl-certificates">SSL Certificates<a class="headerlink" href="#ssl-certificates" title="Permanent link">&para;</a></h3>
+<p>SSL certificates (<code>ssl_certificates</code>) generate SSL/TLS certificate files from Kubernetes Secret data. Certificates are stored in <code>/etc/haproxy/ssl/</code> and referenced in HAProxy configuration using absolute paths like <code>/etc/haproxy/ssl/example-com.pem</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">ssl_certificates</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">example-com.pem</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="no">{%- for secret in resources.secrets.Fetch(&quot;default&quot;, &quot;kubernetes.io/tls&quot;) %}</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="no">{%- if secret.metadata.name == &quot;example-com-tls&quot; %}</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="no">{{ secret.data.tls_crt | b64decode }}</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="no">{{ secret.data.tls_key | b64decode }}</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">      </span><span class="no">{%- endif %}</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+</code></pre></div>
+<p><strong>Use SSL certificates for:</strong>
+- TLS termination at HAProxy
+- Client certificate authentication
+- Backend SSL connections</p>
+<blockquote>
+<p>[!NOTE]
+Certificate data in Secrets is base64-encoded. Use the <code>b64decode</code> filter to decode it in your templates.</p>
+</blockquote>
+<h3 id="template-snippets">Template Snippets<a class="headerlink" href="#template-snippets" title="Permanent link">&para;</a></h3>
+<p>Template snippets (<code>template_snippets</code>) define reusable template fragments that can be included in other templates. This promotes code reuse and keeps templates maintainable.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">template_snippets</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">backend-name</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">backend-name</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;-</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="no">ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">backend-servers</span><span class="p">:</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">backend-servers</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">      </span><span class="no">{%- for endpoint_slice in resources.endpoints.Fetch(service_name) %}</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">      </span><span class="no">{%- for endpoint in (endpoint_slice.endpoints | default([])) %}</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">      </span><span class="no">{%- for address in (endpoint.addresses | default([])) %}</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">      </span><span class="no">server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+</code></pre></div>
+<p>Include snippets using <code>{% include "snippet-name" %}</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>backend {% include &quot;backend-name&quot; %}
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    balance roundrobin
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    {% include &quot;backend-servers&quot; %}
+</code></pre></div>
+<h2 id="template-syntax">Template Syntax<a class="headerlink" href="#template-syntax" title="Permanent link">&para;</a></h2>
+<p>Templates use Gonja v2, which provides Jinja2-like syntax for Go. The syntax is familiar if you've used Jinja2, Django templates, or Ansible.</p>
+<h3 id="control-structures">Control Structures<a class="headerlink" href="#control-structures" title="Permanent link">&para;</a></h3>
+<p><strong>Loops</strong> iterate over collections:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>{% for ingress in resources.ingresses.List() %}
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  backend {{ ingress.metadata.name }}
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>      server srv1 192.168.1.10:80
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>{% endfor %}
+</code></pre></div>
+<p><strong>Conditionals</strong> control template logic:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>{% if ingress.spec.tls %}
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>  {% set cert_name = ingress.metadata.name ~ &quot;.pem&quot; %}
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  bind *:443 ssl crt {{ pathResolver.GetPath(cert_name, &quot;cert&quot;) }}
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>{% else %}
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>  bind *:80
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>{% endif %}
+</code></pre></div>
+<p><strong>Variables</strong> store values for reuse:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>{% set service_name = path.backend.service.name %}
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>{% set port = path.backend.service.port.number | default(80) %}
+</code></pre></div>
+<p><strong>Comments</strong> document your templates:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>{# This backend handles all traffic for the production namespace #}
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>backend production_backend
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    balance roundrobin
+</code></pre></div>
+<p>For complete syntax reference, see the <a href="https://github.com/nikolalohinski/gonja">Gonja documentation</a>.</p>
+<h3 id="filters">Filters<a class="headerlink" href="#filters" title="Permanent link">&para;</a></h3>
+<p>Filters transform values in templates using the pipe (<code>|</code>) operator.</p>
+<p><strong>Common filters:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>{# Provide default values for missing data #}
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>{{ path.backend.service.port.number | default(80) }}
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>{# String manipulation #}
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>{{ rule.host | lower }}
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>{{ ingress.metadata.name | upper }}
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>{# Get collection length #}
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>{{ ingress.spec.rules | length }}
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>{# Indent text blocks #}
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>{%- filter indent(2, first=True) %}
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>{% include &quot;backend-servers&quot; %}
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>{%- endfilter %}
+</code></pre></div>
+<p><strong>Context method - pathResolver.GetPath():</strong></p>
+<p>The <code>pathResolver.GetPath()</code> method resolves filenames to absolute paths based on file type. This simplifies template writing by automatically constructing correct absolute paths for HAProxy auxiliary files.</p>
+<p>The <code>pathResolver</code> is a context variable that provides path resolution based on the controller's dataplane configuration.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>{# Map files - resolve to maps directory #}
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath(&quot;host.map&quot;, &quot;map&quot;) }})]
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>{# Output: use_backend %[req.hdr(host),lower,map(/etc/haproxy/maps/host.map)] #}
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>{# General files - resolve to general directory #}
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>errorfile 504 {{ pathResolver.GetPath(&quot;504.http&quot;, &quot;file&quot;) }}
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>{# Output: errorfile 504 /etc/haproxy/general/504.http #}
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>{# SSL certificates - resolve to SSL directory #}
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>bind *:443 ssl crt {{ pathResolver.GetPath(&quot;example.com.pem&quot;, &quot;cert&quot;) }}
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>{# Output: bind *:443 ssl crt /etc/haproxy/ssl/example.com.pem #}
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>{# Use with variables #}
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>{% set cert_name = ingress.metadata.name ~ &quot;.pem&quot; %}
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>bind *:443 ssl crt {{ pathResolver.GetPath(cert_name, &quot;cert&quot;) }}
+</code></pre></div>
+<p><strong>Arguments:</strong>
+- <strong>filename</strong> (required): The base filename without directory path
+- <strong>type</strong> (required): File type - <code>"map"</code>, <code>"file"</code>, <code>"cert"</code>, or <code>"crt-list"</code></p>
+<p>The method uses the paths configured in <code>dataplane.maps_dir</code>, <code>dataplane.ssl_certs_dir</code>, and <code>dataplane.general_storage_dir</code> from your controller configuration.</p>
+<p><strong>Custom filter - glob_match:</strong></p>
+<p>The <code>glob_match</code> filter filters lists of strings using glob patterns with <code>*</code> (match any characters) and <code>?</code> (match single character) wildcards.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>{# Filter template snippet names by pattern #}
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>{% set backend_snippets = template_snippets | glob_match(&quot;backend-annotation-*&quot;) %}
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>{% for snippet_name in backend_snippets %}
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>  {% include snippet_name %}
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>{% endfor %}
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>{# Filter resource names #}
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>{% set prod_ingresses = resources.ingresses.List() | map(attribute=&#39;metadata.name&#39;) | glob_match(&quot;prod-*&quot;) %}
+</code></pre></div>
+<p><strong>Arguments:</strong>
+- <strong>input</strong> (required): List of strings to filter
+- <strong>pattern</strong> (required): Glob pattern string</p>
+<p><strong>Returns:</strong> List of strings matching the pattern</p>
+<p><strong>Custom filter - b64decode:</strong></p>
+<p>The <code>b64decode</code> filter decodes base64-encoded strings. This is essential for accessing Kubernetes Secret data, as Kubernetes automatically base64-encodes all secret values.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>{# Decode secret data #}
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>{% set secret = resources.secrets.GetSingle(&quot;default&quot;, &quot;my-secret&quot;) %}
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>{% if secret %}
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>  password: {{ secret.data.password | b64decode }}
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>{% endif %}
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>{# Decode credentials for HAProxy userlist #}
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>userlist auth_users
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>{% for username in secret.data %}
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>  user {{ username }} password {{ secret.data[username] | b64decode }}
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>{% endfor %}
+</code></pre></div>
+<p><strong>Arguments:</strong>
+- <strong>input</strong> (required): Base64-encoded string</p>
+<p><strong>Returns:</strong> Decoded plaintext string</p>
+<p><strong>Custom filter - regex_escape:</strong></p>
+<p>The <code>regex_escape</code> filter escapes special regex characters for safe use in HAProxy ACL patterns. Essential when constructing regex patterns from user-controlled data.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>{# Escape path prefixes for regex matching #}
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>{% set path_pattern = route.match.path.value | regex_escape %}
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>acl path_match path_reg ^{{ path_pattern }}
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>{# Example with Gateway API HTTPRoute path matching #}
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>{% for route in httproutes %}
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>  {% set escaped_path = route.spec.rules[0].matches[0].path.value | regex_escape %}
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>  use_backend backend_{{ route.metadata.name }} if { path_reg ^{{ escaped_path }} }
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>{% endfor %}
+</code></pre></div>
+<p><strong>Custom filter - sort_by:</strong></p>
+<p>The <code>sort_by</code> filter sorts arrays of objects by JSONPath expressions. Supports multiple sort criteria with modifiers.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>{# Sort routes by priority (descending) then name #}
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>{% set sorted_routes = routes | sort_by([&quot;$.priority:desc&quot;, &quot;$.name&quot;]) %}
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>{# Gateway API route precedence: method &gt; headers &gt; query params &gt; path specificity #}
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>{% set sorted = routes | sort_by([
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    &quot;$.match.method:exists:desc&quot;,
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    &quot;$.match.headers | length:desc&quot;,
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    &quot;$.match.queryParams | length:desc&quot;,
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    &quot;$.match.path.value | length:desc&quot;
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>]) %}
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>{% for route in sorted %}
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>  {# Routes now ordered by Gateway API precedence rules #}
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>  use_backend {{ route.backend }} if {{ route.acl }}
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>{% endfor %}
+</code></pre></div>
+<p><strong>Available modifiers:</strong>
+- <code>:desc</code> - Sort in descending order
+- <code>:exists</code> - Sort by field presence (present items first)
+- <code>| length</code> - Sort by string or array length</p>
+<p><strong>Custom filter - extract:</strong></p>
+<p>The <code>extract</code> filter extracts values from objects using JSONPath expressions. Automatically flattens nested arrays.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>{# Extract all HTTP methods from Gateway API routes #}
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>{% set all_methods = httproutes | extract(&quot;$.spec.rules[*].matches[*].method&quot;) %}
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>{# Returns: [&quot;GET&quot;, &quot;POST&quot;, &quot;PUT&quot;, &quot;DELETE&quot;] #}
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>{# Extract service names from ingresses #}
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>{% set services = ingresses | extract(&quot;$.spec.rules[*].http.paths[*].backend.service.name&quot;) %}
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>{# Use extracted values for ACL construction #}
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>{% set hostnames = ingresses | extract(&quot;$.spec.rules[*].host&quot;) | unique %}
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>{% for host in hostnames %}
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>  acl is_{{ host | replace(&quot;.&quot;, &quot;_&quot;) }} hdr(host) -i {{ host }}
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>{% endfor %}
+</code></pre></div>
+<p><strong>Custom filter - group_by:</strong></p>
+<p>The <code>group_by</code> filter groups array items by the value of a JSONPath expression.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>{# Group ingresses by namespace for multi-tenant configuration #}
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>{% set by_namespace = ingresses | group_by(&quot;$.metadata.namespace&quot;) %}
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>{% for namespace, ingresses in by_namespace.items() %}
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>  # Namespace: {{ namespace }} ({{ ingresses|length }} ingresses)
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>  {% for ingress in ingresses %}
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    backend ing_{{ namespace }}_{{ ingress.metadata.name }}
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>  {% endfor %}
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>{% endfor %}
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>{# Group routes by priority level #}
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>{% set by_priority = routes | group_by(&quot;$.priority&quot;) %}
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>{% for priority in by_priority.keys() | sort | reverse %}
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>  # Priority {{ priority }} routes
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a>  {% for route in by_priority[priority] %}
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a>    {# Process high-priority routes first #}
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>  {% endfor %}
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>{% endfor %}
+</code></pre></div>
+<p><strong>Custom filter - transform:</strong></p>
+<p>The <code>transform</code> filter applies regex substitution to array elements.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>{# Strip API version prefixes from paths #}
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>{% set paths = [&quot;/api/v1/users&quot;, &quot;/api/v1/posts&quot;, &quot;/api/v2/comments&quot;] %}
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>{% set clean_paths = paths | transform(&quot;^/api/v\\d+&quot;, &quot;&quot;) %}
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>{# Returns: [&quot;/users&quot;, &quot;/posts&quot;, &quot;/comments&quot;] #}
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>{# Normalize hostname formats #}
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>{% set hosts = [&quot;www.example.com&quot;, &quot;api.example.com&quot;] %}
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>{% set domains = hosts | transform(&quot;^[^.]+\\.&quot;, &quot;&quot;) %}
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>{# Returns: [&quot;example.com&quot;, &quot;example.com&quot;] #}
+</code></pre></div>
+<p><strong>Custom filter - debug:</strong></p>
+<p>The <code>debug</code> filter outputs variables as JSON-formatted HAProxy comments. Useful for template development and troubleshooting.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>{# Debug route structure during development #}
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>{{ routes | debug(&quot;available-routes&quot;) }}
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>{# Output:
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a># DEBUG available-routes:
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a># [
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>#   {
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>#     &quot;name&quot;: &quot;api-route&quot;,
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>#     &quot;priority&quot;: 100,
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a>#     &quot;match&quot;: {&quot;method&quot;: &quot;GET&quot;, &quot;path&quot;: &quot;/api&quot;}
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>#   }
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a># ]
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a>#}
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>
+<a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a>{# Compare before/after transformations #}
+<a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a>{{ routes | debug(&quot;before-sorting&quot;) }}
+<a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a>{% set sorted = routes | sort_by([&quot;$.priority:desc&quot;]) %}
+<a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a>{{ sorted | debug(&quot;after-sorting&quot;) }}
+</code></pre></div>
+<p><strong>Custom filter - eval:</strong></p>
+<p>The <code>eval</code> filter evaluates JSONPath expressions and shows results with type information. Useful for testing sort_by criteria.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>{# Test sort criteria before applying #}
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>{% for route in routes %}
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>  Route: {{ route.name }}
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>    Priority: {{ route | eval(&quot;$.priority&quot;) }}
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    Has method: {{ route | eval(&quot;$.match.method:exists&quot;) }}
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>    Header count: {{ route | eval(&quot;$.match.headers | length&quot;) }}
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>{% endfor %}
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>{# Understand why items are sorted in a specific order #}
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>{% for item in items %}
+<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a>  {{ item | eval(&quot;$.weight:desc&quot;) }}  {# Shows: 100 (int), 50 (int), 10 (int) #}
+<a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a>{% endfor %}
+</code></pre></div>
+<p>For the complete list of built-in filters, see <a href="https://github.com/nikolalohinski/gonja#filters">Gonja filters</a>.</p>
+<h3 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h3>
+<p>Gonja provides built-in functions for common operations. See the <a href="https://github.com/nikolalohinski/gonja#functions">Gonja documentation</a> for available functions.</p>
+<h2 id="available-template-data">Available Template Data<a class="headerlink" href="#available-template-data" title="Permanent link">&para;</a></h2>
+<p>Templates have access to the <code>resources</code> variable, which contains stores for all watched Kubernetes resource types.</p>
+<h3 id="the-resources-variable">The <code>resources</code> Variable<a class="headerlink" href="#the-resources-variable" title="Permanent link">&para;</a></h3>
+<p>The <code>resources</code> variable is a collection of stores, one for each resource type you configure in <code>watched_resources</code>. Each store provides <code>List()</code> and <code>Get()</code> methods for accessing resources.</p>
+<p><strong>Structure:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nt">resources</span><span class="p">:</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span><span class="w">    </span><span class="c1"># Store for Ingress resources (if configured)</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span><span class="w">     </span><span class="c1"># Store for Service resources (if configured)</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">  </span><span class="nt">endpoints</span><span class="p">:</span><span class="w">    </span><span class="c1"># Store for EndpointSlice resources (if configured)</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span><span class="w">      </span><span class="c1"># Store for Secret resources (if configured)</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">  </span><span class="c1"># ... any other configured resource types</span>
+</code></pre></div>
+<p>The store names match the keys in your <code>watched_resources</code> configuration.</p>
+<h3 id="using-list-method">Using List() Method<a class="headerlink" href="#using-list-method" title="Permanent link">&para;</a></h3>
+<p>The <code>List()</code> method returns all resources of a specific type. Use this to iterate over all resources.</p>
+<p><strong>Example:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>{# Iterate over all Ingress resources #}
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>{% for ingress in resources.ingresses.List() %}
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>backend {{ ingress.metadata.name }}
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>    balance roundrobin
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>    server srv1 192.168.1.10:80
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>{% endfor %}
+</code></pre></div>
+<p><strong>When to use List():</strong>
+- Generate configuration for all resources of a type
+- Build map files with all hosts/paths
+- Count resources for capacity planning</p>
+<h3 id="using-get-method">Using Get() Method<a class="headerlink" href="#using-get-method" title="Permanent link">&para;</a></h3>
+<p>The <code>Get()</code> method returns resources matching specific index keys. The parameters you provide to <code>Get()</code> are determined by the <code>index_by</code> configuration for that resource type.</p>
+<p><strong>How indexing works:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">    </span><span class="c1"># Get() expects: Get(namespace, name)</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="w">  </span><span class="nt">endpoints</span><span class="p">:</span>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">discovery.k8s.io/v1</span>
+<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EndpointSlice</span>
+<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.labels.kubernetes\\.io/service-name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="w">    </span><span class="c1"># Get() expects: Get(service_name)</span>
+</code></pre></div>
+<p><strong>Examples:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>{# Get specific ingress by namespace and name #}
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>{% for ingress in resources.ingresses.Fetch(&quot;default&quot;, &quot;my-ingress&quot;) %}
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>  {# Usually returns 0 or 1 items #}
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>{% endfor %}
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>{# Get all endpoint slices for a service #}
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>{% set service_name = path.backend.service.name %}
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>{% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>  {# Returns all endpoint slices labeled with this service name #}
+<a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>{% endfor %}
+</code></pre></div>
+<p><strong>When to use Get():</strong>
+- Look up specific resources by key
+- Find related resources (e.g., endpoints for a service)
+- Implement cross-resource matching patterns</p>
+<h3 id="index-configuration">Index Configuration<a class="headerlink" href="#index-configuration" title="Permanent link">&para;</a></h3>
+<p>The <code>index_by</code> field in <code>watched_resources</code> determines:
+1. How resources are indexed in the store
+2. What parameters <code>Get()</code> expects
+3. Query performance (O(1) lookups with proper indexing)</p>
+<p><strong>Common indexing patterns:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># By namespace and name (most resources)</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="c1"># Get(namespace, name) returns specific resource</span>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="c1"># By service name (endpoint slices)</span>
+<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.labels.kubernetes\\.io/service-name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># Get(service_name) returns all endpoint slices for that service</span>
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>
+<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a><span class="c1"># By type (secrets)</span>
+<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;type&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a><span class="c1"># Get(namespace, type) returns all secrets of that type in namespace</span>
+</code></pre></div>
+<blockquote>
+<p>[!TIP]
+Escape dots in JSONPath expressions for labels: <code>kubernetes\\.io/service-name</code></p>
+</blockquote>
+<h2 id="custom-template-variables">Custom Template Variables<a class="headerlink" href="#custom-template-variables" title="Permanent link">&para;</a></h2>
+<p>You can add custom variables to the template context using <code>templatingSettings.extraContext</code>. These variables are available in all templates, allowing you to configure template behavior without modifying controller code.</p>
+<h3 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h3>
+<p>Define custom variables in your HAProxyTemplateConfig CRD or ConfigMap configuration:</p>
+<p><strong>Using CRD:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">haproxy-template-ic.github.io/v1alpha1</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">HAProxyTemplateConfig</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">  </span><span class="nt">templatingSettings</span><span class="p">:</span>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="w">    </span><span class="nt">extraContext</span><span class="p">:</span>
+<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a><span class="w">      </span><span class="nt">debug</span><span class="p">:</span>
+<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="w">        </span><span class="nt">verboseHeaders</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a><span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">production</span>
+<a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a><span class="w">      </span><span class="nt">featureFlags</span><span class="p">:</span>
+<a id="__codelineno-26-11" name="__codelineno-26-11" href="#__codelineno-26-11"></a><span class="w">        </span><span class="nt">rateLimiting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-26-12" name="__codelineno-26-12" href="#__codelineno-26-12"></a><span class="w">        </span><span class="nt">caching</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-26-13" name="__codelineno-26-13" href="#__codelineno-26-13"></a><span class="w">      </span><span class="nt">customTimeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+</code></pre></div>
+<p><strong>Using ConfigMap:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="c1"># config.yaml in ConfigMap</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="nt">templating_settings</span><span class="p">:</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="w">  </span><span class="nt">extra_context</span><span class="p">:</span>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="w">    </span><span class="nt">debug</span><span class="p">:</span>
+<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a><span class="w">      </span><span class="nt">verbose_headers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a><span class="w">    </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">production</span>
+<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a><span class="w">    </span><span class="nt">feature_flags</span><span class="p">:</span>
+<a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a><span class="w">      </span><span class="nt">rate_limiting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a><span class="w">      </span><span class="nt">caching</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a><span class="w">    </span><span class="nt">custom_timeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+</code></pre></div>
+<h3 id="accessing-custom-variables">Accessing Custom Variables<a class="headerlink" href="#accessing-custom-variables" title="Permanent link">&para;</a></h3>
+<p>Custom variables are merged at the top level of the template context. Access them directly without prefixes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>{% if debug.enabled %}
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>  # Debug mode - add diagnostic headers
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>  http-response set-header X-HAProxy-Backend %[be_name]
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a>  http-response set-header X-HAProxy-Server %[srv_name]
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a>{% endif %}
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a>{% if environment == &quot;production&quot; %}
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a>  # Production-specific settings
+<a id="__codelineno-28-9" name="__codelineno-28-9" href="#__codelineno-28-9"></a>  timeout client {{ customTimeout }}s
+<a id="__codelineno-28-10" name="__codelineno-28-10" href="#__codelineno-28-10"></a>  timeout server {{ customTimeout }}s
+<a id="__codelineno-28-11" name="__codelineno-28-11" href="#__codelineno-28-11"></a>{% else %}
+<a id="__codelineno-28-12" name="__codelineno-28-12" href="#__codelineno-28-12"></a>  # Development settings
+<a id="__codelineno-28-13" name="__codelineno-28-13" href="#__codelineno-28-13"></a>  timeout client 300s
+<a id="__codelineno-28-14" name="__codelineno-28-14" href="#__codelineno-28-14"></a>  timeout server 300s
+<a id="__codelineno-28-15" name="__codelineno-28-15" href="#__codelineno-28-15"></a>{% endif %}
+<a id="__codelineno-28-16" name="__codelineno-28-16" href="#__codelineno-28-16"></a>
+<a id="__codelineno-28-17" name="__codelineno-28-17" href="#__codelineno-28-17"></a>{% if featureFlags.rateLimiting %}
+<a id="__codelineno-28-18" name="__codelineno-28-18" href="#__codelineno-28-18"></a>  # Rate limiting configuration
+<a id="__codelineno-28-19" name="__codelineno-28-19" href="#__codelineno-28-19"></a>  stick-table type ip size 100k expire 30s store http_req_rate(10s)
+<a id="__codelineno-28-20" name="__codelineno-28-20" href="#__codelineno-28-20"></a>  http-request track-sc0 src
+<a id="__codelineno-28-21" name="__codelineno-28-21" href="#__codelineno-28-21"></a>  http-request deny if { sc_http_req_rate(0) gt 100 }
+<a id="__codelineno-28-22" name="__codelineno-28-22" href="#__codelineno-28-22"></a>{% endif %}
+</code></pre></div>
+<h3 id="use-cases">Use Cases<a class="headerlink" href="#use-cases" title="Permanent link">&para;</a></h3>
+<p><strong>Environment-Specific Configuration:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="nt">extraContext</span><span class="p">:</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">staging</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="w">  </span><span class="nt">limits</span><span class="p">:</span>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="w">    </span><span class="nt">maxConn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="w">    </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>global
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>  maxconn {% if environment == &quot;production&quot; %}10000{% else %}{{ limits.maxConn }}{% endif %}
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>defaults
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>  timeout connect {{ limits.timeout }}s
+</code></pre></div>
+<p><strong>Feature Flags:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="nt">extraContext</span><span class="p">:</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="w">  </span><span class="nt">features</span><span class="p">:</span>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="w">    </span><span class="nt">compression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="w">    </span><span class="nt">http2</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>{% if features.compression %}
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>  compression algo gzip
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>  compression type text/html text/plain text/css
+<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>{% endif %}
+<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>
+<a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a>{% if features.http2 %}
+<a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a>  bind *:443 ssl crt /etc/haproxy/ssl/ alpn h2,http/1.1
+<a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a>{% else %}
+<a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a>  bind *:443 ssl crt /etc/haproxy/ssl/
+<a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a>{% endif %}
+</code></pre></div>
+<p><strong>Debug Headers:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="nt">extraContext</span><span class="p">:</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a><span class="w">  </span><span class="nt">debug</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>{% if debug %}
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>  # Add diagnostic headers showing routing decisions
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>  http-response set-header X-Gateway-Matched-Route %[var(txn.matched_route)]
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>  http-response set-header X-Gateway-Backend %[var(txn.backend_name)]
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>{% endif %}
+</code></pre></div>
+<h3 id="supported-value-types">Supported Value Types<a class="headerlink" href="#supported-value-types" title="Permanent link">&para;</a></h3>
+<p>The <code>extraContext</code> field accepts any valid JSON value:
+- <strong>Strings</strong>: <code>environment: "production"</code>
+- <strong>Numbers</strong>: <code>timeout: 30</code>, <code>limit: 1.5</code>
+- <strong>Booleans</strong>: <code>enabled: true</code>
+- <strong>Objects</strong>: <code>debug: { enabled: true, level: 2 }</code>
+- <strong>Arrays</strong>: <code>allowedIPs: ["10.0.0.1", "10.0.0.2"]</code></p>
+<h2 id="authentication-annotations">Authentication Annotations<a class="headerlink" href="#authentication-annotations" title="Permanent link">&para;</a></h2>
+<p>The controller provides built-in support for HAProxy basic authentication through Ingress annotations. When you add authentication annotations to an Ingress, the controller automatically generates HAProxy userlist sections and configures <code>http-request auth</code> directives.</p>
+<h3 id="basic-authentication">Basic Authentication<a class="headerlink" href="#basic-authentication" title="Permanent link">&para;</a></h3>
+<p>Use these annotations on Ingress resources to enable HTTP basic authentication:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">protected-app</span>
+<a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a><span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-35-6" name="__codelineno-35-6" href="#__codelineno-35-6"></a><span class="w">    </span><span class="nt">haproxy.org/auth-type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic-auth&quot;</span>
+<a id="__codelineno-35-7" name="__codelineno-35-7" href="#__codelineno-35-7"></a><span class="w">    </span><span class="nt">haproxy.org/auth-secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;my-auth-secret&quot;</span>
+<a id="__codelineno-35-8" name="__codelineno-35-8" href="#__codelineno-35-8"></a><span class="w">    </span><span class="nt">haproxy.org/auth-realm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Protected</span><span class="nv"> </span><span class="s">Application&quot;</span>
+<a id="__codelineno-35-9" name="__codelineno-35-9" href="#__codelineno-35-9"></a><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-35-10" name="__codelineno-35-10" href="#__codelineno-35-10"></a><span class="w">  </span><span class="nt">rules</span><span class="p">:</span>
+<a id="__codelineno-35-11" name="__codelineno-35-11" href="#__codelineno-35-11"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">app.example.com</span>
+<a id="__codelineno-35-12" name="__codelineno-35-12" href="#__codelineno-35-12"></a><span class="w">      </span><span class="nt">http</span><span class="p">:</span>
+<a id="__codelineno-35-13" name="__codelineno-35-13" href="#__codelineno-35-13"></a><span class="w">        </span><span class="nt">paths</span><span class="p">:</span>
+<a id="__codelineno-35-14" name="__codelineno-35-14" href="#__codelineno-35-14"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/</span>
+<a id="__codelineno-35-15" name="__codelineno-35-15" href="#__codelineno-35-15"></a><span class="w">            </span><span class="nt">pathType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Prefix</span>
+<a id="__codelineno-35-16" name="__codelineno-35-16" href="#__codelineno-35-16"></a><span class="w">            </span><span class="nt">backend</span><span class="p">:</span>
+<a id="__codelineno-35-17" name="__codelineno-35-17" href="#__codelineno-35-17"></a><span class="w">              </span><span class="nt">service</span><span class="p">:</span>
+<a id="__codelineno-35-18" name="__codelineno-35-18" href="#__codelineno-35-18"></a><span class="w">                </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-service</span>
+<a id="__codelineno-35-19" name="__codelineno-35-19" href="#__codelineno-35-19"></a><span class="w">                </span><span class="nt">port</span><span class="p">:</span>
+<a id="__codelineno-35-20" name="__codelineno-35-20" href="#__codelineno-35-20"></a><span class="w">                  </span><span class="nt">number</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
+</code></pre></div>
+<p><strong>Annotations:</strong>
+- <code>haproxy.org/auth-type</code>: Authentication type (currently only <code>"basic-auth"</code> is supported)
+- <code>haproxy.org/auth-secret</code>: Name of the Kubernetes Secret containing credentials (format: <code>"secret-name"</code> or <code>"namespace/secret-name"</code>)
+- <code>haproxy.org/auth-realm</code>: HTTP authentication realm displayed to users (optional, defaults to <code>"Restricted Area"</code>)</p>
+<h3 id="creating-authentication-secrets">Creating Authentication Secrets<a class="headerlink" href="#creating-authentication-secrets" title="Permanent link">&para;</a></h3>
+<p>Secrets must contain username-password pairs where values are <strong>base64-encoded crypt(3) SHA-512 password hashes</strong>.</p>
+<p><strong>Generate password hashes:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="c1"># Generate SHA-512 hash and encode for Kubernetes</span>
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="nv">HASH</span><span class="o">=</span><span class="k">$(</span>openssl<span class="w"> </span>passwd<span class="w"> </span>-6<span class="w"> </span>mypassword<span class="k">)</span>
+<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>kubectl<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>my-auth-secret<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">admin</span><span class="o">=</span><span class="k">$(</span><span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HASH</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>base64<span class="w"> </span>-w0<span class="k">)</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">user</span><span class="o">=</span><span class="k">$(</span><span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HASH</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>base64<span class="w"> </span>-w0<span class="k">)</span>
+</code></pre></div>
+<p><strong>Secret structure:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-auth-secret</span>
+<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Opaque</span>
+<a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a><span class="nt">data</span><span class="p">:</span>
+<a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a><span class="w">  </span><span class="c1"># Each key is a username, value is base64-encoded password hash</span>
+<a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a><span class="w">  </span><span class="nt">admin</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">JDYkMVd3c2YxNmprcDBkMVBpTyRkS3FHUTF0SW0uOGF1VlJIcVA3dVcuMVV5dVNtZ3YveEc3dEFiOXdZNzc1REw3ZGE0N0hIeVB4ZllDS1BMTktZclJvMHRNQWQyQk1YUHBDd2Z5ZW03MA==</span>
+<a id="__codelineno-37-9" name="__codelineno-37-9" href="#__codelineno-37-9"></a><span class="w">  </span><span class="nt">user</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">JDYkbkdxOHJ1T2kyd3l4MUtyZyQ1a2d1azEzb2tKWmpzZ2Z2c3JqdmkvOVoxQjZIbDRUcGVvdkpzb2lQeHA2eGRKWUpha21wUmIwSUVHb1ZUSC8zRzZrLmRMRzBuVUNMWEZnMEhTRTJ5MA==</span>
+</code></pre></div>
+<h3 id="secret-sharing">Secret Sharing<a class="headerlink" href="#secret-sharing" title="Permanent link">&para;</a></h3>
+<p>Multiple Ingress resources can reference the same authentication secret. The controller automatically deduplicates userlist generation, so the HAProxy userlist is created only once regardless of how many Ingresses use it.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="c1"># First ingress</span>
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">app1</span>
+<a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a><span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-38-7" name="__codelineno-38-7" href="#__codelineno-38-7"></a><span class="w">    </span><span class="nt">haproxy.org/auth-type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic-auth&quot;</span>
+<a id="__codelineno-38-8" name="__codelineno-38-8" href="#__codelineno-38-8"></a><span class="w">    </span><span class="nt">haproxy.org/auth-secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;shared-auth&quot;</span><span class="w">  </span><span class="c1"># Shared secret</span>
+<a id="__codelineno-38-9" name="__codelineno-38-9" href="#__codelineno-38-9"></a><span class="w">    </span><span class="nt">haproxy.org/auth-realm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;App</span><span class="nv"> </span><span class="s">1&quot;</span>
+<a id="__codelineno-38-10" name="__codelineno-38-10" href="#__codelineno-38-10"></a><span class="c1"># ...</span>
+<a id="__codelineno-38-11" name="__codelineno-38-11" href="#__codelineno-38-11"></a>
+<a id="__codelineno-38-12" name="__codelineno-38-12" href="#__codelineno-38-12"></a><span class="nn">---</span>
+<a id="__codelineno-38-13" name="__codelineno-38-13" href="#__codelineno-38-13"></a><span class="c1"># Second ingress using same secret</span>
+<a id="__codelineno-38-14" name="__codelineno-38-14" href="#__codelineno-38-14"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-38-15" name="__codelineno-38-15" href="#__codelineno-38-15"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-38-16" name="__codelineno-38-16" href="#__codelineno-38-16"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-38-17" name="__codelineno-38-17" href="#__codelineno-38-17"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">app2</span>
+<a id="__codelineno-38-18" name="__codelineno-38-18" href="#__codelineno-38-18"></a><span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-38-19" name="__codelineno-38-19" href="#__codelineno-38-19"></a><span class="w">    </span><span class="nt">haproxy.org/auth-type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic-auth&quot;</span>
+<a id="__codelineno-38-20" name="__codelineno-38-20" href="#__codelineno-38-20"></a><span class="w">    </span><span class="nt">haproxy.org/auth-secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;shared-auth&quot;</span><span class="w">  </span><span class="c1"># Same secret</span>
+<a id="__codelineno-38-21" name="__codelineno-38-21" href="#__codelineno-38-21"></a><span class="w">    </span><span class="nt">haproxy.org/auth-realm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;App</span><span class="nv"> </span><span class="s">2&quot;</span>
+<a id="__codelineno-38-22" name="__codelineno-38-22" href="#__codelineno-38-22"></a><span class="c1"># ...</span>
+</code></pre></div>
+<h3 id="on-demand-secret-access">On-Demand Secret Access<a class="headerlink" href="#on-demand-secret-access" title="Permanent link">&para;</a></h3>
+<p>Authentication secrets are fetched on-demand during template rendering. You must configure the secrets store with <code>store: on-demand</code> in your <code>watched_resources</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-39-5" name="__codelineno-39-5" href="#__codelineno-39-5"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-demand</span>
+<a id="__codelineno-39-6" name="__codelineno-39-6" href="#__codelineno-39-6"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>This allows the controller to fetch only the secrets referenced by Ingress annotations rather than watching all secrets in the cluster.</p>
+<h2 id="tips-tricks">Tips &amp; Tricks<a class="headerlink" href="#tips-tricks" title="Permanent link">&para;</a></h2>
+<p>These patterns solve common challenges when templating HAProxy configurations.</p>
+<h3 id="reserved-server-slots-pattern-avoid-reloads">Reserved Server Slots Pattern (Avoid Reloads)<a class="headerlink" href="#reserved-server-slots-pattern-avoid-reloads" title="Permanent link">&para;</a></h3>
+<p><strong>Problem</strong>: Adding or removing servers in HAProxy backends requires a process reload, which can briefly interrupt existing connections.</p>
+<p><strong>Solution</strong>: Pre-allocate a fixed number of server slots with static names. Active endpoints fill slots with real addresses, while unused slots contain disabled placeholders.</p>
+<p><strong>How it works:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a>{%- set initial_slots = 10 %}  {# Adjust based on expected endpoints #}
+<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a>
+<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a>{# Collect active endpoints #}
+<a id="__codelineno-40-4" name="__codelineno-40-4" href="#__codelineno-40-4"></a>{%- set ns = namespace(active_endpoints=[]) %}
+<a id="__codelineno-40-5" name="__codelineno-40-5" href="#__codelineno-40-5"></a>{%- for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+<a id="__codelineno-40-6" name="__codelineno-40-6" href="#__codelineno-40-6"></a>  {%- for endpoint in (endpoint_slice.endpoints | default([])) %}
+<a id="__codelineno-40-7" name="__codelineno-40-7" href="#__codelineno-40-7"></a>    {%- for address in (endpoint.addresses | default([])) %}
+<a id="__codelineno-40-8" name="__codelineno-40-8" href="#__codelineno-40-8"></a>      {%- set ns.active_endpoints = ns.active_endpoints + [{&#39;name&#39;: endpoint.targetRef.name, &#39;address&#39;: address, &#39;port&#39;: port}] %}
+<a id="__codelineno-40-9" name="__codelineno-40-9" href="#__codelineno-40-9"></a>    {%- endfor %}
+<a id="__codelineno-40-10" name="__codelineno-40-10" href="#__codelineno-40-10"></a>  {%- endfor %}
+<a id="__codelineno-40-11" name="__codelineno-40-11" href="#__codelineno-40-11"></a>{%- endfor %}
+<a id="__codelineno-40-12" name="__codelineno-40-12" href="#__codelineno-40-12"></a>
+<a id="__codelineno-40-13" name="__codelineno-40-13" href="#__codelineno-40-13"></a>{# Generate fixed server slots #}
+<a id="__codelineno-40-14" name="__codelineno-40-14" href="#__codelineno-40-14"></a>{%- for i in range(1, initial_slots + 1) %}
+<a id="__codelineno-40-15" name="__codelineno-40-15" href="#__codelineno-40-15"></a>  {%- if loop.index0 &lt; ns.active_endpoints|length %}
+<a id="__codelineno-40-16" name="__codelineno-40-16" href="#__codelineno-40-16"></a>    {# Active server with real endpoint #}
+<a id="__codelineno-40-17" name="__codelineno-40-17" href="#__codelineno-40-17"></a>    {%- set endpoint = ns.active_endpoints[loop.index0] %}
+<a id="__codelineno-40-18" name="__codelineno-40-18" href="#__codelineno-40-18"></a>server SRV_{{ i }} {{ endpoint.address }}:{{ endpoint.port }} check
+<a id="__codelineno-40-19" name="__codelineno-40-19" href="#__codelineno-40-19"></a>  {%- else %}
+<a id="__codelineno-40-20" name="__codelineno-40-20" href="#__codelineno-40-20"></a>    {# Disabled placeholder server #}
+<a id="__codelineno-40-21" name="__codelineno-40-21" href="#__codelineno-40-21"></a>server SRV_{{ i }} 127.0.0.1:1 disabled
+<a id="__codelineno-40-22" name="__codelineno-40-22" href="#__codelineno-40-22"></a>  {%- endif %}
+<a id="__codelineno-40-23" name="__codelineno-40-23" href="#__codelineno-40-23"></a>{%- endfor %}
+</code></pre></div>
+<p><strong>Benefits:</strong>
+- Endpoint changes only update server addresses via runtime API (no reload)
+- Server names remain stable (<code>SRV_1</code>, <code>SRV_2</code>, etc.)
+- HAProxy can update addresses without dropping connections</p>
+<p><strong>Auto-expansion:</strong>
+You can implement automatic slot doubling when all slots are filled:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a>{%- set active_count = ns.active_endpoints|length %}
+<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a>{%- if active_count &gt; initial_slots %}
+<a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a>  {%- set max_servers = initial_slots * 2 %}  {# Double when full #}
+<a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a>{%- else %}
+<a id="__codelineno-41-5" name="__codelineno-41-5" href="#__codelineno-41-5"></a>  {%- set max_servers = initial_slots %}
+<a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a>{%- endif %}
+</code></pre></div>
+<h3 id="matching-resources-across-types">Matching Resources Across Types<a class="headerlink" href="#matching-resources-across-types" title="Permanent link">&para;</a></h3>
+<p><strong>Pattern</strong>: Use fields from one resource type to query another resource type, enabling cross-resource relationships.</p>
+<p><strong>Example</strong>: Matching Ingress resources with their corresponding EndpointSlices:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a>{# Step 1: Iterate over ingresses #}
+<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a>{% for ingress in resources.ingresses.List() %}
+<a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a>{% for rule in (ingress.spec.rules | default([])) %}
+<a id="__codelineno-42-4" name="__codelineno-42-4" href="#__codelineno-42-4"></a>{% for path in (rule.http.paths | default([])) %}
+<a id="__codelineno-42-5" name="__codelineno-42-5" href="#__codelineno-42-5"></a>
+<a id="__codelineno-42-6" name="__codelineno-42-6" href="#__codelineno-42-6"></a>  {# Step 2: Extract service name from ingress #}
+<a id="__codelineno-42-7" name="__codelineno-42-7" href="#__codelineno-42-7"></a>  {% set service_name = path.backend.service.name %}
+<a id="__codelineno-42-8" name="__codelineno-42-8" href="#__codelineno-42-8"></a>  {% set port = path.backend.service.port.number | default(80) %}
+<a id="__codelineno-42-9" name="__codelineno-42-9" href="#__codelineno-42-9"></a>
+<a id="__codelineno-42-10" name="__codelineno-42-10" href="#__codelineno-42-10"></a>  {# Step 3: Look up endpoint slices for this service #}
+<a id="__codelineno-42-11" name="__codelineno-42-11" href="#__codelineno-42-11"></a>  backend ing_{{ ingress.metadata.name }}_{{ service_name }}
+<a id="__codelineno-42-12" name="__codelineno-42-12" href="#__codelineno-42-12"></a>      balance roundrobin
+<a id="__codelineno-42-13" name="__codelineno-42-13" href="#__codelineno-42-13"></a>      {%- for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+<a id="__codelineno-42-14" name="__codelineno-42-14" href="#__codelineno-42-14"></a>      {%- for endpoint in (endpoint_slice.endpoints | default([])) %}
+<a id="__codelineno-42-15" name="__codelineno-42-15" href="#__codelineno-42-15"></a>      {%- for address in (endpoint.addresses | default([])) %}
+<a id="__codelineno-42-16" name="__codelineno-42-16" href="#__codelineno-42-16"></a>      server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
+<a id="__codelineno-42-17" name="__codelineno-42-17" href="#__codelineno-42-17"></a>      {%- endfor %}
+<a id="__codelineno-42-18" name="__codelineno-42-18" href="#__codelineno-42-18"></a>      {%- endfor %}
+<a id="__codelineno-42-19" name="__codelineno-42-19" href="#__codelineno-42-19"></a>      {%- endfor %}
+<a id="__codelineno-42-20" name="__codelineno-42-20" href="#__codelineno-42-20"></a>
+<a id="__codelineno-42-21" name="__codelineno-42-21" href="#__codelineno-42-21"></a>{% endfor %}
+<a id="__codelineno-42-22" name="__codelineno-42-22" href="#__codelineno-42-22"></a>{% endfor %}
+<a id="__codelineno-42-23" name="__codelineno-42-23" href="#__codelineno-42-23"></a>{% endfor %}
+</code></pre></div>
+<p><strong>Key insight</strong>: The index configuration enables this pattern. EndpointSlices are indexed by <code>metadata.labels.kubernetes\.io/service-name</code>, so <code>Get(service_name)</code> returns all endpoint slices for that service.</p>
+<p><strong>Other cross-resource patterns:</strong></p>
+<p><strong>Services with Endpoints:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a>{% for service in resources.services.List() %}
+<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a>  {% set service_name = service.metadata.name %}
+<a id="__codelineno-43-3" name="__codelineno-43-3" href="#__codelineno-43-3"></a>  {# Look up endpoints #}
+<a id="__codelineno-43-4" name="__codelineno-43-4" href="#__codelineno-43-4"></a>  {% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+<a id="__codelineno-43-5" name="__codelineno-43-5" href="#__codelineno-43-5"></a>    {# Process endpoints #}
+<a id="__codelineno-43-6" name="__codelineno-43-6" href="#__codelineno-43-6"></a>  {% endfor %}
+<a id="__codelineno-43-7" name="__codelineno-43-7" href="#__codelineno-43-7"></a>{% endfor %}
+</code></pre></div></p>
+<p><strong>Ingresses with TLS Secrets:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a>{% for ingress in resources.ingresses.List() %}
+<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a>  {% if ingress.spec.tls %}
+<a id="__codelineno-44-3" name="__codelineno-44-3" href="#__codelineno-44-3"></a>    {% for tls in ingress.spec.tls %}
+<a id="__codelineno-44-4" name="__codelineno-44-4" href="#__codelineno-44-4"></a>      {% set secret_name = tls.secretName %}
+<a id="__codelineno-44-5" name="__codelineno-44-5" href="#__codelineno-44-5"></a>      {% set namespace = ingress.metadata.namespace %}
+<a id="__codelineno-44-6" name="__codelineno-44-6" href="#__codelineno-44-6"></a>      {# Look up TLS secret #}
+<a id="__codelineno-44-7" name="__codelineno-44-7" href="#__codelineno-44-7"></a>      {% for secret in resources.secrets.Fetch(namespace, secret_name) %}
+<a id="__codelineno-44-8" name="__codelineno-44-8" href="#__codelineno-44-8"></a>        {# Use cert data: secret.data.tls_crt | b64decode #}
+<a id="__codelineno-44-9" name="__codelineno-44-9" href="#__codelineno-44-9"></a>      {% endfor %}
+<a id="__codelineno-44-10" name="__codelineno-44-10" href="#__codelineno-44-10"></a>    {% endfor %}
+<a id="__codelineno-44-11" name="__codelineno-44-11" href="#__codelineno-44-11"></a>  {% endif %}
+<a id="__codelineno-44-12" name="__codelineno-44-12" href="#__codelineno-44-12"></a>{% endfor %}
+</code></pre></div></p>
+<p><strong>Required index configuration:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-45-1" name="__codelineno-45-1" href="#__codelineno-45-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-45-2" name="__codelineno-45-2" href="#__codelineno-45-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-45-3" name="__codelineno-45-3" href="#__codelineno-45-3"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-45-4" name="__codelineno-45-4" href="#__codelineno-45-4"></a>
+<a id="__codelineno-45-5" name="__codelineno-45-5" href="#__codelineno-45-5"></a><span class="w">  </span><span class="nt">endpoints</span><span class="p">:</span>
+<a id="__codelineno-45-6" name="__codelineno-45-6" href="#__codelineno-45-6"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.labels.kubernetes\\.io/service-name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-45-7" name="__codelineno-45-7" href="#__codelineno-45-7"></a>
+<a id="__codelineno-45-8" name="__codelineno-45-8" href="#__codelineno-45-8"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-45-9" name="__codelineno-45-9" href="#__codelineno-45-9"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div></p>
+<h3 id="safe-iteration-with-default-filter">Safe Iteration with default Filter<a class="headerlink" href="#safe-iteration-with-default-filter" title="Permanent link">&para;</a></h3>
+<p>Always use the <code>default</code> filter when iterating over optional fields to prevent template errors when fields are missing or null.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-46-1" name="__codelineno-46-1" href="#__codelineno-46-1"></a>{# Safe: Returns empty array if field is missing #}
+<a id="__codelineno-46-2" name="__codelineno-46-2" href="#__codelineno-46-2"></a>{% for endpoint in (endpoint_slice.endpoints | default([])) %}
+<a id="__codelineno-46-3" name="__codelineno-46-3" href="#__codelineno-46-3"></a>  {% for address in (endpoint.addresses | default([])) %}
+<a id="__codelineno-46-4" name="__codelineno-46-4" href="#__codelineno-46-4"></a>    server srv {{ address }}:80
+<a id="__codelineno-46-5" name="__codelineno-46-5" href="#__codelineno-46-5"></a>  {% endfor %}
+<a id="__codelineno-46-6" name="__codelineno-46-6" href="#__codelineno-46-6"></a>{% endfor %}
+<a id="__codelineno-46-7" name="__codelineno-46-7" href="#__codelineno-46-7"></a>
+<a id="__codelineno-46-8" name="__codelineno-46-8" href="#__codelineno-46-8"></a>{# Unsafe: Fails if endpoints field is null #}
+<a id="__codelineno-46-9" name="__codelineno-46-9" href="#__codelineno-46-9"></a>{% for endpoint in endpoint_slice.endpoints %}
+<a id="__codelineno-46-10" name="__codelineno-46-10" href="#__codelineno-46-10"></a>  {# ERROR if endpoints is null #}
+<a id="__codelineno-46-11" name="__codelineno-46-11" href="#__codelineno-46-11"></a>{% endfor %}
+</code></pre></div>
+<h3 id="filtering-with-selectattr">Filtering with selectattr<a class="headerlink" href="#filtering-with-selectattr" title="Permanent link">&para;</a></h3>
+<p>Use <code>selectattr</code> to filter resources that have specific attributes, useful for optional Kubernetes fields.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-47-1" name="__codelineno-47-1" href="#__codelineno-47-1"></a>{# Only process rules that have HTTP configuration #}
+<a id="__codelineno-47-2" name="__codelineno-47-2" href="#__codelineno-47-2"></a>{% for rule in (ingress.spec.rules | default([]) | selectattr(&quot;http&quot;, &quot;defined&quot;)) %}
+<a id="__codelineno-47-3" name="__codelineno-47-3" href="#__codelineno-47-3"></a>  {# rule.http is guaranteed to exist #}
+<a id="__codelineno-47-4" name="__codelineno-47-4" href="#__codelineno-47-4"></a>  {% for path in rule.http.paths %}
+<a id="__codelineno-47-5" name="__codelineno-47-5" href="#__codelineno-47-5"></a>    {# Process paths #}
+<a id="__codelineno-47-6" name="__codelineno-47-6" href="#__codelineno-47-6"></a>  {% endfor %}
+<a id="__codelineno-47-7" name="__codelineno-47-7" href="#__codelineno-47-7"></a>{% endfor %}
+<a id="__codelineno-47-8" name="__codelineno-47-8" href="#__codelineno-47-8"></a>
+<a id="__codelineno-47-9" name="__codelineno-47-9" href="#__codelineno-47-9"></a>{# Only process paths with specific pathType #}
+<a id="__codelineno-47-10" name="__codelineno-47-10" href="#__codelineno-47-10"></a>{% set path_types = [&quot;Prefix&quot;, &quot;Exact&quot;] %}
+<a id="__codelineno-47-11" name="__codelineno-47-11" href="#__codelineno-47-11"></a>{% for path in (rule.http.paths | default([]) | selectattr(&quot;pathType&quot;, &quot;in&quot;, path_types)) %}
+<a id="__codelineno-47-12" name="__codelineno-47-12" href="#__codelineno-47-12"></a>  {# Only Prefix and Exact paths #}
+<a id="__codelineno-47-13" name="__codelineno-47-13" href="#__codelineno-47-13"></a>{% endfor %}
+</code></pre></div>
+<h3 id="maintaining-variables-across-loop-scopes">Maintaining Variables Across Loop Scopes<a class="headerlink" href="#maintaining-variables-across-loop-scopes" title="Permanent link">&para;</a></h3>
+<p>Jinja2/Gonja scoping rules prevent modifying variables inside loops. Use <code>namespace()</code> to create a mutable container for accumulating values across iterations.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-48-1" name="__codelineno-48-1" href="#__codelineno-48-1"></a>{# Create namespace for mutable list #}
+<a id="__codelineno-48-2" name="__codelineno-48-2" href="#__codelineno-48-2"></a>{% set ns = namespace(active_endpoints=[]) %}
+<a id="__codelineno-48-3" name="__codelineno-48-3" href="#__codelineno-48-3"></a>
+<a id="__codelineno-48-4" name="__codelineno-48-4" href="#__codelineno-48-4"></a>{# Append items inside loops #}
+<a id="__codelineno-48-5" name="__codelineno-48-5" href="#__codelineno-48-5"></a>{% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+<a id="__codelineno-48-6" name="__codelineno-48-6" href="#__codelineno-48-6"></a>  {% for endpoint in (endpoint_slice.endpoints | default([])) %}
+<a id="__codelineno-48-7" name="__codelineno-48-7" href="#__codelineno-48-7"></a>    {% for address in (endpoint.addresses | default([])) %}
+<a id="__codelineno-48-8" name="__codelineno-48-8" href="#__codelineno-48-8"></a>      {% set ns.active_endpoints = ns.active_endpoints + [{&#39;address&#39;: address, &#39;port&#39;: port}] %}
+<a id="__codelineno-48-9" name="__codelineno-48-9" href="#__codelineno-48-9"></a>    {% endfor %}
+<a id="__codelineno-48-10" name="__codelineno-48-10" href="#__codelineno-48-10"></a>  {% endfor %}
+<a id="__codelineno-48-11" name="__codelineno-48-11" href="#__codelineno-48-11"></a>{% endfor %}
+<a id="__codelineno-48-12" name="__codelineno-48-12" href="#__codelineno-48-12"></a>
+<a id="__codelineno-48-13" name="__codelineno-48-13" href="#__codelineno-48-13"></a>{# Use accumulated list #}
+<a id="__codelineno-48-14" name="__codelineno-48-14" href="#__codelineno-48-14"></a>{% for endpoint in ns.active_endpoints %}
+<a id="__codelineno-48-15" name="__codelineno-48-15" href="#__codelineno-48-15"></a>  server srv{{ loop.index }} {{ endpoint.address }}:{{ endpoint.port }}
+<a id="__codelineno-48-16" name="__codelineno-48-16" href="#__codelineno-48-16"></a>{% endfor %}
+</code></pre></div>
+<h3 id="template-snippet-composition">Template Snippet Composition<a class="headerlink" href="#template-snippet-composition" title="Permanent link">&para;</a></h3>
+<p>Break complex templates into reusable snippets for better maintainability and code reuse.</p>
+<p><strong>Define snippets:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-49-1" name="__codelineno-49-1" href="#__codelineno-49-1"></a><span class="nt">template_snippets</span><span class="p">:</span>
+<a id="__codelineno-49-2" name="__codelineno-49-2" href="#__codelineno-49-2"></a><span class="w">  </span><span class="nt">backend-name</span><span class="p">:</span>
+<a id="__codelineno-49-3" name="__codelineno-49-3" href="#__codelineno-49-3"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">backend-name</span>
+<a id="__codelineno-49-4" name="__codelineno-49-4" href="#__codelineno-49-4"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;-</span>
+<a id="__codelineno-49-5" name="__codelineno-49-5" href="#__codelineno-49-5"></a><span class="w">      </span><span class="no">ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}</span>
+<a id="__codelineno-49-6" name="__codelineno-49-6" href="#__codelineno-49-6"></a>
+<a id="__codelineno-49-7" name="__codelineno-49-7" href="#__codelineno-49-7"></a><span class="w">  </span><span class="nt">backend-servers</span><span class="p">:</span>
+<a id="__codelineno-49-8" name="__codelineno-49-8" href="#__codelineno-49-8"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">backend-servers</span>
+<a id="__codelineno-49-9" name="__codelineno-49-9" href="#__codelineno-49-9"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-49-10" name="__codelineno-49-10" href="#__codelineno-49-10"></a><span class="w">      </span><span class="no">{% set service_name = path.backend.service.name %}</span>
+<a id="__codelineno-49-11" name="__codelineno-49-11" href="#__codelineno-49-11"></a><span class="w">      </span><span class="no">{% set port = path.backend.service.port.number %}</span>
+<a id="__codelineno-49-12" name="__codelineno-49-12" href="#__codelineno-49-12"></a><span class="w">      </span><span class="no">{% include &quot;reserved-server-slots&quot; %}</span>
+</code></pre></div>
+<p><strong>Use snippets:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-50-1" name="__codelineno-50-1" href="#__codelineno-50-1"></a>{# Include snippet inline #}
+<a id="__codelineno-50-2" name="__codelineno-50-2" href="#__codelineno-50-2"></a>backend {% include &quot;backend-name&quot; %}
+<a id="__codelineno-50-3" name="__codelineno-50-3" href="#__codelineno-50-3"></a>    balance roundrobin
+<a id="__codelineno-50-4" name="__codelineno-50-4" href="#__codelineno-50-4"></a>    {%- filter indent(4) %}
+<a id="__codelineno-50-5" name="__codelineno-50-5" href="#__codelineno-50-5"></a>    {% include &quot;backend-servers&quot; %}
+<a id="__codelineno-50-6" name="__codelineno-50-6" href="#__codelineno-50-6"></a>    {%- endfilter %}
+</code></pre></div>
+<p><strong>Pass variables to snippets:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-51-1" name="__codelineno-51-1" href="#__codelineno-51-1"></a>{# Set variables before including snippet #}
+<a id="__codelineno-51-2" name="__codelineno-51-2" href="#__codelineno-51-2"></a>{% set service_name = &quot;my-service&quot; %}
+<a id="__codelineno-51-3" name="__codelineno-51-3" href="#__codelineno-51-3"></a>{% set port = 8080 %}
+<a id="__codelineno-51-4" name="__codelineno-51-4" href="#__codelineno-51-4"></a>{% include &quot;backend-servers&quot; %}
+</code></pre></div>
+<h3 id="indentation-control">Indentation Control<a class="headerlink" href="#indentation-control" title="Permanent link">&para;</a></h3>
+<p>Control whitespace in generated output using the <code>-</code> marker to strip whitespace.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-52-1" name="__codelineno-52-1" href="#__codelineno-52-1"></a>{# Strip whitespace before tag #}
+<a id="__codelineno-52-2" name="__codelineno-52-2" href="#__codelineno-52-2"></a>{%- for item in items %}
+<a id="__codelineno-52-3" name="__codelineno-52-3" href="#__codelineno-52-3"></a>  {{ item }}
+<a id="__codelineno-52-4" name="__codelineno-52-4" href="#__codelineno-52-4"></a>{%- endfor %}
+<a id="__codelineno-52-5" name="__codelineno-52-5" href="#__codelineno-52-5"></a>
+<a id="__codelineno-52-6" name="__codelineno-52-6" href="#__codelineno-52-6"></a>{# Strip whitespace after tag #}
+<a id="__codelineno-52-7" name="__codelineno-52-7" href="#__codelineno-52-7"></a>{% for item in items -%}
+<a id="__codelineno-52-8" name="__codelineno-52-8" href="#__codelineno-52-8"></a>  {{ item }}
+<a id="__codelineno-52-9" name="__codelineno-52-9" href="#__codelineno-52-9"></a>{% endfor -%}
+<a id="__codelineno-52-10" name="__codelineno-52-10" href="#__codelineno-52-10"></a>
+<a id="__codelineno-52-11" name="__codelineno-52-11" href="#__codelineno-52-11"></a>{# Indent included content #}
+<a id="__codelineno-52-12" name="__codelineno-52-12" href="#__codelineno-52-12"></a>backend my_backend
+<a id="__codelineno-52-13" name="__codelineno-52-13" href="#__codelineno-52-13"></a>    {%- filter indent(4, first=True) %}
+<a id="__codelineno-52-14" name="__codelineno-52-14" href="#__codelineno-52-14"></a>    {% include &quot;server-list&quot; %}
+<a id="__codelineno-52-15" name="__codelineno-52-15" href="#__codelineno-52-15"></a>    {%- endfilter %}
+</code></pre></div>
+<p><strong>Result with indentation:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-53-1" name="__codelineno-53-1" href="#__codelineno-53-1"></a>backend my_backend
+<a id="__codelineno-53-2" name="__codelineno-53-2" href="#__codelineno-53-2"></a>    server srv1 192.168.1.10:80
+<a id="__codelineno-53-3" name="__codelineno-53-3" href="#__codelineno-53-3"></a>    server srv2 192.168.1.11:80
+</code></pre></div></p>
+<h2 id="complete-examples">Complete Examples<a class="headerlink" href="#complete-examples" title="Permanent link">&para;</a></h2>
+<h3 id="example-1-simple-host-based-routing">Example 1: Simple Host-Based Routing<a class="headerlink" href="#example-1-simple-host-based-routing" title="Permanent link">&para;</a></h3>
+<p>Basic Ingress to backend mapping with map-based routing:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-54-1" name="__codelineno-54-1" href="#__codelineno-54-1"></a><span class="c1"># Configuration</span>
+<a id="__codelineno-54-2" name="__codelineno-54-2" href="#__codelineno-54-2"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-54-3" name="__codelineno-54-3" href="#__codelineno-54-3"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-54-4" name="__codelineno-54-4" href="#__codelineno-54-4"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-54-5" name="__codelineno-54-5" href="#__codelineno-54-5"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-54-6" name="__codelineno-54-6" href="#__codelineno-54-6"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-54-7" name="__codelineno-54-7" href="#__codelineno-54-7"></a>
+<a id="__codelineno-54-8" name="__codelineno-54-8" href="#__codelineno-54-8"></a><span class="nt">maps</span><span class="p">:</span>
+<a id="__codelineno-54-9" name="__codelineno-54-9" href="#__codelineno-54-9"></a><span class="w">  </span><span class="nt">host.map</span><span class="p">:</span>
+<a id="__codelineno-54-10" name="__codelineno-54-10" href="#__codelineno-54-10"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-54-11" name="__codelineno-54-11" href="#__codelineno-54-11"></a><span class="w">      </span><span class="no">{%- for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-54-12" name="__codelineno-54-12" href="#__codelineno-54-12"></a><span class="w">      </span><span class="no">{%- for rule in (ingress.spec.rules | default([])) %}</span>
+<a id="__codelineno-54-13" name="__codelineno-54-13" href="#__codelineno-54-13"></a><span class="w">      </span><span class="no">{{ rule.host }} backend_{{ ingress.metadata.name }}</span>
+<a id="__codelineno-54-14" name="__codelineno-54-14" href="#__codelineno-54-14"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-54-15" name="__codelineno-54-15" href="#__codelineno-54-15"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-54-16" name="__codelineno-54-16" href="#__codelineno-54-16"></a>
+<a id="__codelineno-54-17" name="__codelineno-54-17" href="#__codelineno-54-17"></a><span class="nt">haproxy_config</span><span class="p">:</span>
+<a id="__codelineno-54-18" name="__codelineno-54-18" href="#__codelineno-54-18"></a><span class="w">  </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-54-19" name="__codelineno-54-19" href="#__codelineno-54-19"></a><span class="w">    </span><span class="no">global</span>
+<a id="__codelineno-54-20" name="__codelineno-54-20" href="#__codelineno-54-20"></a><span class="w">        </span><span class="no">daemon</span>
+<a id="__codelineno-54-21" name="__codelineno-54-21" href="#__codelineno-54-21"></a>
+<a id="__codelineno-54-22" name="__codelineno-54-22" href="#__codelineno-54-22"></a><span class="w">    </span><span class="no">defaults</span>
+<a id="__codelineno-54-23" name="__codelineno-54-23" href="#__codelineno-54-23"></a><span class="w">        </span><span class="no">mode http</span>
+<a id="__codelineno-54-24" name="__codelineno-54-24" href="#__codelineno-54-24"></a><span class="w">        </span><span class="no">timeout connect 5s</span>
+<a id="__codelineno-54-25" name="__codelineno-54-25" href="#__codelineno-54-25"></a><span class="w">        </span><span class="no">timeout client 50s</span>
+<a id="__codelineno-54-26" name="__codelineno-54-26" href="#__codelineno-54-26"></a><span class="w">        </span><span class="no">timeout server 50s</span>
+<a id="__codelineno-54-27" name="__codelineno-54-27" href="#__codelineno-54-27"></a>
+<a id="__codelineno-54-28" name="__codelineno-54-28" href="#__codelineno-54-28"></a><span class="w">    </span><span class="no">frontend http</span>
+<a id="__codelineno-54-29" name="__codelineno-54-29" href="#__codelineno-54-29"></a><span class="w">        </span><span class="no">bind *:80</span>
+<a id="__codelineno-54-30" name="__codelineno-54-30" href="#__codelineno-54-30"></a><span class="w">        </span><span class="no"># Use map for host-based routing</span>
+<a id="__codelineno-54-31" name="__codelineno-54-31" href="#__codelineno-54-31"></a><span class="w">        </span><span class="no">use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath(&quot;host.map&quot;, &quot;map&quot;) }})]</span>
+<a id="__codelineno-54-32" name="__codelineno-54-32" href="#__codelineno-54-32"></a>
+<a id="__codelineno-54-33" name="__codelineno-54-33" href="#__codelineno-54-33"></a><span class="w">    </span><span class="no">{% for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-54-34" name="__codelineno-54-34" href="#__codelineno-54-34"></a><span class="w">    </span><span class="no">backend backend_{{ ingress.metadata.name }}</span>
+<a id="__codelineno-54-35" name="__codelineno-54-35" href="#__codelineno-54-35"></a><span class="w">        </span><span class="no">balance roundrobin</span>
+<a id="__codelineno-54-36" name="__codelineno-54-36" href="#__codelineno-54-36"></a><span class="w">        </span><span class="no">server srv1 192.168.1.10:80 check</span>
+<a id="__codelineno-54-37" name="__codelineno-54-37" href="#__codelineno-54-37"></a><span class="w">    </span><span class="no">{% endfor %}</span>
+</code></pre></div>
+<h3 id="example-2-path-based-routing-with-maps">Example 2: Path-Based Routing with Maps<a class="headerlink" href="#example-2-path-based-routing-with-maps" title="Permanent link">&para;</a></h3>
+<p>Using map files for both host and path-based routing:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-55-1" name="__codelineno-55-1" href="#__codelineno-55-1"></a><span class="nt">maps</span><span class="p">:</span>
+<a id="__codelineno-55-2" name="__codelineno-55-2" href="#__codelineno-55-2"></a><span class="w">  </span><span class="nt">host.map</span><span class="p">:</span>
+<a id="__codelineno-55-3" name="__codelineno-55-3" href="#__codelineno-55-3"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-55-4" name="__codelineno-55-4" href="#__codelineno-55-4"></a><span class="w">      </span><span class="no">{%- for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-55-5" name="__codelineno-55-5" href="#__codelineno-55-5"></a><span class="w">      </span><span class="no">{%- for rule in (ingress.spec.rules | default([])) %}</span>
+<a id="__codelineno-55-6" name="__codelineno-55-6" href="#__codelineno-55-6"></a><span class="w">      </span><span class="no">{{ rule.host }} {{ rule.host }}</span>
+<a id="__codelineno-55-7" name="__codelineno-55-7" href="#__codelineno-55-7"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-55-8" name="__codelineno-55-8" href="#__codelineno-55-8"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-55-9" name="__codelineno-55-9" href="#__codelineno-55-9"></a>
+<a id="__codelineno-55-10" name="__codelineno-55-10" href="#__codelineno-55-10"></a><span class="w">  </span><span class="nt">path-prefix.map</span><span class="p">:</span>
+<a id="__codelineno-55-11" name="__codelineno-55-11" href="#__codelineno-55-11"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-55-12" name="__codelineno-55-12" href="#__codelineno-55-12"></a><span class="w">      </span><span class="no">{%- for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-55-13" name="__codelineno-55-13" href="#__codelineno-55-13"></a><span class="w">      </span><span class="no">{%- for rule in (ingress.spec.rules | default([])) %}</span>
+<a id="__codelineno-55-14" name="__codelineno-55-14" href="#__codelineno-55-14"></a><span class="w">      </span><span class="no">{%- for path in (rule.http.paths | default([]) | selectattr(&quot;pathType&quot;, &quot;equalto&quot;, &quot;Prefix&quot;)) %}</span>
+<a id="__codelineno-55-15" name="__codelineno-55-15" href="#__codelineno-55-15"></a><span class="w">      </span><span class="no">{{ rule.host }}{{ path.path }}/ backend_{{ ingress.metadata.name }}_{{ path.backend.service.name }}</span>
+<a id="__codelineno-55-16" name="__codelineno-55-16" href="#__codelineno-55-16"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-55-17" name="__codelineno-55-17" href="#__codelineno-55-17"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-55-18" name="__codelineno-55-18" href="#__codelineno-55-18"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-55-19" name="__codelineno-55-19" href="#__codelineno-55-19"></a>
+<a id="__codelineno-55-20" name="__codelineno-55-20" href="#__codelineno-55-20"></a><span class="nt">haproxy_config</span><span class="p">:</span>
+<a id="__codelineno-55-21" name="__codelineno-55-21" href="#__codelineno-55-21"></a><span class="w">  </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-55-22" name="__codelineno-55-22" href="#__codelineno-55-22"></a><span class="w">    </span><span class="no">frontend http</span>
+<a id="__codelineno-55-23" name="__codelineno-55-23" href="#__codelineno-55-23"></a><span class="w">        </span><span class="no">bind *:80</span>
+<a id="__codelineno-55-24" name="__codelineno-55-24" href="#__codelineno-55-24"></a>
+<a id="__codelineno-55-25" name="__codelineno-55-25" href="#__codelineno-55-25"></a><span class="w">        </span><span class="no"># Normalize host header</span>
+<a id="__codelineno-55-26" name="__codelineno-55-26" href="#__codelineno-55-26"></a><span class="w">        </span><span class="no">http-request set-var(txn.host) req.hdr(Host),field(1,:),lower</span>
+<a id="__codelineno-55-27" name="__codelineno-55-27" href="#__codelineno-55-27"></a><span class="w">        </span><span class="no">http-request set-var(txn.host_match) var(txn.host),map({{ pathResolver.GetPath(&quot;host.map&quot;, &quot;map&quot;) }})</span>
+<a id="__codelineno-55-28" name="__codelineno-55-28" href="#__codelineno-55-28"></a>
+<a id="__codelineno-55-29" name="__codelineno-55-29" href="#__codelineno-55-29"></a><span class="w">        </span><span class="no"># Path-based routing with prefix matching</span>
+<a id="__codelineno-55-30" name="__codelineno-55-30" href="#__codelineno-55-30"></a><span class="w">        </span><span class="no">http-request set-var(txn.backend) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath(&quot;path-prefix.map&quot;, &quot;map&quot;) }})</span>
+<a id="__codelineno-55-31" name="__codelineno-55-31" href="#__codelineno-55-31"></a>
+<a id="__codelineno-55-32" name="__codelineno-55-32" href="#__codelineno-55-32"></a><span class="w">        </span><span class="no">use_backend %[var(txn.backend)]</span>
+<a id="__codelineno-55-33" name="__codelineno-55-33" href="#__codelineno-55-33"></a><span class="w">        </span><span class="no">default_backend default_backend</span>
+<a id="__codelineno-55-34" name="__codelineno-55-34" href="#__codelineno-55-34"></a>
+<a id="__codelineno-55-35" name="__codelineno-55-35" href="#__codelineno-55-35"></a><span class="w">    </span><span class="no">{% for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-55-36" name="__codelineno-55-36" href="#__codelineno-55-36"></a><span class="w">    </span><span class="no">{% for rule in (ingress.spec.rules | default([])) %}</span>
+<a id="__codelineno-55-37" name="__codelineno-55-37" href="#__codelineno-55-37"></a><span class="w">    </span><span class="no">{% for path in (rule.http.paths | default([])) %}</span>
+<a id="__codelineno-55-38" name="__codelineno-55-38" href="#__codelineno-55-38"></a><span class="w">    </span><span class="no">backend backend_{{ ingress.metadata.name }}_{{ path.backend.service.name }}</span>
+<a id="__codelineno-55-39" name="__codelineno-55-39" href="#__codelineno-55-39"></a><span class="w">        </span><span class="no">balance roundrobin</span>
+<a id="__codelineno-55-40" name="__codelineno-55-40" href="#__codelineno-55-40"></a><span class="w">        </span><span class="no">server srv1 192.168.1.10:80 check</span>
+<a id="__codelineno-55-41" name="__codelineno-55-41" href="#__codelineno-55-41"></a><span class="w">    </span><span class="no">{% endfor %}</span>
+<a id="__codelineno-55-42" name="__codelineno-55-42" href="#__codelineno-55-42"></a><span class="w">    </span><span class="no">{% endfor %}</span>
+<a id="__codelineno-55-43" name="__codelineno-55-43" href="#__codelineno-55-43"></a><span class="w">    </span><span class="no">{% endfor %}</span>
+<a id="__codelineno-55-44" name="__codelineno-55-44" href="#__codelineno-55-44"></a>
+<a id="__codelineno-55-45" name="__codelineno-55-45" href="#__codelineno-55-45"></a><span class="w">    </span><span class="no">backend default_backend</span>
+<a id="__codelineno-55-46" name="__codelineno-55-46" href="#__codelineno-55-46"></a><span class="w">        </span><span class="no">http-request return status 404</span>
+</code></pre></div>
+<h3 id="example-3-dynamic-backend-servers-with-cross-resource-lookups">Example 3: Dynamic Backend Servers with Cross-Resource Lookups<a class="headerlink" href="#example-3-dynamic-backend-servers-with-cross-resource-lookups" title="Permanent link">&para;</a></h3>
+<p>Complete ingress → service → endpoints chain using reserved slots pattern:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-56-1" name="__codelineno-56-1" href="#__codelineno-56-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-56-2" name="__codelineno-56-2" href="#__codelineno-56-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-56-3" name="__codelineno-56-3" href="#__codelineno-56-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-56-4" name="__codelineno-56-4" href="#__codelineno-56-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-56-5" name="__codelineno-56-5" href="#__codelineno-56-5"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-56-6" name="__codelineno-56-6" href="#__codelineno-56-6"></a>
+<a id="__codelineno-56-7" name="__codelineno-56-7" href="#__codelineno-56-7"></a><span class="w">  </span><span class="nt">endpoints</span><span class="p">:</span>
+<a id="__codelineno-56-8" name="__codelineno-56-8" href="#__codelineno-56-8"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">discovery.k8s.io/v1</span>
+<a id="__codelineno-56-9" name="__codelineno-56-9" href="#__codelineno-56-9"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EndpointSlice</span>
+<a id="__codelineno-56-10" name="__codelineno-56-10" href="#__codelineno-56-10"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.labels.kubernetes\\.io/service-name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-56-11" name="__codelineno-56-11" href="#__codelineno-56-11"></a>
+<a id="__codelineno-56-12" name="__codelineno-56-12" href="#__codelineno-56-12"></a><span class="nt">template_snippets</span><span class="p">:</span>
+<a id="__codelineno-56-13" name="__codelineno-56-13" href="#__codelineno-56-13"></a><span class="w">  </span><span class="nt">backend-servers-with-slots</span><span class="p">:</span>
+<a id="__codelineno-56-14" name="__codelineno-56-14" href="#__codelineno-56-14"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">backend-servers-with-slots</span>
+<a id="__codelineno-56-15" name="__codelineno-56-15" href="#__codelineno-56-15"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-56-16" name="__codelineno-56-16" href="#__codelineno-56-16"></a><span class="w">      </span><span class="no">{%- set initial_slots = 10 %}</span>
+<a id="__codelineno-56-17" name="__codelineno-56-17" href="#__codelineno-56-17"></a>
+<a id="__codelineno-56-18" name="__codelineno-56-18" href="#__codelineno-56-18"></a><span class="w">      </span><span class="no">{# Collect active endpoints using indexed lookup #}</span>
+<a id="__codelineno-56-19" name="__codelineno-56-19" href="#__codelineno-56-19"></a><span class="w">      </span><span class="no">{%- set ns = namespace(active_endpoints=[]) %}</span>
+<a id="__codelineno-56-20" name="__codelineno-56-20" href="#__codelineno-56-20"></a><span class="w">      </span><span class="no">{%- for endpoint_slice in resources.endpoints.Fetch(service_name) %}</span>
+<a id="__codelineno-56-21" name="__codelineno-56-21" href="#__codelineno-56-21"></a><span class="w">        </span><span class="no">{%- for endpoint in (endpoint_slice.endpoints | default([])) %}</span>
+<a id="__codelineno-56-22" name="__codelineno-56-22" href="#__codelineno-56-22"></a><span class="w">          </span><span class="no">{%- for address in (endpoint.addresses | default([])) %}</span>
+<a id="__codelineno-56-23" name="__codelineno-56-23" href="#__codelineno-56-23"></a><span class="w">            </span><span class="no">{%- set ns.active_endpoints = ns.active_endpoints + [{&#39;name&#39;: endpoint.targetRef.name, &#39;address&#39;: address, &#39;port&#39;: port}] %}</span>
+<a id="__codelineno-56-24" name="__codelineno-56-24" href="#__codelineno-56-24"></a><span class="w">          </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-56-25" name="__codelineno-56-25" href="#__codelineno-56-25"></a><span class="w">        </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-56-26" name="__codelineno-56-26" href="#__codelineno-56-26"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-56-27" name="__codelineno-56-27" href="#__codelineno-56-27"></a>
+<a id="__codelineno-56-28" name="__codelineno-56-28" href="#__codelineno-56-28"></a><span class="w">      </span><span class="no">{# Generate fixed server slots #}</span>
+<a id="__codelineno-56-29" name="__codelineno-56-29" href="#__codelineno-56-29"></a><span class="w">      </span><span class="no">{%- for i in range(1, initial_slots + 1) %}</span>
+<a id="__codelineno-56-30" name="__codelineno-56-30" href="#__codelineno-56-30"></a><span class="w">        </span><span class="no">{%- if loop.index0 &lt; ns.active_endpoints|length %}</span>
+<a id="__codelineno-56-31" name="__codelineno-56-31" href="#__codelineno-56-31"></a><span class="w">          </span><span class="no">{%- set endpoint = ns.active_endpoints[loop.index0] %}</span>
+<a id="__codelineno-56-32" name="__codelineno-56-32" href="#__codelineno-56-32"></a><span class="w">      </span><span class="no">server SRV_{{ i }} {{ endpoint.address }}:{{ endpoint.port }} check</span>
+<a id="__codelineno-56-33" name="__codelineno-56-33" href="#__codelineno-56-33"></a><span class="w">        </span><span class="no">{%- else %}</span>
+<a id="__codelineno-56-34" name="__codelineno-56-34" href="#__codelineno-56-34"></a><span class="w">      </span><span class="no">server SRV_{{ i }} 127.0.0.1:1 disabled</span>
+<a id="__codelineno-56-35" name="__codelineno-56-35" href="#__codelineno-56-35"></a><span class="w">        </span><span class="no">{%- endif %}</span>
+<a id="__codelineno-56-36" name="__codelineno-56-36" href="#__codelineno-56-36"></a><span class="w">      </span><span class="no">{%- endfor %}</span>
+<a id="__codelineno-56-37" name="__codelineno-56-37" href="#__codelineno-56-37"></a>
+<a id="__codelineno-56-38" name="__codelineno-56-38" href="#__codelineno-56-38"></a><span class="nt">haproxy_config</span><span class="p">:</span>
+<a id="__codelineno-56-39" name="__codelineno-56-39" href="#__codelineno-56-39"></a><span class="w">  </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-56-40" name="__codelineno-56-40" href="#__codelineno-56-40"></a><span class="w">    </span><span class="no">global</span>
+<a id="__codelineno-56-41" name="__codelineno-56-41" href="#__codelineno-56-41"></a><span class="w">        </span><span class="no">daemon</span>
+<a id="__codelineno-56-42" name="__codelineno-56-42" href="#__codelineno-56-42"></a><span class="w">        </span><span class="no">maxconn 4096</span>
+<a id="__codelineno-56-43" name="__codelineno-56-43" href="#__codelineno-56-43"></a>
+<a id="__codelineno-56-44" name="__codelineno-56-44" href="#__codelineno-56-44"></a><span class="w">    </span><span class="no">defaults</span>
+<a id="__codelineno-56-45" name="__codelineno-56-45" href="#__codelineno-56-45"></a><span class="w">        </span><span class="no">mode http</span>
+<a id="__codelineno-56-46" name="__codelineno-56-46" href="#__codelineno-56-46"></a><span class="w">        </span><span class="no">timeout connect 5s</span>
+<a id="__codelineno-56-47" name="__codelineno-56-47" href="#__codelineno-56-47"></a><span class="w">        </span><span class="no">timeout client 50s</span>
+<a id="__codelineno-56-48" name="__codelineno-56-48" href="#__codelineno-56-48"></a><span class="w">        </span><span class="no">timeout server 50s</span>
+<a id="__codelineno-56-49" name="__codelineno-56-49" href="#__codelineno-56-49"></a><span class="w">        </span><span class="no">option httpchk GET /healthz</span>
+<a id="__codelineno-56-50" name="__codelineno-56-50" href="#__codelineno-56-50"></a>
+<a id="__codelineno-56-51" name="__codelineno-56-51" href="#__codelineno-56-51"></a><span class="w">    </span><span class="no">frontend http</span>
+<a id="__codelineno-56-52" name="__codelineno-56-52" href="#__codelineno-56-52"></a><span class="w">        </span><span class="no">bind *:80</span>
+<a id="__codelineno-56-53" name="__codelineno-56-53" href="#__codelineno-56-53"></a><span class="w">        </span><span class="no">use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath(&quot;host.map&quot;, &quot;map&quot;) }})]</span>
+<a id="__codelineno-56-54" name="__codelineno-56-54" href="#__codelineno-56-54"></a>
+<a id="__codelineno-56-55" name="__codelineno-56-55" href="#__codelineno-56-55"></a><span class="w">    </span><span class="no">{% for ingress in resources.ingresses.List() %}</span>
+<a id="__codelineno-56-56" name="__codelineno-56-56" href="#__codelineno-56-56"></a><span class="w">    </span><span class="no">{% for rule in (ingress.spec.rules | default([])) %}</span>
+<a id="__codelineno-56-57" name="__codelineno-56-57" href="#__codelineno-56-57"></a><span class="w">    </span><span class="no">{% for path in (rule.http.paths | default([])) %}</span>
+<a id="__codelineno-56-58" name="__codelineno-56-58" href="#__codelineno-56-58"></a><span class="w">    </span><span class="no">{%- set service_name = path.backend.service.name %}</span>
+<a id="__codelineno-56-59" name="__codelineno-56-59" href="#__codelineno-56-59"></a><span class="w">    </span><span class="no">{%- set port = path.backend.service.port.number | default(80) %}</span>
+<a id="__codelineno-56-60" name="__codelineno-56-60" href="#__codelineno-56-60"></a>
+<a id="__codelineno-56-61" name="__codelineno-56-61" href="#__codelineno-56-61"></a><span class="w">    </span><span class="no">backend ing_{{ ingress.metadata.name }}_{{ service_name }}</span>
+<a id="__codelineno-56-62" name="__codelineno-56-62" href="#__codelineno-56-62"></a><span class="w">        </span><span class="no">balance roundrobin</span>
+<a id="__codelineno-56-63" name="__codelineno-56-63" href="#__codelineno-56-63"></a><span class="w">        </span><span class="no">default-server check inter 2s</span>
+<a id="__codelineno-56-64" name="__codelineno-56-64" href="#__codelineno-56-64"></a><span class="w">        </span><span class="no">{%- filter indent(4, first=True) %}</span>
+<a id="__codelineno-56-65" name="__codelineno-56-65" href="#__codelineno-56-65"></a><span class="w">        </span><span class="no">{% include &quot;backend-servers-with-slots&quot; %}</span>
+<a id="__codelineno-56-66" name="__codelineno-56-66" href="#__codelineno-56-66"></a><span class="w">        </span><span class="no">{%- endfilter %}</span>
+<a id="__codelineno-56-67" name="__codelineno-56-67" href="#__codelineno-56-67"></a>
+<a id="__codelineno-56-68" name="__codelineno-56-68" href="#__codelineno-56-68"></a><span class="w">    </span><span class="no">{% endfor %}</span>
+<a id="__codelineno-56-69" name="__codelineno-56-69" href="#__codelineno-56-69"></a><span class="w">    </span><span class="no">{% endfor %}</span>
+<a id="__codelineno-56-70" name="__codelineno-56-70" href="#__codelineno-56-70"></a><span class="w">    </span><span class="no">{% endfor %}</span>
+</code></pre></div>
+<p><strong>Result</strong>: Endpoint changes only update server addresses via HAProxy runtime API without reloads. Server slot names (<code>SRV_1</code>, <code>SRV_2</code>, etc.) remain stable.</p>
+<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/pkg/templating/README.md">Template Engine Reference</a> - Detailed templating API and error handling</li>
+<li><a href="../supported-configuration/">Configuration Reference</a> - Complete configuration schema</li>
+<li><a href="https://github.com/nikolalohinski/gonja">Gonja Documentation</a> - Full template syntax reference</li>
+<li><a href="https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/charts/haproxy-template-ic/values.yaml">Helm Chart Values</a> - Production-ready template examples</li>
+<li><a href="https://docs.haproxy.org/2.9/configuration.html">HAProxy Configuration Manual</a> - HAProxy configuration reference</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/HAProxy-Template-IC" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.expand", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.e71a0d61.min.js"></script>
+      
+    
+  </body>
+</html>

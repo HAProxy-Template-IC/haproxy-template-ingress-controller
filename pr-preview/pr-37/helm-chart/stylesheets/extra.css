@@ -1,0 +1,20 @@
+/* Import shared brand colors (copied during build from docs/shared/colors.css) */
+@import url('./colors.css');
+
+/* Map brand colors to MkDocs Material variables */
+:root {
+  --md-primary-fg-color: var(--brand-primary);
+  --md-primary-fg-color--light: var(--brand-primary-light);
+  --md-primary-fg-color--dark: var(--brand-primary-dark);
+}
+
+/* Dark mode: use lighter color for links */
+[data-md-color-scheme="slate"] {
+  --md-typeset-a-color: var(--brand-primary-light);
+}
+
+/* Logo sizing */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.6rem;
+}
