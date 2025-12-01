@@ -1,0 +1,3647 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Template-driven HAProxy Ingress Controller for Kubernetes">
+      
+      
+      
+        <link rel="canonical" href="https://haproxy-template-ic.github.io/controller/watching-resources/">
+      
+      
+        <link rel="prev" href="../crd-reference/">
+      
+      
+        <link rel="next" href="../validation-tests/">
+      
+      
+        
+          <link rel="alternate" href="https://haproxy-template-ic.github.io/helm-chart/latest/" hreflang="helm">
+        
+      
+      
+      <link rel="icon" href="../assets/logo-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.0">
+    
+    
+      
+        <title>Watching Resources - HAProxy Template IC</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.618322db.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="light-blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#watched-resources-configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="HAProxy Template IC" class="md-header__button md-logo" aria-label="HAProxy Template IC" data-md-component="logo">
+      
+  <img src="../assets/logo-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HAProxy Template IC
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Watching Resources
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="light-blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="light-blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="https://haproxy-template-ic.github.io/helm-chart/latest/" hreflang="helm" class="md-select__link">
+              Helm Chart Docs
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HAProxy-Template-IC/haproxy-template-ingress-controller
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="HAProxy Template IC" class="md-nav__button md-logo" aria-label="HAProxy Template IC" data-md-component="logo">
+      
+  <img src="../assets/logo-icon.svg" alt="logo">
+
+    </a>
+    HAProxy Template IC
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HAProxy-Template-IC/haproxy-template-ingress-controller
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../templating/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Templating
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crd-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CRD Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Watching Resources
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Watching Resources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#understanding-store-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understanding Store Types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Store
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Store">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-memory-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use Memory Store
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cached-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cached Store
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cached Store">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-cached-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use Cached Store
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trade-offs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trade-offs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#indexing-with-index_by" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing with index_by
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Indexing with index_by">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#understanding-indexing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understanding Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-indexing-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common Indexing Patterns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Common Indexing Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pattern-1-by-namespace-and-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pattern 1: By Namespace and Name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pattern-2-by-service-name-for-endpointslices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pattern 2: By Service Name (for EndpointSlices)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pattern-3-by-type-for-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pattern 3: By Type (for Secrets)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pattern-4-single-key-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pattern 4: Single Key Index
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-index-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing Index Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-unique-indexes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Unique Indexes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accessing-resources-in-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accessing Resources in Templates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Accessing Resources in Templates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-resources-variable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The resources Variable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-list-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using List() Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-fetch-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using Fetch() Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method Comparison
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getsingle-helper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GetSingle() Helper
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-implications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Implications
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance Implications">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#memory-usage_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-rendering-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Rendering Time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kubernetes-api-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubernetes API Load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance-recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Recommendations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-the-right-store-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing the Right Store Type
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Choosing the Right Store Type">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#use-memory-store-when" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Memory Store When:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-cached-store-when" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Cached Store When:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision Matrix
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixed-store-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixed Store Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-1-standard-ingress-controller-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 1: Standard Ingress Controller Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-2-authentication-with-cached-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 2: Authentication with Cached Secrets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-3-tls-certificates-with-cached-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 3: TLS Certificates with Cached Store
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-4-namespace-restricted-watching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 4: Namespace-Restricted Watching
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#store-returns-empty-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Store Returns Empty Results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#high-memory-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        High Memory Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slow-template-rendering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slow Template Rendering
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-miss-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache Miss Debugging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-misconfigurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common Misconfigurations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../validation-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../supported-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/high-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    High Availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/architecture-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/package-structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/sequence-diagrams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sequence Diagrams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Components
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Components
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/leader-election/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Leader Election
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/introspection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introspection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/crd-validation-design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CRD Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/design-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Decisions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/considerations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Considerations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/design/appendices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Appendices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/linting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Linting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#understanding-store-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understanding Store Types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Store
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Store">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-memory-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use Memory Store
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cached-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cached Store
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cached Store">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-cached-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use Cached Store
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trade-offs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trade-offs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#indexing-with-index_by" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing with index_by
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Indexing with index_by">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#understanding-indexing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understanding Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-indexing-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common Indexing Patterns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Common Indexing Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pattern-1-by-namespace-and-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pattern 1: By Namespace and Name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pattern-2-by-service-name-for-endpointslices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pattern 2: By Service Name (for EndpointSlices)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pattern-3-by-type-for-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pattern 3: By Type (for Secrets)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pattern-4-single-key-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pattern 4: Single Key Index
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-index-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing Index Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-unique-indexes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Unique Indexes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accessing-resources-in-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accessing Resources in Templates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Accessing Resources in Templates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-resources-variable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The resources Variable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-list-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using List() Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-fetch-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using Fetch() Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method Comparison
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getsingle-helper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GetSingle() Helper
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-implications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Implications
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance Implications">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#memory-usage_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-rendering-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Rendering Time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kubernetes-api-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubernetes API Load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance-recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Recommendations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-the-right-store-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing the Right Store Type
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Choosing the Right Store Type">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#use-memory-store-when" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Memory Store When:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-cached-store-when" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Cached Store When:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision Matrix
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixed-store-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixed Store Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-1-standard-ingress-controller-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 1: Standard Ingress Controller Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-2-authentication-with-cached-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 2: Authentication with Cached Secrets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-3-tls-certificates-with-cached-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 3: TLS Certificates with Cached Store
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-4-namespace-restricted-watching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 4: Namespace-Restricted Watching
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#store-returns-empty-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Store Returns Empty Results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#high-memory-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        High Memory Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slow-template-rendering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slow Template Rendering
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-miss-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache Miss Debugging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-misconfigurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common Misconfigurations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="watched-resources-configuration">Watched Resources Configuration<a class="headerlink" href="#watched-resources-configuration" title="Permanent link">&para;</a></h1>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>The <code>watched_resources</code> configuration determines which Kubernetes resources the controller monitors and how it stores them in memory. Each resource type you configure creates a watcher that tracks changes and maintains an indexed store for template access.</p>
+<p>This configuration is critical for:
+- <strong>Performance</strong>: Choosing the right storage strategy affects memory usage and template rendering speed
+- <strong>Functionality</strong>: Resources must be watched to be accessible in templates
+- <strong>Scalability</strong>: Proper store selection allows operation in memory-constrained environments</p>
+<p>The controller supports two storage strategies: <strong>memory store</strong> (full in-memory storage) and <strong>cached store</strong> (on-demand API-backed storage). Understanding when to use each is essential for optimal controller performance.</p>
+<p>For complete configuration syntax, see <a href="../configuration/#watched_resources">Configuration Reference</a>.</p>
+<h2 id="understanding-store-types">Understanding Store Types<a class="headerlink" href="#understanding-store-types" title="Permanent link">&para;</a></h2>
+<p>The controller provides two store implementations with different trade-offs:</p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Memory Store (<code>store: full</code> or default)</th>
+<th>Cached Store (<code>store: on-demand</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Storage</strong></td>
+<td>Complete resources in memory</td>
+<td>Only references in memory, resources fetched from API</td>
+</tr>
+<tr>
+<td><strong>Lookup Performance</strong></td>
+<td>O(1), instant</td>
+<td>O(1) with cache hit, API latency on cache miss</td>
+</tr>
+<tr>
+<td><strong>Memory Usage</strong></td>
+<td>~1KB per resource</td>
+<td>Minimal (only references + cache)</td>
+</tr>
+<tr>
+<td><strong>API Load</strong></td>
+<td>Initial list only</td>
+<td>Initial list + fetch on cache miss</td>
+</tr>
+<tr>
+<td><strong>Best For</strong></td>
+<td>Iterating over all resources</td>
+<td>Selective resource access</td>
+</tr>
+<tr>
+<td><strong>Template Method</strong></td>
+<td><code>.List()</code> efficient</td>
+<td><code>.Fetch()</code> efficient</td>
+</tr>
+</tbody>
+</table>
+<p><strong>How they work:</strong></p>
+<p><strong>Memory Store</strong>: When a resource changes, the watcher stores the complete resource object in memory. Template rendering accesses this in-memory copy directly.</p>
+<p><strong>Cached Store</strong>: When a resource changes, the watcher stores only a reference (namespace + name + index keys). When a template accesses the resource via <code>.Fetch()</code>, the store checks its TTL cache. On cache miss, it fetches from the Kubernetes API and caches the result.</p>
+<h2 id="memory-store">Memory Store<a class="headerlink" href="#memory-store" title="Permanent link">&para;</a></h2>
+<p>The memory store is the default storage strategy. It keeps complete resource objects in memory for fast access.</p>
+<h3 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h3>
+<p>When you configure a resource with memory store:</p>
+<ol>
+<li>The watcher performs an initial list operation to load all existing resources</li>
+<li>Each resource is stored completely in memory after field filtering</li>
+<li>Resources are indexed using the <code>index_by</code> configuration for O(1) lookups</li>
+<li>Real-time changes (add/update/delete) update the in-memory store</li>
+<li>Template rendering accesses resources directly from memory</li>
+</ol>
+<h3 id="when-to-use-memory-store">When to Use Memory Store<a class="headerlink" href="#when-to-use-memory-store" title="Permanent link">&para;</a></h3>
+<p>Use memory store when you will:
+- <strong>Iterate over all resources</strong> frequently (e.g., generating map files with all ingresses)
+- <strong>Access most resources</strong> during each template render
+- <strong>Need fastest template rendering</strong> (no API latency)
+- Work with <strong>small to medium resources</strong> (Ingress, Service, EndpointSlice)</p>
+<p><strong>Example use cases:</strong>
+- Ingress resources for generating HAProxy routing rules
+- Service resources for backend configuration
+- EndpointSlice resources for dynamic server lists
+- ConfigMap resources for configuration snippets</p>
+<h3 id="memory-usage">Memory Usage<a class="headerlink" href="#memory-usage" title="Permanent link">&para;</a></h3>
+<p>Approximate memory usage per resource:
+- <strong>Ingress</strong>: ~1-2 KB (depends on number of rules and paths)
+- <strong>Service</strong>: ~1 KB (simple services) to ~5 KB (many ports/annotations)
+- <strong>EndpointSlice</strong>: ~2-5 KB (depends on number of endpoints)
+- <strong>ConfigMap/Secret</strong>: ~1 KB + data size</p>
+<p><strong>Example</strong>: 1000 Ingress resources ≈ 1-2 MB memory</p>
+<h3 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h3>
+<p>Configure memory store explicitly or use the default:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="c1"># Memory store is the default</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">full</span><span class="w">  </span><span class="c1"># Optional - this is the default</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Service</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="c1"># Omitting &#39;store&#39; uses memory store by default</span>
+</code></pre></div>
+<p>See <a href="../configuration/#watched_resources">Configuration Reference</a> for complete field descriptions.</p>
+<h2 id="cached-store">Cached Store<a class="headerlink" href="#cached-store" title="Permanent link">&para;</a></h2>
+<p>The cached store minimizes memory usage by storing only resource references and fetching complete resources on-demand from the Kubernetes API.</p>
+<h3 id="how-it-works_1">How It Works<a class="headerlink" href="#how-it-works_1" title="Permanent link">&para;</a></h3>
+<p>When you configure a resource with cached store:</p>
+<ol>
+<li>The watcher performs an initial list operation to discover resources</li>
+<li>Only references are stored (namespace, name, and index keys)</li>
+<li>Resources are indexed using the <code>index_by</code> configuration</li>
+<li>When a template calls <code>.Fetch()</code>, the store checks its TTL cache</li>
+<li>On cache miss, the store fetches the resource from the Kubernetes API</li>
+<li>Fetched resources are cached for the configured TTL duration</li>
+<li>Real-time changes update the reference index but don't fetch the full resource</li>
+</ol>
+<h3 id="when-to-use-cached-store">When to Use Cached Store<a class="headerlink" href="#when-to-use-cached-store" title="Permanent link">&para;</a></h3>
+<p>Use cached store when you will:
+- <strong>Access resources selectively</strong> (e.g., fetch specific secrets by name)
+- Work with <strong>large resources</strong> (Secrets with certificate data, large ConfigMaps)
+- Need to <strong>minimize memory usage</strong> (hundreds of secrets or large data)
+- Can tolerate <strong>API latency</strong> on cache misses</p>
+<p><strong>Example use cases:</strong>
+- Secrets containing TLS certificates (large PEM data)
+- Secrets for authentication (accessed by annotation reference)
+- ConfigMaps with large configuration data
+- Resources accessed conditionally in templates</p>
+<h3 id="trade-offs">Trade-offs<a class="headerlink" href="#trade-offs" title="Permanent link">&para;</a></h3>
+<p><strong>Benefits:</strong>
+- Minimal memory footprint (only references + cache)
+- Suitable for large resource types
+- Cache reduces API calls for frequently accessed resources</p>
+<p><strong>Costs:</strong>
+- API latency on cache misses (typically 10-50ms)
+- Additional load on Kubernetes API server
+- Slightly slower template rendering when cache misses occur</p>
+<h3 id="configuration_1">Configuration<a class="headerlink" href="#configuration_1" title="Permanent link">&para;</a></h3>
+<p>Configure cached store with the <code>store: on-demand</code> setting:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-demand</span><span class="w">  </span><span class="c1"># Use cached store</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2m10s</span><span class="w">  </span><span class="c1"># Optional: cache duration (default: 2m10s)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Cache TTL considerations:</strong>
+- <strong>Shorter TTL</strong> (1-2 minutes): More API calls, fresher data
+- <strong>Longer TTL</strong> (5-10 minutes): Fewer API calls, may show stale data between template renders
+- <strong>Default</strong> (2m10s): Balanced approach for most use cases</p>
+<p>See <a href="../configuration/#watched_resources">Configuration Reference</a> for complete field descriptions.</p>
+<h2 id="indexing-with-index_by">Indexing with index_by<a class="headerlink" href="#indexing-with-index_by" title="Permanent link">&para;</a></h2>
+<p>The <code>index_by</code> configuration determines how resources are indexed for lookups and what parameters the <code>.Fetch()</code> method expects in templates.</p>
+<h3 id="understanding-indexing">Understanding Indexing<a class="headerlink" href="#understanding-indexing" title="Permanent link">&para;</a></h3>
+<p>Resources are indexed using composite keys constructed from JSONPath expressions. This enables O(1) lookup performance for specific resources.</p>
+<p><strong>Example</strong>: Indexing by namespace and name:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div></p>
+<p>Creates composite keys like:
+- <code>default/my-ingress</code> → [Ingress resource]
+- <code>production/api-gateway</code> → [Ingress resource]</p>
+<p><strong>How lookups work:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>{# In templates, Fetch() parameters match index_by order #}
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>{% for ingress in resources.ingresses.Fetch(&quot;default&quot;, &quot;my-ingress&quot;) %}
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  {# Returns the specific ingress #}
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>{% endfor %}
+</code></pre></div></p>
+<h3 id="common-indexing-patterns">Common Indexing Patterns<a class="headerlink" href="#common-indexing-patterns" title="Permanent link">&para;</a></h3>
+<h4 id="pattern-1-by-namespace-and-name">Pattern 1: By Namespace and Name<a class="headerlink" href="#pattern-1-by-namespace-and-name" title="Permanent link">&para;</a></h4>
+<p><strong>Most common pattern</strong> for standard Kubernetes resources:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Use when:</strong>
+- Looking up specific resources by namespace and name
+- Standard resource types (Ingress, Service, ConfigMap, Secret)</p>
+<p><strong>Template usage:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>{# Fetch specific ingress #}
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>{% for ingress in resources.ingresses.Fetch(&quot;default&quot;, &quot;my-app&quot;) %}
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  {# Process specific ingress #}
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>{% endfor %}
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>{# Fetch all in namespace #}
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>{% for ingress in resources.ingresses.Fetch(&quot;default&quot;) %}
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>  {# Process all ingresses in &#39;default&#39; namespace #}
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>{% endfor %}
+</code></pre></div></p>
+<p>See <a href="../configuration/#watched_resources">Configuration Reference</a> for <code>index_by</code> syntax.</p>
+<h4 id="pattern-2-by-service-name-for-endpointslices">Pattern 2: By Service Name (for EndpointSlices)<a class="headerlink" href="#pattern-2-by-service-name-for-endpointslices" title="Permanent link">&para;</a></h4>
+<p><strong>Essential pattern</strong> for mapping services to endpoints:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">endpoints</span><span class="p">:</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">discovery.k8s.io/v1</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EndpointSlice</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.labels.kubernetes\\.io/service-name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Why this works</strong>: EndpointSlices are labeled with <code>kubernetes.io/service-name</code>, allowing O(1) lookup of all endpoint slices for a service.</p>
+<p><strong>Template usage:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>{# In ingress loop, extract service name #}
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>{% set service_name = path.backend.service.name %}
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>{# Fetch all endpoint slices for this service #}
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>{% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>  {# Generate server entries from endpoints #}
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>  {% for endpoint in (endpoint_slice.endpoints | default([])) %}
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    {% for address in (endpoint.addresses | default([])) %}
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>      server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    {% endfor %}
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>  {% endfor %}
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>{% endfor %}
+</code></pre></div></p>
+<p>This is the <strong>most important cross-resource lookup pattern</strong> in HAProxy configurations.</p>
+<p>See <a href="../configuration/#index_by">Configuration Reference</a> for label selector syntax.</p>
+<h4 id="pattern-3-by-type-for-secrets">Pattern 3: By Type (for Secrets)<a class="headerlink" href="#pattern-3-by-type-for-secrets" title="Permanent link">&para;</a></h4>
+<p><strong>Useful pattern</strong> for grouping secrets by type:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-demand</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;type&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Template usage:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>{# Fetch all TLS secrets in namespace #}
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>{% for secret in resources.secrets.Fetch(&quot;default&quot;, &quot;kubernetes.io/tls&quot;) %}
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>  {# Generate SSL certificate files #}
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>{% endfor %}
+</code></pre></div></p>
+<h4 id="pattern-4-single-key-index">Pattern 4: Single Key Index<a class="headerlink" href="#pattern-4-single-key-index" title="Permanent link">&para;</a></h4>
+<p><strong>Simplified pattern</strong> when resources are uniquely identified by one field:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">configmaps</span><span class="p">:</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ConfigMap</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">haproxy-system</span><span class="w">  </span><span class="c1"># Watch single namespace</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Template usage:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>{# Fetch by name only (namespace is implicit) #}
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>{% for cm in resources.configmaps.Fetch(&quot;error-pages&quot;) %}
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>  {# Use configmap data #}
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>{% endfor %}
+</code></pre></div></p>
+<h3 id="choosing-index-strategy">Choosing Index Strategy<a class="headerlink" href="#choosing-index-strategy" title="Permanent link">&para;</a></h3>
+<p>Consider these questions when choosing <code>index_by</code>:</p>
+<ol>
+<li><strong>How will you look up resources in templates?</strong></li>
+<li>By namespace + name → Use both in <code>index_by</code></li>
+<li>By label value → Use label in <code>index_by</code></li>
+<li>
+<p>By type → Include type in <code>index_by</code></p>
+</li>
+<li>
+<p><strong>What cross-resource relationships exist?</strong></p>
+</li>
+<li>Service → Endpoints: Index endpoints by service name label</li>
+<li>
+<p>Ingress → Secret: Index secrets by namespace + name</p>
+</li>
+<li>
+<p><strong>Is the index unique or non-unique?</strong></p>
+</li>
+<li>Unique (namespace + name): Returns 0 or 1 resource</li>
+<li>Non-unique (service name): Returns 0+ resources</li>
+</ol>
+<p><strong>Example decision</strong>: For EndpointSlices, you need to find all slices for a service name. Index by the service name label (non-unique) rather than namespace + name (unique).</p>
+<p>See <a href="../configuration/#index_by">Configuration Reference</a> for additional indexing examples.</p>
+<h3 id="non-unique-indexes">Non-Unique Indexes<a class="headerlink" href="#non-unique-indexes" title="Permanent link">&para;</a></h3>
+<p>Some index configurations intentionally map multiple resources to the same key:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Multiple endpoint slices can have the same service-name label</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.labels.kubernetes\\.io/service-name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Result</strong>: <code>.Fetch("my-service")</code> returns all endpoint slices labeled with <code>my-service</code>.</p>
+<p>This is the correct behavior for one-to-many relationships.</p>
+<h2 id="accessing-resources-in-templates">Accessing Resources in Templates<a class="headerlink" href="#accessing-resources-in-templates" title="Permanent link">&para;</a></h2>
+<p>Resources are accessed in templates through the <code>resources</code> variable, which contains stores for all configured resource types.</p>
+<h3 id="the-resources-variable">The resources Variable<a class="headerlink" href="#the-resources-variable" title="Permanent link">&para;</a></h3>
+<p>The <code>resources</code> variable structure matches your <code>watched_resources</code> configuration:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Configuration</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nv">...</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nv">...</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span><span class="nt">endpoints</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nv">...</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nv">...</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>{# Template access #}
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>{{ resources.ingresses }}  {# Store for ingresses #}
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>{{ resources.services }}   {# Store for services #}
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>{{ resources.endpoints }}  {# Store for endpoints #}
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>{{ resources.secrets }}    {# Store for secrets #}
+</code></pre></div>
+<p>Each store provides two methods: <code>.List()</code> and <code>.Fetch()</code>.</p>
+<h3 id="using-list-method">Using List() Method<a class="headerlink" href="#using-list-method" title="Permanent link">&para;</a></h3>
+<p>The <code>.List()</code> method returns all resources in the store.</p>
+<p><strong>Best for:</strong>
+- Iterating over all resources
+- Generating configuration for every resource
+- Counting total resources
+- Memory store (efficient)</p>
+<p><strong>Example - Generate routing map for all ingresses:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>{# maps/host.map template #}
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>{% for ingress in resources.ingresses.List() %}
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>  {% for rule in (ingress.spec.rules | default([])) %}
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>    {{ rule.host }} backend_{{ ingress.metadata.name }}
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>  {% endfor %}
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>{% endfor %}
+</code></pre></div></p>
+<p><strong>Example - Count resources:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>{# Total ingresses: {{ resources.ingresses.List() | length }} #}
+</code></pre></div></p>
+<p><strong>Performance note</strong>: With memory store, <code>.List()</code> returns in-memory objects (fast). With cached store, <code>.List()</code> still returns references, but template rendering will trigger fetches for each resource (slower).</p>
+<h3 id="using-fetch-method">Using Fetch() Method<a class="headerlink" href="#using-fetch-method" title="Permanent link">&para;</a></h3>
+<p>The <code>.Fetch()</code> method returns resources matching index keys.</p>
+<p><strong>Best for:</strong>
+- Looking up specific resources
+- Cross-resource relationships (service → endpoints)
+- Conditional resource access
+- Cached store (efficient)</p>
+<p><strong>Parameters</strong>: Match the <code>index_by</code> configuration order.</p>
+<p><strong>Example - Fetch specific ingress:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Configuration</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>{# Template #}
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>{% for ingress in resources.ingresses.Fetch(&quot;default&quot;, &quot;my-app&quot;) %}
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>  {# Usually returns 0 or 1 items #}
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>{% endfor %}
+</code></pre></div>
+<p><strong>Example - Fetch all in namespace:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>{# Partial key match - returns all in namespace #}
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>{% for ingress in resources.ingresses.Fetch(&quot;default&quot;) %}
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>  {# All ingresses in &#39;default&#39; namespace #}
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>{% endfor %}
+</code></pre></div></p>
+<p><strong>Example - Cross-resource lookup:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>{# Get endpoints for a service #}
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>{% set service_name = path.backend.service.name %}
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>{% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>  {# All endpoint slices for this service #}
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>{% endfor %}
+</code></pre></div></p>
+<p><strong>Performance note</strong>: With cached store, <code>.Fetch()</code> uses the cache effectively. Only fetches from API on cache miss.</p>
+<h3 id="method-comparison">Method Comparison<a class="headerlink" href="#method-comparison" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Memory Store</th>
+<th>Cached Store</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.List()</code></td>
+<td>Fast (in-memory)</td>
+<td>Slow (fetches all)</td>
+<td>Iterate over all resources</td>
+</tr>
+<tr>
+<td><code>.Fetch(keys)</code></td>
+<td>Fast (indexed lookup)</td>
+<td>Fast (cached/on-demand)</td>
+<td>Lookup specific resources</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rule of thumb:</strong>
+- Use <code>.List()</code> when you need most or all resources
+- Use <code>.Fetch()</code> when you need specific resources
+- With memory store, both are fast
+- With cached store, prefer <code>.Fetch()</code> for selective access</p>
+<h3 id="getsingle-helper">GetSingle() Helper<a class="headerlink" href="#getsingle-helper" title="Permanent link">&para;</a></h3>
+<p>For convenience, stores also provide <code>.GetSingle()</code> which returns a single resource or <code>null</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>{# Instead of looping #}
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>{% set secret = resources.secrets.GetSingle(&quot;default&quot;, &quot;my-secret&quot;) %}
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>{% if secret %}
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>  {{ secret.data.password | b64decode }}
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>{% endif %}
+</code></pre></div>
+<p>This is equivalent to:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>{% for secret in resources.secrets.Fetch(&quot;default&quot;, &quot;my-secret&quot;) %}
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>  {{ secret.data.password | b64decode }}
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>{% endfor %}
+</code></pre></div></p>
+<p>See <a href="../templating/#using-list-method">Templating Guide</a> for more template patterns.</p>
+<h2 id="performance-implications">Performance Implications<a class="headerlink" href="#performance-implications" title="Permanent link">&para;</a></h2>
+<p>The choice between memory and cached stores affects multiple performance dimensions:</p>
+<h3 id="memory-usage_1">Memory Usage<a class="headerlink" href="#memory-usage_1" title="Permanent link">&para;</a></h3>
+<p><strong>Memory Store:</strong>
+- <strong>Per-resource overhead</strong>: 1-10 KB depending on resource type
+- <strong>Total usage</strong>: Number of resources × average size
+- <strong>Example</strong>: 1000 ingresses × 1.5 KB = 1.5 MB</p>
+<p><strong>Cached Store:</strong>
+- <strong>Per-reference overhead</strong>: ~100 bytes (namespace, name, index keys)
+- <strong>Cache overhead</strong>: Cache size × average resource size
+- <strong>Example</strong>: 1000 secret references × 100 bytes = 100 KB (plus cache)</p>
+<p><strong>Memory savings example:</strong>
+- 1000 secrets with 10 KB certificates each
+- Memory store: 10 MB
+- Cached store: 100 KB + cache (bounded by cache_ttl and access patterns)</p>
+<h3 id="template-rendering-time">Template Rendering Time<a class="headerlink" href="#template-rendering-time" title="Permanent link">&para;</a></h3>
+<p><strong>Memory Store:</strong>
+- <code>.List()</code>: &lt;1ms (return in-memory slice)
+- <code>.Fetch()</code>: &lt;1ms (indexed lookup)
+- <strong>No API calls during rendering</strong></p>
+<p><strong>Cached Store:</strong>
+- <code>.List()</code>: Triggers fetch for all resources (slow)
+- <code>.Fetch()</code> with cache hit: &lt;1ms (cached lookup)
+- <code>.Fetch()</code> with cache miss: 10-50ms (API call)
+- <strong>API calls add latency</strong></p>
+<p><strong>Rendering time example:</strong>
+- Template accessing 10 secrets
+- Memory store: ~1ms total
+- Cached store (all cached): ~1ms total
+- Cached store (all misses): ~100-500ms total</p>
+<h3 id="kubernetes-api-load">Kubernetes API Load<a class="headerlink" href="#kubernetes-api-load" title="Permanent link">&para;</a></h3>
+<p><strong>Memory Store:</strong>
+- <strong>Initial sync</strong>: Single list operation per resource type
+- <strong>Updates</strong>: Watch events only (efficient)
+- <strong>Template rendering</strong>: No API calls</p>
+<p><strong>Cached Store:</strong>
+- <strong>Initial sync</strong>: Single list operation (same as memory)
+- <strong>Updates</strong>: Watch events only (same as memory)
+- <strong>Template rendering</strong>: API calls on cache misses
+- <strong>Additional load</strong>: Depends on cache hit rate</p>
+<p><strong>API call estimation:</strong>
+- 100 template renders per minute
+- 10 secrets accessed per render
+- 50% cache hit rate
+- API calls: 100 × 10 × 0.5 = 500 per minute</p>
+<h3 id="performance-recommendations">Performance Recommendations<a class="headerlink" href="#performance-recommendations" title="Permanent link">&para;</a></h3>
+<p><strong>Optimize for memory store:</strong>
+- Use field filtering to remove unnecessary data (see configuration.md#watched_resources_ignore_fields)
+- Watch only necessary namespaces
+- Use label selectors to limit resource count</p>
+<p><strong>Optimize for cached store:</strong>
+- Set appropriate cache TTL (balance freshness vs API load)
+- Use <code>.Fetch()</code> instead of <code>.List()</code> in templates
+- Access resources conditionally (don't fetch unless needed)
+- Consider cache pre-warming for frequently accessed resources</p>
+<h2 id="choosing-the-right-store-type">Choosing the Right Store Type<a class="headerlink" href="#choosing-the-right-store-type" title="Permanent link">&para;</a></h2>
+<p>Use this decision guide to select the appropriate store type for each resource:</p>
+<h3 id="use-memory-store-when">Use Memory Store When:<a class="headerlink" href="#use-memory-store-when" title="Permanent link">&para;</a></h3>
+<ul>
+<li>✅ Resources are small to medium size (&lt;10 KB)</li>
+<li>✅ You iterate over most/all resources in templates</li>
+<li>✅ You need fastest possible template rendering</li>
+<li>✅ Memory is not constrained</li>
+<li>✅ Resource count is manageable (&lt;10,000)</li>
+</ul>
+<p><strong>Common resources for memory store:</strong>
+- Ingress resources
+- Service resources
+- EndpointSlice resources
+- Small ConfigMap resources
+- Deployment/Pod resources (if watching)</p>
+<h3 id="use-cached-store-when">Use Cached Store When:<a class="headerlink" href="#use-cached-store-when" title="Permanent link">&para;</a></h3>
+<ul>
+<li>✅ Resources are large (&gt;10 KB)</li>
+<li>✅ You access resources selectively by key</li>
+<li>✅ Memory is constrained</li>
+<li>✅ Resource count is high (&gt;1,000)</li>
+<li>✅ Can tolerate API latency on cache misses</li>
+</ul>
+<p><strong>Common resources for cached store:</strong>
+- Secrets containing certificates (large PEM data)
+- Secrets for authentication (selective access via annotations)
+- Large ConfigMap resources
+- Resources with high volume but infrequent access</p>
+<h3 id="decision-matrix">Decision Matrix<a class="headerlink" href="#decision-matrix" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Resource Type</th>
+<th>Typical Size</th>
+<th>Access Pattern</th>
+<th>Recommended Store</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ingress</td>
+<td>1-2 KB</td>
+<td>Iterate all</td>
+<td>Memory</td>
+</tr>
+<tr>
+<td>Service</td>
+<td>1-5 KB</td>
+<td>Iterate all</td>
+<td>Memory</td>
+</tr>
+<tr>
+<td>EndpointSlice</td>
+<td>2-5 KB</td>
+<td>Lookup by service</td>
+<td>Memory</td>
+</tr>
+<tr>
+<td>Secret (TLS)</td>
+<td>5-20 KB</td>
+<td>Lookup by name</td>
+<td>Cached</td>
+</tr>
+<tr>
+<td>Secret (auth)</td>
+<td>&lt;1 KB</td>
+<td>Lookup by annotation</td>
+<td>Cached</td>
+</tr>
+<tr>
+<td>ConfigMap (small)</td>
+<td>&lt;5 KB</td>
+<td>Iterate all</td>
+<td>Memory</td>
+</tr>
+<tr>
+<td>ConfigMap (large)</td>
+<td>&gt;10 KB</td>
+<td>Selective access</td>
+<td>Cached</td>
+</tr>
+</tbody>
+</table>
+<h3 id="mixed-store-configuration">Mixed Store Configuration<a class="headerlink" href="#mixed-store-configuration" title="Permanent link">&para;</a></h3>
+<p>You can use different stores for different resource types:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="c1"># High-frequency access, small resources</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">full</span><span class="w">  </span><span class="c1"># Memory store</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Service</span>
+<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">full</span><span class="w">  </span><span class="c1"># Memory store</span>
+<a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>
+<a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a><span class="w">  </span><span class="nt">endpoints</span><span class="p">:</span>
+<a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">discovery.k8s.io/v1</span>
+<a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EndpointSlice</span>
+<a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">full</span><span class="w">  </span><span class="c1"># Memory store</span>
+<a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.labels.kubernetes\\.io/service-name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a>
+<a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="w">  </span><span class="c1"># Selective access, large resources</span>
+<a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-demand</span><span class="w">  </span><span class="c1"># Cached store</span>
+<a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a><span class="w">    </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2m</span>
+<a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>This is the recommended approach for most deployments.</p>
+<p>See <a href="../configuration/#watched_resources">Configuration Reference</a> for complete configuration options.</p>
+<h2 id="configuration-examples">Configuration Examples<a class="headerlink" href="#configuration-examples" title="Permanent link">&para;</a></h2>
+<h3 id="example-1-standard-ingress-controller-configuration">Example 1: Standard Ingress Controller Configuration<a class="headerlink" href="#example-1-standard-ingress-controller-configuration" title="Permanent link">&para;</a></h3>
+<p>Typical configuration for an ingress controller with memory store:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="w">    </span><span class="c1"># Memory store (default)</span>
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Service</span>
+<a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a>
+<a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="w">  </span><span class="nt">endpoints</span><span class="p">:</span>
+<a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">discovery.k8s.io/v1</span>
+<a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EndpointSlice</span>
+<a id="__codelineno-24-16" name="__codelineno-24-16" href="#__codelineno-24-16"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.labels.kubernetes\\.io/service-name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Template usage:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>{# Generate backends with dynamic servers #}
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>{% for ingress in resources.ingresses.List() %}
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>  {% for rule in (ingress.spec.rules | default([])) %}
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>    {% for path in (rule.http.paths | default([])) %}
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>      {% set service_name = path.backend.service.name %}
+<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>      {% set port = path.backend.service.port.number %}
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a>
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>      backend ing_{{ ingress.metadata.name }}_{{ service_name }}
+<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>        balance roundrobin
+<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a>        {# Cross-resource lookup: service → endpoints #}
+<a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a>        {% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+<a id="__codelineno-25-12" name="__codelineno-25-12" href="#__codelineno-25-12"></a>          {% for endpoint in (endpoint_slice.endpoints | default([])) %}
+<a id="__codelineno-25-13" name="__codelineno-25-13" href="#__codelineno-25-13"></a>            {% for address in (endpoint.addresses | default([])) %}
+<a id="__codelineno-25-14" name="__codelineno-25-14" href="#__codelineno-25-14"></a>              server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
+<a id="__codelineno-25-15" name="__codelineno-25-15" href="#__codelineno-25-15"></a>            {% endfor %}
+<a id="__codelineno-25-16" name="__codelineno-25-16" href="#__codelineno-25-16"></a>          {% endfor %}
+<a id="__codelineno-25-17" name="__codelineno-25-17" href="#__codelineno-25-17"></a>        {% endfor %}
+<a id="__codelineno-25-18" name="__codelineno-25-18" href="#__codelineno-25-18"></a>    {% endfor %}
+<a id="__codelineno-25-19" name="__codelineno-25-19" href="#__codelineno-25-19"></a>  {% endfor %}
+<a id="__codelineno-25-20" name="__codelineno-25-20" href="#__codelineno-25-20"></a>{% endfor %}
+</code></pre></div></p>
+<h3 id="example-2-authentication-with-cached-secrets">Example 2: Authentication with Cached Secrets<a class="headerlink" href="#example-2-authentication-with-cached-secrets" title="Permanent link">&para;</a></h3>
+<p>Configuration using cached store for authentication secrets:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>
+<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="w">  </span><span class="c1"># Secrets accessed selectively via annotations</span>
+<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-26-11" name="__codelineno-26-11" href="#__codelineno-26-11"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-demand</span><span class="w">  </span><span class="c1"># Cached store</span>
+<a id="__codelineno-26-12" name="__codelineno-26-12" href="#__codelineno-26-12"></a><span class="w">    </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5m</span>
+<a id="__codelineno-26-13" name="__codelineno-26-13" href="#__codelineno-26-13"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Template usage:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>{# Generate userlist sections for basic auth #}
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>{% set ns = namespace(processed=[]) %}
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>{% for ingress in resources.ingresses.List() %}
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>  {% set auth_type = ingress.metadata.annotations[&quot;haproxy.org/auth-type&quot;] | default(&quot;&quot;) %}
+<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>  {% if auth_type == &quot;basic-auth&quot; %}
+<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a>    {% set auth_secret = ingress.metadata.annotations[&quot;haproxy.org/auth-secret&quot;] | default(&quot;&quot;) %}
+<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a>    {% if auth_secret and auth_secret not in ns.processed %}
+<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a>      {% set ns.processed = ns.processed + [auth_secret] %}
+<a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a>
+<a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a>      {# Parse namespace/name from annotation #}
+<a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a>      {% if &quot;/&quot; in auth_secret %}
+<a id="__codelineno-27-12" name="__codelineno-27-12" href="#__codelineno-27-12"></a>        {% set secret_ns = auth_secret.split(&quot;/&quot;)[0] %}
+<a id="__codelineno-27-13" name="__codelineno-27-13" href="#__codelineno-27-13"></a>        {% set secret_name = auth_secret.split(&quot;/&quot;)[1] %}
+<a id="__codelineno-27-14" name="__codelineno-27-14" href="#__codelineno-27-14"></a>      {% else %}
+<a id="__codelineno-27-15" name="__codelineno-27-15" href="#__codelineno-27-15"></a>        {% set secret_ns = ingress.metadata.namespace %}
+<a id="__codelineno-27-16" name="__codelineno-27-16" href="#__codelineno-27-16"></a>        {% set secret_name = auth_secret %}
+<a id="__codelineno-27-17" name="__codelineno-27-17" href="#__codelineno-27-17"></a>      {% endif %}
+<a id="__codelineno-27-18" name="__codelineno-27-18" href="#__codelineno-27-18"></a>
+<a id="__codelineno-27-19" name="__codelineno-27-19" href="#__codelineno-27-19"></a>      {# Fetch specific secret (cached or API call) #}
+<a id="__codelineno-27-20" name="__codelineno-27-20" href="#__codelineno-27-20"></a>      {% set secret = resources.secrets.GetSingle(secret_ns, secret_name) %}
+<a id="__codelineno-27-21" name="__codelineno-27-21" href="#__codelineno-27-21"></a>      {% if secret %}
+<a id="__codelineno-27-22" name="__codelineno-27-22" href="#__codelineno-27-22"></a>        userlist auth_{{ secret_ns }}_{{ secret_name }}
+<a id="__codelineno-27-23" name="__codelineno-27-23" href="#__codelineno-27-23"></a>        {% for username in secret.data | default({}) %}
+<a id="__codelineno-27-24" name="__codelineno-27-24" href="#__codelineno-27-24"></a>          user {{ username }} password {{ secret.data[username] | b64decode }}
+<a id="__codelineno-27-25" name="__codelineno-27-25" href="#__codelineno-27-25"></a>        {% endfor %}
+<a id="__codelineno-27-26" name="__codelineno-27-26" href="#__codelineno-27-26"></a>      {% endif %}
+<a id="__codelineno-27-27" name="__codelineno-27-27" href="#__codelineno-27-27"></a>    {% endif %}
+<a id="__codelineno-27-28" name="__codelineno-27-28" href="#__codelineno-27-28"></a>  {% endif %}
+<a id="__codelineno-27-29" name="__codelineno-27-29" href="#__codelineno-27-29"></a>{% endfor %}
+</code></pre></div></p>
+<p><strong>Why cached store here</strong>: Secrets are large and accessed selectively (only those referenced in annotations). Cached store minimizes memory usage.</p>
+<p>See <a href="../templating/#authentication-annotations">Templating Guide</a> for complete authentication examples.</p>
+<h3 id="example-3-tls-certificates-with-cached-store">Example 3: TLS Certificates with Cached Store<a class="headerlink" href="#example-3-tls-certificates-with-cached-store" title="Permanent link">&para;</a></h3>
+<p>Configuration for TLS certificates using cached store:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a><span class="w">  </span><span class="c1"># Large TLS secrets accessed conditionally</span>
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a><span class="w">  </span><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-28-9" name="__codelineno-28-9" href="#__codelineno-28-9"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-28-10" name="__codelineno-28-10" href="#__codelineno-28-10"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-28-11" name="__codelineno-28-11" href="#__codelineno-28-11"></a><span class="w">    </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-demand</span>
+<a id="__codelineno-28-12" name="__codelineno-28-12" href="#__codelineno-28-12"></a><span class="w">    </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10m</span><span class="w">  </span><span class="c1"># Longer TTL for certificates</span>
+<a id="__codelineno-28-13" name="__codelineno-28-13" href="#__codelineno-28-13"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Template usage:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>{# Generate SSL certificates from ingress TLS configuration #}
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>{% for ingress in resources.ingresses.List() %}
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>  {% if ingress.spec.tls %}
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a>    {% for tls in ingress.spec.tls %}
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a>      {% set secret_name = tls.secretName %}
+<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a>      {% set namespace = ingress.metadata.namespace %}
+<a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a>
+<a id="__codelineno-29-8" name="__codelineno-29-8" href="#__codelineno-29-8"></a>      {# Fetch TLS secret only if ingress has TLS #}
+<a id="__codelineno-29-9" name="__codelineno-29-9" href="#__codelineno-29-9"></a>      {% set secret = resources.secrets.GetSingle(namespace, secret_name) %}
+<a id="__codelineno-29-10" name="__codelineno-29-10" href="#__codelineno-29-10"></a>      {% if secret %}
+<a id="__codelineno-29-11" name="__codelineno-29-11" href="#__codelineno-29-11"></a>        {# SSL certificate content for {{ namespace }}/{{ secret_name }} #}
+<a id="__codelineno-29-12" name="__codelineno-29-12" href="#__codelineno-29-12"></a>        {{ secret.data[&quot;tls.crt&quot;] | b64decode }}
+<a id="__codelineno-29-13" name="__codelineno-29-13" href="#__codelineno-29-13"></a>        {{ secret.data[&quot;tls.key&quot;] | b64decode }}
+<a id="__codelineno-29-14" name="__codelineno-29-14" href="#__codelineno-29-14"></a>      {% endif %}
+<a id="__codelineno-29-15" name="__codelineno-29-15" href="#__codelineno-29-15"></a>    {% endfor %}
+<a id="__codelineno-29-16" name="__codelineno-29-16" href="#__codelineno-29-16"></a>  {% endif %}
+<a id="__codelineno-29-17" name="__codelineno-29-17" href="#__codelineno-29-17"></a>{% endfor %}
+</code></pre></div></p>
+<p><strong>Why cached store here</strong>: Certificate secrets are 5-20 KB each. Only ingresses with TLS need certificate data. Cached store avoids loading all certificates into memory.</p>
+<h3 id="example-4-namespace-restricted-watching">Example 4: Namespace-Restricted Watching<a class="headerlink" href="#example-4-namespace-restricted-watching" title="Permanent link">&para;</a></h3>
+<p>Watch resources only in specific namespaces:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="nt">watched_resources</span><span class="p">:</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="w">  </span><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="w">    </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">production</span><span class="w">  </span><span class="c1"># Only watch &#39;production&#39; namespace</span>
+<a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span><span class="w">  </span><span class="c1"># Single key (namespace is implicit)</span>
+<a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a>
+<a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a><span class="w">    </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a><span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Service</span>
+<a id="__codelineno-30-11" name="__codelineno-30-11" href="#__codelineno-30-11"></a><span class="w">    </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">production</span>
+<a id="__codelineno-30-12" name="__codelineno-30-12" href="#__codelineno-30-12"></a><span class="w">    </span><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><strong>Benefits:</strong>
+- Reduced memory usage (fewer resources)
+- Reduced API load (narrower watch scope)
+- Simplified indexing (single key)</p>
+<p><strong>Template usage:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>{# Fetch by name only (namespace is implicit) #}
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>{% for ingress in resources.ingresses.Fetch(&quot;api-gateway&quot;) %}
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>  {# ... #}
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>{% endfor %}
+</code></pre></div></p>
+<p>See <a href="../configuration/#namespace">Configuration Reference</a> for namespace restrictions.</p>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<h3 id="store-returns-empty-results">Store Returns Empty Results<a class="headerlink" href="#store-returns-empty-results" title="Permanent link">&para;</a></h3>
+<p><strong>Symptoms:</strong>
+- <code>.List()</code> returns empty array
+- <code>.Fetch()</code> returns no resources
+- Templates generate empty output</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+<li>
+<p><strong>Check if watcher has completed initial sync:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="c1"># Check controller logs for sync completion</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>kubectl<span class="w"> </span>logs<span class="w"> </span>deployment/haproxy-template-ic<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s2">&quot;initial sync complete&quot;</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Verify resources exist matching the watch configuration:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="c1"># Check if resources exist</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>kubectl<span class="w"> </span>get<span class="w"> </span>ingresses<span class="w"> </span>-A
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>
+<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="c1"># Check if resources match label selector (if configured)</span>
+<a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a>kubectl<span class="w"> </span>get<span class="w"> </span>ingresses<span class="w"> </span>-A<span class="w"> </span>-l<span class="w"> </span><span class="nv">app</span><span class="o">=</span>myapp
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Verify RBAC permissions:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="c1"># Check if service account can list resources</span>
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>kubectl<span class="w"> </span>auth<span class="w"> </span>can-i<span class="w"> </span>list<span class="w"> </span>ingresses<span class="w"> </span>--all-namespaces<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a><span class="w">  </span>--as<span class="o">=</span>system:serviceaccount:haproxy-system:haproxy-template-ic
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Check index_by configuration matches template usage:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="c1"># Configuration</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>{# Template must match index order #}
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>{% for ing in resources.ingresses.Fetch(&quot;default&quot;, &quot;my-app&quot;) %}
+</code></pre></div></p>
+</li>
+</ol>
+<p><strong>Solutions:</strong>
+- Wait for initial sync to complete
+- Verify resource selectors (namespace, labels)
+- Fix RBAC permissions
+- Align template <code>.Fetch()</code> calls with <code>index_by</code> configuration</p>
+<h3 id="high-memory-usage">High Memory Usage<a class="headerlink" href="#high-memory-usage" title="Permanent link">&para;</a></h3>
+<p><strong>Symptoms:</strong>
+- Controller pod OOMKilled
+- High resident memory (RSS)
+- Memory growth over time</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+<li>
+<p><strong>Count resources in each store:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="c1"># Enable debug port and check /debug/vars endpoint</span>
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>kubectl<span class="w"> </span>port-forward<span class="w"> </span>pod/haproxy-template-ic-xxx<span class="w"> </span><span class="m">6060</span>:6060
+<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>curl<span class="w"> </span>http://localhost:6060/debug/vars<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>.
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Identify large resource types:</strong></p>
+</li>
+<li>Secrets with large data (certificates)</li>
+<li>ConfigMaps with large configuration</li>
+<li>
+<p>High resource counts (&gt;10,000)</p>
+</li>
+<li>
+<p><strong>Check field filtering configuration:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="c1"># Are unnecessary fields being stored?</span>
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a><span class="nt">watched_resources_ignore_fields</span><span class="p">:</span>
+<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metadata.managedFields</span>
+<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metadata.annotations[&quot;kubectl.kubernetes.io/last-applied-configuration&quot;]</span>
+</code></pre></div></p>
+</li>
+</ol>
+<p><strong>Solutions:</strong></p>
+<ol>
+<li>
+<p><strong>Switch large resources to cached store:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a><span class="w">  </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-demand</span>
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a><span class="w">  </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2m</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Add field filtering:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a><span class="nt">watched_resources_ignore_fields</span><span class="p">:</span>
+<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metadata.managedFields</span>
+<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metadata.annotations[&quot;kubectl.kubernetes.io/last-applied-configuration&quot;]</span>
+</code></pre></div>
+   See <a href="../configuration/#watched_resources_ignore_fields">Configuration Reference</a> for field filtering syntax.</p>
+</li>
+<li>
+<p><strong>Limit watch scope:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">production</span><span class="w">  </span><span class="c1"># Watch single namespace</span>
+<a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a><span class="w">  </span><span class="nt">label_selector</span><span class="p">:</span>
+<a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a><span class="w">    </span><span class="nt">app</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">myapp</span><span class="w">  </span><span class="c1"># Filter by labels</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Monitor memory with container limits:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a><span class="nt">resources</span><span class="p">:</span>
+<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="w">  </span><span class="nt">limits</span><span class="p">:</span>
+<a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a><span class="w">    </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">256Mi</span><span class="w">  </span><span class="c1"># Adjust based on resource count</span>
+</code></pre></div></p>
+</li>
+</ol>
+<h3 id="slow-template-rendering">Slow Template Rendering<a class="headerlink" href="#slow-template-rendering" title="Permanent link">&para;</a></h3>
+<p><strong>Symptoms:</strong>
+- Template rendering takes &gt;1 second
+- Deployment delays
+- High CPU usage during rendering</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+<li>
+<p><strong>Check if using cached store with <code>.List()</code>:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a>{# This triggers fetch for ALL resources - slow with cached store #}
+<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a>{% for secret in resources.secrets.List() %}
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Check for cache misses:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a><span class="c1"># Look for &quot;cache miss&quot; in logs with verbose logging</span>
+<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a>kubectl<span class="w"> </span>logs<span class="w"> </span>deployment/haproxy-template-ic<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s2">&quot;cache miss&quot;</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Profile template rendering:</strong></p>
+</li>
+<li>Enable debug mode (verbose=2)</li>
+<li>Check rendering duration in logs</li>
+</ol>
+<p><strong>Solutions:</strong></p>
+<ol>
+<li>
+<p><strong>Use cached store efficiently:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-45-1" name="__codelineno-45-1" href="#__codelineno-45-1"></a>{# Instead of List() #}
+<a id="__codelineno-45-2" name="__codelineno-45-2" href="#__codelineno-45-2"></a>{% for secret in resources.secrets.List() %}  {# SLOW #}
+<a id="__codelineno-45-3" name="__codelineno-45-3" href="#__codelineno-45-3"></a>
+<a id="__codelineno-45-4" name="__codelineno-45-4" href="#__codelineno-45-4"></a>{# Use Fetch() with specific keys #}
+<a id="__codelineno-45-5" name="__codelineno-45-5" href="#__codelineno-45-5"></a>{% set secret = resources.secrets.GetSingle(namespace, name) %}  {# FAST #}
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Switch to memory store for frequently accessed resources:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-46-1" name="__codelineno-46-1" href="#__codelineno-46-1"></a><span class="nt">ingresses</span><span class="p">:</span>
+<a id="__codelineno-46-2" name="__codelineno-46-2" href="#__codelineno-46-2"></a><span class="w">  </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">full</span><span class="w">  </span><span class="c1"># Use memory store instead of cached</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Increase cache TTL to reduce API calls:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-47-1" name="__codelineno-47-1" href="#__codelineno-47-1"></a><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-47-2" name="__codelineno-47-2" href="#__codelineno-47-2"></a><span class="w">  </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5m</span><span class="w">  </span><span class="c1"># Longer cache duration</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Optimize template logic:</strong></p>
+</li>
+<li>Avoid nested loops over large collections</li>
+<li>Cache computed values in variables</li>
+<li>Use <code>{% set %}</code> for repeated expressions</li>
+</ol>
+<h3 id="cache-miss-debugging">Cache Miss Debugging<a class="headerlink" href="#cache-miss-debugging" title="Permanent link">&para;</a></h3>
+<p><strong>Symptoms:</strong>
+- Inconsistent rendering performance
+- Occasional slow template renders
+- High API call rate</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+<li>
+<p><strong>Enable debug logging:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-48-1" name="__codelineno-48-1" href="#__codelineno-48-1"></a><span class="nt">logging</span><span class="p">:</span>
+<a id="__codelineno-48-2" name="__codelineno-48-2" href="#__codelineno-48-2"></a><span class="w">  </span><span class="nt">verbose</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">  </span><span class="c1"># Debug level</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Monitor cache hit/miss ratio in logs:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-49-1" name="__codelineno-49-1" href="#__codelineno-49-1"></a>kubectl<span class="w"> </span>logs<span class="w"> </span>deployment/haproxy-template-ic<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s2">&quot;cache (hit|miss)&quot;</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Check cache TTL configuration:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-50-1" name="__codelineno-50-1" href="#__codelineno-50-1"></a><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-50-2" name="__codelineno-50-2" href="#__codelineno-50-2"></a><span class="w">  </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2m10s</span><span class="w">  </span><span class="c1"># Current TTL</span>
+</code></pre></div></p>
+</li>
+</ol>
+<p><strong>Solutions:</strong></p>
+<ol>
+<li>
+<p><strong>Increase cache TTL if resources don't change frequently:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-51-1" name="__codelineno-51-1" href="#__codelineno-51-1"></a><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-51-2" name="__codelineno-51-2" href="#__codelineno-51-2"></a><span class="w">  </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10m</span><span class="w">  </span><span class="c1"># Longer TTL for stable resources</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Pre-warm cache by accessing resources early:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-52-1" name="__codelineno-52-1" href="#__codelineno-52-1"></a>{# Access commonly used resources at template start #}
+<a id="__codelineno-52-2" name="__codelineno-52-2" href="#__codelineno-52-2"></a>{% set _ = resources.secrets.GetSingle(&quot;default&quot;, &quot;common-secret&quot;) %}
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Switch to memory store if cache miss rate is high:</strong>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-53-1" name="__codelineno-53-1" href="#__codelineno-53-1"></a><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-53-2" name="__codelineno-53-2" href="#__codelineno-53-2"></a><span class="w">  </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">full</span><span class="w">  </span><span class="c1"># Switch to memory store</span>
+</code></pre></div></p>
+</li>
+</ol>
+<h3 id="common-misconfigurations">Common Misconfigurations<a class="headerlink" href="#common-misconfigurations" title="Permanent link">&para;</a></h3>
+<p><strong>Issue: index_by doesn't match template usage</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-54-1" name="__codelineno-54-1" href="#__codelineno-54-1"></a><span class="c1"># Configuration</span>
+<a id="__codelineno-54-2" name="__codelineno-54-2" href="#__codelineno-54-2"></a><span class="nt">index_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;metadata.namespace&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;metadata.name&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-55-1" name="__codelineno-55-1" href="#__codelineno-55-1"></a>{# Template - WRONG: only provides one key #}
+<a id="__codelineno-55-2" name="__codelineno-55-2" href="#__codelineno-55-2"></a>{% for ing in resources.ingresses.Fetch(&quot;my-app&quot;) %}
+</code></pre></div>
+<p><strong>Solution:</strong> Match template parameters to index_by order:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-56-1" name="__codelineno-56-1" href="#__codelineno-56-1"></a>{# Correct: both namespace and name #}
+<a id="__codelineno-56-2" name="__codelineno-56-2" href="#__codelineno-56-2"></a>{% for ing in resources.ingresses.Fetch(&quot;default&quot;, &quot;my-app&quot;) %}
+</code></pre></div></p>
+<p><strong>Issue: Using memory store for large resources</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-57-1" name="__codelineno-57-1" href="#__codelineno-57-1"></a><span class="c1"># Bad: Large secrets in memory</span>
+<a id="__codelineno-57-2" name="__codelineno-57-2" href="#__codelineno-57-2"></a><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-57-3" name="__codelineno-57-3" href="#__codelineno-57-3"></a><span class="w">  </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">full</span><span class="w">  </span><span class="c1"># Default, stores all in memory</span>
+</code></pre></div>
+<p><strong>Solution:</strong> Use cached store for large resources:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-58-1" name="__codelineno-58-1" href="#__codelineno-58-1"></a><span class="nt">secrets</span><span class="p">:</span>
+<a id="__codelineno-58-2" name="__codelineno-58-2" href="#__codelineno-58-2"></a><span class="w">  </span><span class="nt">store</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">on-demand</span>
+<a id="__codelineno-58-3" name="__codelineno-58-3" href="#__codelineno-58-3"></a><span class="w">  </span><span class="nt">cache_ttl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2m</span>
+</code></pre></div></p>
+<p><strong>Issue: Using .List() with cached store</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-59-1" name="__codelineno-59-1" href="#__codelineno-59-1"></a>{# Slow: Fetches all resources from API #}
+<a id="__codelineno-59-2" name="__codelineno-59-2" href="#__codelineno-59-2"></a>{% for secret in resources.secrets.List() %}
+</code></pre></div>
+<p><strong>Solution:</strong> Use <code>.Fetch()</code> for selective access:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-60-1" name="__codelineno-60-1" href="#__codelineno-60-1"></a>{# Fast: Fetches only required resources #}
+<a id="__codelineno-60-2" name="__codelineno-60-2" href="#__codelineno-60-2"></a>{% set secret = resources.secrets.GetSingle(namespace, name) %}
+</code></pre></div></p>
+<p>See <a href="../configuration/">Configuration Reference</a> for additional configuration guidance.</p>
+<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../configuration/">Configuration Reference</a> - Complete configuration syntax and field descriptions</li>
+<li><a href="../templating/">Templating Guide</a> - Template syntax and resource access patterns</li>
+<li><a href="https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/pkg/k8s/README.md">pkg/k8s README</a> - Store implementation details and API documentation</li>
+<li><a href="../development/design/">Architecture Design</a> - System architecture and component interactions</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/HAProxy-Template-IC" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.expand", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.e71a0d61.min.js"></script>
+      
+    
+  </body>
+</html>
