@@ -3,7 +3,7 @@
 
 /* Map brand colors to MkDocs Material variables */
 /* Light mode: light blue header */
-:root {
+[data-md-color-scheme="default"] {
   --md-primary-fg-color: #4a8bc2;
   --md-primary-fg-color--light: var(--brand-primary-light);
   --md-primary-fg-color--dark: var(--brand-primary-dark);
