@@ -951,7 +951,7 @@ detailed error messages.
 
 - [Template Syntax and Filters](./templating.md) - Detailed template documentation
 - [Supported HAProxy Configuration](./supported-configuration.md) - HAProxy sections and child components
-- [Helm Chart Values](../charts/haproxy-template-ic/values.yaml) - Production deployment examples
+- [Helm Chart Values](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/charts/haproxy-template-ic/values.yaml) - Production deployment examples
 
 ## Troubleshooting
 

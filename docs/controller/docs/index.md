@@ -31,7 +31,7 @@ helm repo update
 helm install my-controller haproxy-template-ic/haproxy-template-ic
 ```
 
-See the [Helm Chart Installation Guide](helm-chart/index.md) for detailed configuration options.
+See the [Helm Chart Installation Guide](/helm-chart/latest/) for detailed configuration options.
 
 ### Create an Ingress
 
@@ -60,9 +60,9 @@ spec:
 | Section | Description |
 |---------|-------------|
 | [Getting Started](getting-started.md) | Initial setup and basic concepts |
-| [Helm Chart](helm-chart/index.md) | Installation via Helm with pre-built templates |
-| [Gateway API](helm-chart/gateway-api.md) | HTTPRoute and GRPCRoute support |
-| [HAProxy Annotations](helm-chart/annotations.md) | Compatible with haproxy.org annotations |
+| [Helm Chart](/helm-chart/latest/) | Installation via Helm with pre-built templates |
+| [Gateway API](/helm-chart/latest/gateway-api/) | HTTPRoute and GRPCRoute support |
+| [HAProxy Annotations](/helm-chart/latest/annotations/) | Compatible with haproxy.org annotations |
 | [Templating](templating.md) | Custom template development |
 | [Operations](operations/high-availability.md) | Production deployment guidance |
 
