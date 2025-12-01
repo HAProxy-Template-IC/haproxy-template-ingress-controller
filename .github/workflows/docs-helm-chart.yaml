@@ -30,8 +30,9 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global url."https://x-access-token:${{ secrets.PAGES_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Determine version
         id: version
@@ -50,11 +51,11 @@ jobs:
           if [ "${{ steps.version.outputs.version }}" = "dev" ]; then
             mike deploy --push ${{ steps.version.outputs.version }} \
               --deploy-prefix helm-chart \
-              --remote https://x-access-token:${{ secrets.PAGES_REPO_TOKEN }}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git \
+              --remote https://github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git \
               --branch main
           else
             mike deploy --push --update-aliases ${{ steps.version.outputs.version }} latest \
               --deploy-prefix helm-chart \
-              --remote https://x-access-token:${{ secrets.PAGES_REPO_TOKEN }}@github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git \
+              --remote https://github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git \
               --branch main
           fi
