@@ -346,6 +346,9 @@ jobs:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
+    environment:
+      name: pr-preview
+      url: https://haproxy-template-ic.github.io/haproxy-template-ingress-controller/pr-preview/pr-${{ github.event.number }}/
     steps:
       - uses: actions/checkout@v4
 
