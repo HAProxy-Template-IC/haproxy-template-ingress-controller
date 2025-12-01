@@ -355,41 +355,30 @@ jobs:
 
       - run: pip install mkdocs-material mike
 
+      - name: Fetch production site
+        run: |
+          git clone --depth 1 https://github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git _site
+          rm -rf _site/.git
+
       - name: Copy shared CSS to stylesheets dirs
         run: |
           cp docs/shared/colors.css docs/controller/docs/stylesheets/
           cp docs/shared/colors.css charts/haproxy-template-ic/docs/stylesheets/
 
-      - name: Build controller docs
+      - name: Build and overlay controller docs
         run: |
           cd docs/controller
-          mkdocs build -d ../../_site/controller
+          mkdocs build -d ../../_site/controller/dev
 
-      - name: Build helm chart docs
+      - name: Build and overlay helm chart docs
         run: |
           cd charts/haproxy-template-ic
-          mkdocs build -d ../../_site/helm-chart
+          mkdocs build -d ../../_site/helm-chart/dev
 
-      - name: Create PR preview landing page
+      - name: Update landing page and shared assets
         run: |
-          cat > _site/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>PR Preview - HAProxy Template IC Docs</title>
-            <style>
-              body { font-family: system-ui; max-width: 600px; margin: 50px auto; padding: 20px; }
-              a { display: block; margin: 10px 0; padding: 15px; background: #f0f0f0; text-decoration: none; border-radius: 4px; }
-              a:hover { background: #e0e0e0; }
-            </style>
-          </head>
-          <body>
-            <h1>PR Preview</h1>
-            <a href="./controller/">Controller Documentation</a>
-            <a href="./helm-chart/">Helm Chart Documentation</a>
-          </body>
-          </html>
-          EOF
+          cp docs/landing-page/index.html _site/index.html
+          cp docs/shared/colors.css _site/shared/colors.css
 
       - uses: rossjrw/pr-preview-action@v1
         with:
