@@ -82,7 +82,7 @@ Pure business logic components (templating, k8s, dataplane) have no event depend
 - [Performance](../operations/performance.md) - Resource sizing and optimization
 
 ### Package Documentation
-- [Controller Package](../../pkg/controller/README.md) - Event-driven controller implementation
-- [Template Engine](../../pkg/templating/README.md) - Template engine API reference
-- [Kubernetes Integration](../../pkg/k8s/README.md) - Resource watching and indexing API
-- [Dataplane Integration](../../pkg/dataplane/README.md) - HAProxy configuration synchronization
+- [Controller Package](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/pkg/controller/README.md) - Event-driven controller implementation
+- [Template Engine](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/pkg/templating/README.md) - Template engine API reference
+- [Kubernetes Integration](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/pkg/k8s/README.md) - Resource watching and indexing API
+- [Dataplane Integration](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/pkg/dataplane/README.md) - HAProxy configuration synchronization

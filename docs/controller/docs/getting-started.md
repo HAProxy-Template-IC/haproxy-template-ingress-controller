@@ -524,4 +524,4 @@ kubectl delete crd haproxytemplateconfigs.haproxy-template-ic.github.io
 - [Templating Guide](./templating.md) - Template syntax and filters
 - [HAProxy Configuration](./supported-configuration.md) - Supported HAProxy features
 - [Watching Resources](./watching-resources.md) - Resource watching configuration
-- [Helm Chart Documentation](../charts/haproxy-template-ic/README.md) - Chart values and options
+- [Helm Chart Documentation](/helm-chart/latest/) - Chart values and options
