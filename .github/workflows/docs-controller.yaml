@@ -87,7 +87,9 @@ jobs:
           PAGES_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
         run: |
           cd pages-repo
-          git pull origin main
+          # Reset to clean state after mike's push to avoid including stale changes
+          git fetch origin
+          git reset --hard origin/main
           cp ../docs/landing-page/index.html index.html
           git add index.html
           if ! git diff --cached --quiet; then
