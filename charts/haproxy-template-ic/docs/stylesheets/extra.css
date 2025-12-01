@@ -1,16 +1,19 @@
 /* HAProxy Template IC brand colors
  * Primary: #0b3a66 (dark navy blue from logo)
- * Only customize light mode - let theme handle dark mode properly
  */
 
-/* Light mode: use brand navy */
-[data-md-color-scheme="default"] {
+:root {
+  /* Brand color for header (applies to both light and dark modes) */
   --md-primary-fg-color: #0b3a66;
   --md-primary-fg-color--light: #1a5a96;
   --md-primary-fg-color--dark: #062744;
 }
 
-/* Dark mode: no overrides - theme uses accessible defaults */
+/* Dark mode: override link color for accessibility */
+[data-md-color-scheme="slate"] {
+  /* Use lighter blue for links - similar to theme's WCAG-compliant #7299e1 */
+  --md-typeset-a-color: #7299e1;
+}
 
 /* Logo sizing */
 .md-header__button.md-logo img,
