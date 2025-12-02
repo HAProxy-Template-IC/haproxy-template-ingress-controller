@@ -161,16 +161,29 @@ func TestDataplaneClient(env fixenv.Env) *client.DataplaneClient {
 	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*client.DataplaneClient], error) {
 		endpoint := haproxy.GetDataplaneEndpoint()
 
-		dataplaneClient, err := client.New(context.Background(), &client.Config{
-			BaseURL:  endpoint.URL,
-			Username: endpoint.Username,
-			Password: endpoint.Password,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create dataplane client: %w", err)
+		var dataplaneClient *client.DataplaneClient
+		var lastErr error
+
+		// Retry client creation up to 3 times with exponential backoff
+		// This handles transient API failures during version detection
+		for attempt := 1; attempt <= 3; attempt++ {
+			dataplaneClient, lastErr = client.New(context.Background(), &client.Config{
+				BaseURL:  endpoint.URL,
+				Username: endpoint.Username,
+				Password: endpoint.Password,
+			})
+			if lastErr == nil {
+				return fixenv.NewGenericResult(dataplaneClient), nil
+			}
+
+			if attempt < 3 {
+				backoff := time.Duration(attempt) * time.Second
+				fmt.Printf("Dataplane client creation attempt %d failed: %v (retrying in %v)\n", attempt, lastErr, backoff)
+				time.Sleep(backoff)
+			}
 		}
 
-		return fixenv.NewGenericResult(dataplaneClient), nil
+		return nil, fmt.Errorf("failed to create dataplane client after 3 attempts: %w", lastErr)
 	})
 }
 
@@ -208,12 +221,25 @@ func TestDataplaneHighLevelClient(env fixenv.Env) *dataplane.Client {
 			Password: endpoint.Password,
 		}
 
-		client, err := dataplane.NewClient(context.Background(), &dpEndpoint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create dataplane client: %w", err)
+		var dpClient *dataplane.Client
+		var lastErr error
+
+		// Retry client creation up to 3 times with exponential backoff
+		// This handles transient API failures during version detection
+		for attempt := 1; attempt <= 3; attempt++ {
+			dpClient, lastErr = dataplane.NewClient(context.Background(), &dpEndpoint)
+			if lastErr == nil {
+				return fixenv.NewGenericResult(dpClient), nil
+			}
+
+			if attempt < 3 {
+				backoff := time.Duration(attempt) * time.Second
+				fmt.Printf("High-level dataplane client creation attempt %d failed: %v (retrying in %v)\n", attempt, lastErr, backoff)
+				time.Sleep(backoff)
+			}
 		}
 
-		return fixenv.NewGenericResult(client), nil
+		return nil, fmt.Errorf("failed to create dataplane client after 3 attempts: %w", lastErr)
 	})
 }
 

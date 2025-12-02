@@ -368,8 +368,13 @@ log_targets:
 	select {
 	case <-instance.readyChan:
 		// Port forwarding is ready
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		return nil, fmt.Errorf("port forwarding did not become ready in time")
+	}
+
+	// Wait for Dataplane API to actually be responding
+	if err := instance.waitForDataplaneAPI(30 * time.Second); err != nil {
+		return nil, fmt.Errorf("dataplane API not responding: %w", err)
 	}
 
 	return instance, nil
@@ -423,6 +428,41 @@ func (h *HAProxyInstance) WaitReady(timeout time.Duration) error {
 	}
 
 	return err
+}
+
+// waitForDataplaneAPI polls the Dataplane API until it responds or timeout.
+// This is called after port forwarding is established to ensure the API is
+// actually responding before returning the HAProxy instance to tests.
+func (h *HAProxyInstance) waitForDataplaneAPI(timeout time.Duration) error {
+	endpoint := fmt.Sprintf("http://localhost:%d/v3/info", h.LocalPort)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	return WaitForCondition(context.Background(), WaitConfig{
+		InitialInterval: 100 * time.Millisecond,
+		MaxInterval:     2 * time.Second,
+		Timeout:         timeout,
+		Multiplier:      2.0,
+	}, func(ctx context.Context) (bool, error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+		if err != nil {
+			return false, err
+		}
+		req.SetBasicAuth(h.DataplaneUser, h.DataplanePass)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			// Connection errors are transient, keep retrying
+			return false, nil
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			return true, nil
+		}
+
+		// Non-200 responses mean the API is responding but not ready yet
+		return false, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	})
 }
 
 // DataplaneEndpoint represents connection details for the Dataplane API

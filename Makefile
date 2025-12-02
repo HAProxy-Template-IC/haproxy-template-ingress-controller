@@ -75,9 +75,9 @@ test-integration: ## Run integration tests (requires kind cluster)
 	@echo "  TEST_RUN_PATTERN   - Run specific tests matching pattern"
 ifdef TEST_RUN_PATTERN
 	@echo "Running tests matching pattern: $(TEST_RUN_PATTERN)"
-	$(GO) test -tags=integration -v -race -timeout 10m -run "$(TEST_RUN_PATTERN)" ./tests/integration
+	$(GO) test -tags=integration -v -race -timeout 15m -run "$(TEST_RUN_PATTERN)" ./tests/integration
 else
-	$(GO) test -tags=integration -v -race -timeout 10m ./tests/integration/...
+	$(GO) test -tags=integration -v -race -timeout 15m ./tests/integration/...
 endif
 
 test-acceptance: docker-build-test ## Run acceptance tests (builds image, creates kind cluster)

@@ -204,12 +204,9 @@ func (k *KindCluster) CreateNamespace(name string) (*Namespace, error) {
 // CleanupOldTestNamespacesAsync triggers asynchronous cleanup of old test namespaces.
 // This function returns immediately without blocking - cleanup happens in the background.
 // It lists all namespaces with the "test-" prefix that are older than 5 minutes and deletes them.
-// This prevents race conditions where newly created test namespaces get deleted while tests are running.
+// The 5-minute age threshold ensures newly created test namespaces are not affected.
 func (k *KindCluster) CleanupOldTestNamespacesAsync() {
 	go func() {
-		// Wait a bit before starting cleanup to allow current tests to create their namespaces
-		time.Sleep(2 * time.Second)
-
 		ctx := context.Background()
 
 		// List all namespaces with test- prefix
