@@ -16,6 +16,7 @@ import (
 // TestUDPLoadBalancers tests UDP load balancer CRUD operations.
 // UDP load balancing is available in all HAProxy Enterprise versions.
 func TestUDPLoadBalancers(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfUDPLBNotSupported(t, env)
 
@@ -43,6 +44,7 @@ func TestUDPLoadBalancers(t *testing.T) {
 // TestUDPLoadBalancerDgramBinds tests UDP LB dgram bind operations.
 // Dgram binds are available in all HAProxy Enterprise versions.
 func TestUDPLoadBalancerDgramBinds(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfUDPLBNotSupported(t, env)
 
@@ -80,6 +82,7 @@ func TestUDPLoadBalancerDgramBinds(t *testing.T) {
 // TestUDPLoadBalancerLogTargets tests UDP LB log target operations.
 // Log targets are available in all HAProxy Enterprise versions.
 func TestUDPLoadBalancerLogTargets(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfUDPLBNotSupported(t, env)
 
@@ -116,6 +119,7 @@ func TestUDPLoadBalancerLogTargets(t *testing.T) {
 // TestUDPLoadBalancerACLs tests UDP LB ACL operations.
 // ACLs for UDP load balancers are only available in HAProxy Enterprise v3.2+.
 func TestUDPLoadBalancerACLs(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfUDPLBACLsNotSupported(t, env)
 

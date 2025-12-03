@@ -1,5 +1,5 @@
 {{- if .Values.controller.config }}
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: {{ .Values.controller.crdName }}

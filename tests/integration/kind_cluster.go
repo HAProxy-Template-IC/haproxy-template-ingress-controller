@@ -14,8 +14,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/flowcontrol"
 	"sigs.k8s.io/kind/pkg/cluster"
 	"sigs.k8s.io/kind/pkg/cmd"
+
+	"haproxy-template-ic/tests/kindutil"
 )
 
 // KindClusterConfig holds configuration for creating a Kind cluster
@@ -24,6 +27,12 @@ type KindClusterConfig struct {
 	// Image is the Kind node image to use (e.g., "kindest/node:v1.32.0")
 	// If empty, uses the image from KIND_NODE_IMAGE env var or defaults to kindest/node:v1.32.0
 	Image string
+}
+
+// GetNodePortHost returns the hostname for accessing NodePort services.
+// In Docker-in-Docker, this is the dind hostname; otherwise localhost.
+func GetNodePortHost() string {
+	return kindutil.GetNodePortHost()
 }
 
 // KindCluster represents a Kind (Kubernetes in Docker) cluster for testing
@@ -80,6 +89,13 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 			createOpts = append(createOpts, cluster.CreateWithNodeImage(nodeImage))
 		}
 
+		// If running in Docker-in-Docker, use special config that binds to 0.0.0.0
+		// and adds "docker" as a certificate SAN
+		if kindutil.IsDockerInDocker() {
+			fmt.Printf("📦 Detected Docker-in-Docker environment, using dind-compatible config\n")
+			createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.DindKindConfig)))
+		}
+
 		// Create the cluster
 		if err := provider.Create(cfg.Name, createOpts...); err != nil {
 			return nil, fmt.Errorf("failed to create kind cluster: %w", err)
@@ -92,6 +108,13 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
 	}
 
+	// If running in Docker-in-Docker, patch the kubeconfig to use the dind hostname
+	// instead of localhost/0.0.0.0 (which are not accessible from the CI job container)
+	if kindutil.IsDockerInDocker() {
+		kubeconfig = kindutil.PatchKubeconfigForDind(kubeconfig)
+		fmt.Printf("📦 Patched kubeconfig for Docker-in-Docker (server: https://%s:...)\n", kindutil.GetDindHostname())
+	}
+
 	// Create Kubernetes client
 	config, err := clientcmd.RESTConfigFromKubeConfig([]byte(kubeconfig))
 	if err != nil {
@@ -100,9 +123,9 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 
 	// Disable client-side rate limiting for parallel tests
 	// Default is QPS=5, Burst=10 which is too restrictive
-	// Set to 0 to disable rate limiting entirely
-	config.QPS = 0
-	config.Burst = 0
+	// Note: Setting QPS=0 and Burst=0 means "use defaults", not "disable"
+	// Use FakeAlwaysRateLimiter to actually disable rate limiting
+	config.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -288,9 +311,9 @@ func (k *KindCluster) getRestConfig() (*rest.Config, error) {
 	}
 
 	// Disable client-side rate limiting for parallel tests
-	// Set to 0 to disable rate limiting entirely
-	config.QPS = 0
-	config.Burst = 0
+	// Note: Setting QPS=0 and Burst=0 means "use defaults", not "disable"
+	// Use FakeAlwaysRateLimiter to actually disable rate limiting
+	config.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
 
 	return config, nil
 }

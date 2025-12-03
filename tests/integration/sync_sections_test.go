@@ -9,6 +9,7 @@ import (
 // TestSyncSections runs table-driven synchronization tests for section operations
 // (resolvers, mailers, peers, cache, ring)
 func TestSyncSections(t *testing.T) {
+	t.Parallel()
 	testCases := []syncTestCase{
 		// ==================== RESOLVERS SECTION OPERATIONS ====================
 		{

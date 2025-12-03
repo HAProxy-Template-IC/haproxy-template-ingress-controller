@@ -43,8 +43,8 @@ func ParseCRD(resource *unstructured.Unstructured) (*config.Config, *v1alpha1.HA
 		return nil, nil, fmt.Errorf("expected HAProxyTemplateConfig, got %s", kind)
 	}
 
-	if apiVersion != "haproxy-template-ic.github.io/v1alpha1" {
-		return nil, nil, fmt.Errorf("expected apiVersion haproxy-template-ic.github.io/v1alpha1, got %s", apiVersion)
+	if apiVersion != "haproxy-template-ic.gitlab.io/v1alpha1" {
+		return nil, nil, fmt.Errorf("expected apiVersion haproxy-template-ic.gitlab.io/v1alpha1, got %s", apiVersion)
 	}
 
 	// Convert unstructured to typed CRD

@@ -15,18 +15,18 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # HAProxyCfg CRD (runtime configuration publishing)
   # Published to controller's namespace as read-only view of rendered config
-  - apiGroups: ["haproxy-template-ic.github.io"]
+  - apiGroups: ["haproxy-template-ic.gitlab.io"]
     resources: ["haproxycfgs"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
-  - apiGroups: ["haproxy-template-ic.github.io"]
+  - apiGroups: ["haproxy-template-ic.gitlab.io"]
     resources: ["haproxycfgs/status"]
     verbs: ["get", "update", "patch"]
   # HAProxyMapFile CRD (auxiliary map files)
   # Published to controller's namespace as children of HAProxyCfg
-  - apiGroups: ["haproxy-template-ic.github.io"]
+  - apiGroups: ["haproxy-template-ic.gitlab.io"]
     resources: ["haproxymapfiles"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["haproxy-template-ic.github.io"]
+  - apiGroups: ["haproxy-template-ic.gitlab.io"]
     resources: ["haproxymapfiles/status"]
     verbs: ["get", "update", "patch"]
 {{- end }}

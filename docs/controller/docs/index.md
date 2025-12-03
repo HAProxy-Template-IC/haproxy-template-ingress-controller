@@ -26,7 +26,7 @@ Unlike traditional ingress controllers with hardcoded configuration logic, HAPro
 ### Install with Helm
 
 ```bash
-helm repo add haproxy-template-ic https://haproxy-template-ic.github.io/charts
+helm repo add haproxy-template-ic https://haproxy-template-ic.gitlab.io/charts
 helm repo update
 helm install my-controller haproxy-template-ic/haproxy-template-ic
 ```

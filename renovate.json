@@ -1,0 +1,51 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":separateMajorReleases",
+    "customManagers:dockerfileVersions",
+    "customManagers:gitlabPipelineVersions",
+    "customManagers:makefileVersions",
+    "customManagers:helmChartYamlAppVersions"
+  ],
+  "labels": ["dependencies"],
+  "platformAutomerge": true,
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Automerge patch and minor updates",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Automerge Go patch and minor",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "Update Go version in go.mod",
+      "matchManagers": ["gomod"],
+      "matchDepNames": ["go"],
+      "matchDepTypes": ["golang"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Group Kubernetes dependencies",
+      "matchPackagePrefixes": ["k8s.io/", "sigs.k8s.io/"],
+      "groupName": "kubernetes packages"
+    },
+    {
+      "description": "Group linter dependencies",
+      "matchPackagePatterns": ["golangci", "staticcheck"],
+      "groupName": "linting tools"
+    },
+    {
+      "description": "Group HAProxy dependencies",
+      "matchPackagePrefixes": ["github.com/haproxytech/"],
+      "groupName": "haproxy packages"
+    }
+  ]
+}

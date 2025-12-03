@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # Build arguments for version control
+# renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.25
+# renovate: datasource=docker depName=haproxytech/haproxy-debian
 ARG HAPROXY_VERSION=3.2
 ARG GIT_COMMIT=unknown
 ARG GIT_TAG=unknown
@@ -9,7 +11,7 @@ ARG GIT_TAG=unknown
 # -----------------------------------------------------------------------------
 # Builder stage - compile the Go binary
 # -----------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS builder
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,12 +22,15 @@ WORKDIR /build
 
 # Leverage Docker cache for Go modules
 # Copy go.mod and go.sum first to cache module downloads
+# Note: We intentionally avoid --mount=type=cache here so that downloaded
+# modules become part of the layer and can be cached in CI registry caching.
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+RUN go mod download
 
-# Copy source code
-COPY . .
+# Copy only source directories needed for compilation
+# (explicit copies avoid cache invalidation from README, docs, tests, etc.)
+COPY cmd/ ./cmd/
+COPY pkg/ ./pkg/
 
 # Build arguments for cross-compilation and version info
 ARG TARGETOS
@@ -41,9 +46,7 @@ ARG GIT_TAG
 #   - -s: strip debug information
 #   - -w: strip DWARF debug information
 #   - -X: inject version variables (placeholder for future)
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 \
+RUN CGO_ENABLED=0 \
     GOOS=${TARGETOS} \
     GOARCH=${TARGETARCH} \
     go build \
@@ -53,12 +56,21 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     ./cmd/controller
 
 # -----------------------------------------------------------------------------
+# Binary output stage - exports the controller binary
+# This stage can be overridden via --build-context binary=<path> to use a
+# pre-compiled binary instead of building from source (used in GitLab CI)
+# -----------------------------------------------------------------------------
+FROM scratch AS binary
+COPY --from=builder /build/controller /controller
+
+# -----------------------------------------------------------------------------
 # Runtime stage - minimal image with HAProxy for validation
 # -----------------------------------------------------------------------------
-FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}
+FROM haproxytech/haproxy-debian:${HAPROXY_VERSION} AS runtime
 
-# Copy the controller binary from builder
-COPY --from=builder /build/controller /usr/local/bin/controller
+# Copy the controller binary from the 'binary' stage
+# When using --build-context binary=<path>, this copies from the external context
+COPY --from=binary /controller /usr/local/bin/controller
 
 # Ensure binary is executable
 RUN chmod +x /usr/local/bin/controller

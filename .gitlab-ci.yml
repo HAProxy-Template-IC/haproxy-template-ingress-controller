@@ -1,0 +1,649 @@
+spec:
+  inputs:
+    rotate_renovate_token:
+      type: boolean
+      default: false
+      description: "Set to true to rotate the Renovate access token"
+---
+
+include:
+  - local: '.gitlab/ci/renovate.yml'
+    inputs:
+      rotate_renovate_token: $[[ inputs.rotate_renovate_token ]]
+
+stages:
+  - lint
+  - test
+  - build
+  - integration
+  - deploy
+
+# Prevent duplicate pipelines for MR and branch pushes
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+variables:
+  # Language and tool versions
+  # renovate: datasource=docker depName=golang
+  GO_VERSION: "1.25"
+  # renovate: datasource=docker depName=docker
+  DOCKER_VERSION: "27"
+  # renovate: datasource=docker depName=python
+  PYTHON_VERSION: "3.12"
+  # renovate: datasource=github-releases depName=kubernetes-sigs/kind
+  KIND_VERSION: "0.24.0"
+  # renovate: datasource=docker depName=kindest/node
+  KIND_NODE_VERSION: "v1.32.0"
+  # Container registry
+  CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+
+# Reusable rules for path-based filtering
+.rules-code:
+  rules:
+    - changes:
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - Makefile
+        - Dockerfile
+        - scripts/**
+        - .gitlab-ci.yml
+        - .golangci.yml
+
+.rules-helm:
+  rules:
+    - changes:
+        - charts/**
+        - .gitlab-ci.yml
+
+.rules-docs:
+  rules:
+    - changes:
+        - docs/**
+        - charts/**/docs/**
+        - charts/**/mkdocs.yml
+        - .gitlab-ci.yml
+
+# HAProxy version matrix for multi-version testing
+.haproxy-version-matrix:
+  parallel:
+    matrix:
+      - HAPROXY_VERSION: ["3.0", "3.1", "3.2"]
+
+# Docker-in-Docker base configuration for jobs that need to run Docker commands
+# (e.g., kind clusters, docker build). In GitLab CI, the Docker daemon runs in
+# a separate container (docker:dind service) accessible via the "docker" hostname.
+.docker-dind:
+  services:
+    - name: docker:${DOCKER_VERSION}-dind
+      alias: docker
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_HOST: tcp://docker:2376
+  tags:
+    - saas-linux-xlarge-amd64
+  retry:
+    max: 2
+    when: runner_system_failure
+
+# =============================================================================
+# CI Image Builds (.pre stage - runs before all other stages)
+# =============================================================================
+
+.build-ci-image:
+  stage: .pre
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  variables:
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
+  tags:
+    - saas-linux-medium-amd64
+  rules:
+    - changes:
+        - .gitlab/ci/images/**
+        - .gitlab-ci.yml
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > ~/.docker/config.json
+
+build-ci:
+  extends:
+    - .build-ci-image
+    - .haproxy-version-matrix
+  script:
+    - |
+      CI_IMAGE="${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}"
+      buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=.gitlab/ci/images/ci/ \
+        --local dockerfile=.gitlab/ci/images/ci/ \
+        --opt build-arg:GO_VERSION=${GO_VERSION} \
+        --opt build-arg:HAPROXY_VERSION=${HAPROXY_VERSION} \
+        --opt build-arg:DOCKER_VERSION=${DOCKER_VERSION} \
+        --opt build-arg:KIND_VERSION=${KIND_VERSION} \
+        --import-cache type=registry,ref=${CI_IMAGE} \
+        --export-cache type=inline \
+        --output type=image,name=${CI_IMAGE},push=true
+
+build-python-docs:
+  extends: .build-ci-image
+  script:
+    - |
+      buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=.gitlab/ci/images/python-docs/ \
+        --local dockerfile=.gitlab/ci/images/python-docs/ \
+        --opt build-arg:PYTHON_VERSION=${PYTHON_VERSION} \
+        --import-cache type=registry,ref=${CI_REGISTRY_IMAGE}/ci/python-docs:latest \
+        --export-cache type=inline \
+        --output type=image,name=${CI_REGISTRY_IMAGE}/ci/python-docs:latest,push=true
+
+# =============================================================================
+# Lint Stage
+# =============================================================================
+
+lint:
+  stage: lint
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .rules-code
+  tags:
+    - saas-linux-medium-amd64
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+  before_script:
+    - go version
+  script:
+    - make lint
+  artifacts:
+    reports:
+      codequality: gl-code-quality-report.json
+    expire_in: 1 week
+    when: always
+
+audit:
+  stage: lint
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .rules-code
+  tags:
+    - saas-linux-medium-amd64
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+  script:
+    - make audit
+
+# =============================================================================
+# Test Stage
+# =============================================================================
+
+test:
+  stage: test
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .rules-code
+  tags:
+    - saas-linux-large-amd64
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+  before_script:
+    - haproxy -v
+  script:
+    # gotestsum passes coverage flags through to go test - single test run
+    # Use -coverpkg to exclude generated code from coverage calculation
+    - |
+      go tool gotestsum --junitfile report.xml --format testname -- \
+        -race -coverprofile=coverage.out -covermode=atomic \
+        -coverpkg=./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/... \
+        ./...
+    # Show coverage summary and extract percentage for badge
+    - go tool cover -func=coverage.out | tail -1
+    # Convert to Cobertura for GitLab diff visualization
+    - gocover-cobertura < coverage.out > coverage.xml
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    expire_in: 1 week
+    when: always
+
+.validate-helm-libraries-base:
+  stage: test
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  tags:
+    - saas-linux-medium-amd64
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+  rules:
+    - changes:
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - charts/**
+        - .gitlab-ci.yml
+  before_script:
+    - haproxy -v
+  script:
+    - make build
+    - |
+      helm template charts/haproxy-template-ic \
+        --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+        --set controller.templateLibraries.ingress.enabled=true \
+        --set controller.templateLibraries.gateway.enabled=true \
+        --set controller.templateLibraries.haproxytech.enabled=true \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
+        > /tmp/merged-config.yaml
+      ./bin/controller validate -f /tmp/merged-config.yaml
+
+validate-helm-libraries:
+  extends:
+    - .validate-helm-libraries-base
+    - .haproxy-version-matrix
+
+# =============================================================================
+# Build Stage
+# =============================================================================
+
+# Compile Go binary using CI image with cached modules
+# Separate compilation allows using Go module cache effectively
+compile:
+  stage: build
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .rules-code
+  tags:
+    - saas-linux-2xlarge-amd64
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+  script:
+    - |
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+        -trimpath \
+        -ldflags="-s -w -X main.GitCommit=${CI_COMMIT_SHA} -X main.GitTag=ci-${CI_PIPELINE_ID}" \
+        -o controller \
+        ./cmd/controller
+  artifacts:
+    paths:
+      - controller
+    expire_in: 1 hour
+
+# Package pre-built binary into Docker image for each HAProxy version
+# Uses Dockerfile's named build context feature to override the 'binary' stage
+build-test-image:
+  stage: build
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  extends:
+    - .rules-code
+    - .haproxy-version-matrix
+  tags:
+    - saas-linux-medium-amd64
+  needs:
+    - compile
+  variables:
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > ~/.docker/config.json
+  script:
+    - |
+      TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
+      # Create binary context with pre-compiled controller
+      mkdir -p binary-context
+      cp controller binary-context/controller
+      # Build using named context override - 'binary' stage uses our pre-built binary
+      buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=. \
+        --local binary=binary-context \
+        --opt context:binary=local:binary \
+        --opt target=runtime \
+        --opt build-arg:HAPROXY_VERSION=${HAPROXY_VERSION} \
+        --output type=image,name=${TEST_IMAGE},push=true
+
+# =============================================================================
+# Integration Stage
+# =============================================================================
+
+.test-integration-base:
+  stage: integration
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .docker-dind
+    - .rules-code
+  timeout: 30 minutes
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+  variables:
+    KEEP_CLUSTER: "false"
+  script:
+    - make test-integration
+  artifacts:
+    reports:
+      junit: report-integration.xml
+    when: always
+    expire_in: 1 week
+
+test-integration:
+  tags:
+    - saas-linux-2xlarge-amd64
+  extends:
+    - .test-integration-base
+    - .haproxy-version-matrix
+
+test-acceptance:
+  stage: integration
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .docker-dind
+    - .rules-code
+  timeout: 30 minutes
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+    - job: build-test-image
+  variables:
+    HAPROXY_VERSION: "3.2"
+    KIND_NODE_IMAGE: kindest/node:${KIND_NODE_VERSION}
+  before_script:
+    # Pull test image from registry and tag it for the acceptance tests
+    # The Go test code handles kind cluster creation with DinD support
+    - |
+      TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
+      docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      docker pull ${TEST_IMAGE}
+      docker tag ${TEST_IMAGE} haproxy-template-ic:test
+  script:
+    - go tool gotestsum --junitfile report-acceptance.xml --format testname -- -tags=acceptance -v -timeout 25m -run TestAllAcceptanceParallel ./tests/acceptance/...
+  after_script:
+    # Extract debug logs on failure for troubleshooting
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ]; then
+        echo "Job failed - extracting debug logs..."
+        mkdir -p debug-logs
+
+        # List all test namespaces (they have pattern test-*)
+        for ns in $(kubectl get ns -o name 2>/dev/null | grep '^namespace/test-' | cut -d/ -f2); do
+          echo "=== Namespace: $ns ===" >> debug-logs/test-namespaces.log
+
+          # Controller pod logs
+          kubectl -n "$ns" logs -l app=haproxy-template-ic --all-containers=true \
+            >> debug-logs/controller-$ns.log 2>&1 || true
+
+          # Pod status
+          kubectl -n "$ns" get pods -o wide >> debug-logs/pods-$ns.log 2>&1 || true
+
+          # Events
+          kubectl -n "$ns" get events --sort-by=.lastTimestamp \
+            >> debug-logs/events-$ns.log 2>&1 || true
+        done
+
+        echo "Debug logs extracted"
+        ls -la debug-logs/ || true
+      fi
+    # Clean up cluster
+    - kind delete cluster --name haproxy-test || true
+  artifacts:
+    reports:
+      junit: report-acceptance.xml
+    paths:
+      - debug-logs/
+    when: always
+    expire_in: 1 week
+
+.test-routes-base:
+  stage: integration
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .docker-dind
+  timeout: 25 minutes
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+    - job: build-test-image
+  rules:
+    - changes:
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - charts/**
+        - scripts/**
+        - .gitlab-ci.yml
+  before_script:
+    - |
+      # Pull pre-built test image from registry and tag for start-dev-env.sh
+      TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
+      docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      docker pull ${TEST_IMAGE}
+      docker tag ${TEST_IMAGE} haproxy-template-ic:dev
+    - |
+      # Pre-create kind cluster with DinD-compatible networking
+      # start-dev-env.sh will detect the existing cluster and skip creation
+      kind create cluster --name haproxy-template-ic-dev --image kindest/node:${KIND_NODE_VERSION} \
+        --config .gitlab/ci/kind-config-dind.yaml --wait 120s
+    - |
+      # Fix kubeconfig to use "docker" hostname instead of 0.0.0.0
+      mkdir -p ~/.kube
+      kind get kubeconfig --name haproxy-template-ic-dev > ~/.kube/config
+      sed -i 's|https://0\.0\.0\.0:|https://docker:|g' ~/.kube/config
+    - |
+      # Wait for API server to be ready
+      for i in $(seq 1 30); do
+        if kubectl get nodes &>/dev/null; then
+          echo "API server is ready"
+          break
+        fi
+        echo "Waiting for API server... (attempt $i/30)"
+        sleep 2
+      done
+  script:
+    - HAPROXY_VERSION=${HAPROXY_VERSION} ./scripts/start-dev-env.sh --skip-build --timeout 240
+    - ./scripts/test-routes.sh
+  after_script:
+    # Extract debug logs on failure for troubleshooting
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ]; then
+        echo "Job failed - extracting debug logs..."
+        mkdir -p debug-logs
+
+        # Controller logs
+        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic --all-containers=true \
+          > debug-logs/controller.log 2>&1 || echo "Failed to get controller logs"
+
+        # HAProxy logs (haproxy container)
+        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic-haproxy -c haproxy \
+          > debug-logs/haproxy.log 2>&1 || echo "Failed to get HAProxy logs"
+
+        # Dataplane API logs
+        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic-haproxy -c dataplane \
+          > debug-logs/dataplane.log 2>&1 || echo "Failed to get dataplane logs"
+
+        # HAProxy configuration (useful for debugging routing issues)
+        kubectl -n haproxy-template-ic exec deployment/haproxy-template-ic-haproxy -c haproxy -- \
+          cat /etc/haproxy/haproxy.cfg > debug-logs/haproxy.cfg 2>&1 || echo "Failed to get HAProxy config"
+
+        # Pod status summary
+        kubectl get pods -A -o wide > debug-logs/pod-status.log 2>&1 || true
+
+        # Events (useful for deployment issues)
+        kubectl get events -n haproxy-template-ic --sort-by=.lastTimestamp \
+          > debug-logs/events.log 2>&1 || true
+
+        # Service details (including NodePorts) - critical for port connectivity issues
+        kubectl get svc -n haproxy-template-ic -o yaml \
+          > debug-logs/services.yaml 2>&1 || true
+
+        # Network connectivity diagnostics
+        {
+          echo "=== Network Diagnostics ==="
+          echo "DOCKER_HOST: ${DOCKER_HOST:-not set}"
+          echo ""
+          echo "=== Docker host resolution ==="
+          DOCKER_HOSTNAME=$(echo "$DOCKER_HOST" | sed 's|tcp://||' | cut -d: -f1)
+          getent hosts "$DOCKER_HOSTNAME" 2>&1 || echo "Failed to resolve docker hostname"
+          echo ""
+          echo "=== Port 30443 connectivity test ==="
+          NODEPORT_IP=$(getent hosts "$DOCKER_HOSTNAME" | awk '{print $1}' | head -1)
+          echo "Testing connection to ${NODEPORT_IP}:30443..."
+          timeout 5 curl -vsk --max-time 5 "https://${NODEPORT_IP}:30443/" 2>&1 || echo "Connection failed"
+          echo ""
+          echo "=== Port 30080 connectivity test (reference) ==="
+          echo "Testing connection to ${NODEPORT_IP}:30080..."
+          timeout 5 curl -vs --max-time 5 -H "Host: echo.localdev.me" "http://${NODEPORT_IP}:30080/" 2>&1 | head -50 || echo "Connection failed"
+        } > debug-logs/network-diagnostics.log 2>&1
+
+        echo "Debug logs extracted to debug-logs/"
+        ls -la debug-logs/
+      fi
+    # Clean up cluster
+    - kind delete cluster --name haproxy-template-ic-dev || true
+  artifacts:
+    paths:
+      - debug-logs/
+    when: on_failure
+    expire_in: 1 week
+
+test-routes:
+  extends:
+    - .test-routes-base
+    - .haproxy-version-matrix
+
+# =============================================================================
+# Deploy Stage
+# =============================================================================
+
+build-release:
+  stage: deploy
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  tags:
+    - saas-linux-large-amd64
+  needs: []
+  variables:
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > ~/.docker/config.json
+  script:
+    - |
+      buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=. \
+        --opt platform=linux/amd64,linux/arm64 \
+        --opt build-arg:GIT_COMMIT=${CI_COMMIT_SHA} \
+        --opt build-arg:GIT_TAG=${CI_COMMIT_TAG} \
+        --import-cache type=registry,ref=${CI_REGISTRY_IMAGE}:cache \
+        --import-cache type=registry,ref=${CI_REGISTRY_IMAGE}:latest \
+        --export-cache type=registry,ref=${CI_REGISTRY_IMAGE}:cache,mode=max \
+        --output type=image,\"name=${CI_REGISTRY_IMAGE}:${CI_COMMIT_TAG},${CI_REGISTRY_IMAGE}:latest\",push=true
+
+# MR documentation preview using parallel deployments
+pages-preview:
+  stage: deploy
+  image: ${CI_REGISTRY_IMAGE}/ci/python-docs:latest
+  tags:
+    - saas-linux-small-amd64
+  needs:
+    - job: build-python-docs
+      optional: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - docs/**
+        - charts/**/docs/**
+        - charts/**/mkdocs.yml
+  script:
+    - |
+      # Copy shared CSS
+      cp docs/shared/colors.css docs/controller/docs/stylesheets/
+      cp docs/shared/colors.css charts/haproxy-template-ic/docs/stylesheets/
+    - |
+      # Build controller docs
+      cd docs/controller
+      mkdocs build -d ../../public/controller/latest
+      cd ../..
+    - |
+      # Build helm chart docs
+      cd charts/haproxy-template-ic
+      mkdocs build -d ../../public/helm-chart/latest
+      cd ../..
+    - |
+      # Copy landing page and shared assets
+      cp docs/landing-page/index.html public/index.html
+      mkdir -p public/shared
+      cp docs/shared/colors.css public/shared/colors.css
+    - echo "Preview available at ${CI_PAGES_URL}/"
+  pages:
+    path_prefix: "mr-$CI_MERGE_REQUEST_IID"
+    expire_in: never  # Cleaned up automatically when MR closes
+  artifacts:
+    paths:
+      - public
+  environment:
+    name: docs/mr-$CI_MERGE_REQUEST_IID
+    url: $CI_PAGES_URL/
+    on_stop: pages-preview-cleanup
+    auto_stop_in: 1 week
+
+# Cleanup job for MR preview (runs when MR is closed/merged)
+pages-preview-cleanup:
+  stage: deploy
+  image: alpine:latest
+  tags:
+    - saas-linux-small-amd64
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+  script:
+    - echo "MR preview environment stopped"
+  environment:
+    name: docs/mr-$CI_MERGE_REQUEST_IID
+    action: stop
+
+# Trigger pages project to build and deploy docs to group-level pages
+trigger-pages:
+  stage: deploy
+  needs: []
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - docs/**
+        - charts/**/docs/**
+        - charts/**/mkdocs.yml
+  trigger:
+    project: haproxy-template-ic/haproxy-template-ic.gitlab.io
+    branch: main
+    strategy: depend

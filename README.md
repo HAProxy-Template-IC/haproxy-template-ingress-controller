@@ -5,7 +5,8 @@
 </p>
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/actions/workflows/ci.yml)
+[![Build Status](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/pipeline.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/pipelines)
+[![Coverage](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/coverage.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/graphs/main/charts)
 
 ## Overview
 
@@ -147,7 +148,7 @@ Here's a minimal configuration that watches Kubernetes Ingress resources and gen
 
 ```yaml
 # HAProxyTemplateConfig CRD: haproxy-template-ic-config
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: haproxy-template-ic-config
@@ -254,7 +255,7 @@ The controller includes a built-in test runner for validating HAProxy templates 
 **Add tests to your configuration:**
 
 ```yaml
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: my-config

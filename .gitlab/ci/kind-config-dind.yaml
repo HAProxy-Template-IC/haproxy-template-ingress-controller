@@ -1,0 +1,51 @@
+# Kind cluster configuration for Docker-in-Docker environments
+# Used in GitLab CI where the Docker daemon runs in a separate container (docker:dind service)
+#
+# Key differences from local development config:
+# - networking.apiServerAddress: "0.0.0.0" - Binds API server to all interfaces
+# - kubeadmConfigPatchesJSON6902 adds "docker" as a certificate SAN
+#
+# After cluster creation, the kubeconfig must be patched to replace 0.0.0.0 with "docker"
+# because the Docker daemon is accessible via the "docker" hostname in GitLab CI.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+networking:
+  # Bind API server to all interfaces so it's accessible from the CI job container
+  apiServerAddress: "0.0.0.0"
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # HTTP traffic to HAProxy - exposed on docker host for test-routes.sh
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+        listenAddress: "0.0.0.0"
+      # HTTPS traffic to HAProxy
+      - containerPort: 30443
+        hostPort: 30443
+        protocol: TCP
+        listenAddress: "0.0.0.0"
+      # HAProxy stats/health
+      - containerPort: 30404
+        hostPort: 30404
+        protocol: TCP
+        listenAddress: "0.0.0.0"
+
+kubeadmConfigPatchesJSON6902:
+  # Add "docker" as a Subject Alternative Name to the API server certificate
+  # This allows kubectl to connect using https://docker:<port>
+  - group: kubeadm.k8s.io
+    version: v1beta3
+    kind: ClusterConfiguration
+    patch: |
+      - op: add
+        path: /apiServer/certSANs/-
+        value: docker

@@ -86,6 +86,14 @@ spec:
             - name: tls
               mountPath: /etc/ssl/demo
               readOnly: true
+          # startupProbe ensures BOTH ports are ready before pod is marked Ready
+          # This prevents race conditions where port 8080 is up but 8443 isn't yet
+          startupProbe:
+            tcpSocket:
+              port: 8443
+            initialDelaySeconds: 2
+            failureThreshold: 15
+            periodSeconds: 2
           livenessProbe:
             tcpSocket:
               port: 8080
@@ -94,7 +102,7 @@ spec:
           readinessProbe:
             tcpSocket:
               port: 8080
-            initialDelaySeconds: 3
+            initialDelaySeconds: 1
             periodSeconds: 5
       volumes:
         - name: config

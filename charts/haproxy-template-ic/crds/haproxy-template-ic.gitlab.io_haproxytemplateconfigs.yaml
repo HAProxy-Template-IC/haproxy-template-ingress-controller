@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: haproxytemplateconfigs.haproxy-template-ic.github.io
+  name: haproxytemplateconfigs.haproxy-template-ic.gitlab.io
 spec:
-  group: haproxy-template-ic.github.io
+  group: haproxy-template-ic.gitlab.io
   names:
     kind: HAProxyTemplateConfig
     listKind: HAProxyTemplateConfigList

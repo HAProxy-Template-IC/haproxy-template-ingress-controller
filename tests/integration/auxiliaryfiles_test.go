@@ -28,6 +28,7 @@ func skipIfCRTListNotSupported(t *testing.T, env fixenv.Env) {
 
 // TestGeneralFiles tests Create, Update, and Delete operations for general files
 func TestGeneralFiles(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name      string
 		setup     func(t *testing.T, ctx context.Context, env fixenv.Env) // Setup initial state
@@ -232,6 +233,7 @@ func TestGeneralFiles(t *testing.T) {
 
 // TestSSLCertificates tests Create, Update, and Delete operations for SSL certificates
 func TestSSLCertificates(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name      string
 		setup     func(t *testing.T, ctx context.Context, env fixenv.Env)
@@ -430,6 +432,7 @@ func TestSSLCertificates(t *testing.T) {
 
 // TestSSLCertificatesCompareAndSync tests the Compare and Sync functions for SSL certificates
 func TestSSLCertificatesCompareAndSync(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	ctx := context.Background()
 	dataplaneClient := TestDataplaneClient(env)
@@ -613,6 +616,7 @@ func TestSSLCertificatesCompareAndSync(t *testing.T) {
 
 // TestGeneralFilesCompareAndSync tests the Compare and Sync functions for general files
 func TestGeneralFilesCompareAndSync(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	ctx := context.Background()
 	client := TestDataplaneClient(env)
@@ -754,8 +758,10 @@ func LoadTestFileContent(t *testing.T, relativePath string) string {
 	require.NoError(t, err, "failed to read test file %s", relativePath)
 	return string(content)
 }
+
 // TestCRTLists tests Create, Update, and Delete operations for CRT-list files
 func TestCRTLists(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name      string
 		setup     func(t *testing.T, ctx context.Context, env fixenv.Env)
@@ -964,6 +970,7 @@ func TestCRTLists(t *testing.T) {
 // TestCRTListsCompareAndSync tests the Compare and Sync workflow for CRT-lists
 // through sequential phases that build upon each other.
 func TestCRTListsCompareAndSync(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 
 	// Skip if CRT-list storage is not supported (requires DataPlane API v3.2+)
@@ -1018,7 +1025,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 	// CRT-lists use direct content comparison, so changes are accurately detected
 	t.Run("compare-with-existing-crtlists", func(t *testing.T) {
 		desired := []auxiliaryfiles.CRTListFile{
-			{Path: "example.com.txt", Content: LoadTestFileContent(t, "crt-lists/crt-list-updated.txt")}, // Changed content
+			{Path: "example.com.txt", Content: LoadTestFileContent(t, "crt-lists/crt-list-updated.txt")},  // Changed content
 			{Path: "test.com.txt", Content: LoadTestFileContent(t, "crt-lists/crt-list-single-cert.txt")}, // Same content
 		}
 

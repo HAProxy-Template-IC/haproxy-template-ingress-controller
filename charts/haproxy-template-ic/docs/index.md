@@ -21,7 +21,7 @@ For users who need full control over templates, see the [Templating Guide](/cont
 ### Add the Helm Repository
 
 ```bash
-helm repo add haproxy-template-ic https://haproxy-template-ic.github.io/charts
+helm repo add haproxy-template-ic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
 helm repo update
 ```
 
@@ -51,7 +51,7 @@ helm install my-controller haproxy-template-ic/haproxy-template-ic \
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `replicaCount` | Number of controller replicas (2+ recommended for HA) | `2` |
-| `image.repository` | Controller image repository | `ghcr.io/haproxy-template-ic/haproxy-template-ingress-controller` |
+| `image.repository` | Controller image repository | `registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller` |
 | `image.tag` | Controller image tag | Chart appVersion |
 | `controller.templateLibraries.ingress.enabled` | Enable Ingress resource support | `true` |
 | `controller.templateLibraries.gateway.enabled` | Enable Gateway API support | `false` |

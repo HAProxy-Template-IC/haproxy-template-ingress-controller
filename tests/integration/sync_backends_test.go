@@ -8,6 +8,7 @@ import (
 
 // TestSyncBackends runs table-driven synchronization tests for backend operations
 func TestSyncBackends(t *testing.T) {
+	t.Parallel()
 	testCases := []syncTestCase{
 		// ==================== BASIC BACKEND OPERATIONS ====================
 		{

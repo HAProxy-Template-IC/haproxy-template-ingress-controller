@@ -17,6 +17,11 @@ integration.test
 *.out
 coverage.html
 coverage.txt
+coverage.xml
+
+# CI-generated report files
+gl-code-quality-report.json
+report*.xml
 
 # Go workspace file
 go.work

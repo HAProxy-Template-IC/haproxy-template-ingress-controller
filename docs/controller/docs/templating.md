@@ -579,7 +579,7 @@ Define custom variables in your HAProxyTemplateConfig CRD or ConfigMap configura
 **Using CRD:**
 
 ```yaml
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 spec:
   templatingSettings:
@@ -1255,8 +1255,8 @@ haproxy_config:
 
 ## See Also
 
-- [Template Engine Reference](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/pkg/templating/README.md) - Detailed templating API and error handling
+- [Template Engine Reference](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/templating/README.md) - Detailed templating API and error handling
 - [Configuration Reference](supported-configuration.md) - Complete configuration schema
 - [Gonja Documentation](https://github.com/nikolalohinski/gonja) - Full template syntax reference
-- [Helm Chart Values](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/charts/haproxy-template-ic/values.yaml) - Production-ready template examples
+- [Helm Chart Values](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/charts/haproxy-template-ic/values.yaml) - Production-ready template examples
 - [HAProxy Configuration Manual](https://docs.haproxy.org/2.9/configuration.html) - HAProxy configuration reference

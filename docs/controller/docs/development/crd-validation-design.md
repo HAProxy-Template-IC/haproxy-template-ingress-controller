@@ -33,7 +33,7 @@ Migrate from ConfigMap-based configuration to a Custom Resource Definition (CRD)
 
 ### API Group and Version
 
-- **Group**: `haproxy-template-ic.github.io`
+- **Group**: `haproxy-template-ic.gitlab.io`
 - **Version**: `v1alpha1` (pre-release, API may change)
 - **Kind**: `HAProxyTemplateConfig`
 - **Plural**: `haproxytemplateconfigs`
@@ -42,7 +42,7 @@ Migrate from ConfigMap-based configuration to a Custom Resource Definition (CRD)
 ### Resource Structure
 
 ```yaml
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: my-haproxy-config
@@ -441,7 +441,7 @@ Place generated CRD in `charts/haproxy-template-ic/crds/`:
 ```
 charts/haproxy-template-ic/
 ├── crds/
-│   └── haproxy-template-ic.github.io_haproxytemplateconfigs.yaml
+│   └── haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml
 ├── templates/
 │   ├── deployment.yaml
 │   ├── serviceaccount.yaml
@@ -468,12 +468,12 @@ metadata:
   name: haproxy-template-ic
 rules:
   # CRD permissions
-  - apiGroups: ["haproxy-template-ic.github.io"]
+  - apiGroups: ["haproxy-template-ic.gitlab.io"]
     resources: ["haproxytemplateconfigs"]
     verbs: ["get", "list", "watch"]
 
   # CRD status updates
-  - apiGroups: ["haproxy-template-ic.github.io"]
+  - apiGroups: ["haproxy-template-ic.gitlab.io"]
     resources: ["haproxytemplateconfigs/status"]
     verbs: ["update", "patch"]
 
@@ -1073,7 +1073,7 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: haproxy-template-ic-webhook
 webhooks:
-  - name: validate.haproxytemplateconfig.haproxy-template-ic.github.io
+  - name: validate.haproxytemplateconfig.haproxy-template-ic.gitlab.io
     clientConfig:
       service:
         name: haproxy-template-ic-webhook
@@ -1082,7 +1082,7 @@ webhooks:
       caBundle: {{ .Values.webhook.caBundle }}
 
     rules:
-      - apiGroups: ["haproxy-template-ic.github.io"]
+      - apiGroups: ["haproxy-template-ic.gitlab.io"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["haproxytemplateconfigs"]
@@ -1290,7 +1290,7 @@ The webhook only validates configs with matching labels:
 
 ```yaml
 # Controller A's config
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: controller-a-config
@@ -1300,7 +1300,7 @@ metadata:
     app.kubernetes.io/instance: controller-a  # Matches controller A's webhook
 
 # Controller B's config
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: controller-b-config

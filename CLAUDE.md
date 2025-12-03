@@ -89,7 +89,7 @@ Pre-commit hooks run automatically via git hooks and enforce:
 - Formatting issues (gofmt/goimports)
 - Test failures
 
-Bypassing pre-commit hooks with `--no-verify` only delays the problem until CI runs, wasting time and blocking PR merges.
+Bypassing pre-commit hooks with `--no-verify` only delays the problem until CI runs, wasting time and blocking MR merges.
 
 ### Fixing Common Issues
 
@@ -108,7 +108,45 @@ govulncheck ./...
 make check-all
 ```
 
-**If extensive refactoring is needed**: Create separate commits/PRs for linting fixes rather than bypassing checks.
+**If extensive refactoring is needed**: Create separate commits/MRs for linting fixes rather than bypassing checks.
+
+### GitLab CLI (glab) Commands
+
+Common `glab` commands for development workflow:
+
+```bash
+# Create merge request
+glab mr create --title "Fix template rendering" --description "Fixes issue with..."
+
+# View MR details
+glab mr view 123
+
+# List open MRs
+glab mr list
+
+# Check CI pipeline status
+glab ci view
+
+# View failed job logs
+glab ci view --job-id 12345
+
+# Create issue
+glab issue create --title "Bug: ..." --description "..."
+
+# View CI configuration
+glab ci lint .gitlab-ci.yml
+
+# Download job artifacts for debugging CI failures
+# Replace <JOB_ID> with the numeric job ID from the GitLab job URL
+glab api --method GET "projects/haproxy-template-ic%2Fhaproxy-template-ingress-controller/jobs/<JOB_ID>/artifacts" > artifacts.zip
+unzip artifacts.zip
+
+# View job trace/log
+glab api --method GET "projects/haproxy-template-ic%2Fhaproxy-template-ingress-controller/jobs/<JOB_ID>/trace"
+
+# Get job details (status, artifacts info, ref, etc)
+glab api projects/haproxy-template-ic%2Fhaproxy-template-ingress-controller/jobs/<JOB_ID>
+```
 
 ## Event-Driven Architecture Principles
 

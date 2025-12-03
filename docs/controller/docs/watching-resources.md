@@ -1056,5 +1056,5 @@ See [Configuration Reference](./configuration.md) for additional configuration g
 
 - [Configuration Reference](./configuration.md) - Complete configuration syntax and field descriptions
 - [Templating Guide](./templating.md) - Template syntax and resource access patterns
-- [pkg/k8s README](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/pkg/k8s/README.md) - Store implementation details and API documentation
+- [pkg/k8s README](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/k8s/README.md) - Store implementation details and API documentation
 - [Architecture Design](./development/design.md) - System architecture and component interactions

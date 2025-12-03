@@ -30,7 +30,7 @@ type HaproxyTemplateICV1alpha1Interface interface {
 	HAProxyTemplateConfigsGetter
 }
 
-// HaproxyTemplateICV1alpha1Client is used to interact with features provided by the haproxy-template-ic.github.io group.
+// HaproxyTemplateICV1alpha1Client is used to interact with features provided by the haproxy-template-ic.gitlab.io group.
 type HaproxyTemplateICV1alpha1Client struct {
 	restClient rest.Interface
 }

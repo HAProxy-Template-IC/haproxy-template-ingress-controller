@@ -30,7 +30,7 @@ rules:
     resources: ["leases"]
     verbs: ["get", "create", "update"]
   # HAProxyTemplateConfig CRD
-  - apiGroups: ["haproxy-template-ic.github.io"]
+  - apiGroups: ["haproxy-template-ic.gitlab.io"]
     resources: ["haproxytemplateconfigs"]
     verbs: ["get", "list", "watch"]
 {{- end }}

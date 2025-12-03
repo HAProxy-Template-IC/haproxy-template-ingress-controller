@@ -818,4 +818,4 @@ See [Debugging Guide](./operations/debugging.md) for details.
 - [Configuration Reference](./configuration.md) - Complete configuration options
 - [High Availability Guide](./operations/high-availability.md) - HA-specific troubleshooting
 - [Debugging Guide](./operations/debugging.md) - Advanced debugging techniques
-- [GitHub Issues](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/issues) - Report bugs and request features
+- [GitLab Issues](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/issues) - Report bugs and request features

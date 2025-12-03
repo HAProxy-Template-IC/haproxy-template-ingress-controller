@@ -19,7 +19,7 @@ Tests are embedded directly in the HAProxyTemplateConfig CRD and can be executed
 Add a `validationTests` section to your HAProxyTemplateConfig:
 
 ```yaml
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: my-config
@@ -948,7 +948,7 @@ controller validate -f config.yaml --haproxy-binary /usr/local/bin/haproxy
 ### Complete Example: Ingress Routing
 
 ```yaml
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: ingress-routing
