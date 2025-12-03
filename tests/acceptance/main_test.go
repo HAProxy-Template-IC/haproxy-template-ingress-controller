@@ -210,23 +210,29 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 			}
 			fmt.Println("DEBUG: Controller image loaded successfully")
 
-			// Install HAProxyTemplateConfig CRD
-			fmt.Println("DEBUG: Installing HAProxyTemplateConfig CRD...")
-			crdPath := "../../charts/haproxy-template-ic/crds/haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml"
-			cmd = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", TestKubeconfigPath, "-f", crdPath)
+			// Install all CRDs (HAProxyTemplateConfig, HAProxyCfg, HAProxyMapFile)
+			fmt.Println("DEBUG: Installing CRDs...")
+			crdDir := "../../charts/haproxy-template-ic/crds/"
+			cmd = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", TestKubeconfigPath, "-f", crdDir)
 			if output, err := cmd.CombinedOutput(); err != nil {
-				return ctx, fmt.Errorf("failed to install HAProxyTemplateConfig CRD: %w\nOutput: %s", err, string(output))
+				return ctx, fmt.Errorf("failed to install CRDs: %w\nOutput: %s", err, string(output))
 			}
-			fmt.Println("DEBUG: HAProxyTemplateConfig CRD installed successfully")
+			fmt.Println("DEBUG: CRDs installed successfully")
 
-			// Wait for CRD to be established
-			cmd = exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", TestKubeconfigPath,
-				"--for=condition=Established",
+			// Wait for CRDs to be established
+			crds := []string{
 				"crd/haproxytemplateconfigs.haproxy-template-ic.gitlab.io",
-				"--timeout=60s")
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return ctx, fmt.Errorf("failed to wait for CRD to be established: %w\nOutput: %s", err, string(output))
+				"crd/haproxycfgs.haproxy-template-ic.gitlab.io",
+				"crd/haproxymapfiles.haproxy-template-ic.gitlab.io",
 			}
+			for _, crd := range crds {
+				cmd = exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", TestKubeconfigPath,
+					"--for=condition=Established", crd, "--timeout=60s")
+				if output, err := cmd.CombinedOutput(); err != nil {
+					return ctx, fmt.Errorf("failed to wait for %s to be established: %w\nOutput: %s", crd, err, string(output))
+				}
+			}
+			fmt.Println("DEBUG: All CRDs established")
 
 			return ctx, nil
 		},
@@ -234,12 +240,23 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 
 	testEnv.Finish(
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			// In CI, skip cluster deletion - let after_script handle it
+			// This allows after_script to extract debug logs before cleanup
+			if os.Getenv("CI") == "true" {
+				fmt.Println("DEBUG: CI mode - skipping cluster deletion (handled by after_script)")
+				return ctx, nil
+			}
 			if err := provider.Delete(kindClusterName, ""); err != nil {
 				fmt.Printf("Warning: failed to destroy kind cluster: %v\n", err)
 			}
 			return ctx, nil
 		},
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			// In CI, skip kubeconfig deletion - after_script needs it
+			if os.Getenv("CI") == "true" {
+				fmt.Println("DEBUG: CI mode - keeping kubeconfig for after_script")
+				return ctx, nil
+			}
 			if err := os.Remove(TestKubeconfigPath); err != nil && !os.IsNotExist(err) {
 				fmt.Printf("Warning: failed to remove test kubeconfig %s: %v\n", TestKubeconfigPath, err)
 			} else {
@@ -290,23 +307,29 @@ func setupForLocal(kindClusterName, kindNodeImage string) {
 			}
 			fmt.Println("DEBUG: Controller image loaded successfully")
 
-			// Install HAProxyTemplateConfig CRD
-			fmt.Println("DEBUG: Installing HAProxyTemplateConfig CRD...")
-			crdPath := "../../charts/haproxy-template-ic/crds/haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml"
-			cmd = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", crdPath)
+			// Install all CRDs (HAProxyTemplateConfig, HAProxyCfg, HAProxyMapFile)
+			fmt.Println("DEBUG: Installing CRDs...")
+			crdDir := "../../charts/haproxy-template-ic/crds/"
+			cmd = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", crdDir)
 			if output, err := cmd.CombinedOutput(); err != nil {
-				return ctx, fmt.Errorf("failed to install HAProxyTemplateConfig CRD: %w\nOutput: %s", err, string(output))
+				return ctx, fmt.Errorf("failed to install CRDs: %w\nOutput: %s", err, string(output))
 			}
-			fmt.Println("DEBUG: HAProxyTemplateConfig CRD installed successfully")
+			fmt.Println("DEBUG: CRDs installed successfully")
 
-			// Wait for CRD to be established
-			cmd = exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
-				"--for=condition=Established",
+			// Wait for CRDs to be established
+			crds := []string{
 				"crd/haproxytemplateconfigs.haproxy-template-ic.gitlab.io",
-				"--timeout=60s")
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return ctx, fmt.Errorf("failed to wait for CRD to be established: %w\nOutput: %s", err, string(output))
+				"crd/haproxycfgs.haproxy-template-ic.gitlab.io",
+				"crd/haproxymapfiles.haproxy-template-ic.gitlab.io",
 			}
+			for _, crd := range crds {
+				cmd = exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
+					"--for=condition=Established", crd, "--timeout=60s")
+				if output, err := cmd.CombinedOutput(); err != nil {
+					return ctx, fmt.Errorf("failed to wait for %s to be established: %w\nOutput: %s", crd, err, string(output))
+				}
+			}
+			fmt.Println("DEBUG: All CRDs established")
 
 			return ctx, nil
 		},

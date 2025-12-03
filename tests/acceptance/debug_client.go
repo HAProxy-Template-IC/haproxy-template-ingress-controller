@@ -122,10 +122,11 @@ func (dc *DebugClient) Start(ctx context.Context) error {
 	}
 }
 
-// Stop stops the port-forward.
+// Stop stops the port-forward. Safe to call multiple times.
 func (dc *DebugClient) Stop() {
 	if dc.stopChannel != nil {
 		close(dc.stopChannel)
+		dc.stopChannel = nil
 	}
 }
 
@@ -382,6 +383,53 @@ func (dc *DebugClient) WaitForRenderedConfigContains(ctx context.Context, expect
 
 			if contains(rendered, expectedSubstring) {
 				return nil
+			}
+		}
+	}
+}
+
+// WaitForRenderedConfigContainsAny waits for the rendered config to contain any of the expected strings.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
+// On timeout, returns an error with the last seen config for debugging.
+func (dc *DebugClient) WaitForRenderedConfigContainsAny(ctx context.Context, expectedSubstrings []string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastErr error
+	var lastConfig string
+	for {
+		select {
+		case <-ctx.Done():
+			errMsg := fmt.Sprintf("timeout waiting for rendered config to contain any of %v", expectedSubstrings)
+			if lastConfig != "" {
+				errMsg += fmt.Sprintf("\nlast seen config:\n%s", lastConfig)
+			}
+			if lastErr != nil {
+				return "", fmt.Errorf("%s (last error: %w)", errMsg, lastErr)
+			}
+			return "", fmt.Errorf("%s", errMsg)
+
+		case <-ticker.C:
+			rendered, err := dc.GetRenderedConfig(ctx)
+			if err != nil {
+				lastErr = err
+				// If it's a connection error, try to reconnect the port-forward
+				if isConnectionError(err) {
+					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+					}
+				}
+				continue // Retry on error
+			}
+
+			lastConfig = rendered
+			for _, expected := range expectedSubstrings {
+				if contains(rendered, expected) {
+					return expected, nil
+				}
 			}
 		}
 	}

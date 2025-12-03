@@ -845,55 +845,35 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 				time.Sleep(50 * time.Millisecond) // Very small delay between updates
 			}
 
-			// Wait for debouncing to complete
-			t.Log("Waiting for debounce to complete...")
-			time.Sleep(3 * time.Second)
-
-			// Verify the final version is deployed
-			renderedConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
-			require.NoError(t, err)
-
-			// Debouncing is non-deterministic, so verify a late version is deployed.
-			// Any version from 7-10 indicates debouncing worked (early versions were skipped).
-			foundLateVersion := false
-			for v := 7; v <= 10; v++ {
-				if strings.Contains(renderedConfig, fmt.Sprintf("# version %d", v)) {
-					t.Logf("Found version %d in rendered config (debouncing worked)", v)
-					foundLateVersion = true
-					break
-				}
+			// Wait for debouncing to complete and a late version to appear
+			// Debouncing is non-deterministic, so poll until any version from 7-10 appears
+			// which indicates debouncing worked (early versions were skipped)
+			t.Log("Waiting for a late version (7-10) to appear in rendered config...")
+			expectedVersions := []string{
+				"# version 7", "# version 8", "# version 9", "# version 10",
 			}
-			if !foundLateVersion {
-				t.Log("FAILURE: No late version (7-10) found in rendered config")
-				t.Log("Searching for version markers in config:")
-				for v := 0; v <= 10; v++ {
-					if strings.Contains(renderedConfig, fmt.Sprintf("# version %d", v)) {
-						t.Logf("  Found: # version %d", v)
-					}
-				}
-				t.Logf("Full rendered config:\n%s", renderedConfig)
-			}
-			assert.True(t, foundLateVersion,
-				"Final config should have a late version marker (7-10), indicating debouncing worked")
+			foundVersion, err := debugClient.WaitForRenderedConfigContainsAny(ctx, expectedVersions, 30*time.Second)
+			require.NoError(t, err, "Should find a late version (7-10) in rendered config")
+			t.Logf("Found %q in rendered config (debouncing worked)", foundVersion)
+
+			// Wait for validation to complete (validation happens after rendering)
+			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			require.NoError(t, err, "Validation should succeed after debounce")
 
 			// Use debug endpoint to verify pipeline completed successfully after debouncing
 			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
 			if err == nil && pipeline != nil {
 				t.Log("Pipeline status retrieved for debounce verification")
 
-				// Verify rendering and validation succeeded for final debounced config
+				// Log rendering status (validation already verified above)
 				if pipeline.Rendering != nil {
 					t.Logf("Final rendering status: %s (duration: %dms)",
 						pipeline.Rendering.Status, pipeline.Rendering.DurationMs)
-					assert.Equal(t, "succeeded", pipeline.Rendering.Status,
-						"Final rendering should succeed after debounce")
 				}
 
 				if pipeline.Validation != nil {
 					t.Logf("Final validation status: %s (duration: %dms)",
 						pipeline.Validation.Status, pipeline.Validation.DurationMs)
-					assert.Equal(t, "succeeded", pipeline.Validation.Status,
-						"Final validation should succeed after debounce")
 				}
 
 				// Log the last trigger for debugging
@@ -1815,31 +1795,26 @@ func buildTransactionConflictFeature() types.Feature {
 				time.Sleep(100 * time.Millisecond)
 			}
 
-			// Wait for reconciliation
-			t.Log("Waiting for controller to process updates...")
-			time.Sleep(5 * time.Second)
-
 			// Verify controller is still healthy
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 30*time.Second)
 			require.NoError(t, err, "Controller should remain healthy after rapid updates")
 
-			// Verify final state is consistent
-			renderedConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
-			require.NoError(t, err)
+			// Refresh debug client after rapid updates - port-forward may be stale
+			debugClient.Stop()
+			newDebugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 60*time.Second)
+			require.NoError(t, err, "Failed to refresh debug client after rapid updates")
+			defer newDebugClient.Stop()
+			debugClient = newDebugClient
 
-			// Should have version 10 (last update) - may have different version due to debouncing
-			hasVersionMarker := strings.Contains(renderedConfig, "# version 10")
-			if !hasVersionMarker {
-				t.Log("FAILURE: Config does not have expected version marker")
-				t.Log("Searching for version markers in config:")
-				for v := 0; v <= 10; v++ {
-					if strings.Contains(renderedConfig, fmt.Sprintf("# version %d", v)) {
-						t.Logf("  Found: # version %d", v)
-					}
-				}
-				t.Logf("Full rendered config:\n%s", renderedConfig)
+			// Wait for a late version to appear (debouncing coalesces updates)
+			// Versions are 101-105 from VersionedTemplate(100+i)
+			t.Log("Waiting for a late version (103-105) to appear in rendered config...")
+			expectedVersions := []string{
+				"# version 103", "# version 104", "# version 105",
 			}
-			assert.True(t, hasVersionMarker, "Config should have a version marker (debouncing may coalesce)")
+			foundVersion, err := debugClient.WaitForRenderedConfigContainsAny(ctx, expectedVersions, 30*time.Second)
+			require.NoError(t, err, "Should find a late version (103-105) in rendered config")
+			t.Logf("Found %q in rendered config (debouncing worked)", foundVersion)
 
 			// Use debug endpoint to verify pipeline completed successfully
 			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
@@ -2038,16 +2013,13 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 
 			// Refresh debug client in case pod restarted during config updates
 			debugClient.Stop()
-			debugClient, err = EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			debugClient, err = EnsureDebugClientReady(ctx, t, client, namespace, 60*time.Second)
 			require.NoError(t, err, "Failed to refresh debug client")
 
-			// Verify config is tracked correctly
-			renderedConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
-			require.NoError(t, err)
-
-			// Should have latest version marker
-			assert.Contains(t, renderedConfig, "# version 20",
-				"Config should reflect updates even with no deployment targets")
+			// Verify config is tracked correctly by polling for the expected version
+			// Use WaitForRenderedConfigContains which has built-in reconnect logic for stability
+			err = debugClient.WaitForRenderedConfigContains(ctx, "# version 20", 60*time.Second)
+			require.NoError(t, err, "Config should reflect updates even with no deployment targets")
 
 			// Use debug endpoint to verify pipeline status for partial deployment
 			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
