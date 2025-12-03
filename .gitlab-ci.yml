@@ -389,6 +389,9 @@ test-acceptance:
         echo "Job failed - extracting debug logs..."
         mkdir -p debug-logs
 
+        # Use the kubeconfig created by the acceptance tests
+        export KUBECONFIG=/tmp/haproxy-test-kubeconfig
+
         # List all test namespaces (they have pattern test-*)
         for ns in $(kubectl get ns -o name 2>/dev/null | grep '^namespace/test-' | cut -d/ -f2); do
           echo "=== Namespace: $ns ===" >> debug-logs/test-namespaces.log
@@ -580,7 +583,7 @@ pages-preview:
       optional: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
+      changes: &pages-preview-changes
         - docs/**
         - charts/**/docs/**
         - charts/**/mkdocs.yml
@@ -627,6 +630,7 @@ pages-preview-cleanup:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: manual
       allow_failure: true
+      changes: *pages-preview-changes
   script:
     - echo "MR preview environment stopped"
   environment:
@@ -643,6 +647,8 @@ trigger-pages:
         - docs/**
         - charts/**/docs/**
         - charts/**/mkdocs.yml
+  inherit:
+    variables: false
   trigger:
     project: haproxy-template-ic/haproxy-template-ic.gitlab.io
     branch: main
