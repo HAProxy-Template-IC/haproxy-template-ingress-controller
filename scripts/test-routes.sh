@@ -14,8 +14,49 @@ CLUSTER_NAME="haproxy-template-ic-dev"
 ECHO_NAMESPACE="echo"
 NODEPORT="30080"
 HTTPS_NODEPORT="30443"
-BASE_URL="http://localhost:${NODEPORT}"
-HTTPS_BASE_URL="https://localhost:${HTTPS_NODEPORT}"
+
+# Docker-in-Docker detection and hostname extraction
+# When DOCKER_HOST is set (e.g., tcp://docker:2376), the Docker daemon runs in a
+# separate container and kind clusters are accessible via that hostname, not localhost.
+is_docker_in_docker() {
+    [[ "${DOCKER_HOST:-}" == tcp://* ]]
+}
+
+# Extract hostname from DOCKER_HOST (e.g., tcp://docker:2376 → docker)
+# Returns "localhost" if not in dind environment
+get_dind_hostname() {
+    if is_docker_in_docker; then
+        echo "$DOCKER_HOST" | sed 's|tcp://||' | cut -d: -f1
+    else
+        echo "localhost"
+    fi
+}
+
+# Get IP address for curl --resolve (requires IP, not hostname)
+# In DinD: resolve the docker hostname to IP, preferring IPv4
+# Locally: use 127.0.0.1
+get_nodeport_ip() {
+    if is_docker_in_docker; then
+        local hostname ip
+        hostname=$(echo "$DOCKER_HOST" | sed 's|tcp://||' | cut -d: -f1)
+        # Prefer IPv4: filter out addresses containing ':' (IPv6)
+        # Kind's extraPortMappings only listen on IPv4 (listenAddress: "0.0.0.0")
+        ip=$(getent hosts "$hostname" | awk '{print $1}' | grep -v ':' | head -1)
+        if [[ -z "$ip" ]]; then
+            # No IPv4 found, fall back to first address
+            ip=$(getent hosts "$hostname" | awk '{print $1}' | head -1)
+        fi
+        echo "$ip"
+    else
+        echo "127.0.0.1"
+    fi
+}
+
+# Get the host to use for NodePort access (localhost or dind hostname)
+NODEPORT_HOST="$(get_dind_hostname)"
+NODEPORT_IP="$(get_nodeport_ip)"
+BASE_URL="http://${NODEPORT_HOST}:${NODEPORT}"
+HTTPS_BASE_URL="https://${NODEPORT_HOST}:${HTTPS_NODEPORT}"
 
 # Options
 VERBOSE=false
@@ -96,6 +137,25 @@ EXIT CODES:
     1   One or more tests failed
 
 EOF
+}
+
+# Check for required tools
+check_required_tools() {
+    local missing_tools=()
+
+    for tool in curl kubectl kind jq; do
+        if ! command -v "$tool" &>/dev/null; then
+            missing_tools+=("$tool")
+        fi
+    done
+
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        echo -e "${RED}Error:${NC} Missing required tools: ${missing_tools[*]}"
+        echo "Please install them before running this script."
+        exit 1
+    fi
+
+    debug "All required tools available: curl, kubectl, kind, jq"
 }
 
 # Test assertion helpers
@@ -588,6 +648,21 @@ wait_for_services_ready() {
         debug "haproxy-demo-backend pods not found (skipping)"
     fi
 
+    # Step 4b: Check for blocklist-server pods (HTTP Store dependency with critical: true)
+    # This is a critical dependency - if blocklist-server isn't ready, the controller's
+    # http.Fetch() with critical: true will cause the ENTIRE reconciliation to fail.
+    debug "Checking blocklist-server pod readiness..."
+    if kubectl -n echo get pods -l app=blocklist-server >/dev/null 2>&1; then
+        if ! kubectl -n echo wait --for=condition=ready pod \
+            -l app=blocklist-server --timeout=120s >/dev/null 2>&1; then
+            warn "blocklist-server pods exist but are not ready (continuing anyway)"
+        else
+            ok "blocklist-server pods are ready"
+        fi
+    else
+        debug "blocklist-server pods not found (skipping)"
+    fi
+
     # Step 5: Wait for Ingress resources to exist
     log INFO "Waiting for Ingress resources to be created..."
     local ingress_attempts=30  # 60 seconds
@@ -658,10 +733,72 @@ wait_for_services_ready() {
     fi
     ok "Service endpoints populated"
 
+    # Step 6b: Wait for haproxy-demo-backend endpoints (if service exists)
+    if kubectl -n echo get svc haproxy-demo-backend >/dev/null 2>&1; then
+        log INFO "Waiting for haproxy-demo-backend endpoints to be populated..."
+        endpoint_attempts=30
+        attempt=1
+        endpoints_ready=false
+
+        while [[ $attempt -le $endpoint_attempts ]]; do
+            if kubectl -n echo get endpoints haproxy-demo-backend -o json 2>/dev/null | \
+                jq -e '.subsets[0].addresses | length > 0' >/dev/null 2>&1; then
+                endpoints_ready=true
+                debug "haproxy-demo-backend endpoints are populated"
+                break
+            fi
+
+            if [[ $attempt -lt $endpoint_attempts ]]; then
+                debug "haproxy-demo-backend endpoints not ready yet (attempt $attempt/$endpoint_attempts), waiting 2s..."
+                sleep 2
+            fi
+
+            attempt=$((attempt + 1))
+        done
+
+        if [[ "$endpoints_ready" == "true" ]]; then
+            ok "haproxy-demo-backend endpoints populated"
+        else
+            warn "haproxy-demo-backend endpoints were not populated after ${endpoint_attempts} attempts (continuing anyway)"
+        fi
+    fi
+
+    # Step 6c: Wait for blocklist-server endpoints (critical for reconciliation)
+    # The controller uses http.Fetch() with critical: true to fetch blocklist content.
+    # If this fails, the ENTIRE reconciliation fails - no backends will be configured.
+    if kubectl -n echo get svc blocklist-server >/dev/null 2>&1; then
+        log INFO "Waiting for blocklist-server endpoints to be populated..."
+        endpoint_attempts=30
+        attempt=1
+        endpoints_ready=false
+
+        while [[ $attempt -le $endpoint_attempts ]]; do
+            if kubectl -n echo get endpoints blocklist-server -o json 2>/dev/null | \
+                jq -e '.subsets[0].addresses | length > 0' >/dev/null 2>&1; then
+                endpoints_ready=true
+                debug "blocklist-server endpoints are populated"
+                break
+            fi
+
+            if [[ $attempt -lt $endpoint_attempts ]]; then
+                debug "blocklist-server endpoints not ready yet (attempt $attempt/$endpoint_attempts), waiting 2s..."
+                sleep 2
+            fi
+
+            attempt=$((attempt + 1))
+        done
+
+        if [[ "$endpoints_ready" == "true" ]]; then
+            ok "blocklist-server endpoints populated"
+        else
+            warn "blocklist-server endpoints were not populated (controller reconciliation may fail)"
+        fi
+    fi
+
     # Step 7: Wait for controller to reconcile with backends
     # Now that endpoints exist, wait for HAProxyCfg that includes backends
     log INFO "Waiting for HAProxy configuration with backends..."
-    local config_attempts=30  # 60 seconds
+    local config_attempts=60  # 120 seconds
     attempt=1
     local config_deployed=false
 
@@ -687,9 +824,22 @@ wait_for_services_ready() {
                 debug "Configuration has $backend_count echo backends"
 
                 if [[ $backend_count -gt 0 ]]; then
-                    debug "HAProxy configuration with backends was deployed"
-                    config_deployed=true
-                    break
+                    # Also verify haproxy-demo-backend has real servers (not placeholders)
+                    # Placeholders use 127.0.0.1:1, real servers use pod IPs (10.x.x.x)
+                    local haproxy_cfg=$(kubectl -n haproxy-template-ic get haproxycfg -o json 2>/dev/null | \
+                        jq -r '.items[0].spec.content // ""')
+                    local demo_backend_servers=$(echo "$haproxy_cfg" | \
+                        grep -A 20 "backend.*haproxy-demo-backend" | \
+                        grep -c "server SRV_.*10\." 2>/dev/null || echo 0)
+
+                    if [[ $demo_backend_servers -gt 0 ]]; then
+                        debug "HAProxy configuration with backends was deployed"
+                        debug "haproxy-demo-backend has $demo_backend_servers real servers"
+                        config_deployed=true
+                        break
+                    else
+                        debug "Configuration has backends but haproxy-demo-backend still has placeholder servers"
+                    fi
                 else
                     debug "Configuration deployed but has no backends yet (reconciling...)"
                 fi
@@ -805,7 +955,7 @@ should_test() {
 wait_for_httproute_backends() {
     log INFO "Waiting for HTTPRoute backends to be deployed..."
 
-    local config_attempts=30  # 60 seconds
+    local config_attempts=60  # 120 seconds
     local attempt=1
     local backends_deployed=false
 
@@ -1399,9 +1549,18 @@ test_ingress_ssl_passthrough() {
 
     # Test HTTPS connectivity (using --insecure since it's a self-signed cert)
     # Use --connect-to to ensure proper SNI is sent
-    local response
-    if ! response=$(curl -sk --max-time 5 --resolve echo-passthrough.localdev.me:30443:127.0.0.1 --connect-to echo-passthrough.localdev.me:30443:localhost:30443 https://echo-passthrough.localdev.me:30443/ 2>&1); then
-        err "SSL passthrough - Connection failed"
+    local response curl_exit
+    debug "Testing SSL passthrough to ${NODEPORT_HOST}:30443"
+    set +e
+    # Use --connect-to to redirect connection to NodePort while preserving SNI
+    # Let curl handle IPv4/IPv6 resolution via Happy Eyeballs
+    response=$(curl -sk --max-time 10 --connect-to "echo-passthrough.localdev.me:30443:${NODEPORT_HOST}:30443" https://echo-passthrough.localdev.me:30443/ 2>&1)
+    curl_exit=$?
+    set -e
+    if [[ $curl_exit -ne 0 ]]; then
+        err "SSL passthrough - Connection failed (curl exit code: $curl_exit)"
+        echo "  Target: ${NODEPORT_HOST}:30443"
+        echo "  Error: ${response:0:500}"
         return 1
     fi
 
@@ -1426,9 +1585,18 @@ test_ingress_tls() {
 
     # Test HTTPS connectivity with TLS termination
     # HAProxy terminates TLS and forwards plain HTTP to backend
-    local response
-    if ! response=$(curl -sk --max-time 5 --resolve echo-tls.localdev.me:30443:127.0.0.1 https://echo-tls.localdev.me:30443/ 2>&1); then
-        err "TLS termination - Connection failed"
+    local response curl_exit
+    debug "Testing TLS termination to ${NODEPORT_HOST}:30443"
+    set +e
+    # Use --connect-to to redirect connection to NodePort while preserving SNI
+    # Let curl handle IPv4/IPv6 resolution via Happy Eyeballs
+    response=$(curl -sk --max-time 10 --connect-to "echo-tls.localdev.me:30443:${NODEPORT_HOST}:30443" https://echo-tls.localdev.me:30443/ 2>&1)
+    curl_exit=$?
+    set -e
+    if [[ $curl_exit -ne 0 ]]; then
+        err "TLS termination - Connection failed (curl exit code: $curl_exit)"
+        echo "  Target: ${NODEPORT_HOST}:30443"
+        echo "  Error: ${response:0:500}"
         return 1
     fi
 
@@ -1453,8 +1621,9 @@ test_ingress_tls_multi() {
     print_section "Testing Ingress: echo-tls-multi (Multi-host TLS with SAN)"
 
     # Test primary hostname from SAN certificate
+    # Use --connect-to to let curl handle IPv4/IPv6 via Happy Eyeballs
     local response1
-    if ! response1=$(curl -sk --max-time 5 --resolve echo-tls-multi.localdev.me:30443:127.0.0.1 https://echo-tls-multi.localdev.me:30443/ 2>&1); then
+    if ! response1=$(curl -sk --max-time 5 --connect-to "echo-tls-multi.localdev.me:30443:${NODEPORT_HOST}:30443" https://echo-tls-multi.localdev.me:30443/ 2>&1); then
         err "Multi-host TLS - Primary host connection failed"
         return 1
     fi
@@ -1467,8 +1636,9 @@ test_ingress_tls_multi() {
     fi
 
     # Test alternate hostname from SAN certificate
+    # Use --connect-to to let curl handle IPv4/IPv6 via Happy Eyeballs
     local response2
-    if ! response2=$(curl -sk --max-time 5 --resolve echo-tls-alt.localdev.me:30443:127.0.0.1 https://echo-tls-alt.localdev.me:30443/ 2>&1); then
+    if ! response2=$(curl -sk --max-time 5 --connect-to "echo-tls-alt.localdev.me:30443:${NODEPORT_HOST}:30443" https://echo-tls-alt.localdev.me:30443/ 2>&1); then
         err "Multi-host TLS - Alternate host connection failed"
         return 1
     fi
@@ -1491,8 +1661,9 @@ test_ingress_tls_combined() {
     print_section "Testing Ingress: echo-tls-combined (TLS + security headers)"
 
     # Test HTTPS connectivity
+    # Use --connect-to to let curl handle IPv4/IPv6 via Happy Eyeballs
     local headers
-    if ! headers=$(curl -skI --max-time 5 --resolve echo-tls-combined.localdev.me:30443:127.0.0.1 https://echo-tls-combined.localdev.me:30443/ 2>&1); then
+    if ! headers=$(curl -skI --max-time 5 --connect-to "echo-tls-combined.localdev.me:30443:${NODEPORT_HOST}:30443" https://echo-tls-combined.localdev.me:30443/ 2>&1); then
         err "TLS combined - Connection failed"
         return 1
     fi
@@ -1763,8 +1934,9 @@ test_gateway_tls_terminate() {
 
     # Test HTTPS connectivity via Gateway HTTPS listener with TLS Terminate mode
     # Gateway terminates TLS and forwards plain HTTP to HTTPRoute backend
+    # Use --connect-to to let curl handle IPv4/IPv6 via Happy Eyeballs
     local response
-    if ! response=$(curl -sk --max-time 5 --resolve echo-gateway-tls.localdev.me:30443:127.0.0.1 https://echo-gateway-tls.localdev.me:30443/ 2>&1); then
+    if ! response=$(curl -sk --max-time 5 --connect-to "echo-gateway-tls.localdev.me:30443:${NODEPORT_HOST}:30443" https://echo-gateway-tls.localdev.me:30443/ 2>&1); then
         err "Gateway TLS Terminate - Connection failed"
         return 1
     fi
@@ -1826,6 +1998,7 @@ main() {
     echo "═══════════════════════════════════════════════════════════════════════════"
     echo
 
+    check_required_tools
     verify_cluster
     wait_for_services_ready
 

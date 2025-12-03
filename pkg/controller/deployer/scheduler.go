@@ -21,8 +21,10 @@ import (
 	"sync"
 	"time"
 
+	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
 	"haproxy-template-ic/pkg/controller/events"
 	busevents "haproxy-template-ic/pkg/events"
+	"haproxy-template-ic/pkg/k8s/configpublisher"
 )
 
 const (
@@ -59,15 +61,17 @@ type DeploymentScheduler struct {
 	ctx                   context.Context // Main event loop context for scheduling
 
 	// State protected by mutex
-	mu                     sync.RWMutex
-	lastRenderedConfig     string        // Last rendered HAProxy config (before validation)
-	lastAuxiliaryFiles     interface{}   // Last rendered auxiliary files
-	lastValidatedConfig    string        // Last validated HAProxy config
-	lastValidatedAux       interface{}   // Last validated auxiliary files
-	currentEndpoints       []interface{} // Current HAProxy pod endpoints
-	hasValidConfig         bool          // Whether we have a validated config to deploy
-	runtimeConfigName      string        // Name of HAProxyCfg resource
-	runtimeConfigNamespace string        // Namespace of HAProxyCfg resource
+	mu                      sync.RWMutex
+	lastRenderedConfig      string        // Last rendered HAProxy config (before validation)
+	lastAuxiliaryFiles      interface{}   // Last rendered auxiliary files
+	lastValidatedConfig     string        // Last validated HAProxy config
+	lastValidatedAux        interface{}   // Last validated auxiliary files
+	currentEndpoints        []interface{} // Current HAProxy pod endpoints
+	hasValidConfig          bool          // Whether we have a validated config to deploy
+	runtimeConfigName       string        // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
+	runtimeConfigNamespace  string        // Namespace of HAProxyCfg resource (set by ConfigPublishedEvent)
+	templateConfigName      string        // Name from ConfigValidatedEvent.TemplateConfig (for early runtimeConfigName computation)
+	templateConfigNamespace string        // Namespace from ConfigValidatedEvent.TemplateConfig
 
 	// Deployment scheduling and rate limiting
 	schedulerMutex        sync.Mutex
@@ -129,6 +133,9 @@ func (s *DeploymentScheduler) handleEvent(ctx context.Context, event busevents.E
 	case *events.TemplateRenderedEvent:
 		s.handleTemplateRendered(e)
 
+	case *events.ConfigValidatedEvent:
+		s.handleConfigValidated(e)
+
 	case *events.ValidationCompletedEvent:
 		s.handleValidationCompleted(ctx, e)
 
@@ -163,6 +170,28 @@ func (s *DeploymentScheduler) handleTemplateRendered(event *events.TemplateRende
 	s.logger.Debug("cached rendered config for deployment after validation",
 		"config_bytes", event.ConfigBytes,
 		"aux_files", event.AuxiliaryFileCount)
+}
+
+// handleConfigValidated handles ConfigValidatedEvent to cache template config metadata.
+//
+// This caches the template config name and namespace early in the pipeline, allowing
+// runtimeConfigName to be computed deterministically without waiting for ConfigPublishedEvent.
+// This fixes the race condition where deployment was scheduled before ConfigPublishedEvent arrived.
+func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidatedEvent) {
+	tc, ok := event.TemplateConfig.(*v1alpha1.HAProxyTemplateConfig)
+	if !ok {
+		s.logger.Debug("ConfigValidatedEvent.TemplateConfig is not HAProxyTemplateConfig, skipping")
+		return
+	}
+
+	s.mu.Lock()
+	s.templateConfigName = tc.Name
+	s.templateConfigNamespace = tc.Namespace
+	s.mu.Unlock()
+
+	s.logger.Debug("cached template config metadata for runtime config name computation",
+		"template_config_name", tc.Name,
+		"template_config_namespace", tc.Namespace)
 }
 
 // handleValidationCompleted handles successful configuration validation.
@@ -379,7 +408,20 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	s.mu.RLock()
 	runtimeConfigName := s.runtimeConfigName
 	runtimeConfigNamespace := s.runtimeConfigNamespace
+	templateConfigName := s.templateConfigName
+	templateConfigNamespace := s.templateConfigNamespace
 	s.mu.RUnlock()
+
+	// Compute runtime config name if not set via ConfigPublishedEvent.
+	// This uses the deterministic naming convention to avoid waiting for the
+	// K8s API call that publishes the HAProxyCfg resource (fixes race condition).
+	if runtimeConfigName == "" && templateConfigName != "" {
+		runtimeConfigName = configpublisher.GenerateRuntimeConfigName(templateConfigName)
+		runtimeConfigNamespace = templateConfigNamespace
+		s.logger.Debug("computed runtime config name from template config",
+			"runtime_config_name", runtimeConfigName,
+			"template_config_name", templateConfigName)
+	}
 
 	// Publish DeploymentScheduledEvent
 	s.logger.Info("scheduling deployment",

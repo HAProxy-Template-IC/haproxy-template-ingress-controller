@@ -334,24 +334,14 @@ log_targets:
 		return nil, fmt.Errorf("failed to create pod: %w", err)
 	}
 
-	// Find a free local port for port forwarding
-	// This allows multiple tests to run in parallel without port conflicts
-	localPort, err := getFreePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find free port: %w", err)
-	}
-
 	instance := &HAProxyInstance{
 		Name:          name,
 		Namespace:     ns.Name,
 		DataplanePort: cfg.DataplanePort,
-		LocalPort:     int32(localPort),
 		DataplaneUser: cfg.DataplaneUser,
 		DataplanePass: cfg.DataplanePass,
 		pod:           createdPod,
 		namespace:     ns,
-		stopChan:      make(chan struct{}, 1),
-		readyChan:     make(chan struct{}),
 	}
 
 	// Wait for pod to be ready (5 minutes to account for resource contention)
@@ -359,17 +349,48 @@ log_targets:
 		return nil, fmt.Errorf("haproxy pod not ready: %w", err)
 	}
 
-	// Set up port forwarding
-	if err := instance.setupPortForward(); err != nil {
-		return nil, fmt.Errorf("failed to setup port forwarding: %w", err)
+	// Set up port forwarding with retry logic for port collisions
+	// In parallel test runs, another test might grab the port between getFreePort() and setupPortForward()
+	const maxPortRetries = 5
+	var lastPortErr error
+	for attempt := 1; attempt <= maxPortRetries; attempt++ {
+		// Find a free local port for port forwarding
+		localPort, err := getFreePort()
+		if err != nil {
+			return nil, fmt.Errorf("failed to find free port: %w", err)
+		}
+
+		instance.LocalPort = int32(localPort)
+		instance.stopChan = make(chan struct{}, 1)
+		instance.readyChan = make(chan struct{})
+
+		// Set up port forwarding
+		if err := instance.setupPortForward(); err != nil {
+			lastPortErr = err
+			fmt.Printf("Port forward attempt %d failed: %v (retrying with new port)\n", attempt, err)
+			continue
+		}
+
+		// Wait for port forwarding to be ready
+		select {
+		case <-instance.readyChan:
+			// Port forwarding is ready
+			lastPortErr = nil
+		case <-time.After(10 * time.Second):
+			// Close this attempt's channels and retry
+			close(instance.stopChan)
+			lastPortErr = fmt.Errorf("port forwarding did not become ready in time (attempt %d)", attempt)
+			fmt.Printf("Port forward attempt %d timed out (retrying with new port)\n", attempt)
+			continue
+		}
+
+		if lastPortErr == nil {
+			break
+		}
 	}
 
-	// Wait for port forwarding to be ready
-	select {
-	case <-instance.readyChan:
-		// Port forwarding is ready
-	case <-time.After(30 * time.Second):
-		return nil, fmt.Errorf("port forwarding did not become ready in time")
+	if lastPortErr != nil {
+		return nil, fmt.Errorf("failed to setup port forwarding after %d attempts: %w", maxPortRetries, lastPortErr)
 	}
 
 	// Wait for Dataplane API to actually be responding

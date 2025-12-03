@@ -1,2 +1,2 @@
-Find the GH PR for this branch and get the most recent code review comment.
+Find the Gitlab MR for this branch and get the most recent code review comment.
 Consider implementing the suggestions in this comment. But only if they are reasonable.

@@ -23,7 +23,7 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 	// Create CRD resource
 	crd := &v1alpha1.HAProxyTemplateConfig{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.github.io/v1alpha1",
+			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
 			Kind:       "HAProxyTemplateConfig",
 		},
 		ObjectMeta: metav1.ObjectMeta{

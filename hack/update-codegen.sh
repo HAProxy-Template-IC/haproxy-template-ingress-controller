@@ -80,7 +80,7 @@ find "${SCRIPT_ROOT}/pkg/generated" -name "*.go" -type f -exec sed -i \
   -e 's/haproxy - template - ic/haproxytemplateic/g' \
   -e 's/haproxy-template-ic/haproxytemplateic/g' \
   -e 's/"haproxytemplateic\//"haproxy-template-ic\//g' \
-  -e 's/haproxytemplateic\.github\.io/haproxy-template-ic.github.io/g' \
+  -e 's/haproxytemplateic\.gitlab\.io/haproxy-template-ic.gitlab.io/g' \
   {} +
 
 # Format the fixed files

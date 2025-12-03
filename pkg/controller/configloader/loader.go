@@ -105,7 +105,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 		"version", version)
 
 	// Validate resource type
-	if apiVersion != "haproxy-template-ic.github.io/v1alpha1" || kind != "HAProxyTemplateConfig" {
+	if apiVersion != "haproxy-template-ic.gitlab.io/v1alpha1" || kind != "HAProxyTemplateConfig" {
 		c.logger.Error("Unsupported resource type for config",
 			"apiVersion", apiVersion,
 			"kind", kind,

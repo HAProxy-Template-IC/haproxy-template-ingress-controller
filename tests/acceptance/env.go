@@ -341,6 +341,60 @@ func WaitForLeaderElection(ctx context.Context, restConfig *rest.Config, namespa
 	}
 }
 
+// WaitForNewLeader waits until a different leader is elected than oldLeaderIdentity.
+// It verifies the new leader pod exists and is running.
+func WaitForNewLeader(ctx context.Context, client klient.Client, restConfig *rest.Config,
+	namespace, leaseName, oldLeaderIdentity string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("timeout waiting for new leader (old: %s)", oldLeaderIdentity)
+
+		case <-ticker.C:
+			lease, err := clientset.CoordinationV1().Leases(namespace).Get(ctx, leaseName, metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+
+			if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity == "" {
+				continue
+			}
+
+			newLeader := *lease.Spec.HolderIdentity
+
+			// Must be different from old leader
+			if newLeader == oldLeaderIdentity {
+				continue
+			}
+
+			// Verify the new leader pod exists and is running
+			pods, err := GetAllControllerPods(ctx, client, namespace)
+			if err != nil {
+				continue
+			}
+
+			for i := range pods {
+				pod := &pods[i]
+				if strings.Contains(newLeader, pod.Name) && pod.Status.Phase == corev1.PodRunning {
+					return newLeader, nil
+				}
+			}
+			// New leader in lease but pod not running yet, keep waiting
+		}
+	}
+}
+
 // GetPodLogs retrieves the last N lines of logs from a pod.
 func GetPodLogs(ctx context.Context, client klient.Client, pod *corev1.Pod, tailLines int) (string, error) {
 	clientset, err := kubernetes.NewForConfig(client.RESTConfig())
@@ -465,6 +519,7 @@ func (dc *DebugClient) GetGeneralFileContent(ctx context.Context, fileName strin
 }
 
 // WaitForAuxFileContains waits until a specific auxiliary file contains the expected content.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForAuxFileContains(ctx context.Context, fileName, expectedContent string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -487,6 +542,12 @@ func (dc *DebugClient) WaitForAuxFileContains(ctx context.Context, fileName, exp
 			content, err := dc.GetGeneralFileContent(ctx, fileName)
 			if err != nil {
 				lastError = err
+				// If it's a connection error, try to reconnect the port-forward
+				if isConnectionError(err) {
+					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+						lastError = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+					}
+				}
 				continue // Retry on error
 			}
 			lastContent = content
@@ -500,6 +561,7 @@ func (dc *DebugClient) WaitForAuxFileContains(ctx context.Context, fileName, exp
 
 // WaitForAuxFileNotContains waits until a specific auxiliary file does NOT contain the specified content.
 // This is useful for verifying that invalid content was rejected.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForAuxFileNotContains(ctx context.Context, fileName, unexpectedContent string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -522,6 +584,12 @@ func (dc *DebugClient) WaitForAuxFileNotContains(ctx context.Context, fileName, 
 			content, err := dc.GetGeneralFileContent(ctx, fileName)
 			if err != nil {
 				lastError = err
+				// If it's a connection error, try to reconnect the port-forward
+				if isConnectionError(err) {
+					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+						lastError = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+					}
+				}
 				continue // Retry on error
 			}
 			lastContent = content
@@ -535,6 +603,7 @@ func (dc *DebugClient) WaitForAuxFileNotContains(ctx context.Context, fileName, 
 
 // WaitForAuxFileContentStable waits and verifies that the file content stays unchanged for the duration.
 // This is useful for verifying that invalid updates are rejected and old content is preserved.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForAuxFileContentStable(ctx context.Context, fileName string, expectedContent string, stableDuration time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, stableDuration+5*time.Second)
 	defer cancel()
@@ -543,15 +612,26 @@ func (dc *DebugClient) WaitForAuxFileContentStable(ctx context.Context, fileName
 	defer ticker.Stop()
 
 	stableStart := time.Now()
+	var lastErr error
 
 	for {
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("timeout while verifying content stability for file %s (last error: %w)", fileName, lastErr)
+			}
 			return fmt.Errorf("timeout while verifying content stability for file %s", fileName)
 
 		case <-ticker.C:
 			content, err := dc.GetGeneralFileContent(ctx, fileName)
 			if err != nil {
+				// If it's a connection error, try to reconnect and continue
+				if isConnectionError(err) {
+					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+					}
+					continue // Retry after reconnect
+				}
 				return fmt.Errorf("error getting file content: %w", err)
 			}
 
@@ -629,7 +709,7 @@ func getDynamicClient(config *rest.Config) (dynamic.Interface, error) {
 // haproxyTemplateConfigGVR returns the GroupVersionResource for HAProxyTemplateConfig.
 func haproxyTemplateConfigGVR() schema.GroupVersionResource {
 	return schema.GroupVersionResource{
-		Group:    "haproxy-template-ic.github.io",
+		Group:    "haproxy-template-ic.gitlab.io",
 		Version:  "v1alpha1",
 		Resource: "haproxytemplateconfigs",
 	}

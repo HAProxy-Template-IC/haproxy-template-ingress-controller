@@ -391,7 +391,7 @@ rules:
   # Audit configuration changes
   - level: RequestResponse
     resources:
-      - group: "haproxy-template-ic.github.io"
+      - group: "haproxy-template-ic.gitlab.io"
         resources: ["haproxytemplateconfigs"]
 ```
 

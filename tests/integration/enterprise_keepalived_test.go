@@ -25,6 +25,7 @@ func isKeepalivedNotInstalled(err error) bool {
 // TestKeepalivedVRRPInstances tests VRRP instance operations.
 // VRRP is available in all HAProxy Enterprise versions, but Keepalived must be installed.
 func TestKeepalivedVRRPInstances(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfKeepalivedNotSupported(t, env)
 
@@ -48,6 +49,7 @@ func TestKeepalivedVRRPInstances(t *testing.T) {
 // TestKeepalivedVRRPSyncGroups tests VRRP sync group operations.
 // VRRP sync groups are available in all HAProxy Enterprise versions, but Keepalived must be installed.
 func TestKeepalivedVRRPSyncGroups(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfKeepalivedNotSupported(t, env)
 
@@ -71,6 +73,7 @@ func TestKeepalivedVRRPSyncGroups(t *testing.T) {
 // TestKeepalivedVRRPScripts tests VRRP tracking script operations.
 // VRRP scripts are available in all HAProxy Enterprise versions, but Keepalived must be installed.
 func TestKeepalivedVRRPScripts(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfKeepalivedNotSupported(t, env)
 
@@ -94,6 +97,7 @@ func TestKeepalivedVRRPScripts(t *testing.T) {
 // TestKeepalivedTransactions tests the Keepalived-specific transaction system.
 // Keepalived has its own transaction system separate from HAProxy configuration.
 func TestKeepalivedTransactions(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfKeepalivedNotSupported(t, env)
 

@@ -213,6 +213,9 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			t.Logf("Initial config length: %d bytes", len(initialConfig))
 
 			// Verify initial config has valid structure
+			if !strings.Contains(initialConfig, "backend test-backend") {
+				t.Logf("FAILURE: Initial config does not contain expected backend\nFull config:\n%s", initialConfig)
+			}
 			assert.Contains(t, initialConfig, "backend test-backend", "Initial config should have valid backend")
 
 			// Now update HAProxyTemplateConfig with INVALID config (HAProxy syntax error)
@@ -507,23 +510,9 @@ func buildCredentialsMissingFeature() types.Feature {
 			_, err = debugClient.WaitForConfig(ctx, 30*time.Second)
 			require.NoError(t, err, "Controller should have config after credentials provided")
 
-			// Use debug endpoint to verify pipeline is healthy after recovery
-			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
-			if err == nil && pipeline != nil {
-				t.Log("Pipeline status retrieved after credentials recovery")
-
-				// Verify rendering succeeded after credentials were provided
-				if pipeline.Rendering != nil {
-					t.Logf("Rendering status: %s", pipeline.Rendering.Status)
-				}
-
-				// Verify validation succeeded
-				if pipeline.Validation != nil {
-					t.Logf("Validation status: %s", pipeline.Validation.Status)
-					assert.Equal(t, "succeeded", pipeline.Validation.Status,
-						"Validation should succeed after credentials recovery")
-				}
-			}
+			// Wait for validation to succeed after credentials recovery
+			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			require.NoError(t, err, "Validation should succeed after credentials recovery")
 
 			// Check errors endpoint to verify no persistent errors after recovery
 			errors, err := debugClient.GetErrors(ctx)
@@ -710,6 +699,9 @@ func buildControllerCrashRecoveryFeature() types.Feature {
 			// Verify rendered config is available
 			config, err := newDebugClient.GetRenderedConfig(ctx)
 			require.NoError(t, err)
+			if !strings.Contains(config, "backend") {
+				t.Logf("FAILURE: Rendered config does not contain expected backend after recovery\nFull config:\n%s", config)
+			}
 			assert.Contains(t, config, "backend", "Config should be rendered after recovery")
 
 			t.Log("Controller successfully recovered after crash")
@@ -870,6 +862,16 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 					foundLateVersion = true
 					break
 				}
+			}
+			if !foundLateVersion {
+				t.Log("FAILURE: No late version (7-10) found in rendered config")
+				t.Log("Searching for version markers in config:")
+				for v := 0; v <= 10; v++ {
+					if strings.Contains(renderedConfig, fmt.Sprintf("# version %d", v)) {
+						t.Logf("  Found: # version %d", v)
+					}
+				}
+				t.Logf("Full rendered config:\n%s", renderedConfig)
 			}
 			assert.True(t, foundLateVersion,
 				"Final config should have a late version marker (7-10), indicating debouncing worked")
@@ -1825,8 +1827,18 @@ func buildTransactionConflictFeature() types.Feature {
 			renderedConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
 			require.NoError(t, err)
 
-			// Should have version 105 (last update) - may have different version due to debouncing
+			// Should have version 10 (last update) - may have different version due to debouncing
 			hasVersionMarker := strings.Contains(renderedConfig, "# version 10")
+			if !hasVersionMarker {
+				t.Log("FAILURE: Config does not have expected version marker")
+				t.Log("Searching for version markers in config:")
+				for v := 0; v <= 10; v++ {
+					if strings.Contains(renderedConfig, fmt.Sprintf("# version %d", v)) {
+						t.Logf("  Found: # version %d", v)
+					}
+				}
+				t.Logf("Full rendered config:\n%s", renderedConfig)
+			}
 			assert.True(t, hasVersionMarker, "Config should have a version marker (debouncing may coalesce)")
 
 			// Use debug endpoint to verify pipeline completed successfully

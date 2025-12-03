@@ -16,6 +16,7 @@ import (
 // TestWAFRulesets tests WAF ruleset CRUD operations.
 // WAF rulesets are available in all HAProxy Enterprise versions.
 func TestWAFRulesets(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfWAFNotSupported(t, env)
 
@@ -34,6 +35,7 @@ func TestWAFRulesets(t *testing.T) {
 // TestWAFBodyRules tests WAF body rules for frontends and backends.
 // WAF body rules are available in all HAProxy Enterprise versions.
 func TestWAFBodyRules(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfWAFNotSupported(t, env)
 
@@ -66,6 +68,7 @@ func TestWAFBodyRules(t *testing.T) {
 // TestWAFGlobal tests WAF global configuration.
 // WAF global config is only available in HAProxy Enterprise v3.2+.
 func TestWAFGlobal(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfWAFGlobalNotSupported(t, env)
 
@@ -88,6 +91,7 @@ func TestWAFGlobal(t *testing.T) {
 // TestWAFProfiles tests WAF profile management.
 // WAF profiles are only available in HAProxy Enterprise v3.2+.
 func TestWAFProfiles(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfWAFProfilesNotSupported(t, env)
 

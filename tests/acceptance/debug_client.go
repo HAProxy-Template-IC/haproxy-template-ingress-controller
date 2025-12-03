@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -128,6 +129,36 @@ func (dc *DebugClient) Stop() {
 	}
 }
 
+// Reconnect closes the existing port-forward and establishes a new one.
+// This is useful when the port-forward connection has died due to network issues
+// or pod restarts.
+func (dc *DebugClient) Reconnect(ctx context.Context) error {
+	// Stop existing port-forward
+	dc.Stop()
+	dc.stopChannel = nil
+	dc.readyChannel = nil
+	dc.portForwarder = nil
+	dc.localPort = 0
+
+	// Start a new port-forward
+	return dc.Start(ctx)
+}
+
+// isConnectionError checks if an error indicates the port-forward connection is dead.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "EOF") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "context deadline exceeded") ||
+		strings.Contains(errStr, "i/o timeout")
+}
+
 // StartWithRetry starts the port-forward with retry logic for transient failures.
 // This is useful when the controller pod may have restarted and the connection
 // needs time to become available.
@@ -185,6 +216,7 @@ func (dc *DebugClient) GetRenderedConfig(ctx context.Context) (string, error) {
 
 // GetRenderedConfigWithRetry retrieves the rendered HAProxy configuration with retry logic.
 // This is useful in parallel test execution where port-forward connections may be transiently unavailable.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) GetRenderedConfigWithRetry(ctx context.Context, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
@@ -195,6 +227,14 @@ func (dc *DebugClient) GetRenderedConfigWithRetry(ctx context.Context, timeout t
 			return config, nil
 		}
 		lastErr = err
+
+		// If it's a connection error, try to reconnect the port-forward
+		if isConnectionError(err) {
+			if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+				// Log reconnect failure but continue retrying
+				lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+			}
+		}
 
 		select {
 		case <-ctx.Done():
@@ -235,6 +275,7 @@ func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]interface{},
 // This is useful during controller startup when the debug endpoint is running
 // but configuration hasn't been loaded yet. The method polls the debug endpoint
 // until configuration is available or the timeout expires.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForConfig(ctx context.Context, timeout time.Duration) (map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -255,6 +296,12 @@ func (dc *DebugClient) WaitForConfig(ctx context.Context, timeout time.Duration)
 			config, err := dc.GetConfig(ctx)
 			if err != nil {
 				lastErr = err
+				// If it's a connection error, try to reconnect the port-forward
+				if isConnectionError(err) {
+					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+					}
+				}
 				continue // Retry on error
 			}
 
@@ -265,6 +312,7 @@ func (dc *DebugClient) WaitForConfig(ctx context.Context, timeout time.Duration)
 }
 
 // WaitForConfigVersion waits for the controller to load a specific config version.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -272,14 +320,25 @@ func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	var lastErr error
 	for {
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("timeout waiting for config version %q (last error: %w)", expectedVersion, lastErr)
+			}
 			return fmt.Errorf("timeout waiting for config version %q", expectedVersion)
 
 		case <-ticker.C:
 			config, err := dc.GetConfig(ctx)
 			if err != nil {
+				lastErr = err
+				// If it's a connection error, try to reconnect the port-forward
+				if isConnectionError(err) {
+					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+					}
+				}
 				continue // Retry on error
 			}
 
@@ -291,6 +350,7 @@ func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion
 }
 
 // WaitForRenderedConfigContains waits for the rendered config to contain a specific string.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForRenderedConfigContains(ctx context.Context, expectedSubstring string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -298,14 +358,25 @@ func (dc *DebugClient) WaitForRenderedConfigContains(ctx context.Context, expect
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	var lastErr error
 	for {
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("timeout waiting for rendered config to contain %q (last error: %w)", expectedSubstring, lastErr)
+			}
 			return fmt.Errorf("timeout waiting for rendered config to contain %q", expectedSubstring)
 
 		case <-ticker.C:
 			rendered, err := dc.GetRenderedConfig(ctx)
 			if err != nil {
+				lastErr = err
+				// If it's a connection error, try to reconnect the port-forward
+				if isConnectionError(err) {
+					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+					}
+				}
 				continue // Retry on error
 			}
 
@@ -414,6 +485,7 @@ func (dc *DebugClient) GetPipelineStatus(ctx context.Context) (*PipelineStatus, 
 
 // GetPipelineStatusWithRetry retrieves the pipeline status with retry logic.
 // This is useful in parallel test execution where port-forward connections may be transiently unavailable.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) GetPipelineStatusWithRetry(ctx context.Context, timeout time.Duration) (*PipelineStatus, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
@@ -424,6 +496,13 @@ func (dc *DebugClient) GetPipelineStatusWithRetry(ctx context.Context, timeout t
 			return status, nil
 		}
 		lastErr = err
+
+		// If it's a connection error, try to reconnect the port-forward
+		if isConnectionError(err) {
+			if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+				lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+			}
+		}
 
 		select {
 		case <-ctx.Done():
@@ -483,6 +562,7 @@ func (dc *DebugClient) GetErrors(ctx context.Context) (*ErrorSummary, error) {
 }
 
 // WaitForValidationStatus waits for the validation status to match the expected value.
+// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -490,14 +570,25 @@ func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected str
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	var lastErr error
 	for {
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("timeout waiting for validation status %q (last error: %w)", expected, lastErr)
+			}
 			return fmt.Errorf("timeout waiting for validation status %q", expected)
 
 		case <-ticker.C:
 			status, err := dc.GetPipelineStatus(ctx)
 			if err != nil {
+				lastErr = err
+				// If it's a connection error, try to reconnect the port-forward
+				if isConnectionError(err) {
+					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
+						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+					}
+				}
 				continue // Retry on error
 			}
 

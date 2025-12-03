@@ -16,6 +16,7 @@ import (
 // TestBotManagementProfiles tests bot management profile operations.
 // Bot management is available in all HAProxy Enterprise versions.
 func TestBotManagementProfiles(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfBotManagementNotSupported(t, env)
 
@@ -43,6 +44,7 @@ func TestBotManagementProfiles(t *testing.T) {
 // TestBotManagementCaptchas tests CAPTCHA configuration operations.
 // CAPTCHAs are available in all HAProxy Enterprise versions.
 func TestBotManagementCaptchas(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfBotManagementNotSupported(t, env)
 

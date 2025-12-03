@@ -196,7 +196,7 @@ Install the controller using Helm with default configuration:
 
 ```bash
 # Add the Helm repository (if published)
-# helm repo add haproxy-template-ic https://haproxy-template-ic.github.io/haproxy-template-ingress-controller
+# helm repo add haproxy-template-ic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller
 # helm repo update
 
 # Install from local chart
@@ -515,7 +515,7 @@ helm uninstall haproxy-ic
 kubectl delete -f haproxy-deployment.yaml
 
 # Remove CRD (optional, removes all configs)
-kubectl delete crd haproxytemplateconfigs.haproxy-template-ic.github.io
+kubectl delete crd haproxytemplateconfigs.haproxy-template-ic.gitlab.io
 ```
 
 ## See Also

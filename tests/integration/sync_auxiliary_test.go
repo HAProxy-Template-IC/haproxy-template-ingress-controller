@@ -9,6 +9,7 @@ import (
 // TestSyncAuxiliary runs table-driven synchronization tests for auxiliary file operations
 // (http-errors sections, SSL certificates, map files)
 func TestSyncAuxiliary(t *testing.T) {
+	t.Parallel()
 	testCases := []syncTestCase{
 		// ==================== HTTP ERRORS SECTION OPERATIONS ====================
 		{

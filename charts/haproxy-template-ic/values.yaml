@@ -40,7 +40,7 @@ replicaCount: 2
 
 # Controller image configuration
 image:
-  repository: ghcr.io/haproxy-template-ic/haproxy-template-ingress-controller
+  repository: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion
   tag: ""
@@ -368,7 +368,7 @@ ingressClass:
   default: false
   # Controller identifier (must be unique across all ingress controllers)
   # This value should match what the controller uses to identify itself
-  controllerName: haproxy-template-ic.github.io/controller
+  controllerName: haproxy-template-ic.gitlab.io/controller
 
 # GatewayClass resource
 # Creates a GatewayClass resource for Gateway API
@@ -386,12 +386,12 @@ gatewayClass:
   default: false
   # Controller identifier (must be unique across all Gateway API controllers)
   # This value should match what the controller uses to identify itself
-  controllerName: haproxy-template-ic.github.io/controller
+  controllerName: haproxy-template-ic.gitlab.io/controller
   # Reference to HAProxyTemplateConfig for controller-specific configuration
   # Automatically points to the HAProxyTemplateConfig created by this chart
   # This links Gateway API configuration to the controller's template-based config
   parametersRef:
-    group: haproxy-template-ic.github.io
+    group: haproxy-template-ic.gitlab.io
     kind: HAProxyTemplateConfig
     # Name will default to controller.crdName if empty
     name: ""
@@ -604,6 +604,7 @@ haproxy:
     pullPolicy: IfNotPresent
     # HAProxy has independent versioning from controller
     # Chart default: 3.2 (can override via --set haproxy.image.tag=3.0)
+    # renovate: datasource=docker depName=haproxytech/haproxy-debian
     tag: "3.2"
 
   # Enterprise mode configuration

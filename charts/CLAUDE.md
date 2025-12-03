@@ -270,7 +270,7 @@ helm template charts/haproxy-template-ic \
   > /tmp/gateway-config.yaml
 ```
 
-This flag is already used in CI (see `.github/workflows/ci.yml:119`). The gateway library uses a Capabilities check (`templates/_helpers.tpl:86`) to only merge when Gateway API CRDs are detected.
+This flag is already used in CI (see `.gitlab-ci.yml`). The gateway library uses a Capabilities check (`templates/_helpers.tpl:86`) to only merge when Gateway API CRDs are detected.
 
 ### Testing Specific Libraries
 
@@ -1252,7 +1252,7 @@ charts/haproxy-template-ic/
 │   └── ...                     # Other K8s resources
 │
 └── crds/                        # Custom Resource Definitions
-    └── haproxy-template-ic.github.io_haproxytemplateconfigs.yaml
+    └── haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml
 ```
 
 ## Debugging Tips
@@ -1296,6 +1296,6 @@ helm template charts/haproxy-template-ic \
 
 - Helm template reference: https://helm.sh/docs/chart_template_guide/
 - yq documentation: https://github.com/mikefarah/yq
-- HAProxyTemplateConfig CRD: `crds/haproxy-template-ic.github.io_haproxytemplateconfigs.yaml`
+- HAProxyTemplateConfig CRD: `crds/haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml`
 - Controller validation: `pkg/controller/testrunner/CLAUDE.md`
 - Template engine: `pkg/templating/CLAUDE.md`

@@ -16,6 +16,7 @@ import (
 // TestMiscFacts tests the Facts endpoint.
 // Facts retrieval is available in all HAProxy Enterprise versions.
 func TestMiscFacts(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfNotEnterprise(t, env)
 
@@ -39,6 +40,7 @@ func TestMiscFacts(t *testing.T) {
 // TestMiscPing tests the Ping endpoint.
 // Ping is only available in HAProxy Enterprise v3.2+.
 func TestMiscPing(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfPingNotSupported(t, env)
 
@@ -55,6 +57,7 @@ func TestMiscPing(t *testing.T) {
 // TestMiscStructuredConfig tests structured configuration operations.
 // Structured config is available in all HAProxy Enterprise versions.
 func TestMiscStructuredConfig(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfNotEnterprise(t, env)
 
@@ -81,6 +84,7 @@ func TestMiscStructuredConfig(t *testing.T) {
 // TestGitOperations tests Git integration operations.
 // Git integration is available in all HAProxy Enterprise versions.
 func TestGitOperations(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfGitIntegrationNotSupported(t, env)
 
@@ -102,6 +106,7 @@ func TestGitOperations(t *testing.T) {
 // TestLoggingOperations tests advanced logging operations.
 // Advanced logging is available in all HAProxy Enterprise versions.
 func TestLoggingOperations(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfAdvancedLoggingNotSupported(t, env)
 
@@ -123,6 +128,7 @@ func TestLoggingOperations(t *testing.T) {
 // TestDynamicUpdateOperations tests dynamic update operations.
 // Dynamic updates are available in all HAProxy Enterprise versions.
 func TestDynamicUpdateOperations(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfDynamicUpdateNotSupported(t, env)
 
@@ -159,6 +165,7 @@ func TestDynamicUpdateOperations(t *testing.T) {
 // TestALOHAOperations tests ALOHA-specific operations.
 // ALOHA features are available in all HAProxy Enterprise versions.
 func TestALOHAOperations(t *testing.T) {
+	t.Parallel()
 	env := fixenv.New(t)
 	skipIfALOHANotSupported(t, env)
 

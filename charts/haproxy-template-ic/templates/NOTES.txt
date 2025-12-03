@@ -94,4 +94,4 @@ Next Steps:
   3. Create Ingress resources to configure routing
 
 For more information, visit:
-  https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller
+  https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller

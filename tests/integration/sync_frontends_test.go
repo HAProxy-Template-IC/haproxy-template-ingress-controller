@@ -8,6 +8,7 @@ import (
 
 // TestSyncFrontends runs table-driven synchronization tests for frontend operations
 func TestSyncFrontends(t *testing.T) {
+	t.Parallel()
 	testCases := []syncTestCase{
 		{
 			name:              "frontend-add",

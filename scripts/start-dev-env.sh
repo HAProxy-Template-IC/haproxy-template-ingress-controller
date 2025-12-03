@@ -43,6 +43,26 @@ warn() { echo -e "${YELLOW}⚠${NC} $*"; }
 err() { echo -e "${RED}✖${NC} $*"; }
 debug() { [[ "$VERBOSE" == "true" ]] && echo -e "${BLUE}[DEBUG]${NC} $*" || true; }
 
+# Docker-in-Docker detection and hostname extraction
+# When DOCKER_HOST is set (e.g., tcp://docker:2376), the Docker daemon runs in a
+# separate container and kind clusters are accessible via that hostname, not localhost.
+is_docker_in_docker() {
+    [[ "${DOCKER_HOST:-}" == tcp://* ]]
+}
+
+# Extract hostname from DOCKER_HOST (e.g., tcp://docker:2376 → docker)
+# Returns "localhost" if not in dind environment
+get_dind_hostname() {
+    if is_docker_in_docker; then
+        echo "$DOCKER_HOST" | sed 's|tcp://||' | cut -d: -f1
+    else
+        echo "localhost"
+    fi
+}
+
+# Get the host to use for NodePort access (localhost or dind hostname)
+NODEPORT_HOST="$(get_dind_hostname)"
+
 # Compute HAProxy image settings based on enterprise mode
 compute_haproxy_image() {
     if [[ "$HAPROXY_ENTERPRISE" == "true" ]]; then
@@ -368,6 +388,25 @@ ensure_cluster() {
 		kind export kubeconfig --name "${CLUSTER_NAME}" >/dev/null 2>&1
 	fi
 
+	# If running in Docker-in-Docker, patch the kubeconfig to use the dind hostname
+	# instead of localhost/127.0.0.1 (which are not accessible from the CI job container)
+	if is_docker_in_docker; then
+		local dind_hostname
+		dind_hostname=$(get_dind_hostname)
+		log INFO "Detected Docker-in-Docker, patching kubeconfig to use '${dind_hostname}'..."
+
+		# Get kubeconfig path
+		local kubeconfig_path="${KUBECONFIG:-$HOME/.kube/config}"
+
+		# Replace localhost/127.0.0.1 with dind hostname in kubeconfig
+		if [[ -f "$kubeconfig_path" ]]; then
+			sed -i "s|https://127.0.0.1:|https://${dind_hostname}:|g" "$kubeconfig_path"
+			sed -i "s|https://0.0.0.0:|https://${dind_hostname}:|g" "$kubeconfig_path"
+			sed -i "s|https://localhost:|https://${dind_hostname}:|g" "$kubeconfig_path"
+			ok "Kubeconfig patched for Docker-in-Docker (server: https://${dind_hostname}:...)"
+		fi
+	fi
+
 	local ctx="kind-${CLUSTER_NAME}"
 	if ! kubectl config get-contexts -o name | grep -qx "$ctx"; then
 		err "kubectl context '$ctx' not found."
@@ -523,7 +562,7 @@ build_and_load_local_image() {
         docker_path="$(command -v docker)"
 
         run_with_spinner "Building controller image '${LOCAL_IMAGE}' with HAProxy ${HAPROXY_VERSION}" \
-            "${docker_path}" build "${build_args[@]}" || {
+            env DOCKER_BUILDKIT=1 "${docker_path}" build "${build_args[@]}" || {
             err "Docker build failed"
             return 1
         }
@@ -1076,7 +1115,7 @@ test_ingress() {
 
     # Test via NodePort (requires kind cluster)
     if kind get clusters 2>/dev/null | grep -q "$CLUSTER_NAME"; then
-        log INFO "Testing via NodePort (localhost:30080)..."
+        log INFO "Testing via NodePort (${NODEPORT_HOST}:30080)..."
         echo "Trying to connect to echo service through HAProxy ingress controller..."
 
         # Wait for the service to be ready with retries
@@ -1088,7 +1127,7 @@ test_ingress() {
         while [[ $attempt -le $max_attempts ]]; do
             debug "Connection attempt $attempt/$max_attempts..."
 
-            if curl -s --max-time 5 -H "Host: echo.localdev.me" http://localhost:30080 >/dev/null 2>&1; then
+            if curl -s --max-time 5 -H "Host: echo.localdev.me" "http://${NODEPORT_HOST}:30080" >/dev/null 2>&1; then
                 test_successful=true
                 break
             fi
@@ -1105,8 +1144,8 @@ test_ingress() {
             ok "Ingress controller is working! Echo service is accessible"
             echo
             echo "Test the ingress controller with:"
-            echo "  curl -H 'Host: echo.localdev.me' http://localhost:30080"
-            echo "  curl -H 'Host: echo.localdev.me' http://localhost:30080/test"
+            echo "  curl -H 'Host: echo.localdev.me' http://${NODEPORT_HOST}:30080"
+            echo "  curl -H 'Host: echo.localdev.me' http://${NODEPORT_HOST}:30080/test"
             echo
             echo "Or in your browser:"
             echo "  Add '127.0.0.1 echo.localdev.me' to /etc/hosts"

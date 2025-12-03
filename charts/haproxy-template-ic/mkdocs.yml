@@ -1,9 +1,9 @@
 site_name: HAProxy Template IC - Helm Chart
-site_url: https://haproxy-template-ic.github.io/helm-chart/
+site_url: https://haproxy-template-ic.gitlab.io/helm-chart/
 site_description: Helm chart for HAProxy Template IC
 
 repo_name: HAProxy-Template-IC/haproxy-template-ingress-controller
-repo_url: https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller
+repo_url: https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
 
 docs_dir: docs
 
@@ -58,11 +58,11 @@ extra:
     provider: mike
   alternate:
     - name: Controller Docs
-      link: https://haproxy-template-ic.github.io/controller/latest/
+      link: https://haproxy-template-ic.gitlab.io/controller/latest/
       lang: controller
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/HAProxy-Template-IC
+      link: https://gitlab.com/haproxy-template-ic
 
 plugins:
   - search

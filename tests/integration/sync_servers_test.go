@@ -8,6 +8,7 @@ import (
 
 // TestSyncServers runs table-driven synchronization tests for server operations
 func TestSyncServers(t *testing.T) {
+	t.Parallel()
 	testCases := []syncTestCase{
 		// ==================== BASIC SERVER OPERATIONS ====================
 		{

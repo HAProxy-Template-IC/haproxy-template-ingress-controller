@@ -371,7 +371,7 @@ func NewHAProxyTemplateConfig(namespace, name, secretName string, leaderElection
 
 	config := &haproxyv1alpha1.HAProxyTemplateConfig{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.github.io/v1alpha1",
+			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
 			Kind:       "HAProxyTemplateConfig",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -480,9 +480,29 @@ func NewRole(namespace, name string) *rbacv1.Role {
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
-				APIGroups: []string{"haproxy-template-ic.github.io"},
+				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
 				Resources: []string{"haproxytemplateconfigs"},
 				Verbs:     []string{"get", "watch", "list"},
+			},
+			{
+				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				Resources: []string{"haproxycfgs"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
+			},
+			{
+				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				Resources: []string{"haproxycfgs/status"},
+				Verbs:     []string{"get", "update", "patch"},
+			},
+			{
+				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				Resources: []string{"haproxymapfiles"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				Resources: []string{"haproxymapfiles/status"},
+				Verbs:     []string{"get", "update", "patch"},
 			},
 			{
 				APIGroups: []string{""},
@@ -543,7 +563,7 @@ func NewClusterRole(name, namespace string) *rbacv1.ClusterRole {
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
-				APIGroups: []string{"haproxy-template-ic.github.io"},
+				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
 				Resources: []string{"haproxytemplateconfigs"},
 				Verbs:     []string{"get", "watch", "list"},
 			},
@@ -929,7 +949,7 @@ func NewInvalidBackendHAProxyTemplateConfig(namespace, name, secretName string) 
 
 	config := &haproxyv1alpha1.HAProxyTemplateConfig{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.github.io/v1alpha1",
+			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
 			Kind:       "HAProxyTemplateConfig",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -1008,7 +1028,7 @@ func NewHAProxyTemplateConfigWithVersion(namespace, name, secretName string, ver
 
 	config := &haproxyv1alpha1.HAProxyTemplateConfig{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.github.io/v1alpha1",
+			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
 			Kind:       "HAProxyTemplateConfig",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -1089,7 +1109,7 @@ func NewHTTPStoreHAProxyTemplateConfig(namespace, name, secretName string, leade
 
 	config := &haproxyv1alpha1.HAProxyTemplateConfig{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.github.io/v1alpha1",
+			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
 			Kind:       "HAProxyTemplateConfig",
 		},
 		ObjectMeta: metav1.ObjectMeta{

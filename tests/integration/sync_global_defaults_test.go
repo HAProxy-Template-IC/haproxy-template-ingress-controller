@@ -8,6 +8,7 @@ import (
 
 // TestSyncGlobalDefaults runs table-driven synchronization tests for global and defaults sections
 func TestSyncGlobalDefaults(t *testing.T) {
+	t.Parallel()
 	testCases := []syncTestCase{
 		{
 			name:              "global-change-maxconn",

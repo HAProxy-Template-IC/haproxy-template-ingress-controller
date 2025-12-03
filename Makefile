@@ -7,6 +7,7 @@
 
 # Variables
 GO := go
+# renovate: datasource=github-releases depName=golangci/golangci-lint
 GOLANGCI_LINT_VERSION := v2.6.2
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck
@@ -17,7 +18,7 @@ CONTROLLER_GEN := $(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen
 # Docker variables
 IMAGE_NAME ?= haproxy-template-ic# Container image name (override: IMAGE_NAME=my-image)
 IMAGE_TAG ?= dev# Image tag (override: IMAGE_TAG=v1.0.0)
-REGISTRY ?=# Container registry (e.g., ghcr.io/myorg)
+REGISTRY ?=# Container registry (e.g., registry.gitlab.com/myorg)
 FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NAME):$(IMAGE_TAG))
 KIND_CLUSTER ?= haproxy-template-ic-dev  # Kind cluster name for local testing
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -38,7 +39,17 @@ version: ## Display version information
 
 lint: ## Run all linters (golangci-lint + arch-go + eventimmutability)
 	@echo "Running golangci-lint..."
-	$(GOLANGCI_LINT) run ./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... ./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... ./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
+ifdef CI
+	$(GOLANGCI_LINT) run --output.code-climate.path=gl-code-quality-report.json \
+		./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... \
+		./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... \
+		./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
+else
+	$(GOLANGCI_LINT) run \
+		./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... \
+		./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... \
+		./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
+endif
 	@echo "Running arch-go..."
 	$(ARCH_GO)
 	@echo "Running event immutability checker..."
@@ -65,7 +76,7 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 
 test: ## Run tests
 	@echo "Running tests..."
-	$(GO) test -race -cover ./...
+	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -cover ./...
 
 test-integration: ## Run integration tests (requires kind cluster)
 	@echo "Running integration tests..."
@@ -75,9 +86,9 @@ test-integration: ## Run integration tests (requires kind cluster)
 	@echo "  TEST_RUN_PATTERN   - Run specific tests matching pattern"
 ifdef TEST_RUN_PATTERN
 	@echo "Running tests matching pattern: $(TEST_RUN_PATTERN)"
-	$(GO) test -tags=integration -v -race -timeout 15m -run "$(TEST_RUN_PATTERN)" ./tests/integration
+	$(GO) tool gotestsum --junitfile report-integration.xml --format testname -- -tags=integration -v -race -timeout 15m -run "$(TEST_RUN_PATTERN)" ./tests/integration
 else
-	$(GO) test -tags=integration -v -race -timeout 15m ./tests/integration/...
+	$(GO) tool gotestsum --junitfile report-integration.xml --format testname -- -tags=integration -v -race -timeout 15m ./tests/integration/...
 endif
 
 test-acceptance: docker-build-test ## Run acceptance tests (builds image, creates kind cluster)
@@ -151,7 +162,7 @@ docker-build-multiarch: ## Build multi-platform Docker image for local testing (
 docker-build-multiarch-push: ## Build and push multi-platform Docker image (linux/amd64,linux/arm64)
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "Error: REGISTRY variable must be set for multi-arch push"; \
-		echo "Example: make docker-build-multiarch-push REGISTRY=ghcr.io/myorg"; \
+		echo "Example: make docker-build-multiarch-push REGISTRY=registry.gitlab.com/myorg"; \
 		exit 1; \
 	fi
 	@echo "Building and pushing multi-platform Docker image: $(FULL_IMAGE)"
@@ -181,7 +192,7 @@ docker-load-kind: docker-build ## Build Docker image and load into kind cluster
 docker-push: docker-build ## Build and push Docker image to registry
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "Error: REGISTRY variable must be set"; \
-		echo "Example: make docker-push REGISTRY=ghcr.io/myorg"; \
+		echo "Example: make docker-push REGISTRY=registry.gitlab.com/myorg"; \
 		exit 1; \
 	fi
 	@echo "Pushing Docker image: $(FULL_IMAGE)"

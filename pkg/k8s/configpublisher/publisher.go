@@ -321,11 +321,11 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
 			Labels: map[string]string{
-				"haproxy-template-ic.github.io/template-config": req.TemplateConfigName,
+				"haproxy-template-ic.gitlab.io/template-config": req.TemplateConfigName,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "haproxy-template-ic.github.io/v1alpha1",
+					APIVersion:         "haproxy-template-ic.gitlab.io/v1alpha1",
 					Kind:               "HAProxyTemplateConfig",
 					Name:               req.TemplateConfigName,
 					UID:                req.TemplateConfigUID,
@@ -470,11 +470,11 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
 			Labels: map[string]string{
-				"haproxy-template-ic.github.io/runtime-config": owner.Name,
+				"haproxy-template-ic.gitlab.io/runtime-config": owner.Name,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "haproxy-template-ic.github.io/v1alpha1",
+					APIVersion:         "haproxy-template-ic.gitlab.io/v1alpha1",
 					Kind:               "HAProxyCfg",
 					Name:               owner.Name,
 					UID:                owner.UID,
@@ -535,12 +535,12 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
 			Labels: map[string]string{
-				"haproxy-template-ic.github.io/runtime-config": owner.Name,
-				"haproxy-template-ic.github.io/type":           "ssl-certificate",
+				"haproxy-template-ic.gitlab.io/runtime-config": owner.Name,
+				"haproxy-template-ic.gitlab.io/type":           "ssl-certificate",
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "haproxy-template-ic.github.io/v1alpha1",
+					APIVersion:         "haproxy-template-ic.gitlab.io/v1alpha1",
 					Kind:               "HAProxyCfg",
 					Name:               owner.Name,
 					UID:                owner.UID,
@@ -820,8 +820,15 @@ func buildPodStatus(update *DeploymentStatusUpdate) haproxyv1alpha1.PodDeploymen
 	return podStatus
 }
 
-func (p *Publisher) generateRuntimeConfigName(templateConfigName string) string {
+// GenerateRuntimeConfigName generates the HAProxyCfg resource name from a template config name.
+// This is the single source of truth for the naming convention used by both
+// the ConfigPublisher and DeploymentScheduler.
+func GenerateRuntimeConfigName(templateConfigName string) string {
 	return templateConfigName + "-haproxycfg"
+}
+
+func (p *Publisher) generateRuntimeConfigName(templateConfigName string) string {
+	return GenerateRuntimeConfigName(templateConfigName)
 }
 
 func (p *Publisher) generateMapFileName(mapName string) string {

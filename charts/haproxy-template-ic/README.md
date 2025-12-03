@@ -49,7 +49,7 @@ helm install my-controller ./charts/haproxy-template-ic \
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `replicaCount` | Number of controller replicas (2+ recommended for HA) | `2` |
-| `image.repository` | Controller image repository | `ghcr.io/haproxy-template-ic/haproxy-template-ingress-controller` |
+| `image.repository` | Controller image repository | `registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller` |
 | `image.tag` | Controller image tag | Chart appVersion |
 | `controller.templateLibraries.ingress.enabled` | Enable Ingress resource support | `true` |
 | `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTPRoute, GRPCRoute) | `false` |
@@ -235,7 +235,7 @@ ingressClass:
   enabled: true       # Create IngressClass (default: true)
   name: haproxy       # IngressClass name
   default: false      # Mark as cluster default
-  controllerName: haproxy-template-ic.github.io/controller
+  controllerName: haproxy-template-ic.gitlab.io/controller
 ```
 
 ### Capability Detection
@@ -258,7 +258,7 @@ When running multiple ingress controllers:
 # Controller 1 (haproxy-template-ic)
 ingressClass:
   name: haproxy
-  controllerName: haproxy-template-ic.github.io/controller
+  controllerName: haproxy-template-ic.gitlab.io/controller
 
 # Controller 2 (nginx)
 ingressClass:
@@ -330,9 +330,9 @@ gatewayClass:
   enabled: true
   name: haproxy
   default: false
-  controllerName: haproxy-template-ic.github.io/controller
+  controllerName: haproxy-template-ic.gitlab.io/controller
   parametersRef:
-    group: haproxy-template-ic.github.io
+    group: haproxy-template-ic.gitlab.io
     kind: HAProxyTemplateConfig
     name: ""        # Defaults to controller.crdName
     namespace: ""   # Defaults to Release.Namespace
@@ -376,7 +376,7 @@ When running multiple Gateway API controllers:
 # Controller 1 (haproxy-template-ic)
 gatewayClass:
   name: haproxy
-  controllerName: haproxy-template-ic.github.io/controller
+  controllerName: haproxy-template-ic.gitlab.io/controller
 
 # Controller 2 (nginx-gateway-fabric)
 gatewayClass:
@@ -401,7 +401,7 @@ helm install haproxy-internet ./charts/haproxy-template-ic
 
 # Create separate HAProxyTemplateConfig for internal traffic with different templates
 kubectl apply -f - <<EOF
-apiVersion: haproxy-template-ic.github.io/v1alpha1
+apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: haproxy-internal-config
@@ -420,9 +420,9 @@ kind: GatewayClass
 metadata:
   name: haproxy-internal
 spec:
-  controllerName: haproxy-template-ic.github.io/controller
+  controllerName: haproxy-template-ic.gitlab.io/controller
   parametersRef:
-    group: haproxy-template-ic.github.io
+    group: haproxy-template-ic.gitlab.io
     kind: HAProxyTemplateConfig
     name: haproxy-internal-config
     namespace: default

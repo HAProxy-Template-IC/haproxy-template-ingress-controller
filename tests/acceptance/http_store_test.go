@@ -167,6 +167,9 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			// Verify the content also contains the other IP
 			content, err := debugClient.GetGeneralFileContent(ctx, "blocked-ips.acl")
 			require.NoError(t, err)
+			if !strings.Contains(content, "10.0.0.0/8") {
+				t.Logf("FAILURE: Initial blocklist content missing expected IP\nActual content:\n%s", content)
+			}
 			assert.Contains(t, content, "10.0.0.0/8", "Initial content should contain both IPs")
 
 			// Update the blocklist content with new valid IPs
@@ -210,6 +213,9 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			// Verify the new content contains both new IPs
 			content, err = debugClient.GetGeneralFileContent(ctx, "blocked-ips.acl")
 			require.NoError(t, err)
+			if !strings.Contains(content, "192.168.0.0/16") {
+				t.Logf("FAILURE: Updated blocklist content missing expected IP\nActual content:\n%s", content)
+			}
 			assert.Contains(t, content, "192.168.0.0/16", "Updated content should contain both new IPs")
 
 			// Verify old content is gone
@@ -419,6 +425,9 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			require.NoError(t, err)
 
 			// Old content should still be present
+			if !strings.Contains(content, "192.168.1.0/24") || !strings.Contains(content, "10.0.0.0/8") {
+				t.Logf("FAILURE: Old valid content not preserved after invalid update rejection\nActual content:\n%s", content)
+			}
 			assert.Contains(t, content, "192.168.1.0/24", "Old valid content should be preserved")
 			assert.Contains(t, content, "10.0.0.0/8", "Old valid content should be preserved")
 
@@ -634,14 +643,10 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			err = clientset.CoreV1().Pods(namespace).Delete(ctx, leaderPod.Name, metav1.DeleteOptions{})
 			require.NoError(t, err)
 
-			// Wait for new leader election
+			// Wait for new leader election (must be different from old leader)
 			t.Log("Waiting for new leader election...")
-			time.Sleep(5 * time.Second) // Give time for old leader to be removed from lease
-
-			err = WaitForLeaderElection(ctx, cfg.Client().RESTConfig(), namespace, leaseName, 60*time.Second)
-			require.NoError(t, err)
-
-			newLeaderIdentity, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, leaseName)
+			newLeaderIdentity, err := WaitForNewLeader(ctx, client, cfg.Client().RESTConfig(),
+				namespace, leaseName, leaderIdentity, 90*time.Second)
 			require.NoError(t, err)
 			t.Logf("New leader: %s", newLeaderIdentity)
 
@@ -652,20 +657,12 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			var newLeaderPod *corev1.Pod
 			for i := range allPods {
 				pod := &allPods[i]
-				// Only consider running pods
-				if pod.Status.Phase != corev1.PodRunning {
-					continue
-				}
-				if strings.Contains(newLeaderIdentity, pod.Name) {
+				if strings.Contains(newLeaderIdentity, pod.Name) && pod.Status.Phase == corev1.PodRunning {
 					newLeaderPod = pod
 					break
 				}
 			}
 			require.NotNil(t, newLeaderPod, "New leader pod should be found")
-
-			// Wait for new leader to be fully ready
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 60*time.Second)
-			require.NoError(t, err)
 
 			// Start debug client to new leader
 			newDebugClient := NewDebugClient(cfg.Client().RESTConfig(), newLeaderPod, DebugPort)
@@ -711,6 +708,9 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			// Verify full content
 			content, err := newDebugClient.GetGeneralFileContent(ctx, "blocked-ips.acl")
 			require.NoError(t, err)
+			if !strings.Contains(content, "192.168.0.0/16") {
+				t.Logf("FAILURE: Updated content not applied after failover\nActual content:\n%s", content)
+			}
 			assert.Contains(t, content, "192.168.0.0/16", "Updated content should be fully applied after failover")
 
 			return ctx
