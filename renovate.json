@@ -33,6 +33,12 @@
       "rangeStrategy": "bump"
     },
     {
+      "description": "Group Go version updates from go.mod and .tool-versions",
+      "matchManagers": ["gomod", "asdf"],
+      "matchDepNames": ["go", "golang"],
+      "groupName": "go version"
+    },
+    {
       "description": "Group Kubernetes dependencies",
       "matchPackagePrefixes": ["k8s.io/", "sigs.k8s.io/"],
       "groupName": "kubernetes packages"
