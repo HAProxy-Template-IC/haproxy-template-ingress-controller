@@ -20,189 +20,129 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/portforward"
-	"k8s.io/client-go/transport/spdy"
+	"k8s.io/client-go/kubernetes"
+
+	"haproxy-template-ic/tests/testutil"
 )
 
-// DebugClient provides access to the controller's debug HTTP server via port-forward.
+// DebugClient provides access to the controller's debug HTTP server via Kubernetes API proxy.
+// This approach uses the API server's built-in service proxy, which routes requests through
+// the API server to the service. This is more reliable than port-forwarding (SPDY) and
+// doesn't require NodePort exposure through DinD extraPortMappings.
 type DebugClient struct {
-	podName       string
-	podNamespace  string
-	debugPort     int
-	localPort     int
-	restConfig    *rest.Config
-	stopChannel   chan struct{}
-	readyChannel  chan struct{}
-	portForwarder *portforward.PortForwarder
+	clientset   kubernetes.Interface
+	namespace   string
+	serviceName string
+	port        string
 }
 
-// NewDebugClient creates a new debug client for the given pod.
-func NewDebugClient(restConfig *rest.Config, pod *corev1.Pod, debugPort int) *DebugClient {
+// NewDebugClient creates a new debug client for accessing the controller via API proxy.
+// The clientset is used to make proxied HTTP requests through the Kubernetes API server.
+func NewDebugClient(clientset kubernetes.Interface, namespace, serviceName string, port int32) *DebugClient {
 	return &DebugClient{
-		podName:      pod.Name,
-		podNamespace: pod.Namespace,
-		debugPort:    debugPort,
-		localPort:    0, // Will be assigned by port-forward
-		restConfig:   restConfig,
+		clientset:   clientset,
+		namespace:   namespace,
+		serviceName: serviceName,
+		port:        strconv.Itoa(int(port)),
 	}
 }
 
-// Start starts the port-forward to the pod's debug port.
-func (dc *DebugClient) Start(ctx context.Context) error {
-	// Create port-forward URL
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", dc.podNamespace, dc.podName)
-	hostURL := dc.restConfig.Host + path
-
-	transport, upgrader, err := spdy.RoundTripperFor(dc.restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create round tripper: %w", err)
-	}
-
-	parsedURL, err := url.Parse(hostURL)
-	if err != nil {
-		return fmt.Errorf("failed to parse URL: %w", err)
-	}
-
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", parsedURL)
-
-	dc.stopChannel = make(chan struct{}, 1)
-	dc.readyChannel = make(chan struct{})
-
-	// Port 0 means pick random local port
-	ports := []string{fmt.Sprintf("0:%d", dc.debugPort)}
-
-	dc.portForwarder, err = portforward.New(
-		dialer,
-		ports,
-		dc.stopChannel,
-		dc.readyChannel,
-		io.Discard,
-		io.Discard,
+// proxyGet makes an HTTP GET request through the Kubernetes API server proxy.
+// Includes retry logic with exponential backoff for resilience during parallel test execution.
+//
+// The retry budget is intentionally kept small (3 retries, 2s max backoff) to ensure
+// that higher-level Wait functions get enough retry opportunities. In CI with 17
+// parallel tests, the API server can be temporarily overloaded. With a smaller
+// retry budget (~4s worst case), the Wait function can make more attempts within
+// its timeout budget.
+func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error) {
+	const (
+		maxRetries     = 3                       // Reduced from 5 to allow more Wait-level retries
+		initialBackoff = 100 * time.Millisecond
+		maxBackoff     = 2 * time.Second         // Reduced from 5s for tighter retry budget
+		minTimeForRetries = 3 * time.Second      // Minimum time needed for meaningful retries
 	)
-	if err != nil {
-		return fmt.Errorf("failed to create port forwarder: %w", err)
-	}
 
-	// Start port-forward in background
-	errChan := make(chan error)
-	go func() {
-		errChan <- dc.portForwarder.ForwardPorts()
-	}()
-
-	// Wait for port-forward to be ready or error
-	select {
-	case <-dc.readyChannel:
-		// Get the assigned local port
-		forwardedPorts, err := dc.portForwarder.GetPorts()
-		if err != nil {
-			dc.Stop()
-			return fmt.Errorf("failed to get forwarded ports: %w", err)
+	// Check if we have enough time remaining for retries.
+	// If deadline is tight, try once and fail fast to let the Wait function retry.
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < minTimeForRetries {
+			// Not enough time for meaningful retries - try once and return
+			return dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
+				"http",
+				dc.serviceName,
+				dc.port,
+				path,
+				nil,
+			).DoRaw(ctx)
 		}
-		dc.localPort = int(forwardedPorts[0].Local)
-		return nil
-
-	case err := <-errChan:
-		return fmt.Errorf("port-forward failed: %w", err)
-
-	case <-ctx.Done():
-		dc.Stop()
-		return ctx.Err()
-
-	case <-time.After(30 * time.Second):
-		dc.Stop()
-		return fmt.Errorf("port-forward timeout")
 	}
-}
 
-// Stop stops the port-forward. Safe to call multiple times.
-func (dc *DebugClient) Stop() {
-	if dc.stopChannel != nil {
-		close(dc.stopChannel)
-		dc.stopChannel = nil
-	}
-}
-
-// Reconnect closes the existing port-forward and establishes a new one.
-// This is useful when the port-forward connection has died due to network issues
-// or pod restarts.
-func (dc *DebugClient) Reconnect(ctx context.Context) error {
-	// Stop existing port-forward
-	dc.Stop()
-	dc.stopChannel = nil
-	dc.readyChannel = nil
-	dc.portForwarder = nil
-	dc.localPort = 0
-
-	// Start a new port-forward
-	return dc.Start(ctx)
-}
-
-// isConnectionError checks if an error indicates the port-forward connection is dead.
-func isConnectionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "connection reset") ||
-		strings.Contains(errStr, "broken pipe") ||
-		strings.Contains(errStr, "EOF") ||
-		strings.Contains(errStr, "no such host") ||
-		strings.Contains(errStr, "context deadline exceeded") ||
-		strings.Contains(errStr, "i/o timeout")
-}
-
-// StartWithRetry starts the port-forward with retry logic for transient failures.
-// This is useful when the controller pod may have restarted and the connection
-// needs time to become available.
-func (dc *DebugClient) StartWithRetry(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
 	var lastErr error
-	backoff := 1 * time.Second
+	backoff := initialBackoff
 
-	for time.Now().Before(deadline) {
-		err := dc.Start(ctx)
-		if err == nil {
-			return nil
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Wait before retry with exponential backoff
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
 		}
+
+		body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
+			"http",
+			dc.serviceName,
+			dc.port,
+			path,
+			nil,
+		).DoRaw(ctx)
+
+		if err == nil {
+			return body, nil
+		}
+
 		lastErr = err
 
-		// Reset channels for retry (Start() may have partially initialized them)
-		dc.Stop()
-		dc.stopChannel = nil
-		dc.readyChannel = nil
-		dc.portForwarder = nil
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(backoff):
-			backoff = min(backoff*2, 5*time.Second)
+		// Check if the parent context is cancelled - don't retry in that case
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
+
+		// Check if error is retryable (server overloaded, temporary unavailability)
+		errStr := err.Error()
+		if strings.Contains(errStr, "unable to handle the request") ||
+			strings.Contains(errStr, "connection refused") ||
+			strings.Contains(errStr, "no endpoints available") {
+			// Retryable error, continue to next attempt
+			continue
+		}
+
+		// Non-retryable error, return immediately
+		return nil, err
 	}
 
-	return fmt.Errorf("failed to start debug client after retries: %w", lastErr)
+	return nil, fmt.Errorf("proxyGet failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // GetConfig retrieves the current controller configuration from the debug server.
 func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]interface{}, error) {
-	url := fmt.Sprintf("http://localhost:%d/debug/vars/config", dc.localPort)
-	return dc.getJSON(ctx, url)
+	return dc.getJSON(ctx, "/debug/vars/config")
 }
 
 // GetRenderedConfig retrieves the rendered HAProxy configuration.
 func (dc *DebugClient) GetRenderedConfig(ctx context.Context) (string, error) {
-	url := fmt.Sprintf("http://localhost:%d/debug/vars/rendered", dc.localPort)
-
-	data, err := dc.getJSON(ctx, url)
+	data, err := dc.getJSON(ctx, "/debug/vars/rendered")
 	if err != nil {
 		return "", err
 	}
@@ -216,43 +156,32 @@ func (dc *DebugClient) GetRenderedConfig(ctx context.Context) (string, error) {
 }
 
 // GetRenderedConfigWithRetry retrieves the rendered HAProxy configuration with retry logic.
-// This is useful in parallel test execution where port-forward connections may be transiently unavailable.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
+// This is useful when the controller may be temporarily unavailable during startup.
 func (dc *DebugClient) GetRenderedConfigWithRetry(ctx context.Context, timeout time.Duration) (string, error) {
-	deadline := time.Now().Add(timeout)
-	var lastErr error
+	var result string
 
-	for time.Now().Before(deadline) {
-		config, err := dc.GetRenderedConfig(ctx)
-		if err == nil {
-			return config, nil
-		}
-		lastErr = err
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
 
-		// If it's a connection error, try to reconnect the port-forward
-		if isConnectionError(err) {
-			if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-				// Log reconnect failure but continue retrying
-				lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+	err := testutil.WaitForConditionWithDescription(ctx, cfg, "rendered config",
+		func(ctx context.Context) (bool, error) {
+			config, err := dc.GetRenderedConfig(ctx)
+			if err != nil {
+				return false, err
 			}
-		}
+			result = config
+			return true, nil
+		})
 
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(1 * time.Second):
-			// Retry after 1 second
-		}
+	if err != nil {
+		return "", err
 	}
-
-	return "", fmt.Errorf("timeout waiting for rendered config: %w", lastErr)
+	return result, nil
 }
 
 // GetEvents retrieves recent events from the debug server.
 func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]interface{}, error) {
-	url := fmt.Sprintf("http://localhost:%d/debug/vars/events", dc.localPort)
-
-	data, err := dc.getJSON(ctx, url)
+	data, err := dc.getJSON(ctx, "/debug/vars/events")
 	if err != nil {
 		return nil, err
 	}
@@ -276,163 +205,97 @@ func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]interface{},
 // This is useful during controller startup when the debug endpoint is running
 // but configuration hasn't been loaded yet. The method polls the debug endpoint
 // until configuration is available or the timeout expires.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForConfig(ctx context.Context, timeout time.Duration) (map[string]interface{}, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	var result map[string]interface{}
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
 
-	var lastErr error
-	for {
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return nil, fmt.Errorf("timeout waiting for config to become available (last error: %w)", lastErr)
-			}
-			return nil, fmt.Errorf("timeout waiting for config to become available")
-
-		case <-ticker.C:
+	err := testutil.WaitForConditionWithDescription(ctx, cfg, "config available",
+		func(ctx context.Context) (bool, error) {
 			config, err := dc.GetConfig(ctx)
 			if err != nil {
-				lastErr = err
-				// If it's a connection error, try to reconnect the port-forward
-				if isConnectionError(err) {
-					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
-					}
-				}
-				continue // Retry on error
+				return false, err
 			}
+			result = config
+			return true, nil
+		})
 
-			// Config is available
-			return config, nil
-		}
+	if err != nil {
+		return nil, err
 	}
+	return result, nil
 }
 
 // WaitForConfigVersion waits for the controller to load a specific config version.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	var lastErr error
-	for {
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return fmt.Errorf("timeout waiting for config version %q (last error: %w)", expectedVersion, lastErr)
-			}
-			return fmt.Errorf("timeout waiting for config version %q", expectedVersion)
-
-		case <-ticker.C:
+	return testutil.WaitForConditionWithDescription(ctx, cfg, fmt.Sprintf("config version %q", expectedVersion),
+		func(ctx context.Context) (bool, error) {
 			config, err := dc.GetConfig(ctx)
 			if err != nil {
-				lastErr = err
-				// If it's a connection error, try to reconnect the port-forward
-				if isConnectionError(err) {
-					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
-					}
-				}
-				continue // Retry on error
+				return false, err
 			}
 
 			if version, ok := config["version"].(string); ok && version == expectedVersion {
-				return nil
+				return true, nil
 			}
-		}
-	}
+			return false, nil
+		})
 }
 
 // WaitForRenderedConfigContains waits for the rendered config to contain a specific string.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForRenderedConfigContains(ctx context.Context, expectedSubstring string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	var lastErr error
-	for {
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return fmt.Errorf("timeout waiting for rendered config to contain %q (last error: %w)", expectedSubstring, lastErr)
-			}
-			return fmt.Errorf("timeout waiting for rendered config to contain %q", expectedSubstring)
-
-		case <-ticker.C:
+	return testutil.WaitForConditionWithDescription(ctx, cfg, fmt.Sprintf("rendered config contains %q", expectedSubstring),
+		func(ctx context.Context) (bool, error) {
 			rendered, err := dc.GetRenderedConfig(ctx)
 			if err != nil {
-				lastErr = err
-				// If it's a connection error, try to reconnect the port-forward
-				if isConnectionError(err) {
-					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
-					}
-				}
-				continue // Retry on error
+				return false, err
 			}
 
-			if contains(rendered, expectedSubstring) {
-				return nil
-			}
-		}
-	}
+			return strings.Contains(rendered, expectedSubstring), nil
+		})
 }
 
 // WaitForRenderedConfigContainsAny waits for the rendered config to contain any of the expected strings.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
 // On timeout, returns an error with the last seen config for debugging.
 func (dc *DebugClient) WaitForRenderedConfigContainsAny(ctx context.Context, expectedSubstrings []string, timeout time.Duration) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	var lastErr error
+	var matched string
 	var lastConfig string
-	for {
-		select {
-		case <-ctx.Done():
-			errMsg := fmt.Sprintf("timeout waiting for rendered config to contain any of %v", expectedSubstrings)
-			if lastConfig != "" {
-				errMsg += fmt.Sprintf("\nlast seen config:\n%s", lastConfig)
-			}
-			if lastErr != nil {
-				return "", fmt.Errorf("%s (last error: %w)", errMsg, lastErr)
-			}
-			return "", fmt.Errorf("%s", errMsg)
 
-		case <-ticker.C:
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
+
+	err := testutil.WaitForCondition(ctx, cfg,
+		func(ctx context.Context) (bool, error) {
 			rendered, err := dc.GetRenderedConfig(ctx)
 			if err != nil {
-				lastErr = err
-				// If it's a connection error, try to reconnect the port-forward
-				if isConnectionError(err) {
-					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
-					}
-				}
-				continue // Retry on error
+				return false, err
 			}
 
 			lastConfig = rendered
 			for _, expected := range expectedSubstrings {
-				if contains(rendered, expected) {
-					return expected, nil
+				if strings.Contains(rendered, expected) {
+					matched = expected
+					return true, nil
 				}
 			}
+			return false, nil
+		})
+
+	if err != nil {
+		errMsg := fmt.Sprintf("timeout waiting for rendered config to contain any of %v", expectedSubstrings)
+		if lastConfig != "" {
+			errMsg += fmt.Sprintf("\nlast seen config:\n%s", lastConfig)
 		}
+		return "", fmt.Errorf("%s: %w", errMsg, err)
 	}
+	return matched, nil
 }
 
 // PipelineStatus represents the reconciliation pipeline status.
@@ -510,9 +373,7 @@ type ErrorInfo struct {
 
 // GetPipelineStatus retrieves the reconciliation pipeline status.
 func (dc *DebugClient) GetPipelineStatus(ctx context.Context) (*PipelineStatus, error) {
-	url := fmt.Sprintf("http://localhost:%d/debug/vars/pipeline", dc.localPort)
-
-	data, err := dc.getJSON(ctx, url)
+	data, err := dc.getJSON(ctx, "/debug/vars/pipeline")
 	if err != nil {
 		return nil, err
 	}
@@ -532,42 +393,32 @@ func (dc *DebugClient) GetPipelineStatus(ctx context.Context) (*PipelineStatus, 
 }
 
 // GetPipelineStatusWithRetry retrieves the pipeline status with retry logic.
-// This is useful in parallel test execution where port-forward connections may be transiently unavailable.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
+// This is useful when the controller may be temporarily unavailable during startup.
 func (dc *DebugClient) GetPipelineStatusWithRetry(ctx context.Context, timeout time.Duration) (*PipelineStatus, error) {
-	deadline := time.Now().Add(timeout)
-	var lastErr error
+	var result *PipelineStatus
 
-	for time.Now().Before(deadline) {
-		status, err := dc.GetPipelineStatus(ctx)
-		if err == nil {
-			return status, nil
-		}
-		lastErr = err
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
 
-		// If it's a connection error, try to reconnect the port-forward
-		if isConnectionError(err) {
-			if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-				lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
+	err := testutil.WaitForConditionWithDescription(ctx, cfg, "pipeline status",
+		func(ctx context.Context) (bool, error) {
+			status, err := dc.GetPipelineStatus(ctx)
+			if err != nil {
+				return false, err
 			}
-		}
+			result = status
+			return true, nil
+		})
 
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(1 * time.Second):
-			// Retry after 1 second
-		}
+	if err != nil {
+		return nil, err
 	}
-
-	return nil, fmt.Errorf("timeout waiting for pipeline status: %w", lastErr)
+	return result, nil
 }
 
 // GetValidatedConfig retrieves the last successfully validated HAProxy configuration.
 func (dc *DebugClient) GetValidatedConfig(ctx context.Context) (*ValidatedConfigInfo, error) {
-	url := fmt.Sprintf("http://localhost:%d/debug/vars/validated", dc.localPort)
-
-	data, err := dc.getJSON(ctx, url)
+	data, err := dc.getJSON(ctx, "/debug/vars/validated")
 	if err != nil {
 		return nil, err
 	}
@@ -588,9 +439,7 @@ func (dc *DebugClient) GetValidatedConfig(ctx context.Context) (*ValidatedConfig
 
 // GetErrors retrieves the error summary.
 func (dc *DebugClient) GetErrors(ctx context.Context) (*ErrorSummary, error) {
-	url := fmt.Sprintf("http://localhost:%d/debug/vars/errors", dc.localPort)
-
-	data, err := dc.getJSON(ctx, url)
+	data, err := dc.getJSON(ctx, "/debug/vars/errors")
 	if err != nil {
 		return nil, err
 	}
@@ -610,84 +459,175 @@ func (dc *DebugClient) GetErrors(ctx context.Context) (*ErrorSummary, error) {
 }
 
 // WaitForValidationStatus waits for the validation status to match the expected value.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
 func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	var lastErr error
-	for {
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return fmt.Errorf("timeout waiting for validation status %q (last error: %w)", expected, lastErr)
-			}
-			return fmt.Errorf("timeout waiting for validation status %q", expected)
-
-		case <-ticker.C:
+	return testutil.WaitForConditionWithDescription(ctx, cfg, fmt.Sprintf("validation status %q", expected),
+		func(ctx context.Context) (bool, error) {
 			status, err := dc.GetPipelineStatus(ctx)
 			if err != nil {
-				lastErr = err
-				// If it's a connection error, try to reconnect the port-forward
-				if isConnectionError(err) {
-					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
-					}
-				}
-				continue // Retry on error
+				return false, err
 			}
 
 			if status.Validation != nil && status.Validation.Status == expected {
-				return nil
+				return true, nil
 			}
-		}
-	}
+			return false, nil
+		})
 }
 
-// getJSON fetches JSON from the debug server.
-func (dc *DebugClient) getJSON(ctx context.Context, url string) (map[string]interface{}, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	resp, err := client.Do(req)
+// getJSON fetches JSON from the debug server via API proxy.
+func (dc *DebugClient) getJSON(ctx context.Context, path string) (map[string]interface{}, error) {
+	body, err := dc.proxyGet(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch from debug server: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("debug server returned status %d: %s", resp.StatusCode, string(body))
-	}
 
 	var data map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, fmt.Errorf("failed to decode JSON response: %w", err)
 	}
 
 	return data, nil
 }
 
-// contains checks if a string contains a substring.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && indexOf(s, substr) >= 0)
+// GetAuxiliaryFiles retrieves the auxiliary files from the debug endpoint.
+func (dc *DebugClient) GetAuxiliaryFiles(ctx context.Context) (map[string]interface{}, error) {
+	return dc.getJSON(ctx, "/debug/vars/auxfiles")
 }
 
-// indexOf returns the index of substr in s, or -1 if not found.
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
+// GetGeneralFileContent retrieves the content of a specific general file from auxiliary files.
+// Returns the content string and any error encountered.
+func (dc *DebugClient) GetGeneralFileContent(ctx context.Context, fileName string) (string, error) {
+	auxFiles, err := dc.GetAuxiliaryFiles(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get auxiliary files: %w", err)
+	}
+
+	files, ok := auxFiles["files"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("files field not found or wrong type")
+	}
+
+	// The struct field is GeneralFiles (not general_files) - Go JSON serialization uses struct field names
+	generalFiles, ok := files["GeneralFiles"].([]interface{})
+	if !ok {
+		return "", fmt.Errorf("GeneralFiles field not found or wrong type")
+	}
+
+	for _, file := range generalFiles {
+		fileMap, ok := file.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// The struct field is Filename (not Name)
+		name, ok := fileMap["Filename"].(string)
+		if !ok {
+			continue
+		}
+		if name == fileName {
+			content, ok := fileMap["Content"].(string)
+			if !ok {
+				return "", fmt.Errorf("content field not found or wrong type for file %s", fileName)
+			}
+			return content, nil
 		}
 	}
-	return -1
+
+	return "", fmt.Errorf("file %s not found in auxiliary files", fileName)
+}
+
+// WaitForAuxFileContains waits until a specific auxiliary file contains the expected content.
+func (dc *DebugClient) WaitForAuxFileContains(ctx context.Context, fileName, expectedContent string, timeout time.Duration) error {
+	var lastContent string
+
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
+
+	err := testutil.WaitForCondition(ctx, cfg,
+		func(ctx context.Context) (bool, error) {
+			content, err := dc.GetGeneralFileContent(ctx, fileName)
+			if err != nil {
+				return false, err
+			}
+			lastContent = content
+
+			if strings.Contains(content, expectedContent) {
+				return true, nil
+			}
+			return false, nil
+		})
+
+	if err != nil {
+		return fmt.Errorf("waiting for file %s to contain %q (last content: %q): %w", fileName, expectedContent, lastContent, err)
+	}
+	return nil
+}
+
+// WaitForAuxFileNotContains waits until a specific auxiliary file does NOT contain the specified content.
+// This is useful for verifying that invalid content was rejected.
+func (dc *DebugClient) WaitForAuxFileNotContains(ctx context.Context, fileName, unexpectedContent string, timeout time.Duration) error {
+	var lastContent string
+
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
+
+	err := testutil.WaitForCondition(ctx, cfg,
+		func(ctx context.Context) (bool, error) {
+			content, err := dc.GetGeneralFileContent(ctx, fileName)
+			if err != nil {
+				return false, err
+			}
+			lastContent = content
+
+			if !strings.Contains(content, unexpectedContent) {
+				return true, nil
+			}
+			return false, nil
+		})
+
+	if err != nil {
+		return fmt.Errorf("file %s still contains %q (last content: %q): %w", fileName, unexpectedContent, lastContent, err)
+	}
+	return nil
+}
+
+// WaitForAuxFileContentStable waits and verifies that the file content stays unchanged for the duration.
+// This is useful for verifying that invalid updates are rejected and old content is preserved.
+//
+// Note: This function uses a fixed 500ms polling interval to ensure frequent stability checks.
+// Exponential backoff would be counter-productive here as we need to verify content hasn't changed.
+func (dc *DebugClient) WaitForAuxFileContentStable(ctx context.Context, fileName string, expectedContent string, stableDuration time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, stableDuration+5*time.Second)
+	defer cancel()
+
+	// Use a fast fixed interval for stability checking - we need frequent checks
+	// to verify content hasn't changed, not exponential backoff
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	stableStart := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout while verifying content stability for file %s", fileName)
+
+		case <-ticker.C:
+			content, err := dc.GetGeneralFileContent(ctx, fileName)
+			if err != nil {
+				return fmt.Errorf("error getting file content: %w", err)
+			}
+
+			if !strings.Contains(content, expectedContent) {
+				return fmt.Errorf("file content changed unexpectedly, expected to contain %q but got %q", expectedContent, content)
+			}
+
+			if time.Since(stableStart) >= stableDuration {
+				// Content has been stable for the required duration
+				return nil
+			}
+		}
+	}
 }

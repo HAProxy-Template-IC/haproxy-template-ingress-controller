@@ -1,18 +1,18 @@
 # HAProxy Dataplane Sync Library
 
-A powerful, easy-to-use Go library for synchronizing HAProxy configurations via the Dataplane API. The library handles all complexity internally and provides a simple interface: give it an endpoint and a desired configuration, and it ensures HAProxy matches that configuration.
+A Go library for synchronizing HAProxy configurations via the Dataplane API. Provide an endpoint and a desired configuration, and it ensures HAProxy matches that configuration.
 
 ## Features
 
-- **Simple API**: Just provide an endpoint and desired config string
-- **Connection Reuse**: Client-based API for efficient connection management
+- **Minimal API**: Provide an endpoint and desired config string
+- **Connection Reuse**: Client-based API for connection management
 - **Two-Phase Validation**: Syntax validation (client-native parser) + semantic validation (haproxy binary)
-- **Intelligent Sync**: Uses fine-grained operations (create/update/delete servers, backends, ACLs, etc.)
+- **Fine-grained Sync**: Uses granular operations (create/update/delete servers, backends, ACLs, etc.)
 - **Automatic Fallback**: Falls back to raw config push if fine-grained sync fails
-- **Conflict Resolution**: Automatically retries on version conflicts (409 errors)
-- **Detailed Results**: Returns structured information about applied changes
+- **Conflict Resolution**: Retries on version conflicts (409 errors)
+- **Structured Results**: Returns information about applied changes
 - **Reload Optimization**: Uses runtime API when possible to avoid HAProxy reloads
-- **Actionable Errors**: Detailed error messages with hints for troubleshooting
+- **Detailed Errors**: Error messages with hints for troubleshooting
 
 ## Installation
 

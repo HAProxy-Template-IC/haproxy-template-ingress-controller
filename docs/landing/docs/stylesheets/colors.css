@@ -1,0 +1,25 @@
+/* HAProxy Template IC - Shared Colors
+ * Single source of truth for brand colors across all pages
+ */
+:root {
+  --brand-primary: #0b3a66;
+  --brand-primary-light: #1a5a96;
+  --brand-primary-dark: #062744;
+  --brand-header: #4a8bc2;
+  --brand-bg: #ffffff;
+  --brand-text: #333;
+  --brand-text-muted: #666;
+  --brand-border: #e0e0e0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand-primary: #4a8bc2;
+    --brand-primary-light: #6ba3d6;
+    --brand-header: #0b3a66;
+    --brand-bg: #1e1e1e;
+    --brand-text: #e8edf4;
+    --brand-text-muted: #999;
+    --brand-border: #444;
+  }
+}

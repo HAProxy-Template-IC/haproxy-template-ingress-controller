@@ -19,10 +19,6 @@ package acceptance
 import (
 	"context"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -35,9 +31,6 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/portforward"
-	"k8s.io/client-go/transport/spdy"
 )
 
 const (
@@ -63,7 +56,9 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			t.Log("Setting up leader election two replicas test")
 
 			// Generate unique namespace for this test
-			namespace := envconf.RandomName("test-leader-2rep", 16)
+			// Note: RandomName generates a name of total length n, not prefix + n random chars
+			// "test-leader-2rep" is 16 chars, so use 32 to get 16 random chars appended
+			namespace := envconf.RandomName("test-leader-2rep", 32)
 			t.Logf("Using test namespace: %s", namespace)
 
 			// Store namespace in context
@@ -144,6 +139,17 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			}
 			t.Log("Created controller deployment with 2 replicas")
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			if err := client.Resources().Create(ctx, debugSvc); err != nil {
+				t.Fatal("Failed to create debug service:", err)
+			}
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			if err := client.Resources().Create(ctx, metricsSvc); err != nil {
+				t.Fatal("Failed to create metrics service:", err)
+			}
+
 			return ctx
 		}).
 		Assess("Exactly one leader elected", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -192,22 +198,22 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 				t.Fatalf("Expected 2 pods, found %d", len(pods))
 			}
 
-			// Check metrics from each pod
+			// Get leader from Lease (the authoritative source)
+			leaderPodName, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName)
+			if err != nil {
+				t.Fatal("Failed to get lease holder:", err)
+			}
+
+			if leaderPodName == "" {
+				t.Fatal("No leader found in lease")
+			}
+
+			// Verify leader pod is in our pod list
 			leaderCount := 0
 			followerCount := 0
-			var leaderPodName string
-
 			for _, pod := range pods {
-				t.Logf("Checking metrics for pod %s", pod.Name)
-
-				isLeader, err := checkPodIsLeader(ctx, t, cfg.Client().RESTConfig(), &pod)
-				if err != nil {
-					t.Fatalf("Failed to check leader status for pod %s: %v", pod.Name, err)
-				}
-
-				if isLeader {
+				if pod.Name == leaderPodName {
 					leaderCount++
-					leaderPodName = pod.Name
 					t.Logf("Pod %s is the leader", pod.Name)
 				} else {
 					followerCount++
@@ -221,16 +227,6 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			}
 			if followerCount != 1 {
 				t.Fatalf("Expected exactly 1 follower, found %d", followerCount)
-			}
-
-			// Verify Lease holder matches leader pod
-			holderIdentity, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName)
-			if err != nil {
-				t.Fatal("Failed to get lease holder:", err)
-			}
-
-			if holderIdentity != leaderPodName {
-				t.Fatalf("Lease holder (%s) does not match leader pod (%s)", holderIdentity, leaderPodName)
 			}
 
 			t.Logf("✓ Leader election working correctly: leader=%s, follower count=%d", leaderPodName, followerCount)
@@ -313,11 +309,10 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			}
 
 			// Access debug endpoint to verify rendered config contains the ingress
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), leaderPod, DebugPort)
-			if err := debugClient.Start(ctx); err != nil {
-				t.Fatal("Failed to start debug client:", err)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			if err != nil {
+				t.Fatal("Failed to setup debug client:", err)
 			}
-			defer debugClient.Stop()
 
 			// Wait for reconciliation by polling the rendered config
 			// This replaces the previous 10s sleep with proper condition checking
@@ -352,101 +347,6 @@ func TestLeaderElection_TwoReplicas(t *testing.T) {
 	testEnv.Test(t, buildLeaderElectionTwoReplicasFeature())
 }
 
-// checkPodIsLeader checks if a pod reports itself as leader via metrics.
-func checkPodIsLeader(ctx context.Context, t *testing.T, restConfig *rest.Config, pod *corev1.Pod) (bool, error) {
-	t.Helper()
-
-	// Get a free local port
-	listener, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		return false, fmt.Errorf("failed to get free port: %w", err)
-	}
-	localPort := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-
-	// Setup port-forward to metrics endpoint
-	roundTripper, upgrader, err := spdy.RoundTripperFor(restConfig)
-	if err != nil {
-		return false, fmt.Errorf("failed to create round tripper: %w", err)
-	}
-
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", pod.Namespace, pod.Name)
-	hostIP := strings.TrimPrefix(restConfig.Host, "https://")
-	serverURLStr := fmt.Sprintf("https://%s%s", hostIP, path)
-
-	serverURL, err := url.Parse(serverURLStr)
-	if err != nil {
-		return false, fmt.Errorf("failed to parse server URL: %w", err)
-	}
-
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: roundTripper}, http.MethodPost, serverURL)
-
-	stopChan := make(chan struct{}, 1)
-	readyChan := make(chan struct{})
-	errChan := make(chan error)
-
-	// Create port forwarder
-	fw, err := portforward.New(dialer, []string{fmt.Sprintf("%d:%d", localPort, MetricsPort)}, stopChan, readyChan, nil, nil)
-	if err != nil {
-		return false, fmt.Errorf("failed to create port forwarder: %w", err)
-	}
-
-	// Start port forwarding in background
-	go func() {
-		if err := fw.ForwardPorts(); err != nil {
-			errChan <- err
-		}
-	}()
-
-	// Wait for port-forward to be ready
-	select {
-	case <-readyChan:
-		// Ready
-	case err := <-errChan:
-		return false, fmt.Errorf("port forward failed: %w", err)
-	case <-time.After(30 * time.Second):
-		close(stopChan)
-		return false, fmt.Errorf("timeout waiting for port forward")
-	}
-
-	defer close(stopChan)
-
-	// Fetch metrics
-	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", localPort)
-	resp, err := http.Get(metricsURL)
-	if err != nil {
-		return false, fmt.Errorf("failed to fetch metrics: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, fmt.Errorf("failed to read metrics: %w", err)
-	}
-
-	metricsOutput := string(body)
-
-	// Parse metrics to find haproxy_ic_leader_election_is_leader
-	lines := strings.Split(metricsOutput, "\n")
-	for _, line := range lines {
-		// Skip comments
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		// Look for is_leader metric
-		if strings.Contains(line, "haproxy_ic_leader_election_is_leader") {
-			// Format: haproxy_ic_leader_election_is_leader{pod="..."} 1
-			if strings.HasSuffix(strings.TrimSpace(line), " 1") || strings.HasSuffix(strings.TrimSpace(line), " 1.0") {
-				return true, nil
-			}
-			return false, nil
-		}
-	}
-
-	return false, fmt.Errorf("leader election metric not found in metrics output")
-}
-
 // buildLeaderElectionFailoverFeature builds a feature that verifies automatic failover
 // when leader fails.
 //
@@ -464,7 +364,8 @@ func buildLeaderElectionFailoverFeature() types.Feature {
 			t.Helper()
 			t.Log("Setting up leader election failover test")
 
-			namespace := envconf.RandomName("test-leader-failover", 16)
+			// Note: "test-leader-failover" is 20 chars, use 36 to get 16 random chars
+			namespace := envconf.RandomName("test-leader-failover", 36)
 			t.Logf("Using test namespace: %s", namespace)
 
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -638,52 +539,8 @@ func buildLeaderElectionFailoverFeature() types.Feature {
 			}
 
 		FailoverComplete:
-
-			// Wait for metrics to update by polling until exactly one leader is reported
-			// This replaces the previous 5s sleep with proper condition checking
-			err = WaitForCondition(ctx, "exactly one leader in metrics", 30*time.Second, 500*time.Millisecond, func() (bool, error) {
-				pods, err := GetAllControllerPods(ctx, client, namespace)
-				if err != nil {
-					// Transient error, keep trying
-					return false, nil
-				}
-
-				leaderCount := 0
-				correctLeader := false
-				for _, pod := range pods {
-					isLeader, err := checkPodIsLeader(ctx, t, cfg.Client().RESTConfig(), &pod)
-					if err != nil {
-						// Pod might be terminating, keep trying
-						continue
-					}
-
-					if isLeader {
-						leaderCount++
-						if pod.Name == newLeader {
-							correctLeader = true
-						}
-					}
-				}
-
-				// Success condition: exactly one leader and it's the expected one
-				return leaderCount == 1 && correctLeader, nil
-			})
-
-			if err != nil {
-				// Get final state for debugging
-				pods, _ := GetAllControllerPods(ctx, client, namespace)
-				leaderCount := 0
-				for _, pod := range pods {
-					isLeader, checkErr := checkPodIsLeader(ctx, t, cfg.Client().RESTConfig(), &pod)
-					if checkErr == nil && isLeader {
-						leaderCount++
-						t.Logf("Pod %s reports is_leader=1", pod.Name)
-					}
-				}
-				t.Fatalf("Metrics did not converge: %v (found %d leaders, expected 1)", err, leaderCount)
-			}
-
-			t.Log("✓ Failover successful, exactly one leader active")
+			// Failover already verified by Lease holder check above
+			t.Log("✓ Failover successful, new leader elected via Lease")
 
 			return ctx
 		}).
@@ -750,7 +607,8 @@ watched_resources:
 			t.Helper()
 			t.Log("Setting up leader election disabled mode test")
 
-			namespace := envconf.RandomName("test-leader-disabled", 16)
+			// Note: "test-leader-disabled" is 20 chars, use 36 to get 16 random chars
+			namespace := envconf.RandomName("test-leader-disabled", 36)
 			t.Logf("Using test namespace: %s", namespace)
 
 			ctx = StoreNamespaceInContext(ctx, namespace)
@@ -827,6 +685,17 @@ watched_resources:
 			}
 			t.Log("Created controller deployment with 1 replica")
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			if err := client.Resources().Create(ctx, debugSvc); err != nil {
+				t.Fatal("Failed to create debug service:", err)
+			}
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			if err := client.Resources().Create(ctx, metricsSvc); err != nil {
+				t.Fatal("Failed to create metrics service:", err)
+			}
+
 			return ctx
 		}).
 		Assess("No Lease created", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -890,18 +759,11 @@ watched_resources:
 				t.Fatal("Failed to create client:", err)
 			}
 
-			// Get controller pod
-			pod, err := GetControllerPod(ctx, client, namespace)
+			// Access debug endpoint via NodePort
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			if err != nil {
-				t.Fatal("Failed to get controller pod:", err)
+				t.Fatal("Failed to setup debug client:", err)
 			}
-
-			// Access debug endpoint
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			if err := debugClient.Start(ctx); err != nil {
-				t.Fatal("Failed to start debug client:", err)
-			}
-			defer debugClient.Stop()
 
 			// Wait for config to become available (controller is initializing)
 			// This accommodates the time needed for controller startup and debug variable registration

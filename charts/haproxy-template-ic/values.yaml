@@ -1,37 +1,7 @@
 # Default values for haproxy-template-ic.
-
-# =============================================================================
-# Port Configuration Architecture
-# =============================================================================
 #
-# Port Flow: Container → Service → External
-#
-# 1. Container Ports (controller.ports.* and haproxy.ports.*)
-#    - Defined once, source of truth for all port numbers
-#    - Used in: container specs, health probes, NetworkPolicies
-#
-# 2. Named Port References
-#    - Containers expose named ports (e.g., "http", "https", "metrics")
-#    - Services reference by name (targetPort: http)
-#    - Reduces duplication - port numbers defined only once
-#
-# 3. Service Ports (*.service.*.port)
-#    - External-facing port numbers
-#    - Can differ from container ports (e.g., 80 → 8080)
-#
-# 4. NodePorts (*.service.*.nodePort)
-#    - Only used when service.type: NodePort
-#    - Maps to host ports on Kubernetes nodes (30000-32767 range)
-#
-# Example Flow:
-#   Container listens on: 8080 (haproxy.ports.http)
-#   Named as: "http" in container port spec
-#   Service exposes as: 80 (haproxy.service.http.port)
-#   Service targetPort: http (references the named port)
-#   NodePort maps to: 30080 (haproxy.service.http.nodePort)
-#   External access: http://node-ip:30080 → Service:80 → Pod:8080
-#
-# =============================================================================
+# Port architecture: Container ports (*.ports.*) are the source of truth.
+# Services reference them by name (targetPort: http). See README for details.
 
 # Replica count for controller
 # Default: 2 replicas for high availability with leader election
@@ -226,7 +196,7 @@ controller:
       # These paths are used for both validation and deployment
       # See: https://www.haproxy.com/documentation/haproxy-data-plane-api/reference/configuration-file/#resources
       mapsDir: /etc/haproxy/maps
-      sslCertsDir: /etc/haproxy/certs
+      sslCertsDir: /etc/haproxy/ssl
       generalStorageDir: /etc/haproxy/general
       configFile: /etc/haproxy/haproxy.cfg
 

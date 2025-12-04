@@ -58,7 +58,6 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - User Guide:
-    - Configuration: configuration.md
     - Templating: templating.md
     - CRD Reference: crd-reference.md
     - Watching Resources: watching-resources.md
@@ -96,7 +95,7 @@ extra:
       link: https://haproxy-template-ic.gitlab.io/helm-chart/latest/
       lang: helm
   social:
-    - icon: fontawesome/brands/github
+    - icon: fontawesome/brands/gitlab
       link: https://gitlab.com/haproxy-template-ic
 
 plugins:

@@ -21,16 +21,23 @@ The HAProxy Template Ingress Controller:
 
 ## Installation
 
+### Add the Helm Repository
+
+```bash
+helm repo add haproxy-template-ic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
+helm repo update
+```
+
 ### Basic Installation
 
 ```bash
-helm install my-controller ./charts/haproxy-template-ic
+helm install my-controller haproxy-template-ic/haproxy-template-ic
 ```
 
 ### With Custom Values
 
 ```bash
-helm install my-controller ./charts/haproxy-template-ic \
+helm install my-controller haproxy-template-ic/haproxy-template-ic \
   --set image.tag=v0.1.0 \
   --set replicaCount=2
 ```
@@ -38,7 +45,7 @@ helm install my-controller ./charts/haproxy-template-ic \
 ### With Custom Values File
 
 ```bash
-helm install my-controller ./charts/haproxy-template-ic \
+helm install my-controller haproxy-template-ic/haproxy-template-ic \
   -f my-values.yaml
 ```
 
@@ -52,13 +59,13 @@ helm install my-controller ./charts/haproxy-template-ic \
 | `image.repository` | Controller image repository | `registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller` |
 | `image.tag` | Controller image tag | Chart appVersion |
 | `controller.templateLibraries.ingress.enabled` | Enable Ingress resource support | `true` |
-| `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTPRoute, GRPCRoute) | `false` |
+| `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTPRoute, GRPCRoute) | `true` |
 | `ingressClass.enabled` | Create IngressClass resource | `true` |
 | `ingressClass.name` | IngressClass name | `haproxy` |
 | `gatewayClass.enabled` | Create GatewayClass resource | `true` |
 | `gatewayClass.name` | GatewayClass name | `haproxy` |
 | `controller.debugPort` | Introspection HTTP server port (provides /healthz and /debug/*) | `8080` |
-| `controller.config.pod_selector` | Labels to match HAProxy pods | `{app: haproxy, component: loadbalancer}` |
+| `controller.config.podSelector` | Labels to match HAProxy pods | `{app.kubernetes.io/component: loadbalancer}` |
 | `controller.config.logging.verbose` | Log level (0=WARN, 1=INFO, 2=DEBUG) | `1` |
 | `credentials.dataplane.username` | Dataplane API username | `admin` |
 | `credentials.dataplane.password` | Dataplane API password | `adminpass` |
@@ -68,28 +75,28 @@ helm install my-controller ./charts/haproxy-template-ic \
 
 The controller configuration is defined in `controller.config` and includes:
 
-- **pod_selector**: Labels to identify HAProxy pods to manage
-- **watched_resources**: Kubernetes resources to watch (Ingress, Service, EndpointSlice, Secret)
-- **template_snippets**: Reusable Jinja2 template fragments
+- **podSelector**: Labels to identify HAProxy pods to manage
+- **watchedResources**: Kubernetes resources to watch (Ingress, Service, EndpointSlice, Secret)
+- **templateSnippets**: Reusable Jinja2 template fragments
 - **maps**: HAProxy map file templates
 - **files**: Auxiliary files (error pages, etc.)
-- **haproxy_config**: Main HAProxy configuration template
+- **haproxyConfig**: Main HAProxy configuration template
 
 Example custom configuration:
 
 ```yaml
 controller:
   config:
-    pod_selector:
-      match_labels:
+    podSelector:
+      matchLabels:
         app: my-haproxy
         environment: production
 
-    watched_resources:
+    watchedResources:
       ingresses:
-        api_version: networking.k8s.io/v1
-        kind: Ingress
-        index_by: ["metadata.namespace", "metadata.name"]
+        apiVersion: networking.k8s.io/v1
+        resources: ingresses
+        indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 ### Ingress Class Filtering
@@ -100,7 +107,7 @@ By default, the controller only watches Ingress resources with `spec.ingressClas
 ```yaml
 controller:
   config:
-    watched_resources:
+    watchedResources:
       ingresses:
         fieldSelector: "spec.ingressClassName=haproxy"
 ```
@@ -109,7 +116,7 @@ controller:
 ```yaml
 controller:
   config:
-    watched_resources:
+    watchedResources:
       ingresses:
         fieldSelector: "spec.ingressClassName=my-custom-class"
 ```
@@ -118,7 +125,7 @@ controller:
 ```yaml
 controller:
   config:
-    watched_resources:
+    watchedResources:
       ingresses:
         fieldSelector: ""
 ```
@@ -127,102 +134,32 @@ The field selector uses Kubernetes server-side filtering for efficient resource 
 
 ## Template Libraries
 
-The controller uses a template library system for modular feature support. Libraries are merged in order: base → ingress → gateway → haproxytech → user values.
+The controller uses a modular template library system where configuration files are merged at Helm render time. Each library provides specific HAProxy functionality and can be enabled or disabled independently.
 
-### Available Libraries
+| Library | Default | Description |
+|---------|---------|-------------|
+| Base | Always enabled | Core HAProxy configuration, extension points |
+| SSL | Enabled | TLS certificates, HTTPS frontend |
+| Ingress | Enabled | Kubernetes Ingress support |
+| Gateway | Enabled | Gateway API (HTTPRoute, GRPCRoute) |
+| HAProxy Annotations | Enabled | `haproxy.org/*` annotation support |
+| HAProxy Ingress | Enabled | HAProxy Ingress Controller compatibility |
+| Path Regex Last | Disabled | Performance-first path matching |
 
-**Base Library** (always enabled)
-- Resource-agnostic HAProxy core configuration
-- Error pages and plugin orchestration
-- Uses `resource_*` patterns to discover implementations
-
-**Ingress Library** (enabled by default)
-- Kubernetes Ingress resource support (networking.k8s.io/v1)
-- Path matching, host-based routing, backend management
-- Watched resources: `ingresses` (filtered by `spec.ingressClassName`)
-
-**Gateway Library** (disabled by default)
-- Kubernetes Gateway API support (gateway.networking.k8s.io/v1)
-- HTTPRoute and GRPCRoute routing with advanced features
-- Watched resources: `httproutes`, `grpcroutes`
-
-**HAProxyTech Library** (enabled by default)
-- Support for haproxy.org/* annotations
-- Works with both Ingress and Gateway API resources
-
-### Enabling Gateway API Support
-
-To enable Gateway API support:
+### Enabling/Disabling Libraries
 
 ```yaml
 controller:
   templateLibraries:
     gateway:
-      enabled: true
+      enabled: true   # Enable Gateway API support
+    ingress:
+      enabled: false  # Disable Ingress support
 ```
 
-This automatically:
-- Adds HTTPRoute and GRPCRoute to watched resources
-- Grants necessary RBAC permissions (via ClusterRole)
-- Includes Gateway API routing templates
+For comprehensive documentation including extension points and custom configuration injection, see [Template Libraries](./docs/template-libraries.md).
 
-### Gateway API Features
-
-When the gateway library is enabled, the controller supports Gateway API v1.2.0 resources. See [Gateway API Support Documentation](./docs/gateway-api-support.md) for complete feature matrix.
-
-**HTTPRoute:**
-- Path matching: Exact, PathPrefix, RegularExpression
-- Host-based routing via `hostnames`
-- Weighted traffic splitting with `backendRefs`
-- Backend deduplication
-
-**GRPCRoute:**
-- Host-based routing
-- Weighted traffic splitting
-- HTTP/2 backend connections (`proto h2`)
-
-**Known Limitations:**
-- Header and query parameter matching not implemented
-- Filters (header modification, redirects, etc.) not implemented
-- GRPCRoute method-based routing not implemented
-
-**Example HTTPRoute:**
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: example-route
-spec:
-  hostnames:
-    - "example.com"
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /api
-      backendRefs:
-        - name: api-service-v1
-          port: 8080
-          weight: 90
-        - name: api-service-v2
-          port: 8080
-          weight: 10
-```
-
-This creates an HAProxy backend with 90/10 traffic split using server weights.
-
-### Conditional Resource Watching
-
-Watched resources are determined by enabled libraries:
-
-| Library | Enabled | Watched Resources |
-|---------|---------|-------------------|
-| ingress | `true` (default) | ingresses |
-| gateway | `false` (default) | - |
-| gateway | `true` | httproutes, grpcroutes |
-
-Core resources (services, endpoints, secrets) are always watched.
+For Gateway API features, see [Gateway API Library](./docs/libraries/gateway.md).
 
 ## IngressClass
 
@@ -317,6 +254,8 @@ Install Gateway API CRDs (standard channel) before enabling the gateway library:
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
 ```
+
+Check [Gateway API releases](https://github.com/kubernetes-sigs/gateway-api/releases) for newer versions.
 
 ### Configuration
 
@@ -477,9 +416,9 @@ gatewayClass:
   enabled: false
 ```
 
-## Resource Limits and Cloud-Native Behavior
+## Resource Limits and Container Awareness
 
-The controller automatically detects and respects container resource limits for optimal cloud-native operation:
+The controller automatically detects and respects container resource limits:
 
 ### CPU Limits (GOMAXPROCS)
 
@@ -535,7 +474,6 @@ Valid range: 0.0 < AUTOMEMLIMIT ≤ 1.0
 - **Prevents OOM kills**: GOMEMLIMIT helps the Go GC keep heap memory under control
 - **Reduces CPU throttling**: Proper GOMAXPROCS prevents over-scheduling goroutines
 - **Improves performance**: Better GC tuning and reduced context switching
-- **Cloud-native best practice**: Industry standard for containerized Go applications in 2025
 
 ## NetworkPolicy Configuration
 
@@ -602,61 +540,69 @@ service:
 Exposes the HAProxy load balancer for ingress traffic:
 - **http** (80): HTTP traffic routing
 - **https** (443): HTTPS/TLS traffic routing
+- **stats** (8404): Health and statistics page
 
 This service routes external traffic to HAProxy pods. You can configure it based on your deployment environment:
 
 **Development (kind cluster)**:
 
 ```yaml
-haproxyService:
+haproxy:
   enabled: true
-  type: LoadBalancer  # kind maps to localhost
+  service:
+    type: LoadBalancer  # kind maps to localhost
 ```
 
 **Production (cloud provider)**:
 
 ```yaml
-haproxyService:
+haproxy:
   enabled: true
-  type: LoadBalancer
-  annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-  externalTrafficPolicy: Local  # Preserve client IPs
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 ```
 
 **Production (NodePort for external LB)**:
 
 ```yaml
-haproxyService:
+haproxy:
   enabled: true
-  type: NodePort
-  httpNodePort: 30080
-  httpsNodePort: 30443
+  service:
+    type: NodePort
+    http:
+      nodePort: 30080
+    https:
+      nodePort: 30443
 ```
 
 **Production (managed externally)**:
 
 ```yaml
-haproxyService:
-  enabled: false  # Manage HAProxy Service separately
+haproxy:
+  enabled: false  # Manage HAProxy deployment separately
 ```
 
 ### Configuration Options
 
-The HAProxy Service supports standard Kubernetes Service configuration:
+The HAProxy Service configuration:
 
 ```yaml
-haproxyService:
+haproxy:
   enabled: true
-  type: ClusterIP  # ClusterIP, NodePort, or LoadBalancer
-  httpPort: 80
-  httpsPort: 443
-  httpNodePort: 30080  # Optional, only for NodePort type
-  httpsNodePort: 30443  # Optional, only for NodePort type
-  loadBalancerIP: ""  # Optional, for LoadBalancer type
-  externalTrafficPolicy: ""  # Optional: Local or Cluster
-  annotations: {}  # Cloud provider annotations
-  labels: {}  # Additional service labels
+  service:
+    type: NodePort  # ClusterIP, NodePort, or LoadBalancer
+    annotations: {}  # Cloud provider annotations
+    http:
+      port: 80
+      nodePort: 30080  # Only for NodePort/LoadBalancer
+    https:
+      port: 443
+      nodePort: 30443  # Only for NodePort/LoadBalancer
+    stats:
+      port: 8404
+      nodePort: 30404  # Only for NodePort/LoadBalancer
 ```
 
 ### Why Separate Services?
@@ -671,7 +617,7 @@ Separating the controller and HAProxy services provides:
 
 The controller manages HAProxy pods deployed separately. Each HAProxy pod must:
 
-1. **Have matching labels** as defined in `pod_selector`
+1. **Have matching labels** as defined in `podSelector`
 2. **Run HAProxy with Dataplane API sidecar**
 3. **Share config volume** between HAProxy and Dataplane containers
 4. **Expose Dataplane API** on port 5555
@@ -1114,17 +1060,17 @@ curl http://localhost:8080/debug/vars
 curl http://localhost:8080/debug/vars/config
 
 # Get rendered HAProxy configuration
-curl http://localhost:6060/debug/vars/rendered
+curl http://localhost:8080/debug/vars/rendered
 
 # Get recent events (last 100)
-curl http://localhost:6060/debug/vars/events
+curl http://localhost:8080/debug/vars/events
 
 # Get resource counts
-curl http://localhost:6060/debug/vars/resources
+curl http://localhost:8080/debug/vars/resources
 
 # Go profiling (CPU, heap, goroutines)
-curl http://localhost:6060/debug/pprof/
-go tool pprof http://localhost:6060/debug/pprof/heap
+curl http://localhost:8080/debug/pprof/
+go tool pprof http://localhost:8080/debug/pprof/heap
 ```
 
 ### Debug Variables
@@ -1150,13 +1096,13 @@ Extract specific fields using JSONPath:
 
 ```bash
 # Get only the config version
-curl 'http://localhost:6060/debug/vars/config?field={.version}'
+curl 'http://localhost:8080/debug/vars/config?field={.version}'
 
 # Get only template names
-curl 'http://localhost:6060/debug/vars/config?field={.config.templates}'
+curl 'http://localhost:8080/debug/vars/config?field={.config.templates}'
 
 # Get rendered config size
-curl 'http://localhost:6060/debug/vars/rendered?field={.size}'
+curl 'http://localhost:8080/debug/vars/rendered?field={.size}'
 ```
 
 ## Monitoring
@@ -1278,18 +1224,18 @@ replicaCount: 2  # Runs 2 replicas by default
 controller:
   config:
     controller:
-      leader_election:
+      leaderElection:
         enabled: true  # Enabled by default
-        lease_name: haproxy-template-ic-leader
-        lease_duration: 60s    # Failover within ~15-20 seconds typically
-        renew_deadline: 15s
-        retry_period: 5s
+        leaseName: ""  # Defaults to Helm release fullname
+        leaseDuration: 15s
+        renewDeadline: 10s
+        retryPeriod: 2s
 ```
 
 **How it works:**
 - All replicas watch resources, render templates, and validate configs
 - Only the elected leader deploys configurations to HAProxy instances
-- Automatic failover if leader fails (~15-20 second downtime)
+- Automatic failover if leader fails (within leaseDuration, default 15s)
 - Leadership transitions are logged and tracked via Prometheus metrics
 
 **Check current leader:**
@@ -1351,18 +1297,317 @@ autoscaling:
   targetCPUUtilizationPercentage: 80
 ```
 
+## Configuration Reference
+
+Complete reference of all Helm values with types, defaults, and descriptions.
+
+### Deployment & Image
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `replicaCount` | int | `2` | Number of controller replicas (2+ recommended for HA with leader election) |
+| `image.repository` | string | `registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller` | Controller image repository |
+| `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
+| `image.tag` | string | Chart appVersion | Controller image tag |
+| `imagePullSecrets` | list | `[]` | Image pull secrets for private registries |
+| `nameOverride` | string | `""` | Override chart name |
+| `fullnameOverride` | string | `""` | Override full release name |
+
+### Controller Core
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.crdName` | string | `haproxy-template-ic-config` | Name of HAProxyTemplateConfig CRD resource |
+| `controller.debugPort` | int | `8080` | Introspection HTTP server port (/healthz, /debug/*) |
+| `controller.ports.healthz` | int | `8080` | Health check endpoint port |
+| `controller.ports.metrics` | int | `9090` | Prometheus metrics endpoint port |
+| `controller.ports.webhook` | int | `9443` | Admission webhook HTTPS port |
+
+### Template Libraries
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.templateLibraries.base.enabled` | bool | `true` | Core HAProxy configuration (always enabled) |
+| `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
+| `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
+| `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTPRoute, GRPCRoute) |
+| `controller.templateLibraries.haproxytech.enabled` | bool | `true` | haproxy.org/* annotation support |
+| `controller.templateLibraries.haproxyIngress.enabled` | bool | `true` | HAProxy Ingress Controller compatibility |
+| `controller.templateLibraries.pathRegexLast.enabled` | bool | `false` | Performance-first path matching (regex last) |
+
+### Default SSL Certificate
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.defaultSSLCertificate.enabled` | bool | `true` | Enable default SSL certificate requirement |
+| `controller.defaultSSLCertificate.secretName` | string | `default-ssl-cert` | TLS Secret name containing certificate |
+| `controller.defaultSSLCertificate.namespace` | string | `""` | Secret namespace (defaults to Release.Namespace) |
+| `controller.defaultSSLCertificate.create` | bool | `false` | Create Secret from inline cert/key (testing only) |
+| `controller.defaultSSLCertificate.cert` | string | `""` | PEM certificate (when create=true) |
+| `controller.defaultSSLCertificate.key` | string | `""` | PEM private key (when create=true) |
+
+### Controller Config
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.config.credentialsSecretRef.name` | string | Auto-generated | Secret containing Dataplane API credentials |
+| `controller.config.credentialsSecretRef.namespace` | string | `""` | Credentials secret namespace |
+| `controller.config.podSelector.matchLabels` | map | `{app.kubernetes.io/component: loadbalancer}` | Labels to match HAProxy pods |
+| `controller.config.controller.healthzPort` | int | `8080` | Health check port |
+| `controller.config.controller.metricsPort` | int | `9090` | Metrics port |
+
+### Leader Election
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.config.controller.leaderElection.enabled` | bool | `true` | Enable leader election (recommended for HA) |
+| `controller.config.controller.leaderElection.leaseName` | string | `""` | Lease resource name (defaults to release fullname) |
+| `controller.config.controller.leaderElection.leaseDuration` | duration | `15s` | Failover timeout duration |
+| `controller.config.controller.leaderElection.renewDeadline` | duration | `10s` | Leader renewal timeout |
+| `controller.config.controller.leaderElection.retryPeriod` | duration | `2s` | Retry interval between attempts |
+
+### Dataplane Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.config.dataplane.port` | int | `5555` | Dataplane API port |
+| `controller.config.dataplane.minDeploymentInterval` | duration | `2s` | Minimum time between deployments |
+| `controller.config.dataplane.driftPreventionInterval` | duration | `60s` | Periodic drift prevention interval |
+| `controller.config.dataplane.mapsDir` | string | `/etc/haproxy/maps` | HAProxy maps directory |
+| `controller.config.dataplane.sslCertsDir` | string | `/etc/haproxy/ssl` | SSL certificates directory |
+| `controller.config.dataplane.generalStorageDir` | string | `/etc/haproxy/general` | General storage directory |
+| `controller.config.dataplane.configFile` | string | `/etc/haproxy/haproxy.cfg` | HAProxy config file path |
+
+### Logging & Templating
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.config.logging.verbose` | int | `1` | Log level (0=WARN, 1=INFO, 2=DEBUG) |
+| `controller.config.templatingSettings.extraContext.debug` | bool | `true` | Enable debug headers in HAProxy responses |
+| `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields]` | Fields to ignore in watched resources |
+
+### Webhook Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `webhook.enabled` | bool | `true` | Enable admission webhook validation |
+| `webhook.secretName` | string | Auto-generated | Webhook TLS certificate secret name |
+| `webhook.service.port` | int | `443` | Webhook service port |
+| `webhook.certManager.enabled` | bool | `false` | Use cert-manager for certificates |
+| `webhook.certManager.issuerRef.name` | string | `selfsigned-issuer` | cert-manager Issuer name |
+| `webhook.certManager.issuerRef.kind` | string | `Issuer` | cert-manager Issuer kind |
+| `webhook.certManager.duration` | duration | `8760h` | Certificate validity (1 year) |
+| `webhook.certManager.renewBefore` | duration | `720h` | Renew before expiry (30 days) |
+| `webhook.caBundle` | string | `""` | Base64-encoded CA bundle (manual certs) |
+
+### IngressClass
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ingressClass.enabled` | bool | `true` | Create IngressClass resource |
+| `ingressClass.name` | string | `haproxy` | IngressClass name |
+| `ingressClass.default` | bool | `false` | Mark as default IngressClass |
+| `ingressClass.controllerName` | string | `haproxy-template-ic.gitlab.io/controller` | Controller identifier |
+
+### GatewayClass
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `gatewayClass.enabled` | bool | `true` | Create GatewayClass resource |
+| `gatewayClass.name` | string | `haproxy` | GatewayClass name |
+| `gatewayClass.default` | bool | `false` | Mark as default GatewayClass |
+| `gatewayClass.controllerName` | string | `haproxy-template-ic.gitlab.io/controller` | Controller identifier |
+| `gatewayClass.parametersRef.group` | string | `haproxy-template-ic.gitlab.io` | HAProxyTemplateConfig API group |
+| `gatewayClass.parametersRef.kind` | string | `HAProxyTemplateConfig` | HAProxyTemplateConfig kind |
+| `gatewayClass.parametersRef.name` | string | `""` | Config name (defaults to controller.crdName) |
+| `gatewayClass.parametersRef.namespace` | string | `""` | Config namespace (defaults to Release.Namespace) |
+
+### Credentials
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `credentials.dataplane.username` | string | `admin` | Dataplane API username |
+| `credentials.dataplane.password` | string | `adminpass` | Dataplane API password |
+
+### ServiceAccount & RBAC
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `serviceAccount.create` | bool | `true` | Create ServiceAccount |
+| `serviceAccount.automount` | bool | `true` | Automount API credentials |
+| `serviceAccount.annotations` | map | `{}` | ServiceAccount annotations |
+| `serviceAccount.name` | string | `""` | ServiceAccount name (auto-generated if empty) |
+| `rbac.create` | bool | `true` | Create RBAC resources |
+
+### Pod Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `podAnnotations` | map | `{}` | Pod annotations |
+| `podLabels` | map | `{}` | Additional pod labels |
+| `priorityClassName` | string | `""` | Pod priority class name |
+| `topologySpreadConstraints` | list | `[]` | Pod topology spread constraints |
+| `podSecurityContext.runAsNonRoot` | bool | `true` | Run as non-root user |
+| `podSecurityContext.runAsUser` | int | `65532` | User ID |
+| `podSecurityContext.runAsGroup` | int | `65532` | Group ID |
+| `podSecurityContext.fsGroup` | int | `65532` | Filesystem group ID |
+| `podSecurityContext.seccompProfile.type` | string | `RuntimeDefault` | Seccomp profile type |
+
+### Container Security Context
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `securityContext.allowPrivilegeEscalation` | bool | `false` | Allow privilege escalation |
+| `securityContext.capabilities.drop` | list | `[ALL]` | Dropped capabilities |
+| `securityContext.readOnlyRootFilesystem` | bool | `true` | Read-only root filesystem |
+| `securityContext.runAsNonRoot` | bool | `true` | Run as non-root |
+| `securityContext.runAsUser` | int | `65532` | Container user ID |
+
+### Service & Health Probes
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `service.type` | string | `ClusterIP` | Controller service type |
+| `livenessProbe.httpGet.path` | string | `/healthz` | Liveness probe path |
+| `livenessProbe.initialDelaySeconds` | int | `10` | Initial delay |
+| `livenessProbe.periodSeconds` | int | `10` | Probe period |
+| `livenessProbe.failureThreshold` | int | `3` | Failure threshold |
+| `readinessProbe.httpGet.path` | string | `/healthz` | Readiness probe path |
+| `readinessProbe.initialDelaySeconds` | int | `5` | Initial delay |
+| `readinessProbe.periodSeconds` | int | `5` | Probe period |
+| `readinessProbe.failureThreshold` | int | `3` | Failure threshold |
+
+### Resources & Scheduling
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `resources.requests.cpu` | string | `100m` | CPU request |
+| `resources.requests.memory` | string | `128Mi` | Memory request |
+| `resources.limits.cpu` | string | `""` | CPU limit (optional) |
+| `resources.limits.memory` | string | `""` | Memory limit (optional) |
+| `nodeSelector` | map | `{}` | Node selector |
+| `tolerations` | list | `[]` | Pod tolerations |
+| `affinity` | map | `{}` | Pod affinity rules |
+
+### Autoscaling & PDB
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `autoscaling.enabled` | bool | `false` | Enable HorizontalPodAutoscaler |
+| `autoscaling.minReplicas` | int | `1` | Minimum replicas |
+| `autoscaling.maxReplicas` | int | `10` | Maximum replicas |
+| `autoscaling.targetCPUUtilizationPercentage` | int | `80` | Target CPU utilization |
+| `podDisruptionBudget.enabled` | bool | `true` | Enable PodDisruptionBudget |
+| `podDisruptionBudget.minAvailable` | int | `1` | Minimum available pods |
+
+### Monitoring
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `monitoring.serviceMonitor.enabled` | bool | `false` | Create ServiceMonitor for Prometheus |
+| `monitoring.serviceMonitor.interval` | duration | `30s` | Scrape interval |
+| `monitoring.serviceMonitor.scrapeTimeout` | duration | `10s` | Scrape timeout |
+| `monitoring.serviceMonitor.labels` | map | `{}` | ServiceMonitor labels |
+| `monitoring.serviceMonitor.relabelings` | list | `[]` | Prometheus relabelings |
+| `monitoring.serviceMonitor.metricRelabelings` | list | `[]` | Metric relabelings |
+
+### HAProxy Deployment
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.enabled` | bool | `true` | Deploy HAProxy pods with this chart |
+| `haproxy.replicaCount` | int | `2` | Number of HAProxy replicas |
+| `haproxy.image.repository` | string | `haproxytech/haproxy-debian` | HAProxy image repository |
+| `haproxy.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
+| `haproxy.image.tag` | string | `3.2` | HAProxy image tag |
+| `haproxy.enterprise.enabled` | bool | `false` | Use HAProxy Enterprise |
+| `haproxy.enterprise.version` | string | `3.2` | Enterprise version |
+| `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |
+| `haproxy.dataplaneBin` | string | Auto-detected | Dataplane API binary path |
+| `haproxy.user` | string | Auto-detected | HAProxy user |
+
+### HAProxy Ports
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.ports.http` | int | `8080` | HTTP frontend container port |
+| `haproxy.ports.https` | int | `8443` | HTTPS frontend container port |
+| `haproxy.ports.stats` | int | `8404` | Stats/health page port |
+| `haproxy.ports.dataplane` | int | `5555` | Dataplane API port |
+
+### HAProxy Service
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.service.type` | string | `NodePort` | HAProxy service type |
+| `haproxy.service.annotations` | map | `{}` | Service annotations |
+| `haproxy.service.http.port` | int | `80` | HTTP service port |
+| `haproxy.service.http.nodePort` | int | `30080` | HTTP NodePort |
+| `haproxy.service.https.port` | int | `443` | HTTPS service port |
+| `haproxy.service.https.nodePort` | int | `30443` | HTTPS NodePort |
+| `haproxy.service.stats.port` | int | `8404` | Stats service port |
+| `haproxy.service.stats.nodePort` | int | `30404` | Stats NodePort |
+
+### HAProxy Dataplane Sidecar
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.dataplane.service.type` | string | `ClusterIP` | Dataplane service type |
+| `haproxy.dataplane.credentials.username` | string | `admin` | Dataplane API username |
+| `haproxy.dataplane.credentials.password` | string | `adminpass` | Dataplane API password |
+
+### HAProxy Resources & Scheduling
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.resources.requests.cpu` | string | `100m` | CPU request |
+| `haproxy.resources.requests.memory` | string | `128Mi` | Memory request |
+| `haproxy.resources.limits.cpu` | string | `500m` | CPU limit |
+| `haproxy.resources.limits.memory` | string | `512Mi` | Memory limit |
+| `haproxy.priorityClassName` | string | `""` | Pod priority class |
+| `haproxy.topologySpreadConstraints` | list | `[]` | Topology spread constraints |
+
+### HAProxy NetworkPolicy
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.networkPolicy.enabled` | bool | `false` | Enable HAProxy NetworkPolicy |
+| `haproxy.networkPolicy.allowExternal` | bool | `true` | Allow external traffic |
+| `haproxy.networkPolicy.allowedSources` | list | `[]` | Allowed traffic sources (when allowExternal=false) |
+| `haproxy.networkPolicy.extraIngress` | list | `[]` | Additional ingress rules |
+| `haproxy.networkPolicy.extraEgress` | list | `[]` | Additional egress rules |
+
+### Controller NetworkPolicy
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `networkPolicy.enabled` | bool | `true` | Enable controller NetworkPolicy |
+| `networkPolicy.egress.allowDNS` | bool | `true` | Allow DNS resolution |
+| `networkPolicy.egress.kubernetesApi` | list | See values.yaml | Kubernetes API access rules |
+| `networkPolicy.egress.haproxyPods.enabled` | bool | `true` | Allow access to HAProxy pods |
+| `networkPolicy.egress.haproxyPods.podSelector` | map | See values.yaml | HAProxy pod selector |
+| `networkPolicy.egress.haproxyPods.namespaceSelector` | map | `{}` | Namespace selector |
+| `networkPolicy.egress.additionalRules` | list | See values.yaml | Additional egress rules |
+| `networkPolicy.ingress.monitoring.enabled` | bool | `false` | Allow Prometheus scraping |
+| `networkPolicy.ingress.monitoring.podSelector` | map | `{}` | Prometheus pod selector |
+| `networkPolicy.ingress.monitoring.namespaceSelector` | map | `{}` | Prometheus namespace selector |
+| `networkPolicy.ingress.healthChecks.enabled` | bool | `true` | Allow health check access |
+| `networkPolicy.ingress.dataplaneApi.enabled` | bool | `true` | Allow Dataplane API access |
+| `networkPolicy.ingress.webhook.enabled` | bool | `true` | Allow webhook access |
+| `networkPolicy.ingress.additionalRules` | list | `[]` | Additional ingress rules |
+
 ## Upgrading
 
 ### Upgrade the Chart
 
 ```bash
-helm upgrade my-controller ./charts/haproxy-template-ic
+helm upgrade my-controller haproxy-template-ic/haproxy-template-ic
 ```
 
 ### Upgrade with New Values
 
 ```bash
-helm upgrade my-controller ./charts/haproxy-template-ic \
+helm upgrade my-controller haproxy-template-ic/haproxy-template-ic \
   -f my-values.yaml
 ```
 

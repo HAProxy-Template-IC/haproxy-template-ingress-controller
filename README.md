@@ -10,7 +10,7 @@
 
 ## Overview
 
-The HAProxy Template IC is a Kubernetes operator that manages HAProxy load balancer configurations through Jinja2-like templates. Unlike annotation-based ingress controllers, you define the entire HAProxy configuration using templates, giving you complete control over all HAProxy features without being constrained by a predefined set of annotations.
+The HAProxy Template IC is a Kubernetes operator that manages HAProxy load balancer configurations through Jinja2-like templates. Unlike annotation-based ingress controllers, you define the entire HAProxy configuration using templates, which allows access to all HAProxy features without being constrained by a predefined set of annotations.
 
 The controller watches Kubernetes resources you specify (Ingress, Service, Secrets, custom CRDs, or any combination), renders your templates with the current resource state, validates the generated configuration, and deploys it to HAProxy instances using the Dataplane API. Configuration changes are applied through HAProxy's runtime API when possible to avoid process reloads and maintain existing connections.
 
@@ -26,9 +26,9 @@ The controller watches Kubernetes resources you specify (Ingress, Service, Secre
 - **Flexible resource watching**: Monitor any Kubernetes resource type (Ingress, Service, Secrets, CRDs) as input to your templates
 - **Multi-phase validation**: Configurations are validated by the client-native parser and HAProxy binary before deployment
 - **Embedded validation tests**: Write tests directly in your HAProxyTemplateConfig with fixtures and assertions to catch template errors in CI/CD. Includes debugging flags (`--verbose`, `--dump-rendered`, `--trace-templates`) for troubleshooting failures
-- **Zero-reload optimization**: Uses HAProxy runtime API for server weight, address, and maintenance state changes
-- **High availability**: Leader election with multiple controller replicas for automatic failover and zero-downtime upgrades
-- **Smart deployment scheduling**: Rate limiting prevents concurrent deployments, periodic drift detection corrects external modifications
+- **Runtime API updates**: Uses HAProxy runtime API for server weight, address, and maintenance state changes without reloading
+- **High availability**: Leader election with multiple controller replicas for automatic failover
+- **Deployment rate limiting**: Prevents concurrent deployments, periodic drift detection corrects external modifications
 - **Event-driven architecture**: Components communicate through an event bus for clean separation and observability
 - **Prometheus metrics**: Comprehensive metrics for controller operations, reconciliation cycles, deployment success rates, and leader election status
 
@@ -155,49 +155,49 @@ metadata:
   namespace: default
 spec:
   watchedResources:
-  # Watch Ingress resources across all namespaces
-  ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
-    # Index by namespace and name for O(1) lookups in templates
-    index_by:
-      - metadata.namespace
-      - metadata.name
+    # Watch Ingress resources across all namespaces
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      # Index by namespace and name for O(1) lookups in templates
+      indexBy:
+        - metadata.namespace
+        - metadata.name
 
-haproxy_config:
-  template: |
-    global
-        daemon
-        maxconn 256
+  haproxyConfig:
+    template: |
+      global
+          daemon
+          maxconn 256
 
-    defaults
-        mode http
-        timeout client 30s
-        timeout server 30s
-        timeout connect 5s
+      defaults
+          mode http
+          timeout client 30s
+          timeout server 30s
+          timeout connect 5s
 
-    # Frontend that routes requests based on Host header
-    frontend http
-        bind :80
-        {% for ingress in resources.ingresses %}
-        {% for rule in ingress.spec.rules %}
-        # Route for {{ rule.host }}
-        acl host_{{ ingress.metadata.name }} hdr(host) -i {{ rule.host }}
-        use_backend {{ ingress.metadata.name }} if host_{{ ingress.metadata.name }}
-        {% endfor %}
-        {% endfor %}
+      # Frontend that routes requests based on Host header
+      frontend http
+          bind :80
+          {% for ingress in resources.ingresses.List() %}
+          {% for rule in ingress.spec.rules %}
+          # Route for {{ rule.host }}
+          acl host_{{ ingress.metadata.name }} hdr(host) -i {{ rule.host }}
+          use_backend {{ ingress.metadata.name }} if host_{{ ingress.metadata.name }}
+          {% endfor %}
+          {% endfor %}
 
-    # Backend for each Ingress resource
-    {% for ingress in resources.ingresses %}
-    backend {{ ingress.metadata.name }}
-        balance roundrobin
-        {% for rule in ingress.spec.rules %}
-        {% for path in rule.http.paths %}
-        # Server pointing to Kubernetes Service
-        server {{ path.backend.service.name }} {{ path.backend.service.name }}.{{ ingress.metadata.namespace }}.svc.cluster.local:{{ path.backend.service.port.number }} check
-        {% endfor %}
-        {% endfor %}
-    {% endfor %}
+      # Backend for each Ingress resource
+      {% for ingress in resources.ingresses.List() %}
+      backend {{ ingress.metadata.name }}
+          balance roundrobin
+          {% for rule in ingress.spec.rules %}
+          {% for path in rule.http.paths %}
+          # Server pointing to Kubernetes Service
+          server {{ path.backend.service.name }} {{ path.backend.service.name }}.{{ ingress.metadata.namespace }}.svc.cluster.local:{{ path.backend.service.port.number }} check
+          {% endfor %}
+          {% endfor %}
+      {% endfor %}
 ```
 
 Any Ingress resource created in your cluster automatically appears in the `resources.ingresses` collection, and the template generates the corresponding HAProxy configuration. The controller renders the template, validates it, and deploys it to all HAProxy instances.
@@ -263,7 +263,7 @@ spec:
   # ... template configuration ...
 
   validationTests:
-    - name: test-basic-frontend
+    test-basic-frontend:
       description: Frontend should be created with correct settings
       fixtures:
         services:
@@ -306,28 +306,27 @@ controller validate -f config.yaml --output json
 - `equals` - Checks exact value matches
 - `jsonpath` - Queries template rendering context
 
-For complete documentation on writing and running validation tests, see [docs/validation-tests.md](docs/validation-tests.md).
+For complete documentation on writing and running validation tests, see [Validation Tests](docs/controller/docs/validation-tests.md).
 
 ## Documentation
 
 ### User Guides
 
-- [Getting Started](docs/getting-started.md) - Step-by-step guide to deploying and configuring the controller
-- [CRD Reference](docs/crd-reference.md) - HAProxyTemplateConfig custom resource documentation (recommended)
-- [Configuration Reference](docs/configuration.md) - Legacy ConfigMap configuration (deprecated)
-- [Templating Guide](docs/templating.md) - How to write templates for HAProxy configuration, maps, and certificates
-- [Validation Tests](docs/validation-tests.md) - Write and run embedded validation tests for template verification
-- [Watching Resources](docs/watching-resources.md) - Resource watching and storage strategies
-- [Supported HAProxy Configuration](docs/supported-configuration.md) - HAProxy features available through templates
-- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
+- [Getting Started](docs/controller/docs/getting-started.md) - Step-by-step guide to deploying and configuring the controller
+- [CRD Reference](docs/controller/docs/crd-reference.md) - HAProxyTemplateConfig custom resource documentation
+- [Templating Guide](docs/controller/docs/templating.md) - How to write templates for HAProxy configuration, maps, and certificates
+- [Validation Tests](docs/controller/docs/validation-tests.md) - Write and run embedded validation tests for template verification
+- [Watching Resources](docs/controller/docs/watching-resources.md) - Resource watching and storage strategies
+- [Supported HAProxy Configuration](docs/controller/docs/supported-configuration.md) - HAProxy features available through templates
+- [Troubleshooting](docs/controller/docs/troubleshooting.md) - Common issues and solutions
 
 ### Operations
 
-- [High Availability](docs/operations/high-availability.md) - Leader election and multi-replica deployments
-- [Monitoring](docs/operations/monitoring.md) - Prometheus metrics and alerting
-- [Debugging](docs/operations/debugging.md) - Runtime introspection and troubleshooting
-- [Security](docs/operations/security.md) - RBAC, secrets, and security best practices
-- [Performance](docs/operations/performance.md) - Resource sizing and optimization
+- [High Availability](docs/controller/docs/operations/high-availability.md) - Leader election and multi-replica deployments
+- [Monitoring](docs/controller/docs/operations/monitoring.md) - Prometheus metrics and alerting
+- [Debugging](docs/controller/docs/operations/debugging.md) - Runtime introspection and troubleshooting
+- [Security](docs/controller/docs/operations/security.md) - RBAC, secrets, and security best practices
+- [Performance](docs/controller/docs/operations/performance.md) - Resource sizing and optimization
 - [Helm Chart](charts/haproxy-template-ic/README.md) - Installation and configuration guide
 
 ### Package Documentation

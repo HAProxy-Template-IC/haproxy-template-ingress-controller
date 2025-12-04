@@ -49,9 +49,17 @@ markdown_extensions:
   - md_in_html
 
 nav:
-  - Installation: index.md
-  - Gateway API: gateway-api.md
-  - Annotations: annotations.md
+  - Home: index.md
+  - Template Libraries:
+    - Overview: template-libraries.md
+    - Libraries:
+      - Base: libraries/base.md
+      - SSL: libraries/ssl.md
+      - Ingress: libraries/ingress.md
+      - Gateway API: libraries/gateway.md
+      - HAProxy Annotations: libraries/haproxytech.md
+      - HAProxy Ingress: libraries/haproxy-ingress.md
+      - Path Regex Last: libraries/path-regex-last.md
 
 extra:
   version:

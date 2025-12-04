@@ -31,6 +31,8 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
+
+	"haproxy-template-ic/tests/testutil"
 )
 
 // Template strings for CRD updates
@@ -168,6 +170,15 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Invalid config is rejected and old config preserved", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -186,18 +197,9 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			pod, err := GetControllerPod(ctx, client, namespace)
 			require.NoError(t, err)
 
-			// Start debug client - track it for cleanup
-			// Note: debugClient may be reassigned during error scenarios,
-			// so we track the current one and stop it in cleanup
-			var debugClient *DebugClient
-			debugClient = NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
+			// Create debug client using NodePort - no Start()/Stop() needed
+			debugClient, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
 			require.NoError(t, err)
-			defer func() {
-				if debugClient != nil {
-					debugClient.Stop()
-				}
-			}()
 
 			// Wait for initial config to be loaded
 			t.Log("Waiting for initial config to be ready...")
@@ -228,7 +230,6 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			require.NoError(t, err, "Controller should still be running after invalid config")
 
 			// Refresh debug client in case pod restarted
-			debugClient.Stop()
 			debugClient, err = EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			if err != nil {
 				t.Logf("Warning: failed to refresh debug client: %v", err)
@@ -321,9 +322,6 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			require.NoError(t, err)
 
 			// Refresh debug client before checking restore
-			if debugClient != nil {
-				debugClient.Stop()
-			}
 			debugClient, err = EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err, "Debug client should be available after config restore")
 
@@ -445,6 +443,15 @@ func buildCredentialsMissingFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Controller waits for credentials and recovers when created", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -457,16 +464,27 @@ func buildCredentialsMissingFeature() types.Feature {
 			clientset, err := kubernetes.NewForConfig(cfg.Client().RESTConfig())
 			require.NoError(t, err)
 
-			// Wait for controller pod to start (may not be Ready due to missing credentials)
+			// Wait for controller pod to exist (may not be Ready due to missing credentials)
 			t.Log("Waiting for controller pod to start...")
-			time.Sleep(15 * time.Second)
+			waitCfg := testutil.DefaultWaitConfig()
+			waitCfg.Timeout = 30 * time.Second
+			err = testutil.WaitForConditionWithDescription(ctx, waitCfg, "controller pod exists",
+				func(ctx context.Context) (bool, error) {
+					pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+						LabelSelector: "app=" + ControllerDeploymentName,
+					})
+					if err != nil {
+						return false, err
+					}
+					return len(pods.Items) > 0, nil
+				})
+			require.NoError(t, err, "Controller pod should exist")
 
 			// Check controller pod status - should be Running but may be waiting
 			pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: "app=" + ControllerDeploymentName,
 			})
 			require.NoError(t, err)
-			require.NotEmpty(t, pods.Items, "Controller pod should exist")
 
 			pod := &pods.Items[0]
 			t.Logf("Controller pod status: %s", pod.Status.Phase)
@@ -497,14 +515,9 @@ func buildCredentialsMissingFeature() types.Feature {
 			}
 			require.NoError(t, err, "Controller should become ready after credentials created")
 
-			// Verify controller is operational
-			pod, err = GetControllerPod(ctx, client, namespace)
+			// Verify controller is operational via debug client
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
-
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
-			require.NoError(t, err)
-			defer debugClient.Stop()
 
 			// Verify config is loaded
 			_, err = debugClient.WaitForConfig(ctx, 30*time.Second)
@@ -638,6 +651,15 @@ func buildControllerCrashRecoveryFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Controller recovers after crash", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -661,14 +683,12 @@ func buildControllerCrashRecoveryFeature() types.Feature {
 			initialPodName := pod.Name
 			initialPodUID := string(pod.UID)
 
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
 
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)
 			t.Log("Initial config verified")
-			debugClient.Stop()
 
 			// Delete the pod (simulate crash)
 			t.Logf("Deleting pod %s (UID: %s) to simulate crash...", initialPodName, initialPodUID)
@@ -683,21 +703,16 @@ func buildControllerCrashRecoveryFeature() types.Feature {
 			require.NoError(t, err, "Should find a new pod with different UID")
 			t.Logf("New pod: %s (UID: %s), was %s (UID: %s)", newPod.Name, newPod.UID, initialPodName, initialPodUID)
 
-			// Verify controller is operational
-			newDebugClient := NewDebugClient(cfg.Client().RESTConfig(), newPod, DebugPort)
-			err = newDebugClient.Start(ctx)
-			require.NoError(t, err)
-			defer newDebugClient.Stop()
-
-			// Verify config is loaded in new pod
-			_, err = newDebugClient.WaitForConfig(ctx, 60*time.Second)
+			// Verify controller is operational - reuse the existing debug client via NodePort
+			// (no need to create new client as NodePort stays the same and routes to new pod)
+			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			if err != nil {
 				DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), newPod)
 			}
 			require.NoError(t, err, "New pod should have config loaded")
 
 			// Verify rendered config is available
-			config, err := newDebugClient.GetRenderedConfig(ctx)
+			config, err := debugClient.GetRenderedConfig(ctx)
 			require.NoError(t, err)
 			if !strings.Contains(config, "backend") {
 				t.Logf("FAILURE: Rendered config does not contain expected backend after recovery\nFull config:\n%s", config)
@@ -810,6 +825,15 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Rapid updates are debounced", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -824,13 +848,8 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
-			pod, err := GetControllerPod(ctx, client, namespace)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
-
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
-			require.NoError(t, err)
-			defer debugClient.Stop()
 
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)
@@ -848,11 +867,12 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 			// Wait for debouncing to complete and a late version to appear
 			// Debouncing is non-deterministic, so poll until any version from 7-10 appears
 			// which indicates debouncing worked (early versions were skipped)
+			// Use 60s timeout for parallel tests where reconciliation is slower under load
 			t.Log("Waiting for a late version (7-10) to appear in rendered config...")
 			expectedVersions := []string{
 				"# version 7", "# version 8", "# version 9", "# version 10",
 			}
-			foundVersion, err := debugClient.WaitForRenderedConfigContainsAny(ctx, expectedVersions, 30*time.Second)
+			foundVersion, err := debugClient.WaitForRenderedConfigContainsAny(ctx, expectedVersions, 60*time.Second)
 			require.NoError(t, err, "Should find a late version (7-10) in rendered config")
 			t.Logf("Found %q in rendered config (debouncing worked)", foundVersion)
 
@@ -990,6 +1010,15 @@ func buildGracefulShutdownFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Controller shuts down gracefully", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -1011,13 +1040,11 @@ func buildGracefulShutdownFeature() types.Feature {
 			require.NoError(t, err)
 			podName := pod.Name
 
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
 
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)
-			debugClient.Stop()
 
 			// Delete pod with grace period (sends SIGTERM)
 			t.Logf("Deleting pod %s with 30s grace period...", podName)
@@ -1027,29 +1054,19 @@ func buildGracefulShutdownFeature() types.Feature {
 			})
 			require.NoError(t, err)
 
-			// Wait for pod to terminate
+			// Wait for pod to terminate using proper polling
 			t.Log("Waiting for pod to terminate...")
-			terminated := false
-			for i := 0; i < 40; i++ { // Wait up to 40 seconds
-				time.Sleep(1 * time.Second)
-				_, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
-				if err != nil {
-					// Pod is gone
-					terminated = true
-					t.Logf("Pod terminated after %d seconds", i+1)
-					break
-				}
-			}
-
-			if !terminated {
+			err = WaitForPodTerminated(ctx, client, namespace, podName, 40*time.Second)
+			if err != nil {
 				// Pod didn't terminate in time - this is a failure
 				t.Log("Pod did not terminate in time, fetching logs...")
 				pod, podErr := GetControllerPod(ctx, client, namespace)
 				if podErr == nil {
 					DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
 				}
+				t.Fatal("Pod should terminate within grace period")
 			}
-			assert.True(t, terminated, "Pod should terminate within grace period")
+			t.Log("Pod terminated successfully")
 
 			// Wait for new pod to start
 			t.Log("Waiting for new pod to be ready...")
@@ -1062,12 +1079,8 @@ func buildGracefulShutdownFeature() types.Feature {
 
 			assert.NotEqual(t, podName, newPod.Name, "New pod should be created")
 
-			newDebugClient := NewDebugClient(cfg.Client().RESTConfig(), newPod, DebugPort)
-			err = newDebugClient.Start(ctx)
-			require.NoError(t, err)
-			defer newDebugClient.Stop()
-
-			_, err = newDebugClient.WaitForConfig(ctx, 60*time.Second)
+			// Reuse debugClient via NodePort (routes to new pod automatically)
+			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err, "New pod should have config loaded")
 
 			t.Log("Graceful shutdown verified successfully")
@@ -1182,6 +1195,15 @@ func buildDataplaneUnreachableFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Controller handles no HAProxy endpoints gracefully", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -1196,13 +1218,8 @@ func buildDataplaneUnreachableFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
-			pod, err := GetControllerPod(ctx, client, namespace)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
-
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
-			require.NoError(t, err)
-			defer debugClient.Stop()
 
 			// Wait for config to be processed
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
@@ -1218,12 +1235,19 @@ func buildDataplaneUnreachableFeature() types.Feature {
 			err = UpdateHAProxyTemplateConfigTemplate(ctx, client, namespace, ControllerCRDName, VersionedTemplate(99))
 			require.NoError(t, err)
 
-			// Wait for reconciliation to process
-			time.Sleep(5 * time.Second)
+			// Wait for reconciliation to process by checking for version 99 in rendered config
+			err = debugClient.WaitForRenderedConfigContains(ctx, "# version 99", 30*time.Second)
+			require.NoError(t, err, "Config update should be processed")
 
 			// Verify controller is still running (didn't crash)
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 30*time.Second)
 			require.NoError(t, err, "Controller should still be running with no HAProxy endpoints")
+
+			// Wait for validation to complete before checking status
+			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			if err != nil {
+				t.Logf("Note: Validation did not reach 'succeeded' status: %v", err)
+			}
 
 			// Use debug endpoint to verify pipeline status
 			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
@@ -1254,13 +1278,16 @@ func buildDataplaneUnreachableFeature() types.Feature {
 			} else {
 				// Fall back to log checking if debug endpoint unavailable
 				t.Log("Pipeline status unavailable, falling back to log verification")
-				logs, logErr := GetPodLogs(ctx, client, pod, 200)
-				if logErr == nil {
-					hasExpectedBehavior := strings.Contains(logs, "endpoint") ||
-						strings.Contains(logs, "no pods") ||
-						strings.Contains(logs, "reconcil")
-					if hasExpectedBehavior {
-						t.Log("Controller logs show expected endpoint handling")
+				pod, podErr := GetControllerPod(ctx, client, namespace)
+				if podErr == nil {
+					logs, logErr := GetPodLogs(ctx, client, pod, 200)
+					if logErr == nil {
+						hasExpectedBehavior := strings.Contains(logs, "endpoint") ||
+							strings.Contains(logs, "no pods") ||
+							strings.Contains(logs, "reconcil")
+						if hasExpectedBehavior {
+							t.Log("Controller logs show expected endpoint handling")
+						}
 					}
 				}
 			}
@@ -1375,6 +1402,15 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("New leader elected after leader deletion", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -1387,9 +1423,10 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			clientset, err := kubernetes.NewForConfig(cfg.Client().RESTConfig())
 			require.NoError(t, err)
 
-			// Wait for both pods to be ready
-			t.Log("Waiting for controller pods to be ready...")
-			time.Sleep(10 * time.Second) // Allow deployment to create pods
+			// Wait for deployment to create pods (2 replicas expected)
+			t.Log("Waiting for controller pods to be created...")
+			err = WaitForPodCount(ctx, client, namespace, "app="+ControllerDeploymentName, 2, 60*time.Second)
+			require.NoError(t, err, "Should have 2 controller pods")
 
 			pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: "app=" + ControllerDeploymentName,
@@ -1397,7 +1434,8 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			require.NoError(t, err)
 			t.Logf("Found %d controller pods", len(pods.Items))
 
-			// Wait for pods to be ready
+			// Wait for at least one pod to be ready
+			t.Log("Waiting for controller pods to be ready...")
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 
@@ -1429,9 +1467,14 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			err = clientset.CoreV1().Pods(namespace).Delete(ctx, deletedPod, metav1.DeleteOptions{})
 			require.NoError(t, err)
 
-			// Wait for new pod to be created
+			// Wait for the deleted pod to be replaced with a new one
 			t.Log("Waiting for pod replacement...")
-			time.Sleep(10 * time.Second)
+			_, err = WaitForNewPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, string(pods.Items[0].UID), 90*time.Second)
+			require.NoError(t, err, "New pod should be created after deletion")
+
+			// Wait for 2 pods to be present again
+			err = WaitForPodCount(ctx, client, namespace, "app="+ControllerDeploymentName, 2, 60*time.Second)
+			require.NoError(t, err, "Should have 2 controller pods after replacement")
 
 			// Wait for pods to be ready again
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 90*time.Second)
@@ -1444,8 +1487,11 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			require.NoError(t, err)
 			t.Logf("After leadership transition: %d pods", len(pods.Items))
 
-			// Verify new leader is elected (or leadership continues)
-			time.Sleep(5 * time.Second) // Allow time for lease acquisition
+			// Wait for leader election to complete
+			err = WaitForLeaderElection(ctx, cfg.Client().RESTConfig(), namespace, "haproxy-template-ic-leader", 30*time.Second)
+			if err != nil {
+				t.Logf("Leader election wait failed: %v (continuing anyway)", err)
+			}
 			newLeader, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, "haproxy-template-ic-leader")
 			if err != nil {
 				t.Logf("Could not get new leader: %v", err)
@@ -1463,13 +1509,10 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			}
 			require.NotNil(t, activePod, "Should have a running pod")
 
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), activePod, DebugPort)
-			err = debugClient.Start(ctx)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			if err != nil {
-				t.Logf("Could not start debug client: %v (this may be expected if pod is not leader)", err)
+				t.Logf("Could not setup debug client: %v (this may be expected if pod is not leader)", err)
 			} else {
-				defer debugClient.Stop()
-
 				// Verify config is available
 				_, err = debugClient.WaitForConfig(ctx, 30*time.Second)
 				if err != nil {
@@ -1584,6 +1627,15 @@ func buildWatchReconnectionFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Controller reconnects and processes updates after restart", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -1605,13 +1657,11 @@ func buildWatchReconnectionFeature() types.Feature {
 			require.NoError(t, err)
 			initialPodName := pod.Name
 
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
 
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)
-			debugClient.Stop()
 
 			// Delete pod (simulate restart/disruption)
 			t.Logf("Deleting pod %s to disrupt watch...", initialPodName)
@@ -1623,28 +1673,18 @@ func buildWatchReconnectionFeature() types.Feature {
 			err = UpdateHAProxyTemplateConfigTemplate(ctx, client, namespace, ControllerCRDName, VersionedTemplate(42))
 			require.NoError(t, err)
 
-			// Wait for new pod to come up
+			// Wait for new pod (different UID) to be ready
 			t.Log("Waiting for new pod to be ready...")
-			time.Sleep(5 * time.Second) // Allow old pod to terminate
-
-			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 90*time.Second)
-			require.NoError(t, err)
-
-			newPod, err := GetControllerPod(ctx, client, namespace)
+			newPod, err := WaitForNewPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, string(pod.UID), 90*time.Second)
 			require.NoError(t, err)
 			t.Logf("New pod: %s (was %s)", newPod.Name, initialPodName)
 
-			// Verify new pod processed the update
-			newDebugClient := NewDebugClient(cfg.Client().RESTConfig(), newPod, DebugPort)
-			err = newDebugClient.Start(ctx)
-			require.NoError(t, err)
-			defer newDebugClient.Stop()
-
-			_, err = newDebugClient.WaitForConfig(ctx, 60*time.Second)
+			// Verify new pod processed the update - reuse debugClient via NodePort
+			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)
 
 			// Verify the updated config is reflected
-			renderedConfig, err := newDebugClient.GetRenderedConfig(ctx)
+			renderedConfig, err := debugClient.GetRenderedConfig(ctx)
 			require.NoError(t, err)
 
 			// Should have version 42 marker
@@ -1759,6 +1799,15 @@ func buildTransactionConflictFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Controller handles concurrent updates gracefully", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -1773,13 +1822,8 @@ func buildTransactionConflictFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
-			pod, err := GetControllerPod(ctx, client, namespace)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
-
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
-			require.NoError(t, err)
-			defer debugClient.Stop()
 
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)
@@ -1799,13 +1843,6 @@ func buildTransactionConflictFeature() types.Feature {
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 30*time.Second)
 			require.NoError(t, err, "Controller should remain healthy after rapid updates")
 
-			// Refresh debug client after rapid updates - port-forward may be stale
-			debugClient.Stop()
-			newDebugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 60*time.Second)
-			require.NoError(t, err, "Failed to refresh debug client after rapid updates")
-			defer newDebugClient.Stop()
-			debugClient = newDebugClient
-
 			// Wait for a late version to appear (debouncing coalesces updates)
 			// Versions are 101-105 from VersionedTemplate(100+i)
 			t.Log("Waiting for a late version (103-105) to appear in rendered config...")
@@ -1815,6 +1852,12 @@ func buildTransactionConflictFeature() types.Feature {
 			foundVersion, err := debugClient.WaitForRenderedConfigContainsAny(ctx, expectedVersions, 30*time.Second)
 			require.NoError(t, err, "Should find a late version (103-105) in rendered config")
 			t.Logf("Found %q in rendered config (debouncing worked)", foundVersion)
+
+			// Wait for validation to complete before checking status
+			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			if err != nil {
+				t.Logf("Note: Validation did not reach 'succeeded' status: %v", err)
+			}
 
 			// Use debug endpoint to verify pipeline completed successfully
 			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
@@ -1964,6 +2007,15 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Controller handles zero endpoints and remains operational", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -1978,18 +2030,8 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
-			pod, err := GetControllerPod(ctx, client, namespace)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
-
-			var debugClient *DebugClient
-			debugClient = NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
-			require.NoError(t, err)
-			defer func() {
-				if debugClient != nil {
-					debugClient.Stop()
-				}
-			}()
 
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)
@@ -2001,25 +2043,27 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 				err = UpdateHAProxyTemplateConfigTemplate(ctx, client, namespace, ControllerCRDName, VersionedTemplate(200+i))
 				require.NoError(t, err)
 				t.Logf("Config update %d applied", i)
-				time.Sleep(1 * time.Second)
+				time.Sleep(1 * time.Second) // Intentional delay between rapid updates
 			}
 
-			// Wait for processing
-			time.Sleep(3 * time.Second)
+			// Wait for processing by checking for final config version
+			err = debugClient.WaitForRenderedConfigContains(ctx, "# version 203", 30*time.Second)
+			require.NoError(t, err, "Final config update should be processed")
 
 			// Verify controller is still operational
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 30*time.Second)
 			require.NoError(t, err, "Controller should remain operational with no endpoints")
 
-			// Refresh debug client in case pod restarted during config updates
-			debugClient.Stop()
-			debugClient, err = EnsureDebugClientReady(ctx, t, client, namespace, 60*time.Second)
-			require.NoError(t, err, "Failed to refresh debug client")
-
 			// Verify config is tracked correctly by polling for the expected version
 			// Use WaitForRenderedConfigContains which has built-in reconnect logic for stability
 			err = debugClient.WaitForRenderedConfigContains(ctx, "# version 20", 60*time.Second)
 			require.NoError(t, err, "Config should reflect updates even with no deployment targets")
+
+			// Wait for validation to complete before checking status
+			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			if err != nil {
+				t.Logf("Note: Validation did not reach 'succeeded' status: %v", err)
+			}
 
 			// Use debug endpoint to verify pipeline status for partial deployment
 			pipeline, err := debugClient.GetPipelineStatusWithRetry(ctx, 30*time.Second)
@@ -2059,12 +2103,15 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			} else {
 				// Fall back to log checking if debug endpoint unavailable
 				t.Log("Pipeline status unavailable, falling back to log verification")
-				logs, logErr := GetPodLogs(ctx, client, pod, 200)
-				if logErr == nil {
-					if strings.Contains(logs, "no pods") ||
-						strings.Contains(logs, "endpoint") ||
-						strings.Contains(logs, "0 endpoints") {
-						t.Log("Controller logs show expected no-endpoints handling")
+				pod, podErr := GetControllerPod(ctx, client, namespace)
+				if podErr == nil {
+					logs, logErr := GetPodLogs(ctx, client, pod, 200)
+					if logErr == nil {
+						if strings.Contains(logs, "no pods") ||
+							strings.Contains(logs, "endpoint") ||
+							strings.Contains(logs, "0 endpoints") {
+							t.Log("Controller logs show expected no-endpoints handling")
+						}
 					}
 				}
 			}

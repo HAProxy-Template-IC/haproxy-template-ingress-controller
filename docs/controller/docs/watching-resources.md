@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `watched_resources` configuration determines which Kubernetes resources the controller monitors and how it stores them in memory. Each resource type you configure creates a watcher that tracks changes and maintains an indexed store for template access.
+The `watchedResources` configuration determines which Kubernetes resources the controller monitors and how it stores them in memory. Each resource type you configure creates a watcher that tracks changes and maintains an indexed store for template access.
 
 This configuration is critical for:
 - **Performance**: Choosing the right storage strategy affects memory usage and template rendering speed
@@ -11,7 +11,7 @@ This configuration is critical for:
 
 The controller supports two storage strategies: **memory store** (full in-memory storage) and **cached store** (on-demand API-backed storage). Understanding when to use each is essential for optimal controller performance.
 
-For complete configuration syntax, see [Configuration Reference](./configuration.md#watched_resources).
+For complete configuration syntax, see [CRD Reference](./crd-reference.md#watchedresources).
 
 ## Understanding Store Types
 
@@ -42,7 +42,7 @@ When you configure a resource with memory store:
 
 1. The watcher performs an initial list operation to load all existing resources
 2. Each resource is stored completely in memory after field filtering
-3. Resources are indexed using the `index_by` configuration for O(1) lookups
+3. Resources are indexed using the `indexBy` configuration for O(1) lookups
 4. Real-time changes (add/update/delete) update the in-memory store
 5. Template rendering accesses resources directly from memory
 
@@ -75,22 +75,22 @@ Approximate memory usage per resource:
 Configure memory store explicitly or use the default:
 
 ```yaml
-watched_resources:
+watchedResources:
   ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
-    index_by: ["metadata.namespace", "metadata.name"]
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
+    indexBy: ["metadata.namespace", "metadata.name"]
     # Memory store is the default
     store: full  # Optional - this is the default
 
   services:
-    api_version: v1
-    kind: Service
-    index_by: ["metadata.namespace", "metadata.name"]
+    apiVersion: v1
+    resources: services
+    indexBy: ["metadata.namespace", "metadata.name"]
     # Omitting 'store' uses memory store by default
 ```
 
-See [Configuration Reference](./configuration.md#watched_resources) for complete field descriptions.
+See [CRD Reference](./crd-reference.md#watchedresources) for complete field descriptions.
 
 ## Cached Store
 
@@ -102,7 +102,7 @@ When you configure a resource with cached store:
 
 1. The watcher performs an initial list operation to discover resources
 2. Only references are stored (namespace, name, and index keys)
-3. Resources are indexed using the `index_by` configuration
+3. Resources are indexed using the `indexBy` configuration
 4. When a template calls `.Fetch()`, the store checks its TTL cache
 5. On cache miss, the store fetches the resource from the Kubernetes API
 6. Fetched resources are cached for the configured TTL duration
@@ -139,13 +139,13 @@ Use cached store when you will:
 Configure cached store with the `store: on-demand` setting:
 
 ```yaml
-watched_resources:
+watchedResources:
   secrets:
-    api_version: v1
-    kind: Secret
+    apiVersion: v1
+    resources: secrets
     store: on-demand  # Use cached store
-    cache_ttl: 2m10s  # Optional: cache duration (default: 2m10s)
-    index_by: ["metadata.namespace", "metadata.name"]
+    cacheTTL: 2m10s  # Optional: cache duration (default: 2m10s)
+    indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 **Cache TTL considerations:**
@@ -153,11 +153,11 @@ watched_resources:
 - **Longer TTL** (5-10 minutes): Fewer API calls, may show stale data between template renders
 - **Default** (2m10s): Balanced approach for most use cases
 
-See [Configuration Reference](./configuration.md#watched_resources) for complete field descriptions.
+See [CRD Reference](./crd-reference.md#watchedresources) for complete field descriptions.
 
-## Indexing with index_by
+## Indexing with indexBy
 
-The `index_by` configuration determines how resources are indexed for lookups and what parameters the `.Fetch()` method expects in templates.
+The `indexBy` configuration determines how resources are indexed for lookups and what parameters the `.Fetch()` method expects in templates.
 
 ### Understanding Indexing
 
@@ -165,7 +165,7 @@ Resources are indexed using composite keys constructed from JSONPath expressions
 
 **Example**: Indexing by namespace and name:
 ```yaml
-index_by: ["metadata.namespace", "metadata.name"]
+indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 Creates composite keys like:
@@ -174,7 +174,7 @@ Creates composite keys like:
 
 **How lookups work:**
 ```jinja2
-{# In templates, Fetch() parameters match index_by order #}
+{# In templates, .Fetch() parameters match indexBy order #}
 {% for ingress in resources.ingresses.Fetch("default", "my-ingress") %}
   {# Returns the specific ingress #}
 {% endfor %}
@@ -187,11 +187,11 @@ Creates composite keys like:
 **Most common pattern** for standard Kubernetes resources:
 
 ```yaml
-watched_resources:
+watchedResources:
   ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
-    index_by: ["metadata.namespace", "metadata.name"]
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
+    indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 **Use when:**
@@ -211,18 +211,18 @@ watched_resources:
 {% endfor %}
 ```
 
-See [Configuration Reference](./configuration.md#watched_resources) for `index_by` syntax.
+See [CRD Reference](./crd-reference.md#watchedresources) for `indexBy` syntax.
 
 #### Pattern 2: By Service Name (for EndpointSlices)
 
 **Essential pattern** for mapping services to endpoints:
 
 ```yaml
-watched_resources:
+watchedResources:
   endpoints:
-    api_version: discovery.k8s.io/v1
-    kind: EndpointSlice
-    index_by: ["metadata.labels.kubernetes\\.io/service-name"]
+    apiVersion: discovery.k8s.io/v1
+    resources: endpointslices
+    indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
 ```
 
 **Why this works**: EndpointSlices are labeled with `kubernetes.io/service-name`, allowing O(1) lookup of all endpoint slices for a service.
@@ -245,19 +245,19 @@ watched_resources:
 
 This is the **most important cross-resource lookup pattern** in HAProxy configurations.
 
-See [Configuration Reference](./configuration.md#index_by) for label selector syntax.
+See [CRD Reference](./crd-reference.md#watchedresources) for label selector syntax.
 
 #### Pattern 3: By Type (for Secrets)
 
 **Useful pattern** for grouping secrets by type:
 
 ```yaml
-watched_resources:
+watchedResources:
   secrets:
-    api_version: v1
-    kind: Secret
+    apiVersion: v1
+    resources: secrets
     store: on-demand
-    index_by: ["metadata.namespace", "type"]
+    indexBy: ["metadata.namespace", "type"]
 ```
 
 **Template usage:**
@@ -273,12 +273,12 @@ watched_resources:
 **Simplified pattern** when resources are uniquely identified by one field:
 
 ```yaml
-watched_resources:
+watchedResources:
   configmaps:
-    api_version: v1
-    kind: ConfigMap
+    apiVersion: v1
+    resources: configmaps
     namespace: haproxy-system  # Watch single namespace
-    index_by: ["metadata.name"]
+    indexBy: ["metadata.name"]
 ```
 
 **Template usage:**
@@ -291,12 +291,12 @@ watched_resources:
 
 ### Choosing Index Strategy
 
-Consider these questions when choosing `index_by`:
+Consider these questions when choosing `indexBy`:
 
 1. **How will you look up resources in templates?**
-   - By namespace + name → Use both in `index_by`
-   - By label value → Use label in `index_by`
-   - By type → Include type in `index_by`
+   - By namespace + name → Use both in `indexBy`
+   - By label value → Use label in `indexBy`
+   - By type → Include type in `indexBy`
 
 2. **What cross-resource relationships exist?**
    - Service → Endpoints: Index endpoints by service name label
@@ -308,7 +308,7 @@ Consider these questions when choosing `index_by`:
 
 **Example decision**: For EndpointSlices, you need to find all slices for a service name. Index by the service name label (non-unique) rather than namespace + name (unique).
 
-See [Configuration Reference](./configuration.md#index_by) for additional indexing examples.
+See [CRD Reference](./crd-reference.md#watchedresources) for additional indexing examples.
 
 ### Non-Unique Indexes
 
@@ -316,7 +316,7 @@ Some index configurations intentionally map multiple resources to the same key:
 
 ```yaml
 # Multiple endpoint slices can have the same service-name label
-index_by: ["metadata.labels.kubernetes\\.io/service-name"]
+indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
 ```
 
 **Result**: `.Fetch("my-service")` returns all endpoint slices labeled with `my-service`.
@@ -329,11 +329,11 @@ Resources are accessed in templates through the `resources` variable, which cont
 
 ### The resources Variable
 
-The `resources` variable structure matches your `watched_resources` configuration:
+The `resources` variable structure matches your `watchedResources` configuration:
 
 ```yaml
 # Configuration
-watched_resources:
+watchedResources:
   ingresses: {...}
   services: {...}
   endpoints: {...}
@@ -377,7 +377,7 @@ The `.List()` method returns all resources in the store.
 
 **Performance note**: With memory store, `.List()` returns in-memory objects (fast). With cached store, `.List()` still returns references, but template rendering will trigger fetches for each resource (slower).
 
-### Using Fetch() Method
+### Using .Fetch() Method
 
 The `.Fetch()` method returns resources matching index keys.
 
@@ -387,12 +387,12 @@ The `.Fetch()` method returns resources matching index keys.
 - Conditional resource access
 - Cached store (efficient)
 
-**Parameters**: Match the `index_by` configuration order.
+**Parameters**: Match the `indexBy` configuration order.
 
 **Example - Fetch specific ingress:**
 ```yaml
 # Configuration
-index_by: ["metadata.namespace", "metadata.name"]
+indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 ```jinja2
@@ -517,7 +517,7 @@ The choice between memory and cached stores affects multiple performance dimensi
 ### Performance Recommendations
 
 **Optimize for memory store:**
-- Use field filtering to remove unnecessary data (see configuration.md#watched_resources_ignore_fields)
+- Use field filtering to remove unnecessary data (see [CRD Reference](./crd-reference.md#watchedresources))
 - Watch only necessary namespaces
 - Use label selectors to limit resource count
 
@@ -577,38 +577,38 @@ Use this decision guide to select the appropriate store type for each resource:
 You can use different stores for different resource types:
 
 ```yaml
-watched_resources:
+watchedResources:
   # High-frequency access, small resources
   ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
     store: full  # Memory store
-    index_by: ["metadata.namespace", "metadata.name"]
+    indexBy: ["metadata.namespace", "metadata.name"]
 
   services:
-    api_version: v1
-    kind: Service
+    apiVersion: v1
+    resources: services
     store: full  # Memory store
-    index_by: ["metadata.namespace", "metadata.name"]
+    indexBy: ["metadata.namespace", "metadata.name"]
 
   endpoints:
-    api_version: discovery.k8s.io/v1
-    kind: EndpointSlice
+    apiVersion: discovery.k8s.io/v1
+    resources: endpointslices
     store: full  # Memory store
-    index_by: ["metadata.labels.kubernetes\\.io/service-name"]
+    indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
 
   # Selective access, large resources
   secrets:
-    api_version: v1
-    kind: Secret
+    apiVersion: v1
+    resources: secrets
     store: on-demand  # Cached store
-    cache_ttl: 2m
-    index_by: ["metadata.namespace", "metadata.name"]
+    cacheTTL: 2m
+    indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 This is the recommended approach for most deployments.
 
-See [Configuration Reference](./configuration.md#watched_resources) for complete configuration options.
+See [CRD Reference](./crd-reference.md#watchedresources) for complete configuration options.
 
 ## Configuration Examples
 
@@ -617,22 +617,22 @@ See [Configuration Reference](./configuration.md#watched_resources) for complete
 Typical configuration for an ingress controller with memory store:
 
 ```yaml
-watched_resources:
+watchedResources:
   ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
-    index_by: ["metadata.namespace", "metadata.name"]
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
+    indexBy: ["metadata.namespace", "metadata.name"]
     # Memory store (default)
 
   services:
-    api_version: v1
-    kind: Service
-    index_by: ["metadata.namespace", "metadata.name"]
+    apiVersion: v1
+    resources: services
+    indexBy: ["metadata.namespace", "metadata.name"]
 
   endpoints:
-    api_version: discovery.k8s.io/v1
-    kind: EndpointSlice
-    index_by: ["metadata.labels.kubernetes\\.io/service-name"]
+    apiVersion: discovery.k8s.io/v1
+    resources: endpointslices
+    indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
 ```
 
 **Template usage:**
@@ -664,19 +664,19 @@ watched_resources:
 Configuration using cached store for authentication secrets:
 
 ```yaml
-watched_resources:
+watchedResources:
   ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
-    index_by: ["metadata.namespace", "metadata.name"]
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
+    indexBy: ["metadata.namespace", "metadata.name"]
 
   # Secrets accessed selectively via annotations
   secrets:
-    api_version: v1
-    kind: Secret
+    apiVersion: v1
+    resources: secrets
     store: on-demand  # Cached store
-    cache_ttl: 5m
-    index_by: ["metadata.namespace", "metadata.name"]
+    cacheTTL: 5m
+    indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 **Template usage:**
@@ -721,19 +721,19 @@ See [Templating Guide](./templating.md#authentication-annotations) for complete 
 Configuration for TLS certificates using cached store:
 
 ```yaml
-watched_resources:
+watchedResources:
   ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
-    index_by: ["metadata.namespace", "metadata.name"]
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
+    indexBy: ["metadata.namespace", "metadata.name"]
 
   # Large TLS secrets accessed conditionally
   secrets:
-    api_version: v1
-    kind: Secret
+    apiVersion: v1
+    resources: secrets
     store: on-demand
-    cache_ttl: 10m  # Longer TTL for certificates
-    index_by: ["metadata.namespace", "metadata.name"]
+    cacheTTL: 10m  # Longer TTL for certificates
+    indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 **Template usage:**
@@ -764,18 +764,18 @@ watched_resources:
 Watch resources only in specific namespaces:
 
 ```yaml
-watched_resources:
+watchedResources:
   ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
     namespace: production  # Only watch 'production' namespace
-    index_by: ["metadata.name"]  # Single key (namespace is implicit)
+    indexBy: ["metadata.name"]  # Single key (namespace is implicit)
 
   services:
-    api_version: v1
-    kind: Service
+    apiVersion: v1
+    resources: services
     namespace: production
-    index_by: ["metadata.name"]
+    indexBy: ["metadata.name"]
 ```
 
 **Benefits:**
@@ -791,270 +791,51 @@ watched_resources:
 {% endfor %}
 ```
 
-See [Configuration Reference](./configuration.md#namespace) for namespace restrictions.
+See [CRD Reference](./crd-reference.md#watchedresources) for namespace restrictions.
 
 ## Troubleshooting
 
-### Store Returns Empty Results
+### Empty Results
 
-**Symptoms:**
-- `.List()` returns empty array
-- `.Fetch()` returns no resources
-- Templates generate empty output
+If `.List()` or `.Fetch()` returns empty results:
 
-**Diagnosis:**
-
-1. **Check if watcher has completed initial sync:**
-   ```bash
-   # Check controller logs for sync completion
-   kubectl logs deployment/haproxy-template-ic | grep "initial sync complete"
-   ```
-
-2. **Verify resources exist matching the watch configuration:**
-   ```bash
-   # Check if resources exist
-   kubectl get ingresses -A
-
-   # Check if resources match label selector (if configured)
-   kubectl get ingresses -A -l app=myapp
-   ```
-
-3. **Verify RBAC permissions:**
-   ```bash
-   # Check if service account can list resources
-   kubectl auth can-i list ingresses --all-namespaces \
-     --as=system:serviceaccount:haproxy-system:haproxy-template-ic
-   ```
-
-4. **Check index_by configuration matches template usage:**
-   ```yaml
-   # Configuration
-   index_by: ["metadata.namespace", "metadata.name"]
-   ```
-   ```jinja2
-   {# Template must match index order #}
-   {% for ing in resources.ingresses.Fetch("default", "my-app") %}
-   ```
-
-**Solutions:**
-- Wait for initial sync to complete
-- Verify resource selectors (namespace, labels)
-- Fix RBAC permissions
-- Align template `.Fetch()` calls with `index_by` configuration
+1. **Check initial sync**: `kubectl logs deployment/haproxy-template-ic | grep "initial sync"`
+2. **Verify resources exist**: `kubectl get <resource> -A`
+3. **Check RBAC**: `kubectl auth can-i list <resource> --all-namespaces --as=system:serviceaccount:<namespace>:<sa>`
+4. **Verify indexBy matches template**: `.Fetch()` parameters must match `indexBy` order
 
 ### High Memory Usage
 
-**Symptoms:**
-- Controller pod OOMKilled
-- High resident memory (RSS)
-- Memory growth over time
+If the controller is OOMKilled or uses excessive memory:
 
-**Diagnosis:**
+1. **Switch large resources to cached store**: `store: on-demand`
+2. **Add field filtering** to remove `managedFields` and `last-applied-configuration`
+3. **Limit watch scope** with namespace or label selectors
+4. **Monitor via debug port**: `curl http://localhost:6060/debug/vars`
 
-1. **Count resources in each store:**
-   ```bash
-   # Enable debug port and check /debug/vars endpoint
-   kubectl port-forward pod/haproxy-template-ic-xxx 6060:6060
-   curl http://localhost:6060/debug/vars | jq .
-   ```
+### Slow Rendering
 
-2. **Identify large resource types:**
-   - Secrets with large data (certificates)
-   - ConfigMaps with large configuration
-   - High resource counts (>10,000)
+If template rendering is slow:
 
-3. **Check field filtering configuration:**
-   ```yaml
-   # Are unnecessary fields being stored?
-   watched_resources_ignore_fields:
-     - metadata.managedFields
-     - metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]
-   ```
-
-**Solutions:**
-
-1. **Switch large resources to cached store:**
-   ```yaml
-   secrets:
-     store: on-demand
-     cache_ttl: 2m
-   ```
-
-2. **Add field filtering:**
-   ```yaml
-   watched_resources_ignore_fields:
-     - metadata.managedFields
-     - metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]
-   ```
-   See [Configuration Reference](./configuration.md#watched_resources_ignore_fields) for field filtering syntax.
-
-3. **Limit watch scope:**
-   ```yaml
-   ingresses:
-     namespace: production  # Watch single namespace
-     label_selector:
-       app: myapp  # Filter by labels
-   ```
-
-4. **Monitor memory with container limits:**
-   ```yaml
-   resources:
-     limits:
-       memory: 256Mi  # Adjust based on resource count
-   ```
-
-### Slow Template Rendering
-
-**Symptoms:**
-- Template rendering takes >1 second
-- Deployment delays
-- High CPU usage during rendering
-
-**Diagnosis:**
-
-1. **Check if using cached store with `.List()`:**
-   ```jinja2
-   {# This triggers fetch for ALL resources - slow with cached store #}
-   {% for secret in resources.secrets.List() %}
-   ```
-
-2. **Check for cache misses:**
-   ```bash
-   # Look for "cache miss" in logs with verbose logging
-   kubectl logs deployment/haproxy-template-ic | grep "cache miss"
-   ```
-
-3. **Profile template rendering:**
-   - Enable debug mode (verbose=2)
-   - Check rendering duration in logs
-
-**Solutions:**
-
-1. **Use cached store efficiently:**
-   ```jinja2
-   {# Instead of List() #}
-   {% for secret in resources.secrets.List() %}  {# SLOW #}
-
-   {# Use Fetch() with specific keys #}
-   {% set secret = resources.secrets.GetSingle(namespace, name) %}  {# FAST #}
-   ```
-
-2. **Switch to memory store for frequently accessed resources:**
-   ```yaml
-   ingresses:
-     store: full  # Use memory store instead of cached
-   ```
-
-3. **Increase cache TTL to reduce API calls:**
-   ```yaml
-   secrets:
-     cache_ttl: 5m  # Longer cache duration
-   ```
-
-4. **Optimize template logic:**
-   - Avoid nested loops over large collections
-   - Cache computed values in variables
-   - Use `{% set %}` for repeated expressions
-
-### Cache Miss Debugging
-
-**Symptoms:**
-- Inconsistent rendering performance
-- Occasional slow template renders
-- High API call rate
-
-**Diagnosis:**
-
-1. **Enable debug logging:**
-   ```yaml
-   logging:
-     verbose: 2  # Debug level
-   ```
-
-2. **Monitor cache hit/miss ratio in logs:**
-   ```bash
-   kubectl logs deployment/haproxy-template-ic | grep -E "cache (hit|miss)"
-   ```
-
-3. **Check cache TTL configuration:**
-   ```yaml
-   secrets:
-     cache_ttl: 2m10s  # Current TTL
-   ```
-
-**Solutions:**
-
-1. **Increase cache TTL if resources don't change frequently:**
-   ```yaml
-   secrets:
-     cache_ttl: 10m  # Longer TTL for stable resources
-   ```
-
-2. **Pre-warm cache by accessing resources early:**
-   ```jinja2
-   {# Access commonly used resources at template start #}
-   {% set _ = resources.secrets.GetSingle("default", "common-secret") %}
-   ```
-
-3. **Switch to memory store if cache miss rate is high:**
-   ```yaml
-   secrets:
-     store: full  # Switch to memory store
-   ```
+1. **Don't use `.List()` with cached store** - it fetches all resources from API
+2. **Use `.Fetch()` or `.GetSingle()`** for selective access
+3. **Increase cache TTL** for stable resources
+4. **Consider memory store** for frequently iterated resources
 
 ### Common Misconfigurations
 
-**Issue: index_by doesn't match template usage**
+| Issue | Solution |
+|-------|----------|
+| `.Fetch()` parameters don't match `indexBy` | Align parameter order with `indexBy` fields |
+| Large secrets in memory store | Use `store: on-demand` for secrets/certificates |
+| `.List()` on cached store is slow | Use `.Fetch()` for selective access |
+| High cache miss rate | Increase `cacheTTL` or switch to memory store |
 
-```yaml
-# Configuration
-index_by: ["metadata.namespace", "metadata.name"]
-```
-
-```jinja2
-{# Template - WRONG: only provides one key #}
-{% for ing in resources.ingresses.Fetch("my-app") %}
-```
-
-**Solution:** Match template parameters to index_by order:
-```jinja2
-{# Correct: both namespace and name #}
-{% for ing in resources.ingresses.Fetch("default", "my-app") %}
-```
-
-**Issue: Using memory store for large resources**
-
-```yaml
-# Bad: Large secrets in memory
-secrets:
-  store: full  # Default, stores all in memory
-```
-
-**Solution:** Use cached store for large resources:
-```yaml
-secrets:
-  store: on-demand
-  cache_ttl: 2m
-```
-
-**Issue: Using .List() with cached store**
-
-```jinja2
-{# Slow: Fetches all resources from API #}
-{% for secret in resources.secrets.List() %}
-```
-
-**Solution:** Use `.Fetch()` for selective access:
-```jinja2
-{# Fast: Fetches only required resources #}
-{% set secret = resources.secrets.GetSingle(namespace, name) %}
-```
-
-See [Configuration Reference](./configuration.md) for additional configuration guidance.
+See [CRD Reference](./crd-reference.md) for configuration details.
 
 ## See Also
 
-- [Configuration Reference](./configuration.md) - Complete configuration syntax and field descriptions
+- [CRD Reference](./crd-reference.md) - Complete configuration syntax and field descriptions
 - [Templating Guide](./templating.md) - Template syntax and resource access patterns
 - [pkg/k8s README](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/k8s/README.md) - Store implementation details and API documentation
 - [Architecture Design](./development/design.md) - System architecture and component interactions

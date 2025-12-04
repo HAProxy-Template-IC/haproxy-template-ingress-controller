@@ -93,18 +93,18 @@ controller:
   leaderElection:
     enabled: true
     leaseName: haproxy-template-ic-leader
-    leaseDuration: 60s
-    renewDeadline: 15s
-    retryPeriod: 5s
+    leaseDuration: 15s
+    renewDeadline: 10s
+    retryPeriod: 2s
 ```
 
 **Defaults:**
 - `healthzPort`: 8080
 - `metricsPort`: 9090
 - `leaderElection.enabled`: true
-- `leaderElection.leaseDuration`: 60s
-- `leaderElection.renewDeadline`: 15s
-- `leaderElection.retryPeriod`: 5s
+- `leaderElection.leaseDuration`: 15s
+- `leaderElection.renewDeadline`: 10s
+- `leaderElection.retryPeriod`: 2s
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 
@@ -468,7 +468,6 @@ Additional validation occurs when:
 
 ## See Also
 
-- [Configuration Reference](./configuration.md) - Detailed field descriptions
 - [Templating Guide](./templating.md) - Template syntax and examples
 - [Watching Resources](./watching-resources.md) - Resource watching configuration
 - [CRD Validation Design](./development/crd-validation-design.md) - Validation framework

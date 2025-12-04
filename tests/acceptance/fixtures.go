@@ -1098,6 +1098,64 @@ backend test-backend
 	return config
 }
 
+// NewDebugService creates a ClusterIP Service for accessing the controller's debug endpoint.
+// Access is provided via the Kubernetes API server proxy, which is more reliable than
+// port-forwarding (SPDY) or NodePort (which requires extraPortMappings in DinD environments).
+func NewDebugService(namespace, deploymentName string, debugPort int32) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deploymentName + "-debug",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app": deploymentName,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": deploymentName,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "debug",
+					Port:       debugPort,
+					TargetPort: intstr.FromInt(int(debugPort)),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+}
+
+// NewMetricsService creates a ClusterIP Service for accessing the controller's metrics endpoint.
+// This is used by WaitForControllerReady to verify the controller has completed startup reconciliation.
+// Access is provided via the Kubernetes API server proxy.
+func NewMetricsService(namespace, deploymentName string, metricsPort int32) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deploymentName + "-metrics",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app": deploymentName,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": deploymentName,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "metrics",
+					Port:       metricsPort,
+					TargetPort: intstr.FromInt(int(metricsPort)),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+}
+
 // NewHTTPStoreHAProxyTemplateConfig creates a HAProxyTemplateConfig that uses http.Fetch()
 // to fetch a blocklist from an HTTP server. The template creates an ACL file that triggers
 // HAProxy validation - invalid content (non-CIDR IPs) will cause validation to fail.

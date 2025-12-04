@@ -2,7 +2,7 @@
 # Provides support for Kubernetes Gateway API v1.2.0 (gateway.networking.k8s.io/v1)
 # Implements the resource_gateway_* plugin interface for the base library
 #
-# Full feature documentation: ../docs/gateway-api-support.md
+# Full feature documentation: ../docs/libraries/gateway.md
 #
 # Supported resources:
 # - HTTPRoute: HTTP/HTTPS routing with path matching and weighted traffic splitting

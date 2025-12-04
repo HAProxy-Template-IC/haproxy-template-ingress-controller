@@ -3,7 +3,7 @@
 #
 # IMPORTANT: This library provides INGRESS-ONLY annotation support.
 # Gateway API resources (HTTPRoute, GRPCRoute) use filters instead of annotations.
-# See charts/haproxy-template-ic/docs/gateway-api-support.md for Gateway API filter documentation.
+# See charts/haproxy-template-ic/docs/libraries/gateway.md for Gateway API filter documentation.
 
 watchedResources:
   secrets:

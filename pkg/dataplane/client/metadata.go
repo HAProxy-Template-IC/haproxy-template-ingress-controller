@@ -84,6 +84,9 @@ func ConvertAPIMetadataToClient(apiMetadata map[string]map[string]interface{}) m
 //
 //	{"metadata": {"comment": {"value": "string value"}}, ...}
 //
+// This function recursively transforms metadata in nested objects (like servers
+// within backends, binds within frontends, etc.).
+//
 // If the JSON doesn't contain a metadata field, or the metadata is not in the
 // expected format, the original JSON is returned unchanged.
 func TransformClientMetadataInJSON(jsonData []byte) ([]byte, error) {
@@ -92,10 +95,49 @@ func TransformClientMetadataInJSON(jsonData []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Check if metadata field exists and needs transformation
-	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
-		obj["metadata"] = ConvertClientMetadataToAPI(metadata)
-	}
+	// Recursively transform metadata in the object tree
+	transformMetadataRecursive(obj)
 
 	return json.Marshal(obj)
+}
+
+// transformMetadataRecursive walks the JSON object tree and transforms any
+// metadata fields from client-native flat format to API nested format.
+func transformMetadataRecursive(obj map[string]interface{}) {
+	for key, value := range obj {
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if key == "metadata" {
+			// Check if this is a flat metadata map (needs transformation)
+			// vs already nested (has "value" sub-key)
+			if needsMetadataTransformation(v) {
+				obj[key] = ConvertClientMetadataToAPI(v)
+			}
+		} else {
+			// Recurse into nested objects
+			transformMetadataRecursive(v)
+		}
+	}
+}
+
+// needsMetadataTransformation checks if a metadata map needs to be transformed.
+// Returns true if the map contains flat key-value pairs (client-native format).
+// Returns false if it's already in nested format (API format with {"key": {"value": ...}}).
+func needsMetadataTransformation(metadata map[string]interface{}) bool {
+	for _, v := range metadata {
+		// If any value is not a map with a "value" key, it needs transformation
+		if nested, ok := v.(map[string]interface{}); ok {
+			if _, hasValue := nested["value"]; hasValue {
+				// Already in API format
+				return false
+			}
+		}
+		// Value is not a nested map or doesn't have "value" key - needs transformation
+		return true
+	}
+	// Empty map - no transformation needed
+	return false
 }
