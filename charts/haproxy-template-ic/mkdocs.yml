@@ -11,6 +11,8 @@ theme:
   name: material
   logo: assets/logo-icon.svg
   favicon: assets/logo-icon.svg
+  icon:
+    alternate: material/book-open-page-variant
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -62,16 +64,10 @@ nav:
       - Path Regex Last: libraries/path-regex-last.md
 
 extra:
-  version:
-    provider: mike
   alternate:
     - name: Controller Docs
       link: https://haproxy-template-ic.gitlab.io/controller/latest/
       lang: controller
-  social:
-    - icon: fontawesome/brands/github
-      link: https://gitlab.com/haproxy-template-ic
 
 plugins:
   - search
-  - mike

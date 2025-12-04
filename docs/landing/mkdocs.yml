@@ -39,10 +39,5 @@ markdown_extensions:
 nav:
   - Home: index.md
 
-extra:
-  social:
-    - icon: fontawesome/brands/gitlab
-      link: https://gitlab.com/haproxy-template-ic
-
 plugins:
   - search: false

@@ -48,6 +48,31 @@
   margin-bottom: 0.5rem;
 }
 
+/* Community project note */
+.community-note {
+  max-width: 800px;
+  margin: 0 auto 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(var(--md-admonition-bg-color), 0.5);
+  border-left: 4px solid var(--brand-primary-light);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.community-note p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--brand-text-muted);
+}
+
+.community-note strong {
+  color: var(--brand-primary);
+}
+
+[data-md-color-scheme="slate"] .community-note strong {
+  color: var(--brand-primary-light);
+}
+
 /* Flow container - combines diagram and features */
 .flow-container {
   display: flex;
