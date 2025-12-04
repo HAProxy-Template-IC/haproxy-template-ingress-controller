@@ -1,0 +1,48 @@
+site_name: HAProxy Template IC
+site_url: https://haproxy-template-ic.gitlab.io/
+site_description: Template-driven HAProxy Ingress Controller for Kubernetes
+
+repo_name: HAProxy-Template-IC/haproxy-template-ingress-controller
+repo_url: https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+
+docs_dir: docs
+
+theme:
+  name: material
+  custom_dir: overrides
+  logo: assets/logo-icon.svg
+  favicon: assets/logo-icon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: light-blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: light-blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/gitlab
+      link: https://gitlab.com/haproxy-template-ic
+
+plugins:
+  - search: false

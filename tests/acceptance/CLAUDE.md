@@ -45,10 +45,31 @@ E2E Framework (kubernetes-sigs/e2e-framework)
     │   └── Teardown (cleanup)
     │
     └── Test Infrastructure
-        ├── DebugClient (port-forward + HTTP client)
-        ├── Fixtures (ConfigMap, Secret, Deployment)
-        └── Helpers (pod finding, waiting)
+        ├── DebugClient (NodePort + HTTP client)
+        ├── Fixtures (ConfigMap, Secret, Deployment, Services)
+        └── Helpers (pod finding, waiting, NodePort access)
 ```
+
+### Kubernetes API Server Proxy
+
+Tests access controller debug and metrics endpoints via the Kubernetes API server proxy rather than port-forwarding or NodePort services. This is a deliberate design decision:
+
+**Why API Server Proxy?**
+- Port-forwarding uses SPDY protocol which breaks under parallel test execution (EOF, connection reset errors)
+- NodePort requires `extraPortMappings` in Kind configuration, which doesn't work in DinD environments
+- API server proxy routes requests through the existing API server connection
+- Works reliably in all environments including DinD (Docker-in-Docker) on GitLab CI
+- Uses built-in client-go `ProxyGet` method - first-party Kubernetes API
+
+**How it works:**
+1. Tests create ClusterIP services for debug and metrics endpoints
+2. `SetupDebugClient()` and `SetupMetricsAccess()` create clients that use `ProxyGet`
+3. Requests are routed: `client → API server → service → pod`
+
+**Helper functions:**
+- `SetupDebugClient()` - creates debug service and returns DebugClient using API proxy
+- `SetupMetricsAccess()` - creates metrics service and returns MetricsClient using API proxy
+- `WaitForServiceEndpoints()` - waits for service endpoints to be ready
 
 ## Key Components
 
@@ -106,40 +127,48 @@ func Setup(t *testing.T) env.Environment {
 
 ### DebugClient
 
-Port-forward client for accessing controller debug endpoints:
+HTTP client for accessing controller debug endpoints via Kubernetes API server proxy:
 
 ```go
 // debug_client.go
 type DebugClient struct {
-    podName       string
-    podNamespace  string
-    debugPort     int
-    localPort     int
-    restConfig    *rest.Config
-    stopChannel   chan struct{}
-    readyChannel  chan struct{}
-    portForwarder *portforward.PortForwarder
+    clientset   kubernetes.Interface
+    namespace   string
+    serviceName string
+    port        string
 }
 
-func (dc *DebugClient) Start(ctx context.Context) error {
-    // Sets up kubectl port-forward to pod
-    // ...
+// Create via SetupDebugClient - uses ProxyGet to access the service
+func NewDebugClient(clientset kubernetes.Interface, namespace, serviceName string, port int32) *DebugClient {
+    return &DebugClient{
+        clientset:   clientset,
+        namespace:   namespace,
+        serviceName: serviceName,
+        port:        strconv.Itoa(int(port)),
+    }
 }
 
 func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]interface{}, error) {
-    // GET /debug/vars/config
+    // Uses ProxyGet to fetch /debug/vars/config
 }
 
 func (dc *DebugClient) GetRenderedConfig(ctx context.Context) (string, error) {
-    // GET /debug/vars/rendered?field={.config}
+    // Uses ProxyGet to fetch /debug/vars/rendered
 }
 
 func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion string, timeout time.Duration) error {
-    // Polls /debug/vars/config?field={.version} until matches
+    // Polls until config version matches
 }
 ```
 
 **Purpose**: Access controller internal state without log parsing.
+
+**Why API server proxy instead of NodePort or port-forwarding?**
+- Port-forwarding uses SPDY which breaks under parallel test execution (EOF errors)
+- NodePort requires extraPortMappings which don't work in DinD environments
+- API proxy uses existing API server connection - always works
+- Uses built-in `ProxyGet` method from client-go
+- No connection lifecycle management needed
 
 **Why not logs?**
 - Logs are brittle (format changes break tests)
@@ -155,41 +184,19 @@ Factory functions for creating test resources:
 // fixtures.go
 
 // NewConfigMap creates ConfigMap with given configuration
-func NewConfigMap(namespace, name, configYAML string) *corev1.ConfigMap {
-    return &corev1.ConfigMap{
-        ObjectMeta: metav1.ObjectMeta{
-            Name:      name,
-            Namespace: namespace,
-        },
-        Data: map[string]string{
-            "config": configYAML,
-        },
-    }
-}
+func NewConfigMap(namespace, name, configYAML string) *corev1.ConfigMap
 
 // NewSecret creates Secret with HAProxy credentials
-func NewSecret(namespace, name string) *corev1.Secret {
-    return &corev1.Secret{
-        ObjectMeta: metav1.ObjectMeta{
-            Name:      name,
-            Namespace: namespace,
-        },
-        StringData: map[string]string{
-            "dataplane_username": "admin",
-            "dataplane_password": "password",
-        },
-    }
-}
+func NewSecret(namespace, name string) *corev1.Secret
 
 // NewControllerDeployment creates controller deployment
-func NewControllerDeployment(namespace, configMapName, secretName string, debugPort int32) *appsv1.Deployment {
-    // Creates deployment with:
-    //   - Controller image
-    //   - ConfigMap reference
-    //   - Secret reference
-    //   - Debug port exposed
-    //   - Environment variables
-}
+func NewControllerDeployment(namespace, configMapName, secretName string, debugPort int32) *appsv1.Deployment
+
+// NewDebugService creates a ClusterIP Service for accessing the debug endpoint via API proxy
+func NewDebugService(namespace, deploymentName string, debugPort int32) *corev1.Service
+
+// NewMetricsService creates a ClusterIP Service for accessing the metrics endpoint via API proxy
+func NewMetricsService(namespace, deploymentName string, metricsPort int32) *corev1.Service
 ```
 
 **Predefined configs**:
@@ -213,11 +220,11 @@ func TestMyFeature(t *testing.T) {
 
     feature := features.New("My Feature").
         Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-            // Create resources (ConfigMap, Secret, Deployment)
             client, err := cfg.NewClient()
             require.NoError(t, err)
 
-            cm := NewConfigMap(TestNamespace, "my-config", InitialConfigYAML)
+            // Create test resources
+            cm := NewConfigMap(namespace, "my-config", InitialConfigYAML)
             err = client.Resources().Create(ctx, cm)
             require.NoError(t, err)
 
@@ -226,19 +233,20 @@ func TestMyFeature(t *testing.T) {
             return ctx
         }).
         Assess("Feature works", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-            // Wait for controller ready
             client, _ := cfg.NewClient()
-            err := WaitForPodReady(ctx, client, TestNamespace, "app="+ControllerDeploymentName, 2*time.Minute)
+
+            // Setup debug and metrics access via API proxy
+            debugClient, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
             require.NoError(t, err)
 
-            // Get controller pod
-            pod, err := GetControllerPod(ctx, client, TestNamespace)
+            metricsClient, err := SetupMetricsAccess(ctx, client, namespace, 30*time.Second)
             require.NoError(t, err)
 
-            // Access debug endpoint
-            debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-            debugClient.Start(ctx)
+            // Wait for controller to complete startup reconciliation
+            _, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, 2*time.Minute)
+            require.NoError(t, err)
 
+            // Use debug client - uses API proxy, no Start() needed!
             config, err := debugClient.GetConfig(ctx)
             require.NoError(t, err)
             assert.NotNil(t, config)
@@ -268,9 +276,8 @@ require.NoError(t, err)
 ### Using Debug Endpoints
 
 ```go
-// Setup debug client
-debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-err := debugClient.Start(ctx)
+// Setup debug client via API proxy - no Start() needed
+debugClient, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
 require.NoError(t, err)
 
 // Get full config
@@ -287,6 +294,10 @@ assert.Contains(t, rendered, "frontend http")
 
 // Wait for specific version
 err = debugClient.WaitForConfigVersion(ctx, "v2", 30*time.Second)
+require.NoError(t, err)
+
+// Get pipeline status (rendering, validation, deployment phases)
+status, err := debugClient.GetPipelineStatus(ctx)
 require.NoError(t, err)
 ```
 
@@ -313,42 +324,50 @@ require.NoError(t, err)
 
 ## Common Pitfalls
 
-### Not Waiting for Pod Ready
+### Not Waiting for Controller Ready
 
-**Problem**: Test tries to access pod before it's ready.
+**Problem**: Test tries to access debug endpoints before controller is fully initialized.
 
 ```go
-// Bad - pod might not be ready
-pod, _ := GetControllerPod(ctx, client, namespace)
-debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-debugClient.Start(ctx)  // Might fail!
+// Bad - controller might not be ready
+debugClient, _ := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+config, _ := debugClient.GetConfig(ctx)  // Might fail or return incomplete data!
 ```
 
-**Solution**: Wait for pod ready first.
+**Solution**: Wait for controller to complete startup reconciliation using metrics.
 
 ```go
-// Good - wait for pod ready
-err := WaitForPodReady(ctx, client, namespace, "app=controller", 2*time.Minute)
+// Good - wait for controller ready using metrics
+metricsClient, _ := SetupMetricsAccess(ctx, client, namespace, 30*time.Second)
+_, err := WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, 2*time.Minute)
 require.NoError(t, err)
 
-pod, _ := GetControllerPod(ctx, client, namespace)
-debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-debugClient.Start(ctx)  // Works!
+debugClient, _ := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+config, _ := debugClient.GetConfig(ctx)  // Works!
 ```
 
-### Not Handling Port-Forward Cleanup
+### Using Old Port-Forward or NodePort Pattern
 
-**Problem**: Port-forward not stopped, leaks resources.
+**Problem**: Old code uses port-forwarding or NodePort which are unreliable.
 
 ```go
-// Bad - port-forward not stopped
-debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-debugClient.Start(ctx)
-// ... test logic
-// Forgot to stop!
+// Bad - port-forwarding breaks under load (SPDY EOF errors)
+debugClient := NewDebugClient(restConfig, pod, DebugPort)
+debugClient.Start(ctx)  // OLD PATTERN - don't use!
+defer debugClient.Stop()
+
+// Bad - NodePort doesn't work in DinD without extraPortMappings
+debugClient := NewDebugClient(nodeHost, nodePort)  // OLD PATTERN
 ```
 
-**Solution**: Port-forward stops automatically when context is cancelled (handled by e2e-framework).
+**Solution**: Use API proxy-based SetupDebugClient - no Start/Stop needed.
+
+```go
+// Good - API proxy is reliable in all environments
+debugClient, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+require.NoError(t, err)
+// No Start() or Stop() needed - client uses API proxy
+```
 
 ### Not Waiting for Config Reload
 
@@ -435,7 +454,12 @@ kubectl config use-context kind-haproxy-test
 kubectl get pods -n haproxy-test
 kubectl logs -n haproxy-test haproxy-template-ic-xxx
 
-# Access debug endpoint
+# Access debug endpoint via NodePort (tests create the service automatically)
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+NODE_PORT=$(kubectl get svc -n haproxy-test haproxy-template-ic-debug -o jsonpath='{.spec.ports[0].nodePort}')
+curl http://$NODE_IP:$NODE_PORT/debug/vars/config
+
+# Or for quick manual testing, use port-forward (not used in actual tests)
 kubectl port-forward -n haproxy-test pod/haproxy-template-ic-xxx 6060:6060
 curl http://localhost:6060/debug/vars/config
 ```

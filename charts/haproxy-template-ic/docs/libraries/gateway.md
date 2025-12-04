@@ -1,32 +1,89 @@
-# Gateway API Support
+# Gateway API Library
 
-The HAProxy Template Ingress Controller chart provides Gateway API support through the `gateway.yaml` template library. This document describes which features of Gateway API v1.2.0 HTTPRoute and GRPCRoute are currently supported.
+The Gateway API library provides support for Kubernetes Gateway API resources, enabling modern, expressive traffic routing through HAProxy.
 
 ## Overview
 
-Gateway API support is implemented as a template library that plugs into the controller's resource-agnostic architecture. The controller itself doesn't know about Gateway API - resource support is added by the chart through template libraries.
+The Gateway API library implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) specification, providing:
 
-**Enable Gateway API support:**
+- HTTPRoute and GRPCRoute support
+- Advanced request matching (method, headers, query parameters)
+- Traffic splitting with weighted backends
+- Request/response header modification
+- URL rewrites and redirects
+- TLS termination and SSL passthrough
+
+This library is **enabled by default**.
+
+## Configuration
 
 ```yaml
-# values.yaml
 controller:
   templateLibraries:
     gateway:
-      enabled: true
+      enabled: true  # Enabled by default
 ```
 
-The Gateway API CRDs must be installed separately in your cluster. The chart automatically detects their presence and enables the gateway library if available.
+!!! warning "Gateway API CRDs Required"
+    The Gateway API library requires Gateway API CRDs to be installed in your cluster. Without them, the library will not be merged into the configuration.
+
+## Extension Points
+
+### Extension Points Used
+
+The Gateway API library implements these extension points from base.yaml:
+
+| Extension Point | This Library's Snippets | What They Generate |
+|-----------------|-------------------------|-------------------|
+| Features | `features-gateway-ssl-passthrough`, `features-gateway-tls` | SSL passthrough registration, TLS certificates |
+| Host Map | `map-host-gateway` | Host-to-group mapping entries |
+| Path Exact Map | `map-path-exact-gateway` | Exact path match entries |
+| Path Prefix Exact Map | `map-path-prefix-exact-gateway` | Prefix paths matching exactly |
+| Path Prefix Map | `map-path-prefix-gateway` | Prefix path match entries |
+| Path Regex Map | `map-path-regex-gateway` | Regex path match entries |
+| Weighted Backend Map | `map-weighted-backend-gateway` | Weighted routing entries |
+| Backends | `backends-gateway`, `backends-gateway-ssl-passthrough` | Backend definitions |
+| Advanced Matchers | `frontend-matchers-advanced-gateway-*` | Method/header/query matching |
+| Frontend Filters | `frontend-filters-gateway-*` | Header modification, redirects, rewrites |
+
+### Injecting Custom Configuration
+
+You can extend Gateway API functionality by adding snippets that match extension point patterns:
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      # Add custom advanced matcher
+      frontend-matchers-advanced-custom-auth:
+        template: |
+          # Custom authentication check
+          http-request deny if { var(txn.matched_route) -m found } !{ req.hdr(Authorization) -m found }
+```
+
+## Watched Resources
+
+| Resource | API Version | Purpose |
+|----------|-------------|---------|
+| Gateways | gateway.networking.k8s.io/v1 | Gateway definitions |
+| HTTPRoutes | gateway.networking.k8s.io/v1 | HTTP routing rules |
+| GRPCRoutes | gateway.networking.k8s.io/v1 | gRPC routing rules |
+| Services | v1 | Service discovery |
+| EndpointSlices | discovery.k8s.io/v1 | Backend endpoints |
+| Secrets | v1 | TLS certificates |
 
 ## Architecture
 
 The `gateway.yaml` library:
+
 - Declares `httproutes` and `grpcroutes` as watched resources
 - Implements backend generation for Gateway routes
 - Adds routing rules to HAProxy map files
 - Plugs into extension points defined in `base.yaml`
 
 This architecture allows the controller to remain resource-agnostic while the chart provides specific resource support.
+
+---
 
 ## HTTPRoute Support
 
@@ -564,6 +621,8 @@ The template automatically deduplicates backends when multiple routes reference 
 
 Internal route identifiers use the format `namespace_routename_ruleindex` to ensure uniqueness across namespaces and rules.
 
+---
+
 ## GRPCRoute Support
 
 ### spec.parentRefs
@@ -668,6 +727,8 @@ spec:
           port: 9090
 ```
 
+---
+
 ## Debug Headers
 
 When debug headers are enabled, the gateway library adds response headers to help troubleshoot routing decisions:
@@ -676,9 +737,9 @@ When debug headers are enabled, the gateway library adds response headers to hel
 # values.yaml
 controller:
   config:
-    debug:
-      headers:
-        enabled: true
+    templatingSettings:
+      extraContext:
+        debug: true
 ```
 
 **Response Headers:**
@@ -689,6 +750,27 @@ These headers are useful for:
 - Verifying which route handled a request
 - Understanding precedence when multiple routes match
 - Debugging complex routing configurations
+
+---
+
+## Features Summary
+
+| Feature | Support | Notes |
+|---------|---------|-------|
+| HTTPRoute | Full | All matching types, filters |
+| GRPCRoute | Full | HTTP/2 protocol |
+| Path Matching | Exact, PathPrefix, RegularExpression | |
+| Method Matching | Full | GET, POST, etc. |
+| Header Matching | Exact, RegularExpression | Request headers |
+| Query Param Matching | Exact, RegularExpression | URL parameters |
+| RequestHeaderModifier | Full | Add, set, remove headers |
+| ResponseHeaderModifier | Full | Add, set, remove headers |
+| RequestRedirect | Full | HTTP redirects |
+| URLRewrite | Full | Path and hostname rewrite |
+| Traffic Splitting | Full | Weighted backends |
+| SSL Passthrough | Full | Via annotation |
+
+---
 
 ## Known Limitations
 
@@ -706,6 +788,8 @@ These headers are useful for:
 - Cross-namespace parent Gateway references
 - Wildcard hostname patterns
 - Listener-specific route attachment (`sectionName`)
+
+---
 
 ## Testing Coverage
 
@@ -733,6 +817,8 @@ The gateway library includes comprehensive validation tests:
 - RequestMirror filter (requires external SPOE agent)
 - ExtensionRef filter (not yet implemented)
 
+---
+
 ## Future Development
 
 Priority areas for future enhancement:
@@ -747,8 +833,12 @@ Priority areas for future enhancement:
 
 5. **Wildcard hostname support** - Test and document wildcard hostname patterns (e.g., `*.example.com`).
 
+---
+
 ## See Also
 
 - [Gateway API Documentation](https://gateway-api.sigs.k8s.io/)
-- [HAProxy Configuration Reference](../../docs/supported-configuration.md)
-- [Template Library Architecture](../CLAUDE.md)
+- [Template Libraries Overview](../template-libraries.md) - How template libraries work
+- [Base Library](base.md) - Extension points and routing infrastructure
+- [SSL Library](ssl.md) - TLS certificate management
+- [HAProxy Annotations Library](haproxytech.md) - Annotation-based configuration

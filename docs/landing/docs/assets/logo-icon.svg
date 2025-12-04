@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HAProxy Template IC — simplified icon (auto light/dark adaptive SVG) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 160" width="380" height="160" role="img" aria-labelledby="title desc">
+  <title id="title">HAProxy Template IC icon (auto light/dark)</title>
+  <desc id="desc">Adaptive minimalist icon with templating tag "{%%}" in monospace font. Automatically switches color scheme between light and dark mode.</desc>
+
+  <style>
+    :root {
+      --brand: #0b3a66;  /* text color in light mode */
+      --bg: transparent; /* background color in light mode */
+    }
+    svg { background: var(--bg); }
+
+    /* Dark mode overrides */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --brand: #e8edf4; /* light text on dark bg */
+        --bg: #0b3a66;    /* dark background */
+      }
+    }
+
+    .icon-text {
+      fill: var(--brand);
+      font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+      font-weight: 700;
+      letter-spacing: 6px;
+    }
+  </style>
+
+  <!-- Symbol -->
+  <text class="icon-text" x="190" y="120" text-anchor="middle" font-size="140">
+    {%%}
+  </text>
+</svg>

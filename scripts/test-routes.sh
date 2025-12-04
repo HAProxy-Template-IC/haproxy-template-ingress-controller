@@ -828,9 +828,10 @@ wait_for_services_ready() {
                     # Placeholders use 127.0.0.1:1, real servers use pod IPs (10.x.x.x)
                     local haproxy_cfg=$(kubectl -n haproxy-template-ic get haproxycfg -o json 2>/dev/null | \
                         jq -r '.items[0].spec.content // ""')
-                    local demo_backend_servers=$(echo "$haproxy_cfg" | \
+                    local demo_backend_servers
+                    demo_backend_servers=$(echo "$haproxy_cfg" | \
                         grep -A 20 "backend.*haproxy-demo-backend" | \
-                        grep -c "server SRV_.*10\." 2>/dev/null || echo 0)
+                        grep -c "server SRV_.*10\." 2>/dev/null) || demo_backend_servers=0
 
                     if [[ $demo_backend_servers -gt 0 ]]; then
                         debug "HAProxy configuration with backends was deployed"

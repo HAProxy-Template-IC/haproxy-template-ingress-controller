@@ -9,7 +9,7 @@ This guide walks you through deploying the HAProxy Template Ingress Controller a
 - Create a basic Ingress configuration
 - Verify the deployment and test routing
 
-The entire process takes approximately 15 minutes on a local Kubernetes cluster.
+The entire process takes approximately 30-45 minutes on a local Kubernetes cluster.
 
 ## Prerequisites
 
@@ -395,7 +395,7 @@ kubectl get haproxytemplateconfig haproxy-template-ic-config -o yaml
 kubectl edit haproxytemplateconfig haproxy-template-ic-config
 ```
 
-See [Configuration Reference](./configuration.md) for all available options.
+See [CRD Reference](./crd-reference.md) for all available options.
 
 ### Template Customization
 
@@ -520,7 +520,7 @@ kubectl delete crd haproxytemplateconfigs.haproxy-template-ic.gitlab.io
 
 ## See Also
 
-- [Configuration Reference](./configuration.md) - Complete configuration options
+- [CRD Reference](./crd-reference.md) - Complete configuration options
 - [Templating Guide](./templating.md) - Template syntax and filters
 - [HAProxy Configuration](./supported-configuration.md) - Supported HAProxy features
 - [Watching Resources](./watching-resources.md) - Resource watching configuration

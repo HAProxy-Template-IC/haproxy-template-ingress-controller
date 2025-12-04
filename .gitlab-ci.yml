@@ -477,17 +477,22 @@ test-acceptance:
         echo "Job failed - extracting debug logs..."
         mkdir -p debug-logs
 
-        # Controller logs
-        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic --all-containers=true \
-          > debug-logs/controller.log 2>&1 || echo "Failed to get controller logs"
+        # Controller logs - ALL pods (not just one from deployment)
+        for pod in $(kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/name=haproxy-template-ic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "=== Controller: $pod ===" >> debug-logs/controller.log
+          kubectl -n haproxy-template-ic logs "$pod" --all-containers=true >> debug-logs/controller.log 2>&1 || true
+        done
+        [ -f debug-logs/controller.log ] || echo "Failed to get controller logs" > debug-logs/controller.log
 
-        # HAProxy logs (haproxy container)
-        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic-haproxy -c haproxy \
-          > debug-logs/haproxy.log 2>&1 || echo "Failed to get HAProxy logs"
-
-        # Dataplane API logs
-        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic-haproxy -c dataplane \
-          > debug-logs/dataplane.log 2>&1 || echo "Failed to get dataplane logs"
+        # HAProxy and Dataplane logs - ALL pods
+        for pod in $(kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "=== HAProxy: $pod ===" >> debug-logs/haproxy.log
+          kubectl -n haproxy-template-ic logs "$pod" -c haproxy >> debug-logs/haproxy.log 2>&1 || true
+          echo "=== Dataplane: $pod ===" >> debug-logs/dataplane.log
+          kubectl -n haproxy-template-ic logs "$pod" -c dataplane >> debug-logs/dataplane.log 2>&1 || true
+        done
+        [ -f debug-logs/haproxy.log ] || echo "Failed to get HAProxy logs" > debug-logs/haproxy.log
+        [ -f debug-logs/dataplane.log ] || echo "Failed to get dataplane logs" > debug-logs/dataplane.log
 
         # HAProxy configuration (useful for debugging routing issues)
         kubectl -n haproxy-template-ic exec deployment/haproxy-template-ic-haproxy -c haproxy -- \
@@ -572,7 +577,8 @@ build-release:
         --export-cache type=registry,ref=${CI_REGISTRY_IMAGE}:cache,mode=max \
         --output type=image,\"name=${CI_REGISTRY_IMAGE}:${CI_COMMIT_TAG},${CI_REGISTRY_IMAGE}:latest\",push=true
 
-# MR documentation preview using parallel deployments
+# MR documentation preview with versioned docs
+# Uses shared deployment script from pages repo for consistency with production
 pages-preview:
   stage: deploy
   image: ${CI_REGISTRY_IMAGE}/ci/python-docs:latest
@@ -589,24 +595,12 @@ pages-preview:
         - charts/**/mkdocs.yml
   script:
     - |
-      # Copy shared CSS
-      cp docs/shared/colors.css docs/controller/docs/stylesheets/
-      cp docs/shared/colors.css charts/haproxy-template-ic/docs/stylesheets/
+      # Clone pages repo to get deployment script and existing content
+      git clone --depth 1 https://gitlab.com/haproxy-template-ic/haproxy-template-ic.gitlab.io.git pages-repo
     - |
-      # Build controller docs
-      cd docs/controller
-      mkdocs build -d ../../public/controller/latest
-      cd ../..
-    - |
-      # Build helm chart docs
-      cd charts/haproxy-template-ic
-      mkdocs build -d ../../public/helm-chart/latest
-      cd ../..
-    - |
-      # Copy landing page and shared assets
-      cp docs/landing-page/index.html public/index.html
-      mkdir -p public/shared
-      cp docs/shared/colors.css public/shared/colors.css
+      # Use shared deployment script (same as production)
+      chmod +x pages-repo/scripts/deploy-docs.sh
+      pages-repo/scripts/deploy-docs.sh dev . ./public
     - echo "Preview available at ${CI_PAGES_URL}/"
   pages:
     path_prefix: "mr-$CI_MERGE_REQUEST_IID"

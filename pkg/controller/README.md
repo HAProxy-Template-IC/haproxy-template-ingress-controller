@@ -49,11 +49,15 @@ pkg/controller/
 │   └── loader.go        # Loads ConfigMap, parses config, publishes ConfigParsedEvent
 ├── credentialsloader/   # Credentials loading and validation
 │   └── loader.go        # Loads Secret, validates credentials, publishes CredentialsUpdatedEvent
+├── discovery/           # HAProxy pod discovery (Stage 5)
+│   └── component.go     # Discovers HAProxy pods matching selector, publishes HAProxyPodsDiscoveredEvent
 ├── events/              # Domain-specific event type definitions
 │   └── types.go         # ~50 event types covering controller lifecycle
 ├── executor/            # Reconciliation orchestrator (Stage 5)
 │   ├── executor.go      # Handles events from Renderer, Validator components
 │   └── executor_test.go # Event flow and orchestration tests
+├── httpstore/           # HTTP resource fetching for templates
+│   └── component.go     # Fetches HTTP resources referenced in templates
 ├── reconciler/          # Reconciliation debouncer (Stage 5)
 │   ├── reconciler.go    # Debounces changes, triggers reconciliation
 │   └── reconciler_test.go
@@ -243,7 +247,7 @@ Orchestrates reconciliation cycles by handling events from pure components (Stag
 
 **Event-Driven Flow:**
 - Renderer publishes TemplateRenderedEvent → HAProxyValidator validates → Executor handles validation result
-- On ValidationCompletedEvent: Proceeds to deployment (pending implementation)
+- On ValidationCompletedEvent: Proceeds to deployment
 - On ValidationFailedEvent: Publishes ReconciliationFailedEvent
 
 **Example:**

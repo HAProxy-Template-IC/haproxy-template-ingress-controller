@@ -39,38 +39,38 @@ The controller supports all configuration sections that can be managed through t
 
 Frontends support **9 child component types** with individual Create/Update/Delete operations:
 
-| Component | Description | Code Reference |
-|-----------|-------------|----------------|
-| **Binds** | Listen addresses and ports | `comparator.go:1191` |
-| **ACLs** | Access control lists | `comparator.go:744` |
-| **HTTP Request Rules** | HTTP request processing rules | `comparator.go:808` |
-| **HTTP Response Rules** | HTTP response processing rules | `comparator.go:857` |
-| **TCP Request Rules** | TCP request processing rules | `comparator.go:906` |
-| **Backend Switching Rules** | Dynamic backend selection rules | `comparator.go:1117` |
-| **Filters** | Data filters (compression, trace, etc.) | `comparator.go:1261` |
-| **Captures** | Request/response capture declarations | `comparator.go:1384` |
-| **Log Targets** | Logging destinations | `comparator.go:992` |
+| Component | Description |
+|-----------|-------------|
+| **Binds** | Listen addresses and ports |
+| **ACLs** | Access control lists |
+| **HTTP Request Rules** | HTTP request processing rules |
+| **HTTP Response Rules** | HTTP response processing rules |
+| **TCP Request Rules** | TCP request processing rules |
+| **Backend Switching Rules** | Dynamic backend selection rules |
+| **Filters** | Data filters (compression, trace, etc.) |
+| **Captures** | Request/response capture declarations |
+| **Log Targets** | Logging destinations |
 
 ### Backend Child Components
 
 Backends support **14 child component types** with individual Create/Update/Delete operations:
 
-| Component | Description | Code Reference |
-|-----------|-------------|----------------|
-| **Servers** | Backend server definitions | `comparator.go:338` |
-| **Server Templates** | Dynamic server templates | `comparator.go:1420` |
-| **ACLs** | Access control lists | `comparator.go:744` |
-| **HTTP Request Rules** | HTTP request processing rules | `comparator.go:808` |
-| **HTTP Response Rules** | HTTP response processing rules | `comparator.go:857` |
-| **HTTP After Response Rules** | Post-response processing rules | `comparator.go:1080` |
-| **TCP Request Rules** | TCP request processing rules | `comparator.go:906` |
-| **TCP Response Rules** | TCP response processing rules | `comparator.go:955` |
-| **Server Switching Rules** | Dynamic server selection rules | `comparator.go:1154` |
-| **Stick Rules** | Session persistence rules | `comparator.go:1042` |
-| **Filters** | Data filters | `comparator.go:1261` |
-| **HTTP Checks** | HTTP health check configurations | `comparator.go:1310` |
-| **TCP Checks** | TCP health check configurations | `comparator.go:1347` |
-| **Log Targets** | Logging destinations | `comparator.go:992` |
+| Component | Description |
+|-----------|-------------|
+| **Servers** | Backend server definitions |
+| **Server Templates** | Dynamic server templates |
+| **ACLs** | Access control lists |
+| **HTTP Request Rules** | HTTP request processing rules |
+| **HTTP Response Rules** | HTTP response processing rules |
+| **HTTP After Response Rules** | Post-response processing rules |
+| **TCP Request Rules** | TCP request processing rules |
+| **TCP Response Rules** | TCP response processing rules |
+| **Server Switching Rules** | Dynamic server selection rules |
+| **Stick Rules** | Session persistence rules |
+| **Filters** | Data filters |
+| **HTTP Checks** | HTTP health check configurations |
+| **TCP Checks** | TCP health check configurations |
+| **Log Targets** | Logging destinations |
 
 ### Mailers, Resolvers, and Peers Child Components
 

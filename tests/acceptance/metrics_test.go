@@ -19,9 +19,6 @@ package acceptance
 import (
 	"bufio"
 	"context"
-	"fmt"
-	"io"
-	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,8 +30,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/portforward"
-	"k8s.io/client-go/transport/spdy"
 )
 
 // buildMetricsFeature builds a feature that verifies the controller exposes
@@ -154,12 +149,33 @@ func buildMetricsFeature() types.Feature {
 			}
 			t.Log("Created controller deployment")
 
-			// Wait for controller pod to be ready
-			t.Log("Waiting for controller pod to be ready...")
-			if err := WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 2*time.Minute); err != nil {
-				t.Fatal("Controller pod did not become ready:", err)
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			if err := client.Resources().Create(ctx, debugSvc); err != nil {
+				t.Fatal("Failed to create debug service:", err)
 			}
-			t.Log("Controller pod is ready")
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			if err := client.Resources().Create(ctx, metricsSvc); err != nil {
+				t.Fatal("Failed to create metrics service:", err)
+			}
+
+			// Wait for controller pod to be ready AND reconciliation to complete
+			// This ensures metrics will have non-zero values when we check them
+			t.Log("Waiting for controller to complete startup reconciliation...")
+			metricsClient, err := SetupMetricsAccess(ctx, client, namespace, 30*time.Second)
+			if err != nil {
+				t.Fatal("Failed to setup metrics access:", err)
+			}
+
+			pod, err := WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, 3*time.Minute)
+			if err != nil {
+				t.Fatal("Controller did not become ready:", err)
+			}
+			t.Logf("Controller pod %s is ready with reconciliation completed", pod.Name)
+
+			// Store metrics client in context for use in Assess phases
+			ctx = context.WithValue(ctx, "metricsClient", metricsClient)
 
 			return ctx
 		}).
@@ -167,71 +183,19 @@ func buildMetricsFeature() types.Feature {
 			t.Helper()
 			t.Log("Verifying metrics endpoint is accessible")
 
-			namespace, err := GetNamespaceFromContext(ctx)
-			if err != nil {
-				t.Fatal("Failed to get namespace from context:", err)
+			// Get metrics client from context (set in Setup phase)
+			metricsClient, ok := ctx.Value("metricsClient").(*MetricsClient)
+			if !ok {
+				t.Fatal("metricsClient not found in context")
 			}
 
-			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatal("Failed to create client:", err)
-			}
-
-			// Get controller pod
-			pod, err := GetControllerPod(ctx, client, namespace)
-			if err != nil {
-				t.Fatal("Failed to get controller pod:", err)
-			}
-			t.Logf("Found controller pod: %s", pod.Name)
-
-			// Set up port-forward to metrics port (9090)
-			metricsPort := 9090
-			stopChan := make(chan struct{}, 1)
-			readyChan := make(chan struct{})
-
-			// Start port-forward in background
-			go func() {
-				err := setupPortForward(ctx, cfg, pod, metricsPort, stopChan, readyChan)
-				if err != nil && err != io.EOF {
-					t.Logf("Port-forward error: %v", err)
-				}
-			}()
-
-			// Wait for port-forward to be ready
-			select {
-			case <-readyChan:
-				t.Log("Port-forward ready")
-			case <-time.After(30 * time.Second):
-				close(stopChan)
-				t.Fatal("Timeout waiting for port-forward")
-			}
-
-			// Ensure port-forward cleanup
-			defer func() {
-				t.Log("Stopping port-forward")
-				close(stopChan)
-				time.Sleep(1 * time.Second) // Give port-forward time to cleanup
-			}()
-
-			// Fetch metrics
-			t.Log("Fetching metrics from /metrics endpoint")
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", metricsPort))
+			// Fetch metrics via API proxy
+			t.Log("Fetching metrics from /metrics endpoint via API proxy")
+			metrics, err := metricsClient.GetMetrics(ctx)
 			if err != nil {
 				t.Fatal("Failed to fetch metrics:", err)
 			}
-			defer resp.Body.Close()
 
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("Expected status 200, got %d", resp.StatusCode)
-			}
-
-			// Read and parse metrics
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				t.Fatal("Failed to read metrics response:", err)
-			}
-
-			metrics := string(body)
 			t.Logf("Received %d bytes of metrics", len(metrics))
 
 			// Store metrics in context for next assessment
@@ -459,44 +423,6 @@ func buildMetricsFeature() types.Feature {
 // TestMetrics runs the metrics endpoint test.
 func TestMetrics(t *testing.T) {
 	testEnv.Test(t, buildMetricsFeature())
-}
-
-// setupPortForward sets up port-forwarding to a pod.
-func setupPortForward(ctx context.Context, cfg *envconf.Config, pod *corev1.Pod, port int, stopChan, readyChan chan struct{}) error {
-	// Build request URL
-	req := cfg.Client().RESTConfig()
-	transport, upgrader, err := spdy.RoundTripperFor(req)
-	if err != nil {
-		return fmt.Errorf("failed to create round tripper: %w", err)
-	}
-
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", pod.Namespace, pod.Name)
-	hostIP := strings.TrimPrefix(req.Host, "https://")
-	hostIP = strings.TrimPrefix(hostIP, "http://")
-
-	// Build the full URL for the dialer
-	fullURL := fmt.Sprintf("https://%s%s", hostIP, path)
-
-	// Parse the URL
-	parsedURL, err := http.NewRequest(http.MethodPost, fullURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Create dialer
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, parsedURL.URL)
-
-	// Set up port-forward
-	ports := []string{fmt.Sprintf("%d:%d", port, port)}
-	out := io.Discard
-	errOut := io.Discard
-
-	forwarder, err := portforward.New(dialer, ports, stopChan, readyChan, out, errOut)
-	if err != nil {
-		return fmt.Errorf("failed to create port forwarder: %w", err)
-	}
-
-	return forwarder.ForwardPorts()
 }
 
 // parsePrometheusMetrics parses Prometheus metrics output and returns metric values.

@@ -140,11 +140,11 @@ spec:
                   backups_number: 10
                   backups_dir: /var/lib/dataplaneapi/backups
                 resources:
-                  maps_dir: /etc/haproxy/maps
-                  ssl_certs_dir: /etc/haproxy/certs
-                  general_storage_dir: /etc/haproxy/general
+                  maps_dir: {{ .Values.controller.config.dataplane.mapsDir }}
+                  ssl_certs_dir: {{ .Values.controller.config.dataplane.sslCertsDir }}
+                  general_storage_dir: {{ .Values.controller.config.dataplane.generalStorageDir }}
               haproxy:
-                config_file: /etc/haproxy/haproxy.cfg
+                config_file: {{ .Values.controller.config.dataplane.configFile }}
                 haproxy_bin: {{ include "haproxy-template-ic.haproxy.bin" . }}
                 master_worker_mode: true
                 master_runtime: /etc/haproxy/haproxy-master.sock

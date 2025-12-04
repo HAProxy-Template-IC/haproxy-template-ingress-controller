@@ -29,9 +29,9 @@ go test -v ./tests/acceptance -run TestConfigMapReload
 
 ```
 tests/acceptance/
-├── env.go                   # E2E framework setup (cluster, namespace)
-├── fixtures.go              # Test resource factories (ConfigMap, Secret, Deployment)
-├── debug_client.go          # Debug HTTP client (port-forward + HTTP)
+├── env.go                   # E2E framework setup (cluster, namespace, NodePort helpers)
+├── fixtures.go              # Test resource factories (ConfigMap, Secret, Deployment, Services)
+├── debug_client.go          # Debug HTTP client (NodePort + HTTP)
 └── configmap_reload_test.go # ConfigMap reload regression test
 ```
 
@@ -99,20 +99,18 @@ func TestConfigReload(t *testing.T) {
         Assess("Initial config loaded", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
             client, _ := cfg.NewClient()
 
-            // Wait for pod ready
-            err := WaitForPodReady(ctx, client, TestNamespace, "app="+ControllerDeploymentName, 2*time.Minute)
+            // Setup debug and metrics access via NodePort
+            debugClient, err := SetupDebugClient(ctx, client, TestNamespace, 30*time.Second)
             require.NoError(t, err)
 
-            // Get controller pod
-            pod, err := GetControllerPod(ctx, client, TestNamespace)
+            metricsHost, metricsPort, err := SetupMetricsAccess(ctx, client, TestNamespace, 30*time.Second)
             require.NoError(t, err)
 
-            // Access debug endpoint
-            debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-            err = debugClient.Start(ctx)
+            // Wait for controller to complete startup reconciliation
+            _, err = WaitForControllerReadyWithMetrics(ctx, client, TestNamespace, metricsHost, metricsPort, 2*time.Minute)
             require.NoError(t, err)
 
-            // Verify config
+            // Verify config - no Start() needed with NodePort!
             config, err := debugClient.GetConfig(ctx)
             require.NoError(t, err)
             assert.Contains(t, fmt.Sprint(config), "version 1")
@@ -138,6 +136,12 @@ secret := NewSecret(namespace, name)
 
 // Create controller Deployment
 deployment := NewControllerDeployment(namespace, configMapName, secretName, debugPort)
+
+// Create NodePort Service for debug endpoint
+debugSvc := NewDebugService(namespace, deploymentName, debugPort)
+
+// Create NodePort Service for metrics endpoint
+metricsSvc := NewMetricsService(namespace, deploymentName, metricsPort)
 ```
 
 ### Predefined Configurations
@@ -152,12 +156,11 @@ UpdatedConfigYAML
 
 ## Debug Client
 
-Access controller internal state via debug HTTP endpoints:
+Access controller internal state via debug HTTP endpoints using NodePort:
 
 ```go
-// Create debug client (sets up port-forward automatically)
-debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-err := debugClient.Start(ctx)
+// Setup debug client via NodePort (no Start() needed)
+debugClient, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
 require.NoError(t, err)
 
 // Get current configuration
@@ -171,7 +174,17 @@ require.NoError(t, err)
 // Wait for specific config version
 err = debugClient.WaitForConfigVersion(ctx, "v2", 30*time.Second)
 require.NoError(t, err)
+
+// Get pipeline status (rendering, validation, deployment phases)
+status, err := debugClient.GetPipelineStatus(ctx)
+require.NoError(t, err)
 ```
+
+**Why NodePort instead of port-forwarding?**
+- Port-forwarding uses SPDY which breaks under parallel test execution (EOF errors)
+- NodePort uses standard HTTP - reliable and well-tested
+- No connection lifecycle management (Start/Stop) needed
+- Works in DinD environments (GitLab CI) via DOCKER_HOST env var
 
 **Why debug endpoints instead of logs?**
 - Stable API (logs are brittle)
@@ -223,7 +236,12 @@ go test -v ./tests/acceptance -run TestConfigMapReload
 ### Access Debug Endpoints
 
 ```bash
-# During or after test
+# During or after test - use NodePort (tests create the service automatically)
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+NODE_PORT=$(kubectl get svc -n haproxy-test haproxy-template-ic-debug -o jsonpath='{.spec.ports[0].nodePort}')
+curl http://$NODE_IP:$NODE_PORT/debug/vars/config
+
+# Or use port-forward for manual debugging (not used in actual tests)
 kubectl port-forward -n haproxy-test pod/haproxy-template-ic-xxx 6060:6060
 
 # Query endpoints
@@ -251,6 +269,36 @@ kubectl get secret -n haproxy-test haproxy-credentials -o yaml
 
 ## Helper Functions
 
+### SetupDebugClient
+
+```go
+debugClient, err := SetupDebugClient(ctx, client, namespace, timeout)
+```
+
+Creates the debug NodePort service and returns a ready-to-use debug client.
+
+**Parameters**:
+- `ctx`: Context
+- `client`: Kubernetes client
+- `namespace`: Namespace
+- `timeout`: Maximum wait time for NodePort assignment
+
+### SetupMetricsAccess
+
+```go
+metricsHost, metricsPort, err := SetupMetricsAccess(ctx, client, namespace, timeout)
+```
+
+Creates the metrics NodePort service and returns connection details.
+
+### WaitForControllerReadyWithMetrics
+
+```go
+pod, err := WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsHost, metricsPort, timeout)
+```
+
+Waits for pod ready AND controller reconciliation to complete (checks metrics).
+
 ### WaitForPodReady
 
 ```go
@@ -259,13 +307,6 @@ err := WaitForPodReady(ctx, client, namespace, labelSelector, timeout)
 
 Waits for a pod matching the label selector to be ready.
 
-**Parameters**:
-- `ctx`: Context with timeout
-- `client`: Kubernetes client
-- `namespace`: Namespace to search
-- `labelSelector`: Label selector (e.g., "app=my-app")
-- `timeout`: Maximum wait time
-
 ### GetControllerPod
 
 ```go
@@ -273,8 +314,6 @@ pod, err := GetControllerPod(ctx, client, namespace)
 ```
 
 Returns the controller pod in the specified namespace.
-
-**Returns**: First pod matching `app=haproxy-template-ic` label.
 
 ## Common Patterns
 
@@ -303,10 +342,7 @@ require.NoError(t, err)
 err = client.Resources().Update(ctx, &cm)
 require.NoError(t, err)
 
-// Wait for controller to detect and reload
-debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-debugClient.Start(ctx)
-
+// Wait for controller to reload - debug client is already set up via NodePort
 err = debugClient.WaitForConfigVersion(ctx, cm.ResourceVersion, 30*time.Second)
 require.NoError(t, err)
 
@@ -333,13 +369,13 @@ kubectl describe pod -n haproxy-test haproxy-template-ic-xxx
 kubectl logs -n haproxy-test haproxy-template-ic-xxx
 ```
 
-### Port-Forward Fails
+### Debug Client Access Fails
 
-**Problem**: DebugClient.Start() fails.
+**Problem**: SetupDebugClient() fails or debug endpoint returns errors.
 
 **Causes**:
 - Pod not ready
-- Port not exposed
+- NodePort service not created
 - Network issues
 
 **Debug**:
@@ -347,11 +383,13 @@ kubectl logs -n haproxy-test haproxy-template-ic-xxx
 # Check pod status
 kubectl get pod -n haproxy-test haproxy-template-ic-xxx
 
-# Check ports
-kubectl describe pod -n haproxy-test haproxy-template-ic-xxx | grep Ports
+# Check debug service exists and has NodePort
+kubectl get svc -n haproxy-test haproxy-template-ic-debug
 
-# Manual port-forward
-kubectl port-forward -n haproxy-test pod/haproxy-template-ic-xxx 6060:6060
+# Test direct access via NodePort
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+NODE_PORT=$(kubectl get svc -n haproxy-test haproxy-template-ic-debug -o jsonpath='{.spec.ports[0].nodePort}')
+curl -v http://$NODE_IP:$NODE_PORT/debug/vars/config
 ```
 
 ### Config Not Reloading

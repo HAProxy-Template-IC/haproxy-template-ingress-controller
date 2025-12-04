@@ -30,6 +30,8 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
+
+	"haproxy-template-ic/tests/testutil"
 )
 
 // buildHTTPStoreValidUpdateFeature builds a feature that tests valid HTTP content
@@ -121,6 +123,15 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Valid HTTP update is applied", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -135,22 +146,19 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
-			// Get controller pod for debug client
-			pod, err := GetControllerPod(ctx, client, namespace)
+			// Setup debug client via NodePort
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
-
-			// Start debug client
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
-			require.NoError(t, err)
-			defer debugClient.Stop()
 
 			// Wait for config to be available first (controller needs to start up)
 			t.Log("Waiting for controller config to be ready...")
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			if err != nil {
-				t.Logf("Config not ready, dumping pod logs...")
-				DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+				t.Logf("Config not ready: %v", err)
+				pod, podErr := GetControllerPod(ctx, client, namespace)
+				if podErr == nil {
+					DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+				}
 				require.NoError(t, err, "Controller config should be available")
 			}
 
@@ -158,8 +166,11 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			t.Log("Waiting for initial blocklist content...")
 			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "192.168.1.0/24", 60*time.Second)
 			if err != nil {
-				t.Logf("Blocklist not found, dumping pod logs...")
-				DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+				t.Logf("Blocklist not found: %v", err)
+				pod, podErr := GetControllerPod(ctx, client, namespace)
+				if podErr == nil {
+					DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+				}
 			}
 			require.NoError(t, err)
 			t.Log("Initial blocklist content verified")
@@ -204,8 +215,11 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			t.Log("Waiting for updated blocklist content...")
 			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "172.16.0.0/12", 60*time.Second)
 			if err != nil {
-				t.Logf("Updated content wait failed, dumping controller logs...")
-				DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+				t.Logf("Updated content wait failed: %v, dumping controller logs...", err)
+				pod, podErr := GetControllerPod(ctx, client, namespace)
+				if podErr == nil {
+					DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+				}
 			}
 			require.NoError(t, err)
 			t.Log("Updated blocklist content verified")
@@ -354,6 +368,15 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("Invalid HTTP update is rejected and old content preserved", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -368,15 +391,9 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
-			// Get controller pod for debug client
-			pod, err := GetControllerPod(ctx, client, namespace)
+			// Setup debug client via NodePort
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
-
-			// Start debug client
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, DebugPort)
-			err = debugClient.Start(ctx)
-			require.NoError(t, err)
-			defer debugClient.Stop()
 
 			// Wait for initial config to be loaded
 			t.Log("Waiting for initial blocklist content...")
@@ -411,14 +428,33 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Blocklist server restarted with invalid content")
 
-			// Wait for the refresh interval and give time for the validation to happen
+			// Wait for the refresh to happen and verify old valid content is preserved
 			// The invalid content should be rejected by HAProxy validation
 			t.Log("Waiting for validation to reject invalid content...")
-			time.Sleep(15 * time.Second) // Wait for refresh + validation
+			waitCfg := testutil.SlowWaitConfig()
+			waitCfg.Timeout = 30 * time.Second
+			err = testutil.WaitForConditionWithDescription(ctx, waitCfg, "invalid content rejected",
+				func(ctx context.Context) (bool, error) {
+					content, err := debugClient.GetGeneralFileContent(ctx, "blocked-ips.acl")
+					if err != nil {
+						return false, err
+					}
+					// Old content should still be present (invalid update was rejected)
+					hasOldContent := strings.Contains(content, "192.168.1.0/24") &&
+						strings.Contains(content, "10.0.0.0/8")
+					// Invalid content should NOT be present
+					hasInvalidContent := strings.Contains(content, "not-an-ip-address") ||
+						strings.Contains(content, "invalid-cidr")
+					return hasOldContent && !hasInvalidContent, nil
+				})
+			require.NoError(t, err, "Invalid content should be rejected")
 
 			// Dump controller logs to understand what happened
 			t.Log("Dumping controller logs after wait...")
-			DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+			pod, podErr := GetControllerPod(ctx, client, namespace)
+			if podErr == nil {
+				DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+			}
 
 			// Verify the old valid content is still present (not replaced with invalid content)
 			content, err := debugClient.GetGeneralFileContent(ctx, "blocked-ips.acl")
@@ -442,10 +478,12 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			t.Log("Content stability verified - invalid update was rejected")
 
 			// Check controller logs for validation failure message
-			logs, err := GetPodLogs(ctx, client, pod, 100)
-			if err == nil {
-				if strings.Contains(logs, "validation failed") || strings.Contains(logs, "invalid") {
-					t.Log("Controller logs show validation failure (expected)")
+			if pod != nil {
+				logs, logsErr := GetPodLogs(ctx, client, pod, 100)
+				if logsErr == nil {
+					if strings.Contains(logs, "validation failed") || strings.Contains(logs, "invalid") {
+						t.Log("Controller logs show validation failure (expected)")
+					}
 				}
 			}
 
@@ -582,6 +620,15 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			err = client.Resources().Create(ctx, deployment)
 			require.NoError(t, err)
 
+			// Create debug and metrics services for NodePort access
+			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+			err = client.Resources().Create(ctx, debugSvc)
+			require.NoError(t, err)
+
+			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+			err = client.Resources().Create(ctx, metricsSvc)
+			require.NoError(t, err)
+
 			return ctx
 		}).
 		Assess("HTTP Store works after controller failover", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -610,7 +657,7 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			require.NoError(t, err)
 			t.Logf("Current leader: %s", leaderIdentity)
 
-			// Get leader pod for debug client
+			// Get leader pod to identify it for deletion
 			allPods, err := GetAllControllerPods(ctx, client, namespace)
 			require.NoError(t, err)
 
@@ -624,9 +671,8 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			}
 			require.NotNil(t, leaderPod, "Leader pod should be found")
 
-			// Start debug client to leader
-			debugClient := NewDebugClient(cfg.Client().RESTConfig(), leaderPod, DebugPort)
-			err = debugClient.Start(ctx)
+			// Setup debug client via NodePort - this routes to the leader pod
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
 			require.NoError(t, err)
 
 			// Verify initial content
@@ -634,9 +680,6 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "192.168.1.0/24", 60*time.Second)
 			require.NoError(t, err)
 			t.Log("Initial blocklist content verified on leader")
-
-			// Stop debug client before deleting pod
-			debugClient.Stop()
 
 			// Delete the leader pod to trigger failover
 			t.Logf("Deleting leader pod %s to trigger failover...", leaderPod.Name)
@@ -650,29 +693,10 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			require.NoError(t, err)
 			t.Logf("New leader: %s", newLeaderIdentity)
 
-			// Get the new leader pod
-			allPods, err = GetAllControllerPods(ctx, client, namespace)
-			require.NoError(t, err)
-
-			var newLeaderPod *corev1.Pod
-			for i := range allPods {
-				pod := &allPods[i]
-				if strings.Contains(newLeaderIdentity, pod.Name) && pod.Status.Phase == corev1.PodRunning {
-					newLeaderPod = pod
-					break
-				}
-			}
-			require.NotNil(t, newLeaderPod, "New leader pod should be found")
-
-			// Start debug client to new leader
-			newDebugClient := NewDebugClient(cfg.Client().RESTConfig(), newLeaderPod, DebugPort)
-			err = newDebugClient.Start(ctx)
-			require.NoError(t, err)
-			defer newDebugClient.Stop()
-
-			// Verify new leader has the blocklist content
+			// Verify new leader has the blocklist content via NodePort
+			// (NodePort service routes to available pods, which now includes only the new leader)
 			t.Log("Waiting for blocklist content on new leader...")
-			err = newDebugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "192.168.1.0/24", 60*time.Second)
+			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "192.168.1.0/24", 60*time.Second)
 			require.NoError(t, err)
 			t.Log("Blocklist content verified on new leader")
 
@@ -701,12 +725,12 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 
 			// Verify new leader processes the update correctly
 			t.Log("Waiting for updated blocklist content on new leader after failover...")
-			err = newDebugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "172.16.0.0/12", 60*time.Second)
+			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "172.16.0.0/12", 60*time.Second)
 			require.NoError(t, err)
 			t.Log("HTTP Store update successful after failover")
 
 			// Verify full content
-			content, err := newDebugClient.GetGeneralFileContent(ctx, "blocked-ips.acl")
+			content, err := debugClient.GetGeneralFileContent(ctx, "blocked-ips.acl")
 			require.NoError(t, err)
 			if !strings.Contains(content, "192.168.0.0/16") {
 				t.Logf("FAILURE: Updated content not applied after failover\nActual content:\n%s", content)

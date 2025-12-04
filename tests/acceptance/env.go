@@ -21,14 +21,17 @@
 package acceptance
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -38,6 +41,8 @@ import (
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/pkg/env"
+
+	"haproxy-template-ic/tests/testutil"
 )
 
 // namespaceContextKey is a type-safe key for storing namespace in context.
@@ -96,40 +101,173 @@ func GetNamespaceFromContext(ctx context.Context) (string, error) {
 	return namespace, nil
 }
 
+// WaitForServiceEndpoints waits until a service has at least one ready endpoint.
+func WaitForServiceEndpoints(ctx context.Context, client klient.Client, namespace, serviceName string, timeout time.Duration) error {
+	cfg := testutil.FastWaitConfig()
+	cfg.Timeout = timeout
+
+	return testutil.WaitForConditionWithDescription(ctx, cfg, "service endpoints ready",
+		func(ctx context.Context) (bool, error) {
+			var endpoints corev1.Endpoints
+			res := client.Resources(namespace)
+
+			if err := res.Get(ctx, serviceName, namespace, &endpoints); err != nil {
+				return false, err
+			}
+
+			// Check if there's at least one ready address
+			for _, subset := range endpoints.Subsets {
+				if len(subset.Addresses) > 0 {
+					return true, nil
+				}
+			}
+			return false, fmt.Errorf("no ready endpoints")
+		})
+}
+
 // WaitForPodReady waits for a pod matching the label selector to be ready.
+// Uses exponential backoff for efficient polling.
 func WaitForPodReady(ctx context.Context, client klient.Client, namespace, labelSelector string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
 
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for pod to be ready")
-
-		case <-ticker.C:
+	return testutil.WaitForConditionWithDescription(ctx, cfg, "pod ready with selector "+labelSelector,
+		func(ctx context.Context) (bool, error) {
 			var podList corev1.PodList
 			res := client.Resources(namespace)
 
-			// List pods with label selector
 			if err := res.List(ctx, &podList, resources.WithLabelSelector(labelSelector)); err != nil {
-				continue
+				return false, err
 			}
 
-			// Check if any pod is ready
+			if len(podList.Items) == 0 {
+				return false, fmt.Errorf("no pods found")
+			}
+
 			for i := range podList.Items {
 				pod := &podList.Items[i]
 				for _, condition := range pod.Status.Conditions {
 					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-						return nil
+						return true, nil
 					}
 				}
 			}
-		}
-	}
+			return false, fmt.Errorf("pod exists but not ready")
+		})
 }
+
+// WaitForPodCount waits until the specified number of pods matching the selector exist.
+func WaitForPodCount(ctx context.Context, client klient.Client, namespace, labelSelector string, count int, timeout time.Duration) error {
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
+
+	return testutil.WaitForConditionWithDescription(ctx, cfg, fmt.Sprintf("%d pods with selector %s", count, labelSelector),
+		func(ctx context.Context) (bool, error) {
+			var podList corev1.PodList
+			res := client.Resources(namespace)
+
+			if err := res.List(ctx, &podList, resources.WithLabelSelector(labelSelector)); err != nil {
+				return false, err
+			}
+
+			if len(podList.Items) == count {
+				return true, nil
+			}
+			return false, fmt.Errorf("found %d pods, expected %d", len(podList.Items), count)
+		})
+}
+
+// WaitForPodTerminated waits until a specific pod no longer exists.
+func WaitForPodTerminated(ctx context.Context, client klient.Client, namespace, podName string, timeout time.Duration) error {
+	cfg := testutil.FastWaitConfig()
+	cfg.Timeout = timeout
+
+	return testutil.WaitForConditionWithDescription(ctx, cfg, fmt.Sprintf("pod %s terminated", podName),
+		func(ctx context.Context) (bool, error) {
+			var podList corev1.PodList
+			res := client.Resources(namespace)
+
+			if err := res.List(ctx, &podList); err != nil {
+				return false, err
+			}
+
+			for i := range podList.Items {
+				if podList.Items[i].Name == podName {
+					return false, fmt.Errorf("pod still exists")
+				}
+			}
+			return true, nil
+		})
+}
+
+// WaitForControllerReadyWithMetrics waits for the controller to complete startup reconciliation.
+// This is more reliable than WaitForPodReady because it verifies the controller
+// has actually processed configuration (reconciliation_total > 0).
+// The metricsClient should be obtained from SetupMetricsAccess.
+func WaitForControllerReadyWithMetrics(ctx context.Context, client klient.Client, namespace string, metricsClient *MetricsClient, timeout time.Duration) (*corev1.Pod, error) {
+	cfg := testutil.SlowWaitConfig()
+	cfg.Timeout = timeout
+
+	var pod *corev1.Pod
+
+	err := testutil.WaitForConditionWithDescription(ctx, cfg, "controller ready",
+		func(ctx context.Context) (bool, error) {
+			// Step 1: Check pod exists and is ready
+			var podList corev1.PodList
+			res := client.Resources(namespace)
+
+			if err := res.List(ctx, &podList, resources.WithLabelSelector("app="+ControllerDeploymentName)); err != nil {
+				return false, err
+			}
+
+			if len(podList.Items) == 0 {
+				return false, fmt.Errorf("no controller pods found")
+			}
+
+			pod = &podList.Items[0]
+
+			if pod.Status.Phase != corev1.PodRunning {
+				return false, fmt.Errorf("pod phase is %s", pod.Status.Phase)
+			}
+
+			// Check pod is ready
+			podReady := false
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					podReady = true
+					break
+				}
+			}
+			if !podReady {
+				return false, fmt.Errorf("pod exists but not ready")
+			}
+
+			// Step 2: Check metrics indicate reconciliation completed
+			reconciliationValue, err := metricsClient.GetMetricValue(ctx, "haproxy_ic_reconciliation_total")
+			if err != nil {
+				return false, fmt.Errorf("metrics not accessible: %w", err)
+			}
+
+			if reconciliationValue == 0 {
+				return false, fmt.Errorf("reconciliation_total is 0, controller still initializing")
+			}
+
+			// Step 3: Check validation has also completed (happens after reconciliation)
+			validationValue, err := metricsClient.GetMetricValue(ctx, "haproxy_ic_validation_total")
+			if err != nil {
+				return false, fmt.Errorf("validation metrics not accessible: %w", err)
+			}
+
+			if validationValue == 0 {
+				return false, fmt.Errorf("validation_total is 0, validation not yet complete")
+			}
+
+			return true, nil
+		})
+
+	return pod, err
+}
+
 
 // GetControllerPod returns the controller pod.
 func GetControllerPod(ctx context.Context, client klient.Client, namespace string) (*corev1.Pod, error) {
@@ -471,182 +609,6 @@ func WaitForCondition(ctx context.Context, description string, timeout, pollInte
 // MetricsPort is the port for Prometheus metrics.
 const MetricsPort = 9090
 
-// GetAuxiliaryFiles retrieves the auxiliary files from the debug endpoint.
-func (dc *DebugClient) GetAuxiliaryFiles(ctx context.Context) (map[string]interface{}, error) {
-	url := fmt.Sprintf("http://localhost:%d/debug/vars/auxfiles", dc.localPort)
-	return dc.getJSON(ctx, url)
-}
-
-// GetGeneralFileContent retrieves the content of a specific general file from auxiliary files.
-// Returns the content string and any error encountered.
-func (dc *DebugClient) GetGeneralFileContent(ctx context.Context, fileName string) (string, error) {
-	auxFiles, err := dc.GetAuxiliaryFiles(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get auxiliary files: %w", err)
-	}
-
-	files, ok := auxFiles["files"].(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("files field not found or wrong type")
-	}
-
-	// The struct field is GeneralFiles (not general_files) - Go JSON serialization uses struct field names
-	generalFiles, ok := files["GeneralFiles"].([]interface{})
-	if !ok {
-		return "", fmt.Errorf("GeneralFiles field not found or wrong type")
-	}
-
-	for _, file := range generalFiles {
-		fileMap, ok := file.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		// The struct field is Filename (not Name)
-		name, ok := fileMap["Filename"].(string)
-		if !ok {
-			continue
-		}
-		if name == fileName {
-			content, ok := fileMap["Content"].(string)
-			if !ok {
-				return "", fmt.Errorf("content field not found or wrong type for file %s", fileName)
-			}
-			return content, nil
-		}
-	}
-
-	return "", fmt.Errorf("file %s not found in auxiliary files", fileName)
-}
-
-// WaitForAuxFileContains waits until a specific auxiliary file contains the expected content.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
-func (dc *DebugClient) WaitForAuxFileContains(ctx context.Context, fileName, expectedContent string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	var lastContent string
-	var lastError error
-
-	for {
-		select {
-		case <-ctx.Done():
-			if lastError != nil {
-				return fmt.Errorf("timeout waiting for file %s to contain %q (last error: %w)", fileName, expectedContent, lastError)
-			}
-			return fmt.Errorf("timeout waiting for file %s to contain %q (last content: %q)", fileName, expectedContent, lastContent)
-
-		case <-ticker.C:
-			content, err := dc.GetGeneralFileContent(ctx, fileName)
-			if err != nil {
-				lastError = err
-				// If it's a connection error, try to reconnect the port-forward
-				if isConnectionError(err) {
-					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-						lastError = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
-					}
-				}
-				continue // Retry on error
-			}
-			lastContent = content
-
-			if strings.Contains(content, expectedContent) {
-				return nil
-			}
-		}
-	}
-}
-
-// WaitForAuxFileNotContains waits until a specific auxiliary file does NOT contain the specified content.
-// This is useful for verifying that invalid content was rejected.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
-func (dc *DebugClient) WaitForAuxFileNotContains(ctx context.Context, fileName, unexpectedContent string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	var lastContent string
-	var lastError error
-
-	for {
-		select {
-		case <-ctx.Done():
-			if lastError != nil {
-				return fmt.Errorf("timeout: file %s still contains %q or error occurred (last error: %w)", fileName, unexpectedContent, lastError)
-			}
-			return fmt.Errorf("timeout: file %s still contains %q (last content: %q)", fileName, unexpectedContent, lastContent)
-
-		case <-ticker.C:
-			content, err := dc.GetGeneralFileContent(ctx, fileName)
-			if err != nil {
-				lastError = err
-				// If it's a connection error, try to reconnect the port-forward
-				if isConnectionError(err) {
-					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-						lastError = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
-					}
-				}
-				continue // Retry on error
-			}
-			lastContent = content
-
-			if !strings.Contains(content, unexpectedContent) {
-				return nil
-			}
-		}
-	}
-}
-
-// WaitForAuxFileContentStable waits and verifies that the file content stays unchanged for the duration.
-// This is useful for verifying that invalid updates are rejected and old content is preserved.
-// If a connection error is detected, it will attempt to reconnect the port-forward.
-func (dc *DebugClient) WaitForAuxFileContentStable(ctx context.Context, fileName string, expectedContent string, stableDuration time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, stableDuration+5*time.Second)
-	defer cancel()
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	stableStart := time.Now()
-	var lastErr error
-
-	for {
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return fmt.Errorf("timeout while verifying content stability for file %s (last error: %w)", fileName, lastErr)
-			}
-			return fmt.Errorf("timeout while verifying content stability for file %s", fileName)
-
-		case <-ticker.C:
-			content, err := dc.GetGeneralFileContent(ctx, fileName)
-			if err != nil {
-				// If it's a connection error, try to reconnect and continue
-				if isConnectionError(err) {
-					if reconnErr := dc.Reconnect(ctx); reconnErr != nil {
-						lastErr = fmt.Errorf("reconnect failed: %w (original error: %v)", reconnErr, err)
-					}
-					continue // Retry after reconnect
-				}
-				return fmt.Errorf("error getting file content: %w", err)
-			}
-
-			if !strings.Contains(content, expectedContent) {
-				return fmt.Errorf("file content changed unexpectedly, expected to contain %q but got %q", expectedContent, content)
-			}
-
-			if time.Since(stableStart) >= stableDuration {
-				// Content has been stable for the required duration
-				return nil
-			}
-		}
-	}
-}
-
 // UpdateHAProxyTemplateConfigTemplate fetches the current HAProxyTemplateConfig from the cluster
 // and replaces its spec.haproxyConfig.template with the new template, preserving resourceVersion.
 // This is necessary because Kubernetes requires resourceVersion for optimistic concurrency control.
@@ -715,9 +677,8 @@ func haproxyTemplateConfigGVR() schema.GroupVersionResource {
 	}
 }
 
-// EnsureDebugClientReady waits for the controller pod to be ready, then creates and starts
-// a debug client with retry logic. This is useful after operations that may cause pod restarts.
-// The function handles transient connection failures that may occur during pod restarts.
+// EnsureDebugClientReady waits for the controller pod to be ready, then creates
+// a debug client using Kubernetes API proxy. This is useful after operations that may cause pod restarts.
 func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Client, namespace string, timeout time.Duration) (*DebugClient, error) {
 	t.Helper()
 
@@ -727,18 +688,272 @@ func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Cli
 		return nil, fmt.Errorf("pod not ready: %w", err)
 	}
 
-	// Get the current controller pod
-	pod, err := GetControllerPod(ctx, client, namespace)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get controller pod: %w", err)
+	// Wait for debug service endpoints to be ready
+	serviceName := ControllerDeploymentName + "-debug"
+	if err := WaitForServiceEndpoints(ctx, client, namespace, serviceName, timeout); err != nil {
+		return nil, fmt.Errorf("failed waiting for debug service endpoints: %w", err)
 	}
 
-	// Create and start debug client with retry logic
-	debugClient := NewDebugClient(client.RESTConfig(), pod, DebugPort)
-	err = debugClient.StartWithRetry(ctx, timeout)
+	// Create Kubernetes clientset for API proxy access
+	clientset, err := kubernetes.NewForConfig(client.RESTConfig())
 	if err != nil {
-		return nil, fmt.Errorf("failed to start debug client: %w", err)
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	return debugClient, nil
+	return NewDebugClient(clientset, namespace, serviceName, DebugPort), nil
+}
+
+// SetupDebugClient creates the debug service (if not exists) and returns a debug client.
+// This should be called during test setup after creating the deployment.
+// The returned debug client uses the Kubernetes API server proxy to access the service,
+// which works reliably in all environments including DinD (Docker-in-Docker).
+// This function is idempotent - it will not fail if the service already exists.
+func SetupDebugClient(ctx context.Context, client klient.Client, namespace string, timeout time.Duration) (*DebugClient, error) {
+	// Create debug service (idempotent - ignore if already exists)
+	debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
+	res := client.Resources(namespace)
+	if err := res.Create(ctx, debugSvc); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("failed to create debug service: %w", err)
+		}
+		// Service already exists, continue
+	}
+
+	// Wait for service endpoints to be ready
+	serviceName := ControllerDeploymentName + "-debug"
+	if err := WaitForServiceEndpoints(ctx, client, namespace, serviceName, timeout); err != nil {
+		return nil, fmt.Errorf("failed waiting for debug service endpoints: %w", err)
+	}
+
+	// Create Kubernetes clientset for API proxy access
+	clientset, err := kubernetes.NewForConfig(client.RESTConfig())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	return NewDebugClient(clientset, namespace, serviceName, DebugPort), nil
+}
+
+// MetricsClient provides access to the controller's metrics endpoint via Kubernetes API proxy.
+type MetricsClient struct {
+	clientset   kubernetes.Interface
+	namespace   string
+	serviceName string
+	port        string
+}
+
+// NewMetricsClient creates a new metrics client for accessing the controller via API proxy.
+func NewMetricsClient(clientset kubernetes.Interface, namespace, serviceName string, port int32) *MetricsClient {
+	return &MetricsClient{
+		clientset:   clientset,
+		namespace:   namespace,
+		serviceName: serviceName,
+		port:        strconv.Itoa(int(port)),
+	}
+}
+
+// GetMetrics fetches the raw metrics from the controller.
+// Includes retry logic with exponential backoff for resilience during parallel test execution.
+//
+// The retry budget is intentionally kept small (3 retries, 2s max backoff) to ensure
+// that higher-level Wait functions get enough retry opportunities. In CI with 17
+// parallel tests, the API server can be temporarily overloaded.
+func (mc *MetricsClient) GetMetrics(ctx context.Context) (string, error) {
+	const (
+		maxRetries        = 3                   // Reduced from 5 to allow more Wait-level retries
+		initialBackoff    = 100 * time.Millisecond
+		maxBackoff        = 2 * time.Second    // Reduced from 5s for tighter retry budget
+		minTimeForRetries = 3 * time.Second    // Minimum time needed for meaningful retries
+	)
+
+	// Check if we have enough time remaining for retries.
+	// If deadline is tight, try once and fail fast to let the Wait function retry.
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < minTimeForRetries {
+			// Not enough time for meaningful retries - try once and return
+			data, err := mc.clientset.CoreV1().Services(mc.namespace).ProxyGet(
+				"http",
+				mc.serviceName,
+				mc.port,
+				"metrics",
+				nil,
+			).DoRaw(ctx)
+			if err != nil {
+				return "", fmt.Errorf("failed to fetch metrics: %w", err)
+			}
+			return string(data), nil
+		}
+	}
+
+	var lastErr error
+	backoff := initialBackoff
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Wait before retry with exponential backoff
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(backoff):
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
+		}
+
+		data, err := mc.clientset.CoreV1().Services(mc.namespace).ProxyGet(
+			"http",
+			mc.serviceName,
+			mc.port,
+			"metrics",
+			nil,
+		).DoRaw(ctx)
+
+		if err == nil {
+			return string(data), nil
+		}
+
+		lastErr = err
+
+		// Check if the parent context is cancelled - don't retry in that case
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
+		// Check if error is retryable (server overloaded, temporary unavailability)
+		errStr := err.Error()
+		if strings.Contains(errStr, "unable to handle the request") ||
+			strings.Contains(errStr, "connection refused") ||
+			strings.Contains(errStr, "no endpoints available") {
+			// Retryable error, continue to next attempt
+			continue
+		}
+
+		// Non-retryable error, return immediately
+		return "", fmt.Errorf("failed to fetch metrics: %w", err)
+	}
+
+	return "", fmt.Errorf("failed to fetch metrics after %d retries: %w", maxRetries, lastErr)
+}
+
+// GetMetricValue fetches a single metric value from the controller's metrics endpoint.
+func (mc *MetricsClient) GetMetricValue(ctx context.Context, metricName string) (float64, error) {
+	metricsBody, err := mc.GetMetrics(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	// Parse the specific metric
+	scanner := bufio.NewScanner(strings.NewReader(metricsBody))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+
+		// Handle metrics with labels like: metric_name{label="value"} 123
+		// or simple metrics like: metric_name 123
+		if strings.HasPrefix(line, metricName) {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				value, err := strconv.ParseFloat(parts[len(parts)-1], 64)
+				if err != nil {
+					continue
+				}
+				return value, nil
+			}
+		}
+	}
+
+	return 0, nil // Metric not found, return 0
+}
+
+// GetLeaderPod parses metrics to find which pod is the leader.
+// Returns the pod name if found, empty string if no leader, or an error.
+func (mc *MetricsClient) GetLeaderPod(ctx context.Context) (string, error) {
+	metricsBody, err := mc.GetMetrics(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	// Parse the metrics to find the leader pod
+	scanner := bufio.NewScanner(strings.NewReader(metricsBody))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+
+		// Look for: haproxy_ic_leader_election_is_leader{pod="pod-name"} 1
+		if strings.Contains(line, "haproxy_ic_leader_election_is_leader") {
+			// Check if this metric reports is_leader=1
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				value := parts[len(parts)-1]
+				if value == "1" || value == "1.0" {
+					// Extract pod name from label: pod="pod-name"
+					start := strings.Index(line, `pod="`)
+					if start != -1 {
+						start += 5 // len(`pod="`)
+						end := strings.Index(line[start:], `"`)
+						if end != -1 {
+							return line[start : start+end], nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return "", nil // No leader found
+}
+
+// SetupMetricsAccess creates the metrics service (if not exists) and returns a MetricsClient.
+// This is used by WaitForControllerReady to check reconciliation metrics.
+// The MetricsClient uses the Kubernetes API server proxy, which works reliably in DinD environments.
+// This function is idempotent - it will not fail if the service already exists.
+func SetupMetricsAccess(ctx context.Context, client klient.Client, namespace string, timeout time.Duration) (*MetricsClient, error) {
+	// Create metrics service (idempotent - ignore if already exists)
+	metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
+	res := client.Resources(namespace)
+	if err := res.Create(ctx, metricsSvc); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("failed to create metrics service: %w", err)
+		}
+		// Service already exists, continue
+	}
+
+	// Wait for service endpoints to be ready
+	serviceName := ControllerDeploymentName + "-metrics"
+	if err := WaitForServiceEndpoints(ctx, client, namespace, serviceName, timeout); err != nil {
+		return nil, fmt.Errorf("failed waiting for metrics service endpoints: %w", err)
+	}
+
+	// Create Kubernetes clientset for API proxy access
+	clientset, err := kubernetes.NewForConfig(client.RESTConfig())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	return NewMetricsClient(clientset, namespace, serviceName, MetricsPort), nil
+}
+
+// GetLeaderPodFromMetrics fetches metrics via API proxy and returns which pod is the leader.
+// It parses the haproxy_ic_leader_election_is_leader{pod="..."} metric to find the pod
+// with value 1. Returns the pod name if found, empty string if no leader, or an error.
+func GetLeaderPodFromMetrics(ctx context.Context, metricsClient *MetricsClient) (string, error) {
+	return metricsClient.GetLeaderPod(ctx)
+}
+
+// CheckPodIsLeaderViaMetrics checks if a specific pod is the leader by fetching metrics via API proxy
+// and parsing the haproxy_ic_leader_election_is_leader metric.
+func CheckPodIsLeaderViaMetrics(ctx context.Context, metricsClient *MetricsClient, podName string) (bool, error) {
+	leaderPod, err := metricsClient.GetLeaderPod(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	return leaderPod == podName, nil
 }

@@ -138,3 +138,106 @@ func TestMetadataRoundTrip(t *testing.T) {
 
 	assert.Equal(t, original, roundTripped)
 }
+
+func TestTransformClientMetadataInJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "top level metadata is transformed",
+			input: `{"name":"test","metadata":{"comment":"Pod: test-pod"}}`,
+			want:  `{"metadata":{"comment":{"value":"Pod: test-pod"}},"name":"test"}`,
+		},
+		{
+			name:  "nested server metadata is transformed",
+			input: `{"name":"backend","servers":{"SRV_1":{"name":"SRV_1","metadata":{"comment":"Pod: test-pod"}}}}`,
+			want:  `{"name":"backend","servers":{"SRV_1":{"metadata":{"comment":{"value":"Pod: test-pod"}},"name":"SRV_1"}}}`,
+		},
+		{
+			name:  "deeply nested metadata is transformed",
+			input: `{"level1":{"level2":{"metadata":{"key":"value"}}}}`,
+			want:  `{"level1":{"level2":{"metadata":{"key":{"value":"value"}}}}}`,
+		},
+		{
+			name:  "already transformed metadata is not double-transformed",
+			input: `{"metadata":{"comment":{"value":"already nested"}}}`,
+			want:  `{"metadata":{"comment":{"value":"already nested"}}}`,
+		},
+		{
+			name:  "no metadata field unchanged",
+			input: `{"name":"test","address":"127.0.0.1"}`,
+			want:  `{"address":"127.0.0.1","name":"test"}`,
+		},
+		{
+			name:  "empty object unchanged",
+			input: `{}`,
+			want:  `{}`,
+		},
+		{
+			name:    "invalid JSON returns error",
+			input:   `{invalid}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := TransformClientMetadataInJSON([]byte(tt.input))
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.JSONEq(t, tt.want, string(got))
+		})
+	}
+}
+
+func TestNeedsMetadataTransformation(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata map[string]interface{}
+		want     bool
+	}{
+		{
+			name:     "empty map does not need transformation",
+			metadata: map[string]interface{}{},
+			want:     false,
+		},
+		{
+			name: "flat string value needs transformation",
+			metadata: map[string]interface{}{
+				"comment": "Pod: test-pod",
+			},
+			want: true,
+		},
+		{
+			name: "nested map with value key does not need transformation",
+			metadata: map[string]interface{}{
+				"comment": map[string]interface{}{
+					"value": "Pod: test-pod",
+				},
+			},
+			want: false,
+		},
+		{
+			name: "nested map without value key needs transformation",
+			metadata: map[string]interface{}{
+				"comment": map[string]interface{}{
+					"other": "Pod: test-pod",
+				},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := needsMetadataTransformation(tt.metadata)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

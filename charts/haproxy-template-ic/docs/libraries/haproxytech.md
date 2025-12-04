@@ -1,27 +1,97 @@
-# HAProxy Tech Annotations Support
+# HAProxy Annotations Library
 
-The HAProxy Template Ingress Controller chart provides support for HAProxy Tech Ingress annotations through the `haproxytech.yaml` template library. This document describes which annotations from the [HAProxy Ingress Controller](https://www.haproxy.com/documentation/kubernetes-ingress/community/configuration-reference/ingress) are currently supported.
+The HAProxy Annotations library provides support for `haproxy.org/*` annotations, enabling fine-grained control over HAProxy behavior through Kubernetes resource annotations.
 
 ## Overview
 
-Annotation support is implemented as a template library that plugs into the controller's resource-agnostic architecture. The controller itself doesn't have built-in annotation handling - annotation support is added by the chart through template libraries.
+The HAProxy Annotations library implements annotations compatible with the [HAProxy Kubernetes Ingress Controller](https://www.haproxy.com/documentation/kubernetes-ingress/). This enables:
 
-**Enable HAProxy Tech annotation support:**
+- Basic authentication
+- SSL/TLS redirection
+- CORS configuration
+- Rate limiting
+- Session persistence
+- Path rewriting
+- Header manipulation
+- Load balancing algorithms
+- Health check configuration
+- Timeout customization
 
-```yaml
-# values.yaml
-controller:
-  templateLibraries:
-    haproxytech:
-      enabled: true
-```
+This library is enabled by default.
 
 **Important notes:**
 
 - Annotations apply to **Ingress resources only** (not Services)
-- Gateway API resources (HTTPRoute, GRPCRoute) use filters instead of annotations - see [Gateway API Support](gateway-api.md)
+- Gateway API resources (HTTPRoute, GRPCRoute) use filters instead of annotations - see [Gateway API Library](gateway.md)
 - All annotations use the `haproxy.org/` prefix
 - Multiple ingresses can share the same annotation values (deduplication is handled automatically)
+
+## Configuration
+
+```yaml
+controller:
+  templateLibraries:
+    haproxytech:
+      enabled: true  # Enabled by default
+```
+
+## Extension Points
+
+### Extension Points Used
+
+The HAProxy Annotations library implements these extension points from base.yaml:
+
+| Extension Point | This Library's Snippets | What They Generate |
+|-----------------|-------------------------|-------------------|
+| Global Top | `global-top-haproxytech-ingress-auth` | Userlist definitions for basic auth |
+| Frontend Filters | `frontend-filters-haproxytech-*` | SSL redirect, CORS, access control, logging |
+| Backend Directives | `backend-directives-haproxytech-*` | Load balancing, rate limiting, health checks |
+
+### Frontend Filter Snippets
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `frontend-filters-haproxytech-ssl-redirect` | `haproxy.org/ssl-redirect` |
+| `frontend-filters-haproxytech-redirects` | `haproxy.org/request-redirect`, `haproxy.org/request-redirect-code` |
+| `frontend-filters-haproxytech-cors` | `haproxy.org/cors-*` annotations |
+| `frontend-filters-haproxytech-access-control` | `haproxy.org/allowlist-with-*`, `haproxy.org/denylist-with-*` |
+| `frontend-filters-haproxytech-logging` | `haproxy.org/log-format` |
+| `frontend-filters-haproxytech-basic-headers` | `haproxy.org/forwarded-for`, `haproxy.org/set-host` |
+| `frontend-filters-haproxytech-timeouts` | `haproxy.org/timeout-client` |
+
+### Backend Directive Snippets
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `backend-directives-haproxytech-load-balance` | `haproxy.org/load-balance` |
+| `backend-directives-haproxytech-rate-limiting` | `haproxy.org/rate-limit-*` |
+| `backend-directives-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
+| `backend-directives-haproxytech-advanced` | `haproxy.org/server-*`, `haproxy.org/check-*` |
+| `backend-directives-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` |
+| `backend-directives-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
+| `backend-directives-haproxytech-set-host` | `haproxy.org/set-host` |
+| `backend-directives-haproxytech-health-checks` | `haproxy.org/check`, `haproxy.org/check-*` |
+| `backend-directives-haproxytech-pod-maxconn` | `haproxy.org/pod-maxconn` |
+| `backend-directives-haproxytech-timeouts` | `haproxy.org/timeout-*` |
+
+### Injecting Custom Annotations
+
+You can extend annotation processing by adding snippets:
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      # Add custom frontend filter
+      frontend-filters-custom-security:
+        template: |
+          {%- for ingress in resources.ingresses.List() %}
+          {%- set security_level = ingress.metadata.annotations["custom.io/security-level"] | default("") %}
+          {%- if security_level == "high" %}
+          http-request deny unless { ssl_fc }
+          {%- endif %}
+          {%- endfor %}
+```
 
 ## Access Control & IP Filtering
 
@@ -1763,25 +1833,6 @@ haproxy.org/auth-realm: "API Access"
 
 4. **Secret format for auth** - Password values must be base64-encoded hashes only, not htpasswd format (`username:hash`). This simplifies template logic and aligns with Kubernetes Secret best practices.
 
-## Testing Coverage
-
-### Well-tested
-
-**Authentication (3 annotations):**
-- ✅ `auth-type`, `auth-secret`, `auth-realm`
-- ✅ Cross-namespace secret references
-- ✅ Custom realm values
-- ✅ Shared userlist deduplication
-- ✅ Invalid auth type error handling
-- ✅ Missing secret error handling
-
-### Other Annotations
-
-The remaining 51 annotations have varying levels of test coverage:
-- **47 fully supported annotations** include validation tests in the template library
-- **0 partially implemented annotations** - all features are either fully supported or not implemented
-- **3 not implemented annotations** (including 2 deprecated) have no test coverage
-
 ## Implementation Status Summary
 
 **Total annotations**: 54
@@ -1817,5 +1868,7 @@ The remaining 51 annotations have varying levels of test coverage:
 
 - [HAProxy Ingress Controller Documentation](https://www.haproxy.com/documentation/kubernetes-ingress/community/configuration-reference/ingress)
 - [HAProxy Ingress Controller Source Code](https://github.com/haproxytech/kubernetes-ingress)
-- [Gateway API Support](./gateway-api-support.md) - For Gateway API resources (HTTPRoute, GRPCRoute)
-- [Template Library Architecture](../CLAUDE.md)
+- [Gateway API Library](gateway.md) - For Gateway API resources (HTTPRoute, GRPCRoute)
+- [Template Libraries Overview](../template-libraries.md) - How template libraries work
+- [Base Library](base.md) - Extension points
+- [Ingress Library](ingress.md) - Ingress resource support
