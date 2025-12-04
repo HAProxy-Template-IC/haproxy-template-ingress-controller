@@ -11,6 +11,8 @@ theme:
   name: material
   logo: assets/logo-icon.svg
   favicon: assets/logo-icon.svg
+  icon:
+    alternate: material/book-open-page-variant
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -57,7 +59,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
-  - User Guide:
+  - Usage:
     - Templating: templating.md
     - CRD Reference: crd-reference.md
     - Watching Resources: watching-resources.md
@@ -88,16 +90,10 @@ nav:
     - Linting: development/linting.md
 
 extra:
-  version:
-    provider: mike
   alternate:
     - name: Helm Chart Docs
       link: https://haproxy-template-ic.gitlab.io/helm-chart/latest/
       lang: helm
-  social:
-    - icon: fontawesome/brands/gitlab
-      link: https://gitlab.com/haproxy-template-ic
 
 plugins:
   - search
-  - mike
