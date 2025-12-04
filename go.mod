@@ -3,7 +3,7 @@ module haproxy-template-ic
 go 1.25.3
 
 require (
-	github.com/KimMachineGun/automemlimit v0.7.4
+	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/arch-go/arch-go v1.6.2
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/golangci/golangci-lint v1.64.8
