@@ -17,6 +17,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -42,7 +43,7 @@ const (
 // This component implements the debug.StateProvider interface and provides
 // thread-safe access to the controller's internal state for debug purposes.
 //
-// It subscribes to key events and updates its cached state accordingly:.
+// It subscribes to key events and updates its cached state accordingly:
 //   - ConfigValidatedEvent → updates config cache
 //   - CredentialsUpdatedEvent → updates credentials cache
 //   - TemplateRenderedEvent → updates rendered config cache
@@ -53,6 +54,8 @@ const (
 type StateCache struct {
 	bus             *busevents.EventBus
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent
+	logger          *slog.Logger
+	eventChan       <-chan busevents.Event
 
 	// Cached state (thread-safe)
 	mu                   sync.RWMutex
@@ -95,10 +98,6 @@ type StateCache struct {
 	endpointsSucceeded   int
 	endpointsFailed      int
 	failedEndpoints      []debug.FailedEndpoint
-
-	// Initialization state (guarded by initOnce)
-	initOnce  sync.Once
-	eventChan <-chan busevents.Event
 }
 
 // Compile-time check that StateCache implements debug.StateProvider interface.
@@ -106,39 +105,32 @@ var _ debug.StateProvider = (*StateCache)(nil)
 
 // NewStateCache creates a new state cache component.
 //
-// The StateCache subscribes to the EventBus when Start() is called and must be started
-// BEFORE bus.Start() to ensure it receives all buffered startup events.
+// The StateCache subscribes to the EventBus in the constructor (before EventBus.Start())
+// to ensure proper startup synchronization and receive all buffered startup events.
 //
 // Usage:
 //
-//	stateCache := NewStateCache(bus, resourceWatcher)
-//	stateCache.Start(ctx)  // Subscribe immediately, process events in background
-//	bus.Start()            // Release buffered events
-func NewStateCache(bus *busevents.EventBus, resourceWatcher *resourcewatcher.ResourceWatcherComponent) *StateCache {
+//	stateCache := NewStateCache(bus, resourceWatcher, logger)
+//	go stateCache.Start(ctx)  // Process events in background
+//	bus.Start()               // Release buffered events
+func NewStateCache(bus *busevents.EventBus, resourceWatcher *resourcewatcher.ResourceWatcherComponent, logger *slog.Logger) *StateCache {
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps
+	eventChan := bus.Subscribe(100)
+
 	return &StateCache{
 		bus:             bus,
 		resourceWatcher: resourceWatcher,
+		logger:          logger,
+		eventChan:       eventChan,
 	}
 }
 
-// Start subscribes to the EventBus and begins processing events.
+// Start begins processing events from the EventBus.
 //
-// This method:
-// 1. Subscribes to the EventBus (exactly once, thread-safe)
-// 2. Starts the event processing loop
-//
-// IMPORTANT: Call this BEFORE bus.Start() to ensure the StateCache receives all
-// buffered startup events. The subscription happens immediately when this method
-// is called, before the event loop starts.
-//
-// This method blocks until the context is cancelled.
+// The component is already subscribed to the EventBus (subscription happens in NewStateCache()),
+// so this method only processes events. This method blocks until the context is cancelled.
 func (sc *StateCache) Start(ctx context.Context) error {
-	// Subscribe to EventBus exactly once (thread-safe)
-	sc.initOnce.Do(func() {
-		sc.eventChan = sc.bus.Subscribe(100)
-	})
-
-	// Event processing loop
 	for {
 		select {
 		case event := <-sc.eventChan:
@@ -185,7 +177,9 @@ func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 		sc.currentConfigVersion = e.Version
 		sc.mu.Unlock()
 	} else {
-		fmt.Printf("DEBUG: StateCache: ConfigValidatedEvent config type assertion failed, got %T\n", e.Config)
+		sc.logger.Error("type assertion failed for ConfigValidatedEvent config",
+			"expected", "*coreconfig.Config",
+			"got", fmt.Sprintf("%T", e.Config))
 	}
 }
 
@@ -196,7 +190,9 @@ func (sc *StateCache) handleCredentialsUpdated(e *events.CredentialsUpdatedEvent
 		sc.currentCredsVersion = e.SecretVersion
 		sc.mu.Unlock()
 	} else {
-		fmt.Printf("DEBUG: StateCache: CredentialsUpdatedEvent credentials type assertion failed, got %T\n", e.Credentials)
+		sc.logger.Error("type assertion failed for CredentialsUpdatedEvent credentials",
+			"expected", "*coreconfig.Credentials",
+			"got", fmt.Sprintf("%T", e.Credentials))
 	}
 }
 
@@ -214,7 +210,9 @@ func (sc *StateCache) handleTemplateRendered(e *events.TemplateRenderedEvent) {
 		sc.lastAuxFiles = auxFiles
 		sc.lastAuxFilesTime = time.Now()
 	} else if e.AuxiliaryFiles != nil {
-		fmt.Printf("DEBUG: StateCache: TemplateRenderedEvent auxiliary files type assertion failed, got %T\n", e.AuxiliaryFiles)
+		sc.logger.Error("type assertion failed for TemplateRenderedEvent auxiliary files",
+			"expected", "*dataplane.AuxiliaryFiles",
+			"got", fmt.Sprintf("%T", e.AuxiliaryFiles))
 	}
 }
 

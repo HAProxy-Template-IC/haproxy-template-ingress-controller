@@ -27,19 +27,49 @@ Defines all domain-specific event types used for controller coordination. This i
 - `pkg/events` - Generic pub/sub infrastructure (domain-agnostic)
 - `pkg/controller/events` - Domain event types (controller-specific)
 
+## File Organization
+
+Events are organized into separate files by category:
+
+| File | Description |
+|------|-------------|
+| `types.go` | Event type constants and package documentation |
+| `lifecycle.go` | System startup/shutdown events |
+| `config.go` | ConfigMap/Secret changes and validation events |
+| `resource.go` | Kubernetes resource indexing events |
+| `reconciliation.go` | Orchestration lifecycle events |
+| `template.go` | Template rendering events |
+| `validation.go` | Configuration validation events |
+| `deployment.go` | HAProxy deployment events |
+| `storage.go` | Auxiliary file sync events |
+| `discovery.go` | HAProxy pod discovery events |
+| `credentials.go` | Credentials loading and validation events |
+| `leader.go` | Leader election events |
+| `publishing.go` | Config publishing events (includes SyncMetadata types) |
+| `certificate.go` | Webhook certificate events |
+| `webhookobservability.go` | Webhook validation observability events |
+| `http.go` | HTTP resource events |
+| `webhook.go` | Scatter-gather request/response events |
+
 ## Event Categories
 
 Events are organized by lifecycle phase:
 
-1. **Lifecycle Events** - System startup/shutdown
-2. **Configuration Events** - ConfigMap/Secret changes and validation
-3. **Resource Events** - Kubernetes resource indexing
-4. **Reconciliation Events** - Orchestration lifecycle
-5. **Template Events** - Template rendering
-6. **Validation Events** - Configuration validation
-7. **Deployment Events** - HAProxy deployment
-8. **Storage Events** - Auxiliary file sync
-9. **HAProxy Pod Events** - Pod discovery
+1. **Lifecycle Events** (`lifecycle.go`) - System startup/shutdown
+2. **Configuration Events** (`config.go`) - ConfigMap/Secret changes and validation
+3. **Resource Events** (`resource.go`) - Kubernetes resource indexing
+4. **Reconciliation Events** (`reconciliation.go`) - Orchestration lifecycle
+5. **Template Events** (`template.go`) - Template rendering
+6. **Validation Events** (`validation.go`) - Configuration validation
+7. **Deployment Events** (`deployment.go`) - HAProxy deployment
+8. **Storage Events** (`storage.go`) - Auxiliary file sync
+9. **HAProxy Pod Events** (`discovery.go`) - Pod discovery
+10. **Credentials Events** (`credentials.go`) - Credentials management
+11. **Leader Election Events** (`leader.go`) - Leadership transitions
+12. **Publishing Events** (`publishing.go`) - Config publishing
+13. **Certificate Events** (`certificate.go`) - Webhook certificates
+14. **Webhook Events** (`webhookobservability.go`, `webhook.go`) - Webhook validation
+15. **HTTP Resource Events** (`http.go`) - HTTP resource management
 
 ## Key Principles
 
@@ -214,33 +244,36 @@ ReconciliationCompletedEvent{
 
 ### Checklist
 
-1. **Define event struct** with exported fields
-2. **Add EventType constant** to types.go
-3. **Implement EventType() method** with pointer receiver
-4. **Create constructor** with defensive copying
-5. **Document contract** (when published, who consumes)
-6. **Update commentator** to log the event
-7. **Add to README.md** event catalog
+1. **Add EventType constant** to `types.go`
+2. **Choose appropriate category file** (or create new one if needed)
+3. **Define event struct** with exported fields in the category file
+4. **Implement EventType() method** with pointer receiver
+5. **Create constructor** with defensive copying
+6. **Document contract** (when published, who consumes)
+7. **Update commentator** to log the event
+8. **Add to README.md** event catalog
 
 ### Example
 
 ```go
-// Step 1: Define struct
+// Step 1: Add constant to types.go
+const EventTypeMyNew = "my.new"
+
+// Step 2-5: Add to appropriate category file (e.g., config.go)
+
+// Define struct
 type MyNewEvent struct {
     Field1 string
     Field2 int
     Data   []string  // Will be copied in constructor
 }
 
-// Step 2: Add constant
-const EventTypeMyNew = "my.new"
-
-// Step 3: Implement EventType()
+// Implement EventType()
 func (e *MyNewEvent) EventType() string {
     return EventTypeMyNew
 }
 
-// Step 4: Create constructor
+// Create constructor with defensive copy
 func NewMyNewEvent(field1 string, field2 int, data []string) *MyNewEvent {
     // Defensive copy
     dataCopy := make([]string, len(data))
@@ -253,8 +286,8 @@ func NewMyNewEvent(field1 string, field2 int, data []string) *MyNewEvent {
     }
 }
 
-// Step 5: Document in README.md
-// Step 6: Update pkg/controller/commentator
+// Step 6: Document in README.md
+// Step 7: Update pkg/controller/commentator
 ```
 
 ## Common Pitfalls

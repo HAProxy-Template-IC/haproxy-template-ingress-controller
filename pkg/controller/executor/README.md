@@ -4,9 +4,7 @@ Executor component - orchestrates reconciliation cycles.
 
 ## Overview
 
-Stage 5 component that coordinates Renderer, Validator, and Deployer components to complete reconciliation cycles.
-
-**Current State**: Minimal stub implementation establishing event flow.
+Stage 5 component that coordinates Renderer, Validator, and Deployer components via event subscriptions. It observes the reconciliation pipeline and publishes lifecycle events for observability.
 
 ## Quick Start
 
@@ -21,15 +19,17 @@ go executor.Start(ctx)
 
 ### Subscribes To
 
-- **ReconciliationTriggeredEvent**: Starts reconciliation
+- **ReconciliationTriggeredEvent**: Starts reconciliation cycle
+- **TemplateRenderedEvent**: Template rendering completed successfully
+- **TemplateRenderFailedEvent**: Template rendering failed
+- **ValidationCompletedEvent**: Configuration validation passed
+- **ValidationFailedEvent**: Configuration validation failed
 
 ### Publishes
 
-- **ReconciliationStartedEvent**: Cycle begins
-- **ReconciliationCompletedEvent**: Cycle completes
-- (TODO) **TemplateRenderedEvent**: Rendering done
-- (TODO) **ValidationCompletedEvent**: Validation done
-- (TODO) **DeploymentCompletedEvent**: Deployment done
+- **ReconciliationStartedEvent**: Reconciliation cycle begins
+- **ReconciliationCompletedEvent**: Reconciliation cycle completes successfully
+- **ReconciliationFailedEvent**: Reconciliation cycle failed at render or validation stage
 
 ## License
 

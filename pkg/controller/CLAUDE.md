@@ -413,61 +413,40 @@ func (r *Reconciler) Start(ctx context.Context) error {
 
 ### executor/ - Reconciliation Orchestrator
 
-Orchestrates reconciliation cycles by coordinating pure components (Stage 5 component 2):
+Observes and reports on reconciliation cycles via event subscriptions (Stage 5 component 2):
 
 ```go
 // pkg/controller/executor/executor.go
 type Executor struct {
-    eventBus *busevents.EventBus
-    logger   *slog.Logger
+    eventBus  *busevents.EventBus
+    eventChan <-chan busevents.Event  // Subscribed in constructor
+    logger    *slog.Logger
 }
 
-func (e *Executor) Start(ctx context.Context) error {
-    eventChan := e.eventBus.Subscribe(EventBufferSize)
-
-    for {
-        select {
-        case event := <-eventChan:
-            if ev, ok := event.(*events.ReconciliationTriggeredEvent); ok {
-                e.handleReconciliationTriggered(ev)
-            }
-
-        case <-ctx.Done():
-            return ctx.Err()
-        }
+func (e *Executor) handleEvent(event busevents.Event) {
+    switch ev := event.(type) {
+    case *events.ReconciliationTriggeredEvent:
+        e.handleReconciliationTriggered(ev)
+    case *events.TemplateRenderedEvent:
+        e.handleTemplateRendered(ev)
+    case *events.TemplateRenderFailedEvent:
+        e.handleTemplateRenderFailed(ev)
+    case *events.ValidationCompletedEvent:
+        e.handleValidationCompleted(ev)
+    case *events.ValidationFailedEvent:
+        e.handleValidationFailed(ev)
     }
-}
-
-func (e *Executor) handleReconciliationTriggered(event *events.ReconciliationTriggeredEvent) {
-    startTime := time.Now()
-
-    // Publish started event
-    e.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason))
-
-    // TODO: Orchestrate pure components:
-    //   1. Renderer - Generate HAProxy config from templates
-    //   2. Validator - Validate generated configuration
-    //   3. Deployer - Deploy to HAProxy instances
-
-    // Publish completed event
-    durationMs := time.Since(startTime).Milliseconds()
-    e.eventBus.Publish(events.NewReconciliationCompletedEvent(durationMs))
 }
 ```
 
-**Current State:**
+**Implementation:**
 
-- Minimal stub implementation establishing event flow
-- Subscribes to ReconciliationTriggeredEvent
-- Publishes ReconciliationStartedEvent and ReconciliationCompletedEvent
-- Measures reconciliation duration for observability
-
-**Future Orchestration:**
-
-- Will call Renderer pure component for template rendering
-- Will call Validator pure component for configuration validation
-- Will call Deployer pure component for HAProxy deployment
-- Will publish events at each stage (TemplateRenderedEvent, ValidationCompletedEvent, DeploymentCompletedEvent)
+- Subscribes in constructor (before EventBus.Start())
+- Observes ReconciliationTriggeredEvent and publishes ReconciliationStartedEvent
+- Observes TemplateRenderedEvent/TemplateRenderFailedEvent from Renderer
+- Observes ValidationCompletedEvent/ValidationFailedEvent from Validator
+- Publishes ReconciliationCompletedEvent or ReconciliationFailedEvent based on pipeline outcome
+- Logs detailed information at each stage for observability
 
 ## Staged Startup Pattern
 

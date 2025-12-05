@@ -23,46 +23,41 @@ Stage 5 component that orchestrates reconciliation cycles. Coordinates pure comp
 
 ## Architecture
 
+The Executor coordinates the reconciliation pipeline via event subscriptions. It subscribes to events from upstream components (Reconciler, Renderer, Validator) and publishes events for observability.
+
 ```
 ReconciliationTriggeredEvent
     ↓
 Executor
     ├─→ Publish ReconciliationStartedEvent
-    ├─→ (TODO) Orchestrate Renderer
-    ├─→ (TODO) Orchestrate Validator
-    ├─→ (TODO) Orchestrate Deployer
-    └─→ Publish ReconciliationCompletedEvent
+    ├─→ Subscribe to TemplateRenderedEvent / TemplateRenderFailedEvent
+    ├─→ Subscribe to ValidationCompletedEvent / ValidationFailedEvent
+    └─→ Publish ReconciliationCompletedEvent / ReconciliationFailedEvent
 ```
 
-**Current State**: Minimal stub implementation. Establishes event flow but doesn't yet call pure components.
-
-**Future**: Will orchestrate:
-
-1. Renderer - Generate HAProxy config from templates
-2. Validator - Validate generated configuration
-3. Deployer - Deploy to HAProxy instances
-
 ## Event Flow
+
+The Executor observes the reconciliation pipeline and publishes lifecycle events:
 
 ```
 Reconciler → ReconciliationTriggeredEvent
     ↓
-Executor → ReconciliationStartedEvent
+Executor → Publishes ReconciliationStartedEvent
     ↓
-(TODO) Call Renderer
+Renderer → TemplateRenderedEvent (or TemplateRenderFailedEvent)
     ↓
-Executor → TemplateRenderedEvent
+Executor → Logs rendering result, publishes ReconciliationFailedEvent on failure
     ↓
-(TODO) Call Validator
+Validator → ValidationCompletedEvent (or ValidationFailedEvent)
     ↓
-Executor → ValidationCompletedEvent
+Executor → Logs validation result, publishes ReconciliationFailedEvent on failure
     ↓
-(TODO) Call Deployer
+Deployer → DeploymentCompletedEvent
     ↓
-Executor → DeploymentCompletedEvent
-    ↓
-Executor → ReconciliationCompletedEvent
+Executor → Publishes ReconciliationCompletedEvent
 ```
+
+Components coordinate via events - the Executor observes and reports on the pipeline rather than directly calling components.
 
 ## Resources
 

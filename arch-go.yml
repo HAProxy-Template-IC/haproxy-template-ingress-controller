@@ -146,7 +146,7 @@ dependenciesRules:
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
 
-  # Rule 18: httpstore package should NOT depend on other top-level packages (pure library)
+  # Rule 13: httpstore package should NOT depend on other top-level packages (pure library)
   - package: "**.pkg.httpstore.**"
     shouldNotDependsOn:
       internal:
@@ -160,7 +160,7 @@ dependenciesRules:
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
 
-  # Rule 13: webhook package should NOT depend on other top-level packages (pure library)
+  # Rule 14: webhook package should NOT depend on other top-level packages (pure library)
   - package: "**.pkg.webhook.**"
     shouldNotDependsOn:
       internal:
@@ -174,7 +174,7 @@ dependenciesRules:
         - "**.pkg.metrics.**"
         - "**.pkg.templating.**"
 
-  # Rule 14: apis package should NOT depend on other top-level packages (CRD types)
+  # Rule 15: apis package should NOT depend on other top-level packages (CRD types)
   - package: "**.pkg.apis.**"
     shouldNotDependsOn:
       internal:
@@ -189,7 +189,7 @@ dependenciesRules:
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
 
-  # Rule 15: generated package should NOT depend on other top-level packages (generated code)
+  # Rule 16: generated package should NOT depend on other top-level packages (generated code)
   - package: "**.pkg.generated.**"
     shouldNotDependsOn:
       internal:
@@ -204,7 +204,7 @@ dependenciesRules:
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
 
-  # Rule 16: dataplane/discovery is part of dataplane (already covered by rule 3)
+  # Rule 17: dataplane/discovery is part of dataplane (already covered by rule 3)
   - package: "**.pkg.dataplane.discovery.**"
     shouldNotDependsOn:
       internal:
@@ -217,7 +217,7 @@ dependenciesRules:
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
 
-  # Rule 17: dataplane/types is part of dataplane (already covered by rule 3)
+  # Rule 18: dataplane/types is part of dataplane (already covered by rule 3)
   - package: "**.pkg.dataplane.types.**"
     shouldNotDependsOn:
       internal:
