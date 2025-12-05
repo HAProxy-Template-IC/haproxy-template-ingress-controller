@@ -742,3 +742,257 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 		t.Error("expected IsSynced() to be true after Start() completes")
 	}
 }
+
+// TestSingleWatcher_LastEventTimeUpdatesOnEvent verifies that LastEventTime is updated
+// when events are received.
+func TestSingleWatcher_LastEventTimeUpdatesOnEvent(t *testing.T) {
+	fakeClient := createFakeClientForSingleWatcher()
+	cfg := validSingleWatcherConfig()
+
+	w, err := NewSingle(cfg, fakeClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	// Initially, LastEventTime should be zero
+	if !w.LastEventTime().IsZero() {
+		t.Error("expected LastEventTime() to be zero initially")
+	}
+
+	// Mark as synced to enable callbacks
+	w.synced.Store(true)
+
+	// Simulate an event
+	beforeEvent := time.Now()
+	w.handleAdd(createUnstructuredConfigMap("test-config", "default", ""))
+
+	// Verify LastEventTime was updated
+	lastEventTime := w.LastEventTime()
+	if lastEventTime.IsZero() {
+		t.Error("expected LastEventTime() to be non-zero after event")
+	}
+
+	// Verify it's within a reasonable range (allow 1 second tolerance due to Unix timestamp precision)
+	// LastEventTime stores Unix seconds, so we truncate beforeEvent to second precision
+	beforeEventTruncated := beforeEvent.Truncate(time.Second)
+	if lastEventTime.Before(beforeEventTruncated) {
+		t.Errorf("LastEventTime() %v is before %v", lastEventTime, beforeEventTruncated)
+	}
+	if lastEventTime.After(beforeEvent.Add(time.Second)) {
+		t.Errorf("LastEventTime() %v is more than 1 second after %v", lastEventTime, beforeEvent)
+	}
+}
+
+// TestSingleWatcher_LastEventTimeUpdatesOnAllEventTypes verifies that LastEventTime
+// is updated for Add, Update, and Delete events.
+func TestSingleWatcher_LastEventTimeUpdatesOnAllEventTypes(t *testing.T) {
+	fakeClient := createFakeClientForSingleWatcher()
+	cfg := validSingleWatcherConfig()
+
+	w, err := NewSingle(cfg, fakeClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	testCases := []struct {
+		name    string
+		handler func()
+	}{
+		{
+			name: "Add",
+			handler: func() {
+				w.handleAdd(createUnstructuredConfigMap("add-config", "ns-add", ""))
+			},
+		},
+		{
+			name: "Update",
+			handler: func() {
+				old := createUnstructuredConfigMap("update-config", "ns-update", "1")
+				new := createUnstructuredConfigMap("update-config", "ns-update", "2")
+				w.handleUpdate(old, new)
+			},
+		},
+		{
+			name: "Delete",
+			handler: func() {
+				w.handleDelete(createUnstructuredConfigMap("delete-config", "ns-delete", ""))
+			},
+		},
+	}
+
+	// Mark as synced
+	w.synced.Store(true)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Reset timestamp
+			w.lastEventTime.Store(0)
+
+			// Verify zero before event
+			if !w.LastEventTime().IsZero() {
+				t.Error("expected LastEventTime() to be zero before event")
+			}
+
+			// Trigger event
+			tc.handler()
+
+			// Verify non-zero after event
+			if w.LastEventTime().IsZero() {
+				t.Errorf("expected LastEventTime() to be non-zero after %s event", tc.name)
+			}
+		})
+	}
+}
+
+// TestSingleWatcher_LastWatchErrorInitiallyZero verifies that LastWatchError returns
+// zero time when no watch errors have occurred.
+func TestSingleWatcher_LastWatchErrorInitiallyZero(t *testing.T) {
+	fakeClient := createFakeClientForSingleWatcher()
+	cfg := validSingleWatcherConfig()
+
+	w, err := NewSingle(cfg, fakeClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	// Initially, LastWatchError should be zero
+	if !w.LastWatchError().IsZero() {
+		t.Error("expected LastWatchError() to be zero initially")
+	}
+}
+
+// TestSingleWatcher_LastWatchErrorUpdatesOnError verifies that LastWatchError is updated
+// when a watch error occurs.
+func TestSingleWatcher_LastWatchErrorUpdatesOnError(t *testing.T) {
+	fakeClient := createFakeClientForSingleWatcher()
+	cfg := validSingleWatcherConfig()
+
+	w, err := NewSingle(cfg, fakeClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	// Initially zero
+	if !w.LastWatchError().IsZero() {
+		t.Error("expected LastWatchError() to be zero initially")
+	}
+
+	// Simulate a watch error
+	beforeError := time.Now()
+	w.handleWatchError(nil, errors.New("simulated watch error"))
+
+	// Verify LastWatchError was updated
+	lastWatchError := w.LastWatchError()
+	if lastWatchError.IsZero() {
+		t.Error("expected LastWatchError() to be non-zero after error")
+	}
+
+	// Verify it's within a reasonable range (allow 1 second tolerance due to Unix timestamp precision)
+	// LastWatchError stores Unix seconds, so we truncate beforeError to second precision
+	beforeErrorTruncated := beforeError.Truncate(time.Second)
+	if lastWatchError.Before(beforeErrorTruncated) {
+		t.Errorf("LastWatchError() %v is before %v", lastWatchError, beforeErrorTruncated)
+	}
+	if lastWatchError.After(beforeError.Add(time.Second)) {
+		t.Errorf("LastWatchError() %v is more than 1 second after %v", lastWatchError, beforeError)
+	}
+}
+
+// Helper functions for tests
+
+// createFakeClientForSingleWatcher creates a fake Kubernetes client suitable for SingleWatcher tests.
+func createFakeClientForSingleWatcher() *client.Client {
+	fakeClientset := kubefake.NewSimpleClientset()
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	return client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+}
+
+// validSingleWatcherConfig returns a valid SingleWatcherConfig for testing.
+func validSingleWatcherConfig() *types.SingleWatcherConfig {
+	return &types.SingleWatcherConfig{
+		GVR: schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "configmaps",
+		},
+		Namespace: "default",
+		Name:      "test-config",
+		OnChange: func(obj interface{}) error {
+			return nil
+		},
+	}
+}
+
+// createUnstructuredConfigMap creates an unstructured ConfigMap for testing.
+func createUnstructuredConfigMap(name, namespace, resourceVersion string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+		},
+	}
+	if resourceVersion != "" {
+		obj.SetResourceVersion(resourceVersion)
+	}
+	return obj
+}
+
+// TestSingleWatcher_SkipsResyncCallback verifies that Update events with unchanged
+// resource version (resync events) don't trigger callbacks.
+func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
+	k8sClient := createFakeClientForSingleWatcher()
+
+	callbackCount := 0
+	cfg := types.SingleWatcherConfig{
+		GVR: schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "configmaps",
+		},
+		Namespace: "default",
+		Name:      "test-config",
+		OnChange: func(obj interface{}) error {
+			callbackCount++
+			return nil
+		},
+	}
+
+	w, err := NewSingle(&cfg, k8sClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	// Mark as synced
+	w.synced.Store(true)
+
+	// Simulate real update: old version "100" -> new version "101"
+	oldResource := createUnstructuredConfigMap("test-config", "default", "100")
+	newResource := createUnstructuredConfigMap("test-config", "default", "101")
+	w.handleUpdate(oldResource, newResource)
+
+	// Callback should have been called for real update
+	if callbackCount != 1 {
+		t.Errorf("expected 1 callback for real update, got %d", callbackCount)
+	}
+
+	// Simulate resync: same version "101" -> "101"
+	w.handleUpdate(newResource, newResource)
+
+	// Callback should NOT have been called for resync
+	if callbackCount != 1 {
+		t.Errorf("expected still 1 callback (resync should be skipped), got %d", callbackCount)
+	}
+
+	// Simulate another real update: version "101" -> "102"
+	newerResource := createUnstructuredConfigMap("test-config", "default", "102")
+	w.handleUpdate(newResource, newerResource)
+
+	// Callback should have been called again for the second real update
+	if callbackCount != 2 {
+		t.Errorf("expected 2 callbacks after second real update, got %d", callbackCount)
+	}
+}

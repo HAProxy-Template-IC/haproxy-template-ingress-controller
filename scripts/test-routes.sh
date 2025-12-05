@@ -878,7 +878,73 @@ wait_for_services_ready() {
     fi
     ok "HAProxy configuration with backends deployed"
 
-    # Step 4: Test HTTP connectivity (pods, endpoints, and config with backends are ready)
+    # Step 8: Wait for HAProxy reloads to complete on all pods
+    # This prevents race conditions where tests run before HAProxy finishes reloading.
+    # Without this, requests may hit old worker processes that don't have the new config.
+    log INFO "Waiting for HAProxy reloads to complete..."
+    local all_reloads_complete=false
+    local reload_attempts=30  # 60 seconds max
+
+    for reload_attempt in $(seq 1 $reload_attempts); do
+        all_reloads_complete=true
+
+        # Get HAProxyCfg status with per-pod deployment info
+        local pods_json
+        pods_json=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get haproxycfg \
+            haproxy-template-ic-config -o json 2>/dev/null) || {
+            debug "Could not get HAProxyCfg status, skipping reload check"
+            break
+        }
+
+        # For each pod in deployedToPods, check reload status via DataPlane API
+        local pod_count
+        pod_count=$(echo "$pods_json" | jq -r '.status.deployedToPods | length' 2>/dev/null || echo 0)
+
+        if [[ "$pod_count" -eq 0 ]]; then
+            debug "No pods in deployedToPods status"
+            all_reloads_complete=false
+            sleep 2
+            continue
+        fi
+
+        for i in $(seq 0 $((pod_count - 1))); do
+            local pod_name reload_id
+            pod_name=$(echo "$pods_json" | jq -r ".status.deployedToPods[$i].podName" 2>/dev/null)
+            reload_id=$(echo "$pods_json" | jq -r ".status.deployedToPods[$i].lastReloadID" 2>/dev/null)
+
+            # Skip if no reload ID (no reload was triggered)
+            if [[ -z "$reload_id" || "$reload_id" == "null" ]]; then
+                debug "Pod $pod_name has no lastReloadID"
+                continue
+            fi
+
+            # Query DataPlane API for reload status via kubectl exec
+            local reload_status
+            reload_status=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic exec "$pod_name" \
+                -c dataplane -- curl -s -u admin:adminpass \
+                "http://localhost:5555/v3/services/haproxy/reloads/${reload_id}" 2>/dev/null | \
+                jq -r '.status' 2>/dev/null) || reload_status=""
+
+            if [[ "$reload_status" != "succeeded" ]]; then
+                debug "Pod $pod_name reload $reload_id status: ${reload_status:-unknown} (attempt $reload_attempt/$reload_attempts)"
+                all_reloads_complete=false
+            fi
+        done
+
+        if [[ "$all_reloads_complete" == "true" ]]; then
+            break
+        fi
+
+        sleep 2
+    done
+
+    if [[ "$all_reloads_complete" == "true" ]]; then
+        ok "HAProxy reloads completed on all pods"
+    else
+        warn "HAProxy reload check timed out or failed (continuing anyway)"
+    fi
+
+    # Step 9: Test HTTP connectivity (pods, endpoints, and config with backends are ready)
     log INFO "Testing HTTP connectivity..."
     local max_attempts=20  # 40 seconds - reduced since pods and config are ready
     local delay=2

@@ -503,6 +503,46 @@ func setupResourceWatchers(
 	return resourceWatcher, nil
 }
 
+// startWatcherHealthCheck starts a periodic health check goroutine that logs watcher status.
+// This helps diagnose issues where watch connections silently drop.
+// With 30-second resync enabled, last_event_age should never exceed ~35 seconds in a healthy system.
+func startWatcherHealthCheck(
+	ctx context.Context,
+	crdWatcher *watcher.SingleWatcher,
+	secretWatcher *watcher.SingleWatcher,
+	logger *slog.Logger,
+) {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				crdLastEvent := crdWatcher.LastEventTime()
+				secretLastEvent := secretWatcher.LastEventTime()
+
+				var crdEventAge, secretEventAge time.Duration
+				if !crdLastEvent.IsZero() {
+					crdEventAge = time.Since(crdLastEvent).Round(time.Second)
+				}
+				if !secretLastEvent.IsZero() {
+					secretEventAge = time.Since(secretLastEvent).Round(time.Second)
+				}
+
+				logger.Info("Watcher health check",
+					"crd_watcher_synced", crdWatcher.IsSynced(),
+					"crd_watcher_started", crdWatcher.IsStarted(),
+					"crd_last_event_age", crdEventAge,
+					"secret_watcher_synced", secretWatcher.IsSynced(),
+					"secret_watcher_started", secretWatcher.IsStarted(),
+					"secret_last_event_age", secretEventAge)
+			}
+		}
+	}()
+}
+
 // setupConfigWatchers creates and starts HAProxyTemplateConfig CRD and Secret watchers, then waits for sync.
 //
 // Returns an error if watcher creation or synchronization fails.
@@ -558,6 +598,9 @@ func setupConfigWatchers(
 			cancel()
 		}
 	}()
+
+	// Start periodic health check for diagnostics
+	startWatcherHealthCheck(iterCtx, crdWatcher, secretWatcher, logger)
 
 	logger.Debug("Watchers started, waiting for initial sync")
 

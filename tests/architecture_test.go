@@ -3,8 +3,8 @@ package tests
 import (
 	"testing"
 
-	"github.com/arch-go/arch-go/api"
-	"github.com/arch-go/arch-go/api/configuration"
+	"github.com/arch-go/arch-go/v2/api"
+	"github.com/arch-go/arch-go/v2/api/configuration"
 )
 
 // TestArchitecture validates that the codebase follows the defined architectural constraints.

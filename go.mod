@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.5
-	github.com/arch-go/arch-go v1.7.0
+	github.com/arch-go/arch-go/v2 v2.1.1
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/golangci/golangci-lint v1.64.8
 	github.com/google/uuid v1.6.0
@@ -146,7 +146,7 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jedib0t/go-pretty/v6 v6.6.4 // indirect
+	github.com/jedib0t/go-pretty/v6 v6.7.5 // indirect
 	github.com/jgautheron/goconst v1.7.1 // indirect
 	github.com/jingyugao/rowserrcheck v1.1.1 // indirect
 	github.com/jjti/go-spancheck v0.6.4 // indirect
