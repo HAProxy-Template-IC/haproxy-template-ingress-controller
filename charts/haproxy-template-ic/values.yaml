@@ -575,7 +575,7 @@ haproxy:
     # HAProxy has independent versioning from controller
     # Chart default: 3.2 (can override via --set haproxy.image.tag=3.0)
     # renovate: datasource=docker depName=haproxytech/haproxy-debian
-    tag: "3.2"
+    tag: "3.4"
 
   # Enterprise mode configuration
   # Set to true when using HAProxy Enterprise images (hapee-registry.haproxy.com/haproxy-enterprise)
