@@ -1,6 +1,6 @@
 module haproxy-template-ic/tools/linters/eventimmutability
 
-go 1.25
+go 1.25.5
 
 require golang.org/x/tools v0.30.0
 
