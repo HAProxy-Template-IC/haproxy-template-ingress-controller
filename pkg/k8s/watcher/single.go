@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"haproxy-template-ic/pkg/k8s/client"
 	"haproxy-template-ic/pkg/k8s/types"
@@ -48,6 +49,10 @@ type SingleWatcher struct {
 	stopOnce  sync.Once     // Ensures Stop() is idempotent
 	startOnce sync.Once     // Ensures Start() is idempotent
 	started   atomic.Bool   // True if Start() has been called
+
+	// Health tracking for diagnostics
+	lastEventTime  atomic.Int64 // Unix timestamp of last event received
+	lastWatchError atomic.Int64 // Unix timestamp of last watch error
 }
 
 // NewSingle creates a new single-resource watcher with the provided configuration.
@@ -102,6 +107,11 @@ func NewSingle(cfg *types.SingleWatcherConfig, k8sClient *client.Client) (*Singl
 	return w, nil
 }
 
+// resyncPeriod is the interval at which the informer re-lists resources from the API server.
+// This provides resilience against missed watch events during network issues.
+// 30 seconds is the recommended value used by sample-controller and production operators.
+const resyncPeriod = 30 * time.Second
+
 // createInformer creates a SharedIndexInformer for the single watched resource.
 func (w *SingleWatcher) createInformer() error {
 	// Get dynamic client
@@ -110,10 +120,11 @@ func (w *SingleWatcher) createInformer() error {
 		return fmt.Errorf("dynamic client is nil")
 	}
 
-	// Create informer factory with field selector for specific resource name
+	// Create informer factory with field selector for specific resource name.
+	// The resyncPeriod enables periodic re-listing which recovers from missed watch events.
 	informerFactory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		dynamicClient,
-		0, // No resync
+		resyncPeriod,
 		w.config.Namespace,
 		func(options *metav1.ListOptions) {
 			// Filter by resource name using field selector
@@ -123,6 +134,13 @@ func (w *SingleWatcher) createInformer() error {
 
 	// Get informer for resource
 	w.informer = informerFactory.ForResource(w.config.GVR).Informer()
+
+	// Register watch error handler for observability.
+	// The Reflector handles retry automatically with exponential backoff,
+	// but we need visibility into when watch connections fail.
+	if err := w.informer.SetWatchErrorHandler(w.handleWatchError); err != nil {
+		return fmt.Errorf("failed to set watch error handler: %w", err)
+	}
 
 	// Add event handlers
 	_, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -137,18 +155,44 @@ func (w *SingleWatcher) createInformer() error {
 	return nil
 }
 
+// handleWatchError is called when the watch connection drops.
+// The Reflector will automatically retry with exponential backoff after this handler returns.
+func (w *SingleWatcher) handleWatchError(_ *cache.Reflector, err error) {
+	w.lastWatchError.Store(time.Now().Unix())
+	slog.Warn("SingleWatcher watch error (Reflector will retry)",
+		"gvr", w.config.GVR.String(),
+		"namespace", w.config.Namespace,
+		"name", w.config.Name,
+		"error", err)
+}
+
 // handleAdd handles resource addition events.
 func (w *SingleWatcher) handleAdd(obj interface{}) {
+	// Track last event time for health monitoring
+	w.lastEventTime.Store(time.Now().Unix())
+
+	// Use INFO level for diagnostics - helps debug watch connection issues
+	slog.Info("SingleWatcher received add event",
+		"gvr", w.config.GVR.String(),
+		"synced", w.synced.Load())
+
 	resource := w.convertToUnstructured(obj)
 	if resource == nil {
+		slog.Warn("SingleWatcher.handleAdd: resource conversion returned nil")
 		return
 	}
+
+	slog.Info("SingleWatcher processing add",
+		"resource_name", resource.GetName(),
+		"resource_namespace", resource.GetNamespace(),
+		"resource_version", resource.GetResourceVersion())
 
 	// Skip callback during initial sync - we don't want to trigger change events
 	// for resources that already exist. Only invoke callback for real additions
 	// that happen after sync completes.
 	if !w.synced.Load() {
 		// During initial sync, skip callback
+		slog.Info("SingleWatcher skipping add callback - not yet synced")
 		return
 	}
 
@@ -161,23 +205,51 @@ func (w *SingleWatcher) handleAdd(obj interface{}) {
 				"resource_name", resource.GetName(),
 				"resource_namespace", resource.GetNamespace(),
 				"resource_kind", resource.GetKind())
+		} else {
+			slog.Info("SingleWatcher add callback succeeded",
+				"resource_name", resource.GetName(),
+				"resource_version", resource.GetResourceVersion())
 		}
 	}
 }
 
 // handleUpdate handles resource update events.
 func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
-	slog.Debug("SingleWatcher.handleUpdate called",
+	// Track last event time for health monitoring
+	w.lastEventTime.Store(time.Now().Unix())
+
+	// Use INFO level for diagnostics - helps debug watch connection issues
+	slog.Info("SingleWatcher received update event",
 		"gvr", w.config.GVR.String(),
 		"synced", w.synced.Load())
 
+	oldResource := w.convertToUnstructured(oldObj)
 	resource := w.convertToUnstructured(newObj)
 	if resource == nil {
-		slog.Debug("SingleWatcher.handleUpdate: resource conversion returned nil")
+		slog.Warn("SingleWatcher.handleUpdate: resource conversion returned nil")
 		return
 	}
 
-	slog.Debug("SingleWatcher.handleUpdate: resource converted",
+	// Skip callback if resource version hasn't changed (resync event).
+	// This happens during resync - the informer re-lists all resources and
+	// triggers Update events even when nothing has changed. We detect this
+	// by comparing resource versions and skip the callback to avoid
+	// unnecessary reconciliation cycles.
+	// Note: Only skip if resource version is non-empty (real Kubernetes resources
+	// always have a version, but test mocks might not).
+	oldVersion := ""
+	if oldResource != nil {
+		oldVersion = oldResource.GetResourceVersion()
+	}
+	newVersion := resource.GetResourceVersion()
+	if oldVersion != "" && newVersion != "" && oldVersion == newVersion {
+		slog.Debug("SingleWatcher skipping update callback - resource version unchanged (resync)",
+			"resource_name", resource.GetName(),
+			"resource_version", resource.GetResourceVersion())
+		return
+	}
+
+	slog.Info("SingleWatcher processing update",
 		"resource_name", resource.GetName(),
 		"resource_namespace", resource.GetNamespace(),
 		"resource_version", resource.GetResourceVersion())
@@ -187,12 +259,9 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
 	// for real updates that happen after sync completes.
 	if !w.synced.Load() {
 		// During initial sync, skip callback
-		slog.Debug("SingleWatcher.handleUpdate: skipping callback - not yet synced")
+		slog.Info("SingleWatcher skipping callback - not yet synced")
 		return
 	}
-
-	slog.Debug("SingleWatcher.handleUpdate: invoking OnChange callback",
-		"has_callback", w.config.OnChange != nil)
 
 	// Invoke callback immediately (no debouncing for single resource)
 	if w.config.OnChange != nil {
@@ -204,13 +273,23 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
 				"resource_namespace", resource.GetNamespace(),
 				"resource_kind", resource.GetKind())
 		} else {
-			slog.Debug("SingleWatcher.handleUpdate: OnChange callback succeeded")
+			slog.Info("SingleWatcher update callback succeeded",
+				"resource_name", resource.GetName(),
+				"resource_version", resource.GetResourceVersion())
 		}
 	}
 }
 
 // handleDelete handles resource deletion events.
 func (w *SingleWatcher) handleDelete(obj interface{}) {
+	// Track last event time for health monitoring
+	w.lastEventTime.Store(time.Now().Unix())
+
+	// Use INFO level for diagnostics - helps debug watch connection issues
+	slog.Info("SingleWatcher received delete event",
+		"gvr", w.config.GVR.String(),
+		"synced", w.synced.Load())
+
 	resource := w.convertToUnstructured(obj)
 	if resource == nil {
 		// Handle DeletedFinalStateUnknown
@@ -218,14 +297,21 @@ func (w *SingleWatcher) handleDelete(obj interface{}) {
 			resource = w.convertToUnstructured(tombstone.Obj)
 		}
 		if resource == nil {
+			slog.Warn("SingleWatcher.handleDelete: resource conversion returned nil")
 			return
 		}
 	}
+
+	slog.Info("SingleWatcher processing delete",
+		"resource_name", resource.GetName(),
+		"resource_namespace", resource.GetNamespace(),
+		"resource_version", resource.GetResourceVersion())
 
 	// Skip callback during initial sync for consistency (unlikely scenario but possible)
 	// Only invoke callback for real deletions that happen after sync completes.
 	if !w.synced.Load() {
 		// During initial sync, skip callback
+		slog.Info("SingleWatcher skipping delete callback - not yet synced")
 		return
 	}
 
@@ -238,6 +324,10 @@ func (w *SingleWatcher) handleDelete(obj interface{}) {
 				"resource_name", resource.GetName(),
 				"resource_namespace", resource.GetNamespace(),
 				"resource_kind", resource.GetKind())
+		} else {
+			slog.Info("SingleWatcher delete callback succeeded",
+				"resource_name", resource.GetName(),
+				"resource_version", resource.GetResourceVersion())
 		}
 	}
 }
@@ -339,4 +429,30 @@ func (w *SingleWatcher) IsSynced() bool {
 // This provides a non-blocking way to check if the watcher has been started.
 func (w *SingleWatcher) IsStarted() bool {
 	return w.started.Load()
+}
+
+// LastEventTime returns the time when the last event was received.
+// Returns zero time if no events have been received yet.
+//
+// This is useful for health checks to detect stalled watches where
+// no events are being received despite the resync period.
+func (w *SingleWatcher) LastEventTime() time.Time {
+	ts := w.lastEventTime.Load()
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(ts, 0)
+}
+
+// LastWatchError returns the time when the last watch error occurred.
+// Returns zero time if no watch errors have occurred.
+//
+// Watch errors trigger automatic retry with exponential backoff by the Reflector.
+// This method is useful for observability and debugging connection issues.
+func (w *SingleWatcher) LastWatchError() time.Time {
+	ts := w.lastWatchError.Load()
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(ts, 0)
 }
