@@ -1235,8 +1235,8 @@ func runIteration(
 	}
 
 	// 5. Initialize StateCache and metrics component
-	// These must be started BEFORE bus.Start() to receive buffered startup events
-	stateCache := NewStateCache(setup.Bus, resourceWatcher)
+	// StateCache subscribes during construction to ensure proper startup synchronization
+	stateCache := NewStateCache(setup.Bus, resourceWatcher, logger)
 
 	// Start StateCache and metrics component in background goroutines
 	// These will subscribe immediately and wait for events
