@@ -2,7 +2,7 @@
 # Build with: docker build -t python-docs:latest .
 
 # renovate: datasource=docker depName=python
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 FROM python:${PYTHON_VERSION}-slim
 
 # Install git and curl (needed for MR previews)
