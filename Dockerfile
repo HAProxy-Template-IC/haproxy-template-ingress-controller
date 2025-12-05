@@ -4,7 +4,7 @@
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.25
 # renovate: datasource=docker depName=haproxytech/haproxy-debian
-ARG HAPROXY_VERSION=3.2
+ARG HAPROXY_VERSION=3.4
 ARG GIT_COMMIT=unknown
 ARG GIT_TAG=unknown
 
