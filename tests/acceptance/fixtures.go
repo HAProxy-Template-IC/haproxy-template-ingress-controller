@@ -364,60 +364,8 @@ iofgnth8Lw==
 	}
 }
 
-// NewHAProxyTemplateConfig creates a HAProxyTemplateConfig CR for testing.
-// The leaderElection parameter controls whether leader election is enabled.
-func NewHAProxyTemplateConfig(namespace, name, secretName string, leaderElection bool) *haproxyv1alpha1.HAProxyTemplateConfig {
-	enabled := leaderElection
-
-	config := &haproxyv1alpha1.HAProxyTemplateConfig{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
-			Kind:       "HAProxyTemplateConfig",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
-			CredentialsSecretRef: haproxyv1alpha1.SecretReference{
-				Name: secretName,
-			},
-			PodSelector: haproxyv1alpha1.PodSelector{
-				MatchLabels: map[string]string{
-					"app":       "haproxy",
-					"component": "loadbalancer",
-				},
-			},
-			Controller: haproxyv1alpha1.ControllerConfig{
-				HealthzPort: 8080,
-				MetricsPort: 9090,
-				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
-					Enabled:       &enabled,
-					LeaseName:     "haproxy-template-ic-leader",
-					LeaseDuration: "15s",
-					RenewDeadline: "10s",
-					RetryPeriod:   "2s",
-				},
-			},
-			Logging: haproxyv1alpha1.LoggingConfig{
-				Verbose: 2, // DEBUG level for tests
-			},
-			Dataplane: haproxyv1alpha1.DataplaneConfig{
-				Port:              5555, // Default Dataplane API port
-				MapsDir:           "/tmp/haproxy-validation/maps",
-				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
-				GeneralStorageDir: "/tmp/haproxy-validation/general",
-				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
-			},
-			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
-				"ingresses": {
-					APIVersion: "networking.k8s.io/v1",
-					Resources:  "ingresses",
-					IndexBy:    []string{"metadata.namespace", "metadata.name"},
-				},
-			},
-			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{
-				Template: `global
+// DefaultHAProxyTemplate is the default HAProxy configuration template used in tests.
+const DefaultHAProxyTemplate = `global
   maxconn 2000
 
 defaults
@@ -453,12 +401,115 @@ backend ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
 
 backend test-backend
   # Placeholder backend - no servers configured
-`,
+`
+
+// HAProxyTemplateConfigBuilder provides a fluent API for creating HAProxyTemplateConfig resources.
+// This reduces duplication across the multiple factory functions that create similar configs.
+type HAProxyTemplateConfigBuilder struct {
+	namespace      string
+	name           string
+	secretName     string
+	leaderElection bool
+	template       string
+	files          map[string]haproxyv1alpha1.GeneralFile
+}
+
+// NewHAProxyTemplateConfigBuilder creates a new builder with required parameters.
+func NewHAProxyTemplateConfigBuilder(namespace, name, secretName string) *HAProxyTemplateConfigBuilder {
+	return &HAProxyTemplateConfigBuilder{
+		namespace:      namespace,
+		name:           name,
+		secretName:     secretName,
+		leaderElection: false,
+		template:       DefaultHAProxyTemplate,
+	}
+}
+
+// WithLeaderElection enables or disables leader election.
+func (b *HAProxyTemplateConfigBuilder) WithLeaderElection(enabled bool) *HAProxyTemplateConfigBuilder {
+	b.leaderElection = enabled
+	return b
+}
+
+// WithTemplate sets a custom HAProxy template.
+func (b *HAProxyTemplateConfigBuilder) WithTemplate(template string) *HAProxyTemplateConfigBuilder {
+	b.template = template
+	return b
+}
+
+// WithFiles sets custom auxiliary files.
+func (b *HAProxyTemplateConfigBuilder) WithFiles(files map[string]haproxyv1alpha1.GeneralFile) *HAProxyTemplateConfigBuilder {
+	b.files = files
+	return b
+}
+
+// Build creates the HAProxyTemplateConfig resource.
+func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateConfig {
+	enabled := b.leaderElection
+
+	config := &haproxyv1alpha1.HAProxyTemplateConfig{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: HAProxyTemplateConfigAPIVersion,
+			Kind:       HAProxyTemplateConfigKind,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      b.name,
+			Namespace: b.namespace,
+		},
+		Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
+			CredentialsSecretRef: haproxyv1alpha1.SecretReference{
+				Name: b.secretName,
 			},
+			PodSelector: haproxyv1alpha1.PodSelector{
+				MatchLabels: map[string]string{
+					"app":       "haproxy",
+					"component": "loadbalancer",
+				},
+			},
+			Controller: haproxyv1alpha1.ControllerConfig{
+				HealthzPort: 8080,
+				MetricsPort: 9090,
+				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
+					Enabled:       &enabled,
+					LeaseName:     "haproxy-template-ic-leader",
+					LeaseDuration: "15s",
+					RenewDeadline: "10s",
+					RetryPeriod:   "2s",
+				},
+			},
+			Logging: haproxyv1alpha1.LoggingConfig{
+				Verbose: 2, // DEBUG level for tests
+			},
+			Dataplane: haproxyv1alpha1.DataplaneConfig{
+				Port:              5555,
+				MapsDir:           "/tmp/haproxy-validation/maps",
+				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
+				GeneralStorageDir: "/tmp/haproxy-validation/general",
+				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
+			},
+			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
+				"ingresses": {
+					APIVersion: "networking.k8s.io/v1",
+					Resources:  "ingresses",
+					IndexBy:    []string{"metadata.namespace", "metadata.name"},
+				},
+			},
+			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{
+				Template: b.template,
+			},
+			Files: b.files,
 		},
 	}
 
 	return config
+}
+
+// NewHAProxyTemplateConfig creates a HAProxyTemplateConfig CR for testing.
+// The leaderElection parameter controls whether leader election is enabled.
+func NewHAProxyTemplateConfig(namespace, name, secretName string, leaderElection bool) *haproxyv1alpha1.HAProxyTemplateConfig {
+	return NewHAProxyTemplateConfigBuilder(namespace, name, secretName).
+		WithLeaderElection(leaderElection).
+		Build()
 }
 
 // NewServiceAccount creates a ServiceAccount for the controller.
@@ -941,63 +992,9 @@ func NewBlocklistService(namespace string) *corev1.Service {
 	}
 }
 
-// NewInvalidBackendHAProxyTemplateConfig creates a HAProxyTemplateConfig with an invalid
-// configuration that references a non-existent backend. This should fail HAProxy validation
-// (haproxy -c) but the template renders successfully.
-func NewInvalidBackendHAProxyTemplateConfig(namespace, name, secretName string) *haproxyv1alpha1.HAProxyTemplateConfig {
-	enabled := false
-
-	config := &haproxyv1alpha1.HAProxyTemplateConfig{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
-			Kind:       "HAProxyTemplateConfig",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
-			CredentialsSecretRef: haproxyv1alpha1.SecretReference{
-				Name: secretName,
-			},
-			PodSelector: haproxyv1alpha1.PodSelector{
-				MatchLabels: map[string]string{
-					"app":       "haproxy",
-					"component": "loadbalancer",
-				},
-			},
-			Controller: haproxyv1alpha1.ControllerConfig{
-				HealthzPort: 8080,
-				MetricsPort: 9090,
-				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
-					Enabled:       &enabled,
-					LeaseName:     "haproxy-template-ic-leader",
-					LeaseDuration: "15s",
-					RenewDeadline: "10s",
-					RetryPeriod:   "2s",
-				},
-			},
-			Logging: haproxyv1alpha1.LoggingConfig{
-				Verbose: 2,
-			},
-			Dataplane: haproxyv1alpha1.DataplaneConfig{
-				Port:              5555,
-				MapsDir:           "/tmp/haproxy-validation/maps",
-				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
-				GeneralStorageDir: "/tmp/haproxy-validation/general",
-				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
-			},
-			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
-				"ingresses": {
-					APIVersion: "networking.k8s.io/v1",
-					Resources:  "ingresses",
-					IndexBy:    []string{"metadata.namespace", "metadata.name"},
-				},
-			},
-			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{
-				// This config is syntactically valid but semantically invalid:
-				// The frontend references "nonexistent_backend" which doesn't exist
-				Template: `global
+// InvalidBackendTemplate is a HAProxy template that references a non-existent backend.
+// HAProxy validation (haproxy -c) will fail, but template rendering succeeds.
+const InvalidBackendTemplate = `global
   maxconn 2000
 
 defaults
@@ -1013,68 +1010,20 @@ frontend http_front
 
 backend test-backend
   server test-server 127.0.0.1:8080
-`,
-			},
-		},
-	}
+`
 
-	return config
+// NewInvalidBackendHAProxyTemplateConfig creates a HAProxyTemplateConfig with an invalid
+// configuration that references a non-existent backend. This should fail HAProxy validation
+// (haproxy -c) but the template renders successfully.
+func NewInvalidBackendHAProxyTemplateConfig(namespace, name, secretName string) *haproxyv1alpha1.HAProxyTemplateConfig {
+	return NewHAProxyTemplateConfigBuilder(namespace, name, secretName).
+		WithTemplate(InvalidBackendTemplate).
+		Build()
 }
 
-// NewHAProxyTemplateConfigWithVersion creates a HAProxyTemplateConfig with a version marker
-// in the template. Used for testing rapid config updates and debouncing.
-func NewHAProxyTemplateConfigWithVersion(namespace, name, secretName string, version int) *haproxyv1alpha1.HAProxyTemplateConfig {
-	enabled := false
-
-	config := &haproxyv1alpha1.HAProxyTemplateConfig{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
-			Kind:       "HAProxyTemplateConfig",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
-			CredentialsSecretRef: haproxyv1alpha1.SecretReference{
-				Name: secretName,
-			},
-			PodSelector: haproxyv1alpha1.PodSelector{
-				MatchLabels: map[string]string{
-					"app":       "haproxy",
-					"component": "loadbalancer",
-				},
-			},
-			Controller: haproxyv1alpha1.ControllerConfig{
-				HealthzPort: 8080,
-				MetricsPort: 9090,
-				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
-					Enabled:       &enabled,
-					LeaseName:     "haproxy-template-ic-leader",
-					LeaseDuration: "15s",
-					RenewDeadline: "10s",
-					RetryPeriod:   "2s",
-				},
-			},
-			Logging: haproxyv1alpha1.LoggingConfig{
-				Verbose: 2,
-			},
-			Dataplane: haproxyv1alpha1.DataplaneConfig{
-				Port:              5555,
-				MapsDir:           "/tmp/haproxy-validation/maps",
-				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
-				GeneralStorageDir: "/tmp/haproxy-validation/general",
-				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
-			},
-			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
-				"ingresses": {
-					APIVersion: "networking.k8s.io/v1",
-					Resources:  "ingresses",
-					IndexBy:    []string{"metadata.namespace", "metadata.name"},
-				},
-			},
-			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{
-				Template: fmt.Sprintf(`global
+// VersionedTemplateFormat is a HAProxy template with a version marker placeholder.
+// Use fmt.Sprintf(VersionedTemplateFormat, version) to create the template.
+const VersionedTemplateFormat = `global
   maxconn 2000
   # version %d
 
@@ -1090,12 +1039,14 @@ frontend test-frontend
 
 backend test-backend
   server test-server 127.0.0.1:8080
-`, version),
-			},
-		},
-	}
+`
 
-	return config
+// NewHAProxyTemplateConfigWithVersion creates a HAProxyTemplateConfig with a version marker
+// in the template. Used for testing rapid config updates and debouncing.
+func NewHAProxyTemplateConfigWithVersion(namespace, name, secretName string, version int) *haproxyv1alpha1.HAProxyTemplateConfig {
+	return NewHAProxyTemplateConfigBuilder(namespace, name, secretName).
+		WithTemplate(fmt.Sprintf(VersionedTemplateFormat, version)).
+		Build()
 }
 
 // NewDebugService creates a ClusterIP Service for accessing the controller's debug endpoint.
@@ -1104,7 +1055,7 @@ backend test-backend
 func NewDebugService(namespace, deploymentName string, debugPort int32) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deploymentName + "-debug",
+			Name:      DebugServiceName(deploymentName),
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app": deploymentName,
@@ -1133,7 +1084,7 @@ func NewDebugService(namespace, deploymentName string, debugPort int32) *corev1.
 func NewMetricsService(namespace, deploymentName string, metricsPort int32) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deploymentName + "-metrics",
+			Name:      MetricsServiceName(deploymentName),
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app": deploymentName,
@@ -1156,64 +1107,8 @@ func NewMetricsService(namespace, deploymentName string, metricsPort int32) *cor
 	}
 }
 
-// NewHTTPStoreHAProxyTemplateConfig creates a HAProxyTemplateConfig that uses http.Fetch()
-// to fetch a blocklist from an HTTP server. The template creates an ACL file that triggers
-// HAProxy validation - invalid content (non-CIDR IPs) will cause validation to fail.
-func NewHTTPStoreHAProxyTemplateConfig(namespace, name, secretName string, leaderElection bool) *haproxyv1alpha1.HAProxyTemplateConfig {
-	enabled := leaderElection
-
-	// Build the blocklist URL using the namespace
-	blocklistURL := fmt.Sprintf("http://%s.%s.svc:80/blocklist.txt", BlocklistServerName, namespace)
-
-	config := &haproxyv1alpha1.HAProxyTemplateConfig{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
-			Kind:       "HAProxyTemplateConfig",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
-			CredentialsSecretRef: haproxyv1alpha1.SecretReference{
-				Name: secretName,
-			},
-			PodSelector: haproxyv1alpha1.PodSelector{
-				MatchLabels: map[string]string{
-					"app":       "haproxy",
-					"component": "loadbalancer",
-				},
-			},
-			Controller: haproxyv1alpha1.ControllerConfig{
-				HealthzPort: 8080,
-				MetricsPort: 9090,
-				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
-					Enabled:       &enabled,
-					LeaseName:     "haproxy-template-ic-leader",
-					LeaseDuration: "15s",
-					RenewDeadline: "10s",
-					RetryPeriod:   "2s",
-				},
-			},
-			Logging: haproxyv1alpha1.LoggingConfig{
-				Verbose: 2, // DEBUG level for tests
-			},
-			Dataplane: haproxyv1alpha1.DataplaneConfig{
-				Port:              5555,
-				MapsDir:           "/tmp/haproxy-validation/maps",
-				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
-				GeneralStorageDir: "/tmp/haproxy-validation/general",
-				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
-			},
-			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
-				"ingresses": {
-					APIVersion: "networking.k8s.io/v1",
-					Resources:  "ingresses",
-					IndexBy:    []string{"metadata.namespace", "metadata.name"},
-				},
-			},
-			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{
-				Template: `global
+// HTTPStoreTemplate is a HAProxy template that uses an ACL file for IP blocking.
+const HTTPStoreTemplate = `global
   maxconn 2000
 
 defaults
@@ -1231,16 +1126,22 @@ frontend http_front
 
 backend http_back
   server test-server 127.0.0.1:8080
-`,
-			},
-			Files: map[string]haproxyv1alpha1.GeneralFile{
-				"blocked-ips.acl": {
-					Template: fmt.Sprintf(`{%%- set blocklist = http.Fetch("%s", {"critical": true, "delay": "5s"}) -%%}
-{{ blocklist }}`, blocklistURL),
-				},
-			},
-		},
-	}
+`
 
-	return config
+// NewHTTPStoreHAProxyTemplateConfig creates a HAProxyTemplateConfig that uses http.Fetch()
+// to fetch a blocklist from an HTTP server. The template creates an ACL file that triggers
+// HAProxy validation - invalid content (non-CIDR IPs) will cause validation to fail.
+func NewHTTPStoreHAProxyTemplateConfig(namespace, name, secretName string, leaderElection bool) *haproxyv1alpha1.HAProxyTemplateConfig {
+	blocklistURL := fmt.Sprintf("http://%s.%s.svc:80/blocklist.txt", BlocklistServerName, namespace)
+
+	return NewHAProxyTemplateConfigBuilder(namespace, name, secretName).
+		WithLeaderElection(leaderElection).
+		WithTemplate(HTTPStoreTemplate).
+		WithFiles(map[string]haproxyv1alpha1.GeneralFile{
+			"blocked-ips.acl": {
+				Template: fmt.Sprintf(`{%%- set blocklist = http.Fetch("%s", {"critical": true, "delay": "5s"}) -%%}
+{{ blocklist }}`, blocklistURL),
+			},
+		}).
+		Build()
 }

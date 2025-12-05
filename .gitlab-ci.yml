@@ -384,16 +384,30 @@ test-acceptance:
         for ns in $(kubectl get ns -o name 2>/dev/null | grep '^namespace/test-' | cut -d/ -f2); do
           echo "=== Namespace: $ns ===" >> debug-logs/test-namespaces.log
 
-          # Controller pod logs
+          # Controller pod logs with timestamps for correlation
           kubectl -n "$ns" logs -l app=haproxy-template-ic --all-containers=true \
+            --timestamps=true --since=10m \
             >> debug-logs/controller-$ns.log 2>&1 || true
 
-          # Pod status
+          # Blocklist server logs (nginx) - critical for HTTP store tests
+          kubectl -n "$ns" logs -l app=blocklist-server --all-containers=true \
+            --timestamps=true --since=10m \
+            >> debug-logs/blocklist-server-$ns.log 2>&1 || true
+
+          # Pod status with IP addresses for debugging service routing
           kubectl -n "$ns" get pods -o wide >> debug-logs/pods-$ns.log 2>&1 || true
 
-          # Events
-          kubectl -n "$ns" get events --sort-by=.lastTimestamp \
+          # Events sorted by time with more detail
+          kubectl -n "$ns" get events --sort-by=.lastTimestamp -o wide \
             >> debug-logs/events-$ns.log 2>&1 || true
+
+          # Lease status for leader election debugging
+          kubectl -n "$ns" get leases -o yaml \
+            >> debug-logs/leases-$ns.log 2>&1 || true
+
+          # ConfigMap content for HTTP store debugging
+          kubectl -n "$ns" get configmaps -o yaml \
+            >> debug-logs/configmaps-$ns.log 2>&1 || true
         done
 
         echo "Debug logs extracted"

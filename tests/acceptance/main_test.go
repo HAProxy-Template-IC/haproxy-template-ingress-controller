@@ -17,7 +17,10 @@ import (
 	kindcmd "sigs.k8s.io/kind/pkg/cmd"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 
 	haproxyv1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
 	"haproxy-template-ic/tests/kindutil"
@@ -45,18 +48,13 @@ const (
 // the cluster is pre-created by helm/kind-action and this function only
 // configures the test environment to use the existing cluster.
 func TestMain(m *testing.M) {
-	fmt.Println("DEBUG: TestMain is running!")
-
 	// Create test environment with parallel execution enabled
 	testEnv = env.NewParallel()
-	fmt.Println("DEBUG: testEnv created:", testEnv != nil)
 
 	// Check if running in CI sharding mode (cluster pre-created by helm/kind-action)
 	if os.Getenv("SKIP_PARALLEL_RUNNER") == "true" {
-		fmt.Println("DEBUG: CI sharding mode detected - using pre-created cluster")
 		setupForCISharding()
 	} else {
-		fmt.Println("DEBUG: Local mode - creating dedicated cluster")
 		setupForLocalDevelopment()
 	}
 
@@ -76,7 +74,6 @@ func setupForCISharding() {
 			if kubeconfigPath == "" {
 				kubeconfigPath = os.Getenv("HOME") + "/.kube/config"
 			}
-			fmt.Printf("DEBUG: Using kubeconfig from CI: %s\n", kubeconfigPath)
 
 			cfg.WithKubeconfigFile(kubeconfigPath)
 
@@ -93,19 +90,89 @@ func setupForCISharding() {
 			if len(nodeList.Items) == 0 {
 				return ctx, fmt.Errorf("SAFETY CHECK FAILED: Cluster has no nodes")
 			}
-			fmt.Printf("DEBUG: Cluster accessible with %d nodes\n", len(nodeList.Items))
+
+			// Create shared clientset with rate limiting disabled for parallel tests
+			if err := initSharedClientset(client.RESTConfig()); err != nil {
+				return ctx, fmt.Errorf("failed to create shared clientset: %w", err)
+			}
 
 			return ctx, nil
 		},
 	)
+}
 
-	// No cleanup needed in CI - the workflow handles cluster deletion
-	testEnv.Finish(
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			fmt.Println("DEBUG: CI mode - skipping cluster cleanup (handled by workflow)")
-			return ctx, nil
-		},
-	)
+// initSharedClientset creates the shared Kubernetes clientset with rate limiting disabled.
+// This must be called during environment setup before any tests run.
+func initSharedClientset(restConfig *rest.Config) error {
+	configCopy := rest.CopyConfig(restConfig)
+	configCopy.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
+
+	clientset, err := kubernetes.NewForConfig(configCopy)
+	if err != nil {
+		return err
+	}
+	sharedClientset = clientset
+
+	// Also store the REST config for operations that need it (like pod exec)
+	SetSharedRESTConfig(configCopy)
+
+	return nil
+}
+
+// loadControllerImage loads the controller Docker image into the Kind cluster.
+func loadControllerImage(ctx context.Context, clusterName string) error {
+	cmd := exec.CommandContext(ctx, "kind", "load", "docker-image", ControllerImageName, "--name", clusterName)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to load controller image into kind cluster: %w\nOutput: %s", err, string(output))
+	}
+	return nil
+}
+
+// installCRDs installs all required CRDs from the helm chart directory.
+func installCRDs(ctx context.Context, kubeconfigPath string) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", CRDDirectory)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to install CRDs: %w\nOutput: %s", err, string(output))
+	}
+	return nil
+}
+
+// waitForCRDsEstablished waits for all required CRDs to be established.
+func waitForCRDsEstablished(ctx context.Context, kubeconfigPath string) error {
+	for _, crd := range RequiredCRDs {
+		cmd := exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
+			"--for=condition=Established", crd, "--timeout=60s")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to wait for %s to be established: %w\nOutput: %s", crd, err, string(output))
+		}
+	}
+	return nil
+}
+
+// initializeClusterResources performs common cluster initialization:
+// loading the controller image, installing CRDs, and waiting for them to be established.
+func initializeClusterResources(ctx context.Context, clusterName, kubeconfigPath string) error {
+	if err := loadControllerImage(ctx, clusterName); err != nil {
+		return err
+	}
+	if err := installCRDs(ctx, kubeconfigPath); err != nil {
+		return err
+	}
+	if err := waitForCRDsEstablished(ctx, kubeconfigPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+// cleanupKubeconfig removes the test kubeconfig file (skipped in CI mode).
+func cleanupKubeconfig(_ context.Context, _ *envconf.Config) (context.Context, error) {
+	if os.Getenv("CI") == "true" {
+		return context.Background(), nil
+	}
+	if err := os.Remove(TestKubeconfigPath); err != nil && !os.IsNotExist(err) {
+		fmt.Printf("Warning: failed to remove test kubeconfig %s: %v\n", TestKubeconfigPath, err)
+	}
+	return context.Background(), nil
 }
 
 // setupForLocalDevelopment creates a dedicated Kind cluster for local testing.
@@ -117,17 +184,14 @@ func setupForLocalDevelopment() {
 		fmt.Printf("FATAL: Failed to set KUBECONFIG: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("DEBUG: Using isolated kubeconfig: %s\n", TestKubeconfigPath)
 
 	kindClusterName := "haproxy-test"
 	kindNodeImage := getKindNodeImage()
 
 	// Check if running in Docker-in-Docker environment
 	if kindutil.IsDockerInDocker() {
-		fmt.Println("DEBUG: Detected Docker-in-Docker environment, using kind library directly")
 		setupForDind(kindClusterName, kindNodeImage)
 	} else {
-		fmt.Println("DEBUG: Local environment, using e2e-framework kind provider")
 		setupForLocal(kindClusterName, kindNodeImage)
 	}
 }
@@ -151,14 +215,11 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 			for _, c := range clusters {
 				if c == kindClusterName {
 					clusterExists = true
-					fmt.Printf("DEBUG: Reusing existing Kind cluster '%s'\n", kindClusterName)
 					break
 				}
 			}
 
 			if !clusterExists {
-				fmt.Printf("DEBUG: Creating new Kind cluster '%s' with DinD config\n", kindClusterName)
-
 				createOpts := []kindcluster.CreateOption{
 					kindcluster.CreateWithWaitForReady(5 * time.Minute),
 					kindcluster.CreateWithNodeImage(kindNodeImage),
@@ -178,7 +239,6 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 
 			// Patch kubeconfig for DinD (replace localhost with docker hostname)
 			kubeconfig = kindutil.PatchKubeconfigForDind(kubeconfig)
-			fmt.Printf("DEBUG: Patched kubeconfig for DinD (server: https://%s:...)\n", kindutil.GetDindHostname())
 
 			// Write kubeconfig to file
 			if err := os.WriteFile(TestKubeconfigPath, []byte(kubeconfig), 0600); err != nil {
@@ -200,39 +260,16 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 			if len(nodeList.Items) == 0 {
 				return ctx, fmt.Errorf("SAFETY CHECK FAILED: Cluster has no nodes")
 			}
-			fmt.Printf("DEBUG: Cluster accessible with %d nodes\n", len(nodeList.Items))
 
-			// Load controller image
-			fmt.Println("DEBUG: Loading controller image into kind cluster...")
-			cmd := exec.CommandContext(ctx, "kind", "load", "docker-image", "haproxy-template-ic:test", "--name", kindClusterName)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return ctx, fmt.Errorf("failed to load controller image into kind cluster: %w\nOutput: %s", err, string(output))
+			// Common cluster initialization (image loading, CRD installation)
+			if err := initializeClusterResources(ctx, kindClusterName, TestKubeconfigPath); err != nil {
+				return ctx, err
 			}
-			fmt.Println("DEBUG: Controller image loaded successfully")
 
-			// Install all CRDs (HAProxyTemplateConfig, HAProxyCfg, HAProxyMapFile)
-			fmt.Println("DEBUG: Installing CRDs...")
-			crdDir := "../../charts/haproxy-template-ic/crds/"
-			cmd = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", TestKubeconfigPath, "-f", crdDir)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return ctx, fmt.Errorf("failed to install CRDs: %w\nOutput: %s", err, string(output))
+			// Create shared clientset with rate limiting disabled for parallel tests
+			if err := initSharedClientset(client.RESTConfig()); err != nil {
+				return ctx, fmt.Errorf("failed to create shared clientset: %w", err)
 			}
-			fmt.Println("DEBUG: CRDs installed successfully")
-
-			// Wait for CRDs to be established
-			crds := []string{
-				"crd/haproxytemplateconfigs.haproxy-template-ic.gitlab.io",
-				"crd/haproxycfgs.haproxy-template-ic.gitlab.io",
-				"crd/haproxymapfiles.haproxy-template-ic.gitlab.io",
-			}
-			for _, crd := range crds {
-				cmd = exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", TestKubeconfigPath,
-					"--for=condition=Established", crd, "--timeout=60s")
-				if output, err := cmd.CombinedOutput(); err != nil {
-					return ctx, fmt.Errorf("failed to wait for %s to be established: %w\nOutput: %s", crd, err, string(output))
-				}
-			}
-			fmt.Println("DEBUG: All CRDs established")
 
 			return ctx, nil
 		},
@@ -243,7 +280,6 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 			// In CI, skip cluster deletion - let after_script handle it
 			// This allows after_script to extract debug logs before cleanup
 			if os.Getenv("CI") == "true" {
-				fmt.Println("DEBUG: CI mode - skipping cluster deletion (handled by after_script)")
 				return ctx, nil
 			}
 			if err := provider.Delete(kindClusterName, ""); err != nil {
@@ -251,19 +287,7 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 			}
 			return ctx, nil
 		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			// In CI, skip kubeconfig deletion - after_script needs it
-			if os.Getenv("CI") == "true" {
-				fmt.Println("DEBUG: CI mode - keeping kubeconfig for after_script")
-				return ctx, nil
-			}
-			if err := os.Remove(TestKubeconfigPath); err != nil && !os.IsNotExist(err) {
-				fmt.Printf("Warning: failed to remove test kubeconfig %s: %v\n", TestKubeconfigPath, err)
-			} else {
-				fmt.Printf("DEBUG: Removed test kubeconfig: %s\n", TestKubeconfigPath)
-			}
-			return ctx, nil
-		},
+		cleanupKubeconfig,
 	)
 }
 
@@ -300,36 +324,15 @@ func setupForLocal(kindClusterName, kindNodeImage string) {
 				return ctx, fmt.Errorf("SAFETY CHECK FAILED: Cluster has no nodes (unexpected for fresh kind cluster)")
 			}
 
-			fmt.Println("DEBUG: Loading controller image into kind cluster...")
-			cmd := exec.CommandContext(ctx, "kind", "load", "docker-image", "haproxy-template-ic:test", "--name", kindClusterName)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return ctx, fmt.Errorf("failed to load controller image into kind cluster: %w\nOutput: %s", err, string(output))
+			// Common cluster initialization (image loading, CRD installation)
+			if err := initializeClusterResources(ctx, kindClusterName, kubeconfigPath); err != nil {
+				return ctx, err
 			}
-			fmt.Println("DEBUG: Controller image loaded successfully")
 
-			// Install all CRDs (HAProxyTemplateConfig, HAProxyCfg, HAProxyMapFile)
-			fmt.Println("DEBUG: Installing CRDs...")
-			crdDir := "../../charts/haproxy-template-ic/crds/"
-			cmd = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", crdDir)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return ctx, fmt.Errorf("failed to install CRDs: %w\nOutput: %s", err, string(output))
+			// Create shared clientset with rate limiting disabled for parallel tests
+			if err := initSharedClientset(client.RESTConfig()); err != nil {
+				return ctx, fmt.Errorf("failed to create shared clientset: %w", err)
 			}
-			fmt.Println("DEBUG: CRDs installed successfully")
-
-			// Wait for CRDs to be established
-			crds := []string{
-				"crd/haproxytemplateconfigs.haproxy-template-ic.gitlab.io",
-				"crd/haproxycfgs.haproxy-template-ic.gitlab.io",
-				"crd/haproxymapfiles.haproxy-template-ic.gitlab.io",
-			}
-			for _, crd := range crds {
-				cmd = exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
-					"--for=condition=Established", crd, "--timeout=60s")
-				if output, err := cmd.CombinedOutput(); err != nil {
-					return ctx, fmt.Errorf("failed to wait for %s to be established: %w\nOutput: %s", crd, err, string(output))
-				}
-			}
-			fmt.Println("DEBUG: All CRDs established")
 
 			return ctx, nil
 		},
@@ -343,14 +346,7 @@ func setupForLocal(kindClusterName, kindNodeImage string) {
 			}
 			return ctx, nil
 		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			if err := os.Remove(TestKubeconfigPath); err != nil && !os.IsNotExist(err) {
-				fmt.Printf("Warning: failed to remove test kubeconfig %s: %v\n", TestKubeconfigPath, err)
-			} else {
-				fmt.Printf("DEBUG: Removed test kubeconfig: %s\n", TestKubeconfigPath)
-			}
-			return ctx, nil
-		},
+		cleanupKubeconfig,
 	)
 }
 

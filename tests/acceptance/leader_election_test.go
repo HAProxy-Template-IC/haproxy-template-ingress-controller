@@ -30,7 +30,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -48,7 +47,6 @@ const (
 //  4. The other pod has is_leader=0 metric
 //  5. The Lease holder matches the pod with is_leader=1
 //
-//nolint:revive // High complexity expected in E2E test scenarios
 func buildLeaderElectionTwoReplicasFeature() types.Feature {
 	return features.New("Leader Election - Two Replicas").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -57,7 +55,6 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 
 			// Generate unique namespace for this test
 			// Note: RandomName generates a name of total length n, not prefix + n random chars
-			// "test-leader-2rep" is 16 chars, so use 32 to get 16 random chars appended
 			namespace := envconf.RandomName("test-leader-2rep", 32)
 			t.Logf("Using test namespace: %s", namespace)
 
@@ -69,86 +66,16 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 				t.Fatal("Failed to create client:", err)
 			}
 
-			// Create test namespace
-			ns := &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: namespace,
-				},
+			// Create controller environment with 2 replicas and leader election enabled
+			opts := ControllerEnvironmentOptions{
+				Replicas:             2,
+				CRDName:              ControllerCRDName,
+				EnableLeaderElection: true,
 			}
-			if err := client.Resources().Create(ctx, ns); err != nil {
-				t.Fatal("Failed to create namespace:", err)
+			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
+				t.Fatal("Failed to create controller environment:", err)
 			}
-			t.Logf("Created test namespace: %s", namespace)
-
-			// Create RBAC resources
-			serviceAccount := NewServiceAccount(namespace, ControllerServiceAccountName)
-			if err := client.Resources().Create(ctx, serviceAccount); err != nil {
-				t.Fatal("Failed to create serviceaccount:", err)
-			}
-
-			role := NewRole(namespace, ControllerRoleName)
-			if err := client.Resources().Create(ctx, role); err != nil {
-				t.Fatal("Failed to create role:", err)
-			}
-
-			roleBinding := NewRoleBinding(namespace, ControllerRoleBindingName, ControllerRoleName, ControllerServiceAccountName)
-			if err := client.Resources().Create(ctx, roleBinding); err != nil {
-				t.Fatal("Failed to create rolebinding:", err)
-			}
-
-			// Create ClusterRole with Lease permissions
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			if err := client.Resources().Create(ctx, clusterRole); err != nil {
-				t.Fatal("Failed to create clusterrole:", err)
-			}
-
-			clusterRoleBinding := NewClusterRoleBinding(ControllerClusterRoleBindingName, ControllerClusterRoleName, ControllerServiceAccountName, namespace, namespace)
-			if err := client.Resources().Create(ctx, clusterRoleBinding); err != nil {
-				t.Fatal("Failed to create clusterrolebinding:", err)
-			}
-
-			// Create Secret
-			secret := NewSecret(namespace, ControllerSecretName)
-			if err := client.Resources().Create(ctx, secret); err != nil {
-				t.Fatal("Failed to create secret:", err)
-			}
-
-			webhookCertSecret := NewWebhookCertSecret(namespace, "haproxy-webhook-certs")
-			if err := client.Resources().Create(ctx, webhookCertSecret); err != nil {
-				t.Fatal("Failed to create webhook cert secret:", err)
-			}
-
-			// Create HAProxyTemplateConfig with leader election enabled
-			htplConfig := NewHAProxyTemplateConfig(namespace, "haproxy-config", ControllerSecretName, true)
-			if err := client.Resources().Create(ctx, htplConfig); err != nil {
-				t.Fatal("Failed to create HAProxyTemplateConfig:", err)
-			}
-			t.Log("Created HAProxyTemplateConfig with leader election enabled")
-
-			// Create Deployment with 2 replicas
-			deployment := NewControllerDeployment(
-				namespace,
-				ControllerCRDName,
-				ControllerSecretName,
-				ControllerServiceAccountName,
-				DebugPort,
-				2, // Two replicas for HA
-			)
-			if err := client.Resources().Create(ctx, deployment); err != nil {
-				t.Fatal("Failed to create deployment:", err)
-			}
-			t.Log("Created controller deployment with 2 replicas")
-
-			// Create debug and metrics services for NodePort access
-			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
-			if err := client.Resources().Create(ctx, debugSvc); err != nil {
-				t.Fatal("Failed to create debug service:", err)
-			}
-
-			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
-			if err := client.Resources().Create(ctx, metricsSvc); err != nil {
-				t.Fatal("Failed to create metrics service:", err)
-			}
+			t.Log("Created controller environment with 2 replicas and leader election enabled")
 
 			return ctx
 		}).
@@ -165,6 +92,9 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 				t.Fatal("Failed to create client:", err)
 			}
 
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
+
 			// Wait for 2 pods to be ready
 			t.Log("Waiting for 2 controller pods to be ready...")
 			if err := WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 2*time.Minute); err != nil {
@@ -174,14 +104,14 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 
 			// Wait for leader election to complete
 			t.Log("Waiting for leader election...")
-			if err := WaitForLeaderElection(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName, 90*time.Second); err != nil {
+			if err := WaitForLeaderElection(ctx, clientset, namespace, LeaderElectionLeaseName, PodRestartTimeout); err != nil {
 				// Dump pod logs for debugging
 				t.Log("Leader election failed, dumping pod logs...")
 				pods, podErr := GetAllControllerPods(ctx, client, namespace)
 				if podErr == nil {
 					for _, pod := range pods {
 						t.Logf("=== Logs for pod %s ===", pod.Name)
-						DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), &pod)
+						DumpPodLogs(ctx, t, clientset, &pod)
 					}
 				}
 				t.Fatal("Leader election did not complete:", err)
@@ -199,7 +129,7 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			}
 
 			// Get leader from Lease (the authoritative source)
-			leaderPodName, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName)
+			leaderPodName, err := GetLeaseHolder(ctx, clientset, namespace, LeaderElectionLeaseName)
 			if err != nil {
 				t.Fatal("Failed to get lease holder:", err)
 			}
@@ -246,6 +176,9 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 				t.Fatal("Failed to create client:", err)
 			}
 
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
+
 			// Create a simple Ingress resource
 			pathType := networkingv1.PathTypePrefix
 			ingress := &networkingv1.Ingress{
@@ -286,7 +219,7 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			t.Log("Created test ingress")
 
 			// Get leader pod
-			holderIdentity, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName)
+			holderIdentity, err := GetLeaseHolder(ctx, clientset, namespace, LeaderElectionLeaseName)
 			if err != nil {
 				t.Fatal("Failed to get lease holder:", err)
 			}
@@ -309,7 +242,7 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 			}
 
 			// Access debug endpoint to verify rendered config contains the ingress
-			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			if err != nil {
 				t.Fatal("Failed to setup debug client:", err)
 			}
@@ -357,7 +290,6 @@ func TestLeaderElection_TwoReplicas(t *testing.T) {
 //  4. New leader is different from deleted pod
 //  5. Only one leader exists after failover
 //
-//nolint:revive // High complexity expected in E2E test scenarios
 func buildLeaderElectionFailoverFeature() types.Feature {
 	return features.New("Leader Election - Failover").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -375,70 +307,16 @@ func buildLeaderElectionFailoverFeature() types.Feature {
 				t.Fatal("Failed to create client:", err)
 			}
 
-			// Create namespace
-			ns := &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: namespace,
-				},
+			// Create controller environment with 2 replicas and leader election enabled
+			opts := ControllerEnvironmentOptions{
+				Replicas:             2,
+				CRDName:              ControllerCRDName,
+				EnableLeaderElection: true,
 			}
-			if err := client.Resources().Create(ctx, ns); err != nil {
-				t.Fatal("Failed to create namespace:", err)
+			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
+				t.Fatal("Failed to create controller environment:", err)
 			}
-
-			// Create RBAC resources
-			serviceAccount := NewServiceAccount(namespace, ControllerServiceAccountName)
-			if err := client.Resources().Create(ctx, serviceAccount); err != nil {
-				t.Fatal("Failed to create serviceaccount:", err)
-			}
-
-			role := NewRole(namespace, ControllerRoleName)
-			if err := client.Resources().Create(ctx, role); err != nil {
-				t.Fatal("Failed to create role:", err)
-			}
-
-			roleBinding := NewRoleBinding(namespace, ControllerRoleBindingName, ControllerRoleName, ControllerServiceAccountName)
-			if err := client.Resources().Create(ctx, roleBinding); err != nil {
-				t.Fatal("Failed to create rolebinding:", err)
-			}
-
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			if err := client.Resources().Create(ctx, clusterRole); err != nil {
-				t.Fatal("Failed to create clusterrole:", err)
-			}
-
-			clusterRoleBinding := NewClusterRoleBinding(ControllerClusterRoleBindingName, ControllerClusterRoleName, ControllerServiceAccountName, namespace, namespace)
-			if err := client.Resources().Create(ctx, clusterRoleBinding); err != nil {
-				t.Fatal("Failed to create clusterrolebinding:", err)
-			}
-
-			secret := NewSecret(namespace, ControllerSecretName)
-			if err := client.Resources().Create(ctx, secret); err != nil {
-				t.Fatal("Failed to create secret:", err)
-			}
-
-			webhookCertSecret := NewWebhookCertSecret(namespace, "haproxy-webhook-certs")
-			if err := client.Resources().Create(ctx, webhookCertSecret); err != nil {
-				t.Fatal("Failed to create webhook cert secret:", err)
-			}
-
-			// Create HAProxyTemplateConfig with leader election enabled
-			htplConfig := NewHAProxyTemplateConfig(namespace, "haproxy-config", ControllerSecretName, true)
-			if err := client.Resources().Create(ctx, htplConfig); err != nil {
-				t.Fatal("Failed to create HAProxyTemplateConfig:", err)
-			}
-
-			deployment := NewControllerDeployment(
-				namespace,
-				ControllerCRDName,
-				ControllerSecretName,
-				ControllerServiceAccountName,
-				DebugPort,
-				2,
-			)
-			if err := client.Resources().Create(ctx, deployment); err != nil {
-				t.Fatal("Failed to create deployment:", err)
-			}
-			t.Log("Created controller deployment with 2 replicas")
+			t.Log("Created controller environment with 2 replicas and leader election enabled")
 
 			return ctx
 		}).
@@ -455,18 +333,21 @@ func buildLeaderElectionFailoverFeature() types.Feature {
 				t.Fatal("Failed to create client:", err)
 			}
 
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
+
 			// Wait for pods ready
 			if err := WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 2*time.Minute); err != nil {
 				t.Fatal("Controller pods did not become ready:", err)
 			}
 
 			// Wait for leader election
-			if err := WaitForLeaderElection(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName, 90*time.Second); err != nil {
+			if err := WaitForLeaderElection(ctx, clientset, namespace, LeaderElectionLeaseName, PodRestartTimeout); err != nil {
 				t.Fatal("Leader election did not complete:", err)
 			}
 
 			// Get initial leader
-			holderIdentity, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName)
+			holderIdentity, err := GetLeaseHolder(ctx, clientset, namespace, LeaderElectionLeaseName)
 			if err != nil {
 				t.Fatal("Failed to get lease holder:", err)
 			}
@@ -488,8 +369,11 @@ func buildLeaderElectionFailoverFeature() types.Feature {
 				t.Fatal("Failed to create client:", err)
 			}
 
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
+
 			// Get current leader
-			oldLeader, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName)
+			oldLeader, err := GetLeaseHolder(ctx, clientset, namespace, LeaderElectionLeaseName)
 			if err != nil {
 				t.Fatal("Failed to get lease holder:", err)
 			}
@@ -524,7 +408,7 @@ func buildLeaderElectionFailoverFeature() types.Feature {
 					t.Fatal("Timeout waiting for failover")
 
 				case <-ticker.C:
-					holder, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, LeaderElectionLeaseName)
+					holder, err := GetLeaseHolder(ctx, clientset, namespace, LeaderElectionLeaseName)
 					if err != nil {
 						// Lease might be temporarily unavailable during transition
 						continue
@@ -560,48 +444,7 @@ func TestLeaderElection_Failover(t *testing.T) {
 //  2. No Lease resource is created
 //  3. Controller operates normally
 //
-//nolint:revive // High complexity expected in E2E test scenarios
 func buildLeaderElectionDisabledModeFeature() types.Feature {
-	// Config with leader election disabled
-	const DisabledLeaderElectionConfig = `
-pod_selector:
-  match_labels:
-    app: haproxy
-    component: loadbalancer
-
-controller:
-  healthz_port: 8080
-  metrics_port: 9090
-  leader_election:
-    enabled: false
-
-haproxy_config:
-  template: |
-    global
-      maxconn 2000
-
-    defaults
-      mode http
-      timeout connect 5000ms
-      timeout client 50000ms
-      timeout server 50000ms
-
-    frontend test-frontend
-      bind :8080
-      default_backend test-backend
-
-    backend test-backend
-      server test-server 127.0.0.1:9999
-
-watched_resources:
-  ingresses:
-    api_version: networking.k8s.io/v1
-    resources: ingresses
-    index_by:
-      - metadata.namespace
-      - metadata.name
-`
-
 	return features.New("Leader Election - Disabled Mode").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			t.Helper()
@@ -618,83 +461,12 @@ watched_resources:
 				t.Fatal("Failed to create client:", err)
 			}
 
-			// Create namespace
-			ns := &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: namespace,
-				},
+			// Create controller environment with 1 replica and leader election disabled
+			opts := DefaultControllerEnvironmentOptions() // 1 replica, leader election disabled
+			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
+				t.Fatal("Failed to create controller environment:", err)
 			}
-			if err := client.Resources().Create(ctx, ns); err != nil {
-				t.Fatal("Failed to create namespace:", err)
-			}
-
-			// Create RBAC resources
-			serviceAccount := NewServiceAccount(namespace, ControllerServiceAccountName)
-			if err := client.Resources().Create(ctx, serviceAccount); err != nil {
-				t.Fatal("Failed to create serviceaccount:", err)
-			}
-
-			role := NewRole(namespace, ControllerRoleName)
-			if err := client.Resources().Create(ctx, role); err != nil {
-				t.Fatal("Failed to create role:", err)
-			}
-
-			roleBinding := NewRoleBinding(namespace, ControllerRoleBindingName, ControllerRoleName, ControllerServiceAccountName)
-			if err := client.Resources().Create(ctx, roleBinding); err != nil {
-				t.Fatal("Failed to create rolebinding:", err)
-			}
-
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			if err := client.Resources().Create(ctx, clusterRole); err != nil {
-				t.Fatal("Failed to create clusterrole:", err)
-			}
-
-			clusterRoleBinding := NewClusterRoleBinding(ControllerClusterRoleBindingName, ControllerClusterRoleName, ControllerServiceAccountName, namespace, namespace)
-			if err := client.Resources().Create(ctx, clusterRoleBinding); err != nil {
-				t.Fatal("Failed to create clusterrolebinding:", err)
-			}
-
-			secret := NewSecret(namespace, ControllerSecretName)
-			if err := client.Resources().Create(ctx, secret); err != nil {
-				t.Fatal("Failed to create secret:", err)
-			}
-
-			webhookCertSecret := NewWebhookCertSecret(namespace, "haproxy-webhook-certs")
-			if err := client.Resources().Create(ctx, webhookCertSecret); err != nil {
-				t.Fatal("Failed to create webhook cert secret:", err)
-			}
-
-			// Create HAProxyTemplateConfig with leader election disabled
-			htplConfig := NewHAProxyTemplateConfig(namespace, "haproxy-config", ControllerSecretName, false)
-			if err := client.Resources().Create(ctx, htplConfig); err != nil {
-				t.Fatal("Failed to create HAProxyTemplateConfig:", err)
-			}
-			t.Log("Created HAProxyTemplateConfig with leader election disabled")
-
-			// Create Deployment with 1 replica
-			deployment := NewControllerDeployment(
-				namespace,
-				ControllerCRDName,
-				ControllerSecretName,
-				ControllerServiceAccountName,
-				DebugPort,
-				1,
-			)
-			if err := client.Resources().Create(ctx, deployment); err != nil {
-				t.Fatal("Failed to create deployment:", err)
-			}
-			t.Log("Created controller deployment with 1 replica")
-
-			// Create debug and metrics services for NodePort access
-			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
-			if err := client.Resources().Create(ctx, debugSvc); err != nil {
-				t.Fatal("Failed to create debug service:", err)
-			}
-
-			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
-			if err := client.Resources().Create(ctx, metricsSvc); err != nil {
-				t.Fatal("Failed to create metrics service:", err)
-			}
+			t.Log("Created controller environment with leader election disabled")
 
 			return ctx
 		}).
@@ -720,10 +492,8 @@ watched_resources:
 			// Poll to verify Lease is NOT created (leader election disabled)
 			// This replaces the previous 10s sleep with active checking
 			// We poll for 10 seconds to ensure Lease doesn't appear
-			clientset, err := kubernetes.NewForConfig(cfg.Client().RESTConfig())
-			if err != nil {
-				t.Fatal("Failed to create clientset:", err)
-			}
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
 
 			err = WaitForCondition(ctx, "Lease to remain absent", 10*time.Second, 500*time.Millisecond, func() (bool, error) {
 				_, err := clientset.CoordinationV1().Leases(namespace).Get(ctx, LeaderElectionLeaseName, metav1.GetOptions{})
@@ -759,8 +529,11 @@ watched_resources:
 				t.Fatal("Failed to create client:", err)
 			}
 
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
+
 			// Access debug endpoint via NodePort
-			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			if err != nil {
 				t.Fatal("Failed to setup debug client:", err)
 			}

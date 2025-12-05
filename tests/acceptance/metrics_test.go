@@ -22,14 +22,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
-
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // buildMetricsFeature builds a feature that verifies the controller exposes
@@ -49,7 +45,6 @@ import (
 //  5. Trigger operations (reconciliation, validation, deployment)
 //  6. Verify metrics are updated with correct values
 //
-//nolint:revive // High complexity expected in E2E test scenarios
 func buildMetricsFeature() types.Feature {
 	return features.New("Metrics Endpoint").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -68,107 +63,21 @@ func buildMetricsFeature() types.Feature {
 				t.Fatal("Failed to create client:", err)
 			}
 
-			// Create test namespace
-			ns := &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: namespace,
-				},
-			}
-			if err := client.Resources().Create(ctx, ns); err != nil {
-				t.Fatal("Failed to create namespace:", err)
-			}
-			t.Logf("Created test namespace: %s", namespace)
-
-			// Create ServiceAccount
-			serviceAccount := NewServiceAccount(namespace, ControllerServiceAccountName)
-			if err := client.Resources().Create(ctx, serviceAccount); err != nil {
-				t.Fatal("Failed to create serviceaccount:", err)
-			}
-			t.Log("Created controller serviceaccount")
-
-			// Create Role
-			role := NewRole(namespace, ControllerRoleName)
-			if err := client.Resources().Create(ctx, role); err != nil {
-				t.Fatal("Failed to create role:", err)
-			}
-			t.Log("Created controller role")
-
-			// Create RoleBinding
-			roleBinding := NewRoleBinding(namespace, ControllerRoleBindingName, ControllerRoleName, ControllerServiceAccountName)
-			if err := client.Resources().Create(ctx, roleBinding); err != nil {
-				t.Fatal("Failed to create rolebinding:", err)
-			}
-			t.Log("Created controller rolebinding")
-
-			// Create ClusterRole
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			if err := client.Resources().Create(ctx, clusterRole); err != nil {
-				t.Fatal("Failed to create clusterrole:", err)
-			}
-			t.Log("Created controller clusterrole")
-
-			// Create ClusterRoleBinding
-			clusterRoleBinding := NewClusterRoleBinding(ControllerClusterRoleBindingName, ControllerClusterRoleName, ControllerServiceAccountName, namespace, namespace)
-			if err := client.Resources().Create(ctx, clusterRoleBinding); err != nil {
-				t.Fatal("Failed to create clusterrolebinding:", err)
-			}
-			t.Log("Created controller clusterrolebinding")
-
-			// Create Secret
-			secret := NewSecret(namespace, ControllerSecretName)
-			if err := client.Resources().Create(ctx, secret); err != nil {
-				t.Fatal("Failed to create secret:", err)
-			}
-			t.Log("Created controller secret")
-
-			// Create webhook certificate Secret
-			webhookCertSecret := NewWebhookCertSecret(namespace, "haproxy-webhook-certs")
-			if err := client.Resources().Create(ctx, webhookCertSecret); err != nil {
-				t.Fatal("Failed to create webhook cert secret:", err)
-			}
-			t.Log("Created webhook certificate secret")
-
-			// Create HAProxyTemplateConfig with metrics port configured
-			htplConfig := NewHAProxyTemplateConfig(namespace, "haproxy-config", ControllerSecretName, false)
-			if err := client.Resources().Create(ctx, htplConfig); err != nil {
-				t.Fatal("Failed to create HAProxyTemplateConfig:", err)
-			}
-			t.Log("Created HAProxyTemplateConfig")
-
-			// Create Deployment
-			deployment := NewControllerDeployment(
-				namespace,
-				ControllerCRDName,
-				ControllerSecretName,
-				ControllerServiceAccountName,
-				DebugPort,
-				1, // Single replica for this test
-			)
-			if err := client.Resources().Create(ctx, deployment); err != nil {
-				t.Fatal("Failed to create deployment:", err)
-			}
-			t.Log("Created controller deployment")
-
-			// Create debug and metrics services for NodePort access
-			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
-			if err := client.Resources().Create(ctx, debugSvc); err != nil {
-				t.Fatal("Failed to create debug service:", err)
-			}
-
-			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
-			if err := client.Resources().Create(ctx, metricsSvc); err != nil {
-				t.Fatal("Failed to create metrics service:", err)
+			// Create controller environment (namespace, RBAC, secrets, CRD, deployment, services)
+			opts := DefaultControllerEnvironmentOptions()
+			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
+				t.Fatal("Failed to create controller environment:", err)
 			}
 
 			// Wait for controller pod to be ready AND reconciliation to complete
 			// This ensures metrics will have non-zero values when we check them
 			t.Log("Waiting for controller to complete startup reconciliation...")
-			metricsClient, err := SetupMetricsAccess(ctx, client, namespace, 30*time.Second)
+			metricsClient, err := SetupMetricsAccess(ctx, client, Clientset(), namespace, DefaultClientSetupTimeout)
 			if err != nil {
 				t.Fatal("Failed to setup metrics access:", err)
 			}
 
-			pod, err := WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, 3*time.Minute)
+			pod, err := WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
 			if err != nil {
 				t.Fatal("Controller did not become ready:", err)
 			}
@@ -289,20 +198,9 @@ func buildMetricsFeature() types.Feature {
 
 			// If errors detected, print controller logs for debugging
 			if hasErrors {
-				namespace, err := GetNamespaceFromContext(ctx)
-				if err == nil {
-					client, err := cfg.NewClient()
-					if err == nil {
-						pod, err := GetControllerPod(ctx, client, namespace)
-						if err == nil {
-							t.Logf("=== Controller logs (showing validation errors) ===")
-							logs, err := GetPodLogs(ctx, client, pod, 100)
-							if err == nil {
-								t.Log(logs)
-							}
-						}
-					}
-				}
+				namespace, _ := GetNamespaceFromContext(ctx)
+				client, _ := cfg.NewClient()
+				DumpControllerLogsOnError(ctx, t, client, namespace)
 			}
 
 			return ctx
@@ -379,43 +277,13 @@ func buildMetricsFeature() types.Feature {
 			t.Helper()
 			t.Log("Cleaning up metrics test resources")
 
-			namespace, err := GetNamespaceFromContext(ctx)
-			if err != nil {
-				t.Log("Failed to get namespace from context:", err)
-				return ctx
-			}
-
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Log("Failed to create client:", err)
 				return ctx
 			}
 
-			// Delete ClusterRoleBinding
-			clusterRoleBinding := NewClusterRoleBinding(ControllerClusterRoleBindingName, ControllerClusterRoleName, ControllerServiceAccountName, namespace, namespace)
-			if err := client.Resources().Delete(ctx, clusterRoleBinding); err != nil {
-				t.Log("Warning: Failed to delete clusterrolebinding:", err)
-			}
-
-			// Delete ClusterRole
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			if err := client.Resources().Delete(ctx, clusterRole); err != nil {
-				t.Log("Warning: Failed to delete clusterrole:", err)
-			}
-
-			// Delete namespace (cascades to all resources)
-			ns := &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: namespace,
-				},
-			}
-			if err := client.Resources().Delete(ctx, ns); err != nil {
-				t.Log("Warning: Failed to delete namespace:", err)
-			} else {
-				t.Logf("Deleted test namespace: %s", namespace)
-			}
-
-			return ctx
+			return CleanupControllerEnvironment(ctx, t, client)
 		}).
 		Feature()
 }
