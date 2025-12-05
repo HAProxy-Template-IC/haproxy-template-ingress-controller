@@ -148,8 +148,6 @@ build-python-docs:
 lint:
   stage: lint
   image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
-  extends:
-    - .rules-code
   tags:
     - saas-linux-medium-amd64
   interruptible: true
