@@ -281,15 +281,36 @@ assert_auth_required() {
 
     debug "Testing auth requirement: $description"
 
-    local response_code
-    response_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -H "Host: $host" "${BASE_URL}/" 2>&1)
+    # Retry logic for flaky CI environments
+    # HAProxy reload can cause brief period where old process handles requests
+    # with stale map files, resulting in 404 instead of 401
+    local max_retries=5
+    local retry_delay=2
+    local attempt=1
+    local response_code=""
 
-    if [[ "$response_code" == "401" ]]; then
-        ok "$description - Auth required (401)"
-    else
-        err "$description - Expected 401, got $response_code"
-        return 1
-    fi
+    while [[ $attempt -le $max_retries ]]; do
+        response_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -H "Host: $host" "${BASE_URL}/" 2>&1)
+
+        if [[ "$response_code" == "401" ]]; then
+            ok "$description - Auth required (401)"
+            return 0
+        elif [[ "$response_code" == "404" ]]; then
+            # 404 likely means HAProxy reload race condition - retry
+            debug "  Attempt $attempt/$max_retries: Got 404 (HAProxy reload race), retrying..."
+        else
+            # Other codes (200, 500, etc.) are real failures
+            break
+        fi
+
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep "$retry_delay"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "$description - Expected 401, got $response_code"
+    return 1
 }
 
 assert_auth_success() {
