@@ -22,7 +22,9 @@ package acceptance
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -37,7 +39,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/flowcontrol"
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/pkg/env"
@@ -77,14 +82,69 @@ const (
 	// DebugPort is the port for the debug HTTP server.
 	DebugPort = 6060
 
+	// MetricsPort is the port for the Prometheus metrics server.
+	MetricsPort = 9090
+
 	// DefaultTimeout for operations.
 	DefaultTimeout = 2 * time.Minute
+
+	// DefaultPodReadyTimeout is the timeout for waiting for pods to become ready.
+	DefaultPodReadyTimeout = 2 * time.Minute
+
+	// DefaultConfigUpdateTimeout is the timeout for config update operations.
+	DefaultConfigUpdateTimeout = 60 * time.Second
+
+	// DefaultClientSetupTimeout is the timeout for setting up debug/metrics clients.
+	DefaultClientSetupTimeout = 30 * time.Second
+
+	// DefaultLeaseWaitTimeout is the timeout for leader election lease operations.
+	DefaultLeaseWaitTimeout = 60 * time.Second
+
+	// PodRestartTimeout is a longer timeout for operations involving pod restarts
+	// (e.g., leader failover, pod recreation after deletion).
+	PodRestartTimeout = 90 * time.Second
+
+	// WebhookCertSecretName is the name of the webhook certificate secret.
+	WebhookCertSecretName = "haproxy-webhook-certs"
 )
 
 var (
 	// testEnv is the shared test environment.
 	testEnv env.Environment
+
+	// sharedClientset is the shared Kubernetes clientset for all tests.
+	// Created once during environment setup with rate limiting disabled.
+	// All tests should use Clientset() instead of creating their own.
+	sharedClientset kubernetes.Interface
+
+	// sharedRESTConfig is the shared REST config for operations that need it
+	// (like pod exec which requires SPDY upgrade).
+	sharedRESTConfig *rest.Config
 )
+
+// RESTConfig returns the shared REST config for operations that require it.
+// This is needed for operations like pod exec that use SPDY streaming.
+func RESTConfig() *rest.Config {
+	if sharedRESTConfig == nil {
+		panic("sharedRESTConfig not initialized - TestMain must run first")
+	}
+	return sharedRESTConfig
+}
+
+// SetSharedRESTConfig sets the shared REST config (called from main_test.go).
+func SetSharedRESTConfig(cfg *rest.Config) {
+	sharedRESTConfig = cfg
+}
+
+// Clientset returns the shared Kubernetes clientset for acceptance tests.
+// This clientset has rate limiting disabled to support parallel test execution.
+// All tests MUST use this instead of creating clientsets via kubernetes.NewForConfig().
+func Clientset() kubernetes.Interface {
+	if sharedClientset == nil {
+		panic("sharedClientset not initialized - TestMain must run first")
+	}
+	return sharedClientset
+}
 
 // StoreNamespaceInContext stores a namespace name in the context for use across test phases.
 func StoreNamespaceInContext(ctx context.Context, namespace string) context.Context {
@@ -99,6 +159,176 @@ func GetNamespaceFromContext(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("namespace not found in context")
 	}
 	return namespace, nil
+}
+
+// ControllerEnvironmentOptions configures the controller setup for CreateControllerEnvironment.
+type ControllerEnvironmentOptions struct {
+	// Replicas is the number of controller replicas to deploy.
+	Replicas int32
+	// CRDName is the name for the HAProxyTemplateConfig CRD instance.
+	CRDName string
+	// EnableLeaderElection enables leader election for multi-replica deployments.
+	EnableLeaderElection bool
+	// SkipCRDAndDeployment skips creation of HAProxyTemplateConfig, Deployment, and Services.
+	// Use this when you need to create custom CRD or deployment resources.
+	SkipCRDAndDeployment bool
+	// SkipCredentialsSecret skips creation of the credentials secret.
+	// Use this for testing missing credentials handling.
+	SkipCredentialsSecret bool
+}
+
+// DefaultControllerEnvironmentOptions returns sensible defaults for controller setup.
+func DefaultControllerEnvironmentOptions() ControllerEnvironmentOptions {
+	return ControllerEnvironmentOptions{
+		Replicas:             1,
+		CRDName:              ControllerCRDName,
+		EnableLeaderElection: false,
+	}
+}
+
+// CreateControllerEnvironment sets up all resources needed to run the controller.
+// This includes namespace, RBAC, secrets, CRD, deployment, and services.
+// Tests that need custom configurations can pass a modified ControllerEnvironmentOptions.
+func CreateControllerEnvironment(ctx context.Context, t *testing.T, cfg klient.Client, namespace string, opts ControllerEnvironmentOptions) error {
+	t.Helper()
+
+	// 1. Create namespace
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
+	if err := cfg.Resources().Create(ctx, ns); err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+	t.Logf("Created namespace: %s", namespace)
+
+	// 2. Create RBAC resources
+	if err := createControllerRBAC(ctx, cfg, namespace); err != nil {
+		return fmt.Errorf("failed to create RBAC: %w", err)
+	}
+	t.Log("Created RBAC resources")
+
+	// 3. Create secrets (optionally skip credentials secret for testing missing credentials)
+	if !opts.SkipCredentialsSecret {
+		if err := cfg.Resources().Create(ctx, NewSecret(namespace, ControllerSecretName)); err != nil {
+			return fmt.Errorf("failed to create credentials secret: %w", err)
+		}
+	}
+	if err := cfg.Resources().Create(ctx, NewWebhookCertSecret(namespace, WebhookCertSecretName)); err != nil {
+		return fmt.Errorf("failed to create webhook cert secret: %w", err)
+	}
+	if opts.SkipCredentialsSecret {
+		t.Log("Created webhook cert secret (credentials secret skipped)")
+	} else {
+		t.Log("Created secrets")
+	}
+
+	// Skip CRD, deployment, and services if requested (for custom setups like HTTP store tests)
+	if opts.SkipCRDAndDeployment {
+		return nil
+	}
+
+	// 4. Create HAProxyTemplateConfig CRD
+	htplConfig := NewHAProxyTemplateConfig(namespace, opts.CRDName, ControllerSecretName, opts.EnableLeaderElection)
+	if err := cfg.Resources().Create(ctx, htplConfig); err != nil {
+		return fmt.Errorf("failed to create HAProxyTemplateConfig: %w", err)
+	}
+	t.Log("Created HAProxyTemplateConfig")
+
+	// 5. Create deployment
+	deployment := NewControllerDeployment(namespace, opts.CRDName, ControllerSecretName, ControllerServiceAccountName, DebugPort, opts.Replicas)
+	if err := cfg.Resources().Create(ctx, deployment); err != nil {
+		return fmt.Errorf("failed to create deployment: %w", err)
+	}
+	t.Log("Created controller deployment")
+
+	// 6. Create services
+	if err := createControllerServices(ctx, cfg, namespace); err != nil {
+		return fmt.Errorf("failed to create services: %w", err)
+	}
+	t.Log("Created debug and metrics services")
+
+	return nil
+}
+
+// createControllerRBAC creates ServiceAccount, Role, RoleBinding, ClusterRole, and ClusterRoleBinding.
+func createControllerRBAC(ctx context.Context, client klient.Client, namespace string) error {
+	if err := client.Resources().Create(ctx, NewServiceAccount(namespace, ControllerServiceAccountName)); err != nil {
+		return fmt.Errorf("ServiceAccount: %w", err)
+	}
+	if err := client.Resources().Create(ctx, NewRole(namespace, ControllerRoleName)); err != nil {
+		return fmt.Errorf("Role: %w", err)
+	}
+	if err := client.Resources().Create(ctx, NewRoleBinding(namespace, ControllerRoleBindingName, ControllerRoleName, ControllerServiceAccountName)); err != nil {
+		return fmt.Errorf("RoleBinding: %w", err)
+	}
+	if err := client.Resources().Create(ctx, NewClusterRole(ControllerClusterRoleName, namespace)); err != nil {
+		return fmt.Errorf("ClusterRole: %w", err)
+	}
+	if err := client.Resources().Create(ctx, NewClusterRoleBinding(ControllerClusterRoleBindingName, ControllerClusterRoleName, ControllerServiceAccountName, namespace, namespace)); err != nil {
+		return fmt.Errorf("ClusterRoleBinding: %w", err)
+	}
+	return nil
+}
+
+
+// createControllerServices creates the debug and metrics ClusterIP services.
+func createControllerServices(ctx context.Context, client klient.Client, namespace string) error {
+	if err := client.Resources().Create(ctx, NewDebugService(namespace, ControllerDeploymentName, DebugPort)); err != nil {
+		return fmt.Errorf("DebugService: %w", err)
+	}
+	if err := client.Resources().Create(ctx, NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)); err != nil {
+		return fmt.Errorf("MetricsService: %w", err)
+	}
+	return nil
+}
+
+// CleanupControllerEnvironment removes cluster-scoped resources and namespace.
+// It returns the context for chaining in Teardown functions.
+// Errors are logged but not returned since cleanup should be best-effort.
+func CleanupControllerEnvironment(ctx context.Context, t *testing.T, cfg klient.Client) context.Context {
+	t.Helper()
+	namespace, err := GetNamespaceFromContext(ctx)
+	if err != nil {
+		t.Logf("Warning: failed to get namespace from context: %v", err)
+		return ctx
+	}
+
+	// Delete cluster-scoped resources first (namespace deletion won't cascade to these)
+	clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
+	if err := cfg.Resources().Delete(ctx, clusterRole); err != nil {
+		t.Logf("Warning: failed to delete ClusterRole: %v", err)
+	}
+
+	clusterRoleBinding := NewClusterRoleBinding(ControllerClusterRoleBindingName, ControllerClusterRoleName, ControllerServiceAccountName, namespace, namespace)
+	if err := cfg.Resources().Delete(ctx, clusterRoleBinding); err != nil {
+		t.Logf("Warning: failed to delete ClusterRoleBinding: %v", err)
+	}
+
+	// Delete namespace (cascades to all namespace-scoped resources)
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
+	if err := cfg.Resources().Delete(ctx, ns); err != nil {
+		t.Logf("Warning: failed to delete namespace: %v", err)
+	} else {
+		t.Logf("Deleted namespace: %s", namespace)
+	}
+
+	return ctx
+}
+
+// DumpControllerLogsOnError logs controller pod output for debugging test failures.
+// This is a best-effort operation - errors are silently ignored.
+func DumpControllerLogsOnError(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+	t.Helper()
+
+	pod, err := GetControllerPod(ctx, client, namespace)
+	if err != nil {
+		return
+	}
+
+	logs, err := GetPodLogs(ctx, Clientset(), pod, 200)
+	if err != nil {
+		return
+	}
+
+	t.Logf("=== Controller logs (%s) ===\n%s", pod.Name, logs)
 }
 
 // WaitForServiceEndpoints waits until a service has at least one ready endpoint.
@@ -287,15 +517,11 @@ func GetControllerPod(ctx context.Context, client klient.Client, namespace strin
 // DumpPodLogs captures and prints pod logs to test output.
 // This is useful for debugging test failures by providing visibility into what
 // happened inside the pod.
-func DumpPodLogs(ctx context.Context, t *testing.T, restConfig *rest.Config, pod *corev1.Pod) {
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func DumpPodLogs(ctx context.Context, t *testing.T, clientset kubernetes.Interface, pod *corev1.Pod) {
 	t.Helper()
-
-	// Create Kubernetes clientset
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		t.Logf("Failed to create Kubernetes clientset for log capture: %v", err)
-		return
-	}
 
 	t.Logf("=== Pod %s/%s logs ===", pod.Namespace, pod.Name)
 
@@ -339,15 +565,12 @@ func DumpPodLogs(ctx context.Context, t *testing.T, restConfig *rest.Config, pod
 // WaitForWebhookConfiguration waits for a ValidatingWebhookConfiguration to exist in the cluster.
 // This is useful when testing webhook functionality - the controller creates the configuration
 // dynamically, so tests must wait for it to appear before attempting webhook validation.
-func WaitForWebhookConfiguration(ctx context.Context, restConfig *rest.Config, name string, timeout time.Duration) error {
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func WaitForWebhookConfiguration(ctx context.Context, clientset kubernetes.Interface, name string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	// Create Kubernetes clientset
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
-	}
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -426,12 +649,10 @@ func WaitForNewPodReady(ctx context.Context, client klient.Client, namespace, la
 
 // GetLeaseHolder queries the Lease resource and returns the holder identity.
 // Returns empty string if Lease doesn't exist or has no holder.
-func GetLeaseHolder(ctx context.Context, restConfig *rest.Config, namespace, leaseName string) (string, error) {
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to create clientset: %w", err)
-	}
-
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func GetLeaseHolder(ctx context.Context, clientset kubernetes.Interface, namespace, leaseName string) (string, error) {
 	lease, err := clientset.CoordinationV1().Leases(namespace).Get(ctx, leaseName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to get lease: %w", err)
@@ -446,14 +667,12 @@ func GetLeaseHolder(ctx context.Context, restConfig *rest.Config, namespace, lea
 
 // WaitForLeaderElection waits until a Lease exists with a holder identity.
 // Returns error if timeout occurs before leader is elected.
-func WaitForLeaderElection(ctx context.Context, restConfig *rest.Config, namespace, leaseName string, timeout time.Duration) error {
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func WaitForLeaderElection(ctx context.Context, clientset kubernetes.Interface, namespace, leaseName string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
-	}
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -481,35 +700,60 @@ func WaitForLeaderElection(ctx context.Context, restConfig *rest.Config, namespa
 
 // WaitForNewLeader waits until a different leader is elected than oldLeaderIdentity.
 // It verifies the new leader pod exists and is running.
-func WaitForNewLeader(ctx context.Context, client klient.Client, restConfig *rest.Config,
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func WaitForNewLeader(ctx context.Context, client klient.Client, clientset kubernetes.Interface,
 	namespace, leaseName, oldLeaderIdentity string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to create clientset: %w", err)
-	}
-
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	// Track state for better error reporting
+	var lastLeaseErr error
+	var lastPodErr error
+	var lastLeaseHolder string
+	var lastPodStates []string
+
+	pollCount := 0
 	for {
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("timeout waiting for new leader (old: %s)", oldLeaderIdentity)
+			// Build detailed error message
+			errMsg := fmt.Sprintf("timeout waiting for new leader (old: %s, polls: %d", oldLeaderIdentity, pollCount)
+			if lastLeaseErr != nil {
+				errMsg += fmt.Sprintf(", lastLeaseErr: %v", lastLeaseErr)
+			}
+			if lastLeaseHolder != "" {
+				errMsg += fmt.Sprintf(", lastLeaseHolder: %s", lastLeaseHolder)
+			}
+			if lastPodErr != nil {
+				errMsg += fmt.Sprintf(", lastPodErr: %v", lastPodErr)
+			}
+			if len(lastPodStates) > 0 {
+				errMsg += fmt.Sprintf(", lastPodStates: %v", lastPodStates)
+			}
+			errMsg += ")"
+			return "", errors.New(errMsg)
 
 		case <-ticker.C:
+			pollCount++
 			lease, err := clientset.CoordinationV1().Leases(namespace).Get(ctx, leaseName, metav1.GetOptions{})
 			if err != nil {
+				lastLeaseErr = err
 				continue
 			}
+			lastLeaseErr = nil
 
 			if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity == "" {
+				lastLeaseHolder = "<empty>"
 				continue
 			}
 
 			newLeader := *lease.Spec.HolderIdentity
+			lastLeaseHolder = newLeader
 
 			// Must be different from old leader
 			if newLeader == oldLeaderIdentity {
@@ -519,11 +763,16 @@ func WaitForNewLeader(ctx context.Context, client klient.Client, restConfig *res
 			// Verify the new leader pod exists and is running
 			pods, err := GetAllControllerPods(ctx, client, namespace)
 			if err != nil {
+				lastPodErr = err
 				continue
 			}
+			lastPodErr = nil
 
+			// Track pod states for debugging
+			lastPodStates = make([]string, 0, len(pods))
 			for i := range pods {
 				pod := &pods[i]
+				lastPodStates = append(lastPodStates, fmt.Sprintf("%s=%s", pod.Name, pod.Status.Phase))
 				if strings.Contains(newLeader, pod.Name) && pod.Status.Phase == corev1.PodRunning {
 					return newLeader, nil
 				}
@@ -534,12 +783,10 @@ func WaitForNewLeader(ctx context.Context, client klient.Client, restConfig *res
 }
 
 // GetPodLogs retrieves the last N lines of logs from a pod.
-func GetPodLogs(ctx context.Context, client klient.Client, pod *corev1.Pod, tailLines int) (string, error) {
-	clientset, err := kubernetes.NewForConfig(client.RESTConfig())
-	if err != nil {
-		return "", fmt.Errorf("failed to create clientset: %w", err)
-	}
-
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func GetPodLogs(ctx context.Context, clientset kubernetes.Interface, pod *corev1.Pod, tailLines int) (string, error) {
 	tailLinesInt64 := int64(tailLines)
 	logOptions := &corev1.PodLogOptions{
 		TailLines: &tailLinesInt64,
@@ -606,9 +853,6 @@ func WaitForCondition(ctx context.Context, description string, timeout, pollInte
 	}
 }
 
-// MetricsPort is the port for Prometheus metrics.
-const MetricsPort = 9090
-
 // UpdateHAProxyTemplateConfigTemplate fetches the current HAProxyTemplateConfig from the cluster
 // and replaces its spec.haproxyConfig.template with the new template, preserving resourceVersion.
 // This is necessary because Kubernetes requires resourceVersion for optimistic concurrency control.
@@ -663,9 +907,13 @@ func UpdateHAProxyTemplateConfigTemplate(ctx context.Context, client klient.Clie
 	return fmt.Errorf("failed to update HAProxyTemplateConfig after %d retries: %w", maxRetries, lastErr)
 }
 
-// getDynamicClient creates a dynamic Kubernetes client.
+// getDynamicClient creates a dynamic Kubernetes client with rate limiting disabled.
+// This is necessary for parallel test execution where multiple tests may need
+// to update HAProxyTemplateConfig resources simultaneously.
 func getDynamicClient(config *rest.Config) (dynamic.Interface, error) {
-	return dynamic.NewForConfig(config)
+	configCopy := rest.CopyConfig(config)
+	configCopy.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
+	return dynamic.NewForConfig(configCopy)
 }
 
 // haproxyTemplateConfigGVR returns the GroupVersionResource for HAProxyTemplateConfig.
@@ -679,7 +927,10 @@ func haproxyTemplateConfigGVR() schema.GroupVersionResource {
 
 // EnsureDebugClientReady waits for the controller pod to be ready, then creates
 // a debug client using Kubernetes API proxy. This is useful after operations that may cause pod restarts.
-func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Client, namespace string, timeout time.Duration) (*DebugClient, error) {
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Client, clientset kubernetes.Interface, namespace string, timeout time.Duration) (*DebugClient, error) {
 	t.Helper()
 
 	// First wait for pod to be ready
@@ -694,12 +945,6 @@ func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Cli
 		return nil, fmt.Errorf("failed waiting for debug service endpoints: %w", err)
 	}
 
-	// Create Kubernetes clientset for API proxy access
-	clientset, err := kubernetes.NewForConfig(client.RESTConfig())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset: %w", err)
-	}
-
 	return NewDebugClient(clientset, namespace, serviceName, DebugPort), nil
 }
 
@@ -708,7 +953,10 @@ func EnsureDebugClientReady(ctx context.Context, t *testing.T, client klient.Cli
 // The returned debug client uses the Kubernetes API server proxy to access the service,
 // which works reliably in all environments including DinD (Docker-in-Docker).
 // This function is idempotent - it will not fail if the service already exists.
-func SetupDebugClient(ctx context.Context, client klient.Client, namespace string, timeout time.Duration) (*DebugClient, error) {
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func SetupDebugClient(ctx context.Context, client klient.Client, clientset kubernetes.Interface, namespace string, timeout time.Duration) (*DebugClient, error) {
 	// Create debug service (idempotent - ignore if already exists)
 	debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
 	res := client.Resources(namespace)
@@ -723,12 +971,6 @@ func SetupDebugClient(ctx context.Context, client klient.Client, namespace strin
 	serviceName := ControllerDeploymentName + "-debug"
 	if err := WaitForServiceEndpoints(ctx, client, namespace, serviceName, timeout); err != nil {
 		return nil, fmt.Errorf("failed waiting for debug service endpoints: %w", err)
-	}
-
-	// Create Kubernetes clientset for API proxy access
-	clientset, err := kubernetes.NewForConfig(client.RESTConfig())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
 	return NewDebugClient(clientset, namespace, serviceName, DebugPort), nil
@@ -914,7 +1156,10 @@ func (mc *MetricsClient) GetLeaderPod(ctx context.Context) (string, error) {
 // This is used by WaitForControllerReady to check reconciliation metrics.
 // The MetricsClient uses the Kubernetes API server proxy, which works reliably in DinD environments.
 // This function is idempotent - it will not fail if the service already exists.
-func SetupMetricsAccess(ctx context.Context, client klient.Client, namespace string, timeout time.Duration) (*MetricsClient, error) {
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func SetupMetricsAccess(ctx context.Context, client klient.Client, clientset kubernetes.Interface, namespace string, timeout time.Duration) (*MetricsClient, error) {
 	// Create metrics service (idempotent - ignore if already exists)
 	metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
 	res := client.Resources(namespace)
@@ -931,29 +1176,199 @@ func SetupMetricsAccess(ctx context.Context, client klient.Client, namespace str
 		return nil, fmt.Errorf("failed waiting for metrics service endpoints: %w", err)
 	}
 
-	// Create Kubernetes clientset for API proxy access
-	clientset, err := kubernetes.NewForConfig(client.RESTConfig())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset: %w", err)
-	}
-
 	return NewMetricsClient(clientset, namespace, serviceName, MetricsPort), nil
 }
 
-// GetLeaderPodFromMetrics fetches metrics via API proxy and returns which pod is the leader.
-// It parses the haproxy_ic_leader_election_is_leader{pod="..."} metric to find the pod
-// with value 1. Returns the pod name if found, empty string if no leader, or an error.
-func GetLeaderPodFromMetrics(ctx context.Context, metricsClient *MetricsClient) (string, error) {
-	return metricsClient.GetLeaderPod(ctx)
+// GetPodsByLabel returns all pods matching a label selector in the namespace.
+// This is useful for getting pods by their app label (e.g., "app=blocklist-server").
+func GetPodsByLabel(ctx context.Context, client klient.Client, namespace, labelSelector string) ([]corev1.Pod, error) {
+	var podList corev1.PodList
+	res := client.Resources(namespace)
+	if err := res.List(ctx, &podList, resources.WithLabelSelector(labelSelector)); err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+	return podList.Items, nil
 }
 
-// CheckPodIsLeaderViaMetrics checks if a specific pod is the leader by fetching metrics via API proxy
-// and parsing the haproxy_ic_leader_election_is_leader metric.
-func CheckPodIsLeaderViaMetrics(ctx context.Context, metricsClient *MetricsClient, podName string) (bool, error) {
-	leaderPod, err := metricsClient.GetLeaderPod(ctx)
+// ExecInPod executes a command inside a pod container and returns the output.
+// This is useful for inspecting file contents inside pods during tests.
+//
+// IMPORTANT: This function uses the shared REST config for SPDY streaming.
+// The clientset parameter is kept for API compatibility but the actual exec
+// uses the shared REST config.
+func ExecInPod(ctx context.Context, clientset kubernetes.Interface, namespace, podName, containerName string, command []string) (string, error) {
+	restConfig := RESTConfig()
+
+	// Create the exec request URL
+	req := clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: containerName,
+			Command:   command,
+			Stdin:     false,
+			Stdout:    true,
+			Stderr:    true,
+			TTY:       false,
+		}, scheme.ParameterCodec)
+
+	// Create the SPDY executor
+	exec, err := remotecommand.NewSPDYExecutor(restConfig, "POST", req.URL())
 	if err != nil {
-		return false, err
+		return "", fmt.Errorf("failed to create SPDY executor: %w", err)
 	}
 
-	return leaderPod == podName, nil
+	// Execute and capture output
+	var stdout, stderr bytes.Buffer
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdin:  nil,
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Tty:    false,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to exec in pod (stderr: %s): %w", stderr.String(), err)
+	}
+
+	return stdout.String(), nil
+}
+
+// WaitForNginxContent polls the nginx blocklist server until it returns content containing the expected string.
+// This verifies the ConfigMap has been properly mounted before testing controller behavior.
+// This is critical for isolating infrastructure issues (nginx serving wrong content) from controller bugs.
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution. Creating new clientsets per call would overwhelm the rate limiter.
+func WaitForNginxContent(ctx context.Context, clientset kubernetes.Interface, namespace, expectedContent string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastContent string
+	var lastError error
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for nginx to serve content containing %q (last content: %q, last error: %v)",
+				expectedContent, lastContent, lastError)
+		case <-ticker.C:
+			// Get blocklist server pod
+			pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app=blocklist-server",
+			})
+			if err != nil {
+				lastError = fmt.Errorf("failed to list pods: %w", err)
+				continue
+			}
+			if len(pods.Items) == 0 {
+				lastError = fmt.Errorf("no blocklist-server pods found")
+				continue
+			}
+
+			// Find a running pod
+			var targetPod *corev1.Pod
+			for i := range pods.Items {
+				if pods.Items[i].Status.Phase == corev1.PodRunning {
+					targetPod = &pods.Items[i]
+					break
+				}
+			}
+			if targetPod == nil {
+				lastError = fmt.Errorf("no running blocklist-server pod found")
+				continue
+			}
+
+			// Read the file content using exec
+			content, err := ExecInPod(ctx, clientset, namespace, targetPod.Name, "nginx",
+				[]string{"cat", "/usr/share/nginx/html/blocklist.txt"})
+			if err != nil {
+				lastError = fmt.Errorf("failed to exec in pod: %w", err)
+				continue
+			}
+
+			lastContent = content
+			lastError = nil
+
+			if strings.Contains(content, expectedContent) {
+				return nil
+			}
+		}
+	}
+}
+
+// SetupBlocklistServer creates all resources needed for the blocklist HTTP server.
+// This includes the ConfigMap with blocklist content, Deployment, and Service.
+// It waits for the server pod to become ready before returning.
+func SetupBlocklistServer(ctx context.Context, t *testing.T, client klient.Client, namespace, content string) error {
+	t.Helper()
+
+	blocklistCM := NewBlocklistContentConfigMap(namespace, content)
+	if err := client.Resources().Create(ctx, blocklistCM); err != nil {
+		return fmt.Errorf("failed to create blocklist configmap: %w", err)
+	}
+
+	blocklistDeploy := NewBlocklistServerDeployment(namespace)
+	if err := client.Resources().Create(ctx, blocklistDeploy); err != nil {
+		return fmt.Errorf("failed to create blocklist deployment: %w", err)
+	}
+
+	blocklistSvc := NewBlocklistService(namespace)
+	if err := client.Resources().Create(ctx, blocklistSvc); err != nil {
+		return fmt.Errorf("failed to create blocklist service: %w", err)
+	}
+
+	if err := WaitForPodReady(ctx, client, namespace, "app="+BlocklistServerName, DefaultTimeout); err != nil {
+		return fmt.Errorf("blocklist server not ready: %w", err)
+	}
+
+	t.Log("Blocklist server ready")
+	return nil
+}
+
+// UpdateBlocklistAndRestart updates the blocklist ConfigMap content and restarts the server pod.
+// This is used to simulate blocklist content changes that the controller should detect.
+// The function waits for the new pod to be ready before returning.
+//
+// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
+// under parallel test execution.
+func UpdateBlocklistAndRestart(ctx context.Context, t *testing.T, client klient.Client, clientset kubernetes.Interface, namespace, newContent string) error {
+	t.Helper()
+
+	blocklistCM, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, BlocklistContentConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get blocklist configmap: %w", err)
+	}
+
+	blocklistCM.Data["blocklist.txt"] = newContent
+	_, err = clientset.CoreV1().ConfigMaps(namespace).Update(ctx, blocklistCM, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update blocklist configmap: %w", err)
+	}
+
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=" + BlocklistServerName,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list blocklist pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return fmt.Errorf("no blocklist server pod found")
+	}
+
+	err = clientset.CoreV1().Pods(namespace).Delete(ctx, pods.Items[0].Name, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete blocklist pod: %w", err)
+	}
+
+	if err := WaitForPodReady(ctx, client, namespace, "app="+BlocklistServerName, DefaultConfigUpdateTimeout); err != nil {
+		return fmt.Errorf("blocklist server not ready after restart: %w", err)
+	}
+
+	t.Log("Blocklist content updated and server restarted")
+	return nil
 }

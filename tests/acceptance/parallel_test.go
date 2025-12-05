@@ -18,27 +18,32 @@ package acceptance
 
 import (
 	"os"
+	"runtime"
+	"strconv"
+	"sync"
 	"testing"
 
 	"sigs.k8s.io/e2e-framework/pkg/types"
 )
 
-// TestAllAcceptanceParallel runs all acceptance tests in parallel using the e2e-framework's
-// TestInParallel method. Each test runs in its own isolated namespace, sharing the same
-// Kind cluster for efficiency.
+// TestAllAcceptanceParallel runs all acceptance tests in parallel with controlled concurrency.
+// Each test runs in its own isolated namespace, sharing the same Kind cluster for efficiency.
 //
 // Usage:
 //
 //	go test -tags=acceptance -v -timeout 30m -run TestAllAcceptanceParallel ./tests/acceptance/...
 //
-// The -parallel flag can be used to control the maximum number of concurrent tests:
+// The PARALLEL environment variable controls the maximum number of concurrent tests:
 //
-//	go test -tags=acceptance -v -timeout 30m -parallel 4 -run TestAllAcceptanceParallel ./tests/acceptance/...
+//	PARALLEL=4 go test -tags=acceptance -v -timeout 30m -run TestAllAcceptanceParallel ./tests/acceptance/...
+//
+// By default, parallelism is set to GOMAXPROCS/2 to prevent resource exhaustion.
 //
 // Benefits:
 // - Faster overall test execution (tests run concurrently)
 // - Shared Kind cluster reduces setup time
 // - Each test has namespace isolation (no cross-test interference)
+// - Controlled parallelism prevents flakiness from resource contention
 //
 // Notes:
 // - Each test creates and cleans up its own namespace
@@ -78,6 +83,44 @@ func TestAllAcceptanceParallel(t *testing.T) {
 		buildMetricsFeature(),
 	}
 
-	// Run all features in parallel
-	testEnv.TestInParallel(t, features...)
+	// Calculate parallelism limit: GOMAXPROCS / 2 (minimum 1)
+	// This prevents resource exhaustion on multi-core CI runners
+	parallel := runtime.GOMAXPROCS(0) / 2
+	if parallel < 1 {
+		parallel = 1
+	}
+
+	// Allow override via PARALLEL env var
+	if p := os.Getenv("PARALLEL"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			parallel = n
+		}
+	}
+
+	t.Logf("Running %d features with parallelism limit: %d (GOMAXPROCS=%d)",
+		len(features), parallel, runtime.GOMAXPROCS(0))
+
+	// Run features with limited parallelism using a semaphore
+	runFeaturesWithLimit(t, features, parallel)
+}
+
+// runFeaturesWithLimit executes features in parallel with a concurrency limit.
+// It uses a semaphore (buffered channel) to control the number of concurrent goroutines.
+func runFeaturesWithLimit(t *testing.T, features []types.Feature, limit int) {
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+
+	for _, f := range features {
+		wg.Add(1)
+		sem <- struct{}{} // Acquire semaphore slot
+
+		go func(feature types.Feature) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release semaphore slot
+
+			testEnv.Test(t, feature)
+		}(f)
+	}
+
+	wg.Wait()
 }

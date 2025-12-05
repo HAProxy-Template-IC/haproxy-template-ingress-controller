@@ -54,17 +54,16 @@ func NewDebugClient(clientset kubernetes.Interface, namespace, serviceName strin
 // proxyGet makes an HTTP GET request through the Kubernetes API server proxy.
 // Includes retry logic with exponential backoff for resilience during parallel test execution.
 //
-// The retry budget is intentionally kept small (3 retries, 2s max backoff) to ensure
-// that higher-level Wait functions get enough retry opportunities. In CI with 17
-// parallel tests, the API server can be temporarily overloaded. With a smaller
-// retry budget (~4s worst case), the Wait function can make more attempts within
-// its timeout budget.
+// With 17 parallel tests, the Kind cluster's API server can become overloaded,
+// returning 503 "server unable to handle request" errors. The retry budget is
+// tuned to handle these transient failures while still allowing higher-level
+// Wait functions to make multiple attempts within their timeout budgets.
 func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error) {
 	const (
-		maxRetries     = 3                       // Reduced from 5 to allow more Wait-level retries
-		initialBackoff = 100 * time.Millisecond
-		maxBackoff     = 2 * time.Second         // Reduced from 5s for tighter retry budget
-		minTimeForRetries = 3 * time.Second      // Minimum time needed for meaningful retries
+		maxRetries        = 8                     // Increased for API overload resilience
+		initialBackoff    = 200 * time.Millisecond
+		maxBackoff        = 4 * time.Second
+		minTimeForRetries = 10 * time.Second     // More time for retries under load
 	)
 
 	// Check if we have enough time remaining for retries.
@@ -123,7 +122,10 @@ func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error
 		errStr := err.Error()
 		if strings.Contains(errStr, "unable to handle the request") ||
 			strings.Contains(errStr, "connection refused") ||
-			strings.Contains(errStr, "no endpoints available") {
+			strings.Contains(errStr, "no endpoints available") ||
+			strings.Contains(errStr, "connection reset") ||
+			strings.Contains(errStr, "i/o timeout") ||
+			strings.Contains(errStr, "EOF") {
 			// Retryable error, continue to next attempt
 			continue
 		}
@@ -137,12 +139,12 @@ func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error
 
 // GetConfig retrieves the current controller configuration from the debug server.
 func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]interface{}, error) {
-	return dc.getJSON(ctx, "/debug/vars/config")
+	return dc.getJSON(ctx, DebugPathConfig)
 }
 
 // GetRenderedConfig retrieves the rendered HAProxy configuration.
 func (dc *DebugClient) GetRenderedConfig(ctx context.Context) (string, error) {
-	data, err := dc.getJSON(ctx, "/debug/vars/rendered")
+	data, err := dc.getJSON(ctx, DebugPathRendered)
 	if err != nil {
 		return "", err
 	}
@@ -181,7 +183,7 @@ func (dc *DebugClient) GetRenderedConfigWithRetry(ctx context.Context, timeout t
 
 // GetEvents retrieves recent events from the debug server.
 func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]interface{}, error) {
-	data, err := dc.getJSON(ctx, "/debug/vars/events")
+	data, err := dc.getJSON(ctx, DebugPathEvents)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +200,14 @@ func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]interface{},
 	}
 
 	return nil, fmt.Errorf("events not found in response")
+}
+
+// waitFor is a helper method that wraps testutil.WaitForConditionWithDescription
+// with a standard timeout configuration. This reduces boilerplate in wait functions.
+func (dc *DebugClient) waitFor(ctx context.Context, timeout time.Duration, description string, check func(context.Context) (bool, error)) error {
+	cfg := testutil.DefaultWaitConfig()
+	cfg.Timeout = timeout
+	return testutil.WaitForConditionWithDescription(ctx, cfg, description, check)
 }
 
 // WaitForConfig waits for the controller configuration to become available.
@@ -229,16 +239,12 @@ func (dc *DebugClient) WaitForConfig(ctx context.Context, timeout time.Duration)
 
 // WaitForConfigVersion waits for the controller to load a specific config version.
 func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion string, timeout time.Duration) error {
-	cfg := testutil.DefaultWaitConfig()
-	cfg.Timeout = timeout
-
-	return testutil.WaitForConditionWithDescription(ctx, cfg, fmt.Sprintf("config version %q", expectedVersion),
+	return dc.waitFor(ctx, timeout, fmt.Sprintf("config version %q", expectedVersion),
 		func(ctx context.Context) (bool, error) {
 			config, err := dc.GetConfig(ctx)
 			if err != nil {
 				return false, err
 			}
-
 			if version, ok := config["version"].(string); ok && version == expectedVersion {
 				return true, nil
 			}
@@ -248,16 +254,12 @@ func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion
 
 // WaitForRenderedConfigContains waits for the rendered config to contain a specific string.
 func (dc *DebugClient) WaitForRenderedConfigContains(ctx context.Context, expectedSubstring string, timeout time.Duration) error {
-	cfg := testutil.DefaultWaitConfig()
-	cfg.Timeout = timeout
-
-	return testutil.WaitForConditionWithDescription(ctx, cfg, fmt.Sprintf("rendered config contains %q", expectedSubstring),
+	return dc.waitFor(ctx, timeout, fmt.Sprintf("rendered config contains %q", expectedSubstring),
 		func(ctx context.Context) (bool, error) {
 			rendered, err := dc.GetRenderedConfig(ctx)
 			if err != nil {
 				return false, err
 			}
-
 			return strings.Contains(rendered, expectedSubstring), nil
 		})
 }
@@ -373,7 +375,7 @@ type ErrorInfo struct {
 
 // GetPipelineStatus retrieves the reconciliation pipeline status.
 func (dc *DebugClient) GetPipelineStatus(ctx context.Context) (*PipelineStatus, error) {
-	data, err := dc.getJSON(ctx, "/debug/vars/pipeline")
+	data, err := dc.getJSON(ctx, DebugPathPipeline)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +420,7 @@ func (dc *DebugClient) GetPipelineStatusWithRetry(ctx context.Context, timeout t
 
 // GetValidatedConfig retrieves the last successfully validated HAProxy configuration.
 func (dc *DebugClient) GetValidatedConfig(ctx context.Context) (*ValidatedConfigInfo, error) {
-	data, err := dc.getJSON(ctx, "/debug/vars/validated")
+	data, err := dc.getJSON(ctx, DebugPathValidated)
 	if err != nil {
 		return nil, err
 	}
@@ -439,7 +441,7 @@ func (dc *DebugClient) GetValidatedConfig(ctx context.Context) (*ValidatedConfig
 
 // GetErrors retrieves the error summary.
 func (dc *DebugClient) GetErrors(ctx context.Context) (*ErrorSummary, error) {
-	data, err := dc.getJSON(ctx, "/debug/vars/errors")
+	data, err := dc.getJSON(ctx, DebugPathErrors)
 	if err != nil {
 		return nil, err
 	}
@@ -460,16 +462,12 @@ func (dc *DebugClient) GetErrors(ctx context.Context) (*ErrorSummary, error) {
 
 // WaitForValidationStatus waits for the validation status to match the expected value.
 func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected string, timeout time.Duration) error {
-	cfg := testutil.DefaultWaitConfig()
-	cfg.Timeout = timeout
-
-	return testutil.WaitForConditionWithDescription(ctx, cfg, fmt.Sprintf("validation status %q", expected),
+	return dc.waitFor(ctx, timeout, fmt.Sprintf("validation status %q", expected),
 		func(ctx context.Context) (bool, error) {
 			status, err := dc.GetPipelineStatus(ctx)
 			if err != nil {
 				return false, err
 			}
-
 			if status.Validation != nil && status.Validation.Status == expected {
 				return true, nil
 			}
@@ -494,7 +492,7 @@ func (dc *DebugClient) getJSON(ctx context.Context, path string) (map[string]int
 
 // GetAuxiliaryFiles retrieves the auxiliary files from the debug endpoint.
 func (dc *DebugClient) GetAuxiliaryFiles(ctx context.Context) (map[string]interface{}, error) {
-	return dc.getJSON(ctx, "/debug/vars/auxfiles")
+	return dc.getJSON(ctx, DebugPathAuxFiles)
 }
 
 // GetGeneralFileContent retrieves the content of a specific general file from auxiliary files.

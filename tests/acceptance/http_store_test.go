@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
@@ -53,84 +52,31 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			client, err := cfg.NewClient()
 			require.NoError(t, err)
 
-			// Create namespace
-			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
-			err = client.Resources().Create(ctx, ns)
-			require.NoError(t, err)
-
-			// Create RBAC resources
-			sa := NewServiceAccount(namespace, ControllerServiceAccountName)
-			err = client.Resources().Create(ctx, sa)
-			require.NoError(t, err)
-
-			role := NewRole(namespace, ControllerRoleName)
-			err = client.Resources().Create(ctx, role)
-			require.NoError(t, err)
-
-			roleBinding := NewRoleBinding(namespace, ControllerRoleBindingName, ControllerRoleName, ControllerServiceAccountName)
-			err = client.Resources().Create(ctx, roleBinding)
-			require.NoError(t, err)
-
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			err = client.Resources().Create(ctx, clusterRole)
-			require.NoError(t, err)
-
-			clusterRoleBinding := NewClusterRoleBinding(
-				ControllerClusterRoleBindingName,
-				ControllerClusterRoleName,
-				ControllerServiceAccountName,
-				namespace,
-				namespace,
-			)
-			err = client.Resources().Create(ctx, clusterRoleBinding)
-			require.NoError(t, err)
-
-			// Create credentials secret
-			secret := NewSecret(namespace, ControllerSecretName)
-			err = client.Resources().Create(ctx, secret)
-			require.NoError(t, err)
-
-			// Create webhook certificate secret (required for controller startup)
-			webhookSecret := NewWebhookCertSecret(namespace, "haproxy-webhook-certs")
-			err = client.Resources().Create(ctx, webhookSecret)
-			require.NoError(t, err)
+			// Create base environment (namespace, RBAC, secrets) but skip CRD and deployment
+			opts := DefaultControllerEnvironmentOptions()
+			opts.SkipCRDAndDeployment = true
+			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
+				t.Fatal("Failed to create base controller environment:", err)
+			}
 
 			// Create blocklist server resources
-			blocklistCM := NewBlocklistContentConfigMap(namespace, ValidBlocklistContent)
-			err = client.Resources().Create(ctx, blocklistCM)
+			err = SetupBlocklistServer(ctx, t, client, namespace, ValidBlocklistContent)
 			require.NoError(t, err)
-
-			blocklistDeploy := NewBlocklistServerDeployment(namespace)
-			err = client.Resources().Create(ctx, blocklistDeploy)
-			require.NoError(t, err)
-
-			blocklistSvc := NewBlocklistService(namespace)
-			err = client.Resources().Create(ctx, blocklistSvc)
-			require.NoError(t, err)
-
-			// Wait for blocklist server to be ready
-			err = WaitForPodReady(ctx, client, namespace, "app="+BlocklistServerName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Blocklist server ready")
 
 			// Create HAProxyTemplateConfig with HTTP Store
 			crd := NewHTTPStoreHAProxyTemplateConfig(namespace, ControllerCRDName, ControllerSecretName, false)
-			err = client.Resources().Create(ctx, crd)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, crd))
 
 			// Deploy controller
 			deployment := NewControllerDeployment(namespace, ControllerCRDName, ControllerSecretName, ControllerServiceAccountName, DebugPort, 1)
-			err = client.Resources().Create(ctx, deployment)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, deployment))
 
-			// Create debug and metrics services for NodePort access
+			// Create debug and metrics services
 			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
-			err = client.Resources().Create(ctx, debugSvc)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, debugSvc))
 
 			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
-			err = client.Resources().Create(ctx, metricsSvc)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, metricsSvc))
 
 			return ctx
 		}).
@@ -141,13 +87,16 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			client, err := cfg.NewClient()
 			require.NoError(t, err)
 
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
+
 			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
 			// Setup debug client via NodePort
-			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
 
 			// Wait for config to be available first (controller needs to start up)
@@ -157,7 +106,7 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 				t.Logf("Config not ready: %v", err)
 				pod, podErr := GetControllerPod(ctx, client, namespace)
 				if podErr == nil {
-					DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+					DumpPodLogs(ctx, t, clientset, pod)
 				}
 				require.NoError(t, err, "Controller config should be available")
 			}
@@ -169,7 +118,7 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 				t.Logf("Blocklist not found: %v", err)
 				pod, podErr := GetControllerPod(ctx, client, namespace)
 				if podErr == nil {
-					DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+					DumpPodLogs(ctx, t, clientset, pod)
 				}
 			}
 			require.NoError(t, err)
@@ -185,40 +134,32 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 
 			// Update the blocklist content with new valid IPs
 			t.Log("Updating blocklist content with new valid IPs...")
-			clientset, err := kubernetes.NewForConfig(cfg.Client().RESTConfig())
+			err = UpdateBlocklistAndRestart(ctx, t, client, clientset, namespace, UpdatedBlocklistContent)
 			require.NoError(t, err)
 
-			blocklistCM, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, BlocklistContentConfigMapName, metav1.GetOptions{})
-			require.NoError(t, err)
-
-			blocklistCM.Data["blocklist.txt"] = UpdatedBlocklistContent
-			_, err = clientset.CoreV1().ConfigMaps(namespace).Update(ctx, blocklistCM, metav1.UpdateOptions{})
-			require.NoError(t, err)
-
-			// Delete the blocklist server pod to trigger immediate reconnection and re-fetch
-			// (alternatively, wait for the refresh interval, but deleting is faster)
-			pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-				LabelSelector: "app=" + BlocklistServerName,
-			})
-			require.NoError(t, err)
-			require.NotEmpty(t, pods.Items, "Blocklist server pod should exist")
-
-			err = clientset.CoreV1().Pods(namespace).Delete(ctx, pods.Items[0].Name, metav1.DeleteOptions{})
-			require.NoError(t, err)
-
-			// Wait for new blocklist server pod to be ready
-			err = WaitForPodReady(ctx, client, namespace, "app="+BlocklistServerName, 60*time.Second)
-			require.NoError(t, err)
-			t.Log("Blocklist server restarted with new content")
+			// CRITICAL: Verify nginx is actually serving the new content before testing controller.
+			// This isolates infrastructure issues (nginx serving wrong content) from controller bugs.
+			t.Log("Verifying nginx is serving updated content...")
+			err = WaitForNginxContent(ctx, clientset, namespace, "192.168.0.0/16", 30*time.Second)
+			if err != nil {
+				t.Logf("INFRASTRUCTURE ISSUE: nginx not serving expected content after restart: %v", err)
+				// Dump ConfigMap content for debugging
+				blocklistCM, cmErr := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, BlocklistContentConfigMapName, metav1.GetOptions{})
+				if cmErr == nil {
+					t.Logf("ConfigMap content: %s", blocklistCM.Data["blocklist.txt"])
+				}
+			}
+			require.NoError(t, err, "nginx should serve new content after restart - if this fails, it's an infrastructure issue, not a controller bug")
+			t.Log("Nginx content verified - now testing controller behavior")
 
 			// Wait for the updated content to appear in auxiliary files
-			t.Log("Waiting for updated blocklist content...")
+			t.Log("Waiting for updated blocklist content in controller...")
 			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "172.16.0.0/12", 60*time.Second)
 			if err != nil {
 				t.Logf("Updated content wait failed: %v, dumping controller logs...", err)
 				pod, podErr := GetControllerPod(ctx, client, namespace)
 				if podErr == nil {
-					DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+					DumpPodLogs(ctx, t, clientset, pod)
 				}
 			}
 			require.NoError(t, err)
@@ -239,36 +180,12 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			if err != nil {
-				t.Logf("Failed to get namespace from context: %v", err)
-				return ctx
-			}
-
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Logf("Failed to create client for cleanup: %v", err)
 				return ctx
 			}
-
-			// Delete cluster-scoped resources first
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			_ = client.Resources().Delete(ctx, clusterRole)
-
-			clusterRoleBinding := NewClusterRoleBinding(
-				ControllerClusterRoleBindingName,
-				ControllerClusterRoleName,
-				ControllerServiceAccountName,
-				namespace,
-				namespace,
-			)
-			_ = client.Resources().Delete(ctx, clusterRoleBinding)
-
-			// Delete namespace (which deletes all namespace-scoped resources)
-			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
-			_ = client.Resources().Delete(ctx, ns)
-
-			return ctx
+			return CleanupControllerEnvironment(ctx, t, client)
 		}).
 		Feature()
 }
@@ -298,84 +215,31 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			client, err := cfg.NewClient()
 			require.NoError(t, err)
 
-			// Create namespace
-			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
-			err = client.Resources().Create(ctx, ns)
-			require.NoError(t, err)
-
-			// Create RBAC resources
-			sa := NewServiceAccount(namespace, ControllerServiceAccountName)
-			err = client.Resources().Create(ctx, sa)
-			require.NoError(t, err)
-
-			role := NewRole(namespace, ControllerRoleName)
-			err = client.Resources().Create(ctx, role)
-			require.NoError(t, err)
-
-			roleBinding := NewRoleBinding(namespace, ControllerRoleBindingName, ControllerRoleName, ControllerServiceAccountName)
-			err = client.Resources().Create(ctx, roleBinding)
-			require.NoError(t, err)
-
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			err = client.Resources().Create(ctx, clusterRole)
-			require.NoError(t, err)
-
-			clusterRoleBinding := NewClusterRoleBinding(
-				ControllerClusterRoleBindingName,
-				ControllerClusterRoleName,
-				ControllerServiceAccountName,
-				namespace,
-				namespace,
-			)
-			err = client.Resources().Create(ctx, clusterRoleBinding)
-			require.NoError(t, err)
-
-			// Create credentials secret
-			secret := NewSecret(namespace, ControllerSecretName)
-			err = client.Resources().Create(ctx, secret)
-			require.NoError(t, err)
-
-			// Create webhook certificate secret (required for controller startup)
-			webhookSecret := NewWebhookCertSecret(namespace, "haproxy-webhook-certs")
-			err = client.Resources().Create(ctx, webhookSecret)
-			require.NoError(t, err)
+			// Create base environment (namespace, RBAC, secrets) but skip CRD and deployment
+			opts := DefaultControllerEnvironmentOptions()
+			opts.SkipCRDAndDeployment = true
+			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
+				t.Fatal("Failed to create base controller environment:", err)
+			}
 
 			// Create blocklist server resources with valid content
-			blocklistCM := NewBlocklistContentConfigMap(namespace, ValidBlocklistContent)
-			err = client.Resources().Create(ctx, blocklistCM)
+			err = SetupBlocklistServer(ctx, t, client, namespace, ValidBlocklistContent)
 			require.NoError(t, err)
-
-			blocklistDeploy := NewBlocklistServerDeployment(namespace)
-			err = client.Resources().Create(ctx, blocklistDeploy)
-			require.NoError(t, err)
-
-			blocklistSvc := NewBlocklistService(namespace)
-			err = client.Resources().Create(ctx, blocklistSvc)
-			require.NoError(t, err)
-
-			// Wait for blocklist server to be ready
-			err = WaitForPodReady(ctx, client, namespace, "app="+BlocklistServerName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Blocklist server ready")
 
 			// Create HAProxyTemplateConfig with HTTP Store
 			crd := NewHTTPStoreHAProxyTemplateConfig(namespace, ControllerCRDName, ControllerSecretName, false)
-			err = client.Resources().Create(ctx, crd)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, crd))
 
 			// Deploy controller
 			deployment := NewControllerDeployment(namespace, ControllerCRDName, ControllerSecretName, ControllerServiceAccountName, DebugPort, 1)
-			err = client.Resources().Create(ctx, deployment)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, deployment))
 
-			// Create debug and metrics services for NodePort access
+			// Create debug and metrics services
 			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
-			err = client.Resources().Create(ctx, debugSvc)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, debugSvc))
 
 			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
-			err = client.Resources().Create(ctx, metricsSvc)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, metricsSvc))
 
 			return ctx
 		}).
@@ -386,13 +250,16 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			client, err := cfg.NewClient()
 			require.NoError(t, err)
 
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
+
 			// Wait for controller to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
 			// Setup debug client via NodePort
-			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
 
 			// Wait for initial config to be loaded
@@ -403,28 +270,7 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 
 			// Update the blocklist content with invalid content
 			t.Log("Updating blocklist content with invalid content...")
-			clientset, err := kubernetes.NewForConfig(cfg.Client().RESTConfig())
-			require.NoError(t, err)
-
-			blocklistCM, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, BlocklistContentConfigMapName, metav1.GetOptions{})
-			require.NoError(t, err)
-
-			blocklistCM.Data["blocklist.txt"] = InvalidBlocklistContent
-			_, err = clientset.CoreV1().ConfigMaps(namespace).Update(ctx, blocklistCM, metav1.UpdateOptions{})
-			require.NoError(t, err)
-
-			// Delete the blocklist server pod to trigger immediate reconnection and re-fetch
-			pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-				LabelSelector: "app=" + BlocklistServerName,
-			})
-			require.NoError(t, err)
-			require.NotEmpty(t, pods.Items, "Blocklist server pod should exist")
-
-			err = clientset.CoreV1().Pods(namespace).Delete(ctx, pods.Items[0].Name, metav1.DeleteOptions{})
-			require.NoError(t, err)
-
-			// Wait for new blocklist server pod to be ready
-			err = WaitForPodReady(ctx, client, namespace, "app="+BlocklistServerName, 60*time.Second)
+			err = UpdateBlocklistAndRestart(ctx, t, client, clientset, namespace, InvalidBlocklistContent)
 			require.NoError(t, err)
 			t.Log("Blocklist server restarted with invalid content")
 
@@ -453,7 +299,7 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			t.Log("Dumping controller logs after wait...")
 			pod, podErr := GetControllerPod(ctx, client, namespace)
 			if podErr == nil {
-				DumpPodLogs(ctx, t, cfg.Client().RESTConfig(), pod)
+				DumpPodLogs(ctx, t, clientset, pod)
 			}
 
 			// Verify the old valid content is still present (not replaced with invalid content)
@@ -479,7 +325,7 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 
 			// Check controller logs for validation failure message
 			if pod != nil {
-				logs, logsErr := GetPodLogs(ctx, client, pod, 100)
+				logs, logsErr := GetPodLogs(ctx, clientset, pod, 100)
 				if logsErr == nil {
 					if strings.Contains(logs, "validation failed") || strings.Contains(logs, "invalid") {
 						t.Log("Controller logs show validation failure (expected)")
@@ -490,36 +336,12 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			if err != nil {
-				t.Logf("Failed to get namespace from context: %v", err)
-				return ctx
-			}
-
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Logf("Failed to create client for cleanup: %v", err)
 				return ctx
 			}
-
-			// Delete cluster-scoped resources first
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			_ = client.Resources().Delete(ctx, clusterRole)
-
-			clusterRoleBinding := NewClusterRoleBinding(
-				ControllerClusterRoleBindingName,
-				ControllerClusterRoleName,
-				ControllerServiceAccountName,
-				namespace,
-				namespace,
-			)
-			_ = client.Resources().Delete(ctx, clusterRoleBinding)
-
-			// Delete namespace
-			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
-			_ = client.Resources().Delete(ctx, ns)
-
-			return ctx
+			return CleanupControllerEnvironment(ctx, t, client)
 		}).
 		Feature()
 }
@@ -550,84 +372,31 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			client, err := cfg.NewClient()
 			require.NoError(t, err)
 
-			// Create namespace
-			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
-			err = client.Resources().Create(ctx, ns)
-			require.NoError(t, err)
-
-			// Create RBAC resources
-			sa := NewServiceAccount(namespace, ControllerServiceAccountName)
-			err = client.Resources().Create(ctx, sa)
-			require.NoError(t, err)
-
-			role := NewRole(namespace, ControllerRoleName)
-			err = client.Resources().Create(ctx, role)
-			require.NoError(t, err)
-
-			roleBinding := NewRoleBinding(namespace, ControllerRoleBindingName, ControllerRoleName, ControllerServiceAccountName)
-			err = client.Resources().Create(ctx, roleBinding)
-			require.NoError(t, err)
-
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			err = client.Resources().Create(ctx, clusterRole)
-			require.NoError(t, err)
-
-			clusterRoleBinding := NewClusterRoleBinding(
-				ControllerClusterRoleBindingName,
-				ControllerClusterRoleName,
-				ControllerServiceAccountName,
-				namespace,
-				namespace,
-			)
-			err = client.Resources().Create(ctx, clusterRoleBinding)
-			require.NoError(t, err)
-
-			// Create credentials secret
-			secret := NewSecret(namespace, ControllerSecretName)
-			err = client.Resources().Create(ctx, secret)
-			require.NoError(t, err)
-
-			// Create webhook certificate secret (required for controller startup)
-			webhookSecret := NewWebhookCertSecret(namespace, "haproxy-webhook-certs")
-			err = client.Resources().Create(ctx, webhookSecret)
-			require.NoError(t, err)
+			// Create base environment (namespace, RBAC, secrets) but skip CRD and deployment
+			opts := DefaultControllerEnvironmentOptions()
+			opts.SkipCRDAndDeployment = true
+			if err := CreateControllerEnvironment(ctx, t, client, namespace, opts); err != nil {
+				t.Fatal("Failed to create base controller environment:", err)
+			}
 
 			// Create blocklist server resources
-			blocklistCM := NewBlocklistContentConfigMap(namespace, ValidBlocklistContent)
-			err = client.Resources().Create(ctx, blocklistCM)
+			err = SetupBlocklistServer(ctx, t, client, namespace, ValidBlocklistContent)
 			require.NoError(t, err)
-
-			blocklistDeploy := NewBlocklistServerDeployment(namespace)
-			err = client.Resources().Create(ctx, blocklistDeploy)
-			require.NoError(t, err)
-
-			blocklistSvc := NewBlocklistService(namespace)
-			err = client.Resources().Create(ctx, blocklistSvc)
-			require.NoError(t, err)
-
-			// Wait for blocklist server to be ready
-			err = WaitForPodReady(ctx, client, namespace, "app="+BlocklistServerName, DefaultTimeout)
-			require.NoError(t, err)
-			t.Log("Blocklist server ready")
 
 			// Create HAProxyTemplateConfig with HTTP Store AND leader election enabled
 			crd := NewHTTPStoreHAProxyTemplateConfig(namespace, ControllerCRDName, ControllerSecretName, true)
-			err = client.Resources().Create(ctx, crd)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, crd))
 
 			// Deploy controller with 2 replicas for failover testing
 			deployment := NewControllerDeployment(namespace, ControllerCRDName, ControllerSecretName, ControllerServiceAccountName, DebugPort, 2)
-			err = client.Resources().Create(ctx, deployment)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, deployment))
 
-			// Create debug and metrics services for NodePort access
+			// Create debug and metrics services
 			debugSvc := NewDebugService(namespace, ControllerDeploymentName, DebugPort)
-			err = client.Resources().Create(ctx, debugSvc)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, debugSvc))
 
 			metricsSvc := NewMetricsService(namespace, ControllerDeploymentName, MetricsPort)
-			err = client.Resources().Create(ctx, metricsSvc)
-			require.NoError(t, err)
+			require.NoError(t, client.Resources().Create(ctx, metricsSvc))
 
 			return ctx
 		}).
@@ -638,8 +407,8 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			client, err := cfg.NewClient()
 			require.NoError(t, err)
 
-			clientset, err := kubernetes.NewForConfig(cfg.Client().RESTConfig())
-			require.NoError(t, err)
+			// Use shared clientset (rate limiting disabled) to avoid exhaustion
+			clientset := Clientset()
 
 			// Wait for at least one controller pod to be ready
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
@@ -648,12 +417,12 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 
 			// Wait for leader election
 			leaseName := "haproxy-template-ic-leader"
-			err = WaitForLeaderElection(ctx, cfg.Client().RESTConfig(), namespace, leaseName, 60*time.Second)
+			err = WaitForLeaderElection(ctx, clientset, namespace, leaseName, 60*time.Second)
 			require.NoError(t, err)
 			t.Log("Leader election complete")
 
 			// Get the current leader
-			leaderIdentity, err := GetLeaseHolder(ctx, cfg.Client().RESTConfig(), namespace, leaseName)
+			leaderIdentity, err := GetLeaseHolder(ctx, clientset, namespace, leaseName)
 			require.NoError(t, err)
 			t.Logf("Current leader: %s", leaderIdentity)
 
@@ -672,7 +441,7 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			require.NotNil(t, leaderPod, "Leader pod should be found")
 
 			// Setup debug client via NodePort - this routes to the leader pod
-			debugClient, err := EnsureDebugClientReady(ctx, t, client, namespace, 30*time.Second)
+			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
 
 			// Verify initial content
@@ -688,8 +457,8 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 
 			// Wait for new leader election (must be different from old leader)
 			t.Log("Waiting for new leader election...")
-			newLeaderIdentity, err := WaitForNewLeader(ctx, client, cfg.Client().RESTConfig(),
-				namespace, leaseName, leaderIdentity, 90*time.Second)
+			newLeaderIdentity, err := WaitForNewLeader(ctx, client, clientset,
+				namespace, leaseName, leaderIdentity, PodRestartTimeout)
 			require.NoError(t, err)
 			t.Logf("New leader: %s", newLeaderIdentity)
 
@@ -702,74 +471,60 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 
 			// Update blocklist content with new valid IPs
 			t.Log("Updating blocklist content after failover...")
-			blocklistCM, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, BlocklistContentConfigMapName, metav1.GetOptions{})
+			err = UpdateBlocklistAndRestart(ctx, t, client, clientset, namespace, UpdatedBlocklistContent)
 			require.NoError(t, err)
 
-			blocklistCM.Data["blocklist.txt"] = UpdatedBlocklistContent
-			_, err = clientset.CoreV1().ConfigMaps(namespace).Update(ctx, blocklistCM, metav1.UpdateOptions{})
-			require.NoError(t, err)
-
-			// Delete the blocklist server pod to trigger immediate re-fetch
-			pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-				LabelSelector: "app=" + BlocklistServerName,
-			})
-			require.NoError(t, err)
-			require.NotEmpty(t, pods.Items, "Blocklist server pod should exist")
-
-			err = clientset.CoreV1().Pods(namespace).Delete(ctx, pods.Items[0].Name, metav1.DeleteOptions{})
-			require.NoError(t, err)
-
-			// Wait for blocklist server to be ready again
-			err = WaitForPodReady(ctx, client, namespace, "app="+BlocklistServerName, 60*time.Second)
-			require.NoError(t, err)
+			// CRITICAL: Verify nginx is actually serving the new content before testing controller.
+			// This isolates infrastructure issues (nginx serving wrong content) from controller bugs.
+			t.Log("Verifying nginx is serving updated content...")
+			err = WaitForNginxContent(ctx, clientset, namespace, "192.168.0.0/16", 30*time.Second)
+			if err != nil {
+				t.Logf("INFRASTRUCTURE ISSUE: nginx not serving expected content after restart: %v", err)
+				// Dump ConfigMap content for debugging
+				blocklistCM, cmErr := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, BlocklistContentConfigMapName, metav1.GetOptions{})
+				if cmErr == nil {
+					t.Logf("ConfigMap content: %s", blocklistCM.Data["blocklist.txt"])
+				}
+			}
+			require.NoError(t, err, "nginx should serve new content after restart - if this fails, it's an infrastructure issue, not a controller bug")
+			t.Log("Nginx content verified - now testing new leader behavior")
 
 			// Verify new leader processes the update correctly
 			t.Log("Waiting for updated blocklist content on new leader after failover...")
 			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "172.16.0.0/12", 60*time.Second)
-			require.NoError(t, err)
-			t.Log("HTTP Store update successful after failover")
-
-			// Verify full content
-			content, err := debugClient.GetGeneralFileContent(ctx, "blocked-ips.acl")
-			require.NoError(t, err)
-			if !strings.Contains(content, "192.168.0.0/16") {
-				t.Logf("FAILURE: Updated content not applied after failover\nActual content:\n%s", content)
+			if err != nil {
+				t.Logf("Updated content wait failed: %v, dumping all controller logs...", err)
+				// Dump ALL controller pods (leader and follower)
+				allPods, _ := GetAllControllerPods(ctx, client, namespace)
+				for i := range allPods {
+					DumpPodLogs(ctx, t, clientset, &allPods[i])
+				}
+				// Also dump blocklist server logs
+				blocklistPods, _ := GetPodsByLabel(ctx, client, namespace, "app=blocklist-server")
+				for i := range blocklistPods {
+					DumpPodLogs(ctx, t, clientset, &blocklistPods[i])
+				}
 			}
-			assert.Contains(t, content, "192.168.0.0/16", "Updated content should be fully applied after failover")
+			require.NoError(t, err)
+			t.Log("HTTP Store update successful after failover (first IP verified)")
+
+			// Verify the second IP is also present.
+			// Note: We use WaitForAuxFileContains instead of GetGeneralFileContent because
+			// with 2 replicas, the ClusterIP service can route to either leader or follower.
+			// Only the leader has updated content, so a single GET might hit the follower
+			// and return stale data. WaitForAuxFileContains retries until it hits the leader.
+			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "192.168.0.0/16", 60*time.Second)
+			require.NoError(t, err, "Updated content should be fully applied after failover")
 
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			namespace, err := GetNamespaceFromContext(ctx)
-			if err != nil {
-				t.Logf("Failed to get namespace from context: %v", err)
-				return ctx
-			}
-
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Logf("Failed to create client for cleanup: %v", err)
 				return ctx
 			}
-
-			// Delete cluster-scoped resources first
-			clusterRole := NewClusterRole(ControllerClusterRoleName, namespace)
-			_ = client.Resources().Delete(ctx, clusterRole)
-
-			clusterRoleBinding := NewClusterRoleBinding(
-				ControllerClusterRoleBindingName,
-				ControllerClusterRoleName,
-				ControllerServiceAccountName,
-				namespace,
-				namespace,
-			)
-			_ = client.Resources().Delete(ctx, clusterRoleBinding)
-
-			// Delete namespace
-			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
-			_ = client.Resources().Delete(ctx, ns)
-
-			return ctx
+			return CleanupControllerEnvironment(ctx, t, client)
 		}).
 		Feature()
 }
