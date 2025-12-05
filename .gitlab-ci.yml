@@ -19,7 +19,7 @@ variables:
   # renovate: datasource=docker depName=golang
   GO_VERSION: "1.25"
   # renovate: datasource=docker depName=docker
-  DOCKER_VERSION: "27"
+  DOCKER_VERSION: "29"
   # renovate: datasource=docker depName=python
   PYTHON_VERSION: "3.14"
   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
