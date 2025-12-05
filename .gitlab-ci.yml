@@ -23,9 +23,9 @@ variables:
   # renovate: datasource=docker depName=python
   PYTHON_VERSION: "3.14"
   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-  KIND_VERSION: "0.24.0"
+  KIND_VERSION: "0.27.0"
   # renovate: datasource=docker depName=kindest/node
-  KIND_NODE_VERSION: "v1.32.0"
+  KIND_NODE_VERSION: "v1.34.0"
   # Container registry
   CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
 
