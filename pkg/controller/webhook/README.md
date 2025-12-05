@@ -189,12 +189,14 @@ rules:
 ### Webhook Not Receiving Requests
 
 **Check:**
+
 1. Service exists and selects correct pods
 2. ValidatingWebhookConfiguration exists
 3. CA bundle matches generated CA certificate
 4. Network policies allow API server → webhook traffic
 
 **Debug:**
+
 ```bash
 # Verify service
 kubectl get svc my-webhook-svc -o yaml
@@ -213,6 +215,7 @@ kubectl logs deployment/my-controller | grep webhook
 **Fix**: Ensure CA bundle in ValidatingWebhookConfiguration matches the CA certificate used to sign server certificate.
 
 **Check:**
+
 ```bash
 # View CA bundle
 kubectl get validatingwebhookconfigurations my-webhook \

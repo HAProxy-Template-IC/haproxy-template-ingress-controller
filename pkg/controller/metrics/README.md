@@ -7,6 +7,7 @@ Domain-specific Prometheus metrics for the HAProxy Template Ingress Controller.
 This package provides controller-specific metrics and an event adapter component that translates controller events into Prometheus metric updates.
 
 **Architecture:**
+
 - **metrics.go** - Defines controller-specific Prometheus metrics
 - **component.go** - Event adapter that subscribes to controller events and updates metrics
 
@@ -17,18 +18,22 @@ This package provides controller-specific metrics and an event adapter component
 Track reconciliation cycle performance and errors.
 
 **haproxy_ic_reconciliation_total** (counter)
+
 - Total number of reconciliation cycles triggered
 - Increments on both successful and failed reconciliations
 
 **haproxy_ic_reconciliation_duration_seconds** (histogram)
+
 - Time spent in reconciliation cycles
 - Buckets: 10ms to 10s (see pkg/metrics.DurationBuckets)
 
 **haproxy_ic_reconciliation_errors_total** (counter)
+
 - Total number of failed reconciliation cycles
 - Increments when reconciliation fails due to template errors, validation failures, etc.
 
 **Example Queries:**
+
 ```promql
 # Reconciliation rate per second
 rate(haproxy_ic_reconciliation_total[5m])
@@ -52,18 +57,22 @@ rate(haproxy_ic_reconciliation_errors_total[5m])
 Track HAProxy configuration deployment performance.
 
 **haproxy_ic_deployment_total** (counter)
+
 - Total number of deployment attempts
 - Increments regardless of success/failure
 
 **haproxy_ic_deployment_duration_seconds** (histogram)
+
 - Time spent deploying configurations to HAProxy instances
 - Buckets: 10ms to 10s
 
 **haproxy_ic_deployment_errors_total** (counter)
+
 - Total number of failed deployments
 - Increments when deployment to at least one instance fails
 
 **Example Queries:**
+
 ```promql
 # Deployment rate
 rate(haproxy_ic_deployment_total[5m])
@@ -80,14 +89,17 @@ rate(haproxy_ic_deployment_errors_total[5m])
 Track configuration validation performance.
 
 **haproxy_ic_validation_total** (counter)
+
 - Total number of validation attempts
 - Increments for both successful and failed validations
 
 **haproxy_ic_validation_errors_total** (counter)
+
 - Total number of failed validations
 - Increments when configuration has syntax errors or validation warnings
 
 **Example Queries:**
+
 ```promql
 # Validation rate
 rate(haproxy_ic_validation_total[5m])
@@ -107,11 +119,13 @@ rate(haproxy_ic_validation_errors_total[5m])
 Track Kubernetes resources being watched.
 
 **haproxy_ic_resource_count** (gauge with `type` label)
+
 - Current number of resources indexed by type
 - Labels: `type` (e.g., "ingresses", "services", "endpoints", "haproxy-pods")
 - Updates on every index change
 
 **Example Queries:**
+
 ```promql
 # Current resource counts
 haproxy_ic_resource_count
@@ -128,14 +142,17 @@ haproxy_ic_resource_count{type="services"}[1h]
 Track event bus activity.
 
 **haproxy_ic_event_subscribers** (gauge)
+
 - Current number of active event subscribers
 - Reflects component health (subscribers should remain constant)
 
 **haproxy_ic_events_published_total** (counter)
+
 - Total number of events published to the event bus
 - Indicates overall controller activity level
 
 **Example Queries:**
+
 ```promql
 # Event publishing rate
 rate(haproxy_ic_events_published_total[5m])
@@ -152,21 +169,25 @@ delta(haproxy_ic_event_subscribers[5m])
 Track leadership status and transitions for high availability deployments.
 
 **haproxy_ic_leader_election_is_leader** (gauge)
+
 - Indicates if this replica is currently the leader
 - Values: 1 (leader), 0 (follower)
 - Only one replica should report 1 across all controller instances
 
 **haproxy_ic_leader_election_transitions_total** (counter)
+
 - Total number of leadership transitions (becoming leader or losing leadership)
 - Increments on both gain and loss of leadership
 - Frequent transitions may indicate cluster instability
 
 **haproxy_ic_leader_election_time_as_leader_seconds_total** (counter)
+
 - Cumulative time this replica has spent as leader (in seconds)
 - Updates when losing leadership
 - Useful for understanding leadership distribution
 
 **Example Queries:**
+
 ```promql
 # Current leader count (should be 1 across all replicas)
 sum(haproxy_ic_leader_election_is_leader)
@@ -192,6 +213,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h]) > 5
 ```
 
 **Operational Notes:**
+
 - In single-replica deployments (leader election disabled), metrics still exist
 - Normal failover causes 1 transition (old leader loses, new leader gains)
 - High transition rates may indicate: clock skew, network issues, or resource contention
@@ -236,6 +258,7 @@ type Component struct {
 ```
 
 **Lifecycle:**
+
 1. Create component: `NewComponent(metrics, eventBus)`
 2. Subscribe to events: `component.Start()`
 3. Start event loop: `go component.Run(ctx)`
@@ -303,22 +326,27 @@ metrics.RecordEvent()
 The component automatically updates metrics based on these events:
 
 **Reconciliation Events:**
+
 - `ReconciliationCompletedEvent` → Increments total, records duration
 - `ReconciliationFailedEvent` → Increments total and errors
 
 **Deployment Events:**
+
 - `DeploymentCompletedEvent` → Increments total, records duration
 - `InstanceDeploymentFailedEvent` → Increments total and errors
 
 **Validation Events:**
+
 - `ValidationCompletedEvent` → Increments total (success)
 - `ValidationFailedEvent` → Increments total and errors
 
 **Resource Events:**
+
 - `IndexSynchronizedEvent` → Initializes resource counts
 - `ResourceIndexUpdatedEvent` → Updates resource counts incrementally
 
 **Leader Election Events:**
+
 - `BecameLeaderEvent` → Sets is_leader to 1, increments transitions, starts time tracking
 - `LostLeadershipEvent` → Sets is_leader to 0, increments transitions, records time as leader
 
@@ -422,6 +450,7 @@ groups:
 ### Grafana Queries
 
 **Reconciliation Performance:**
+
 ```promql
 # Reconciliation rate
 rate(haproxy_ic_reconciliation_total[5m])
@@ -439,6 +468,7 @@ histogram_quantile(0.99, rate(haproxy_ic_reconciliation_duration_seconds_bucket[
 ```
 
 **Deployment Performance:**
+
 ```promql
 # Deployment rate
 rate(haproxy_ic_deployment_total[5m])
@@ -455,6 +485,7 @@ rate(haproxy_ic_deployment_duration_seconds_count[5m])
 ```
 
 **Resource Tracking:**
+
 ```promql
 # All resource counts
 haproxy_ic_resource_count
@@ -468,14 +499,16 @@ haproxy_ic_resource_count{type="haproxy-pods"}
 
 ## Best Practices
 
-### DO:
+### DO
+
 - ✅ Record duration for all async operations
 - ✅ Increment error counters for all failure cases
 - ✅ Update resource counts on every index change
 - ✅ Keep metrics simple and focused
 - ✅ Use histogram for latency, counter for totals
 
-### DON'T:
+### DON'T
+
 - ❌ Create metrics with unbounded labels (e.g., pod names)
 - ❌ Skip error tracking (every failure should increment error counter)
 - ❌ Use gauges for cumulative values (use counters instead)
@@ -494,4 +527,4 @@ This package integrates with the controller architecture:
 - Development context: `pkg/controller/metrics/CLAUDE.md`
 - Generic metrics utilities: `pkg/metrics/README.md`
 - Controller events: `pkg/controller/events/types.go`
-- Prometheus documentation: https://prometheus.io/docs/
+- Prometheus documentation: <https://prometheus.io/docs/>

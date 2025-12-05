@@ -21,6 +21,7 @@ pkg/
 ### Layer 1: Infrastructure (No Dependencies)
 
 **pkg/events/**
+
 - Generic pub/sub and request-response infrastructure
 - NO business logic, NO domain knowledge
 - Could be extracted as standalone library
@@ -29,22 +30,26 @@ pkg/
 ### Layer 2: Pure Libraries (Minimal Dependencies)
 
 **pkg/core/**
+
 - Configuration types and parsing
 - Logging setup
 - Depends on: standard library only
 - Imported by: most other packages
 
 **pkg/templating/**
+
 - Template compilation and rendering
 - Depends on: gonja, standard library
 - Imported by: controller package
 
 **pkg/k8s/**
+
 - Resource watching, indexing, storage
 - Depends on: client-go, events (for coordination)
 - Imported by: controller package
 
 **pkg/dataplane/**
+
 - HAProxy configuration sync
 - Depends on: client-native, events (for observability)
 - Imported by: controller package
@@ -52,6 +57,7 @@ pkg/
 ### Layer 3: Coordination (Depends on Everything)
 
 **pkg/controller/**
+
 - Event-driven orchestration
 - Component lifecycle management
 - Event adapters wrapping pure components
@@ -60,7 +66,7 @@ pkg/
 
 ## When to Create a New Package
 
-### Create a new top-level package when:
+### Create a new top-level package when
 
 - **Reusable library**: Code could be used by multiple applications
 - **Clear boundary**: Package has well-defined responsibility
@@ -69,7 +75,7 @@ pkg/
 
 **Example**: `pkg/templating` is a pure template engine that could be reused in other projects.
 
-### Create a new sub-package when:
+### Create a new sub-package when
 
 - **Related functionality**: Code belongs to parent package's domain
 - **Internal organization**: Breaking up a large package for readability
@@ -77,7 +83,7 @@ pkg/
 
 **Example**: `pkg/dataplane/comparator/sections/` contains section-specific comparison logic.
 
-### Extend existing package when:
+### Extend existing package when
 
 - **Same responsibility**: Feature fits existing package's purpose
 - **Shared types**: Uses same core types and interfaces

@@ -28,8 +28,14 @@ RUN apt-get update \
        https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends haproxy=${HAPROXY_VERSION}.\* docker-ce-cli=5:${DOCKER_VERSION}.\* docker-buildx-plugin jq \
+    && apt-get install -y --no-install-recommends \
+       haproxy=${HAPROXY_VERSION}.\* docker-ce-cli=5:${DOCKER_VERSION}.\* docker-buildx-plugin \
+       jq python3-pip nodejs npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Install yamllint and markdownlint-cli2 for config file linting
+RUN pip3 install --break-system-packages yamllint \
+    && npm install -g markdownlint-cli2
 
 # Install kind
 RUN curl -fsSL -o /usr/local/bin/kind \
@@ -54,4 +60,4 @@ RUN curl -fsSL -o /usr/local/bin/yq \
 RUN go install github.com/boumenot/gocover-cobertura@latest
 
 # Verify installations
-RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1
+RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1

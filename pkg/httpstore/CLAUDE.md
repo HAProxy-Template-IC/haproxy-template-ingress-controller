@@ -5,12 +5,14 @@ Development context for the pure HTTP resource store component.
 ## When to Work Here
 
 Work in this package when:
+
 - Modifying HTTP fetching logic (retries, timeouts, authentication)
 - Changing the two-version caching behavior (pending/accepted)
 - Adding new authentication methods
 - Modifying conditional request handling (ETag, If-Modified-Since)
 
 **DO NOT** work here for:
+
 - Event coordination (refresh timers, validation events) → Use `pkg/controller/httpstore`
 - Template integration → Use `pkg/controller/renderer`
 - Reconciliation triggers → Use `pkg/controller/reconciler`

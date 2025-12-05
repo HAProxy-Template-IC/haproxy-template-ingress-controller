@@ -8,6 +8,7 @@ Development context for HAProxy Dataplane API integration.
 ## When to Work Here
 
 Modify this package when:
+
 - Adding support for new HAProxy configuration sections
 - Implementing new comparison logic for existing sections
 - Fixing synchronization bugs
@@ -16,6 +17,7 @@ Modify this package when:
 - Updating client-native library integration
 
 **DO NOT** modify this package for:
+
 - Template rendering → Use `pkg/templating`
 - Event coordination → Use `pkg/controller`
 - Kubernetes integration → Use `pkg/k8s`
@@ -67,6 +69,7 @@ Phase 3: Post-Config Sync
 **Why three phases?**
 
 HAProxy config can reference auxiliary files. We must ensure:
+
 1. Files exist before config references them (pre-config)
 2. Config is validated and applied (config)
 3. Orphaned files are cleaned up (post-config)
@@ -76,12 +79,14 @@ HAProxy config can reference auxiliary files. We must ensure:
 This package wraps `github.com/haproxytech/client-native` for HAProxy configuration parsing and API access.
 
 **Limitations:**
+
 - Not all HAProxy directives are supported
 - Some sections require specific API versions
 - Parsing errors don't always provide helpful context
 - Transaction handling requires careful management
 
 **Workarounds:**
+
 - Validate config with `haproxy -c` binary before parsing
 - Wrap parsing errors with additional context
 - Implement transaction retry logic
@@ -92,6 +97,7 @@ This package wraps `github.com/haproxytech/client-native` for HAProxy configurat
 Some changes can be applied without HAProxy reload:
 
 **Runtime operations (no reload):**
+
 - Server add/remove
 - Server state changes (enable/disable)
 - Map updates
@@ -99,6 +105,7 @@ Some changes can be applied without HAProxy reload:
 - SSL certificate updates
 
 **Structural changes (requires reload):**
+
 - Frontend/backend creation/deletion
 - Bind address changes
 - Global/defaults modifications
@@ -399,6 +406,7 @@ err = client.UpdateFrontend(tx, frontend)
 ```
 
 **When to modify:**
+
 - Adding new Dataplane API endpoint support
 - Changing retry logic
 - Improving error handling
@@ -433,6 +441,7 @@ backends := parsed.Backends
 2. **Semantic validation**: `haproxy -c -f config` (done before parsing)
 
 **When to modify:**
+
 - Supporting new configuration sections
 - Improving error messages
 - Adding validation logic
@@ -465,6 +474,7 @@ structuralOps := result.StructuralOperations()  // Requires reload
 **Section-specific comparators** (`comparator/sections/`):
 
 Each HAProxy section has dedicated comparison logic:
+
 - `frontend.go` - Frontend comparison
 - `backend.go` - Backend comparison
 - `server.go` - Server comparison
@@ -653,12 +663,14 @@ apiModel := transform.ToAPIACL(clientModel)
 ```
 
 **Design:**
+
 - Generic `transform[T]` function handles JSON marshaling/unmarshaling
 - 35+ type-specific wrapper functions for each HAProxy section
 - Nil-safe (returns nil for nil input)
 - Performance: ~10µs per transformation (acceptable for reconciliation)
 
 **When to modify:**
+
 - Adding support for new HAProxy configuration sections
 - Client-native or Dataplane API models change structure
 - Fixing transformation bugs
@@ -769,11 +781,13 @@ err := syncer.SyncPostConfig(ctx, files, endpoints)
 ```
 
 **Storage locations:**
+
 - Maps: `/etc/haproxy/maps/`
 - SSL certs: `/etc/haproxy/ssl/`
 - General files: `/etc/haproxy/files/`
 
 **When to modify:**
+
 - Adding new file type
 - Changing storage locations
 - Improving sync logic
@@ -1029,12 +1043,14 @@ Output: "failed to render haproxy.cfg: syntax error at line 42"
 ### When to Use Error Simplification
 
 **Use at component boundaries:**
+
 - Webhook validation responses (user-facing)
 - Dry-run validation results (API responses)
 - Log messages for end users
 - Prometheus alert descriptions
 
 **Don't use for:**
+
 - Internal logging (want full stack trace)
 - Debugging scenarios (need implementation details)
 - Error wrapping (preserve error chain)
@@ -1366,6 +1382,7 @@ for _, endpoint := range endpoints {
 ### Transaction Timeouts
 
 **Diagnosis:**
+
 1. Check Dataplane API health
 2. Verify network connectivity
 3. Review HAProxy logs
@@ -1385,6 +1402,7 @@ kubectl logs haproxy-pod -c haproxy
 ### Parsing Failures
 
 **Diagnosis:**
+
 1. Validate config with haproxy binary
 2. Check for unsupported directives
 3. Review client-native version compatibility
@@ -1405,6 +1423,7 @@ if err != nil {
 ### Version Conflicts
 
 **Diagnosis:**
+
 1. Check for concurrent modifications
 2. Verify transaction commit order
 3. Review retry logic
@@ -1424,6 +1443,6 @@ if isVersionConflict(err) {
 ## Resources
 
 - API documentation: `pkg/dataplane/README.md`
-- client-native docs: https://github.com/haproxytech/client-native
-- Dataplane API docs: https://www.haproxy.com/documentation/haproxy-data-plane-api/
-- HAProxy config manual: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/
+- client-native docs: <https://github.com/haproxytech/client-native>
+- Dataplane API docs: <https://www.haproxy.com/documentation/haproxy-data-plane-api/>
+- HAProxy config manual: <https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/>

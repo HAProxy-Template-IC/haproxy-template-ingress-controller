@@ -7,6 +7,7 @@ Controller-specific debug variable implementations for introspection HTTP server
 This package provides controller-specific implementations of the generic `pkg/introspection.Var` interface, exposing internal controller state via HTTP debug endpoints.
 
 **Use cases:**
+
 - Production debugging without logs
 - Acceptance testing with state verification
 - Operational visibility into controller internals
@@ -84,11 +85,13 @@ GetConfig() (*config.Config, string, error)
 Returns the current validated configuration and its version (ConfigMap resource version).
 
 **Returns**:
+
 - `config`: The current Config struct
 - `version`: ConfigMap resource version (e.g., "12345")
 - `error`: Non-nil if config not loaded yet
 
 **Example**:
+
 ```go
 cfg, version, err := provider.GetConfig()
 if err != nil {
@@ -108,6 +111,7 @@ Returns the current credentials and their version (Secret resource version).
 **Security**: Debug variables should NOT expose actual credential values.
 
 **Returns**:
+
 - `creds`: Credentials struct
 - `version`: Secret resource version
 - `error`: Non-nil if credentials not loaded yet
@@ -121,6 +125,7 @@ GetRenderedConfig() (string, time.Time, error)
 Returns the most recently rendered HAProxy configuration and when it was rendered.
 
 **Returns**:
+
 - `config`: Rendered HAProxy config as string
 - `timestamp`: When this config was rendered
 - `error`: Non-nil if no config rendered yet
@@ -134,6 +139,7 @@ GetAuxiliaryFiles() (*dataplane.AuxiliaryFiles, time.Time, error)
 Returns the most recently used auxiliary files (SSL certificates, map files, general files).
 
 **Returns**:
+
 - `auxFiles`: AuxiliaryFiles struct with SSL, maps, general files
 - `timestamp`: When these files were last used
 - `error`: Non-nil if no files cached yet
@@ -147,6 +153,7 @@ GetResourceCounts() (map[string]int, error)
 Returns a map of resource type → count.
 
 **Returns**:
+
 ```go
 {
     "ingresses": 5,
@@ -164,9 +171,11 @@ GetResourcesByType(resourceType string) ([]interface{}, error)
 Returns all resources of a specific type.
 
 **Parameters**:
+
 - `resourceType`: Key from GetResourceCounts() (e.g., "ingresses")
 
 **Returns**:
+
 - `resources`: Slice of resource objects
 - `error`: Non-nil if resource type not found
 
@@ -185,6 +194,7 @@ type ConfigVar struct {
 **Endpoint**: `GET /debug/vars/config`
 
 **Response**:
+
 ```json
 {
   "config": {
@@ -199,6 +209,7 @@ type ConfigVar struct {
 ```
 
 **JSONPath Examples**:
+
 ```bash
 # Get just the version
 curl 'http://localhost:6060/debug/vars/config?field={.version}'
@@ -220,6 +231,7 @@ type CredentialsVar struct {
 **Endpoint**: `GET /debug/vars/credentials`
 
 **Response**:
+
 ```json
 {
   "version": "67890",
@@ -243,6 +255,7 @@ type RenderedVar struct {
 **Endpoint**: `GET /debug/vars/rendered`
 
 **Response**:
+
 ```json
 {
   "config": "global\n  maxconn 2000\n  log stdout local0\n\ndefaults\n...",
@@ -252,6 +265,7 @@ type RenderedVar struct {
 ```
 
 **Usage**:
+
 ```bash
 # Get full rendered config
 curl http://localhost:6060/debug/vars/rendered
@@ -276,6 +290,7 @@ type AuxFilesVar struct {
 **Endpoint**: `GET /debug/vars/auxfiles`
 
 **Response**:
+
 ```json
 {
   "files": {
@@ -311,6 +326,7 @@ type ResourcesVar struct {
 **Endpoint**: `GET /debug/vars/resources`
 
 **Response**:
+
 ```json
 {
   "ingresses": 5,
@@ -320,6 +336,7 @@ type ResourcesVar struct {
 ```
 
 **Usage**:
+
 ```bash
 # Get all resource counts
 curl http://localhost:6060/debug/vars/resources
@@ -342,6 +359,7 @@ type EventsVar struct {
 **Endpoint**: `GET /debug/vars/events`
 
 **Response** (array of recent events):
+
 ```json
 [
   {
@@ -375,6 +393,7 @@ type FullStateVar struct {
 **Warning**: Returns large response containing all state. Use with caution.
 
 **Response**:
+
 ```json
 {
   "config": {
@@ -416,10 +435,12 @@ func NewEventBuffer(size int, bus *events.EventBus) *EventBuffer
 Creates a new event buffer with the specified capacity.
 
 **Parameters**:
+
 - `size`: Maximum number of events to store (e.g., 1000)
 - `bus`: EventBus to subscribe to
 
 **Example**:
+
 ```go
 eventBuffer := debug.NewEventBuffer(1000, bus)
 go eventBuffer.Start(ctx)
@@ -434,6 +455,7 @@ func (eb *EventBuffer) Start(ctx context.Context) error
 Starts collecting events from the EventBus. Blocks until context is cancelled.
 
 **Usage**:
+
 ```go
 go eventBuffer.Start(ctx)
 ```
@@ -447,6 +469,7 @@ func (eb *EventBuffer) GetLast(n int) []Event
 Returns the last N events in chronological order (oldest first).
 
 **Example**:
+
 ```go
 recent := eventBuffer.GetLast(100)
 for _, event := range recent {
@@ -484,6 +507,7 @@ type Event struct {
 ```
 
 **Fields**:
+
 - `Timestamp`: When the event occurred
 - `Type`: Event type string (e.g., "config.validated")
 - `Summary`: Human-readable summary
@@ -502,6 +526,7 @@ func RegisterVariables(
 Registers all controller debug variables with the introspection registry.
 
 **Registered Variables**:
+
 - `config`: ConfigVar
 - `credentials`: CredentialsVar
 - `rendered`: RenderedVar
@@ -512,6 +537,7 @@ Registers all controller debug variables with the introspection registry.
 - `uptime`: Func (controller uptime)
 
 **Example**:
+
 ```go
 registry := introspection.NewRegistry()
 eventBuffer := debug.NewEventBuffer(1000, bus)
@@ -534,6 +560,7 @@ GET /debug/vars
 Lists all registered debug variable paths.
 
 **Response**:
+
 ```json
 {
   "vars": [
@@ -558,6 +585,7 @@ GET /debug/vars/{path}
 Retrieves a specific variable's value.
 
 **Examples**:
+
 ```bash
 curl http://localhost:6060/debug/vars/config
 curl http://localhost:6060/debug/vars/rendered
@@ -573,6 +601,7 @@ GET /debug/vars/{path}?field={.jsonpath}
 Extracts a specific field using JSONPath (kubectl syntax).
 
 **Examples**:
+
 ```bash
 # Get config version
 curl 'http://localhost:6060/debug/vars/config?field={.version}'
@@ -584,7 +613,7 @@ curl 'http://localhost:6060/debug/vars/rendered?field={.size}'
 curl 'http://localhost:6060/debug/vars/resources?field={.ingresses}'
 ```
 
-**JSONPath Syntax**: See https://kubernetes.io/docs/reference/kubectl/jsonpath/
+**JSONPath Syntax**: See <https://kubernetes.io/docs/reference/kubectl/jsonpath/>
 
 ## Access from Kubernetes
 
@@ -608,6 +637,7 @@ curl http://localhost:6060/debug/pprof/heap  # Go profiling
 4. **Large Responses**: FullStateVar can return very large responses - use with caution
 
 **Best Practices**:
+
 - Use kubectl port-forward for production access
 - Don't expose debug port directly to internet
 - Prefer specific variables over full state dump

@@ -5,6 +5,7 @@ End-to-end acceptance tests for critical controller functionality.
 ## Overview
 
 Acceptance tests verify complete controller behavior in a real Kubernetes environment:
+
 - Full controller deployment
 - ConfigMap/Secret watching
 - Configuration reload on changes
@@ -181,12 +182,14 @@ require.NoError(t, err)
 ```
 
 **Why NodePort instead of port-forwarding?**
+
 - Port-forwarding uses SPDY which breaks under parallel test execution (EOF errors)
 - NodePort uses standard HTTP - reliable and well-tested
 - No connection lifecycle management (Start/Stop) needed
 - Works in DinD environments (GitLab CI) via DOCKER_HOST env var
 
 **Why debug endpoints instead of logs?**
+
 - Stable API (logs are brittle)
 - Structured data (easy to query)
 - JSONPath field selection (precise queries)
@@ -201,6 +204,7 @@ make test-acceptance
 ```
 
 This:
+
 1. Creates Kind cluster
 2. Builds controller Docker image
 3. Loads image into cluster
@@ -278,6 +282,7 @@ debugClient, err := SetupDebugClient(ctx, client, namespace, timeout)
 Creates the debug NodePort service and returns a ready-to-use debug client.
 
 **Parameters**:
+
 - `ctx`: Context
 - `client`: Kubernetes client
 - `namespace`: Namespace
@@ -358,11 +363,13 @@ assert.Contains(t, fmt.Sprint(config), "version 2")
 **Problem**: Test times out waiting for pod ready.
 
 **Causes**:
+
 - Image pull issues
 - Resource constraints
 - Controller crash loop
 
 **Debug**:
+
 ```bash
 kubectl get pods -n haproxy-test
 kubectl describe pod -n haproxy-test haproxy-template-ic-xxx
@@ -374,11 +381,13 @@ kubectl logs -n haproxy-test haproxy-template-ic-xxx
 **Problem**: SetupDebugClient() fails or debug endpoint returns errors.
 
 **Causes**:
+
 - Pod not ready
 - NodePort service not created
 - Network issues
 
 **Debug**:
+
 ```bash
 # Check pod status
 kubectl get pod -n haproxy-test haproxy-template-ic-xxx
@@ -397,11 +406,13 @@ curl -v http://$NODE_IP:$NODE_PORT/debug/vars/config
 **Problem**: WaitForConfigVersion times out.
 
 **Causes**:
+
 - ConfigMap not updated
 - Controller not watching ConfigMap
 - Controller crashed
 
 **Debug**:
+
 ```bash
 # Check ConfigMap
 kubectl get configmap -n haproxy-test haproxy-config -o yaml
@@ -438,7 +449,7 @@ const (
 
 ## Resources
 
-- E2E Framework: https://github.com/kubernetes-sigs/e2e-framework
-- Kind: https://kind.sigs.k8s.io/
+- E2E Framework: <https://github.com/kubernetes-sigs/e2e-framework>
+- Kind: <https://kind.sigs.k8s.io/>
 - Debug endpoints: `pkg/introspection/README.md`
 - Development context: `CLAUDE.md`

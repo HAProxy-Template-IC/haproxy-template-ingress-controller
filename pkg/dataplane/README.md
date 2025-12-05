@@ -101,6 +101,7 @@ func main() {
 ### Client Management
 
 **Production Pattern (Recommended):**
+
 ```go
 // Create client once
 client, err := dataplane.NewClient(ctx, endpoint)
@@ -114,6 +115,7 @@ result, err := client.Sync(ctx, desiredConfig, nil, nil)
 ```
 
 **Simple Pattern (Quick Scripts):**
+
 ```go
 // For one-off operations - creates client internally
 result, err := dataplane.Sync(ctx, endpoint, desiredConfig, nil, nil)
@@ -141,6 +143,7 @@ result, err := client.Sync(ctx, desiredConfig, nil, opts)
 ```
 
 **Options explained:**
+
 - `MaxRetries`: How many times to retry on 409 version conflicts (default: 3)
 - `Timeout`: Overall timeout for the sync operation (default: 2 minutes)
 - `ContinueOnError`: Continue applying operations even if some fail (default: false)
@@ -340,6 +343,7 @@ backend servers
 The validator writes auxiliary files to the actual HAProxy directories on disk (with mutex locking to prevent concurrent writes) to validate file references (maps, certificates, error pages) exactly as the Dataplane API does.
 
 **ValidationError Fields:**
+
 - `Phase`: Either "syntax" or "semantic" indicating which phase failed
 - `Message`: Human-readable error description
 - `Err`: Wrapped underlying error for detailed inspection
@@ -452,12 +456,14 @@ The library performs the following steps:
 ### Fine-Grained vs Raw Sync
 
 **Fine-Grained Sync** (default):
+
 - Individual operations for each change
 - Minimal HAProxy reloads
 - Uses runtime API when possible (server weight/status changes)
 - Detailed operation tracking
 
 **Raw Config Push** (fallback):
+
 - Pushes complete configuration
 - Always triggers reload
 - Used when fine-grained sync fails
@@ -472,12 +478,14 @@ The library performs the following steps:
 Synchronizes the desired configuration to HAProxy.
 
 **Parameters:**
+
 - `ctx`: Context for cancellation and timeout
 - `endpoint`: Dataplane API connection info
 - `desiredConfig`: Desired HAProxy configuration as string
 - `opts`: Sync options (use `nil` for defaults)
 
 **Returns:**
+
 - `*SyncResult`: Detailed sync results
 - `error`: Error with actionable hints if sync fails
 
@@ -486,11 +494,13 @@ Synchronizes the desired configuration to HAProxy.
 Previews changes without applying them.
 
 **Parameters:**
+
 - `ctx`: Context for cancellation and timeout
 - `endpoint`: Dataplane API connection info
 - `desiredConfig`: Desired HAProxy configuration as string
 
 **Returns:**
+
 - `*DiffResult`: Planned operations and diff details
 - `error`: Error if comparison fails
 
@@ -552,6 +562,7 @@ type DiffResult struct {
 ### 1. Use Client for Multiple Operations
 
 **Production code should reuse clients:**
+
 ```go
 // Good - create once, reuse
 client, err := dataplane.NewClient(ctx, endpoint)
@@ -568,6 +579,7 @@ if diff.HasChanges {
 ```
 
 **Avoid recreating clients:**
+
 ```go
 // Bad - creates new connection each time
 for _, config := range configs {
@@ -672,6 +684,7 @@ if err == nil && result.FallbackToRaw {
 **Problem**: Can't connect to Dataplane API
 
 **Solutions**:
+
 - Verify endpoint URL is correct
 - Check HAProxy is running and accessible
 - Verify credentials
@@ -683,6 +696,7 @@ if err == nil && result.FallbackToRaw {
 **Problem**: Configuration parsing fails
 
 **Solutions**:
+
 - Validate config syntax: `haproxy -c -f config.cfg`
 - Check for syntax errors in desired config
 - Verify config is compatible with HAProxy version
@@ -692,6 +706,7 @@ if err == nil && result.FallbackToRaw {
 **Problem**: Getting 409 errors even with retries
 
 **Solutions**:
+
 - Increase `MaxRetries` in options
 - Coordinate config updates to avoid concurrent modifications
 - Check for other automation tools modifying HAProxy
@@ -701,6 +716,7 @@ if err == nil && result.FallbackToRaw {
 **Problem**: HAProxy rejects the configuration
 
 **Solutions**:
+
 - Check for references to non-existent backends/servers
 - Verify all directives are compatible with HAProxy version
 - Ensure resource dependencies are satisfied

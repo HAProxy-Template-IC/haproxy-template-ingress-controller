@@ -5,12 +5,14 @@ Development context for the Reconciler component.
 ## When to Work Here
 
 Work in this package when:
+
 - Modifying debounce logic
 - Changing reconciliation triggering behavior
 - Adjusting debounce interval
 - Adding reconciliation triggers
 
 **DO NOT** work here for:
+
 - Reconciliation orchestration → Use `pkg/controller/executor`
 - Template rendering → Use `pkg/controller/renderer`
 - Deployment → Use `pkg/controller/deployer`

@@ -7,12 +7,14 @@ Development context for the test directory structure.
 ## When to Work Here
 
 Work in this directory when:
+
 - Writing architecture validation tests
 - Organizing test infrastructure
 - Adding new test types or frameworks
 - Creating shared test utilities
 
 **DO NOT** work here for:
+
 - Unit tests → Place in same package as code (e.g., `pkg/templating/engine_test.go`)
 - Integration tests → Use `tests/integration/`
 - Acceptance tests → Use `tests/acceptance/`
@@ -20,6 +22,7 @@ Work in this directory when:
 ## Directory Purpose
 
 This directory serves as the root for all non-unit tests and contains:
+
 - Architecture validation tests (arch-go)
 - Test subdirectories for integration and acceptance tests
 - Shared test infrastructure (in subdirectories)
@@ -52,11 +55,13 @@ tests/
 **Purpose**: Validates that the codebase follows architectural constraints defined in `arch-go.yml`.
 
 **What it tests**:
+
 - Package dependency rules
 - No circular dependencies
 - Layer separation (controller can depend on all, libraries are independent)
 
 **Example constraints**:
+
 ```yaml
 # arch-go.yml
 dependencies_rules:
@@ -73,11 +78,13 @@ dependencies_rules:
 ```
 
 **Running**:
+
 ```bash
 go test ./tests -run TestArchitecture
 ```
 
 **Output on failure**:
+
 ```
 Architecture validation failed!
 Dependencies rule violations:
@@ -123,11 +130,13 @@ func TestSyncFrontendAdd(t *testing.T) {
 ```
 
 **Run integration tests only**:
+
 ```bash
 go test -tags=integration ./tests/integration/...
 ```
 
 **Run without integration tests** (default):
+
 ```bash
 go test ./...  # Skips integration tests
 ```
@@ -148,10 +157,12 @@ make test
 ```
 
 This runs:
+
 - All package unit tests
 - Architecture validation test
 
 **Does NOT run**:
+
 - Integration tests (requires `-tags=integration`)
 - Acceptance tests (separate target)
 
@@ -162,11 +173,13 @@ make test-integration
 ```
 
 This runs:
+
 - Creates Kind cluster (or reuses existing)
 - Runs all integration tests in `tests/integration/`
 - Keeps cluster by default for faster subsequent runs
 
 **Environment variables**:
+
 ```bash
 # Force cleanup after tests
 KEEP_CLUSTER=false make test-integration
@@ -182,6 +195,7 @@ make test-acceptance
 ```
 
 This runs:
+
 - Creates Kind cluster
 - Builds and loads controller Docker image
 - Runs all acceptance tests in `tests/acceptance/`
@@ -194,6 +208,7 @@ make test-all
 ```
 
 This runs:
+
 - Unit tests
 - Architecture tests
 - Integration tests
@@ -223,6 +238,7 @@ func TestArchitecture(t *testing.T) {
 ```
 
 **When it fails**:
+
 1. Check error output for specific violation
 2. Either fix the dependency (move code to correct package)
 3. Or update `arch-go.yml` if rule is incorrect
@@ -230,6 +246,7 @@ func TestArchitecture(t *testing.T) {
 ### Test Organization
 
 **Unit tests**: Same package as implementation
+
 ```
 pkg/templating/
     engine.go
@@ -237,6 +254,7 @@ pkg/templating/
 ```
 
 **Integration tests**: Separate directory with fixtures
+
 ```
 tests/integration/
     env.go          # Shared fixtures
@@ -244,6 +262,7 @@ tests/integration/
 ```
 
 **Acceptance tests**: Separate directory with framework
+
 ```
 tests/acceptance/
     env.go                   # E2E framework setup
@@ -277,6 +296,7 @@ Package: pkg/core/config
 ```
 
 **Solution**: Either:
+
 1. Remove the import (core shouldn't depend on controller)
 2. Move event types to a shared location
 3. Update `arch-go.yml` if rule is wrong
@@ -299,6 +319,7 @@ kind delete cluster --name=haproxy-test
 ```
 
 Or set `KEEP_CLUSTER=false` to always cleanup:
+
 ```bash
 KEEP_CLUSTER=false make test-integration
 ```
@@ -368,6 +389,7 @@ echo '\tgo test -tags=performance -bench=. ./tests/performance/...' >> Makefile
 Integration and acceptance tests use different fixture systems:
 
 **Integration** (fixenv):
+
 ```go
 // tests/integration/env.go
 func SharedCluster(env fixenv.Env) *KindCluster
@@ -376,6 +398,7 @@ func TestHAProxy(env fixenv.Env) *HAProxyInstance
 ```
 
 **Acceptance** (e2e-framework):
+
 ```go
 // tests/acceptance/env.go
 func Setup(t *testing.T) env.Environment
@@ -385,6 +408,7 @@ func GetControllerPod(ctx context.Context, client klient.Client, namespace strin
 ### Test Data
 
 Test data lives in subdirectories:
+
 ```
 tests/integration/testdata/
     ├── configs/           # HAProxy configurations

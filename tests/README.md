@@ -5,6 +5,7 @@ Test organization and infrastructure for the HAProxy Template Ingress Controller
 ## Overview
 
 This directory contains all non-unit tests, organized by test type:
+
 - **Architecture validation** - Enforces package dependency rules
 - **Integration tests** - Component testing against real Kubernetes/HAProxy
 - **Acceptance tests** - End-to-end regression tests
@@ -27,16 +28,19 @@ tests/
 Validates codebase architecture using [arch-go](https://github.com/arch-go/arch-go).
 
 **What it validates**:
+
 - Package dependencies follow clean architecture
 - No circular dependencies
 - Layer separation (libraries are independent, controller coordinates)
 
 **Run**:
+
 ```bash
 go test ./tests -run TestArchitecture
 ```
 
 **Example failure**:
+
 ```
 Architecture validation failed!
   Package: pkg/core/config
@@ -44,6 +48,7 @@ Architecture validation failed!
 ```
 
 **Fix**:
+
 1. Remove forbidden import
 2. Move shared types to appropriate location
 3. Update `arch-go.yml` if rule is incorrect
@@ -57,11 +62,13 @@ Component-level tests against real Kubernetes and HAProxy.
 **Framework**: [fixenv](https://github.com/rekby/fixenv) + [Kind](https://kind.sigs.k8s.io/)
 
 **Run**:
+
 ```bash
 make test-integration
 ```
 
 **Features**:
+
 - Shared Kind cluster across tests (fast)
 - Test-scoped namespaces (isolated)
 - Automatic cleanup (configurable)
@@ -78,11 +85,13 @@ End-to-end regression tests for critical functionality.
 **Framework**: [kubernetes-sigs/e2e-framework](https://github.com/kubernetes-sigs/e2e-framework) + Kind
 
 **Run**:
+
 ```bash
 make test-acceptance
 ```
 
 **Features**:
+
 - Full controller lifecycle testing
 - Debug endpoint verification
 - ConfigMap reload regression test
@@ -99,6 +108,7 @@ make test
 ```
 
 Runs in ~5-10 seconds. Includes:
+
 - All package unit tests
 - Architecture validation
 
@@ -114,6 +124,7 @@ First run: ~2 minutes (creates cluster)
 Subsequent runs: ~30 seconds (reuses cluster)
 
 **Environment variables**:
+
 ```bash
 # Always cleanup after tests
 KEEP_CLUSTER=false make test-integration
@@ -131,6 +142,7 @@ make test-acceptance
 Duration: ~3-5 minutes (builds image, creates cluster, runs tests)
 
 **Prerequisites**:
+
 - Docker (for building controller image)
 - Kind (installed automatically if missing)
 
@@ -141,6 +153,7 @@ make test-all
 ```
 
 Runs everything:
+
 - Unit tests
 - Architecture tests
 - Integration tests
@@ -165,6 +178,7 @@ func TestSyncFrontendAdd(t *testing.T) {
 **Why?** Integration tests are slow and require external infrastructure.
 
 **Run with tags**:
+
 ```bash
 go test -tags=integration ./tests/integration/...
 ```
@@ -191,6 +205,7 @@ dependencies_rules:
 **Test**: `architecture_test.go`
 
 **When to update**:
+
 - Adding new top-level package
 - Changing package boundaries
 - Refactoring package dependencies
@@ -356,6 +371,7 @@ EOF
 **Cause**: Integration tests require `-tags=integration` flag.
 
 **Fix**:
+
 ```bash
 go test -tags=integration ./tests/integration/...
 ```
@@ -367,6 +383,7 @@ go test -tags=integration ./tests/integration/...
 **Cause**: Import violates rules in `arch-go.yml`.
 
 **Fix**:
+
 1. Check error message for specific violation
 2. Remove forbidden import or refactor
 3. Update `arch-go.yml` if rule is incorrect
@@ -378,6 +395,7 @@ go test -tags=integration ./tests/integration/...
 **Cause**: Cluster is recreated each run.
 
 **Fix**: Cluster is kept by default. If forcing cleanup:
+
 ```bash
 # Default - keeps cluster
 make test-integration
@@ -391,11 +409,13 @@ KEEP_CLUSTER=false make test-integration
 **Problem**: Kind cluster creation fails.
 
 **Possible causes**:
+
 - Docker not running
 - Port conflicts (6443 already in use)
 - Insufficient resources
 
 **Fix**:
+
 ```bash
 # Check Docker
 docker ps

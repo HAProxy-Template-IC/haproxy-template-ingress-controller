@@ -7,6 +7,7 @@ This document provides an overview of HAProxy configuration sections and child c
 The controller supports all configuration sections that can be managed through the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Configuration changes are applied using fine-grained operations to minimize HAProxy reloads and maximize use of the Runtime API for zero-downtime updates.
 
 **Coverage:**
+
 - **15 main configuration sections** (global, defaults, frontends, backends, etc.)
 - **23 child component types** across frontends and backends (servers, ACLs, rules, etc.)
 - **Complete Dataplane API compatibility** - All manageable resources are supported
@@ -150,6 +151,7 @@ The following changes **require an HAProxy reload**:
 | **Modifying non-runtime fields** | Fields like `check`, `inter`, `rise`, `fall`, `ssl`, `verify`, etc. are not supported by Runtime API |
 
 Examples of server attributes that **require reload** when modified:
+
 - Health check settings (`check`, `inter`, `rise`, `fall`, `fastinter`, `downinter`)
 - SSL/TLS settings (`ssl`, `verify`, `ca-file`, `crt`, `sni`)
 - Connection settings (`maxconn`, `maxqueue`, `minconn`)
@@ -188,6 +190,7 @@ The controller uses fine-grained comparison to detect changes at the attribute l
 **Background:** HAProxy's `listen` directive combines frontend and backend functionality into a single section. However, the Dataplane API enforces separation of concerns by requiring distinct `frontend` and `backend` sections.
 
 **Workaround:** Any Listen section can be decomposed into:
+
 - One Frontend section (handles client connections)
 - One Backend section (handles server connections)
 
@@ -215,6 +218,7 @@ The implementation uses two approaches for optimal performance:
 ### Operation Ordering
 
 Operations are automatically ordered by:
+
 1. **Priority** (lower numbers first)
 2. **Type** (Delete → Create → Update)
 3. **Dependencies** (parent sections before child components)
@@ -224,6 +228,7 @@ This ensures that, for example, a Backend is created before its Servers, and Ser
 ### Code References
 
 All comparison logic is implemented in:
+
 - **Main Comparator:** `pkg/dataplane/comparator/comparator.go`
 - **Operation Definitions:** `pkg/dataplane/comparator/sections/*.go`
 
@@ -241,6 +246,7 @@ The haproxy-template-ic provides complete HAProxy Dataplane API coverage:
 - ❌ **Listen sections** not supported (Dataplane API limitation)
 
 For implementation details, see:
+
 - Architecture: `docs/design.md`
 - Parser: `pkg/dataplane/parser/`
 - Comparator: `pkg/dataplane/comparator/`

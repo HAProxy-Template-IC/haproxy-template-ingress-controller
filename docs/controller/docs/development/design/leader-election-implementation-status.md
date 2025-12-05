@@ -3,11 +3,13 @@
 ## Completed Tasks ✅
 
 ### 1. Design Documentation
+
 - ✅ Created comprehensive design document (`docs/development/design/leader-election.md`)
 - ✅ Documented problem statement, architecture, and implementation plan
 - ✅ Included failure scenarios, testing strategy, and migration path
 
 ### 2. Leader Election Infrastructure Package
+
 - ✅ Created `pkg/controller/leaderelection/` package
 - ✅ Implemented `Config` type with validation (`config.go`)
 - ✅ Defined error types (`errors.go`)
@@ -21,6 +23,7 @@
 - ✅ Created CLAUDE.md with development context
 
 ### 3. Leader Election Events
+
 - ✅ Added event type constants to `pkg/controller/events/types.go`:
   - `EventTypeLeaderElectionStarted`
   - `EventTypeBecameLeader`
@@ -33,12 +36,14 @@
   - `NewLeaderObservedEvent`
 
 ### 4. Configuration Schema
+
 - ✅ Added `LeaderElectionConfig` to `pkg/core/config/types.go`
 - ✅ Added default constants to `pkg/core/config/defaults.go`
 - ✅ Implemented helper methods (GetLeaseDuration, etc.)
 - ✅ Integrated into `ControllerConfig` struct
 
 ### 5. Controller Startup Integration ✅
+
 - ✅ Modified `pkg/controller/controller.go`:
   - Read POD_NAME and POD_NAMESPACE from environment
   - Create LeaderElector early in startup (Stage 0)
@@ -51,6 +56,7 @@
 - ✅ Implemented mutex-protected callback handlers for thread-safe transitions
 
 ### 6. Metrics ✅
+
 - ✅ Added metrics to `pkg/controller/metrics/metrics.go`:
   - `haproxy_ic_leader_election_is_leader` (gauge)
   - `haproxy_ic_leader_election_transitions_total` (counter)
@@ -60,6 +66,7 @@
 - ✅ Subscribed to leader election events in metrics component
 
 ### 7. Commentator ✅
+
 - ✅ Updated `pkg/controller/commentator/commentator.go`:
   - Added case for `LeaderElectionStartedEvent`
   - Added case for `BecameLeaderEvent` (with 🎖️ emoji)
@@ -68,11 +75,13 @@
 - ✅ Added rich contextual logging for each event
 
 ### 8. RBAC Manifests ✅
+
 - ✅ Updated `charts/haproxy-template-ic/templates/clusterrole.yaml`:
   - Added coordination.k8s.io/v1 Lease permissions
   - Verbs: get, create, update
 
 ### 9. Deployment Manifests ✅
+
 - ✅ Updated `charts/haproxy-template-ic/templates/deployment.yaml`:
   - Added POD_NAME environment variable (downward API)
   - Added POD_NAMESPACE environment variable (downward API)
@@ -83,6 +92,7 @@
   - Set replicaCount default to 2
 
 ### 10. Unit Tests ✅
+
 - ✅ Created `pkg/controller/leaderelection/config_test.go`
   - Tested configuration validation (13 scenarios)
   - Tested default config generation
@@ -98,12 +108,14 @@
 ## Remaining Tasks 🚧
 
 ### 11. Integration Tests
+
 - ⏳ Create `tests/integration/leader_election_test.go`:
   - TestLeaderElection_OnlyLeaderDeploys
   - TestLeaderElection_Failover
   - TestLeaderElection_BothReplicasWatchResources
 
 ### 12. Documentation Updates
+
 - ⏳ Update `docs/deployment/README.md` with HA setup instructions
 - ⏳ Create `docs/operations/high-availability.md`
 - ⏳ Update `docs/operations/troubleshooting.md` with leader election debugging
@@ -113,6 +125,7 @@
 ## Dependencies
 
 The implementation requires:
+
 - `k8s.io/client-go/tools/leaderelection` (already in go.mod)
 - `k8s.io/api/coordination/v1` (for Lease resources, already in go.mod)
 
@@ -123,45 +136,56 @@ No new external dependencies needed.
 ### Manual Testing Steps
 
 1. Deploy with single replica (leader election disabled):
+
    ```yaml
    controller:
      leader_election:
        enabled: false
    replicas: 1
    ```
+
    Verify: Controller works as before
 
 2. Deploy with multiple replicas (leader election enabled):
+
    ```yaml
    controller:
      leader_election:
        enabled: true
    replicas: 3
    ```
+
    Verify: Only one replica deploys configs
 
 3. Kill leader pod:
+
    ```bash
    kubectl delete pod <leader-pod>
    ```
+
    Verify: Follower becomes leader within 20 seconds
 
 4. Check lease status:
+
    ```bash
    kubectl get lease -n <namespace> haproxy-template-ic-leader -o yaml
    ```
+
    Verify: Holder identity matches current leader
 
 5. Check metrics:
+
    ```bash
    kubectl port-forward deployment/haproxy-template-ic 9090:9090
    curl http://localhost:9090/metrics | grep controller_is_leader
    ```
+
    Verify: Only one pod reports is_leader=1
 
 ### Integration Test Plan
 
 Run integration tests with kind cluster:
+
 ```bash
 # Start test cluster with 3 controller replicas
 make test-integration-leader-election
@@ -175,17 +199,20 @@ make test-integration-leader-election
 ## Rollout Strategy
 
 ### Phase 1: Opt-in (v0.2.0)
+
 - Release with `enabled: false` default
 - Document how to enable for HA
 - Collect feedback from early adopters
 - Monitor for issues
 
 ### Phase 2: Enabled by Default (v0.3.0)
+
 - Change default to `enabled: true`
 - Update documentation
 - Provide migration guide for single-replica users
 
 ### Phase 3: Deprecate Single Replica (v1.0.0)
+
 - Remove `enabled` flag
 - Always use leader election
 - Multi-replica is standard deployment
@@ -214,6 +241,7 @@ make test-integration-leader-election
 ### What Was Completed
 
 **Core Infrastructure** (100% complete):
+
 - Leader election package with Config, LeaderElector, comprehensive validation
 - Event types for all leadership transitions
 - Configuration schema with YAML support and defaults
@@ -221,18 +249,21 @@ make test-integration-leader-election
 - Mutex-protected lifecycle management for thread-safe transitions
 
 **Observability** (100% complete):
+
 - 3 new Prometheus metrics (leader status, transitions, time as leader)
 - Automatic time tracking with event-driven updates
 - Rich contextual logging with emojis for visibility
 - All leader election events integrated into commentator
 
 **Deployment** (100% complete):
+
 - RBAC permissions for Lease resources
 - POD_NAME/POD_NAMESPACE via downward API
 - Helm chart configured with sensible defaults
 - Default replica count set to 2 for HA
 
 **Testing** (Unit tests complete, integration tests pending):
+
 - 9 comprehensive unit tests covering all scenarios
 - Config validation, disabled mode, state tracking, events
 - All tests passing

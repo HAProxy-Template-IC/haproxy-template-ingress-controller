@@ -123,9 +123,11 @@ func ParseConfig(configYAML string) (*config.Config, error)
 Parses YAML configuration string into a Config struct. This is a pure function that only performs YAML parsing without loading from Kubernetes, applying defaults, or validating.
 
 **Parameters:**
+
 - `configYAML`: The raw YAML configuration string from the ConfigMap
 
 **Returns:**
+
 - Parsed Config struct or error if YAML parsing fails
 
 ### config.SetDefaults
@@ -137,6 +139,7 @@ func SetDefaults(cfg *config.Config)
 Applies default values to unset configuration fields. Modifies the config in-place. Should be called after parsing and before validation.
 
 **Default Values:**
+
 - `controller.healthz_port`: 8080
 - `controller.metrics_port`: 9090
 - `validation.dataplane_host`: "localhost"
@@ -144,6 +147,7 @@ Applies default values to unset configuration fields. Modifies the config in-pla
 - `logging.verbose`: 0 (no default, 0 is valid WARNING level)
 
 **Parameters:**
+
 - `cfg`: The configuration to modify
 
 ### config.ValidateStructure
@@ -155,13 +159,16 @@ func ValidateStructure(cfg *config.Config) error
 Performs structural validation on the configuration. Validates required fields, field types, port ranges, and non-empty slices.
 
 **Does NOT validate:**
+
 - Template syntax (validated by controller via scatter-gather)
 - JSONPath expressions (validated by controller via scatter-gather)
 
 **Parameters:**
+
 - `cfg`: The configuration to validate
 
 **Returns:**
+
 - Error describing the first validation failure, or nil if valid
 
 ### config.LoadCredentials
@@ -173,15 +180,18 @@ func LoadCredentials(secretData map[string][]byte) (*config.Credentials, error)
 Parses Kubernetes Secret data into a Credentials struct. This is a pure function that extracts credentials without loading from Kubernetes or performing validation.
 
 **Expected Secret Keys:**
+
 - `dataplane_username`: Username for HAProxy Data Plane API
 - `dataplane_password`: Password for HAProxy Data Plane API
 - `validation_username`: Username for validation dataplane
 - `validation_password`: Password for validation dataplane
 
 **Parameters:**
+
 - `secretData`: The Secret's data map (keys to base64-decoded byte arrays)
 
 **Returns:**
+
 - Parsed Credentials struct or error if required keys are missing
 
 ### config.ValidateCredentials
@@ -193,9 +203,11 @@ func ValidateCredentials(creds *config.Credentials) error
 Performs basic validation on credentials. Ensures all required credential fields are present and non-empty.
 
 **Parameters:**
+
 - `creds`: The credentials to validate
 
 **Returns:**
+
 - Error if validation fails, or nil if valid
 
 ## Configuration Workflow
@@ -218,6 +230,7 @@ For credentials:
 All functions return descriptive errors that can be logged or returned to users. Errors include field names and context to aid troubleshooting.
 
 Example error messages:
+
 ```
 pod_selector: match_labels cannot be empty
 controller: healthz_port must be between 1 and 65535, got 0
@@ -234,6 +247,7 @@ go test ./pkg/core/config/...
 ```
 
 See test files for usage examples:
+
 - `loader_test.go`: Configuration parsing examples
 - `defaults_test.go`: Default value application examples
 - `validator_test.go`: Validation scenarios and error cases

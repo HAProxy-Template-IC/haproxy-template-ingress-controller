@@ -5,12 +5,14 @@
 This package provides storage backends for indexed Kubernetes resources. The controller uses stores to maintain fast-access collections of watched resources for template rendering. You choose between two storage strategies depending on your resource access patterns and memory constraints.
 
 **When to use this package:**
+
 - Building custom resource watchers that need indexed storage
 - Implementing resource caching strategies
 - Optimizing memory usage for large resource collections
 - Creating high-performance resource lookup mechanisms
 
 The package offers two complementary store types:
+
 - **MemoryStore**: Complete in-memory storage for fast access and iteration
 - **CachedStore**: Reference-based storage with on-demand API fetching and TTL caching
 
@@ -145,9 +147,11 @@ func NewMemoryStore(numKeys int) *MemoryStore
 ```
 
 **Parameters:**
+
 - `numKeys`: Number of index keys (must match indexer configuration)
 
 **Example:**
+
 ```go
 // For indexing by [namespace, name]
 store := store.NewMemoryStore(2)
@@ -165,12 +169,14 @@ func (s *MemoryStore) Add(resource interface{}, keys []string) error
 Stores a resource with the given index keys.
 
 **Parameters:**
+
 - `resource`: The resource object (typically `*unstructured.Unstructured` or map)
 - `keys`: Index key values extracted from the resource
 
 **Returns:** Error if key count doesn't match `numKeys`
 
 **Example:**
+
 ```go
 keys := []string{"default", "my-ingress"}
 err := store.Add(ingressResource, keys)
@@ -185,13 +191,16 @@ func (s *MemoryStore) Get(keys ...string) ([]interface{}, error)
 Retrieves resources matching the provided keys. Supports partial key matching.
 
 **Parameters:**
+
 - `keys`: One or more index keys to match
 
 **Returns:**
+
 - Slice of matching resources
 - Error if too many keys provided
 
 **Examples:**
+
 ```go
 // Get specific resource (all keys)
 resources, _ := store.Get("default", "my-ingress")
@@ -214,6 +223,7 @@ func (s *MemoryStore) Update(resource interface{}, keys []string) error
 Updates an existing resource. If not found, adds it.
 
 **Example:**
+
 ```go
 keys := []string{"default", "my-ingress"}
 err := store.Update(updatedResource, keys)
@@ -228,6 +238,7 @@ func (s *MemoryStore) Delete(keys ...string) error
 Removes resources matching the keys.
 
 **Example:**
+
 ```go
 // Delete specific resource
 err := store.Delete("default", "my-ingress")
@@ -242,6 +253,7 @@ func (s *MemoryStore) List() ([]interface{}, error)
 Returns all resources in the store.
 
 **Example:**
+
 ```go
 allResources, _ := store.List()
 for _, res := range allResources {
@@ -268,6 +280,7 @@ Approximate memory per resource (after field filtering):
 - **Secret**: 1 KB + data size
 
 **Example calculation:**
+
 ```
 1000 Ingress × 1.5 KB = 1.5 MB
 500 Services × 2 KB = 1 MB
@@ -278,6 +291,7 @@ Total: ~8.5 MB for 3500 resources
 ### When to Use MemoryStore
 
 Use MemoryStore when:
+
 - You iterate over most/all resources during template rendering
 - Template uses `{% for ingress in resources.ingresses %}`
 - Fast template rendering is critical
@@ -311,6 +325,7 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error)
 ```
 
 **Configuration:**
+
 ```go
 type CachedStoreConfig struct {
     NumKeys   int                         // Number of index keys
@@ -324,6 +339,7 @@ type CachedStoreConfig struct {
 ```
 
 **Example:**
+
 ```go
 cfg := &store.CachedStoreConfig{
     NumKeys:  2,
@@ -350,6 +366,7 @@ func (s *CachedStore) Add(resource interface{}, keys []string) error
 Stores a resource reference. The `resource` parameter is typically `nil` since only keys matter.
 
 **Example:**
+
 ```go
 // Add reference (from watcher)
 keys := []string{"default", "tls-cert"}
@@ -365,6 +382,7 @@ func (s *CachedStore) Get(keys ...string) ([]interface{}, error)
 Fetches resources matching keys. Triggers API fetch on cache miss.
 
 **Behavior:**
+
 1. Finds matching references by keys
 2. For each reference:
    - Check TTL cache using "namespace/name" key
@@ -373,6 +391,7 @@ Fetches resources matching keys. Triggers API fetch on cache miss.
 3. Return all fetched resources
 
 **Example:**
+
 ```go
 // Fetch specific secret
 resources, err := store.Get("default", "tls-cert")
@@ -393,6 +412,7 @@ func (s *CachedStore) ClearCache() error
 Clears the TTL cache, forcing fresh fetches.
 
 **Example:**
+
 ```go
 // Force fresh fetch on next Get()
 store.ClearCache()
@@ -415,6 +435,7 @@ Total = Base + min(Cache, MaxCacheSize × AvgResourceSize)
 ```
 
 **Example:**
+
 ```
 1000 Secret references × 200 bytes = 200 KB
 Cache: 100 entries × 5 KB = 500 KB
@@ -424,6 +445,7 @@ Total: ~700 KB (vs 5 MB for MemoryStore)
 ### When to Use CachedStore
 
 Use CachedStore when:
+
 - Resources are large (Secrets with certificates, ConfigMaps with big data)
 - Template accesses only a few specific resources (not iteration)
 - Memory is constrained
@@ -453,6 +475,7 @@ type StoreError struct {
 ```
 
 **Example:**
+
 ```go
 resources, err := store.Get("default", "missing")
 if err != nil {

@@ -5,6 +5,7 @@
 The `watchedResources` configuration determines which Kubernetes resources the controller monitors and how it stores them in memory. Each resource type you configure creates a watcher that tracks changes and maintains an indexed store for template access.
 
 This configuration is critical for:
+
 - **Performance**: Choosing the right storage strategy affects memory usage and template rendering speed
 - **Functionality**: Resources must be watched to be accessible in templates
 - **Scalability**: Proper store selection allows operation in memory-constrained environments
@@ -49,12 +50,14 @@ When you configure a resource with memory store:
 ### When to Use Memory Store
 
 Use memory store when you will:
+
 - **Iterate over all resources** frequently (e.g., generating map files with all ingresses)
 - **Access most resources** during each template render
 - **Need fastest template rendering** (no API latency)
 - Work with **small to medium resources** (Ingress, Service, EndpointSlice)
 
 **Example use cases:**
+
 - Ingress resources for generating HAProxy routing rules
 - Service resources for backend configuration
 - EndpointSlice resources for dynamic server lists
@@ -63,6 +66,7 @@ Use memory store when you will:
 ### Memory Usage
 
 Approximate memory usage per resource:
+
 - **Ingress**: ~1-2 KB (depends on number of rules and paths)
 - **Service**: ~1 KB (simple services) to ~5 KB (many ports/annotations)
 - **EndpointSlice**: ~2-5 KB (depends on number of endpoints)
@@ -111,12 +115,14 @@ When you configure a resource with cached store:
 ### When to Use Cached Store
 
 Use cached store when you will:
+
 - **Access resources selectively** (e.g., fetch specific secrets by name)
 - Work with **large resources** (Secrets with certificate data, large ConfigMaps)
 - Need to **minimize memory usage** (hundreds of secrets or large data)
 - Can tolerate **API latency** on cache misses
 
 **Example use cases:**
+
 - Secrets containing TLS certificates (large PEM data)
 - Secrets for authentication (accessed by annotation reference)
 - ConfigMaps with large configuration data
@@ -125,11 +131,13 @@ Use cached store when you will:
 ### Trade-offs
 
 **Benefits:**
+
 - Minimal memory footprint (only references + cache)
 - Suitable for large resource types
 - Cache reduces API calls for frequently accessed resources
 
 **Costs:**
+
 - API latency on cache misses (typically 10-50ms)
 - Additional load on Kubernetes API server
 - Slightly slower template rendering when cache misses occur
@@ -149,6 +157,7 @@ watchedResources:
 ```
 
 **Cache TTL considerations:**
+
 - **Shorter TTL** (1-2 minutes): More API calls, fresher data
 - **Longer TTL** (5-10 minutes): Fewer API calls, may show stale data between template renders
 - **Default** (2m10s): Balanced approach for most use cases
@@ -164,15 +173,18 @@ The `indexBy` configuration determines how resources are indexed for lookups and
 Resources are indexed using composite keys constructed from JSONPath expressions. This enables O(1) lookup performance for specific resources.
 
 **Example**: Indexing by namespace and name:
+
 ```yaml
 indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 Creates composite keys like:
+
 - `default/my-ingress` → [Ingress resource]
 - `production/api-gateway` → [Ingress resource]
 
 **How lookups work:**
+
 ```jinja2
 {# In templates, .Fetch() parameters match indexBy order #}
 {% for ingress in resources.ingresses.Fetch("default", "my-ingress") %}
@@ -195,10 +207,12 @@ watchedResources:
 ```
 
 **Use when:**
+
 - Looking up specific resources by namespace and name
 - Standard resource types (Ingress, Service, ConfigMap, Secret)
 
 **Template usage:**
+
 ```jinja2
 {# Fetch specific ingress #}
 {% for ingress in resources.ingresses.Fetch("default", "my-app") %}
@@ -228,6 +242,7 @@ watchedResources:
 **Why this works**: EndpointSlices are labeled with `kubernetes.io/service-name`, allowing O(1) lookup of all endpoint slices for a service.
 
 **Template usage:**
+
 ```jinja2
 {# In ingress loop, extract service name #}
 {% set service_name = path.backend.service.name %}
@@ -261,6 +276,7 @@ watchedResources:
 ```
 
 **Template usage:**
+
 ```jinja2
 {# Fetch all TLS secrets in namespace #}
 {% for secret in resources.secrets.Fetch("default", "kubernetes.io/tls") %}
@@ -282,6 +298,7 @@ watchedResources:
 ```
 
 **Template usage:**
+
 ```jinja2
 {# Fetch by name only (namespace is implicit) #}
 {% for cm in resources.configmaps.Fetch("error-pages") %}
@@ -355,12 +372,14 @@ Each store provides two methods: `.List()` and `.Fetch()`.
 The `.List()` method returns all resources in the store.
 
 **Best for:**
+
 - Iterating over all resources
 - Generating configuration for every resource
 - Counting total resources
 - Memory store (efficient)
 
 **Example - Generate routing map for all ingresses:**
+
 ```jinja2
 {# maps/host.map template #}
 {% for ingress in resources.ingresses.List() %}
@@ -371,6 +390,7 @@ The `.List()` method returns all resources in the store.
 ```
 
 **Example - Count resources:**
+
 ```jinja2
 {# Total ingresses: {{ resources.ingresses.List() | length }} #}
 ```
@@ -382,6 +402,7 @@ The `.List()` method returns all resources in the store.
 The `.Fetch()` method returns resources matching index keys.
 
 **Best for:**
+
 - Looking up specific resources
 - Cross-resource relationships (service → endpoints)
 - Conditional resource access
@@ -390,6 +411,7 @@ The `.Fetch()` method returns resources matching index keys.
 **Parameters**: Match the `indexBy` configuration order.
 
 **Example - Fetch specific ingress:**
+
 ```yaml
 # Configuration
 indexBy: ["metadata.namespace", "metadata.name"]
@@ -403,6 +425,7 @@ indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 **Example - Fetch all in namespace:**
+
 ```jinja2
 {# Partial key match - returns all in namespace #}
 {% for ingress in resources.ingresses.Fetch("default") %}
@@ -411,6 +434,7 @@ indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
 **Example - Cross-resource lookup:**
+
 ```jinja2
 {# Get endpoints for a service #}
 {% set service_name = path.backend.service.name %}
@@ -429,6 +453,7 @@ indexBy: ["metadata.namespace", "metadata.name"]
 | `.Fetch(keys)` | Fast (indexed lookup) | Fast (cached/on-demand) | Lookup specific resources |
 
 **Rule of thumb:**
+
 - Use `.List()` when you need most or all resources
 - Use `.Fetch()` when you need specific resources
 - With memory store, both are fast
@@ -447,6 +472,7 @@ For convenience, stores also provide `.GetSingle()` which returns a single resou
 ```
 
 This is equivalent to:
+
 ```jinja2
 {% for secret in resources.secrets.Fetch("default", "my-secret") %}
   {{ secret.data.password | b64decode }}
@@ -462,16 +488,19 @@ The choice between memory and cached stores affects multiple performance dimensi
 ### Memory Usage
 
 **Memory Store:**
+
 - **Per-resource overhead**: 1-10 KB depending on resource type
 - **Total usage**: Number of resources × average size
 - **Example**: 1000 ingresses × 1.5 KB = 1.5 MB
 
 **Cached Store:**
+
 - **Per-reference overhead**: ~100 bytes (namespace, name, index keys)
 - **Cache overhead**: Cache size × average resource size
 - **Example**: 1000 secret references × 100 bytes = 100 KB (plus cache)
 
 **Memory savings example:**
+
 - 1000 secrets with 10 KB certificates each
 - Memory store: 10 MB
 - Cached store: 100 KB + cache (bounded by cache_ttl and access patterns)
@@ -479,17 +508,20 @@ The choice between memory and cached stores affects multiple performance dimensi
 ### Template Rendering Time
 
 **Memory Store:**
+
 - `.List()`: <1ms (return in-memory slice)
 - `.Fetch()`: <1ms (indexed lookup)
 - **No API calls during rendering**
 
 **Cached Store:**
+
 - `.List()`: Triggers fetch for all resources (slow)
 - `.Fetch()` with cache hit: <1ms (cached lookup)
 - `.Fetch()` with cache miss: 10-50ms (API call)
 - **API calls add latency**
 
 **Rendering time example:**
+
 - Template accessing 10 secrets
 - Memory store: ~1ms total
 - Cached store (all cached): ~1ms total
@@ -498,17 +530,20 @@ The choice between memory and cached stores affects multiple performance dimensi
 ### Kubernetes API Load
 
 **Memory Store:**
+
 - **Initial sync**: Single list operation per resource type
 - **Updates**: Watch events only (efficient)
 - **Template rendering**: No API calls
 
 **Cached Store:**
+
 - **Initial sync**: Single list operation (same as memory)
 - **Updates**: Watch events only (same as memory)
 - **Template rendering**: API calls on cache misses
 - **Additional load**: Depends on cache hit rate
 
 **API call estimation:**
+
 - 100 template renders per minute
 - 10 secrets accessed per render
 - 50% cache hit rate
@@ -517,11 +552,13 @@ The choice between memory and cached stores affects multiple performance dimensi
 ### Performance Recommendations
 
 **Optimize for memory store:**
+
 - Use field filtering to remove unnecessary data (see [CRD Reference](./crd-reference.md#watchedresources))
 - Watch only necessary namespaces
 - Use label selectors to limit resource count
 
 **Optimize for cached store:**
+
 - Set appropriate cache TTL (balance freshness vs API load)
 - Use `.Fetch()` instead of `.List()` in templates
 - Access resources conditionally (don't fetch unless needed)
@@ -531,7 +568,7 @@ The choice between memory and cached stores affects multiple performance dimensi
 
 Use this decision guide to select the appropriate store type for each resource:
 
-### Use Memory Store When:
+### Use Memory Store When
 
 - ✅ Resources are small to medium size (<10 KB)
 - ✅ You iterate over most/all resources in templates
@@ -540,13 +577,14 @@ Use this decision guide to select the appropriate store type for each resource:
 - ✅ Resource count is manageable (<10,000)
 
 **Common resources for memory store:**
+
 - Ingress resources
 - Service resources
 - EndpointSlice resources
 - Small ConfigMap resources
 - Deployment/Pod resources (if watching)
 
-### Use Cached Store When:
+### Use Cached Store When
 
 - ✅ Resources are large (>10 KB)
 - ✅ You access resources selectively by key
@@ -555,6 +593,7 @@ Use this decision guide to select the appropriate store type for each resource:
 - ✅ Can tolerate API latency on cache misses
 
 **Common resources for cached store:**
+
 - Secrets containing certificates (large PEM data)
 - Secrets for authentication (selective access via annotations)
 - Large ConfigMap resources
@@ -636,6 +675,7 @@ watchedResources:
 ```
 
 **Template usage:**
+
 ```jinja2
 {# Generate backends with dynamic servers #}
 {% for ingress in resources.ingresses.List() %}
@@ -680,6 +720,7 @@ watchedResources:
 ```
 
 **Template usage:**
+
 ```jinja2
 {# Generate userlist sections for basic auth #}
 {% set ns = namespace(processed=[]) %}
@@ -737,6 +778,7 @@ watchedResources:
 ```
 
 **Template usage:**
+
 ```jinja2
 {# Generate SSL certificates from ingress TLS configuration #}
 {% for ingress in resources.ingresses.List() %}
@@ -779,11 +821,13 @@ watchedResources:
 ```
 
 **Benefits:**
+
 - Reduced memory usage (fewer resources)
 - Reduced API load (narrower watch scope)
 - Simplified indexing (single key)
 
 **Template usage:**
+
 ```jinja2
 {# Fetch by name only (namespace is implicit) #}
 {% for ingress in resources.ingresses.Fetch("api-gateway") %}

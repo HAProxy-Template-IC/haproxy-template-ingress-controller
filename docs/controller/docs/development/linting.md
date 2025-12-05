@@ -31,28 +31,34 @@ The `.golangci.yml` configuration enables comprehensive linting tailored for Kub
 ### Enabled Linter Categories
 
 **Error Detection & Correctness**
+
 - errcheck, govet, staticcheck, ineffassign, unused
 - gosimple, bodyclose, errchkjson, nilerr, nilnil
 
 **Security**
+
 - gosec: Detects security vulnerabilities and hardcoded credentials
 
 **Style & Best Practices**
+
 - revive, gocritic, gofmt, goimports, misspell
 - unconvert, unparam, nakedret, whitespace, godot
 - importas: Enforces Kubernetes package aliases
 - goprintffuncname: Checks printf-like function naming
 
 **Code Complexity**
+
 - gocyclo: Cyclomatic complexity (threshold: 20)
 - goconst: Repeated strings
 - dupl: Code duplication (threshold: 150 lines)
 
 **Performance**
+
 - prealloc: Slice preallocation opportunities
 - copyloopvar: Loop variable reference issues (Go 1.22+)
 
 **Maintenance**
+
 - godox: Detects TODO/FIXME/BUG comments
 - asciicheck: Ensures only ASCII characters
 - bidichk: Detects dangerous Unicode bidirectional characters
@@ -61,11 +67,13 @@ The `.golangci.yml` configuration enables comprehensive linting tailored for Kub
 - nolintlint: Reports ill-formed or insufficient nolint directives
 
 **Testing**
+
 - thelper: Test helper function checks
 
 ### Exclusions
 
 The configuration excludes checks for:
+
 - Generated code in `codegen/**/*.gen.go`
 - Test files (`*_test.go`) have relaxed rules
 - Integration tests (`tests/integration/`) have additional exemptions
@@ -105,6 +113,7 @@ make audit
 ```
 
 If vulnerabilities are found:
+
 1. Review the output carefully
 2. Update affected dependencies: `go get -u <package>@latest`
 3. Run `go mod tidy`
@@ -280,16 +289,19 @@ The configuration uses local hooks that execute the existing `make lint` and `ma
 ### Troubleshooting
 
 **Hook doesn't run on commit**
+
 - Verify installation: `pre-commit --version`
 - Reinstall hooks: `pre-commit install`
 - Check `.git/hooks/pre-commit` exists
 
 **Slow hook execution**
+
 - Use `SKIP=make-audit` to skip security scanning for quick commits
 - Run `make audit` separately or in CI
 - Pre-commit caches results for unchanged files
 
 **Hook fails but manual `make lint` passes**
+
 - Ensure working directory is clean: `git status`
 - Run `pre-commit run --all-files` to see full output
 - Check if pre-commit is using correct Go version
@@ -308,6 +320,7 @@ make fmt  # gofmt
 ### High Complexity Functions
 
 When gocyclo reports high complexity (>20):
+
 1. Consider breaking the function into smaller functions
 2. Extract complex conditional logic into separate functions
 3. Use table-driven approaches for complex switch/if statements
@@ -315,6 +328,7 @@ When gocyclo reports high complexity (>20):
 ### Hardcoded Credentials
 
 If gosec reports G101 (potential hardcoded credentials):
+
 - Review the code to ensure it's a false positive
 - If it's configuration (like default names), add a comment explaining it
 - For real credentials, use environment variables or Kubernetes Secrets
@@ -322,6 +336,7 @@ If gosec reports G101 (potential hardcoded credentials):
 ### Cyclomatic Complexity
 
 Functions with complexity >20 should be refactored. Common patterns:
+
 - Extract helper functions
 - Use early returns to reduce nesting
 - Replace long if-else chains with switch statements or maps

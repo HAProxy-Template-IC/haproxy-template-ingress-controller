@@ -7,6 +7,7 @@ Development context for the controller application entry point.
 ## When to Work Here
 
 Modify this package when:
+
 - Changing startup sequence
 - Adding new command-line flags
 - Modifying environment variable handling
@@ -15,6 +16,7 @@ Modify this package when:
 - Modifying graceful shutdown logic
 
 **DO NOT** modify this package for:
+
 - Business logic → Use appropriate `pkg/` package
 - Event coordination → Use `pkg/controller`
 - Configuration parsing → Use `pkg/core/config`
@@ -40,6 +42,7 @@ The primary controller daemon that watches Kubernetes resources and manages HAPr
 CLI tool for validating HAProxyTemplateConfig CRDs with embedded validation tests.
 
 **Usage:**
+
 ```bash
 controller validate -f config.yaml [flags]
 ```
@@ -126,6 +129,7 @@ controller validate -f config.yaml --trace-templates
 7. **Expose endpoints**: Health checks, metrics, profiling
 
 **Not responsible for:**
+
 - Configuration validation (done in pkg/controller/validators)
 - Resource watching (done in pkg/k8s)
 - Template rendering (done in pkg/templating)

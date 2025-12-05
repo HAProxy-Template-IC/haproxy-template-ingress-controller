@@ -5,11 +5,13 @@ Development context for the leader election event adapter.
 ## When to Work Here
 
 Work in this package when:
+
 - Modifying event publishing for leader election
 - Adding observability around leadership transitions
 - Changing how leader election integrates with the EventBus
 
 **DO NOT** work here for:
+
 - Pure leader election logic → Use `pkg/k8s/leaderelection`
 - Controller startup logic → Use `pkg/controller`
 - Event definitions → Use `pkg/controller/events`
@@ -52,6 +54,7 @@ wrappedCallbacks := k8sleaderelection.Callbacks{
 ```
 
 **Why wrap callbacks?**
+
 - Ensures events always published regardless of user callback behavior
 - Decouples observability from business logic
 - User callbacks can fail without affecting event publishing
@@ -73,6 +76,7 @@ func (c *Component) IsLeader() bool {
 ```
 
 **Why delegate?**
+
 - Event adapter is thin wrapper (no business logic)
 - Pure component remains reusable
 - Clear separation of concerns

@@ -80,12 +80,14 @@ pkg/controller/
 Subscribes to all EventBus events and produces domain-aware log messages with contextual insights.
 
 **Features:**
+
 - Ring buffer maintains recent event history for correlation
 - Produces insights like "triggered by config change 234ms ago"
 - Centralized logging strategy - pure components remain clean
 - Fully asynchronous - no performance impact on business logic
 
 **Example:**
+
 ```go
 import (
     "haproxy-template-ic/pkg/controller/commentator"
@@ -105,12 +107,14 @@ go commentator.Run(ctx)
 Loads and parses controller configuration from ConfigMap resources.
 
 **Responsibilities:**
+
 - Subscribes to ConfigResourceChangedEvent
 - Parses ConfigMap data using pkg/core/config.ParseConfig()
 - Applies default values using pkg/core/config.SetDefaults()
 - Publishes ConfigParsedEvent on success
 
 **Example:**
+
 ```go
 import (
     "haproxy-template-ic/pkg/controller/configloader"
@@ -126,6 +130,7 @@ go loader.Run(ctx)
 Loads and validates credentials from Secret resources.
 
 **Responsibilities:**
+
 - Subscribes to SecretResourceChangedEvent
 - Loads credentials using pkg/core/config.LoadCredentials()
 - Validates credentials using pkg/core/config.ValidateCredentials()
@@ -140,6 +145,7 @@ Three validators respond to ConfigValidationRequest using scatter-gather pattern
 3. **JSONPathValidator**: JSONPath expression validation (pkg/k8s/indexer)
 
 **Scatter-Gather Pattern:**
+
 ```go
 // Coordinator publishes request
 req := events.NewConfigValidationRequest(config, version)
@@ -162,6 +168,7 @@ for _, resp := range result.Responses {
 Debounces resource changes and triggers reconciliation events (Stage 5, Component 1).
 
 **Responsibilities:**
+
 - Subscribes to ResourceIndexUpdatedEvent and ConfigValidatedEvent
 - Debounces resource changes with configurable interval (default 500ms)
 - Triggers immediate reconciliation for config changes (no debouncing)
@@ -169,6 +176,7 @@ Debounces resource changes and triggers reconciliation events (Stage 5, Componen
 - Publishes ReconciliationTriggeredEvent when ready
 
 **Example:**
+
 ```go
 import (
     "haproxy-template-ic/pkg/controller/reconciler"
@@ -189,6 +197,7 @@ go reconcilerComponent.Start(ctx)
 Renders HAProxy configuration and auxiliary files from templates (Stage 5, Component 3).
 
 **Responsibilities:**
+
 - Subscribes to ReconciliationTriggeredEvent
 - Queries indexed resources from stores
 - Renders HAProxy configuration using templating engine
@@ -197,6 +206,7 @@ Renders HAProxy configuration and auxiliary files from templates (Stage 5, Compo
 - Publishes TemplateRenderFailedEvent on rendering errors
 
 **Example:**
+
 ```go
 import (
     "haproxy-template-ic/pkg/controller/renderer"
@@ -212,6 +222,7 @@ go rendererComponent.Start(ctx)
 Validates rendered HAProxy configurations using two-phase validation (Stage 5, Component 4).
 
 **Responsibilities:**
+
 - Subscribes to TemplateRenderedEvent
 - Validates configuration syntax using client-native parser
 - Validates configuration semantics using haproxy binary (`haproxy -c`)
@@ -220,10 +231,12 @@ Validates rendered HAProxy configurations using two-phase validation (Stage 5, C
 - Publishes ValidationFailedEvent with detailed error messages on failure
 
 **Two-Phase Validation:**
+
 1. **Phase 1 - Syntax**: Client-native parser validates configuration structure
 2. **Phase 2 - Semantics**: HAProxy binary performs full semantic validation
 
 **Example:**
+
 ```go
 import (
     "haproxy-template-ic/pkg/controller/validator"
@@ -239,6 +252,7 @@ go haproxyValidator.Start(ctx)
 Orchestrates reconciliation cycles by handling events from pure components (Stage 5, Component 2).
 
 **Responsibilities:**
+
 - Subscribes to ReconciliationTriggeredEvent, TemplateRenderedEvent, TemplateRenderFailedEvent, ValidationCompletedEvent, ValidationFailedEvent
 - Publishes ReconciliationStartedEvent when reconciliation begins
 - Handles validation success/failure events
@@ -246,11 +260,13 @@ Orchestrates reconciliation cycles by handling events from pure components (Stag
 - Publishes ReconciliationFailedEvent on errors
 
 **Event-Driven Flow:**
+
 - Renderer publishes TemplateRenderedEvent → HAProxyValidator validates → Executor handles validation result
 - On ValidationCompletedEvent: Proceeds to deployment
 - On ValidationFailedEvent: Publishes ReconciliationFailedEvent
 
 **Example:**
+
 ```go
 import (
     "haproxy-template-ic/pkg/controller/executor"
@@ -356,6 +372,7 @@ log.Info("All components started - Reconciliation pipeline ready")
 ```
 
 **Four-Component Design:**
+
 1. **Reconciler**: Debounces changes (500ms default), publishes ReconciliationTriggeredEvent
 2. **Renderer**: Renders templates, publishes TemplateRenderedEvent
 3. **HAProxyValidator**: Validates configurations, publishes ValidationCompletedEvent or ValidationFailedEvent
@@ -417,10 +434,12 @@ for event := range eventChan {
 The `pkg/controller/events` package defines ~50 event types organized into categories:
 
 **Lifecycle Events:**
+
 - ControllerStartedEvent
 - ControllerShutdownEvent
 
 **Configuration Events:**
+
 - ConfigResourceChangedEvent
 - ConfigParsedEvent
 - ConfigValidationRequest (Request)
@@ -429,42 +448,50 @@ The `pkg/controller/events` package defines ~50 event types organized into categ
 - ConfigInvalidEvent
 
 **Credentials Events:**
+
 - SecretResourceChangedEvent
 - CredentialsUpdatedEvent
 - CredentialsInvalidEvent
 
 **Resource Events:**
+
 - ResourceIndexUpdatedEvent
 - ResourceSyncCompleteEvent
 - IndexSynchronizedEvent
 
 **Reconciliation Events:**
+
 - ReconciliationTriggeredEvent
 - ReconciliationStartedEvent
 - ReconciliationCompletedEvent
 - ReconciliationFailedEvent
 
 **Template Events:**
+
 - TemplateRenderedEvent
 - TemplateRenderFailedEvent
 
 **Validation Events:**
+
 - ValidationStartedEvent
 - ValidationCompletedEvent
 - ValidationFailedEvent
 
 **Deployment Events:**
+
 - DeploymentStartedEvent
 - InstanceDeployedEvent
 - InstanceDeploymentFailedEvent
 - DeploymentCompletedEvent
 
 **Storage Events:**
+
 - StorageSyncStartedEvent
 - StorageSyncCompletedEvent
 - StorageSyncFailedEvent
 
 **HAProxy Pod Events:**
+
 - HAProxyPodsDiscoveredEvent
 - HAProxyPodAddedEvent
 - HAProxyPodRemovedEvent

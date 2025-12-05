@@ -7,12 +7,14 @@ Development context for integration testing infrastructure.
 ## When to Work Here
 
 Work in this directory when:
+
 - Writing integration tests against real Kubernetes/HAProxy
 - Testing dataplane synchronization logic
 - Verifying HAProxy configuration changes
 - Testing multi-component interactions
 
 **DO NOT** work here for:
+
 - Unit tests → Place in pkg/ alongside code
 - Quick tests → Use unit tests instead
 - End-to-end acceptance tests → Use `tests/acceptance/`
@@ -23,6 +25,7 @@ Work in this directory when:
 Provides integration testing infrastructure using real Kubernetes cluster (Kind) and HAProxy instances. Tests verify component behavior against actual infrastructure rather than mocks.
 
 Key features:
+
 - **Fixture-based testing** - Shared resources via fixenv
 - **Real infrastructure** - Kind cluster + HAProxy pods
 - **Fast test iteration** - Cluster reuse between runs
@@ -51,6 +54,7 @@ Test Fixtures (fixenv)
 ```
 
 Fixture dependency chain:
+
 ```
 TestDataplaneHighLevelClient
     → TestHAProxy
@@ -77,6 +81,7 @@ func TestSyncFrontendAdd(t *testing.T) {
 ```
 
 **Benefits**:
+
 - **Declarative dependencies** - Fixtures declare what they need
 - **Automatic ordering** - Dependencies created in correct order
 - **Caching** - Expensive resources shared when possible
@@ -143,6 +148,7 @@ func TestNamespace(env fixenv.Env) *Namespace {
 **Naming**: Auto-generated from test name with hash suffix
 
 **Example namespace name**:
+
 ```
 test-sync-frontend-add-a1b2c3d4
 ```
@@ -172,6 +178,7 @@ func TestHAProxy(env fixenv.Env) *HAProxyInstance {
 ```
 
 **Provides**:
+
 - HAProxy pod with dataplane API enabled
 - Default credentials (admin/password)
 - Minimal initial configuration
@@ -180,6 +187,7 @@ func TestHAProxy(env fixenv.Env) *HAProxyInstance {
 ### Client Fixtures
 
 **Low-level client** (client-native):
+
 ```go
 func TestDataplaneClient(env fixenv.Env) *client.DataplaneClient {
     haproxy := TestHAProxy(env)
@@ -198,6 +206,7 @@ func TestDataplaneClient(env fixenv.Env) *client.DataplaneClient {
 ```
 
 **High-level client** (dataplane.Client - Sync API):
+
 ```go
 func TestDataplaneHighLevelClient(env fixenv.Env) *dataplane.Client {
     haproxy := TestHAProxy(env)
@@ -329,6 +338,7 @@ func TestLowLevelAPI(t *testing.T) {
 ### Cluster Lifecycle Management
 
 **Default behavior** (recommended):
+
 ```bash
 # First run: creates cluster (~2 min)
 go test -tags=integration ./tests/integration -run TestSyncFrontendAdd
@@ -341,6 +351,7 @@ kind delete cluster --name=haproxy-test
 ```
 
 **Force cleanup** (slower):
+
 ```bash
 KEEP_CLUSTER=false go test -tags=integration ./tests/integration -run TestSyncFrontendAdd
 ```
@@ -350,13 +361,16 @@ KEEP_CLUSTER=false go test -tags=integration ./tests/integration -run TestSyncFr
 Namespaces are automatically cleaned up:
 
 **During tests**:
+
 - Old test namespaces cleaned in background on cluster creation
 
 **After tests**:
+
 - If KEEP_CLUSTER=false: immediate cleanup
 - If KEEP_CLUSTER=true: kept for inspection, cleaned on next run
 
 **Manual cleanup**:
+
 ```bash
 # Delete all test namespaces
 kubectl delete ns -l 'kubernetes.io/metadata.name~=test-'
@@ -365,6 +379,7 @@ kubectl delete ns -l 'kubernetes.io/metadata.name~=test-'
 ### Safe Namespace Naming
 
 Kubernetes namespace names must:
+
 - Be ≤ 63 characters
 - Be lowercase
 - Contain only alphanumeric and hyphens
@@ -379,6 +394,7 @@ namespace := generateSafeNamespaceName(testName)
 ```
 
 Strategy:
+
 1. Normalize: lowercase, replace "/" with "-"
 2. Truncate if needed: keep meaningful part
 3. Add hash suffix: ensure uniqueness
@@ -568,6 +584,7 @@ func TestParallelSyncs(t *testing.T) {
 ```
 
 **How it works**:
+
 - Each parallel test gets its own TestNamespace
 - All share the same SharedCluster
 - Complete isolation via namespaces
@@ -618,6 +635,7 @@ kubectl logs -n $NS haproxy-xxx -f
 ### Cluster Reuse
 
 **Default** (fast):
+
 ```bash
 # Creates cluster once
 make test-integration
@@ -626,6 +644,7 @@ make test-integration
 ```
 
 **Always recreate** (slow):
+
 ```bash
 KEEP_CLUSTER=false make test-integration
 ```
@@ -773,8 +792,8 @@ func TestNewEnterpriseFeature(t *testing.T) {
 
 ## Resources
 
-- fixenv documentation: https://github.com/rekby/fixenv
-- Kind documentation: https://kind.sigs.k8s.io/
+- fixenv documentation: <https://github.com/rekby/fixenv>
+- Kind documentation: <https://kind.sigs.k8s.io/>
 - Test examples: `sync_test.go`, `auxiliaryfiles_test.go`
 - Enterprise tests: `enterprise_waf_test.go`, `enterprise_keepalived_test.go`, etc.
 - Fixture definitions: `env.go`

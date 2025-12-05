@@ -8,6 +8,7 @@ Development context for the webhook adapter component.
 ## When to Work Here
 
 Modify this package when:
+
 - Changing webhook lifecycle management
 - Modifying certificate rotation logic
 - Wiring webhook to controller validators
@@ -15,6 +16,7 @@ Modify this package when:
 - Changing webhook configuration management
 
 **DO NOT** modify this package for:
+
 - Webhook server implementation → Use `pkg/webhook`
 - Certificate generation → Use `pkg/webhook`
 - Event type definitions → Use `pkg/controller/events`
@@ -25,6 +27,7 @@ Modify this package when:
 This is an **event adapter** that bridges the pure webhook library (`pkg/webhook`) to the controller's event-driven architecture.
 
 **Key Responsibilities:**
+
 - Manage webhook lifecycle (start, stop, rotation)
 - Publish webhook events to EventBus
 - Bridge webhook ValidationFunc to controller validators
@@ -45,6 +48,7 @@ ConfigManager      ─┘                    ↓
 ```
 
 This follows the established pattern used throughout the controller:
+
 - `pkg/templating` → `pkg/controller/renderer`
 - `pkg/k8s` → `pkg/controller/resourcewatcher`
 - `pkg/webhook` → `pkg/controller/webhook`

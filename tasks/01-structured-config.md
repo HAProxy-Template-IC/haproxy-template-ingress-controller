@@ -5,6 +5,7 @@
 This task implements the core functionality for intelligent HAProxy configuration management through structured parsing, fine-grained comparison, and optimal synchronization via the Dataplane API. This is the trickiest and most critical part of the project, taken on first to validate the approach risk-first.
 
 **Why this matters:**
+
 - Enables zero-reload deployments by using specific Dataplane API endpoints
 - Avoids unnecessary HAProxy process restarts through fine-grained updates
 - Provides foundation for all configuration management operations
@@ -111,6 +112,7 @@ pkg/
 **Location**: `pkg/validation/parser/`
 
 **Dependencies**:
+
 ```go
 import (
     "github.com/haproxytech/client-native/v6/configuration"
@@ -121,6 +123,7 @@ import (
 **Files to create**:
 
 #### `parser.go`
+
 ```go
 type Parser struct {
     parser parser.Parser
@@ -132,6 +135,7 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error)
 ```
 
 **Key functionality**:
+
 - Parse config strings (not files) into `StructuredConfig`
 - Use client-native's parser (do NOT implement custom parser)
 - Return structured representation suitable for comparison
@@ -144,8 +148,9 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error)
 **Location**: `pkg/dataplane/client/`
 
 **Dependencies**:
+
 - **Option A**: `github.com/form3tech-oss/haproxy-data-plane-api-client`
-- **Option B**: Generate from OpenAPI spec at https://www.haproxy.com/documentation/dataplaneapi/community/v3_specification.yaml
+- **Option B**: Generate from OpenAPI spec at <https://www.haproxy.com/documentation/dataplaneapi/community/v3_specification.yaml>
 - **Decision**: Research both options, choose based on completeness and active maintenance
 
 **First**: Check if client-native provides HTTP client functionality. If yes, prefer that.
@@ -153,6 +158,7 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error)
 **Files to create**:
 
 #### `client.go`
+
 ```go
 type DataplaneClient struct {
     baseURL    string
@@ -169,6 +175,7 @@ func (c *DataplaneClient) GetVersion() (int64, error)
 ```
 
 #### `adapter.go`
+
 ```go
 // VersionAdapter wraps client with automatic version management and 409 retry
 type VersionAdapter struct {
@@ -182,6 +189,7 @@ func (a *VersionAdapter) ExecuteWithRetry(op Operation) error
 ```
 
 #### `transaction.go`
+
 ```go
 type Transaction struct {
     id      string
@@ -203,9 +211,11 @@ func (t *Transaction) Abort() error
 ```
 
 #### `operations/*.go`
+
 Comprehensive endpoint coverage for ALL config sections:
 
 **Core Sections**:
+
 - `global.go` - Global settings operations
 - `defaults.go` - Defaults section operations
 - `frontend.go` - Frontend CRUD operations
@@ -213,6 +223,7 @@ Comprehensive endpoint coverage for ALL config sections:
 - `server.go` - Server add/update/delete in backends
 
 **Routing & Logic**:
+
 - `bind.go` - Frontend bind operations
 - `acl.go` - ACL definition operations
 - `http_request_rule.go` - HTTP request rule operations
@@ -223,11 +234,13 @@ Comprehensive endpoint coverage for ALL config sections:
 - `use_backend.go` - Use backend rules
 
 **Runtime Operations**:
+
 - `map.go` - Runtime map operations
 - `stick_table.go` - Stick table operations
 - `server_template.go` - Server template operations
 
 **Advanced Features**:
+
 - `filter.go` - HTTP filter operations (compression, cache, etc.)
 - `cache.go` - Cache section operations
 - `mailer.go` - Mailer section operations
@@ -236,10 +249,12 @@ Comprehensive endpoint coverage for ALL config sections:
 - `ring.go` - Ring buffer operations
 
 **Logging & Errors**:
+
 - `log_target.go` - Log target operations
 - `http_errors.go` - HTTP error file operations
 
 **Each operation file provides**:
+
 ```go
 type BackendOperation interface {
     Execute(client *DataplaneClient, txID string) error
@@ -260,6 +275,7 @@ type DeleteBackend struct {
 ```
 
 **Key functionality**:
+
 - Fetch current config via raw endpoint: `GET /v2/services/haproxy/configuration/raw`
 - Get current version: `GET /v2/services/haproxy/configuration/version`
 - Auto-manage version parameter
@@ -276,6 +292,7 @@ type DeleteBackend struct {
 **Files to create**:
 
 #### `comparator.go`
+
 ```go
 type Comparator struct {
     sectionComparators map[string]SectionComparator
@@ -287,6 +304,7 @@ func (c *Comparator) Compare(current, desired *models.Configuration) (*ConfigDif
 ```
 
 #### `diff.go`
+
 ```go
 type ConfigDiff struct {
     Operations []Operation
@@ -310,9 +328,11 @@ type DiffSummary struct {
 ```
 
 #### `sections/*.go`
+
 Per-section comparison logic with **attribute-level granularity**:
 
 **`sections/backend.go`** - Example implementation:
+
 ```go
 type BackendComparator struct{}
 
@@ -351,6 +371,7 @@ func (bc *BackendComparator) Compare(current, desired *models.Backend) []Operati
 ```
 
 **`sections/server.go`** - Server-level comparison:
+
 ```go
 type ServerComparator struct{}
 
@@ -406,6 +427,7 @@ func (sc *ServerComparator) Compare(backend string, current, desired []*models.S
 ```
 
 **Complete section coverage**:
+
 - `global.go` - Global section comparison
 - `defaults.go` - Defaults section comparison
 - `frontend.go` - Frontend comparison (settings + binds + ACLs + rules)
@@ -419,6 +441,7 @@ func (sc *ServerComparator) Compare(backend string, current, desired []*models.S
 - `log.go`, `http_errors.go`
 
 **Key functionality**:
+
 - **Fine-grained comparison** at attribute level (not section level)
 - Deep equality checks for all config elements
 - Generate minimal change set - only changed attributes
@@ -432,6 +455,7 @@ func (sc *ServerComparator) Compare(backend string, current, desired []*models.S
 **Location**: `pkg/dataplane/comparator/operations.go`
 
 **Operation type system**:
+
 ```go
 type OperationType int
 
@@ -525,6 +549,7 @@ Each operation maps to the most specific endpoint available:
 | CreateSwitchingRule | `POST /v2/services/haproxy/configuration/backend_switching_rules?frontend={name}` |
 
 **Key functionality**:
+
 - Map every config difference to most specific API endpoint
 - Never use `/raw` endpoint (causes reload) unless fallback scenario
 - Provide clear operation descriptions for logging
@@ -539,6 +564,7 @@ Each operation maps to the most specific endpoint available:
 **Files to create**:
 
 #### `synchronizer.go`
+
 ```go
 type Synchronizer struct {
     client      *DataplaneClient
@@ -559,6 +585,7 @@ func (s *Synchronizer) Sync(ctx context.Context, desired *models.Configuration, 
 ```
 
 #### `policy.go`
+
 ```go
 type DeploymentPolicy int
 
@@ -572,6 +599,7 @@ const (
 ```
 
 #### `executor.go`
+
 ```go
 // ExecuteOperations runs operations within a transaction
 func ExecuteOperations(ctx context.Context, client *DataplaneClient, ops []Operation) error {
@@ -601,6 +629,7 @@ func ExecuteOperations(ctx context.Context, client *DataplaneClient, ops []Opera
 ```
 
 #### `ordering.go`
+
 ```go
 // OrderOperations sorts operations by dependency requirements
 func OrderOperations(ops []Operation) []Operation {
@@ -636,6 +665,7 @@ func OrderOperations(ops []Operation) []Operation {
 ```
 
 **Transaction flow**:
+
 ```
 1. Fetch current version from API
    ↓
@@ -665,6 +695,7 @@ func OrderOperations(ops []Operation) []Operation {
 | Unrecoverable | Abort transaction, optionally fallback to raw endpoint |
 
 **Raw endpoint fallback** (last resort):
+
 ```go
 func (s *Synchronizer) SyncWithRawEndpoint(client *DataplaneClient, config string) error {
     // Only used when:
@@ -678,6 +709,7 @@ func (s *Synchronizer) SyncWithRawEndpoint(client *DataplaneClient, config strin
 ```
 
 **Multi-instance deployment**:
+
 ```go
 func (s *Synchronizer) SyncMultiple(ctx context.Context, desired *models.Configuration, endpoints []DataplaneEndpoint) (*MultiSyncResult, error) {
     results := make([]*SyncResult, len(endpoints))
@@ -711,6 +743,7 @@ func (s *Synchronizer) SyncMultiple(ctx context.Context, desired *models.Configu
 ```
 
 **Key functionality**:
+
 - Orchestrate complete sync workflow
 - Handle transaction lifecycle
 - Order operations by dependencies
@@ -727,6 +760,7 @@ func (s *Synchronizer) SyncMultiple(ctx context.Context, desired *models.Configu
 **Location**: `tests/integration/`
 
 **Dependencies**:
+
 ```go
 import (
     "sigs.k8s.io/kind/pkg/cluster"
@@ -737,6 +771,7 @@ import (
 **Files to create**:
 
 #### `kind_cluster.go`
+
 ```go
 // SetupKindCluster creates a Kind cluster for testing
 func SetupKindCluster(t *testing.T) (*KindCluster, error)
@@ -746,6 +781,7 @@ func (kc *KindCluster) Teardown() error
 ```
 
 #### `haproxy_setup.go`
+
 ```go
 // DeployHAProxy deploys HAProxy pod with Dataplane API sidecar
 // Reference the Python project for container images and configuration
@@ -755,9 +791,10 @@ func DeployHAProxy(t *testing.T, cluster *KindCluster) (*HAProxyInstance, error)
 func (hi *HAProxyInstance) GetDataplaneEndpoint() DataplaneEndpoint
 ```
 
-#### Test scenarios:
+#### Test scenarios
 
 **`sync_basic_test.go`** - Fundamental operations:
+
 ```go
 func TestSyncEmptyToSimple(t *testing.T) {
     // Empty config → 1 backend with 2 servers
@@ -786,6 +823,7 @@ func TestSyncModifyBackendBalance(t *testing.T) {
 ```
 
 **`sync_complex_test.go`** - Comprehensive config coverage:
+
 ```go
 func TestSyncCompleteHAProxyConfig(t *testing.T) {
     // Full config with:
@@ -818,6 +856,7 @@ func TestSyncACLsAndRules(t *testing.T) {
 ```
 
 **`sync_errors_test.go`** - Error handling:
+
 ```go
 func TestSync409Retry(t *testing.T) {
     // Simulate concurrent modification
@@ -843,6 +882,7 @@ func TestSyncRawFallback(t *testing.T) {
 ```
 
 **`sync_multi_instance_test.go`** - Multi-instance deployment:
+
 ```go
 func TestSyncBestEffort(t *testing.T) {
     // Deploy to 3 instances, make 2nd fail
@@ -864,6 +904,7 @@ func TestSyncParallelDeployment(t *testing.T) {
 ```
 
 **Test data structure**:
+
 ```
 tests/integration/testdata/
 ├── basic/
@@ -885,6 +926,7 @@ tests/integration/testdata/
 ```
 
 **Test flow example**:
+
 ```go
 func TestCompleteSyncWorkflow(t *testing.T) {
     // 1. Setup Kind cluster
@@ -938,6 +980,7 @@ func TestCompleteSyncWorkflow(t *testing.T) {
 ```
 
 **Key test requirements**:
+
 - Spin up Kind Kubernetes cluster
 - Deploy HAProxy pod with Dataplane API sidecar
 - Test 100+ config variations
@@ -953,6 +996,7 @@ func TestCompleteSyncWorkflow(t *testing.T) {
 ### Library Choices
 
 **Configuration Parsing**:
+
 - ✅ **client-native/v6**: Use `github.com/haproxytech/client-native/v6`
 - Includes integrated config parser
 - Actively maintained (v6 released May 2025)
@@ -960,6 +1004,7 @@ func TestCompleteSyncWorkflow(t *testing.T) {
 - Do NOT implement custom parser
 
 **API Client**:
+
 - 🔍 **Research both options**:
   - Option A: `github.com/form3tech-oss/haproxy-data-plane-api-client` (third-party)
   - Option B: Generate from OpenAPI spec v3 using `oapi-codegen` or similar
@@ -967,6 +1012,7 @@ func TestCompleteSyncWorkflow(t *testing.T) {
 - **Decision criteria**: Completeness, maintenance status, ease of use
 
 **Testing**:
+
 - ✅ **Kind**: `sigs.k8s.io/kind` for Kubernetes cluster
 - ✅ **testify**: `github.com/stretchr/testify` for assertions
 - 📋 **Container image**: Check Python project for HAProxy + Dataplane API image
@@ -974,6 +1020,7 @@ func TestCompleteSyncWorkflow(t *testing.T) {
 ### Version Management
 
 **Optimistic locking pattern**:
+
 1. Fetch current version: `GET /v2/services/haproxy/configuration/version`
 2. Include version in transaction creation: `POST /v2/services/haproxy/transactions?version={version}`
 3. On 409 response:
@@ -982,6 +1029,7 @@ func TestCompleteSyncWorkflow(t *testing.T) {
    - Maximum 3 retry attempts (configurable)
 
 **Automatic injection**:
+
 - Adapter automatically manages version parameter
 - No transaction_id → inject version parameter
 - Has transaction_id → use it (no version needed)
@@ -989,16 +1037,19 @@ func TestCompleteSyncWorkflow(t *testing.T) {
 ### Error Handling
 
 **Recoverable errors**:
+
 - **409 (Conflict)**: Automatic retry with new version
 - **Transient failures**: Configurable retry policy
 
 **Unrecoverable errors**:
+
 - **400 (Bad Request)**: Validation error, abort transaction, return error
 - **500 (Server Error)**: Abort transaction, return error
 - **Unsupported features**: Abort transaction, optionally fallback to raw endpoint
 
 **Raw endpoint fallback**:
 Only use `/raw` endpoint (which triggers reload) for:
+
 - Config features not supported by structured API
 - Semantic validation failures after all retries
 - NOT for 409 conflicts (those are recoverable)
@@ -1006,12 +1057,14 @@ Only use `/raw` endpoint (which triggers reload) for:
 ### State Management
 
 **Stateless operation**:
+
 - Always fetch current config from Dataplane API
 - No persistent tracking of last-applied state
 - Comparison is always: current (fetched) vs. desired (rendered)
 - More reliable, handles external changes
 
 **Benefits**:
+
 - No state synchronization issues
 - Handles manual config changes via API
 - Simpler implementation
@@ -1020,18 +1073,21 @@ Only use `/raw` endpoint (which triggers reload) for:
 ### Comparison Granularity
 
 **Fine-grained attribute-level comparison**:
+
 - Compare individual config attributes, not entire sections
 - Example: If only server weight changed, generate single `UpdateServerWeight` operation
 - Minimizes API calls and reload triggers
 - Maps to most specific endpoint available
 
 **Operation mapping**:
+
 - Server weight change → `PUT /backends/{backend}/servers/{name}` (single attribute)
 - NOT: Replace entire backend → `PUT /backends/{backend}` (all settings + all servers)
 
 ### Dependency Ordering
 
 **Operation execution order**:
+
 1. **Deletes** (reverse dependency order):
    - Delete servers first
    - Then delete backends/frontends
@@ -1045,6 +1101,7 @@ Only use `/raw` endpoint (which triggers reload) for:
    - No dependencies
 
 **Priority system**:
+
 ```go
 // Lower priority = executed first for creates
 // Higher priority = executed first for deletes
@@ -1064,10 +1121,12 @@ const (
 ### Multi-Instance Deployment
 
 **Policies** (from design doc):
+
 - **BestEffort**: Continue deploying to remaining instances on failure, collect all results
 - **AllOrNothing**: Stop immediately on first failure
 
 **Implementation**:
+
 - Parallel deployment using goroutines for BestEffort
 - Sequential with early exit for AllOrNothing
 - Comprehensive result reporting per instance
@@ -1109,6 +1168,7 @@ const (
 ### Validation
 
 **The integration tests must prove**:
+
 1. Parse diverse HAProxy configs correctly
 2. Fetch current config from real HAProxy instances
 3. Compare configs and generate correct operations
@@ -1132,6 +1192,7 @@ const (
 ## Progress
 
 ### Completed
+
 - [ ] Step 1: Configuration parsing with client-native
 - [ ] Step 2: Dataplane API client with transactions
 - [ ] Step 3: Fine-grained configuration comparator
@@ -1140,14 +1201,17 @@ const (
 - [ ] Step 6: Integration tests with Kind clusters
 
 ### Current Focus
+
 - [ ] Research library options (client-native HTTP client vs. third-party vs. generated)
 - [ ] Design operation type system
 - [ ] Implement parser wrapper
 
 ### Blockers
+
 None currently.
 
 ### Notes
+
 - Task 1 is the foundation for all config management
 - Focus on comprehensive coverage from the start (Option A)
 - Integration tests are critical - they validate the entire workflow

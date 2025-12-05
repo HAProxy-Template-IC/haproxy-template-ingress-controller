@@ -5,6 +5,7 @@ This guide covers security best practices for deploying and operating the HAProx
 ## Overview
 
 The controller follows security best practices including:
+
 - Principle of least privilege for RBAC
 - Read-only filesystem for controller containers
 - Secure credential management via Kubernetes Secrets
@@ -85,6 +86,7 @@ stringData:
 ```
 
 **Best practices:**
+
 - Use strong, randomly generated passwords
 - Rotate credentials periodically
 - Use different credentials for production and validation sidecars
@@ -128,6 +130,7 @@ curl http://localhost:6060/debug/vars/credentials
 ```
 
 Response:
+
 ```json
 {
   "version": "12345",
@@ -344,6 +347,7 @@ When using secrets in templates, follow these practices:
 ```
 
 **Best practices:**
+
 - Never log secret values
 - Use password hashes, not plaintext passwords
 - Limit secret access to specific namespaces

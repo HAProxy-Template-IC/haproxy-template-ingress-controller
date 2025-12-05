@@ -8,6 +8,7 @@ Development context for the admission webhook library.
 ## When to Work Here
 
 Modify this package when:
+
 - Improving certificate generation or rotation logic
 - Enhancing webhook server performance
 - Adding new webhook configuration options
@@ -15,6 +16,7 @@ Modify this package when:
 - Improving error handling in validation flow
 
 **DO NOT** modify this package for:
+
 - Validation business logic → Use `pkg/controller/webhook`
 - Event handling → Use `pkg/controller/webhook`
 - Configuration types → Use `pkg/core/config`
@@ -46,12 +48,14 @@ pkg/webhook/
 ### 1. Certificate Management
 
 **Self-Signed CA Approach:**
+
 - Generate CA certificate (valid for 1 year)
 - Sign server certificates with CA
 - Inject CA bundle into ValidatingWebhookConfiguration
 - Rotate server cert when < 30 days until expiry
 
 **Why self-signed?**
+
 - No external dependencies (cert-manager, etc.)
 - Full automation
 - Suitable for internal cluster communication
@@ -59,6 +63,7 @@ pkg/webhook/
 
 **DNS SANs:**
 Server certificates include all possible DNS names for the service:
+
 - `service-name`
 - `service-name.namespace`
 - `service-name.namespace.svc`
@@ -72,6 +77,7 @@ This ensures the webhook works regardless of how the API server connects.
 Kubernetes requires webhooks to use HTTPS with valid certificates. This is enforced by the API server.
 
 **AdmissionReview Handling:**
+
 1. Receive POST request with AdmissionReview (v1)
 2. Extract AdmissionRequest
 3. Parse resource object from request.Object.Raw
@@ -81,6 +87,7 @@ Kubernetes requires webhooks to use HTTPS with valid certificates. This is enfor
 
 **GVK Mapping:**
 Resources are identified by "group/version.Kind" strings:
+
 - Core types: "v1.Pod", "v1.Service"
 - Named groups: "networking.k8s.io/v1.Ingress", "apps/v1.Deployment"
 
@@ -90,6 +97,7 @@ Resources are identified by "group/version.Kind" strings:
 The webhook configuration is created and managed programmatically. No manual YAML files.
 
 **Update Flow:**
+
 1. Create ValidatingWebhookConfiguration with initial rules
 2. When rules change, call CreateOrUpdate()
 3. Existing configuration is patched with new rules
@@ -106,26 +114,26 @@ Test each component in isolation without dependencies:
 
 ```go
 func TestCertificateManager_Generate(t *testing.T) {
-	certMgr := NewCertificateManager(CertConfig{
-		Namespace:   "test",
-		ServiceName: "test-webhook",
-	})
+ certMgr := NewCertificateManager(CertConfig{
+  Namespace:   "test",
+  ServiceName: "test-webhook",
+ })
 
-	certs, err := certMgr.Generate()
+ certs, err := certMgr.Generate()
 
-	require.NoError(t, err)
-	assert.NotNil(t, certs.CACert)
-	assert.NotNil(t, certs.ServerCert)
+ require.NoError(t, err)
+ assert.NotNil(t, certs.CACert)
+ assert.NotNil(t, certs.ServerCert)
 
-	// Verify CA cert is valid
-	caCert, err := ParseCertificatePEM(certs.CACert)
-	require.NoError(t, err)
-	assert.True(t, caCert.IsCA)
+ // Verify CA cert is valid
+ caCert, err := ParseCertificatePEM(certs.CACert)
+ require.NoError(t, err)
+ assert.True(t, caCert.IsCA)
 
-	// Verify server cert is signed by CA
-	serverCert, err := ParseCertificatePEM(certs.ServerCert)
-	require.NoError(t, err)
-	assert.Contains(t, serverCert.DNSNames, "test-webhook.test.svc")
+ // Verify server cert is signed by CA
+ serverCert, err := ParseCertificatePEM(certs.ServerCert)
+ require.NoError(t, err)
+ assert.Contains(t, serverCert.DNSNames, "test-webhook.test.svc")
 }
 ```
 
@@ -135,41 +143,41 @@ Test interactions between components:
 
 ```go
 func TestWebhookEndToEnd(t *testing.T) {
-	// Generate certificates
-	certMgr := NewCertificateManager(CertConfig{
-		Namespace:   "test",
-		ServiceName: "test-webhook",
-	})
-	certs, err := certMgr.Generate()
-	require.NoError(t, err)
+ // Generate certificates
+ certMgr := NewCertificateManager(CertConfig{
+  Namespace:   "test",
+  ServiceName: "test-webhook",
+ })
+ certs, err := certMgr.Generate()
+ require.NoError(t, err)
 
-	// Create server
-	server := NewServer(ServerConfig{
-		Port:    9443,
-		CertPEM: certs.ServerCert,
-		KeyPEM:  certs.ServerKey,
-	})
+ // Create server
+ server := NewServer(ServerConfig{
+  Port:    9443,
+  CertPEM: certs.ServerCert,
+  KeyPEM:  certs.ServerKey,
+ })
 
-	// Register validator
-	called := false
-	server.RegisterValidator("v1.ConfigMap", func(obj interface{}) (bool, string, error) {
-		called = true
-		return true, "", nil
-	})
+ // Register validator
+ called := false
+ server.RegisterValidator("v1.ConfigMap", func(obj interface{}) (bool, string, error) {
+  called = true
+  return true, "", nil
+ })
 
-	// Start server
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+ // Start server
+ ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+ defer cancel()
 
-	go server.Start(ctx)
+ go server.Start(ctx)
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+ // Wait for server to start
+ time.Sleep(100 * time.Millisecond)
 
-	// Make test request
-	// ... HTTP client with TLS ...
+ // Make test request
+ // ... HTTP client with TLS ...
 
-	assert.True(t, called)
+ assert.True(t, called)
 }
 ```
 
@@ -182,8 +190,8 @@ func TestWebhookEndToEnd(t *testing.T) {
 ```go
 // Bad - start server with expired cert
 server := NewServer(ServerConfig{
-	CertPEM: oldCerts.ServerCert,  // Might be expired!
-	KeyPEM:  oldCerts.ServerKey,
+ CertPEM: oldCerts.ServerCert,  // Might be expired!
+ KeyPEM:  oldCerts.ServerKey,
 })
 server.Start(ctx)
 ```
@@ -193,15 +201,15 @@ server.Start(ctx)
 ```go
 // Good - verify cert validity
 if certMgr.NeedsRotation(certs) {
-	certs, err = certMgr.Generate()
-	if err != nil {
-		log.Fatal(err)
-	}
+ certs, err = certMgr.Generate()
+ if err != nil {
+  log.Fatal(err)
+ }
 }
 
 server := NewServer(ServerConfig{
-	CertPEM: certs.ServerCert,
-	KeyPEM:  certs.ServerKey,
+ CertPEM: certs.ServerCert,
+ KeyPEM:  certs.ServerKey,
 })
 ```
 
@@ -212,9 +220,9 @@ server := NewServer(ServerConfig{
 ```go
 // Bad - CA bundle not set
 configMgr := NewConfigManager(client, WebhookConfigSpec{
-	Name: "my-webhook",
-	// CABundle not set!
-	Rules: []WebhookRule{...},
+ Name: "my-webhook",
+ // CABundle not set!
+ Rules: []WebhookRule{...},
 })
 ```
 
@@ -223,9 +231,9 @@ configMgr := NewConfigManager(client, WebhookConfigSpec{
 ```go
 // Good - CA bundle from certificates
 configMgr := NewConfigManager(client, WebhookConfigSpec{
-	Name:     "my-webhook",
-	CABundle: certs.CACert,  // Required!
-	Rules:    []WebhookRule{...},
+ Name:     "my-webhook",
+ CABundle: certs.CACert,  // Required!
+ Rules:    []WebhookRule{...},
 })
 ```
 
@@ -236,8 +244,8 @@ configMgr := NewConfigManager(client, WebhookConfigSpec{
 ```go
 // Bad - service name mismatch
 certMgr := NewCertificateManager(CertConfig{
-	Namespace:   "default",
-	ServiceName: "webhook",  // But actual service is "my-webhook-svc"
+ Namespace:   "default",
+ ServiceName: "webhook",  // But actual service is "my-webhook-svc"
 })
 ```
 
@@ -248,12 +256,12 @@ certMgr := NewCertificateManager(CertConfig{
 serviceName := "my-webhook-svc"
 
 certMgr := NewCertificateManager(CertConfig{
-	Namespace:   "default",
-	ServiceName: serviceName,
+ Namespace:   "default",
+ ServiceName: serviceName,
 })
 
 configMgr := NewConfigManager(client, WebhookConfigSpec{
-	ServiceName: serviceName,  // Same name
+ ServiceName: serviceName,  // Same name
 })
 ```
 
@@ -264,8 +272,8 @@ configMgr := NewConfigManager(client, WebhookConfigSpec{
 ```go
 // Bad - slow validation
 func validateResource(obj interface{}) (bool, string, error) {
-	time.Sleep(15 * time.Second)  // Exceeds webhook timeout!
-	return true, "", nil
+ time.Sleep(15 * time.Second)  // Exceeds webhook timeout!
+ return true, "", nil
 }
 ```
 
@@ -274,11 +282,11 @@ func validateResource(obj interface{}) (bool, string, error) {
 ```go
 // Good - fast validation
 func validateResource(obj interface{}) (bool, string, error) {
-	// Quick checks only
-	if err := validateBasicRules(obj); err != nil {
-		return false, err.Error(), nil
-	}
-	return true, "", nil
+ // Quick checks only
+ if err := validateBasicRules(obj); err != nil {
+  return false, err.Error(), nil
+ }
+ return true, "", nil
 }
 ```
 
@@ -289,9 +297,9 @@ func validateResource(obj interface{}) (bool, string, error) {
 ```go
 // Bad - panics if spec is nil
 func validateResource(obj interface{}) (bool, string, error) {
-	resource := obj.(map[string]interface{})
-	spec := resource["spec"].(map[string]interface{})  // Panic if nil!
-	return true, "", nil
+ resource := obj.(map[string]interface{})
+ spec := resource["spec"].(map[string]interface{})  // Panic if nil!
+ return true, "", nil
 }
 ```
 
@@ -300,17 +308,17 @@ func validateResource(obj interface{}) (bool, string, error) {
 ```go
 // Good - safe nil handling
 func validateResource(obj interface{}) (bool, string, error) {
-	resource, ok := obj.(map[string]interface{})
-	if !ok {
-		return false, "", fmt.Errorf("invalid object type")
-	}
+ resource, ok := obj.(map[string]interface{})
+ if !ok {
+  return false, "", fmt.Errorf("invalid object type")
+ }
 
-	spec, ok := resource["spec"].(map[string]interface{})
-	if !ok {
-		return false, "spec is required", nil
-	}
+ spec, ok := resource["spec"].(map[string]interface{})
+ if !ok {
+  return false, "spec is required", nil
+ }
 
-	return true, "", nil
+ return true, "", nil
 }
 ```
 
@@ -323,24 +331,24 @@ Certificate generation is CPU-intensive (RSA key generation). Consider:
 ```go
 // Cache certificates between restarts
 func loadOrGenerateCerts(certMgr *CertificateManager) (*Certificates, error) {
-	// Try to load from Secret
-	certs, err := loadCertsFromSecret()
-	if err == nil && !certMgr.NeedsRotation(certs) {
-		return certs, nil
-	}
+ // Try to load from Secret
+ certs, err := loadCertsFromSecret()
+ if err == nil && !certMgr.NeedsRotation(certs) {
+  return certs, nil
+ }
 
-	// Generate new certificates
-	certs, err = certMgr.Generate()
-	if err != nil {
-		return nil, err
-	}
+ // Generate new certificates
+ certs, err = certMgr.Generate()
+ if err != nil {
+  return nil, err
+ }
 
-	// Save to Secret
-	if err := saveCertsToSecret(certs); err != nil {
-		return nil, err
-	}
+ // Save to Secret
+ if err := saveCertsToSecret(certs); err != nil {
+  return nil, err
+ }
 
-	return certs, nil
+ return certs, nil
 }
 ```
 
@@ -353,30 +361,30 @@ The server handles concurrent requests. Avoid shared state in validators:
 var validationCache = make(map[string]bool)
 
 func validateWithCache(obj interface{}) (bool, string, error) {
-	key := computeKey(obj)
-	if valid, exists := validationCache[key]; exists {  // Race condition!
-		return valid, "", nil
-	}
-	// ...
+ key := computeKey(obj)
+ if valid, exists := validationCache[key]; exists {  // Race condition!
+  return valid, "", nil
+ }
+ // ...
 }
 
 // Good - no shared state or use mutex
 var (
-	validationCache = make(map[string]bool)
-	cacheMu         sync.RWMutex
+ validationCache = make(map[string]bool)
+ cacheMu         sync.RWMutex
 )
 
 func validateWithCache(obj interface{}) (bool, string, error) {
-	key := computeKey(obj)
+ key := computeKey(obj)
 
-	cacheMu.RLock()
-	valid, exists := validationCache[key]
-	cacheMu.RUnlock()
+ cacheMu.RLock()
+ valid, exists := validationCache[key]
+ cacheMu.RUnlock()
 
-	if exists {
-		return valid, "", nil
-	}
-	// ...
+ if exists {
+  return valid, "", nil
+ }
+ // ...
 }
 ```
 
@@ -392,17 +400,17 @@ func validateWithCache(obj interface{}) (bool, string, error) {
 
 ```go
 func (cm *CertificateManager) RotateIfNeeded(current *Certificates) (*Certificates, bool, error) {
-	if !cm.NeedsRotation(current) {
-		return current, false, nil
-	}
+ if !cm.NeedsRotation(current) {
+  return current, false, nil
+ }
 
-	// Generate new certificates
-	newCerts, err := cm.Generate()
-	if err != nil {
-		return nil, false, err
-	}
+ // Generate new certificates
+ newCerts, err := cm.Generate()
+ if err != nil {
+  return nil, false, err
+ }
 
-	return newCerts, true, nil
+ return newCerts, true, nil
 }
 
 // Usage in controller
@@ -410,26 +418,26 @@ ticker := time.NewTicker(24 * time.Hour)
 defer ticker.Stop()
 
 for {
-	select {
-	case <-ticker.C:
-		newCerts, rotated, err := certMgr.RotateIfNeeded(certs)
-		if err != nil {
-			log.Error("rotation failed", "error", err)
-			continue
-		}
+ select {
+ case <-ticker.C:
+  newCerts, rotated, err := certMgr.RotateIfNeeded(certs)
+  if err != nil {
+   log.Error("rotation failed", "error", err)
+   continue
+  }
 
-		if rotated {
-			log.Info("certificates rotated")
+  if rotated {
+   log.Info("certificates rotated")
 
-			// Update server (requires restart)
-			// Update webhook configuration
-			// Save to Secret
+   // Update server (requires restart)
+   // Update webhook configuration
+   // Save to Secret
 
-			certs = newCerts
-		}
-	case <-ctx.Done():
-		return
-	}
+   certs = newCerts
+  }
+ case <-ctx.Done():
+  return
+ }
 }
 ```
 
@@ -473,15 +481,15 @@ rule.Operations = []admissionv1.OperationType{admissionv1.Create}
 
 // Validate creation and updates (most common)
 rule.Operations = []admissionv1.OperationType{
-	admissionv1.Create,
-	admissionv1.Update,
+ admissionv1.Create,
+ admissionv1.Update,
 }
 
 // Validate all operations including deletion
 rule.Operations = []admissionv1.OperationType{
-	admissionv1.Create,
-	admissionv1.Update,
-	admissionv1.Delete,
+ admissionv1.Create,
+ admissionv1.Update,
+ admissionv1.Delete,
 }
 ```
 
@@ -513,19 +521,23 @@ rule.Operations = []admissionv1.OperationType{
 ### Common Errors
 
 **"x509: certificate signed by unknown authority"**
+
 - CA bundle in webhook configuration doesn't match actual CA cert
 - Fix: Update CA bundle with correct CA certificate
 
 **"no such host"**
+
 - Service name in certificate doesn't match actual service
 - Fix: Regenerate certificates with correct service name
 
 **"context deadline exceeded"**
+
 - Webhook server not responding within timeout
 - Validation function taking too long
 - Fix: Reduce validation complexity, increase timeout
 
 **"connection refused"**
+
 - Webhook server not running
 - Wrong port
 - Fix: Verify server is started and listening on correct port
@@ -546,17 +558,17 @@ For complex admission logic requiring multiple validators:
 
 ```go
 type ValidatorChain struct {
-	validators []ValidationFunc
+ validators []ValidationFunc
 }
 
 func (vc *ValidatorChain) Validate(obj interface{}) (bool, string, error) {
-	for _, validator := range vc.validators {
-		allowed, reason, err := validator(obj)
-		if err != nil || !allowed {
-			return allowed, reason, err
-		}
-	}
-	return true, "", nil
+ for _, validator := range vc.validators {
+  allowed, reason, err := validator(obj)
+  if err != nil || !allowed {
+   return allowed, reason, err
+  }
+ }
+ return true, "", nil
 }
 ```
 
@@ -566,29 +578,29 @@ For validation requiring external APIs:
 
 ```go
 func asyncValidator(obj interface{}) (bool, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+ ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+ defer cancel()
 
-	resultCh := make(chan validationResult, 1)
+ resultCh := make(chan validationResult, 1)
 
-	go func() {
-		// Expensive validation in goroutine
-		valid, reason := checkExternalAPI(ctx, obj)
-		resultCh <- validationResult{valid, reason}
-	}()
+ go func() {
+  // Expensive validation in goroutine
+  valid, reason := checkExternalAPI(ctx, obj)
+  resultCh <- validationResult{valid, reason}
+ }()
 
-	select {
-	case result := <-resultCh:
-		return result.valid, result.reason, nil
-	case <-ctx.Done():
-		return false, "", fmt.Errorf("validation timeout")
-	}
+ select {
+ case result := <-resultCh:
+  return result.valid, result.reason, nil
+ case <-ctx.Done():
+  return false, "", fmt.Errorf("validation timeout")
+ }
 }
 ```
 
 ## Resources
 
 - API documentation: `pkg/webhook/README.md`
-- Kubernetes webhook docs: https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
-- AdmissionReview reference: https://kubernetes.io/docs/reference/config-api/apiserver-webhooks.v1/
-- TLS with Go: https://pkg.go.dev/crypto/tls
+- Kubernetes webhook docs: <https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/>
+- AdmissionReview reference: <https://kubernetes.io/docs/reference/config-api/apiserver-webhooks.v1/>
+- TLS with Go: <https://pkg.go.dev/crypto/tls>

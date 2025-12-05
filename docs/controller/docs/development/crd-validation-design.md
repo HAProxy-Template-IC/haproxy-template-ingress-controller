@@ -7,6 +7,7 @@
 The HAProxy Template Ingress Controller uses a template-driven approach where users define HAProxy configurations using Gonja templates. While this provides flexibility, it introduces a confidence gap: unlike traditional ingress controllers where annotations are part of the code (and therefore tested), here the templates are part of the configuration and remain untested until deployment.
 
 This creates risk:
+
 - Invalid templates cause runtime failures
 - Configuration errors only discovered after applying changes
 - No validation feedback before deployment
@@ -451,6 +452,7 @@ charts/haproxy-template-ic/
 ```
 
 **Helm CRD Handling:**
+
 - CRDs in `crds/` directory are installed before other chart resources
 - CRDs are **not templated** (no Helm variable substitution)
 - CRDs **cannot be upgraded** via `helm upgrade` (Helm limitation)
@@ -494,6 +496,7 @@ rules:
 ### Design Decision
 
 **Keep credentials in Kubernetes Secret** (not in CRD) for security:
+
 - Secrets are encrypted at rest (in clusters with encryption enabled)
 - CRDs are typically not encrypted
 - Credentials should never be in version control
@@ -696,18 +699,21 @@ func (c *Component) handleConfigChange(obj interface{}) {
 ### Config Resolution
 
 The controller needs to know:
+
 1. **Which namespace** to watch for HAProxyTemplateConfig
 2. **Which config resource** to watch (by name)
 
 **Options:**
 
 **Option A: Environment variables (current pattern)**
+
 ```bash
 CONTROLLER_NAMESPACE=default
 CONFIG_NAME=haproxy-config
 ```
 
 **Option B: CLI flags**
+
 ```bash
 controller --namespace=default --config-name=haproxy-config
 ```
@@ -1025,6 +1031,7 @@ func (r *Runner) runAssertion(
 ### Output Formats
 
 **Summary (default):**
+
 ```
 Validating HAProxyTemplateConfig: haproxy-config
 
@@ -1043,6 +1050,7 @@ Time: 2.0s
 ```
 
 **JSON:**
+
 ```json
 {
   "totalTests": 2,
@@ -1393,6 +1401,7 @@ controller validate --config myconfig.yaml --test test_ssl_config
 # Validate deployed config
 controller validate --name haproxy-config --namespace default
 ```
+
 ```
 
 ## Implementation Roadmap

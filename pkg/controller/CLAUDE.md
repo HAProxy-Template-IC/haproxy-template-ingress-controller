@@ -10,6 +10,7 @@ Development context for the controller coordination layer.
 This package is the **coordination layer** - it orchestrates pure components via event-driven patterns.
 
 Modify this package when:
+
 - Adding new controller components (validators, renderers, deployers)
 - Modifying event coordination logic
 - Changing startup sequencing
@@ -17,6 +18,7 @@ Modify this package when:
 - Implementing new event adapters
 
 **DO NOT** modify this package for:
+
 - Template rendering logic → Use `pkg/templating`
 - Kubernetes client code → Use `pkg/k8s`
 - HAProxy sync logic → Use `pkg/dataplane`
@@ -172,12 +174,14 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 ### When to Use Direct Calls vs Events
 
 **Direct calls are acceptable for:**
+
 1. Utility/infrastructure components (StoreManager, Metrics, RestMapper)
 2. Pure components within a single reconciliation context (DryRunValidator renders templates)
 3. Synchronous operations that don't need coordination
 4. Performance-critical paths where event overhead is unacceptable
 
 **Events are required for:**
+
 1. Cross-component coordination (Reconciler → Executor → Deployer)
 2. Scatter-gather operations (multiple validators responding)
 3. Asynchronous workflows
@@ -280,6 +284,7 @@ func (c *EventCommentator) Run(ctx context.Context) error {
 ```
 
 **When to update commentator:**
+
 - New event type added → Add logging case
 - Need better insights → Add ring buffer correlation
 - Performance issues → Reduce log verbosity
@@ -400,6 +405,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 ```
 
 **Features:**
+
 - Debounces resource changes with configurable interval (default 500ms)
 - Triggers immediate reconciliation for config changes
 - Filters initial sync events to prevent premature reconciliation
@@ -450,12 +456,14 @@ func (e *Executor) handleReconciliationTriggered(event *events.ReconciliationTri
 ```
 
 **Current State:**
+
 - Minimal stub implementation establishing event flow
 - Subscribes to ReconciliationTriggeredEvent
 - Publishes ReconciliationStartedEvent and ReconciliationCompletedEvent
 - Measures reconciliation duration for observability
 
 **Future Orchestration:**
+
 - Will call Renderer pure component for template rendering
 - Will call Validator pure component for configuration validation
 - Will call Deployer pure component for HAProxy deployment
@@ -856,6 +864,7 @@ for event := range eventChan {
 When leadership transitions occur, leader-only components start subscribing AFTER critical state events have already been published. This creates event ordering bugs where leader-only components miss essential state.
 
 **Example timeline:**
+
 ```
 14:03:29 - All-replica: Discovery publishes HAProxyPodsDiscoveredEvent
 14:03:30 - All-replica: Renderer publishes TemplateRenderedEvent
@@ -873,6 +882,7 @@ When leadership transitions occur, leader-only components start subscribing AFTE
 All-replica components that maintain state must re-publish their last state when a new leader is elected.
 
 **Pattern:**
+
 ```go
 // All-replica component (Renderer, Validator, Discovery, etc.)
 type Component struct {
@@ -929,6 +939,7 @@ func (c *Component) handleWork(event *events.WorkEvent) {
 ```
 
 **Implemented in:**
+
 - `pkg/controller/discovery/component.go:278` - Re-publishes HAProxyPodsDiscoveredEvent
 - `pkg/controller/renderer/component.go:230` - Re-publishes TemplateRenderedEvent
 - `pkg/controller/validator/haproxy_validator.go:186` - Re-publishes ValidationCompletedEvent
@@ -938,6 +949,7 @@ func (c *Component) handleWork(event *events.WorkEvent) {
 Leader-only components must clean up state when losing leadership to prevent deadlocks.
 
 **Pattern:**
+
 ```go
 // Leader-only component (DeploymentScheduler, DriftMonitor, etc.)
 type Component struct {
@@ -983,12 +995,14 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 ```
 
 **Implemented in:**
+
 - `pkg/controller/deployer/scheduler.go:421` - Clears deployment state
 - `pkg/controller/deployer/driftmonitor.go:205` - Stops drift timer
 
 ### Checklist for New Components
 
 **For all-replica components that maintain state:**
+
 - [ ] Cache last successful state with `sync.RWMutex`
 - [ ] Include `hasState bool` to distinguish "no state" from "zero state"
 - [ ] Subscribe to `BecameLeaderEvent`
@@ -996,12 +1010,14 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 - [ ] Check `hasState` before replaying (don't publish uninitialized state)
 
 **For leader-only components:**
+
 - [ ] Subscribe to `LostLeadershipEvent`
 - [ ] Clear in-progress flags in `handleLostLeadership()`
 - [ ] Stop timers/goroutines to prevent leaks
 - [ ] Clear transient state (but keep historical data like timestamps)
 
 **For both:**
+
 - [ ] Document state dependencies in component CLAUDE.md
 - [ ] Add component to `LEADER_ONLY_COMPONENTS.md` checklist
 - [ ] Test leadership transitions manually

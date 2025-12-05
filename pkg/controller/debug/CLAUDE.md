@@ -7,12 +7,14 @@ Development context for controller-specific debug variable implementations.
 ## When to Use This Package
 
 Use this package when you need to:
+
 - Expose controller internal state via debug HTTP endpoints
 - Implement new debug variables for controller data
 - Access controller state from tests or debugging tools
 - Track recent events independently of EventCommentator
 
 **DO NOT** use this package for:
+
 - Generic debug infrastructure → Use `pkg/introspection`
 - Event bus infrastructure → Use `pkg/events`
 - Ring buffer implementation → Use `pkg/events/ringbuffer`
@@ -23,6 +25,7 @@ Use this package when you need to:
 Provides controller-specific implementations of the generic `pkg/introspection.Var` interface. This package bridges the gap between the controller's internal state and the debug HTTP server.
 
 Key features:
+
 - **StateProvider interface** - Abstracts controller state access
 - **Debug variable implementations** - Config, credentials, rendered output, resources, events
 - **EventBuffer** - Separate event tracking for debug purposes
@@ -43,6 +46,7 @@ HTTP Server (pkg/introspection)
 ```
 
 Flow:
+
 1. Controller implements StateProvider by caching state from events
 2. Debug variables call StateProvider methods to get current state
 3. Variables are registered with introspection.Registry
@@ -115,6 +119,7 @@ func (sc *StateCache) handleEvent(event interface{}) {
 Implementations of introspection.Var for controller-specific data:
 
 **ConfigVar** - Current configuration:
+
 ```go
 type ConfigVar struct {
     provider StateProvider
@@ -135,6 +140,7 @@ func (v *ConfigVar) Get() (interface{}, error) {
 ```
 
 **CredentialsVar** - Credential metadata (NOT actual passwords):
+
 ```go
 type CredentialsVar struct {
     provider StateProvider
@@ -156,6 +162,7 @@ func (v *CredentialsVar) Get() (interface{}, error) {
 ```
 
 **RenderedVar** - Last rendered HAProxy config:
+
 ```go
 type RenderedVar struct {
     provider StateProvider
@@ -209,6 +216,7 @@ func (eb *EventBuffer) Start(ctx context.Context) error {
 ```
 
 **Why separate from EventCommentator?**
+
 - EventCommentator is for logging and observability (domain-specific)
 - EventBuffer is for debug endpoints (domain-agnostic simplified events)
 - Avoids coupling debug infrastructure to logging component
@@ -604,6 +612,7 @@ func RegisterVariables(registry *introspection.Registry, provider StateProvider,
 - **StateCache updates**: O(1) - event handler updates cached state
 
 Memory:
+
 - EventBuffer: O(buffer_size × event_size) - fixed (e.g., 1000 events × ~200 bytes ≈ 200KB)
 - StateCache: O(state_size) - varies based on config/resources
 - Debug variables: O(1) - just struct pointers

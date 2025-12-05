@@ -5,6 +5,7 @@ Development context for the dry-run validation component used in admission webho
 ## When to Work Here
 
 Modify this package when:
+
 - Changing dry-run validation logic
 - Adding support for new resource types in validation
 - Modifying overlay store usage
@@ -12,6 +13,7 @@ Modify this package when:
 - Adding new validation phases
 
 **DO NOT** modify this package for:
+
 - Template rendering logic → Use `pkg/templating`
 - HAProxy validation → Use `pkg/dataplane`
 - Resource storage → Use `pkg/controller/resourcestore`
@@ -22,6 +24,7 @@ Modify this package when:
 This package implements validation-by-rendering: it validates Kubernetes resources (like Ingresses) by attempting to render the HAProxy configuration with those resources included, then validating the resulting configuration with HAProxy.
 
 **Key Features:**
+
 - Dry-run validation (no actual deployment)
 - Overlay store pattern for simulating resource changes
 - Template rendering errors → user-friendly messages
@@ -44,6 +47,7 @@ When validating a CREATE or UPDATE operation via admission webhook:
 ### Solution: Overlay Stores
 
 Create temporary store overlays that:
+
 - Include the new/updated resource being validated
 - Reference the actual stores for all other resources
 - Are discarded after validation
@@ -147,6 +151,7 @@ const (
 ### Memory Management
 
 Overlay stores are:
+
 - Created per validation request
 - Garbage collected after validation completes
 - Do not persist beyond the request
@@ -388,6 +393,7 @@ The DryRunValidator now integrates the test runner to automatically execute embe
    - Assertion failures with descriptions
 
 **Benefits**:
+
 - Automated validation on every admission request
 - Prevents invalid configurations from being admitted
 - Rich error feedback for debugging

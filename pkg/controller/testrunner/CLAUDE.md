@@ -5,6 +5,7 @@ Development context for the validation test runner component.
 ## When to Work Here
 
 Modify this package when:
+
 - Changing test execution logic
 - Adding new assertion types
 - Modifying fixture processing
@@ -12,6 +13,7 @@ Modify this package when:
 - Fixing test runner bugs
 
 **DO NOT** modify this package for:
+
 - CLI command implementation → Use `cmd/controller`
 - Webhook integration → Use `pkg/controller/dryrunvalidator`
 - Template rendering → Use `pkg/templating`
@@ -61,6 +63,7 @@ This package implements a pure test runner component that executes embedded vali
 ### runner.go - Main Test Orchestration
 
 **Key Functions:**
+
 - `RunTests()` - Executes all or specific tests
 - `runSingleTest()` - Executes one test with fixtures
 - `renderWithStores()` - Renders config using fixture stores
@@ -72,10 +75,12 @@ This package implements a pure test runner component that executes embedded vali
 ### fixtures.go - Fixture Store Creation
 
 **Key Functions:**
+
 - `createStoresFromFixtures()` - Converts test fixtures to stores
 - `buildTemplateContext()` - Creates context for backward compatibility
 
 **Implementation Details:**
+
 - Uses `indexer.New()` to create indexers for each resource type
 - Creates `store.NewMemoryStore()` instances for fast in-memory access
 - Extracts index keys using `indexer.ExtractKeys()`
@@ -84,15 +89,18 @@ This package implements a pure test runner component that executes embedded vali
 ### http_fixtures.go - HTTP Fixture Handling
 
 **Key Types:**
+
 - `FixtureHTTPStoreWrapper` - Template-callable wrapper for HTTP fixtures
 
 **Key Functions:**
+
 - `NewFixtureHTTPStoreWrapper()` - Creates wrapper with pre-loaded fixtures
 - `Fetch()` - Returns fixture content or error if URL not found
 - `createHTTPStoreFromFixtures()` - Creates HTTPStore with fixtures pre-loaded
 - `mergeHTTPFixtures()` - Merges global and test-specific HTTP fixtures
 
 **Behavior:**
+
 - Always returns fixture content for known URLs
 - Fails with descriptive error for unknown URLs (no network requests)
 - Test-specific fixtures override global fixtures for same URL
@@ -108,6 +116,7 @@ Implements 5 assertion types:
 5. **jsonpath** - JSONPath queries against template context
 
 **Target Resolution:**
+
 - `haproxy.cfg` - Main HAProxy configuration
 - `map:<name>` - Map file content
 - `file:<name>` - General file content
@@ -116,6 +125,7 @@ Implements 5 assertion types:
 ### output.go - Result Formatting
 
 Formats test results in three modes:
+
 - **Summary** - Human-readable with ✓/✗ symbols
 - **JSON** - Structured output for CI/CD tools
 - **YAML** - Structured output for readability
@@ -125,6 +135,7 @@ Formats test results in three modes:
 ### Unit Tests (runner_test.go)
 
 **Coverage Areas:**
+
 - Basic rendering with assertions
 - Test filtering by name
 - Mixed pass/fail results
@@ -133,6 +144,7 @@ Formats test results in three modes:
 - Edge cases
 
 **Testing Pattern:**
+
 ```go
 func TestRunner_Feature(t *testing.T) {
     // 1. Create test config with CRD spec
@@ -160,6 +172,7 @@ func TestRunner_Feature(t *testing.T) {
 ### Integration Tests (Future)
 
 Should test:
+
 - CLI command execution with real CRD files
 - Webhook validation with embedded tests
 - Full validation flow with HAProxy binary
@@ -187,11 +200,13 @@ type AssertionResult struct {
 ```
 
 **Implementation:**
+
 - `populateTargetMetadata()` called by all assertion methods
 - Preview only for failed assertions (keeps output manageable)
 - Truncated to 200 chars to prevent huge outputs
 
 **Usage in assertions:**
+
 ```go
 // Example from assertContains
 func (r *Runner) assertContains(...) AssertionResult {
@@ -228,12 +243,14 @@ type TestResult struct {
 ```
 
 **Populated in `runSingleTest()`:**
+
 - Captured immediately after successful rendering
 - Only populated on successful render (empty if render fails)
 - Maps use file path/name as key
 - Available in JSON/YAML output formats
 
 **Example population:**
+
 ```go
 // After successful rendering
 if err == nil {
@@ -260,11 +277,13 @@ output, err := testrunner.FormatResults(results, testrunner.OutputOptions{
 ```
 
 **Output formatting** (`formatSummary()` in output.go):
+
 - Shows target name and size for all failed assertions
 - Shows content preview if available
 - Adds hint about --dump-rendered for large targets (>200 chars)
 
 **Example verbose output:**
+
 ```
 ✗ Path map must use MULTIBACKEND qualifier
   Error: pattern "..." not found in map:path-prefix.map (target size: 61 bytes)
@@ -279,23 +298,27 @@ output, err := testrunner.FormatResults(results, testrunner.OutputOptions{
 All assertion methods produce enhanced error messages by default:
 
 **Pattern not found:**
+
 ```
 pattern "X" not found in map:path-prefix.map (target size: 61 bytes).
 Hint: Use --verbose to see content preview
 ```
 
 **Match count:**
+
 ```
 expected 2 matches, got 0 matches of pattern "X" in map:path-prefix.map (target size: 61 bytes).
 Hint: Use --verbose to see content preview
 ```
 
 **HAProxy validation:**
+
 ```
 HAProxy validation failed (config size: 1234 bytes): maxconn: integer expected
 ```
 
 **Benefits:**
+
 - Users immediately see target size without flags
 - Clear hint about --verbose flag
 - Context included in all error messages
@@ -318,11 +341,13 @@ fmt.Println(trace)
 ```
 
 **Trace output shows:**
+
 - Which templates were rendered
 - Render duration in milliseconds
 - Nesting depth (for includes)
 
 **Example trace:**
+
 ```
 Rendering: haproxy.cfg
 Completed: haproxy.cfg (0.007ms)
@@ -333,6 +358,7 @@ Completed: path-prefix.map (3.347ms)
 ### Programmatic Usage
 
 **Enable verbose output:**
+
 ```go
 results, err := runner.RunTests(ctx, "")
 
@@ -343,6 +369,7 @@ output, err := testrunner.FormatResults(results, testrunner.OutputOptions{
 ```
 
 **Access rendered content:**
+
 ```go
 for _, test := range results.TestResults {
     if !test.Passed {
@@ -357,6 +384,7 @@ for _, test := range results.TestResults {
 ```
 
 **Access assertion metadata:**
+
 ```go
 for _, assertion := range test.Assertions {
     if !assertion.Passed {
@@ -385,6 +413,7 @@ controller validate -f config.yaml --verbose
 ```
 
 **Common causes:**
+
 - Empty loops (no resources match filters)
 - Incorrect variable names in templates
 - Missing `| default([])` filters on arrays
@@ -398,12 +427,14 @@ controller validate -f config.yaml --verbose
 ```
 
 **Look for:**
+
 - Whitespace differences (extra newlines, trailing spaces)
 - Case sensitivity issues
 - Regex special characters that need escaping
 - Multiline patterns missing `(?m)` flag
 
 **Example:**
+
 ```
 Expected: "backend foo"
 Got:      " backend foo"  (extra leading space)
@@ -417,12 +448,14 @@ controller validate -f config.yaml --trace-templates
 ```
 
 **Templates taking >10ms may need optimization:**
+
 - Simplify complex loops
 - Reduce nested includes
 - Avoid expensive filters in loops
 - Cache repeated computations
 
 **Example trace showing slow template:**
+
 ```
 Rendering: haproxy.cfg (0.005ms)
 Rendering: backends.cfg (45.123ms)  ← Needs optimization
@@ -436,6 +469,7 @@ controller validate -f config.yaml --dump-rendered
 ```
 
 **Common fixture issues:**
+
 - Missing `apiVersion` or `kind` fields
 - Incorrect index keys (resource not findable)
 - Wrong namespace or name in fixture data
@@ -500,6 +534,7 @@ if err != nil {
 ```
 
 **Example**:
+
 - Raw: `failed to render template 'haproxy.cfg': unable to execute template: failed to call function 'fail': Service 'api' not found`
 - Simplified: `Service 'api' not found`
 
@@ -515,6 +550,7 @@ if err != nil {
 ```
 
 **Example**:
+
 - Raw: `[ALERT] 350/123456 (12345) : parsing [/tmp/haproxy.cfg:15] : 'maxconn' : integer expected, got 'invalid' (line 15, column 12)`
 - Simplified: `maxconn: integer expected, got 'invalid' (line 15)`
 
@@ -583,6 +619,7 @@ for resourceTypeName, store := range stores {
 ```
 
 **Template Usage**:
+
 ```gonja
 {% for svc in resources.services.List() %}
   {{ svc.metadata.name }}

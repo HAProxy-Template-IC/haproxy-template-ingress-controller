@@ -7,6 +7,7 @@ Generic thread-safe ring buffer implementation using Go generics.
 A ring buffer (circular buffer) is a fixed-size data structure that overwrites the oldest items when full. This implementation is generic (works with any type) and thread-safe for concurrent access.
 
 **Use cases:**
+
 - Event history/buffering
 - Sliding window metrics
 - Recent log storage
@@ -46,9 +47,11 @@ func New[T any](size int) *RingBuffer[T]
 Creates a new ring buffer with the specified capacity.
 
 **Parameters:**
+
 - `size` - Maximum number of items to store
 
 **Example:**
+
 ```go
 // Buffer for last 1000 events
 eventBuffer := ringbuffer.New[Event](1000)
@@ -68,6 +71,7 @@ Adds an item to the buffer. If buffer is full, overwrites the oldest item.
 **Thread-safe**: Yes
 
 **Example:**
+
 ```go
 buffer := ringbuffer.New[string](100)
 buffer.Add("event1")
@@ -89,6 +93,7 @@ If N exceeds the current count, returns all available items.
 **Returns**: New slice (does not expose internal buffer)
 
 **Example:**
+
 ```go
 // Get last 100 events
 recent := buffer.GetLast(100)
@@ -107,6 +112,7 @@ Returns all items currently in the buffer in chronological order.
 **Returns**: New slice
 
 **Example:**
+
 ```go
 allItems := buffer.GetAll()
 for _, item := range allItems {
@@ -125,6 +131,7 @@ Returns the current number of items in the buffer (never exceeds capacity).
 **Thread-safe**: Yes
 
 **Example:**
+
 ```go
 count := buffer.Len()
 capacity := 1000
@@ -275,16 +282,19 @@ func DumpLogs() {
 ## Choosing Buffer Size
 
 Buffer size depends on:
+
 1. **Event rate** - How many items per second?
 2. **Retention time** - How much history do you need?
 3. **Memory constraints** - How much memory can you use?
 
 **Formula:**
+
 ```
 buffer_size = event_rate × retention_seconds
 ```
 
 **Examples:**
+
 ```go
 // 10 events/second, keep 5 minutes (300s)
 buffer := ringbuffer.New[Event](10 * 300)  // 3000
@@ -328,6 +338,7 @@ No allocations during Add (except initial buffer creation).
 ## Examples
 
 See:
+
 - Event buffering: `pkg/controller/commentator/commentator.go`
 - Debug events: `pkg/controller/debug/events.go`
 - Tests: `pkg/events/ringbuffer/ringbuffer_test.go`

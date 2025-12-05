@@ -8,6 +8,7 @@ Development context for the template engine library.
 ## When to Work Here
 
 Modify this package when:
+
 - Adding custom template filters
 - Improving template compilation performance
 - Fixing template rendering bugs
@@ -15,6 +16,7 @@ Modify this package when:
 - Enhancing error reporting
 
 **DO NOT** modify this package for:
+
 - Rendering coordination → Use `pkg/controller`
 - Event handling → Use `pkg/events`
 - HAProxy configuration → Use `pkg/dataplane`
@@ -58,6 +60,7 @@ for i := 0; i < 1000; i++ {
 ```
 
 **Benefits:**
+
 - Syntax errors detected at startup (fail-fast)
 - No runtime compilation overhead
 - Thread-safe concurrent rendering
@@ -338,6 +341,7 @@ Completed: backends.cfg (0.012ms)
 ```
 
 **Output format:**
+
 - Indentation shows nesting depth (includes)
 - Duration in milliseconds with 3 decimal places
 - Start/complete pairs for each template
@@ -345,6 +349,7 @@ Completed: backends.cfg (0.012ms)
 ### Use Cases
 
 **1. Performance debugging:**
+
 ```go
 engine.EnableTracing()
 
@@ -363,6 +368,7 @@ for _, line := range strings.Split(trace, "\n") {
 ```
 
 **2. Template execution verification:**
+
 ```go
 // Ensure expected templates are executed
 engine.EnableTracing()
@@ -375,6 +381,7 @@ if !strings.Contains(trace, "Rendering: backends.cfg") {
 ```
 
 **3. Integration with validation tests:**
+
 ```go
 // In controller validate command
 engine.EnableTracing()
@@ -391,6 +398,7 @@ fmt.Println(trace)
 ### Implementation Details
 
 **Tracing configuration:**
+
 ```go
 type tracingConfig struct {
     enabled bool           // Tracing on/off (protected by mu)
@@ -400,12 +408,14 @@ type tracingConfig struct {
 ```
 
 **Thread-safety approach:**
+
 - Per-render state (depth, builder) stored in execution context (isolated per `Render()` call)
 - Shared state (enabled flag, traces slice) protected by mutex
 - Tracing enabled/disabled flag snapshot taken at render start to avoid repeated locking
 - Completed traces appended to shared slice under mutex lock
 
 **Render method integration:**
+
 ```go
 func (e *TemplateEngine) Render(templateName string, context map[string]interface{}) (string, error) {
     // Take thread-safe snapshot of enabled flag
@@ -448,6 +458,7 @@ func (e *TemplateEngine) Render(templateName string, context map[string]interfac
 ```
 
 **Key design decisions:**
+
 - Per-render isolation: Each `Render()` call gets its own trace builder and depth counter in execution context
 - No shared mutable state during render: Depth and builder are context-local, preventing race conditions
 - Mutex-protected aggregation: Completed traces collected into shared slice under lock
@@ -458,6 +469,7 @@ func (e *TemplateEngine) Render(templateName string, context map[string]interfac
 ### Performance Overhead
 
 Tracing overhead is minimal:
+
 - Simple render: ~0.001-0.002ms overhead per template
 - Complex render: <1% overhead
 - String builder prevents repeated allocations
@@ -484,12 +496,14 @@ trace := engine.GetTraceOutput()
 ```
 
 **Captured information:**
+
 - Filter name (sort_by, group_by, extract, transform)
 - Input type ([]interface {}, map[string]interface {})
 - Item count for slice operations
 - Filter parameters in brackets
 
 **Use cases:**
+
 - Understanding which filters are called and in what order
 - Verifying filter parameters are evaluated correctly
 - Debugging unexpected sorting or grouping results
@@ -498,12 +512,14 @@ trace := engine.GetTraceOutput()
 ### Limitations
 
 **Current limitations:**
+
 1. No filtering by template name
 2. Fixed output format (not configurable)
 3. No automatic slow template warnings
 4. Trace cleared on each `GetTraceOutput()` call
 
 **Workarounds:**
+
 - Filter trace output in calling code
 - Parse trace to generate custom reports
 - Set thresholds in analysis code
@@ -512,6 +528,7 @@ trace := engine.GetTraceOutput()
 ### Testing Tracing
 
 **Basic tracing test:**
+
 ```go
 func TestTemplateEngine_Tracing(t *testing.T) {
     templates := map[string]string{
@@ -539,6 +556,7 @@ func TestTemplateEngine_Tracing(t *testing.T) {
 ```
 
 **Concurrent tracing test (race detector validation):**
+
 ```go
 func TestTracing_ConcurrentRenders(t *testing.T) {
     templates := map[string]string{
@@ -612,6 +630,7 @@ INFO SORT comparison criterion=$.priority:desc valA=5 valA_type=int valB=1 valB_
 ```
 
 **Logged fields:**
+
 - `criterion`: The sort expression being evaluated
 - `valA`: Value extracted from first item
 - `valA_type`: Go type of first value
@@ -632,6 +651,7 @@ The `controller validate` command supports `--debug-filters` flag:
 ```
 
 **How it works:**
+
 - Flag passed from CLI → testrunner.Options → testrunner.Runner
 - Runner creates worker engines with `EnableFilterDebug()` called
 - Each worker engine independently logs filter operations
@@ -640,6 +660,7 @@ The `controller validate` command supports `--debug-filters` flag:
 ### Use Cases
 
 **1. Debugging sort_by precedence:**
+
 ```go
 // Template
 routes | sort_by(["$.match.method:exists:desc", "$.match.headers | length:desc"])
@@ -651,6 +672,7 @@ routes | sort_by(["$.match.method:exists:desc", "$.match.headers | length:desc"]
 ```
 
 **2. Understanding mixed-type sorting:**
+
 ```go
 // When sorting items with different value types
 items | sort_by(["$.value"])
@@ -661,6 +683,7 @@ items | sort_by(["$.value"])
 ```
 
 **3. Verifying expression evaluation:**
+
 ```go
 // Complex expressions with multiple criteria
 items | sort_by(["$.type", "$.priority:desc", "$.name"])
@@ -679,6 +702,7 @@ items | sort_by(["$.type", "$.priority:desc", "$.name"])
 ### Performance Impact
 
 Filter debug logging is lightweight:
+
 - Single boolean check per comparison
 - Structured logging (slog) is efficient
 - No string formatting when disabled
@@ -718,6 +742,7 @@ Dumps variable structure as JSON-formatted HAProxy comments:
 ```
 
 **With label:**
+
 ```jinja2
 {{ routes | debug("sorted-routes") }}
 
@@ -728,14 +753,16 @@ Dumps variable structure as JSON-formatted HAProxy comments:
 ```
 
 **Use cases:**
+
 - Inspecting variable structure during template development
 - Verifying filter transformations (before/after)
 - Understanding data passed to templates
 - Safe output (formatted as comments, won't break HAProxy config)
 
 **Features:**
+
 - JSON formatted with indentation
-- Prefixed with `# ` (HAProxy comment)
+- Prefixed with `#` (HAProxy comment)
 - Optional label for identifying debug output
 - Works with any data type (objects, arrays, strings, numbers)
 
@@ -766,12 +793,14 @@ Evaluates JSONPath expressions and shows the result with type information:
 ```
 
 **Use cases:**
+
 - Testing sort_by criteria before using them
 - Understanding why items are sorted in unexpected order
 - Verifying JSONPath expressions extract the right data
 - Debugging :exists checks and modifiers
 
 **Expression syntax:**
+
 - Uses same JSONPath syntax as sort_by/extract filters
 - Supports all modifiers: `:desc`, `:exists`, `| length`
 - Shows both value and Go type
@@ -798,12 +827,14 @@ Evaluates JSONPath expressions and shows the result with type information:
 ### Implementation Notes
 
 **debug filter:**
+
 - Uses `json.MarshalIndent()` for formatting
-- Adds `# ` prefix to every line
+- Adds `#` prefix to every line
 - Falls back to `fmt.Sprintf("%v")` if JSON marshaling fails
 - Returns string (can be used in {{ }} expressions)
 
 **eval filter:**
+
 - Reuses same `evaluateExpression()` function as sort_by
 - Formats output as `value (type)`
 - Type information helps understand comparison behavior
@@ -812,6 +843,7 @@ Evaluates JSONPath expressions and shows the result with type information:
 ### Performance Impact
 
 Both filters are intended for debugging only:
+
 - **debug**: JSON marshaling overhead (skip in production templates)
 - **eval**: Minimal overhead (same as one sort comparison)
 - No impact on other filters or rendering when not used
@@ -908,6 +940,7 @@ templates := map[string]string{
 **Solution**: Require variable creation before compute_once, use marker to track execution state.
 
 **Benefits:**
+
 - Works with Gonja's scoping rules (not against them)
 - Clear ownership (user creates variable, compute_once guards execution)
 - Reliable detection (marker-based, not heuristic)
@@ -959,6 +992,7 @@ Gateway API route analysis optimization (gateway.yaml:323-328, 499-504):
 To add new custom tags, follow this pattern:
 
 1. **Define control structure type:**
+
 ```go
 type MyCustomTag struct {
     location *tokens.Token
@@ -968,6 +1002,7 @@ type MyCustomTag struct {
 ```
 
 2. **Implement Execute method:**
+
 ```go
 func (t *MyCustomTag) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock) error {
     // Tag logic here
@@ -976,6 +1011,7 @@ func (t *MyCustomTag) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock
 ```
 
 3. **Implement parser:**
+
 ```go
 func myCustomTagParser(p *parser.Parser, args *parser.Parser) (nodes.ControlStructure, error) {
     // Parse tag syntax
@@ -988,6 +1024,7 @@ func myCustomTagParser(p *parser.Parser, args *parser.Parser) (nodes.ControlStru
 ```
 
 4. **Register in environment creation:**
+
 ```go
 customControlStructures := map[string]parser.ControlStructureParser{
     "compute_once": computeOnceParser,
@@ -1026,18 +1063,21 @@ template := "Secret: {{ encoded_secret | b64decode }}"
 ### Common Filters to Add
 
 **Base64 operations:**
+
 ```go
 func b64encode(in interface{}) (interface{}, error)
 func b64decode(in interface{}) (interface{}, error)
 ```
 
 **JSONPath extraction:**
+
 ```go
 func get_path(obj interface{}, path string) (interface{}, error)
 // Usage: {{ resource | get_path("metadata.namespace") }}
 ```
 
 **Safe defaults:**
+
 ```go
 func default_empty(in interface{}) (interface{}, error)
 // Returns empty string if nil/null, unlike Gonja's default filter
@@ -1109,6 +1149,7 @@ func BenchmarkTemplateEngine_Render(b *testing.B) {
 ```
 
 **Expected results:**
+
 - Simple: ~20-50µs per render
 - Loop: ~50-100µs per render
 - Complex: ~100-200µs per render
@@ -1166,6 +1207,7 @@ templates := map[string]string{
 ### Gonja v2 vs v1
 
 This package uses Gonja v2 (`github.com/nikolalohinski/gonja/v2`):
+
 - More active maintenance
 - Better error messages
 - Compatible with Jinja2 template syntax
@@ -1174,12 +1216,14 @@ This package uses Gonja v2 (`github.com/nikolalohinski/gonja/v2`):
 ### Gonja Limitations
 
 **Not supported:**
+
 - Template inheritance (`{% extends %}`) - requires file system
 - Automatic escaping - must be done manually
 - Async filters - all filters are synchronous
 - Sandboxing - all functions have full access
 
 **Workarounds:**
+
 - Template inheritance: Flatten templates at load time
 - Escaping: Add custom filters or escape in context preparation
 - Async: Prepare all data before rendering
@@ -1188,21 +1232,26 @@ This package uses Gonja v2 (`github.com/nikolalohinski/gonja/v2`):
 ### Gonja Quirks
 
 **CRITICAL: Escape sequences in string literals not supported:**
+
 ```jinja2
 {{ "\n" }}  {# Does NOT produce a newline! #}
 {{ "Line 1\nLine 2" }}  {# Output: Line 1\nLine 2 (literal backslash-n) #}
 ```
+
 Gonja does not interpret escape sequences (`\n`, `\t`, etc.) in string literals. The backslash-n is output as literal characters or ignored entirely. This is a fundamental limitation of Gonja.
 
 **Workaround**: Use actual newlines in templates or pass newlines through context variables.
 
 **Whitespace handling:**
+
 ```jinja2
 {% if true %}
     text
 {% endif %}
 ```
+
 Produces leading whitespace. Use:
+
 ```jinja2
 {%- if true -%}
     text
@@ -1210,13 +1259,16 @@ Produces leading whitespace. Use:
 ```
 
 **Map access:**
+
 ```jinja2
 {{ user.name }}          {# Dict-style access #}
 {{ user["name"] }}       {# Map-style access #}
 ```
+
 Both work, dict-style is preferred.
 
 **Loop variable:**
+
 ```jinja2
 {% for item in items %}
     {{ loop.index }}    {# 1-indexed #}
@@ -1334,6 +1386,7 @@ func New(engineType EngineType, templates map[string]string) (*TemplateEngine, e
 ```
 
 **Considerations:**
+
 - Must support pre-compilation
 - Must be thread-safe
 - Should have similar performance characteristics
@@ -1342,6 +1395,6 @@ func New(engineType EngineType, templates map[string]string) (*TemplateEngine, e
 ## Resources
 
 - API documentation: `pkg/templating/README.md`
-- Gonja documentation: https://github.com/nikolalohinski/gonja
-- Jinja2 template documentation: https://jinja.palletsprojects.com/
+- Gonja documentation: <https://github.com/nikolalohinski/gonja>
+- Jinja2 template documentation: <https://jinja.palletsprojects.com/>
 - HAProxy template examples: `/examples/templates/`

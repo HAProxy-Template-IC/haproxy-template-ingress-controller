@@ -58,6 +58,7 @@ graph TB
 ##### Key Components
 
 **pkg/introspection** - Generic debug HTTP server infrastructure:
+
 - Instance-based variable registry (not global like expvar)
 - HTTP handlers for `/debug/vars` endpoints
 - JSONPath field selection support (kubectl-style syntax)
@@ -65,18 +66,21 @@ graph TB
 - Graceful shutdown with context
 
 **pkg/events/ringbuffer** - Event history storage:
+
 - Thread-safe circular buffer using Go generics
 - Fixed-size with automatic old-item eviction
 - O(1) add, O(n) retrieval performance
 - Used by both EventCommentator and EventBuffer
 
 **pkg/controller/debug** - Controller-specific debug variables:
+
 - Implements `introspection.Var` interface for controller data
 - ConfigVar, CredentialsVar (metadata only), RenderedVar, ResourcesVar
 - EventBuffer for independent event tracking
 - StateProvider interface for accessing controller state
 
 **StateCache** - Event-driven state tracking:
+
 - Subscribes to validation, rendering, and resource events
 - Maintains current state snapshot in memory
 - Thread-safe RWMutex-protected access
@@ -123,12 +127,14 @@ curl http://localhost:6060/debug/pprof/goroutine
 Two independent event tracking mechanisms:
 
 **EventCommentator** (observability):
+
 - Subscribes to all events for domain-aware logging
 - Ring buffer for event correlation in log messages
 - Produces rich contextual log output
 - Lives in pkg/controller/commentator
 
 **EventBuffer** (debugging):
+
 - Subscribes to all events for debug endpoint access
 - Simplified event representation for HTTP API
 - Exposes last N events via `/debug/vars/events`
@@ -195,6 +201,7 @@ func (v *CredentialsVar) Get() (interface{}, error) {
 ```
 
 The debug server should be:
+
 - Bound to localhost in production (kubectl port-forward for access)
 - Protected by network policies
 - Disabled or restricted in multi-tenant environments
@@ -217,7 +224,7 @@ controller:
 ```
 
 For detailed implementation and API documentation, see:
+
 - `pkg/introspection/README.md` - Generic debug HTTP server
 - `pkg/events/ringbuffer/README.md` - Ring buffer implementation
 - `pkg/controller/debug/README.md` - Controller-specific debug variables
-

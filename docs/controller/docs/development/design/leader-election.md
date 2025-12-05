@@ -13,6 +13,7 @@ The controller currently runs as a single instance. Running multiple replicas wi
 3. **Unnecessary HAProxy reloads**: Multiple deployments of the same configuration
 
 However, all replicas should:
+
 - Watch Kubernetes resources (to maintain hot cache for failover)
 - Render templates (to have configurations ready)
 - Validate configurations (to share the workload)
@@ -51,6 +52,7 @@ With 60s/15s settings, the system tolerates nodes progressing 4x faster than oth
 ### Component Classification
 
 **All replicas run** (read-only or validation operations):
+
 - ConfigWatcher - Monitors ConfigMap changes
 - CredentialsLoader - Monitors Secret changes
 - ResourceWatcher - Watches Kubernetes resources (Ingress, Service, etc.)
@@ -66,6 +68,7 @@ With 60s/15s settings, the system tolerates nodes progressing 4x faster than oth
 - StateCache - Maintains debug state
 
 **Leader-only components** (write operations to dataplane API):
+
 - **Deployer** - Deploys configurations to HAProxy instances
 - **DeploymentScheduler** - Rate-limits and queues deployments
 - **DriftMonitor** - Monitors and corrects configuration drift
@@ -75,6 +78,7 @@ With 60s/15s settings, the system tolerates nodes progressing 4x faster than oth
 **Package**: `pkg/controller/leaderelection/`
 
 **Responsibilities**:
+
 - Create and manage Lease lock in controller namespace
 - Use pod name as unique identity (via POD_NAME env var)
 - Publish leader election events to EventBus
@@ -82,6 +86,7 @@ With 60s/15s settings, the system tolerates nodes progressing 4x faster than oth
 - Handle graceful leadership release on shutdown
 
 **Event integration**:
+
 ```go
 type LeaderElector struct {
     eventBus *events.EventBus
@@ -139,6 +144,7 @@ type NewLeaderObservedEvent struct {
 ```
 
 These events enable:
+
 - **Observability**: Commentator logs all transitions
 - **Metrics**: Track leadership duration, transition count
 - **Debugging**: Understand which replica is active
@@ -239,6 +245,7 @@ OnStoppedLeading: func() {
 ```
 
 **Graceful transition**:
+
 1. Old leader loses lease → stops deployment components
 2. Brief pause (lease expiry time)
 3. New leader acquires lease → starts deployment components
@@ -261,6 +268,7 @@ controller:
 ```
 
 **Backwards compatibility**:
+
 - `enabled: false` → Run without leader election (single replica mode)
 - Existing single-replica deployments work unchanged
 
@@ -344,6 +352,7 @@ controller_time_as_leader_seconds counter
 ```
 
 **Usage**:
+
 - Alert on frequent transitions (indicates instability)
 - Dashboard showing current leader identity
 - Track leadership duration distribution
@@ -433,6 +442,7 @@ func TestLeaderElection_BothReplicasRenderConfigs(t *testing.T)
 ```
 
 **Test setup**:
+
 - Use kind cluster with multi-node setup
 - Deploy controller with 3 replicas
 - Create test Ingress resources
@@ -472,6 +482,7 @@ kubectl logs -l app=haproxy-template-ic | grep "deployment completed"
 ### Leader Pod Crashes
 
 **Behavior**:
+
 1. Leader lease expires (15s after last renewal)
 2. Followers detect expired lease
 3. First follower to update lease becomes new leader
@@ -485,6 +496,7 @@ kubectl logs -l app=haproxy-template-ic | grep "deployment completed"
 **Scenario**: Leader pod loses connectivity to Kubernetes API
 
 **Behavior**:
+
 1. Leader cannot renew lease
 2. After RenewDeadline (15s), leader voluntarily releases leadership
 3. Leader stops deployment components
@@ -498,6 +510,7 @@ kubectl logs -l app=haproxy-template-ic | grep "deployment completed"
 **Scenario**: Nodes have different clock speeds
 
 **Tolerance**: Configured ratio of LeaseDuration/RenewDeadline
+
 - With 60s/15s: Tolerates 4x clock speed difference
 - If exceeded: May experience frequent leadership changes
 
@@ -506,6 +519,7 @@ kubectl logs -l app=haproxy-template-ic | grep "deployment completed"
 ### All Replicas Down
 
 **Behavior**:
+
 1. Lease expires
 2. No deployments occur (expected behavior)
 3. HAProxy continues serving with last known configuration
@@ -516,6 +530,7 @@ kubectl logs -l app=haproxy-template-ic | grep "deployment completed"
 ## Migration Path
 
 ### Phase 1: Code Implementation
+
 1. Implement LeaderElector package
 2. Add leader election events
 3. Modify controller startup for conditional components
@@ -523,18 +538,21 @@ kubectl logs -l app=haproxy-template-ic | grep "deployment completed"
 5. Update RBAC manifests
 
 ### Phase 2: Testing
+
 1. Unit tests for LeaderElector
 2. Integration tests with multi-replica setup
 3. Chaos testing (kill leaders, network partitions)
 4. Performance testing (ensure no regression)
 
 ### Phase 3: Documentation
+
 1. Update deployment guide for HA setup
 2. Document troubleshooting procedures
 3. Update architecture diagrams
 4. Create runbooks for common scenarios
 
 ### Phase 4: Rollout
+
 1. Release with `enabled: false` default
 2. Document opt-in HA setup
 3. Collect feedback from early adopters

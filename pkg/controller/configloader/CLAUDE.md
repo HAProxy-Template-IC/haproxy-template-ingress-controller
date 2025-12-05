@@ -7,12 +7,14 @@ Development context for the ConfigLoader component.
 ## When to Work Here
 
 Work in this package when:
+
 - Modifying ConfigMap parsing logic
 - Changing how configuration is extracted from Kubernetes resources
 - Adding validation before config parsing
 - Debugging configuration loading issues
 
 **DO NOT** work here for:
+
 - Configuration schema definition → Use `pkg/core/config`
 - Configuration validation → Use `pkg/controller/validator`
 - ConfigMap watching → Use `pkg/controller/resourcewatcher` or `pkg/controller/configchange`
@@ -22,6 +24,7 @@ Work in this package when:
 Pure event-driven component that subscribes to ConfigResourceChangedEvent and parses ConfigMap data into config.Config structures. This is part of Stage 1 (Config Management) in the controller lifecycle.
 
 Key responsibilities:
+
 - Extract YAML from ConfigMap data field
 - Parse YAML into config.Config
 - Publish ConfigParsedEvent on success

@@ -5,12 +5,14 @@ Development context for validation components.
 ## When to Work Here
 
 Work in this package when:
+
 - Adding new validation rules
 - Implementing new validator types
 - Modifying scatter-gather coordination
 - Fixing validation bugs
 
 **DO NOT** work here for:
+
 - Parsing configuration → Use `pkg/core/config`
 - Event bus infrastructure → Use `pkg/events`
 

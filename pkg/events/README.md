@@ -25,6 +25,7 @@ pkg/controller/events/   # Domain-specific event catalog
 Thread-safe pub/sub coordinator with startup synchronization.
 
 **Features:**
+
 - Non-blocking publish with backpressure handling (drops events to slow subscribers)
 - Startup coordination via buffering (prevents race conditions during initialization)
 - Thread-safe concurrent access
@@ -99,6 +100,7 @@ bus.Publish(SystemReadyEvent{})
 Synchronous coordination across multiple responders using the scatter-gather pattern.
 
 **Use Cases:**
+
 - Configuration validation (multiple validators must approve)
 - Distributed queries (gather responses from multiple sources)
 - Coordinated operations (need confirmation from multiple parties)
@@ -190,6 +192,7 @@ func (v *Validator) Run(ctx context.Context, bus *events.EventBus) {
 ### 1. Generic Infrastructure
 
 This package is **domain-agnostic** - it provides the plumbing, not the events:
+
 - EventBus, Request, Response are generic mechanisms
 - Event types are defined in `pkg/controller/events`
 - Could be extracted as a standalone library
@@ -197,6 +200,7 @@ This package is **domain-agnostic** - it provides the plumbing, not the events:
 ### 2. Non-Blocking
 
 The EventBus never blocks publishers:
+
 - Full subscriber channels → event dropped for that subscriber
 - Prevents slow consumers from blocking the system
 - Subscribers must drain their channels promptly
@@ -204,6 +208,7 @@ The EventBus never blocks publishers:
 ### 3. Thread-Safe
 
 All operations are safe for concurrent access:
+
 - Multiple goroutines can publish simultaneously
 - Multiple goroutines can subscribe simultaneously
 - Thread-safe startup coordination
@@ -211,6 +216,7 @@ All operations are safe for concurrent access:
 ### 4. Simple API
 
 Minimal surface area:
+
 - `Publish(event)` - send event to all subscribers
 - `Subscribe(bufferSize)` - create new event channel
 - `Start()` - release buffered events
@@ -225,6 +231,7 @@ go test ./pkg/events/... -v
 ```
 
 Test coverage includes:
+
 - Basic pub/sub
 - Startup coordination (buffering/replay)
 - Slow subscriber behavior
@@ -243,17 +250,20 @@ Test coverage includes:
 ## When to Use
 
 **Use EventBus for:**
+
 - Async pub/sub notifications
 - Observability events
 - Decoupling components
 - Event-driven workflows
 
 **Use Request() for:**
+
 - Multi-phase validation
 - Distributed queries
 - Coordinated operations requiring responses
 
 **Don't Use for:**
+
 - Direct function calls (if you don't need decoupling)
 - High-frequency data streams (consider channels instead)
 - Large payloads (events should be lightweight)
@@ -261,6 +271,7 @@ Test coverage includes:
 ## Integration
 
 See `docs/design.md` for:
+
 - Event-driven architecture overview
 - Controller event catalog
 - Startup coordination flow

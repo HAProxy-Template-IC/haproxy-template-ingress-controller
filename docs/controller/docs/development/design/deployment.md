@@ -147,11 +147,13 @@ graph TB
 **Resource Requirements:**
 
 Controller Pod:
+
 - CPU: 100m request, 500m limit
 - Memory: 128Mi request, 512Mi limit
 - Volumes: ConfigMap mount for configuration
 
 HAProxy Pod:
+
 - HAProxy Container: 200m CPU, 256Mi memory (per instance)
 - Dataplane API Container: 100m CPU, 128Mi memory
 - Volumes: EmptyDir for dynamic configs, maps, and certificates

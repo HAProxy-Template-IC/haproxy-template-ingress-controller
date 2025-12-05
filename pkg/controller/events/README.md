@@ -7,6 +7,7 @@ Domain-specific event type definitions for controller coordination.
 This package defines all event types used by the controller for component coordination via the EventBus. Events represent facts about what happened in the system and are immutable after creation.
 
 **Separation**:
+
 - `pkg/events` - Generic pub/sub infrastructure
 - `pkg/controller/events` - Domain event types (this package)
 
@@ -265,6 +266,7 @@ func NewMyNewEvent(field string, data []string) *MyNewEvent {
 ## Common Event Fields
 
 Most events include:
+
 - **Timestamp** - When the event occurred
 - **Version** - Resource version (for ConfigMap/Secret events)
 - **Errors** - Error messages (for failure events)
@@ -272,6 +274,7 @@ Most events include:
 ## Examples
 
 See:
+
 - Event publishing: `pkg/controller/configloader/`
 - Event consumption: `pkg/controller/reconciler/`
 - Scatter-gather: `pkg/controller/validator/coordinator.go`

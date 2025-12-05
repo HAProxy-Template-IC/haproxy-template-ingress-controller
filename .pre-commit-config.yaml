@@ -4,13 +4,13 @@
 repos:
   - repo: local
     hooks:
-      # Run linting (golangci-lint + arch-go + eventimmutability)
+      # Run all linting (YAML, JSON, Markdown, Go)
       - id: make-lint
         name: make lint
         entry: make lint
         language: system
         pass_filenames: false
-        files: \.go$
+        files: \.(go|yaml|yml|json|md|jsonc)$
 
       # Run security audit (govulncheck)
       - id: make-audit

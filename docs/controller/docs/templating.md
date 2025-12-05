@@ -179,6 +179,7 @@ bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 **sort_by modifiers**: `:desc` (descending), `:exists` (by field presence), `| length` (by length)
 
 **Example - Route precedence sorting**:
+
 ```jinja2
 {% set sorted = routes | sort_by([
     "$.match.method:exists:desc",
@@ -345,6 +346,7 @@ backend ing_{{ ingress.metadata.name }}_{{ service_name }}
 ```
 
 **Required indexing**:
+
 ```yaml
 watchedResources:
   ingresses:

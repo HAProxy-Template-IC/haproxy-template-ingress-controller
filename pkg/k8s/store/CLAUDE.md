@@ -8,6 +8,7 @@ Development context for Kubernetes resource storage implementations.
 ## When to Work Here
 
 Modify this package when:
+
 - Adding new storage strategies
 - Optimizing memory usage or performance
 - Fixing storage bugs
@@ -15,6 +16,7 @@ Modify this package when:
 - Improving thread safety
 
 **DO NOT** modify this package for:
+
 - Resource watching → Use `pkg/k8s/watcher`
 - Index key extraction → Use `pkg/k8s/indexer`
 - Event coordination → Use `pkg/controller`
@@ -27,6 +29,7 @@ This package provides storage backends for indexed Kubernetes resources. Before 
 2. **CachedStore**: Reference-based storage with on-demand API fetching (new)
 
 This separation allows:
+
 - Memory-constrained environments to use CachedStore for large resources
 - High-performance environments to use MemoryStore for fast iteration
 - Mixed strategies (MemoryStore for Ingress, CachedStore for Secrets)
@@ -50,6 +53,7 @@ type Store interface {
 ```
 
 **Why this pattern:**
+
 - Watchers don't need to know which store type they use
 - Store type can be changed via configuration
 - Testing with fake stores is straightforward
@@ -66,6 +70,7 @@ compositeKey := "default/my-ingress"
 ```
 
 **Why composite keys:**
+
 - O(1) lookup using single map key
 - Partial matching (Get("default") finds all in namespace)
 - Simple implementation
@@ -86,6 +91,7 @@ resources, _ := store.Get("default", "common-label")
 ```
 
 **Why non-unique keys:**
+
 - Indexing by labels or other non-unique fields
 - Partial key matching returns multiple results naturally
 - Simplifies watcher logic (no uniqueness validation)
@@ -95,6 +101,7 @@ resources, _ := store.Get("default", "common-label")
 ### MemoryStore Design
 
 **Data structure:**
+
 ```go
 type MemoryStore struct {
     mu       sync.RWMutex
@@ -106,6 +113,7 @@ type MemoryStore struct {
 ```
 
 **Why this structure:**
+
 - `map[string][]interface{}`: Handles non-unique keys naturally
 - `allItems` cache: List() doesn't rebuild on every call
 - `dirty` flag: Lazy rebuilding of List() cache
@@ -114,6 +122,7 @@ type MemoryStore struct {
 ### CachedStore Design
 
 **Data structures:**
+
 ```go
 type resourceRef struct {
     namespace string   // For API fetching
@@ -138,16 +147,19 @@ type CachedStore struct {
 ```
 
 **Why this structure:**
+
 - `refs` map: Stores only metadata (200 bytes vs 1-5 KB per resource)
 - `cache` map: Separate cache keyed by namespace/name
 - TTL-based expiration: Automatic cache invalidation
 - Dynamic client: Fetches any resource type
 
 **Cache key vs Index key:**
+
 - **Index key** (composite): Used for matching (e.g., "default/common-label")
 - **Cache key** (namespace/name): Used for caching fetched resources (e.g., "default/my-secret")
 
 This separation allows:
+
 - Multiple references with same index key
 - Unique cache entries per resource
 - Efficient cache lookups by namespace/name
@@ -155,6 +167,7 @@ This separation allows:
 ### Thread Safety Strategy
 
 **Read-write lock pattern:**
+
 ```go
 // Read operations (concurrent)
 func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
@@ -172,16 +185,19 @@ func (s *MemoryStore) Add(resource interface{}, keys []string) error {
 ```
 
 **Why RWMutex:**
+
 - Read-heavy workload (Get/List called frequently)
 - Multiple watchers can read concurrently
 - Only blocks during Add/Update/Delete
 
 **Lock granularity:**
+
 - Entire store is locked (not per-key)
 - Simple, correct implementation
 - Performance sufficient for expected load
 
 If profiling shows lock contention, consider:
+
 - Sharding maps by key prefix
 - Lock-free data structures (complexity vs benefit trade-off)
 
@@ -223,6 +239,7 @@ func (s *MemoryStore) Add(resource interface{}, keys []string) error {
 ```
 
 **Key points:**
+
 - Validates key count
 - Checks for duplicates using `resourcesEqual`
 - Appends to slice for non-unique keys
@@ -275,6 +292,7 @@ func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
 ```
 
 **Key points:**
+
 - Lock is not held during API calls (prevents blocking)
 - Multiple lock/unlock cycles (fine-grained locking)
 - TTL check before using cached entry
@@ -304,6 +322,7 @@ func resourcesEqual(a, b interface{}) bool {
 ```
 
 **Why UID first:**
+
 - UID is unique across cluster lifetime
 - Faster than namespace/name extraction
 - Handles edge cases (deleted and recreated resources)
@@ -608,6 +627,7 @@ func (s *MemoryStore) List() ([]interface{}, error) {
 ```
 
 **Why this matters:**
+
 - List() called frequently during template rendering
 - Rebuilding from map every time is expensive O(N)
 - Cache makes List() O(1) when no changes occurred
@@ -656,6 +676,7 @@ func (s *CachedStore) evictOldest() {
 ### When to Refactor
 
 Consider refactoring if:
+
 - Lock contention appears in profiling (unlikely with current workload)
 - Cache memory usage becomes problematic (add eviction)
 - API call rate becomes excessive (batch fetches, longer TTL)
@@ -666,6 +687,7 @@ Consider refactoring if:
 ### Store Returns Empty Results
 
 **Diagnosis:**
+
 1. Check if resources were added
 2. Verify key count matches
 3. Check for key extraction errors
@@ -685,6 +707,7 @@ for _, res := range resources {
 ### CachedStore Always Hits API
 
 **Diagnosis:**
+
 1. Check TTL configuration
 2. Verify cache isn't being cleared
 3. Check for clock skew
@@ -704,6 +727,7 @@ log.Info("cache size", "entries", cacheSize)
 ### Race Conditions
 
 **Diagnosis:**
+
 1. Run with race detector: `go test -race ./pkg/k8s/store`
 2. Check for missing lock statements
 3. Verify defer unlock patterns

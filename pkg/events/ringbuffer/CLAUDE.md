@@ -7,12 +7,14 @@ Development context for the ring buffer package.
 ## When to Use This Package
 
 Use this package when you need to:
+
 - Store a fixed-size sliding window of recent items
 - Implement event history/buffering with automatic old-item eviction
 - Thread-safe circular buffer with Go generics
 - Efficient memory usage for bounded collections
 
 **DO NOT** use this package for:
+
 - Unbounded collections → Use slice or channel
 - Persistent storage → Use database
 - Priority queues → Use heap data structure
@@ -22,6 +24,7 @@ Use this package when you need to:
 Provides a generic, thread-safe ring buffer implementation using Go generics. When the buffer fills up, new items automatically overwrite the oldest items (circular behavior).
 
 Key features:
+
 - **Generic** - Works with any type via Go generics
 - **Thread-safe** - Uses sync.RWMutex for concurrent access
 - **Fixed size** - Memory-bounded, won't grow indefinitely
@@ -39,6 +42,7 @@ RingBuffer[T]
 ```
 
 Circular buffer behavior:
+
 ```
 Initial:  [ ][ ][ ][ ][ ]  head=0, count=0
 Add(1):   [1][ ][ ][ ][ ]  head=1, count=1
@@ -163,6 +167,7 @@ avg := sum / float64(len(metrics))
 This is a **pure generic data structure** with no dependencies on other application packages.
 
 Used by:
+
 - `pkg/controller/commentator` - Event history ring buffer
 - `pkg/controller/debug` - Debug event buffer
 - Any component needing bounded event/log storage
@@ -225,11 +230,13 @@ buffer := ringbuffer.New[Event](1000000)  // Probably excessive
 ```
 
 **Solution**: Choose size based on:
+
 - Event rate (events/second × retention time)
 - Memory constraints
 - Query patterns (how much history do you need?)
 
 Example:
+
 ```go
 // Keep 5 minutes of events at 10 events/second
 eventsPerSecond := 10
@@ -333,7 +340,7 @@ Memory: O(size) - fixed allocation, no growth
 
 ## Resources
 
-- Go generics: https://go.dev/doc/tutorial/generics
-- Ring buffer algorithm: https://en.wikipedia.org/wiki/Circular_buffer
+- Go generics: <https://go.dev/doc/tutorial/generics>
+- Ring buffer algorithm: <https://en.wikipedia.org/wiki/Circular_buffer>
 - Usage in controller: `pkg/controller/commentator/commentator.go`
 - Usage in debug: `pkg/controller/debug/events.go`

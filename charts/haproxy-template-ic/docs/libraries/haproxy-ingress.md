@@ -47,6 +47,7 @@ controller:
 ### Regex Path Type Annotation
 
 When an Ingress has:
+
 - `pathType: ImplementationSpecific` on a path
 - `haproxy-ingress.github.io/path-type: "regex"` annotation
 

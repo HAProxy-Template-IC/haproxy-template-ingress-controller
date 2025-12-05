@@ -7,6 +7,7 @@ Development context for end-to-end acceptance testing.
 ## When to Work Here
 
 Work in this directory when:
+
 - Writing end-to-end regression tests
 - Testing critical user-facing functionality
 - Verifying controller lifecycle behavior
@@ -14,6 +15,7 @@ Work in this directory when:
 - Validating controller internal state via debug endpoints
 
 **DO NOT** work here for:
+
 - Unit tests → Place in pkg/ alongside code
 - Component integration tests → Use `tests/integration/`
 - Quick feedback tests → Use unit tests
@@ -22,6 +24,7 @@ Work in this directory when:
 ## Package Purpose
 
 Provides end-to-end acceptance testing infrastructure using the kubernetes-sigs/e2e-framework. Tests verify complete controller behavior including:
+
 - Full controller deployment in Kubernetes
 - ConfigMap and Secret watching
 - Configuration reload on changes
@@ -29,6 +32,7 @@ Provides end-to-end acceptance testing infrastructure using the kubernetes-sigs/
 - Debug endpoint accessibility
 
 Key differences from integration tests:
+
 - **Integration tests**: Component-level with fixtures (dataplane, parser, etc.)
 - **Acceptance tests**: Full controller deployment, user-facing features
 
@@ -55,6 +59,7 @@ E2E Framework (kubernetes-sigs/e2e-framework)
 Tests access controller debug and metrics endpoints via the Kubernetes API server proxy rather than port-forwarding or NodePort services. This is a deliberate design decision:
 
 **Why API Server Proxy?**
+
 - Port-forwarding uses SPDY protocol which breaks under parallel test execution (EOF, connection reset errors)
 - NodePort requires `extraPortMappings` in Kind configuration, which doesn't work in DinD environments
 - API server proxy routes requests through the existing API server connection
@@ -62,11 +67,13 @@ Tests access controller debug and metrics endpoints via the Kubernetes API serve
 - Uses built-in client-go `ProxyGet` method - first-party Kubernetes API
 
 **How it works:**
+
 1. Tests create ClusterIP services for debug and metrics endpoints
 2. `SetupDebugClient()` and `SetupMetricsAccess()` create clients that use `ProxyGet`
 3. Requests are routed: `client → API server → service → pod`
 
 **Helper functions:**
+
 - `SetupDebugClient()` - creates debug service and returns DebugClient using API proxy
 - `SetupMetricsAccess()` - creates metrics service and returns MetricsClient using API proxy
 - `WaitForServiceEndpoints()` - waits for service endpoints to be ready
@@ -121,6 +128,7 @@ func Setup(t *testing.T) env.Environment {
 ```
 
 **Features**:
+
 - Shared environment across acceptance tests
 - Automatic setup/teardown
 - Kind cluster lifecycle management
@@ -164,6 +172,7 @@ func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion
 **Purpose**: Access controller internal state without log parsing.
 
 **Why API server proxy instead of NodePort or port-forwarding?**
+
 - Port-forwarding uses SPDY which breaks under parallel test execution (EOF errors)
 - NodePort requires extraPortMappings which don't work in DinD environments
 - API proxy uses existing API server connection - always works
@@ -171,6 +180,7 @@ func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion
 - No connection lifecycle management needed
 
 **Why not logs?**
+
 - Logs are brittle (format changes break tests)
 - Logs don't provide structured state
 - Debug endpoints are stable API
@@ -200,6 +210,7 @@ func NewMetricsService(namespace, deploymentName string, metricsPort int32) *cor
 ```
 
 **Predefined configs**:
+
 - `InitialConfigYAML`: Version 1 config (maxconn 2000)
 - `UpdatedConfigYAML`: Version 2 config (maxconn 4000)
 
@@ -426,11 +437,13 @@ docker build --no-cache -t haproxy-template-ic:test -f Dockerfile .
 ```
 
 **When to use `--no-cache`:**
+
 - After making code changes that aren't reflected in test behavior
 - When you suspect Docker is using old cached layers
 - When debugging mysterious test failures that don't match your code changes
 
 **Common mistake**: Building with the wrong tag and wondering why tests don't use your latest code:
+
 ```bash
 # WRONG - tests won't use this image
 docker build -t haproxy-template-ic:dev -f Dockerfile .
@@ -493,6 +506,7 @@ kind delete cluster --name haproxy-test
 ```
 
 **Troubleshooting tip**: If tests fail after code changes, ensure the image was rebuilt with `--no-cache`:
+
 ```bash
 # Rebuild without cache to ensure latest code is included
 docker build --no-cache -t haproxy-template-ic:test -f Dockerfile .
@@ -506,6 +520,6 @@ go test -v ./tests/acceptance
 
 ## Resources
 
-- E2E Framework: https://github.com/kubernetes-sigs/e2e-framework
-- Kind: https://kind.sigs.k8s.io/
+- E2E Framework: <https://github.com/kubernetes-sigs/e2e-framework>
+- Kind: <https://kind.sigs.k8s.io/>
 - Debug endpoints: `pkg/introspection/README.md`

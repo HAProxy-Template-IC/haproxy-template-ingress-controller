@@ -7,6 +7,7 @@ Development context for controller domain-specific metrics.
 ## When to Work Here
 
 Modify this package when:
+
 - Adding new controller metrics (reconciliation, deployment, validation, etc.)
 - Modifying metric update logic
 - Adding new event types to track
@@ -14,6 +15,7 @@ Modify this package when:
 - Fixing metrics component bugs
 
 **DO NOT** modify this package for:
+
 - Generic metrics infrastructure → Use `pkg/metrics`
 - Event bus infrastructure → Use `pkg/events`
 - Event type definitions → Use `pkg/controller/events`
@@ -56,6 +58,7 @@ This package follows the **Event Adapter Pattern** used throughout the controlle
 ```
 
 **Benefits:**
+
 - Pure metrics can be tested without event bus
 - Event adapter can be tested with mock events
 - Clean separation of concerns
@@ -100,6 +103,7 @@ func (m *Metrics) RecordReconciliation(durationMs int64, success bool) {
 ```
 
 **Why Pure?**
+
 - Can be used outside event-driven context
 - Easy to test without event infrastructure
 - Clear API for metric updates
@@ -151,6 +155,7 @@ func (c *Component) Run(ctx context.Context) error {
 ```
 
 **Why Event Adapter?**
+
 - Decouples metrics from event sources
 - Centralizes metric update logic
 - Easy to add new event handlers
@@ -470,6 +475,7 @@ func (m *Metrics) RecordReconciliation() {
 When adding new metrics:
 
 1. **Define in Metrics struct**
+
 ```go
 type Metrics struct {
     // ... existing metrics ...
@@ -481,6 +487,7 @@ type Metrics struct {
 ```
 
 2. **Create in New() constructor**
+
 ```go
 func New(registry *prometheus.Registry) *Metrics {
     return &Metrics{
@@ -501,6 +508,7 @@ func New(registry *prometheus.Registry) *Metrics {
 ```
 
 3. **Add helper method**
+
 ```go
 func (m *Metrics) RecordCacheAccess(hit bool) {
     if hit {
@@ -512,6 +520,7 @@ func (m *Metrics) RecordCacheAccess(hit bool) {
 ```
 
 4. **Add event handler (if event-driven)**
+
 ```go
 func (c *Component) handleEvent(event pkgevents.Event) {
     // ... existing cases ...
@@ -522,6 +531,7 @@ func (c *Component) handleEvent(event pkgevents.Event) {
 ```
 
 5. **Add unit test**
+
 ```go
 func TestMetrics_RecordCacheAccess(t *testing.T) {
     registry := prometheus.NewRegistry()
@@ -538,6 +548,7 @@ func TestMetrics_RecordCacheAccess(t *testing.T) {
 ```
 
 6. **Add component test (if event-driven)**
+
 ```go
 func TestComponent_CacheEvents(t *testing.T) {
     registry := prometheus.NewRegistry()
@@ -560,6 +571,7 @@ func TestComponent_CacheEvents(t *testing.T) {
 ```
 
 7. **Update README.md with metric documentation**
+
 ```markdown
 ### Cache Metrics
 
@@ -590,12 +602,14 @@ func (c *Component) Start() {
 ```
 
 **Why 200?**
+
 - Metrics component processes all events (high volume)
 - Processing is very fast (just incrementing counters)
 - Large buffer prevents blocking event publishers
 - Trade-off: Memory vs responsiveness
 
 If metrics processing becomes slow, consider:
+
 1. Increasing buffer size
 2. Batching metric updates
 3. Using async metric updates
@@ -670,4 +684,4 @@ type ResourceIndexUpdatedEvent struct { ResourceTypeName string; ChangeStats typ
 - Generic metrics: `pkg/metrics/CLAUDE.md`
 - Event types: `pkg/controller/events/types.go`
 - Controller orchestration: `pkg/controller/CLAUDE.md`
-- Prometheus documentation: https://prometheus.io/docs/
+- Prometheus documentation: <https://prometheus.io/docs/>
