@@ -9,7 +9,7 @@ FROM golang:${GO_VERSION}-bookworm
 # renovate: datasource=github-tags depName=haproxy/haproxy versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)$
 ARG HAPROXY_VERSION=3.2
 # renovate: datasource=docker depName=docker
-ARG DOCKER_VERSION=27
+ARG DOCKER_VERSION=29
 # renovate: datasource=github-releases depName=kubernetes-sigs/kind
 ARG KIND_VERSION=0.30.0
 
