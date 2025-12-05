@@ -11,7 +11,7 @@ ARG HAPROXY_VERSION=3.2
 # renovate: datasource=docker depName=docker
 ARG DOCKER_VERSION=27
 # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-ARG KIND_VERSION=0.24.0
+ARG KIND_VERSION=0.30.0
 
 # Install HAProxy from haproxy.debian.net and Docker CLI from Docker's apt repository
 RUN apt-get update \
