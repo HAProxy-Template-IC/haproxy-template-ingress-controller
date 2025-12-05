@@ -7,6 +7,7 @@ Development context for working with Prometheus metrics infrastructure.
 ## When to Work Here
 
 Modify this package when:
+
 - Adding new helper functions for metric creation
 - Modifying metrics server behavior
 - Changing metric naming conventions
@@ -14,6 +15,7 @@ Modify this package when:
 - Fixing metrics server bugs
 
 **DO NOT** modify this package for:
+
 - Domain-specific metrics → Use `pkg/controller/metrics` or domain packages
 - Business logic → This is pure infrastructure
 - Application-specific configuration → Use config module
@@ -58,12 +60,14 @@ for {
 ```
 
 **Benefits:**
+
 - Metrics reset automatically on reinitialization
 - No stale data from previous iterations
 - No need for manual metric cleanup
 - No global state pollution
 
 **Consequences:**
+
 - Must pass registry to all metric creation functions
 - Cannot use `prometheus.MustRegister()` without registry parameter
 - Slightly more verbose API (worth it for clean lifecycle)
@@ -77,6 +81,7 @@ Serves Prometheus metrics on HTTP endpoint.
 **Key Features:**
 
 1. **Instance-based design**
+
 ```go
 type Server struct {
     addr     string
@@ -92,6 +97,7 @@ func NewServer(addr string, registry prometheus.Gatherer) *Server {
 ```
 
 2. **Graceful shutdown**
+
 ```go
 func (s *Server) Start(ctx context.Context) error {
     go func() {
@@ -107,6 +113,7 @@ func (s *Server) Start(ctx context.Context) error {
 ```
 
 3. **Security settings**
+
 ```go
 s.server = &http.Server{
     Addr:              addr,
@@ -116,6 +123,7 @@ s.server = &http.Server{
 ```
 
 4. **OpenMetrics support**
+
 ```go
 mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{
     EnableOpenMetrics: true,  // Support newer format
@@ -380,6 +388,7 @@ latency := metrics.NewHistogram(
 When adding new helper functions:
 
 1. **Follow naming pattern**
+
 ```go
 func NewMetricType(registry prometheus.Registerer, name, help string) MetricType {
     metric := prometheus.NewMetricType(prometheus.MetricTypeOpts{
@@ -392,6 +401,7 @@ func NewMetricType(registry prometheus.Registerer, name, help string) MetricType
 ```
 
 2. **Add tests**
+
 ```go
 func TestNewMetricType(t *testing.T) {
     registry := prometheus.NewRegistry()
@@ -406,6 +416,7 @@ func TestNewMetricType(t *testing.T) {
 ```
 
 3. **Document in README.md**
+
 ```markdown
 ### NewMetricType
 
@@ -418,6 +429,7 @@ metric := metrics.NewMetricType(registry, "name", "description")
 ```
 
 4. **Consider if preset buckets are needed**
+
 ```go
 // If this is a histogram/summary, provide bucket presets
 func SizeBuckets() []float64 {
@@ -432,6 +444,7 @@ Follow Prometheus best practices:
 ### Counter Metrics
 
 Suffix with `_total`:
+
 ```go
 requests := metrics.NewCounter(registry, "requests_total", "Total requests")
 errors := metrics.NewCounter(registry, "errors_total", "Total errors")
@@ -440,6 +453,7 @@ errors := metrics.NewCounter(registry, "errors_total", "Total errors")
 ### Histogram/Summary Metrics
 
 Suffix with unit:
+
 ```go
 duration := metrics.NewHistogram(registry, "duration_seconds", "Duration in seconds")
 size := metrics.NewHistogram(registry, "size_bytes", "Size in bytes")
@@ -448,6 +462,7 @@ size := metrics.NewHistogram(registry, "size_bytes", "Size in bytes")
 ### Gauge Metrics
 
 No suffix, represents current state:
+
 ```go
 connections := metrics.NewGauge(registry, "active_connections", "Active connections")
 memory := metrics.NewGauge(registry, "memory_usage_bytes", "Memory usage")
@@ -456,6 +471,7 @@ memory := metrics.NewGauge(registry, "memory_usage_bytes", "Memory usage")
 ### Label Names
 
 Use snake_case for label names:
+
 ```go
 counter := metrics.NewCounterVec(
     registry,
@@ -558,6 +574,6 @@ func New(registry *prometheus.Registry) *Metrics {
 ## Resources
 
 - API documentation: `pkg/metrics/README.md`
-- Prometheus documentation: https://prometheus.io/docs/
-- Prometheus client library: https://github.com/prometheus/client_golang
+- Prometheus documentation: <https://prometheus.io/docs/>
+- Prometheus client library: <https://github.com/prometheus/client_golang>
 - Domain metrics: `pkg/controller/metrics/CLAUDE.md`

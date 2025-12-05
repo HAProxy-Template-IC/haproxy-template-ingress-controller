@@ -5,12 +5,14 @@ Development context for the Executor component.
 ## When to Work Here
 
 Work in this package when:
+
 - Implementing reconciliation orchestration logic
 - Coordinating Renderer, Validator, Deployer components
 - Adding reconciliation stages
 - Modifying error handling during reconciliation
 
 **DO NOT** work here for:
+
 - Template rendering → Use Renderer component
 - Configuration validation → Use Validator component
 - HAProxy deployment → Use Deployer component
@@ -35,6 +37,7 @@ Executor
 **Current State**: Minimal stub implementation. Establishes event flow but doesn't yet call pure components.
 
 **Future**: Will orchestrate:
+
 1. Renderer - Generate HAProxy config from templates
 2. Validator - Validate generated configuration
 3. Deployer - Deploy to HAProxy instances

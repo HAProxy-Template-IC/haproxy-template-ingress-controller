@@ -7,6 +7,7 @@ Development context for the introspection package.
 ## When to Use This Package
 
 Use this package when you need to:
+
 - Expose internal application state via HTTP endpoints
 - Create debug/introspection endpoints for production debugging
 - Implement `/debug/vars` style introspection (similar to expvar)
@@ -14,6 +15,7 @@ Use this package when you need to:
 - Provide Go profiling endpoints (`/debug/pprof`)
 
 **DO NOT** use this package for:
+
 - Business logic → Use appropriate domain package
 - Metrics collection → Use Prometheus/metrics package
 - Production APIs → Use proper REST API framework
@@ -23,6 +25,7 @@ Use this package when you need to:
 Provides a generic, reusable HTTP server infrastructure for exposing internal application state. This is a **pure infrastructure package** with no domain knowledge - it can be reused in any Go application.
 
 Key features:
+
 - Instance-based registry (not global like `expvar`)
 - JSONPath field selection (kubectl-style syntax)
 - HTTP handlers for listing and querying variables
@@ -80,6 +83,7 @@ type Var interface {
 ```
 
 Built-in implementations:
+
 - `IntVar`, `StringVar`, `FloatVar`, `MapVar` - Simple atomic types
 - `Func` - Computed on-demand values
 
@@ -93,6 +97,7 @@ go server.Start(ctx)  // Starts HTTP server, blocks until ctx cancelled
 ```
 
 Features:
+
 - Binds to 0.0.0.0 (compatible with kubectl port-forward)
 - Automatic pprof integration
 - JSON responses
@@ -196,11 +201,13 @@ func runIteration(ctx context.Context) {
 This package is **pure infrastructure** - it has no dependencies on other application packages.
 
 Other packages integrate by:
+
 1. Implementing the `Var` interface
 2. Registering variables with the registry
 3. Starting the HTTP server
 
 Example (controller integration):
+
 ```
 pkg/introspection (infrastructure)
        ↑
@@ -337,8 +344,8 @@ func TestServer_GetVar(t *testing.T) {
 
 ## Resources
 
-- JSONPath syntax: https://kubernetes.io/docs/reference/kubectl/jsonpath/
-- Go pprof: https://pkg.go.dev/net/http/pprof
-- expvar (stdlib inspiration): https://pkg.go.dev/expvar
+- JSONPath syntax: <https://kubernetes.io/docs/reference/kubectl/jsonpath/>
+- Go pprof: <https://pkg.go.dev/net/http/pprof>
+- expvar (stdlib inspiration): <https://pkg.go.dev/expvar>
 - Controller integration: `pkg/controller/CLAUDE.md`
 - Debug variables: `pkg/controller/debug/CLAUDE.md`

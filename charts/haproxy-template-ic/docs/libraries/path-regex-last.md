@@ -65,6 +65,7 @@ Merge order (lowest to highest priority):
 The library reorders the HAProxy map lookups:
 
 **Default order (base.yaml):**
+
 ```haproxy
 # Path matching order: Exact > Regex > Prefix-exact > Prefix
 http-request set-var(txn.path_match) ...,map(path-exact.map)
@@ -74,6 +75,7 @@ http-request set-var(txn.path_match) ...,map_beg(path-prefix.map) if !{ var(txn.
 ```
 
 **Performance-first order (path-regex-last.yaml):**
+
 ```haproxy
 # Path matching order: Exact > Prefix-exact > Prefix > Regex
 http-request set-var(txn.path_match) ...,map(path-exact.map)
@@ -85,11 +87,13 @@ http-request set-var(txn.path_match) ...,map_reg(path-regex.map) if !{ var(txn.p
 ### When to Use
 
 **Enable this library when:**
+
 - Your deployment has many prefix paths and few regex paths
 - Performance is critical and you want to minimize regex evaluations
 - You understand the routing behavior change and it's acceptable
 
 **Keep disabled when:**
+
 - You rely on regex paths matching before prefix paths
 - You're migrating from another ingress controller that uses the default order
 - Compatibility with de facto standards is more important than performance
@@ -97,6 +101,7 @@ http-request set-var(txn.path_match) ...,map_reg(path-regex.map) if !{ var(txn.p
 ## Example Behavior Difference
 
 Given these paths:
+
 - `/api/users` (Prefix)
 - `/api/users/[0-9]+` (Regex)
 

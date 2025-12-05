@@ -43,6 +43,7 @@ func NewConfigLoaderComponent(bus *busevents.EventBus, logger *slog.Logger) *Con
 Creates a new ConfigLoader component.
 
 **Parameters**:
+
 - `bus`: EventBus for subscribing and publishing
 - `logger`: Structured logger for diagnostics
 
@@ -57,6 +58,7 @@ func (c *ConfigLoaderComponent) Start(ctx context.Context)
 Starts the component's event loop. Blocks until context is cancelled.
 
 **Process**:
+
 1. Subscribes to EventBus
 2. Waits for ConfigResourceChangedEvent
 3. Extracts ConfigMap data["config"]
@@ -76,6 +78,7 @@ Gracefully stops the component.
 ### Subscribes To
 
 **ConfigResourceChangedEvent**:
+
 ```go
 type ConfigResourceChangedEvent struct {
     Resource interface{}  // *unstructured.Unstructured (ConfigMap)
@@ -87,6 +90,7 @@ Published by ConfigChange watcher when ConfigMap changes.
 ### Publishes
 
 **ConfigParsedEvent** (on success):
+
 ```go
 type ConfigParsedEvent struct {
     Config        *config.Config
@@ -123,6 +127,7 @@ data:
 ```
 
 **Required**:
+
 - `data.config`: YAML configuration string
 
 ## Error Handling
@@ -130,21 +135,25 @@ data:
 Component logs errors but does not publish events for failures:
 
 **Missing "config" key**:
+
 ```
 Error: ConfigMap data missing 'config' key
 ```
 
 **Invalid YAML**:
+
 ```
 Error: Failed to parse configuration YAML
 ```
 
 **Invalid resource type**:
+
 ```
 Error: ConfigResourceChangedEvent contains invalid resource type
 ```
 
 **No data field**:
+
 ```
 Error: ConfigMap has no data field
 ```

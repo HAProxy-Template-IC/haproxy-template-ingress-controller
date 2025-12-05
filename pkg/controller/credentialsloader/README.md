@@ -29,6 +29,7 @@ stringData:
 ```
 
 **Required fields**:
+
 - `dataplane_username`: HAProxy Dataplane API username
 - `dataplane_password`: HAProxy Dataplane API password
 

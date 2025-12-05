@@ -206,6 +206,7 @@ helm install haproxy-ic ./charts/haproxy-template-ic \
 ```
 
 The default Helm installation:
+
 - Runs 2 replicas with leader election enabled for high availability
 - Creates a HAProxyTemplateConfig CRD resource with basic Ingress watching
 - Sets up RBAC permissions for watching Ingress, Service, and EndpointSlice resources
@@ -310,6 +311,7 @@ kubectl logs -l app.kubernetes.io/name=haproxy-template-ic --tail=50 -f
 ```
 
 You should see log entries showing:
+
 - Ingress resource detected
 - Template rendering completed
 - Configuration validation passed
@@ -328,6 +330,7 @@ kubectl exec $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg
 ```
 
 You should see:
+
 - A frontend section with routing rules
 - A backend section referencing the echo service
 - Server entries pointing to the echo pod endpoints
@@ -456,6 +459,7 @@ kubectl logs -l app.kubernetes.io/name=haproxy-template-ic
 ```
 
 Common issues:
+
 - Missing HAProxyTemplateConfig or Secret
 - Insufficient RBAC permissions
 - Cannot connect to Kubernetes API
@@ -473,6 +477,7 @@ curl -u admin:adminpass http://localhost:5555/v2/info
 ```
 
 If this fails, check:
+
 - Dataplane API sidecar is running
 - Credentials match between controller and HAProxy
 - Master socket exists at `/etc/haproxy/haproxy-master.sock`
@@ -480,6 +485,7 @@ If this fails, check:
 ### Ingress Not Routing
 
 Check that:
+
 1. The Ingress has `ingressClassName: haproxy-template-ic`
 2. The Ingress is in the same namespace as watched resources
 3. The backend Service exists and has endpoints

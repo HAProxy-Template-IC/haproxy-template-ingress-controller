@@ -25,69 +25,69 @@ This package provides a lightweight, production-ready solution for Kubernetes ad
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
+ "context"
+ "fmt"
+ "log"
 
-	"haproxy-template-ic/pkg/webhook"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+ "haproxy-template-ic/pkg/webhook"
+ "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func main() {
-	ctx := context.Background()
+ ctx := context.Background()
 
-	// Load TLS certificates from external source (Kubernetes Secret, cert-manager, etc.)
-	certPEM, keyPEM := loadCertificates()
+ // Load TLS certificates from external source (Kubernetes Secret, cert-manager, etc.)
+ certPEM, keyPEM := loadCertificates()
 
-	// Create webhook server
-	server := webhook.NewServer(&webhook.ServerConfig{
-		Port:    9443,
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-		Path:    "/validate",
-	})
+ // Create webhook server
+ server := webhook.NewServer(&webhook.ServerConfig{
+  Port:    9443,
+  CertPEM: certPEM,
+  KeyPEM:  keyPEM,
+  Path:    "/validate",
+ })
 
-	// Register validators by GVK (Group/Version.Kind)
-	server.RegisterValidator("networking.k8s.io/v1.Ingress", validateIngress)
-	server.RegisterValidator("v1.ConfigMap", validateConfigMap)
+ // Register validators by GVK (Group/Version.Kind)
+ server.RegisterValidator("networking.k8s.io/v1.Ingress", validateIngress)
+ server.RegisterValidator("v1.ConfigMap", validateConfigMap)
 
-	// Start server
-	log.Println("Starting webhook server on :9443")
-	if err := server.Start(ctx); err != nil {
-		log.Fatal(err)
-	}
+ // Start server
+ log.Println("Starting webhook server on :9443")
+ if err := server.Start(ctx); err != nil {
+  log.Fatal(err)
+ }
 }
 
 // Validation function with full admission context
 func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
-	// Access the resource object (already parsed as unstructured.Unstructured)
-	if ctx.Object == nil {
-		return false, "", fmt.Errorf("object is nil")
-	}
+ // Access the resource object (already parsed as unstructured.Unstructured)
+ if ctx.Object == nil {
+  return false, "", fmt.Errorf("object is nil")
+ }
 
-	// Extract spec using unstructured helpers
-	spec, found, err := unstructured.NestedMap(ctx.Object.Object, "spec")
-	if err != nil || !found {
-		return false, "spec is required", nil
-	}
+ // Extract spec using unstructured helpers
+ spec, found, err := unstructured.NestedMap(ctx.Object.Object, "spec")
+ if err != nil || !found {
+  return false, "spec is required", nil
+ }
 
-	// Validate rules exist
-	rules, found, err := unstructured.NestedSlice(spec, "rules")
-	if err != nil || !found || len(rules) == 0 {
-		return false, "at least one rule is required", nil
-	}
+ // Validate rules exist
+ rules, found, err := unstructured.NestedSlice(spec, "rules")
+ if err != nil || !found || len(rules) == 0 {
+  return false, "at least one rule is required", nil
+ }
 
-	// For UPDATE operations, compare with old object
-	if ctx.Operation == "UPDATE" && ctx.OldObject != nil {
-		// Implement immutability checks or migration validation
-	}
+ // For UPDATE operations, compare with old object
+ if ctx.Operation == "UPDATE" && ctx.OldObject != nil {
+  // Implement immutability checks or migration validation
+ }
 
-	return true, "", nil
+ return true, "", nil
 }
 
 func validateConfigMap(ctx *webhook.ValidationContext) (bool, string, error) {
-	// Simple validation example
-	return true, "", nil
+ // Simple validation example
+ return true, "", nil
 }
 ```
 
@@ -101,23 +101,23 @@ Use cert-manager or manually created certificates stored in a Kubernetes Secret:
 
 ```go
 import (
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/v1"
+ corev1 "k8s.io/api/core/v1"
+ metav1 "k8s.io/apimachinery/pkg/v1"
 )
 
 // Fetch certificates from Kubernetes Secret
 secret, err := client.CoreV1().Secrets("default").Get(ctx, "webhook-certs", metav1.GetOptions{})
 if err != nil {
-	log.Fatal(err)
+ log.Fatal(err)
 }
 
 certPEM := secret.Data["tls.crt"]
 keyPEM := secret.Data["tls.key"]
 
 server := webhook.NewServer(&webhook.ServerConfig{
-	Port:    9443,
-	CertPEM: certPEM,
-	KeyPEM:  keyPEM,
+ Port:    9443,
+ CertPEM: certPEM,
+ KeyPEM:  keyPEM,
 })
 ```
 
@@ -146,7 +146,7 @@ Then load from the generated Secret:
 ```go
 secret, err := client.CoreV1().Secrets("default").Get(ctx, "webhook-tls", metav1.GetOptions{})
 if err != nil {
-	log.Fatal(err)
+ log.Fatal(err)
 }
 
 certPEM := secret.Data["tls.crt"]
@@ -183,13 +183,13 @@ keyPEM, err := ioutil.ReadFile("/etc/webhook/certs/tls.key")
 
 ```go
 server := webhook.NewServer(&webhook.ServerConfig{
-	Port:         9443,                  // HTTPS port
-	BindAddress:  "0.0.0.0",             // Listen address
-	CertPEM:      certPEM,               // Server certificate
-	KeyPEM:       keyPEM,                // Server private key
-	Path:         "/validate",           // Webhook endpoint path
-	ReadTimeout:  10 * time.Second,      // Request read timeout
-	WriteTimeout: 10 * time.Second,      // Response write timeout
+ Port:         9443,                  // HTTPS port
+ BindAddress:  "0.0.0.0",             // Listen address
+ CertPEM:      certPEM,               // Server certificate
+ KeyPEM:       keyPEM,                // Server private key
+ Path:         "/validate",           // Webhook endpoint path
+ ReadTimeout:  10 * time.Second,      // Request read timeout
+ WriteTimeout: 10 * time.Second,      // Response write timeout
 })
 ```
 
@@ -214,25 +214,25 @@ The ValidationContext provides complete admission request information:
 
 ```go
 type ValidationContext struct {
-	// Object is the resource being validated (*unstructured.Unstructured)
-	// For CREATE: the object being created
-	// For UPDATE: the new version
-	// For DELETE: the object being deleted
-	Object *unstructured.Unstructured
+ // Object is the resource being validated (*unstructured.Unstructured)
+ // For CREATE: the object being created
+ // For UPDATE: the new version
+ // For DELETE: the object being deleted
+ Object *unstructured.Unstructured
 
-	// OldObject is the existing version (UPDATE/DELETE only)
-	OldObject *unstructured.Unstructured
+ // OldObject is the existing version (UPDATE/DELETE only)
+ OldObject *unstructured.Unstructured
 
-	// Operation type: "CREATE", "UPDATE", "DELETE", "CONNECT"
-	Operation string
+ // Operation type: "CREATE", "UPDATE", "DELETE", "CONNECT"
+ Operation string
 
-	// Resource metadata
-	Namespace string  // Empty for cluster-scoped resources
-	Name      string  // May be empty for CREATE with generateName
-	UID       string  // Unique request identifier
+ // Resource metadata
+ Namespace string  // Empty for cluster-scoped resources
+ Name      string  // May be empty for CREATE with generateName
+ UID       string  // Unique request identifier
 
-	// User information for authorization decisions
-	UserInfo interface{}
+ // User information for authorization decisions
+ UserInfo interface{}
 }
 ```
 
@@ -254,9 +254,9 @@ defer cancel()
 
 // Start server in goroutine
 go func() {
-	if err := server.Start(ctx); err != nil {
-		log.Printf("Server error: %v", err)
-	}
+ if err := server.Start(ctx); err != nil {
+  log.Printf("Server error: %v", err)
+ }
 }()
 
 // Wait for shutdown signal
@@ -333,16 +333,16 @@ webhooks:
 
 ```go
 func validateResource(ctx *webhook.ValidationContext) (bool, string, error) {
-	switch ctx.Operation {
-	case "CREATE":
-		return validateCreate(ctx.Object)
-	case "UPDATE":
-		return validateUpdate(ctx.OldObject, ctx.Object)
-	case "DELETE":
-		return validateDelete(ctx.Object)
-	default:
-		return true, "", nil
-	}
+ switch ctx.Operation {
+ case "CREATE":
+  return validateCreate(ctx.Object)
+ case "UPDATE":
+  return validateUpdate(ctx.OldObject, ctx.Object)
+ case "DELETE":
+  return validateDelete(ctx.Object)
+ default:
+  return true, "", nil
+ }
 }
 ```
 
@@ -350,15 +350,15 @@ func validateResource(ctx *webhook.ValidationContext) (bool, string, error) {
 
 ```go
 func validateUpdate(old, new *unstructured.Unstructured) (bool, string, error) {
-	// Extract immutable field
-	oldValue, _, _ := unstructured.NestedString(old.Object, "spec", "immutableField")
-	newValue, _, _ := unstructured.NestedString(new.Object, "spec", "immutableField")
+ // Extract immutable field
+ oldValue, _, _ := unstructured.NestedString(old.Object, "spec", "immutableField")
+ newValue, _, _ := unstructured.NestedString(new.Object, "spec", "immutableField")
 
-	if oldValue != newValue {
-		return false, "field spec.immutableField is immutable", nil
-	}
+ if oldValue != newValue {
+  return false, "field spec.immutableField is immutable", nil
+ }
 
-	return true, "", nil
+ return true, "", nil
 }
 ```
 
@@ -366,16 +366,16 @@ func validateUpdate(old, new *unstructured.Unstructured) (bool, string, error) {
 
 ```go
 func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
-	// Extract annotations
-	annotations := ctx.Object.GetAnnotations()
+ // Extract annotations
+ annotations := ctx.Object.GetAnnotations()
 
-	// Skip validation if annotation present
-	if _, skip := annotations["skip-validation"]; skip {
-		return true, "", nil
-	}
+ // Skip validation if annotation present
+ if _, skip := annotations["skip-validation"]; skip {
+  return true, "", nil
+ }
 
-	// Continue with validation...
-	return validateIngressRules(ctx.Object)
+ // Continue with validation...
+ return validateIngressRules(ctx.Object)
 }
 ```
 
@@ -383,23 +383,23 @@ func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
 
 ```go
 func validateWithAPI(valCtx *webhook.ValidationContext) (bool, string, error) {
-	// Create timeout context for external call
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+ // Create timeout context for external call
+ ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+ defer cancel()
 
-	// Call external API for validation
-	valid, err := externalAPI.Validate(ctx, valCtx.Object)
-	if err != nil {
-		// Internal error - return as error
-		return false, "", fmt.Errorf("external validation failed: %w", err)
-	}
+ // Call external API for validation
+ valid, err := externalAPI.Validate(ctx, valCtx.Object)
+ if err != nil {
+  // Internal error - return as error
+  return false, "", fmt.Errorf("external validation failed: %w", err)
+ }
 
-	if !valid {
-		// Validation failed - deny with reason
-		return false, "resource rejected by external policy", nil
-	}
+ if !valid {
+  // Validation failed - deny with reason
+  return false, "resource rejected by external policy", nil
+ }
 
-	return true, "", nil
+ return true, "", nil
 }
 ```
 
@@ -407,26 +407,26 @@ func validateWithAPI(valCtx *webhook.ValidationContext) (bool, string, error) {
 
 ```go
 type ValidationChain struct {
-	validators []webhook.ValidationFunc
+ validators []webhook.ValidationFunc
 }
 
 func (vc *ValidationChain) Validate(ctx *webhook.ValidationContext) (bool, string, error) {
-	for _, validator := range vc.validators {
-		allowed, reason, err := validator(ctx)
-		if err != nil || !allowed {
-			return allowed, reason, err
-		}
-	}
-	return true, "", nil
+ for _, validator := range vc.validators {
+  allowed, reason, err := validator(ctx)
+  if err != nil || !allowed {
+   return allowed, reason, err
+  }
+ }
+ return true, "", nil
 }
 
 // Usage
 chain := &ValidationChain{
-	validators: []webhook.ValidationFunc{
-		validateStructure,
-		validateBusinessRules,
-		validateSecurity,
-	},
+ validators: []webhook.ValidationFunc{
+  validateStructure,
+  validateBusinessRules,
+  validateSecurity,
+ },
 }
 
 server.RegisterValidator("v1.Ingress", chain.Validate)
@@ -438,17 +438,17 @@ server.RegisterValidator("v1.Ingress", chain.Validate)
 
 ```go
 func validateResource(ctx *webhook.ValidationContext) (bool, string, error) {
-	// Validation failure (deny admission with message)
-	if !isValid(ctx.Object) {
-		return false, "resource does not meet requirements", nil
-	}
+ // Validation failure (deny admission with message)
+ if !isValid(ctx.Object) {
+  return false, "resource does not meet requirements", nil
+ }
 
-	// Internal error (HTTP 500, triggers webhook retry)
-	if err := checkExternalDependency(ctx.Object); err != nil {
-		return false, "", fmt.Errorf("dependency check failed: %w", err)
-	}
+ // Internal error (HTTP 500, triggers webhook retry)
+ if err := checkExternalDependency(ctx.Object); err != nil {
+  return false, "", fmt.Errorf("dependency check failed: %w", err)
+ }
 
-	return true, "", nil
+ return true, "", nil
 }
 ```
 
@@ -459,16 +459,16 @@ Wrap validation logic if needed:
 
 ```go
 func safeValidator(ctx *webhook.ValidationContext) (allowed bool, reason string, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			allowed = false
-			reason = ""
-			err = fmt.Errorf("validation panic: %v", r)
-		}
-	}()
+ defer func() {
+  if r := recover(); r != nil {
+   allowed = false
+   reason = ""
+   err = fmt.Errorf("validation panic: %v", r)
+  }
+ }()
 
-	// Validation logic that might panic
-	return riskyValidation(ctx)
+ // Validation logic that might panic
+ return riskyValidation(ctx)
 }
 ```
 
@@ -478,60 +478,60 @@ func safeValidator(ctx *webhook.ValidationContext) (allowed bool, reason string,
 
 ```go
 func TestValidateIngress(t *testing.T) {
-	tests := []struct {
-		name    string
-		ctx     *webhook.ValidationContext
-		allowed bool
-		reason  string
-		wantErr bool
-	}{
-		{
-			name: "valid ingress",
-			ctx: &webhook.ValidationContext{
-				Object: &unstructured.Unstructured{
-					Object: map[string]interface{}{
-						"spec": map[string]interface{}{
-							"rules": []interface{}{
-								map[string]interface{}{"host": "example.com"},
-							},
-						},
-					},
-				},
-				Operation: "CREATE",
-			},
-			allowed: true,
-		},
-		{
-			name: "missing spec",
-			ctx: &webhook.ValidationContext{
-				Object: &unstructured.Unstructured{
-					Object: map[string]interface{}{},
-				},
-				Operation: "CREATE",
-			},
-			allowed: false,
-			reason:  "spec is required",
-		},
-	}
+ tests := []struct {
+  name    string
+  ctx     *webhook.ValidationContext
+  allowed bool
+  reason  string
+  wantErr bool
+ }{
+  {
+   name: "valid ingress",
+   ctx: &webhook.ValidationContext{
+    Object: &unstructured.Unstructured{
+     Object: map[string]interface{}{
+      "spec": map[string]interface{}{
+       "rules": []interface{}{
+        map[string]interface{}{"host": "example.com"},
+       },
+      },
+     },
+    },
+    Operation: "CREATE",
+   },
+   allowed: true,
+  },
+  {
+   name: "missing spec",
+   ctx: &webhook.ValidationContext{
+    Object: &unstructured.Unstructured{
+     Object: map[string]interface{}{},
+    },
+    Operation: "CREATE",
+   },
+   allowed: false,
+   reason:  "spec is required",
+  },
+ }
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			allowed, reason, err := validateIngress(tt.ctx)
+ for _, tt := range tests {
+  t.Run(tt.name, func(t *testing.T) {
+   allowed, reason, err := validateIngress(tt.ctx)
 
-			if tt.wantErr && err == nil {
-				t.Error("expected error, got nil")
-			}
-			if !tt.wantErr && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if allowed != tt.allowed {
-				t.Errorf("allowed = %v, want %v", allowed, tt.allowed)
-			}
-			if reason != tt.reason {
-				t.Errorf("reason = %q, want %q", reason, tt.reason)
-			}
-		})
-	}
+   if tt.wantErr && err == nil {
+    t.Error("expected error, got nil")
+   }
+   if !tt.wantErr && err != nil {
+    t.Errorf("unexpected error: %v", err)
+   }
+   if allowed != tt.allowed {
+    t.Errorf("allowed = %v, want %v", allowed, tt.allowed)
+   }
+   if reason != tt.reason {
+    t.Errorf("reason = %q, want %q", reason, tt.reason)
+   }
+  })
+ }
 }
 ```
 
@@ -539,29 +539,29 @@ func TestValidateIngress(t *testing.T) {
 
 ```go
 func TestWebhookServer(t *testing.T) {
-	// Load test certificates
-	certPEM, keyPEM := loadTestCertificates()
+ // Load test certificates
+ certPEM, keyPEM := loadTestCertificates()
 
-	// Create server
-	server := webhook.NewServer(&webhook.ServerConfig{
-		Port:    0, // Random port for testing
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
+ // Create server
+ server := webhook.NewServer(&webhook.ServerConfig{
+  Port:    0, // Random port for testing
+  CertPEM: certPEM,
+  KeyPEM:  keyPEM,
+ })
 
-	// Register test validator
-	server.RegisterValidator("v1.ConfigMap", func(ctx *webhook.ValidationContext) (bool, string, error) {
-		return true, "", nil
-	})
+ // Register test validator
+ server.RegisterValidator("v1.ConfigMap", func(ctx *webhook.ValidationContext) (bool, string, error) {
+  return true, "", nil
+ })
 
-	// Start server
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+ // Start server
+ ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+ defer cancel()
 
-	go server.Start(ctx)
+ go server.Start(ctx)
 
-	// Test webhook endpoint
-	// ... make HTTPS request to server ...
+ // Test webhook endpoint
+ // ... make HTTPS request to server ...
 }
 ```
 
@@ -574,15 +574,15 @@ Validation functions should complete quickly (typically < 1 second). The default
 ```go
 // Good - fast validation
 func fastValidator(ctx *webhook.ValidationContext) (bool, string, error) {
-	// Quick checks only
-	return checkBasicRules(ctx.Object)
+ // Quick checks only
+ return checkBasicRules(ctx.Object)
 }
 
 // Bad - slow validation
 func slowValidator(ctx *webhook.ValidationContext) (bool, string, error) {
-	// Avoid expensive operations
-	time.Sleep(5 * time.Second)  // DON'T DO THIS
-	return checkComplexRules(ctx.Object)
+ // Avoid expensive operations
+ time.Sleep(5 * time.Second)  // DON'T DO THIS
+ return checkComplexRules(ctx.Object)
 }
 ```
 
@@ -595,24 +595,24 @@ The server handles multiple requests concurrently. Ensure validation functions a
 var cache map[string]bool  // Shared state without synchronization
 
 func racyValidator(ctx *webhook.ValidationContext) (bool, string, error) {
-	cache[getKey(ctx.Object)] = true  // Race condition!
-	return true, "", nil
+ cache[getKey(ctx.Object)] = true  // Race condition!
+ return true, "", nil
 }
 
 // Good - thread-safe
 var (
-	cache = make(map[string]bool)
-	mu    sync.RWMutex
+ cache = make(map[string]bool)
+ mu    sync.RWMutex
 )
 
 func safeValidator(ctx *webhook.ValidationContext) (bool, string, error) {
-	key := getKey(ctx.Object)
+ key := getKey(ctx.Object)
 
-	mu.Lock()
-	cache[key] = true
-	mu.Unlock()
+ mu.Lock()
+ cache[key] = true
+ mu.Unlock()
 
-	return true, "", nil
+ return true, "", nil
 }
 ```
 
@@ -621,6 +621,7 @@ func safeValidator(ctx *webhook.ValidationContext) (bool, string, error) {
 ### Webhook Not Called
 
 1. Check ValidatingWebhookConfiguration exists:
+
    ```bash
    kubectl get validatingwebhookconfigurations
    ```
@@ -628,11 +629,13 @@ func safeValidator(ctx *webhook.ValidationContext) (bool, string, error) {
 2. Verify CA bundle is correct in webhook config
 
 3. Check Service and Pod are running:
+
    ```bash
    kubectl get svc,pods
    ```
 
 4. Test webhook endpoint directly:
+
    ```bash
    kubectl port-forward pod/webhook-pod 9443:9443
    curl -k https://localhost:9443/healthz
@@ -641,11 +644,13 @@ func safeValidator(ctx *webhook.ValidationContext) (bool, string, error) {
 ### Certificate Errors
 
 1. Verify certificate validity:
+
    ```bash
    openssl x509 -in server.crt -text -noout
    ```
 
 2. Check DNS SANs match service name:
+
    ```bash
    openssl x509 -in server.crt -text -noout | grep DNS
    ```

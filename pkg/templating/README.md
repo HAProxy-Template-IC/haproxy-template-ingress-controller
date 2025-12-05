@@ -5,6 +5,7 @@
 This package provides a Go template engine with Jinja2-like syntax through Gonja v2. Templates are pre-compiled at initialization for fast rendering and early error detection.
 
 **Key features:**
+
 - Pre-compilation at startup (fail-fast, microsecond rendering)
 - Jinja2/Django template syntax
 - Thread-safe concurrent rendering
@@ -121,11 +122,13 @@ engine, err := templating.NewWithFilters(templating.EngineTypeGonja, templates, 
 | `eval` | Show JSONPath evaluation | `{{ route \| eval("$.priority") }}` |
 
 **sort_by modifiers:**
+
 - `:desc` - Descending order
 - `:exists` - Sort by field presence
 - `| length` - Sort by collection/string length
 
 **pathResolver.GetPath()** - Context method for file path resolution:
+
 ```jinja2
 {{ pathResolver.GetPath("host.map", "map") }}     {# /etc/haproxy/maps/host.map #}
 {{ pathResolver.GetPath("cert.pem", "cert") }}    {# /etc/haproxy/ssl/cert.pem #}
@@ -137,6 +140,7 @@ engine, err := templating.NewWithFilters(templating.EngineTypeGonja, templates, 
 Templates use Gonja v2 with Jinja2-like syntax. See [Gonja Documentation](https://github.com/nikolalohinski/gonja) for complete reference.
 
 **Variables:**
+
 ```jinja2
 {{ variable_name }}
 {{ user.name }}
@@ -144,6 +148,7 @@ Templates use Gonja v2 with Jinja2-like syntax. See [Gonja Documentation](https:
 ```
 
 **Filters:**
+
 ```jinja2
 {{ text | upper }}
 {{ value | default("N/A") }}
@@ -151,6 +156,7 @@ Templates use Gonja v2 with Jinja2-like syntax. See [Gonja Documentation](https:
 ```
 
 **Control Structures:**
+
 ```jinja2
 {% if condition %}...{% endif %}
 {% for item in items %}...{% endfor %}
@@ -177,6 +183,7 @@ Executes expensive computations only once per render, even across multiple inclu
 ```
 
 **Requirements:**
+
 - Variable must be created before the `compute_once` block
 - Use `namespace()` for mutable state
 
@@ -205,6 +212,7 @@ engine.DisableFilterDebug()
 ## Best Practices
 
 **1. Pre-compile at startup:**
+
 ```go
 // Good - compile once, reuse
 engine, err := templating.New(templating.EngineTypeGonja, templates)
@@ -220,6 +228,7 @@ for _, ctx := range contexts {
 ```
 
 **2. Check compilation errors early:**
+
 ```go
 engine, err := templating.New(templating.EngineTypeGonja, templates)
 if err != nil {
@@ -231,11 +240,13 @@ if err != nil {
 ```
 
 **3. Use default filter for optional values:**
+
 ```jinja2
 timeout connect {{ timeout_connect | default("5s") }}
 ```
 
 **4. Break large templates into pieces:**
+
 ```go
 templates := map[string]string{
     "haproxy.cfg": `{% include "global" %}{% include "backends" %}`,

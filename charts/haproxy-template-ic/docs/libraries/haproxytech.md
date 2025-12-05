@@ -1117,6 +1117,7 @@ haproxy.org/pod-maxconn: "100"
 **Behavior**:
 
 The annotation value represents the **total** maximum connections across all HAProxy replicas. The controller automatically:
+
 - Counts running HAProxy controller pods
 - Divides the total by the pod count (ceiling rounding)
 - Applies the per-pod value to each server line
@@ -1124,6 +1125,7 @@ The annotation value represents the **total** maximum connections across all HAP
 **Examples**:
 
 **Single HAProxy pod**: Value applied directly without division
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -1133,12 +1135,14 @@ metadata:
 ```
 
 Generated HAProxy configuration (1 HAProxy pod):
+
 ```haproxy
 # pod-maxconn: 100 total / 1 HAProxy pods = 100 per pod
 server SRV_1 10.0.1.5:8080 maxconn 100 check
 ```
 
 **Multiple HAProxy pods**: Value divided equally with ceiling rounding
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -1148,12 +1152,14 @@ metadata:
 ```
 
 Generated HAProxy configuration (2 HAProxy pods):
+
 ```haproxy
 # pod-maxconn: 100 total / 2 HAProxy pods = 50 per pod
 server SRV_1 10.0.1.5:8080 maxconn 50 check
 ```
 
 Generated HAProxy configuration (3 HAProxy pods, with ceiling rounding):
+
 ```haproxy
 # pod-maxconn: 100 total / 3 HAProxy pods = 34 per pod
 server SRV_1 10.0.1.5:8080 maxconn 34 check
@@ -1739,6 +1745,7 @@ http-request auth realm "API Access" unless { http_auth(auth_default_auth-creden
 **Related annotations**: `auth-secret`, `auth-realm`
 
 **Implementation notes**:
+
 - Secret format: Opaque secret where key=username, value=base64-encoded password hash
 - Supports cross-namespace secrets: `namespace/secretname`
 - Automatic deduplication: multiple ingresses sharing the same secret generate a single userlist
@@ -1787,6 +1794,7 @@ htpasswd -nbB admin mypassword | cut -d: -f2 | base64 -w0
 **Dependencies**: Requires `auth-type: basic-auth`
 
 **Implementation notes**:
+
 - Value must be ONLY the password hash, NOT "username:hash" (htpasswd format)
 - Multiple usernames supported: add multiple keys to the secret
 - HAProxy 3.2+ supports bcrypt ($2y$), not MD5 apr1 ($apr1$)

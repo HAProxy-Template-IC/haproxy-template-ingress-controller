@@ -1,6 +1,6 @@
 ## Appendices and References
 
-#### Definitions and Abbreviations
+### Definitions and Abbreviations
 
 - **API**: Application Programming Interface
 - **CRD**: Custom Resource Definition - Kubernetes extension mechanism
@@ -16,36 +16,35 @@
 #### References
 
 1. **HAProxy Documentation**
-   - Configuration Manual: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/
-   - Dataplane API: https://www.haproxy.com/documentation/haproxy-data-plane-api/
-   - Runtime API: https://www.haproxy.com/documentation/haproxy-runtime-api/
+   - Configuration Manual: <https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/>
+   - Dataplane API: <https://www.haproxy.com/documentation/haproxy-data-plane-api/>
+   - Runtime API: <https://www.haproxy.com/documentation/haproxy-runtime-api/>
 
 2. **HAProxy Go Libraries**
-   - client-native: https://github.com/haproxytech/client-native
+   - client-native: <https://github.com/haproxytech/client-native>
      - Configuration parser and validator
      - Used for syntax validation without running HAProxy
-   - dataplaneapi: https://github.com/haproxytech/dataplaneapi
+   - dataplaneapi: <https://github.com/haproxytech/dataplaneapi>
      - Reference implementation for validation strategies
      - Configuration management patterns
 
 3. **Kubernetes Client Libraries**
-   - client-go: https://github.com/kubernetes/client-go
+   - client-go: <https://github.com/kubernetes/client-go>
      - Official Kubernetes Go client
      - Informer pattern documentation
-   - apimachinery: https://github.com/kubernetes/apimachinery
+   - apimachinery: <https://github.com/kubernetes/apimachinery>
      - Common machinery for Kubernetes API interactions
 
 4. **Template Engines**
-   - gonja v2: https://github.com/nikolalohinski/gonja
+   - gonja v2: <https://github.com/nikolalohinski/gonja>
      - Pure Go Jinja2 template engine, actively maintained
      - Latest release: v2.4.1 (January 2025)
      - Recommended for Jinja2-compatible templating
 
 5. **Observability**
-   - Prometheus client_golang: https://github.com/prometheus/client_golang
-   - OpenTelemetry Go: https://github.com/open-telemetry/opentelemetry-go
+   - Prometheus client_golang: <https://github.com/prometheus/client_golang>
+   - OpenTelemetry Go: <https://github.com/open-telemetry/opentelemetry-go>
 
 6. **Design Patterns**
-   - Kubernetes Operator Pattern: https://kubernetes.io/docs/concepts/extend-kubernetes/operator/
-   - Controller Pattern: https://kubernetes.io/docs/concepts/architecture/controller/
-
+   - Kubernetes Operator Pattern: <https://kubernetes.io/docs/concepts/extend-kubernetes/operator/>
+   - Controller Pattern: <https://kubernetes.io/docs/concepts/architecture/controller/>

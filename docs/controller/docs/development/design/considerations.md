@@ -6,9 +6,9 @@ This software acts as ingress controller for a fleet of HAProxy load-balancers.
 It continuously watches a list of user-defined Kubernetes resource types and uses that as input to render the HAProxy
 main configuration file `haproxy.cfg` via templating engine and an optional amount of auxiliary files like custom error pages (`500.http`)
 or map files for lookups (`host.map`).
-After rendering the files they are validated and pushed via HAProxy Dataplane API (https://www.haproxy.com/documentation/haproxy-data-plane-api/).
+After rendering the files they are validated and pushed via HAProxy Dataplane API (<https://www.haproxy.com/documentation/haproxy-data-plane-api/>).
 By pushing only changed config parts via specialized API endpoints we can prevent unnecessary HAProxy reloads.
-Many specialized endpoints use the HAProxy runtime socket (https://www.haproxy.com/documentation/haproxy-runtime-api/)
+Many specialized endpoints use the HAProxy runtime socket (<https://www.haproxy.com/documentation/haproxy-runtime-api/>)
 under the hood and perform changes at runtime.
 The template rendering is triggered by changed Kubernetes resources.
 Additionally, a drift prevention monitor periodically triggers deployments (default 60s interval) to detect and correct configuration drift caused by external changes.
@@ -18,9 +18,9 @@ The drift prevention mechanism ensures the controller's desired configuration is
 ## Constraints
 
 The dataplane API does not support all config statements that the HAProxy config language supports
-(see https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/).
+(see <https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/>).
 Therefore, only rendered configurations that can be parsed by the dataplane API library
-(https://github.com/haproxytech/client-native) are supported.
+(<https://github.com/haproxytech/client-native>) are supported.
 
 ## System Environment
 

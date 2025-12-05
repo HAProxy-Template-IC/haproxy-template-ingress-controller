@@ -7,12 +7,14 @@ This guide explains how to deploy and operate the HAProxy Template Ingress Contr
 The controller supports running multiple replicas for high availability using leader election based on Kubernetes Leases. Only the elected leader performs write operations (deploying configurations to HAProxy), while all replicas continue watching resources, rendering templates, and validating configurations to maintain "hot standby" status.
 
 **Benefits of HA deployment:**
+
 - Zero-downtime during controller upgrades (rolling updates)
 - Automatic failover if leader pod crashes (~15-20 seconds)
 - All replicas ready to take over immediately (hot standby)
 - Balanced leader distribution across nodes
 
 **How it works:**
+
 1. All replicas watch Kubernetes resources and render HAProxy configurations
 2. Leader election determines which replica can deploy configs to HAProxy
 3. When leader fails, followers automatically elect a new leader
@@ -65,12 +67,14 @@ The timing parameters control failover speed and tolerance:
 | `retry_period` | 5s | Interval between leader renewal attempts | Should be < `renew_deadline` (1/3 ratio) |
 
 **Failover time calculation:**
+
 ```
 Worst-case failover = lease_duration + renew_deadline
 Default failover    = 60s + 15s = 75s (but typically 15-20s)
 ```
 
 **Clock skew tolerance:**
+
 ```
 Skew tolerance = lease_duration - renew_deadline
 Default        = 60s - 15s = 45s (handles up to 4x clock differences)
@@ -162,6 +166,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 ### No Leader Elected
 
 **Symptoms:**
+
 - No deployments happening
 - All replicas show `is_leader=0`
 - Logs show constant election failures
@@ -169,6 +174,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 **Common causes:**
 
 1. **Missing RBAC permissions:**
+
    ```bash
    kubectl auth can-i get leases --as=system:serviceaccount:<namespace>:haproxy-template-ic
    kubectl auth can-i create leases --as=system:serviceaccount:<namespace>:haproxy-template-ic
@@ -176,6 +182,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
    ```
 
 2. **Missing environment variables:**
+
    ```bash
    kubectl get pod <pod-name> -o yaml | grep -A2 "POD_NAME\|POD_NAMESPACE"
 
@@ -187,6 +194,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
    ```
 
 3. **API server connectivity:**
+
    ```bash
    kubectl logs <pod-name> | grep "connection refused\|timeout"
    ```
@@ -194,6 +202,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 ### Multiple Leaders (Split-Brain)
 
 **Symptoms:**
+
 - `sum(haproxy_ic_leader_election_is_leader) > 1`
 - Multiple pods deploying configs simultaneously
 - Conflicting deployments in HAProxy
@@ -201,17 +210,20 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 **This should never happen** with proper Kubernetes Lease implementation. If it does:
 
 1. Check for severe clock skew between nodes:
+
    ```bash
    # On each node
    timedatectl status
    ```
 
 2. Verify Kubernetes API server health:
+
    ```bash
    kubectl get --raw /healthz
    ```
 
 3. Restart all controller pods:
+
    ```bash
    kubectl rollout restart deployment haproxy-template-ic
    ```
@@ -219,6 +231,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 ### Frequent Leadership Changes
 
 **Symptoms:**
+
 - `rate(haproxy_ic_leader_election_transitions_total[1h]) > 5`
 - Logs show frequent "Lost leadership" / "Became leader" messages
 - Deployments failing intermittently
@@ -226,6 +239,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 **Common causes:**
 
 1. **Resource contention** - Leader pod can't renew lease in time:
+
    ```bash
    kubectl top pods -n <namespace>
    kubectl describe pod <leader-pod> | grep -A10 "Limits\|Requests"
@@ -234,6 +248,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
    **Solution:** Increase CPU/memory limits
 
 2. **Network issues** - API server communication delays:
+
    ```bash
    kubectl logs <pod-name> | grep "lease renew\|deadline"
    ```
@@ -241,6 +256,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
    **Solution:** Increase `lease_duration` and `renew_deadline`
 
 3. **Node issues** - Leader pod node experiencing problems:
+
    ```bash
    kubectl describe node <node-name>
    ```
@@ -250,6 +266,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 ### Leader Not Deploying
 
 **Symptoms:**
+
 - One replica shows `is_leader=1`
 - No deployment errors in logs
 - HAProxy configs not updating
@@ -265,6 +282,7 @@ kubectl logs <leader-pod> | grep "Started.*Deployer\|DeploymentScheduler"
 ```
 
 **Common causes:**
+
 - Deployment components failed to start (check logs for errors)
 - Rate limiting preventing deployment (check drift prevention interval)
 - HAProxy instances unreachable (check network connectivity)
@@ -274,14 +292,18 @@ kubectl logs <leader-pod> | grep "Started.*Deployer\|DeploymentScheduler"
 ### Replica Count
 
 **Development:**
+
 - 1 replica with `leader_election.enabled: false`
 
 **Staging:**
+
 - 2 replicas with leader election enabled
 
 **Production:**
+
 - 2-3 replicas across multiple availability zones
 - Enable PodDisruptionBudget:
+
   ```yaml
   podDisruptionBudget:
     enabled: true
@@ -356,6 +378,7 @@ To migrate an existing single-replica deployment to HA:
 1. **Verify RBAC permissions** (Helm chart updates this automatically)
 
 2. **Update values.yaml:**
+
    ```yaml
    replicaCount: 2
    controller:
@@ -366,6 +389,7 @@ To migrate an existing single-replica deployment to HA:
    ```
 
 3. **Upgrade with Helm:**
+
    ```bash
    helm upgrade haproxy-ic charts/haproxy-template-ic \
      --reuse-values \
@@ -373,11 +397,13 @@ To migrate an existing single-replica deployment to HA:
    ```
 
 4. **Verify leadership:**
+
    ```bash
    kubectl logs -f deployment/haproxy-template-ic | grep leader
    ```
 
 5. **Confirm one leader:**
+
    ```bash
    kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic \
      -o custom-columns=NAME:.metadata.name,LEADER:.status.podIP

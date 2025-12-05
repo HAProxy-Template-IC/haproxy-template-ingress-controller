@@ -8,6 +8,7 @@ Development context for Kubernetes resource watching and indexing.
 ## When to Work Here
 
 Modify this package when:
+
 - Adding support for new Kubernetes resource types
 - Changing indexing or storage strategies
 - Modifying watcher behavior (debouncing, callbacks)
@@ -15,6 +16,7 @@ Modify this package when:
 - Adding new JSONPath expressions
 
 **DO NOT** modify this package for:
+
 - Event type definitions → Use `pkg/controller/events`
 - Controller coordination → Use `pkg/controller`
 - Template rendering → Use `pkg/templating`
@@ -37,12 +39,14 @@ pkg/k8s/
 ### Two Watcher Types
 
 **Watcher**: For bulk resource watching (Ingress, Service, EndpointSlice)
+
 - Watches collections of resources
 - Debounces rapid changes
 - Indexed storage for fast lookups
 - Tracks initial sync state
 
 **SingleWatcher**: For single resource watching (ConfigMap, Secret)
+
 - Watches one specific resource (namespace + name)
 - Immediate callbacks (no debouncing)
 - No indexing or store overhead
@@ -51,12 +55,14 @@ pkg/k8s/
 ### Store Types
 
 **MemoryStore**: Fast in-memory storage
+
 - Complete resources stored in memory
 - O(1) lookups via composite index keys
 - Default choice for most resources
 - Memory usage: ~1KB per resource
 
 **CachedStore**: API-backed with TTL cache
+
 - Only caches recently accessed resources
 - Falls back to Kubernetes API for cache misses
 - Use for large resources (Secrets, ConfigMaps with big data)
@@ -112,6 +118,7 @@ type WatcherConfig struct {
 ```
 
 **When to modify:**
+
 - Adding new Store method
 - Changing watcher configuration options
 - Adding new callback types
@@ -132,6 +139,7 @@ dynamicClient := client.Dynamic()
 **Common tasks:**
 
 Adding custom client configuration:
+
 ```go
 // client/client.go
 type Config struct {
@@ -173,6 +181,7 @@ err := indexer.ValidateJSONPath("invalid..path")       // Error
 ```
 
 **When to modify:**
+
 - Supporting new JSONPath expressions
 - Optimizing field filtering
 - Adding field validation
@@ -213,11 +222,13 @@ resource, _ := store.Get("default", "my-secret")  // Cached
 ```
 
 **When to use CachedStore:**
+
 - Resources with large data fields (Secrets with certificates)
 - Resources accessed infrequently
 - Memory pressure from many resources
 
 **When to use MemoryStore:**
+
 - Most resources (Ingress, Service, EndpointSlice)
 - Resources accessed frequently
 - Need for fast iteration (List() operations)
@@ -571,11 +582,13 @@ if err := watcher.WaitForSync(ctx); err != nil {
 ### Memory Usage
 
 **MemoryStore:**
+
 - Per resource: ~1KB (Ingress) to ~10KB (Service with many endpoints)
 - 1000 ingresses ≈ 1MB memory
 - Suitable for most use cases
 
 **CachedStore:**
+
 - Per cached entry: Same as resource size
 - TTL eviction reduces memory pressure
 - Cache size limit prevents unbounded growth
@@ -583,16 +596,19 @@ if err := watcher.WaitForSync(ctx); err != nil {
 ### CPU Usage
 
 **Indexing:**
+
 - O(N) where N = number of index expressions
 - Typically <1ms per resource
 - Runs during Add/Update operations
 
 **Lookups:**
+
 - O(1) with proper indexing
 - Map lookup with composite key
 - Typically <100ns
 
 **Debouncing:**
+
 - Single timer per watcher
 - Minimal CPU overhead
 - Reduces reconciliation frequency
@@ -600,11 +616,13 @@ if err := watcher.WaitForSync(ctx); err != nil {
 ### Network Usage
 
 **Watcher:**
+
 - Initial list: Downloads all resources
 - Watch: Receives only changes
 - Efficient for long-running processes
 
 **CachedStore:**
+
 - Fetches on cache miss
 - Adds API calls vs pure MemoryStore
 - Trade-off: Memory vs network
@@ -677,5 +695,5 @@ go func() {
 - API documentation: `pkg/k8s/README.md`
 - Architecture: `/docs/development/design.md`
 - Leader election: `pkg/k8s/leaderelection/CLAUDE.md`
-- client-go documentation: https://github.com/kubernetes/client-go
-- JSONPath syntax: https://kubernetes.io/docs/reference/kubectl/jsonpath/
+- client-go documentation: <https://github.com/kubernetes/client-go>
+- JSONPath syntax: <https://kubernetes.io/docs/reference/kubectl/jsonpath/>

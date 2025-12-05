@@ -38,6 +38,7 @@ if err := server.Start(ctx); err != nil {
 ```
 
 **Features:**
+
 - Instance-based (not global)
 - Graceful shutdown support
 - OpenMetrics format support
@@ -171,6 +172,7 @@ size := metrics.NewHistogramWithBuckets(
 Exposes metrics in Prometheus/OpenMetrics format.
 
 **Response:**
+
 ```
 # HELP haproxy_ic_requests_total Total requests
 # TYPE haproxy_ic_requests_total counter
@@ -236,7 +238,8 @@ func TestMetricsServer(t *testing.T) {
 
 ## Best Practices
 
-### DO:
+### DO
+
 - ✅ Use instance-based registries
 - ✅ Follow Prometheus naming conventions
 - ✅ Use appropriate metric types (counter, gauge, histogram)
@@ -244,7 +247,8 @@ func TestMetricsServer(t *testing.T) {
 - ✅ Add labels for dimensions, but keep cardinality low
 - ✅ Document what each metric measures
 
-### DON'T:
+### DON'T
+
 - ❌ Use global `prometheus.DefaultRegisterer`
 - ❌ Create metrics with high cardinality labels (e.g., user IDs)
 - ❌ Re-register metrics on the same registry
@@ -256,11 +260,13 @@ func TestMetricsServer(t *testing.T) {
 ### Counter Metrics
 
 Rate of events per second:
+
 ```promql
 rate(haproxy_ic_requests_total[5m])
 ```
 
 Total events in time range:
+
 ```promql
 increase(haproxy_ic_requests_total[1h])
 ```
@@ -268,12 +274,14 @@ increase(haproxy_ic_requests_total[1h])
 ### Histogram Metrics
 
 Average latency:
+
 ```promql
 rate(haproxy_ic_duration_seconds_sum[5m]) /
 rate(haproxy_ic_duration_seconds_count[5m])
 ```
 
 95th percentile latency:
+
 ```promql
 histogram_quantile(0.95, rate(haproxy_ic_duration_seconds_bucket[5m]))
 ```
@@ -281,11 +289,13 @@ histogram_quantile(0.95, rate(haproxy_ic_duration_seconds_bucket[5m]))
 ### Gauge Metrics
 
 Current value:
+
 ```promql
 haproxy_ic_active_connections
 ```
 
 Maximum value over time:
+
 ```promql
 max_over_time(haproxy_ic_active_connections[5m])
 ```
@@ -301,6 +311,6 @@ This package provides generic infrastructure. Domain-specific metrics should be 
 ## Resources
 
 - Development context: `pkg/metrics/CLAUDE.md`
-- Prometheus documentation: https://prometheus.io/docs/
-- Prometheus naming best practices: https://prometheus.io/docs/practices/naming/
-- Prometheus client library: https://github.com/prometheus/client_golang
+- Prometheus documentation: <https://prometheus.io/docs/>
+- Prometheus naming best practices: <https://prometheus.io/docs/practices/naming/>
+- Prometheus client library: <https://github.com/prometheus/client_golang>

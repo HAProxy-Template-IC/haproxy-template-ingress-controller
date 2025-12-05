@@ -80,6 +80,7 @@ err = keepalived.CommitTransaction(ctx, txID)
 ## Error Handling
 
 All operations may return:
+
 - `client.ErrEnterpriseRequired` - Connected to Community edition
 - API-specific errors (validation, not found, etc.)
 - Network/connection errors

@@ -7,6 +7,7 @@ This document provides the architectural design for the HAProxy Template Ingress
 The design follows event-driven architecture principles with clean component separation. Components communicate through a central EventBus using pub/sub and request-response patterns, enabling observability, testability, and loose coupling.
 
 **Why this architecture:**
+
 - Event-driven design allows components to evolve independently
 - Template-based approach provides maximum flexibility without annotation constraints
 - Multi-phase validation prevents invalid configurations from reaching production
@@ -70,11 +71,13 @@ Pure business logic components (templating, k8s, dataplane) have no event depend
 ## See Also
 
 ### User Guides
+
 - [Templating Guide](../templating.md) - User guide for writing templates
 - [CRD Reference](../crd-reference.md) - HAProxyTemplateConfig CRD documentation
 - [Supported Configuration Reference](../supported-configuration.md) - What HAProxy features you can configure
 
 ### Operations
+
 - [High Availability](../operations/high-availability.md) - Leader election and HA deployments
 - [Monitoring](../operations/monitoring.md) - Prometheus metrics and alerting
 - [Debugging](../operations/debugging.md) - Runtime introspection and troubleshooting
@@ -82,6 +85,7 @@ Pure business logic components (templating, k8s, dataplane) have no event depend
 - [Performance](../operations/performance.md) - Resource sizing and optimization
 
 ### Package Documentation
+
 - [Controller Package](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/controller/README.md) - Event-driven controller implementation
 - [Template Engine](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/templating/README.md) - Template engine API reference
 - [Kubernetes Integration](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/k8s/README.md) - Resource watching and indexing API

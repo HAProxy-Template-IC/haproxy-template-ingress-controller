@@ -5,6 +5,7 @@ Generic HTTP server infrastructure for exposing internal application state via d
 ## Overview
 
 The introspection package provides a reusable framework for creating debug HTTP servers with:
+
 - Instance-based variable registry
 - JSONPath field selection
 - Built-in Go profiling (pprof)
@@ -170,6 +171,7 @@ func (f Func) Get() (interface{}, error)
 Computed variable - value is calculated on-demand when requested.
 
 Example:
+
 ```go
 registry.Publish("uptime", introspection.Func(func() (interface{}, error) {
     return map[string]interface{}{
@@ -199,6 +201,7 @@ func (s *Server) Start(ctx context.Context) error
 Starts the HTTP server. Blocks until context is cancelled. Performs graceful shutdown with 30s timeout.
 
 Exposes endpoints:
+
 - `GET /debug/vars` - List all variables
 - `GET /debug/vars/{path}` - Get variable value
 - `GET /debug/vars/{path}?field={.jsonpath}` - Extract specific field
@@ -245,6 +248,7 @@ Parses `?field={.path}` query parameter from HTTP request.
 Lists all registered variable paths.
 
 **Response:**
+
 ```json
 {
   "vars": ["config", "uptime", "metrics"]
@@ -256,11 +260,13 @@ Lists all registered variable paths.
 Retrieves variable value.
 
 **Examples:**
+
 ```bash
 curl http://localhost:6060/debug/vars/uptime
 ```
 
 **Response:**
+
 ```json
 {
   "seconds": 123.45,
@@ -273,6 +279,7 @@ curl http://localhost:6060/debug/vars/uptime
 Extracts specific field using JSONPath.
 
 **Examples:**
+
 ```bash
 # Get just the seconds
 curl 'http://localhost:6060/debug/vars/uptime?field={.seconds}'
@@ -283,16 +290,18 @@ curl 'http://localhost:6060/debug/vars/config?field={.templates.main}'
 ```
 
 **JSONPath Syntax:**
+
 - `{.field}` - Top-level field
 - `{.nested.field}` - Nested field
 - `{.array[0]}` - Array element
 - `{.array[*]}` - All array elements
 
-See: https://kubernetes.io/docs/reference/kubectl/jsonpath/
+See: <https://kubernetes.io/docs/reference/kubectl/jsonpath/>
 
 ### GET /debug/pprof/
 
 Go profiling endpoints (automatically included):
+
 - `/debug/pprof/` - Index
 - `/debug/pprof/heap` - Memory allocations
 - `/debug/pprof/goroutine` - Goroutine stacks
@@ -300,6 +309,7 @@ Go profiling endpoints (automatically included):
 - `/debug/pprof/trace?seconds=5` - Execution trace
 
 **Usage:**
+
 ```bash
 # Interactive profiling
 go tool pprof http://localhost:6060/debug/pprof/heap
@@ -342,6 +352,7 @@ registry.Publish("myvar", &MyVar{data: myData})
 1. **Bind Address**: Server binds to 0.0.0.0 by default. In Kubernetes pods, this is safe (private network). For other deployments, consider firewall rules.
 
 2. **Sensitive Data**: Do NOT expose passwords, keys, or tokens. Return metadata only:
+
    ```go
    // Good
    return map[string]interface{}{
@@ -373,6 +384,7 @@ curl http://localhost:6060/debug/pprof/heap
 ## Examples
 
 See:
+
 - Controller integration: `pkg/controller/controller.go` (Stage 6)
 - Debug variables: `pkg/controller/debug/`
 - Acceptance tests: `tests/acceptance/debug_client.go`

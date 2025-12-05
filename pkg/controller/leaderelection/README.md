@@ -97,6 +97,7 @@ func New(
 Creates a new leader election component. The provided callbacks are wrapped to publish events before executing the callback.
 
 **Parameters:**
+
 - `config`: Pure leader election configuration (see `pkg/k8s/leaderelection`)
 - `clientset`: Kubernetes clientset for Lease management
 - `eventBus`: EventBus for publishing observability events
@@ -104,6 +105,7 @@ Creates a new leader election component. The provided callbacks are wrapped to p
 - `logger`: Structured logger (uses slog.Default() if nil)
 
 **Returns:**
+
 - Component instance or error if validation fails
 
 #### Run
@@ -139,6 +141,7 @@ The component publishes the following events to the EventBus:
 Published when leader election starts (at component startup).
 
 **Fields:**
+
 - `Identity`: This instance's identity (pod name)
 - `LeaseName`: Name of the Lease resource
 - `LeaseNamespace`: Namespace of the Lease resource
@@ -148,6 +151,7 @@ Published when leader election starts (at component startup).
 Published when this instance becomes the leader (before OnStartedLeading callback).
 
 **Fields:**
+
 - `Identity`: This instance's identity
 
 ### LostLeadershipEvent
@@ -155,6 +159,7 @@ Published when this instance becomes the leader (before OnStartedLeading callbac
 Published when this instance loses leadership (before OnStoppedLeading callback).
 
 **Fields:**
+
 - `Identity`: This instance's identity
 - `Reason`: Why leadership was lost (e.g., "lease_lost")
 
@@ -163,6 +168,7 @@ Published when this instance loses leadership (before OnStoppedLeading callback)
 Published when a new leader is observed (may be self or another instance).
 
 **Fields:**
+
 - `NewLeaderIdentity`: Identity of the new leader
 - `IsSelf`: Whether this instance is the new leader
 

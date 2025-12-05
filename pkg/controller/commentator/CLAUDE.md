@@ -5,12 +5,14 @@ Development context for the Event Commentator component.
 ## When to Work Here
 
 Work in this package when:
+
 - Adding logging for new event types
 - Improving event correlation logic
 - Enhancing domain-aware insights
 - Debugging event flow
 
 **DO NOT** work here for:
+
 - Event definitions → Use `pkg/controller/events`
 - Business logic → Use appropriate domain package
 

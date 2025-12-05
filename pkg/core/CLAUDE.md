@@ -8,6 +8,7 @@ Development context for core shared functionality.
 ## When to Work Here
 
 Modify this package when:
+
 - Extending configuration schema
 - Adding new validation rules
 - Changing credential handling
@@ -15,6 +16,7 @@ Modify this package when:
 - Adding shared primitive types
 
 **DO NOT** modify this package for:
+
 - Event coordination → Use `pkg/controller`
 - Template rendering → Use `pkg/templating`
 - Kubernetes integration → Use `pkg/k8s`
@@ -49,6 +51,7 @@ creds, err := config.LoadCredentials(secretData)
 ```
 
 **Responsibilities:**
+
 - Define Config struct and all nested types
 - Parse YAML configuration
 - Basic structural validation (required fields, port ranges)
@@ -133,12 +136,14 @@ type DataplaneAPIConfig struct {
 ### Validation Layers
 
 **Basic Validation (pkg/core/config):**
+
 - Required fields present
 - Port numbers in valid range (1-65535)
 - Enum values are valid (e.g., StoreType = "memory" or "cached")
 - Non-empty credentials
 
 **Advanced Validation (pkg/controller/validators):**
+
 - Template syntax validation
 - JSONPath expression validation
 - Cross-field validation
@@ -419,12 +424,14 @@ func TestConfig_GetReconciliationInterval(t *testing.T) {
 ### Best Practices
 
 **DO:**
+
 - Load credentials from Kubernetes Secret
 - Validate all required fields are present
 - Use TLS for Dataplane API connections
 - Rotate credentials regularly
 
 **DON'T:**
+
 - Log credentials
 - Store credentials in ConfigMap
 - Hardcode credentials
@@ -629,4 +636,4 @@ if err != nil {
 - API documentation: `pkg/core/README.md`
 - Configuration reference: `/docs/supported-configuration.md`
 - Architecture: `/docs/development/design.md`
-- slog documentation: https://pkg.go.dev/log/slog
+- slog documentation: <https://pkg.go.dev/log/slog>

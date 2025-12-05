@@ -9,6 +9,7 @@ Common issues and solutions for the HAProxy Template Ingress Controller.
 **Symptoms**: CrashLoopBackOff, repeated restarts, initialization errors
 
 **Diagnosis**:
+
 ```bash
 kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic
 kubectl logs -l app.kubernetes.io/name=haproxy-template-ic --tail=100
@@ -28,6 +29,7 @@ kubectl describe pod -l app.kubernetes.io/name=haproxy-template-ic
 **Symptoms**: Pods running, no reconciliation activity
 
 **Diagnosis**:
+
 ```bash
 kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "watch\|sync complete"
 ```
@@ -47,11 +49,13 @@ kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "watch\|syn
 **Symptoms**: "template rendering failed" errors
 
 **Diagnosis**:
+
 ```bash
 kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "template\|render"
 ```
 
 **Solution**:
+
 1. Check template syntax in HAProxyTemplateConfig
 2. Use debug server: `curl http://localhost:6060/debug/vars/rendered`
 3. See [Templating Guide](./templating.md)
@@ -73,6 +77,7 @@ kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "template\|
 **Symptoms**: `controller validate` fails
 
 **Quick Debugging**:
+
 ```bash
 # Step 1: Run with verbose output
 controller validate -f config.yaml --verbose
@@ -93,6 +98,7 @@ See [Validation Tests](./validation-tests.md#debugging-failed-tests) for detaile
 **Symptoms**: "connection refused", "timeout", deployment failures
 
 **Diagnosis**:
+
 ```bash
 HAPROXY_POD=$(kubectl get pods -l app=haproxy -o jsonpath='{.items[0].metadata.name}')
 kubectl port-forward $HAPROXY_POD 5555:5555
@@ -112,6 +118,7 @@ curl -u admin:password http://localhost:5555/v2/info
 **Symptoms**: Controller shows success but HAProxy has old config
 
 **Diagnosis**:
+
 ```bash
 kubectl exec $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
 kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "deployment.*succeeded"
@@ -131,6 +138,7 @@ kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "deployment
 **Symptoms**: 503 errors, timeouts, no servers in HAProxy stats
 
 **Diagnosis**:
+
 ```bash
 kubectl exec $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A10 "backend"
 kubectl get endpointslices -l kubernetes.io/service-name=<service>
@@ -149,6 +157,7 @@ kubectl get endpointslices -l kubernetes.io/service-name=<service>
 **Symptoms**: SSL handshake failures, certificate errors
 
 **Diagnosis**:
+
 ```bash
 kubectl exec $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/ssl/
 openssl s_client -connect localhost:443 -servername your-host.example.com < /dev/null
@@ -168,12 +177,14 @@ openssl s_client -connect localhost:443 -servername your-host.example.com < /dev
 **Symptoms**: Changes take minutes, high CPU
 
 **Diagnosis**:
+
 ```bash
 kubectl port-forward deployment/haproxy-template-ic 9090:9090
 curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 ```
 
 **Solutions**:
+
 - Use namespace restrictions in `watchedResources`
 - Add label selectors to filter resources
 - Use cached store for large resources
@@ -184,6 +195,7 @@ curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 **Symptoms**: OOMKilled events, gradual memory growth
 
 **Solutions**:
+
 ```yaml
 # Filter large fields
 watchedResourcesIgnoreFields:
@@ -236,6 +248,7 @@ kubectl port-forward deployment/haproxy-template-ic 6060:6060
 ```
 
 **Available endpoints**:
+
 - `/debug/vars` - Internal state
 - `/debug/vars/rendered` - Last rendered config
 - `/debug/pprof/` - Go profiling

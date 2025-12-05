@@ -7,6 +7,7 @@ This guide explains how to monitor the HAProxy Template Ingress Controller using
 The controller exposes Prometheus metrics via an HTTP endpoint, providing visibility into reconciliation performance, deployment status, resource counts, and leader election state.
 
 **Key monitoring areas:**
+
 - Reconciliation cycle performance and errors
 - HAProxy deployment latency and success rates
 - Configuration validation status
@@ -81,6 +82,7 @@ curl http://localhost:9090/metrics
 | `haproxy_ic_reconciliation_errors_total` | Counter | Failed reconciliation cycles |
 
 **Key queries:**
+
 ```promql
 # Reconciliation rate per second
 rate(haproxy_ic_reconciliation_total[5m])
@@ -105,6 +107,7 @@ rate(haproxy_ic_reconciliation_duration_seconds_count[5m])
 | `haproxy_ic_deployment_errors_total` | Counter | Failed deployments |
 
 **Key queries:**
+
 ```promql
 # Deployment rate
 rate(haproxy_ic_deployment_total[5m])
@@ -127,6 +130,7 @@ histogram_quantile(0.95, rate(haproxy_ic_deployment_duration_seconds_bucket[5m])
 | `haproxy_ic_validation_errors_total` | Counter | Failed validations |
 
 **Key queries:**
+
 ```promql
 # Validation rate
 rate(haproxy_ic_validation_total[5m])
@@ -145,6 +149,7 @@ rate(haproxy_ic_validation_total[5m])
 | `haproxy_ic_resource_count` | Gauge | `type` | Current count of watched resources |
 
 **Key queries:**
+
 ```promql
 # All resource counts
 haproxy_ic_resource_count
@@ -166,6 +171,7 @@ delta(haproxy_ic_resource_count[1h])
 | `haproxy_ic_events_published_total` | Counter | Total events published |
 
 **Key queries:**
+
 ```promql
 # Event publishing rate
 rate(haproxy_ic_events_published_total[5m])
@@ -186,6 +192,7 @@ delta(haproxy_ic_event_subscribers[5m])
 | `haproxy_ic_leader_election_time_as_leader_seconds_total` | Counter | Cumulative time as leader |
 
 **Key queries:**
+
 ```promql
 # Current leader count (should be exactly 1)
 sum(haproxy_ic_leader_election_is_leader)
@@ -300,6 +307,7 @@ groups:
 ### Grafana Dashboard Queries
 
 **Reconciliation Overview Panel:**
+
 ```promql
 # Success rate (stat panel)
 100 * (1 - (
@@ -313,6 +321,7 @@ rate(haproxy_ic_reconciliation_errors_total[5m])
 ```
 
 **Deployment Latency Panel:**
+
 ```promql
 # P50, P95, P99 latencies
 histogram_quantile(0.50, rate(haproxy_ic_deployment_duration_seconds_bucket[5m]))
@@ -321,6 +330,7 @@ histogram_quantile(0.99, rate(haproxy_ic_deployment_duration_seconds_bucket[5m])
 ```
 
 **Resource Count Panel:**
+
 ```promql
 # All resource types
 haproxy_ic_resource_count
@@ -330,6 +340,7 @@ haproxy_ic_resource_count{type=~"ingresses|services|endpoints"}
 ```
 
 **Leader Election Panel:**
+
 ```promql
 # Current leader indicator
 haproxy_ic_leader_election_is_leader == 1
@@ -411,16 +422,19 @@ avg_over_time(haproxy_ic_reconciliation_duration_seconds_count[1d])
 ### Troubleshooting with Metrics
 
 **High reconciliation error rate:**
+
 1. Check `haproxy_ic_validation_errors_total` - template/config issues
 2. Check `haproxy_ic_deployment_errors_total` - HAProxy connectivity issues
 3. Review controller logs for specific error messages
 
 **Missing metrics:**
+
 1. Verify metrics port is enabled (`controller.config.controller.metrics_port`)
 2. Check ServiceMonitor selector matches Prometheus configuration
 3. Verify network policies allow scraping
 
 **Leader election issues:**
+
 1. Check if `sum(haproxy_ic_leader_election_is_leader) != 1`
 2. Review `rate(haproxy_ic_leader_election_transitions_total[1h])` for instability
 3. See [High Availability Guide](./high-availability.md) for troubleshooting

@@ -5,6 +5,7 @@
 The `HAProxyTemplateConfig` custom resource is the **recommended way** to configure the HAProxy Template Ingress Controller. It provides a Kubernetes-native API with built-in validation, type safety, and embedded testing capabilities.
 
 **Benefits over ConfigMap:**
+
 - Schema validation catches errors before deployment
 - Status conditions provide feedback on configuration health
 - Native Kubernetes resource with proper RBAC
@@ -63,6 +64,7 @@ credentialsSecretRef:
 ```
 
 **Required Secret keys:**
+
 - `dataplane_username` - Production Dataplane API username
 - `dataplane_password` - Production Dataplane API password
 - `validation_username` - Validation HAProxy username (if validation enabled)
@@ -99,6 +101,7 @@ controller:
 ```
 
 **Defaults:**
+
 - `healthzPort`: 8080
 - `metricsPort`: 9090
 - `leaderElection.enabled`: true
@@ -394,6 +397,7 @@ spec:
 If upgrading from ConfigMap-based configuration:
 
 **Old (ConfigMap):**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -408,6 +412,7 @@ data:
 ```
 
 **New (CRD):**
+
 ```yaml
 apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
 kind: HAProxyTemplateConfig
@@ -423,6 +428,7 @@ spec:
 ```
 
 **Key differences:**
+
 - Configuration is now strongly typed with validation
 - Credentials moved to separate Secret reference
 - Field names use camelCase (e.g., `podSelector` vs `pod_selector`)
@@ -431,6 +437,7 @@ spec:
 ## Validation
 
 The CRD includes OpenAPI schema validation that checks:
+
 - Required fields are present
 - Field types are correct
 - String lengths meet minimum/maximum requirements
@@ -438,6 +445,7 @@ The CRD includes OpenAPI schema validation that checks:
 - Enum values match allowed options
 
 Additional validation occurs when:
+
 1. **Admission webhook** - Runs embedded validation tests (if webhook enabled)
 2. **Controller startup** - Validates configuration before starting
 3. **CLI command** - `controller validate` runs tests locally
@@ -445,22 +453,26 @@ Additional validation occurs when:
 ## Best Practices
 
 **Security:**
+
 - Never include credentials in the CRD - use credentialsSecretRef
 - Restrict RBAC access to HAProxyTemplateConfig resources
 - Use separate namespaces for controller and configs in multi-tenant scenarios
 
 **Organization:**
+
 - One HAProxyTemplateConfig per controller instance
 - Use descriptive names that indicate purpose or environment
 - Label configs for filtering: `environment: production`
 
 **Testing:**
+
 - Include validation tests for critical routing paths
 - Test with realistic fixtures, not toy examples
 - Run `controller validate` before applying changes
 - Use CI/CD to validate configs in pull requests
 
 **Templates:**
+
 - Use templateSnippets for reusable logic
 - Keep haproxyConfig template focused on structure
 - Comment complex template logic

@@ -70,6 +70,7 @@ func ProcessResource(ctx context.Context, resource Resource) error {
 ### Pre-commit Hooks
 
 Pre-commit hooks run automatically via git hooks and enforce:
+
 - **golangci-lint**: Code quality, style, and common mistakes
 - **govulncheck**: Security vulnerability scanning
 
@@ -84,6 +85,7 @@ Pre-commit hooks run automatically via git hooks and enforce:
 ### Why This Matters
 
 **CI pipeline will fail** if code contains:
+
 - Linting violations (golangci-lint errors)
 - Security vulnerabilities (govulncheck findings)
 - Formatting issues (gofmt/goimports)
@@ -204,17 +206,20 @@ func (r *RendererComponent) Run(ctx context.Context) error {
 ### When to Use Events vs Direct Calls
 
 **Use EventBus (async pub/sub):**
+
 - Component coordination across packages
 - Observability and logging
 - Extensibility (new features can subscribe to existing events)
 - Fire-and-forget notifications
 
 **Use Request() (scatter-gather):**
+
 - Configuration validation (multiple validators must respond)
 - Distributed queries
 - Coordinated operations requiring multiple confirmations
 
 **Use direct function calls:**
+
 - Within the same package
 - Pure components calling other pure components
 - Utility components (see below)
@@ -225,12 +230,14 @@ func (r *RendererComponent) Run(ctx context.Context) error {
 Not all dependencies require event-driven coordination. The codebase distinguishes between:
 
 **Pure Components** (require event adapters):
+
 - Contain domain business logic
 - Examples: `pkg/templating`, `pkg/k8s`, `pkg/dataplane`
 - Should be wrapped in event adapters when used in `pkg/controller`
 - Changes to these affect reconciliation logic
 
 **Utility Components** (can be called directly):
+
 - Infrastructure/cross-cutting concerns
 - Examples: EventBus, StoreManager, Metrics, RestMapper
 - Provide services used by multiple components
@@ -488,6 +495,7 @@ kubectl -n echo exec <haproxy-pod> -- cat /etc/haproxy/haproxy.cfg
 ```
 
 **Cluster Names:**
+
 - **Dev cluster**: `kind-haproxy-template-ic-dev` - Use this for development
 - **Test cluster**: `kind-haproxy-test` - Used by integration tests only
 
@@ -573,6 +581,7 @@ logger.Error("reconciliation failed",
 ### Proper Subscription Pattern
 
 **CORRECT Pattern** (all components follow this):
+
 ```go
 // Component constructor subscribes immediately
 func New(eventBus *EventBus, ...) *Component {
@@ -605,6 +614,7 @@ startAllComponents()                  // Start goroutines
 ```
 
 **INCORRECT Pattern** (creates race conditions):
+
 ```go
 // BAD - subscribes in Start()
 func (c *Component) Start(ctx context.Context) error {
@@ -653,6 +663,7 @@ func (c *Component) Start(ctx context.Context) error {
   - Transparency builds trust
 
 **Example of UNACCEPTABLE behavior:**
+
 1. Test fails because routes are in wrong order
 2. Change test to validate the wrong order
 3. Add TODO comment saying "should fix this later"
@@ -660,6 +671,7 @@ func (c *Component) Start(ctx context.Context) error {
 5. Don't tell user about the bug
 
 **Example of CORRECT behavior:**
+
 1. Test fails because routes are in wrong order
 2. Debug the sorting logic to find root cause
 3. Fix the sorting implementation
@@ -678,6 +690,7 @@ func (c *Component) Start(ctx context.Context) error {
 ## Package-Specific Context
 
 For detailed development context on specific packages, see:
+
 - `pkg/CLAUDE.md` - Package organization principles
 - `pkg/events/CLAUDE.md` - Event bus infrastructure
 - `pkg/controller/CLAUDE.md` - Controller orchestration

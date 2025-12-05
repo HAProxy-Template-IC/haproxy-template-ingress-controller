@@ -176,6 +176,7 @@ controller:
 ```
 
 Debug headers include:
+
 - `X-HAProxy-Backend`: Selected backend name
 - `X-HAProxy-Host-Match`: Matched host group
 - `X-HAProxy-Path-Match`: Full path match result

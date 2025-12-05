@@ -18,6 +18,7 @@ Merge Order (lowest to highest priority):
 ```
 
 **Merge Logic** (`templates/_helpers.tpl:69`):
+
 ```yaml
 {{- define "haproxy-template-ic.mergeLibraries" -}}
 {{- $merged := dict }}
@@ -92,12 +93,14 @@ templateSnippets:
 **CRITICAL ARCHITECTURE RULE - base.yaml MUST Be Resource-Agnostic**:
 
 **base.yaml MUST be completely resource-agnostic**. It must NOT access:
+
 - `ingress.metadata.*`, `ingress.spec.*`
 - `httproute.metadata.*`, `httproute.spec.*`
 - `grpcroute.metadata.*`, `grpcroute.spec.*`
 - Any other resource-specific fields or annotations
 
 Resource-specific libraries (ingress.yaml, gateway.yaml, haproxytech.yaml) are responsible for:
+
 1. Extracting annotations and resource-specific data
 2. Performing resource-specific calculations
 3. Setting generic context variables for base.yaml to consume
@@ -105,6 +108,7 @@ Resource-specific libraries (ingress.yaml, gateway.yaml, haproxytech.yaml) are r
 **Pattern**: Resource libraries extract data and set variables → base.yaml reads generic variables
 
 **Example**:
+
 ```jinja2
 {#- ingress.yaml or haproxytech.yaml (resource-specific) -#}
 {%- set pod_maxconn = ingress.metadata.annotations["haproxy.org/pod-maxconn"] | default("") %}
@@ -130,6 +134,7 @@ Resource-specific libraries (ingress.yaml, gateway.yaml, haproxytech.yaml) are r
 HAProxy does **NOT** work with relative file paths. When HAProxy validates or loads a configuration file, it resolves paths relative to its **working directory**, not relative to the configuration file location.
 
 **Example of what DOESN'T work:**
+
 ```haproxy
 errorfile 400 general/400.http          # WRONG - HAProxy can't find this
 use_backend %[path,map(maps/path.map)]   # WRONG - HAProxy can't find this
@@ -142,12 +147,14 @@ When HAProxy runs `haproxy -c -f /tmp/haproxy.cfg`, it looks for `general/400.ht
 HAProxy requires absolute paths:
 
 **Production (in HAProxy Dataplane pods):**
+
 ```haproxy
 errorfile 400 /etc/haproxy/general/400.http       # CORRECT
 use_backend %[path,map(/etc/haproxy/maps/path.map)]  # CORRECT
 ```
 
 **Validation (in controller temp directories):**
+
 ```haproxy
 errorfile 400 /tmp/haproxy-validate-12345/general/400.http    # CORRECT
 use_backend %[path,map(/tmp/haproxy-validate-12345/maps/path.map)]  # CORRECT
@@ -158,12 +165,14 @@ use_backend %[path,map(/tmp/haproxy-validate-12345/maps/path.map)]  # CORRECT
 The codebase implements a dual-PathResolver pattern to handle both production and validation:
 
 **Production PathResolver** (Renderer component):
+
 - Created once during component initialization
 - Uses production paths: `/etc/haproxy/maps`, `/etc/haproxy/certs`, `/etc/haproxy/general`
 - Files exist in HAProxy Dataplane containers
 - See: `pkg/controller/renderer/component.go:113`
 
 **Validation PathResolver** (Testrunner):
+
 - Created per-test during validation
 - Uses temp paths: `/tmp/haproxy-validate-12345/maps`, `/tmp/haproxy-validate-12345/certs`
 - Files written to controller container's temp directories
@@ -225,6 +234,7 @@ The `scripts/test-templates.sh` script automates the correct workflow (helm temp
 ```
 
 **Why use the script?**
+
 - Ensures you don't forget the helm template step
 - Automatically includes `--api-versions` flag for Gateway API tests
 - Handles error checking and temp file cleanup
@@ -433,6 +443,7 @@ templateSnippets:
 **Real Example:**
 
 See `libraries/haproxytech.yaml` lines 18-57 for the `top-level-annotation-haproxytech-auth` template which demonstrates proper documentation including:
+
 - Link to HAProxy Ingress documentation
 - List of all annotations
 - Detailed secret format explanation with WARNING about htpasswd vs hash-only
@@ -444,6 +455,7 @@ See `libraries/haproxytech.yaml` lines 18-57 for the `top-level-annotation-hapro
 **Why This Matters:**
 
 Without inline documentation, developers must:
+
 1. Search external documentation
 2. Guess at format requirements
 3. Potentially implement incorrect parsing logic
@@ -521,6 +533,7 @@ Without optimization, if you analyze routes in multiple places, the analysis run
 **Key Points:**
 
 1. **Variable must be created BEFORE compute_once block**:
+
    ```jinja2
    {%- set analysis = namespace(path_groups={}) %}  {# Create first #}
    {%- compute_once analysis %}  {# Then guard computation #}
@@ -565,12 +578,14 @@ The Gateway API library uses `compute_once` to optimize route analysis (see `lib
 **When to Use compute_once**:
 
 ✅ **Good use cases:**
+
 - Expensive loops over large resource lists (all HTTPRoutes, all Ingresses)
 - Complex sorting, grouping, or conflict detection
 - Template sections included from multiple places
 - Macros that perform heavy computation
 
 ❌ **Don't use for:**
+
 - Simple variable assignments
 - Computations that need different inputs each time
 - Code that should run multiple times with different state
@@ -627,7 +642,7 @@ These are common mistakes when writing Gonja templates. Understanding these will
 
 **Why**: Gonja's list type has an `append()` method that modifies the list in place. The `+` operator creates a new list but doesn't update the namespace variable.
 
-**Documentation**: https://github.com/NikolaLohinski/gonja/blob/master/docs/methods.md#the-list-type
+**Documentation**: <https://github.com/NikolaLohinski/gonja/blob/master/docs/methods.md#the-list-type>
 
 **CRITICAL - Namespace Attributes Return Copies:**
 
@@ -658,6 +673,7 @@ When you access a namespace attribute in a loop, Gonja gives you a **COPY**, not
 **Why This Matters**: Our custom `append()` and `update()` methods return the modified collection specifically to enable this reassignment pattern. Without the reassignment, changes are lost because you're modifying a copy that gets discarded at the end of each iteration.
 
 **When to Use Each Pattern:**
+
 - **Regular variables**: Use `{%- set _ = list.append(item) %}` (in-place modification works)
 - **Namespace attributes**: Use `{%- set ns.list = ns.list.append(item) %}` (must reassign returned value)
 - **Lists nested in dicts in namespaces**: Use get-append-update pattern (see below)
@@ -731,12 +747,14 @@ When you have a dict in a namespace, and that dict contains lists as values, you
 ```
 
 **When to Use**:
+
 - Counters and accumulators
 - Deduplication tracking (seen lists/strings)
 - Building dictionaries/maps dynamically
 - Any state that needs to persist across loop iterations or conditional blocks
 
 **Common Namespace Patterns**:
+
 ```gonja
 {%- set ns = namespace(
     count=0,
@@ -752,6 +770,7 @@ When you have a dict in a namespace, and that dict contains lists as values, you
 Two approaches for tracking seen items to prevent duplicates:
 
 **List-Based Approach** (works with custom append() override):
+
 ```gonja
 {%- set ns = namespace(seen=[]) %}
 {%- for item in items %}
@@ -763,6 +782,7 @@ Two approaches for tracking seen items to prevent duplicates:
 ```
 
 **String-Based Approach** (alternative without custom methods):
+
 ```gonja
 {%- set ns = namespace(seen="") %}
 {%- for item in items %}
@@ -776,6 +796,7 @@ Two approaches for tracking seen items to prevent duplicates:
 **Root Cause - Go Interface Equality**:
 
 Gonja's `Contains()` method uses Go's `==` operator on `interface{}` values:
+
 ```go
 // From exec/value.go Contains() implementation
 for i := 0; i < resolved.Len(); i++ {
@@ -789,21 +810,25 @@ for i := 0; i < resolved.Len(); i++ {
 This compares **object identity**, not **string values**. Each template expression with `~` creates a NEW `*Value` object wrapping the string. Even though the string values are identical, the `*Value` objects are different, so `==` returns false.
 
 **Why List-Based Works for Direct Fields**:
+
 - `secret.metadata.name` returns an EXISTING `*Value` object from the resource store
 - When we check `if name not in seen` and later encounter the SAME resource, we're comparing the SAME `*Value` object reference
 - Object identity comparison succeeds because it's literally the same object
 
 **Why List-Based Fails for Computed Keys**:
+
 - `namespace ~ "_" ~ name` creates a NEW `*Value` object each time it's evaluated
 - When we check `if key not in seen`, we're comparing DIFFERENT `*Value` object instances
 - Object identity comparison fails even though string values are identical
 
 **Why String-Based Works**:
+
 - String membership uses `strings.Contains()` for substring matching
 - Delimiter pattern `"|key|"` ensures exact matches
 - Works with any string value regardless of `*Value` object identity
 
 **Attempted Solutions That Failed**:
+
 1. **Using `| string` filter**: Still creates `*Value` objects, doesn't help
 2. **Using `"" ~` prefix**: Same issue, creates new `*Value` objects
 3. **Using Go maps**: Would work BUT Gonja doesn't support `ns.map[key] = value` syntax
@@ -904,6 +929,7 @@ The maintenance cost of keeping 5 methods in sync is acceptable for enabling sel
 Use namespace with custom methods for mutable state:
 
 **List deduplication:**
+
 ```gonja
 {%- set ns = namespace(seen=[]) %}
 {%- for ingress in resources.ingresses.List() %}
@@ -916,6 +942,7 @@ Use namespace with custom methods for mutable state:
 ```
 
 **Dict accumulation:**
+
 ```gonja
 {%- set ns = namespace(config={}) %}
 {%- for rule in ingress.spec.rules %}
@@ -975,12 +1002,14 @@ backend {%+ include "backend-name" +%}  {# Preserves space before name #}
 ```
 
 **Whitespace Control Characters**:
+
 - `{%-`: Strip whitespace before tag
 - `-%}`: Strip whitespace after tag
 - `{%+`: Preserve whitespace before tag
 - `+%}`: Preserve whitespace after tag
 
 **Example Issue**: Backend name generation
+
 ```gonja
 {# WRONG - creates "backend  name" (two spaces) #}
 template: >-
@@ -1031,6 +1060,7 @@ template: >-
 ### Filter vs Function Confusion
 
 **Filters** (pipe syntax):
+
 ```gonja
 {{ value | b64decode }}
 {{ string | upper }}
@@ -1038,18 +1068,21 @@ template: >-
 ```
 
 **Functions** (call syntax):
+
 ```gonja
 {{ fail("error message") }}
 {{ range(1, 10) }}
 ```
 
 **Macros** (must import first):
+
 ```gonja
 {%- from "macros" import my_macro -%}
 {{ my_macro(value) }}
 ```
 
 **Common Mistake**:
+
 ```gonja
 {# WRONG - can't call filters as functions #}
 {{ b64decode(value) }}
@@ -1078,6 +1111,7 @@ user admin password {{ secret.data.password }}  # Will be gibberish!
 ```
 
 **Format Gotchas**:
+
 - HAProxy auth secrets: Value should be hash only (e.g., `$2y$05$...`)
 - NOT htpasswd format: Don't include `username:` prefix
 - Generate correctly: `htpasswd -nbB user pass | cut -d: -f2 | base64 -w0`
@@ -1096,6 +1130,7 @@ user admin password {{ secret.data.password }}  # Will be gibberish!
 ```
 
 **When Needed**:
+
 - `list.append(item)` → returns `None`
 - `dict.update(other)` → returns `None`
 - Any method that modifies in-place
@@ -1113,6 +1148,7 @@ user admin password {{ secret.data.password }}  # Will be gibberish!
 ```
 
 **How Includes Work**:
+
 1. `{% include "name" %}` looks for `templateSnippets.name`
 2. Not file paths - all snippets merged into one namespace
 3. Use `include_matching("pattern-*")` macro for glob patterns
@@ -1143,6 +1179,7 @@ user admin password {{ secret.data.password }}  # Will be gibberish!
 ```
 
 **Using Controller Logs**:
+
 ```bash
 # Run with debug to see template rendering
 ./bin/controller validate -f config.yaml 2>&1 | grep "component=test-runner"
@@ -1175,6 +1212,7 @@ haproxyConfig:
 ```
 
 **Why Bad**: Library files are meant to be merged. Testing them individually will fail because:
+
 - Missing base template (`haproxyConfig`)
 - Missing snippets from other libraries
 - Missing watched resources from other libraries
@@ -1294,8 +1332,8 @@ helm template charts/haproxy-template-ic \
 
 ## Resources
 
-- Helm template reference: https://helm.sh/docs/chart_template_guide/
-- yq documentation: https://github.com/mikefarah/yq
+- Helm template reference: <https://helm.sh/docs/chart_template_guide/>
+- yq documentation: <https://github.com/mikefarah/yq>
 - HAProxyTemplateConfig CRD: `crds/haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml`
 - Controller validation: `pkg/controller/testrunner/CLAUDE.md`
 - Template engine: `pkg/templating/CLAUDE.md`

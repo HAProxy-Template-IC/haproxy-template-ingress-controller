@@ -7,6 +7,7 @@ This guide explains how to debug and troubleshoot the HAProxy Template Ingress C
 The controller provides a debug HTTP server that exposes internal state, event history, and Go profiling endpoints. These tools help you understand controller behavior without requiring log analysis.
 
 **Key features:**
+
 - Real-time controller state inspection
 - Event history for tracking controller activity
 - JSONPath field selection for targeted queries
@@ -89,6 +90,7 @@ curl 'http://localhost:6060/debug/vars/config?field={.config.templates}'
 ```
 
 **Response:**
+
 ```json
 {
   "config": {
@@ -119,6 +121,7 @@ curl 'http://localhost:6060/debug/vars/rendered?field={.timestamp}'
 ```
 
 **Response:**
+
 ```json
 {
   "config": "global\n  maxconn 2000\n  log stdout local0\n\ndefaults\n...",
@@ -140,6 +143,7 @@ curl 'http://localhost:6060/debug/vars/resources?field={.ingresses}'
 ```
 
 **Response:**
+
 ```json
 {
   "ingresses": 5,
@@ -157,6 +161,7 @@ curl http://localhost:6060/debug/vars/auxfiles
 ```
 
 **Response:**
+
 ```json
 {
   "files": {
@@ -188,6 +193,7 @@ curl http://localhost:6060/debug/vars/events
 ```
 
 **Response:**
+
 ```json
 [
   {
@@ -272,16 +278,19 @@ go tool pprof -http=:8080 cpu.pprof
 ### Configuration Not Loading
 
 1. Check if config is loaded:
+
    ```bash
    curl http://localhost:6060/debug/vars/config
    ```
 
 2. If error "config not loaded yet", check controller logs for parsing errors:
+
    ```bash
    kubectl logs -n <namespace> deployment/haproxy-template-ic | grep -i error
    ```
 
 3. Verify HAProxyTemplateConfig exists:
+
    ```bash
    kubectl get haproxytemplateconfig -n <namespace>
    ```
@@ -289,16 +298,19 @@ go tool pprof -http=:8080 cpu.pprof
 ### HAProxy Config Not Updating
 
 1. Check rendered config timestamp:
+
    ```bash
    curl 'http://localhost:6060/debug/vars/rendered?field={.timestamp}'
    ```
 
 2. Check recent events for reconciliation activity:
+
    ```bash
    curl http://localhost:6060/debug/vars/events | jq '.[] | select(.type | contains("reconciliation"))'
    ```
 
 3. Verify resource counts match expected:
+
    ```bash
    curl http://localhost:6060/debug/vars/resources
    ```
@@ -306,11 +318,13 @@ go tool pprof -http=:8080 cpu.pprof
 ### Template Rendering Errors
 
 1. Check if config is valid:
+
    ```bash
    curl 'http://localhost:6060/debug/vars/config?field={.version}'
    ```
 
 2. Look for template-related events:
+
    ```bash
    curl http://localhost:6060/debug/vars/events | jq '.[] | select(.type | contains("template"))'
    ```
@@ -320,17 +334,20 @@ go tool pprof -http=:8080 cpu.pprof
 ### Memory Issues
 
 1. Get current heap usage:
+
    ```bash
    curl http://localhost:6060/debug/pprof/heap?debug=1 | head -20
    ```
 
 2. Generate heap profile for analysis:
+
    ```bash
    curl http://localhost:6060/debug/pprof/heap > heap.pprof
    go tool pprof -top heap.pprof
    ```
 
 3. Check resource counts (large counts may indicate memory pressure):
+
    ```bash
    curl http://localhost:6060/debug/vars/resources
    ```
@@ -338,16 +355,19 @@ go tool pprof -http=:8080 cpu.pprof
 ### High CPU Usage
 
 1. Generate CPU profile:
+
    ```bash
    curl http://localhost:6060/debug/pprof/profile?seconds=30 > cpu.pprof
    ```
 
 2. Analyze hot spots:
+
    ```bash
    go tool pprof -top cpu.pprof
    ```
 
 3. Check reconciliation frequency in events:
+
    ```bash
    curl http://localhost:6060/debug/vars/events | jq '[.[] | select(.type == "reconciliation.triggered")] | length'
    ```
@@ -355,16 +375,19 @@ go tool pprof -http=:8080 cpu.pprof
 ### Deployment Failures
 
 1. Check recent events for deployment status:
+
    ```bash
    curl http://localhost:6060/debug/vars/events | jq '.[] | select(.type | contains("deployment"))'
    ```
 
 2. Verify HAProxy pods are discovered:
+
    ```bash
    curl 'http://localhost:6060/debug/vars/resources?field={."haproxy-pods"}'
    ```
 
 3. Check rendered config for syntax errors:
+
    ```bash
    curl 'http://localhost:6060/debug/vars/rendered?field={.config}' > haproxy.cfg
    haproxy -c -f haproxy.cfg
@@ -379,6 +402,7 @@ go tool pprof -http=:8080 cpu.pprof
 3. **Large Responses**: Full state dump can expose sensitive configuration - use specific variables instead
 
 4. **Production Usage**: Consider disabling debug port in high-security environments:
+
    ```yaml
    controller:
      debugPort: 0  # Disabled

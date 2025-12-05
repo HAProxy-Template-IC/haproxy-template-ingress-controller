@@ -5,12 +5,14 @@
 **Decision**: Use two-phase validation (client-native parser + haproxy binary) instead of running a full validation sidecar.
 
 **Rationale**:
+
 - **Performance**: Parser validation is fast (~10ms), binary validation completes in ~50-100ms
 - **Resource Efficiency**: No additional HAProxy container needed (saves ~256Mi memory per controller pod)
 - **Simplicity**: Single container deployment reduces complexity
 - **Reliability**: Same validation guarantees as full HAProxy instance
 
 **Implementation**:
+
 ```go
 // Validation is implemented in pkg/dataplane/validator.go
 // Uses real HAProxy directories with mutex locking to match Dataplane API behavior
@@ -65,6 +67,7 @@ The config parser (`pkg/dataplane/parser`) has been enhanced to correctly handle
    - Now correctly identifies log targets: lines starting with "log" followed by an address
    - Properly classifies `log-send-hostname` as a general global directive (not a log target)
    - Example valid config now parses correctly:
+
      ```
      global
          log stdout local0
@@ -85,6 +88,7 @@ This fix resolves issues where valid HAProxy configurations were rejected during
 **Decision**: Use a Jinja2-like template engine for Go with rich feature set.
 
 **Candidates Evaluated**:
+
 1. **gonja v2**: Pure Go Jinja2 implementation, actively maintained (v2.4.1, January 2025)
 2. **pongo2**: Django/Jinja2 syntax, comprehensive but last release 2022
 3. **text/template**: Go stdlib, limited features, verbose syntax
@@ -93,6 +97,7 @@ This fix resolves issues where valid HAProxy configurations were rejected during
 **Selected**: gonja v2 (github.com/nikolalohinski/gonja/v2)
 
 **Rationale**:
+
 - **Active Maintenance**: Latest release v2.4.1 (January 2025), ongoing development
 - **Jinja2 Compatibility**: Aims for maximum compatibility with Python's Jinja2 engine
 - **Familiarity**: Jinja2 syntax is well-known in operations community
@@ -105,12 +110,14 @@ This fix resolves issues where valid HAProxy configurations were rejected during
 **Decision**: Use client-go with SharedInformerFactory for resource watching, no heavy controller framework.
 
 **Rationale**:
+
 - **Control**: Direct control over informer lifecycle and event handling
 - **Flexibility**: Custom indexing logic without framework constraints
 - **Performance**: Optimized cache and index management
 - **Simplicity**: No code generation, no framework-imposed structure
 
 **Implementation Pattern**:
+
 ```go
 // Slim approach using client-go
 factory := informers.NewSharedInformerFactory(clientset, resyncPeriod)
@@ -137,6 +144,7 @@ factory.Start(stopCh)
 **Key Patterns**:
 
 1. **Event Processing**: Buffered channels for event debouncing
+
    ```go
    type Debouncer struct {
        events chan Event
@@ -145,6 +153,7 @@ factory.Start(stopCh)
    ```
 
 2. **Parallel Deployment**: Worker pools for deploying to multiple HAProxy instances
+
    ```go
    var wg sync.WaitGroup
    for _, endpoint := range endpoints {
@@ -158,6 +167,7 @@ factory.Start(stopCh)
    ```
 
 3. **Context Propagation**: All operations use context.Context for cancellation
+
    ```go
    func (s *Synchronizer) Deploy(ctx context.Context, config Config) error {
        ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -175,11 +185,13 @@ factory.Start(stopCh)
 The controller implements comprehensive Prometheus metrics through the event adapter pattern:
 
 **Architecture**:
+
 - `pkg/metrics`: Generic metrics infrastructure with instance-based registry
 - `pkg/controller/metrics`: Event adapter subscribing to controller lifecycle events
 - Metrics exposed on configurable port (default 9090) at `/metrics` endpoint
 
 **Implementation**:
+
 ```go
 // Instance-based registry (not global)
 metricsRegistry := prometheus.NewRegistry()
@@ -221,6 +233,7 @@ go metricsServer.Start(ctx)
 See `pkg/controller/metrics/README.md` for complete metric definitions and Prometheus queries.
 
 **Tracing Integration**:
+
 ```go
 import "go.opentelemetry.io/otel"
 
@@ -243,6 +256,7 @@ func (r *Renderer) Render(ctx context.Context, tpl string) (string, error) {
 **Decision**: Structured errors with context using standard library errors package and custom error types.
 
 **Pattern**:
+
 ```go
 // Custom error types for different failure modes
 type ValidationError struct {
@@ -278,6 +292,7 @@ func validate(config string) error {
 **Decision**: Implement event-driven architecture for component decoupling and extensibility.
 
 **Rationale**:
+
 - **Decoupling**: Components communicate via events, not direct calls
 - **Extensibility**: New features can be added without modifying existing code
 - **Observability**: Complete system visibility through event stream
@@ -305,6 +320,7 @@ Component Architecture:
 ```
 
 **Key Distinction**:
+
 - **Pure Libraries**: Testable business logic with no EventBus dependencies (pkg/templating, pkg/dataplane, pkg/k8s)
 - **Event-Driven Components**: Controllers that subscribe to events, call pure libraries, and publish result events (pkg/controller/*)
 
@@ -982,11 +998,13 @@ The scatter-gather pattern broadcasts a request to multiple recipients and aggre
 3. **Aggregation**: Wait for all (or minimum) expected responses or timeout
 
 **When to Use**:
+
 - **Configuration Validation**: Multiple validators must approve before config becomes active
 - **Distributed Queries**: Need responses from multiple components before proceeding
 - **Coordinated Operations**: Any scenario requiring confirmation from multiple parties
 
 **When NOT to Use**:
+
 - **Fire-and-Forget Notifications**: Use async pub/sub instead
 - **Observability Events**: Use async pub/sub instead
 - **Single Response**: Use direct function call instead
@@ -1273,6 +1291,7 @@ The validation coordinator implements enhanced logging to provide visibility int
    - Exactly which aspects of config failed validation
 
 Example log output for validation failure:
+
 ```
 level=warn msg="configuration validation failed"
   version="abc123"
@@ -1307,6 +1326,7 @@ level=warn msg="configuration validation failed"
 **Decision**: Implement a dedicated Event Commentator component that subscribes to all EventBus events and produces domain-aware log messages with contextual insights.
 
 **Problem**: Traditional logging approaches have several limitations:
+
 - Debug log statements clutter business logic code
 - Logs lack cross-event context and domain knowledge
 - Difficult to correlate related events across the system
@@ -1314,6 +1334,7 @@ level=warn msg="configuration validation failed"
 - Hard to produce insightful "commentary" without duplicating domain knowledge
 
 **Solution**: The Event Commentator Pattern - a specialized component that acts like a sports commentator for the system:
+
 - Subscribes to all events on the EventBus
 - Maintains a ring buffer of recent events for correlation
 - Produces rich, domain-aware log messages with contextual insights
@@ -1676,6 +1697,7 @@ INFO  HAProxy pods discovered endpoint_count=3 change_type=initial_discovery
 ```
 
 Notice how the commentator provides context that would be impossible with traditional logging:
+
 - "triggered by resource.index.updated 234ms ago" (correlation)
 - "recent_validations=1" (trend analysis)
 - "total_duration_ms=456" (end-to-end timing across multiple events)
@@ -1694,4 +1716,3 @@ Notice how the commentator provides context that would be impossible with tradit
 | **Correlation** | Manual via correlation IDs | Automatic via event relationships |
 
 **Selected**: The Event Commentator pattern provides superior observability while keeping business logic clean and maintaining the architectural principle of event-agnostic pure components.
-

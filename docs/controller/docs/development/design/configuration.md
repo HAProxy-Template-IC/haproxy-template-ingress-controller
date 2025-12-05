@@ -377,4 +377,3 @@ haproxy_config:
    - Dynamic backend generation via template inclusion
 
 This configuration demonstrates production-ready patterns including resource indexing optimization, validation webhooks for critical resources, and dynamic backend scaling.
-

@@ -7,6 +7,7 @@ This document describes components that only run on the elected leader and guide
 When leadership transitions occur, leader-only components start subscribing to events AFTER critical state events have already been published by all-replica components. This creates a race condition where leader-only components miss essential state.
 
 **Example timeline of the bug:**
+
 ```
 14:03:29 - Discovery publishes HAProxyPodsDiscoveredEvent (2 pods)
 14:03:30 - Renderer publishes TemplateRenderedEvent (config: 5523 bytes)
@@ -48,6 +49,7 @@ Components that run on all replicas but replay state on leadership transitions:
 All-replica components that maintain state (config, validation results, endpoints) must re-publish their last state when a new leader is elected.
 
 **Implementation pattern:**
+
 ```go
 type Component struct {
     // ... existing fields ...
@@ -87,6 +89,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 Leader-only components must clean up state when losing leadership to prevent deadlocks or stale state issues.
 
 **Implementation pattern:**
+
 ```go
 func (c *Component) handleEvent(event busevents.Event) {
     switch e := event.(type) {
@@ -158,6 +161,7 @@ When creating a new component that maintains state used by leader-only component
 ## Testing Leadership Transitions
 
 **Manual testing with dev cluster:**
+
 ```bash
 # Deploy with 2 replicas
 kubectl -n haproxy-template-ic scale deployment haproxy-template-ic --replicas=2
@@ -176,6 +180,7 @@ kubectl -n haproxy-template-ic delete pod $LEADER_POD
 ```
 
 **Expected log pattern after leadership transition:**
+
 ```
 14:05:04.123 | INFO  | Became leader
 14:05:04.124 | INFO  | became leader, re-discovering HAProxy pods for deployment scheduler | count=2
@@ -188,6 +193,7 @@ kubectl -n haproxy-template-ic delete pod $LEADER_POD
 ## Common Pitfalls
 
 ### Pitfall 1: Not Checking hasState Before Replay
+
 ```go
 // BAD - publishes zero values if no state yet
 func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
@@ -215,6 +221,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 ```
 
 ### Pitfall 2: Not Clearing In-Progress Flags
+
 ```go
 // BAD - deploymentInProgress stays true forever
 func (s *Scheduler) handleLostLeadership(_ *events.LostLeadershipEvent) {
@@ -233,6 +240,7 @@ func (s *Scheduler) handleLostLeadership(_ *events.LostLeadershipEvent) {
 ```
 
 ### Pitfall 3: Replaying Failed Validation
+
 ```go
 // BAD - replays validation failures
 func (v *Validator) handleBecameLeader(_ *events.BecameLeaderEvent) {

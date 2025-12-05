@@ -185,6 +185,7 @@ spec:
 **Match Precedence (Gateway API v1 spec):**
 
 When multiple routes match the same request, ties are broken in the following order:
+
 1. **Path specificity** - Exact > RegularExpression > PathPrefix (by length)
 2. **Method matchers** - Routes with method matchers have higher priority
 3. **Header matchers** - More header matchers = higher priority
@@ -574,6 +575,7 @@ http-request replace-path "^/api/v1(.*)" "/\1" if <route-conditions>
 **Weighted Backend Implementation:**
 
 The gateway library uses HAProxy's `rand()` function and map-based selection for O(1) weighted routing:
+
 - Weights are pre-expanded into map entries (e.g., 70/30 split = 100 map entries)
 - Entry 0-69 map to backend 1, entries 70-99 map to backend 2
 - HAProxy generates random number % total_weight and looks up backend in map
@@ -743,10 +745,12 @@ controller:
 ```
 
 **Response Headers:**
+
 - `X-Gateway-Matched-Route` - The namespace/name of the matched HTTPRoute or GRPCRoute
 - `X-Gateway-Match-Reason` - Additional information about why the route was selected (e.g., "method match", "header match")
 
 These headers are useful for:
+
 - Verifying which route handled a request
 - Understanding precedence when multiple routes match
 - Debugging complex routing configurations
@@ -796,6 +800,7 @@ These headers are useful for:
 The gateway library includes comprehensive validation tests:
 
 **Well-tested:**
+
 - HTTPRoute path matching (Exact, PathPrefix, RegularExpression)
 - HTTPRoute method matching (GET, POST, etc.)
 - HTTPRoute header matching (Exact and RegularExpression types)
@@ -811,6 +816,7 @@ The gateway library includes comprehensive validation tests:
 - Complex route conflict resolution with VAR qualifiers
 
 **Untested:**
+
 - Cross-namespace references
 - Wildcard hostnames
 - Per-backend filters (`backendRefs[].filters[]`)

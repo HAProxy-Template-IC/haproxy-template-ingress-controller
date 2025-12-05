@@ -57,14 +57,17 @@ The script outputs a formatted JSON file containing the complete OpenAPI v3 spec
 ### Troubleshooting
 
 **Container fails to start:**
+
 - Check Docker is running: `docker info`
 - Verify the HAProxy version exists: `docker pull haproxytech/haproxy-alpine:<version>`
 
 **API not becoming ready:**
+
 - Check container logs manually: `docker logs dataplaneapi-extract-<version>`
 - Increase timeout by editing `max_attempts` in the script
 
 **Permission errors during cleanup:**
+
 - The script uses Docker to clean up files created by the container
 - Ensure Docker has proper permissions
 

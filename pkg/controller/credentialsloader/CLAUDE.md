@@ -5,12 +5,14 @@ Development context for the CredentialsLoader component.
 ## When to Work Here
 
 Work in this package when:
+
 - Modifying Secret parsing logic
 - Changing credential extraction
 - Adding credential validation
 - Debugging credential loading
 
 **DO NOT** work here for:
+
 - Credential schema → Use `pkg/core/config`
 - Secret watching → Use `pkg/controller/resourcewatcher`
 

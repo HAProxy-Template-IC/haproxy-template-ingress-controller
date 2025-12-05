@@ -7,12 +7,14 @@ Development context for the leader election pure component.
 ## When to Work Here
 
 Modify this package when:
+
 - Changing leader election behavior or configuration
 - Adding new leader election features
 - Fixing bugs in election logic
 - Improving lease management
 
 **DO NOT** modify this package for:
+
 - Event publishing → Use `pkg/controller/leaderelection`
 - Controller coordination → Use `pkg/controller`
 - Metrics/observability → Use controller event adapter
@@ -195,6 +197,6 @@ RetryPeriod:   2 * time.Second,
 
 ## Resources
 
-- Kubernetes leader election: https://pkg.go.dev/k8s.io/client-go/tools/leaderelection
+- Kubernetes leader election: <https://pkg.go.dev/k8s.io/client-go/tools/leaderelection>
 - Controller event adapter: `pkg/controller/leaderelection/CLAUDE.md`
 - Configuration: `pkg/core/config/types.go` (LeaderElection struct)

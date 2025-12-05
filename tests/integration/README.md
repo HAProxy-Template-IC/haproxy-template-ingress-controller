@@ -5,6 +5,7 @@ Integration tests using real Kubernetes cluster (Kind) and HAProxy instances.
 ## Overview
 
 Integration tests verify component behavior against actual infrastructure:
+
 - Real Kubernetes cluster (Kind)
 - Real HAProxy pods with Dataplane API
 - Actual configuration synchronization
@@ -164,6 +165,7 @@ make test-integration
 ```
 
 Equivalent to:
+
 ```bash
 go test -tags=integration ./tests/integration/...
 ```
@@ -268,10 +270,12 @@ Test namespaces are auto-generated from test names:
 **Pattern**: `test-<normalized-test-name>-<hash>`
 
 **Examples**:
+
 - `TestSyncFrontendAdd` → `test-sync-frontend-add-a1b2c3d4`
 - `TestSyncBackendAddHTTPResponseRule` → `test-sync-backend-add-http-response-rule-a1b2c3d4`
 
 **Constraints**:
+
 - Maximum 63 characters (Kubernetes limit)
 - Lowercase only
 - Alphanumeric and hyphens
@@ -337,6 +341,7 @@ func TestLowLevelAPI(t *testing.T) {
 **Problem**: `go test ./tests/integration/...` shows no tests.
 
 **Solution**: Add `-tags=integration` flag:
+
 ```bash
 go test -tags=integration ./tests/integration/...
 ```
@@ -344,11 +349,13 @@ go test -tags=integration ./tests/integration/...
 ### Cluster Creation Fails
 
 **Possible causes**:
+
 - Docker not running
 - Port 6443 already in use
 - Insufficient resources
 
 **Solutions**:
+
 ```bash
 # Check Docker
 docker ps
@@ -371,6 +378,7 @@ make test-integration
 **Problem**: Many test namespaces left behind.
 
 **Solution**: Background cleanup runs automatically, or manual:
+
 ```bash
 # Delete all test namespaces
 kubectl delete ns -l 'kubernetes.io/metadata.name~=test-'
@@ -400,6 +408,6 @@ kind delete cluster --name=haproxy-test
 
 ## Resources
 
-- fixenv: https://github.com/rekby/fixenv
-- Kind: https://kind.sigs.k8s.io/
+- fixenv: <https://github.com/rekby/fixenv>
+- Kind: <https://kind.sigs.k8s.io/>
 - Development context: `CLAUDE.md`

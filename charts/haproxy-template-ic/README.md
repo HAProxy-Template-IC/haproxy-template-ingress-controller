@@ -5,6 +5,7 @@ This Helm chart deploys the HAProxy Template Ingress Controller, which manages H
 ## Overview
 
 The HAProxy Template Ingress Controller:
+
 - Watches Kubernetes Ingress and/or Gateway API resources
 - Renders Jinja2 templates to generate [HAProxy](https://www.haproxy.org/) configurations
 - Deploys configurations to HAProxy pods via [Dataplane API](https://github.com/haproxytech/dataplaneapi)
@@ -104,6 +105,7 @@ controller:
 By default, the controller only watches Ingress resources with `spec.ingressClassName: haproxy`. This ensures the controller only processes ingresses intended for it.
 
 **Default behavior:**
+
 ```yaml
 controller:
   config:
@@ -113,6 +115,7 @@ controller:
 ```
 
 **To change the ingress class name:**
+
 ```yaml
 controller:
   config:
@@ -122,6 +125,7 @@ controller:
 ```
 
 **To watch all ingresses regardless of class:**
+
 ```yaml
 controller:
   config:
@@ -182,6 +186,7 @@ The chart uses `Capabilities.APIVersions.Has` to check for `networking.k8s.io/v1
 ### Creation Conditions
 
 IngressClass is created only when ALL of the following are true:
+
 1. `ingressClass.enabled: true` (default)
 2. `controller.templateLibraries.ingress.enabled: true` (default)
 3. `networking.k8s.io/v1/IngressClass` API exists in cluster
@@ -191,6 +196,7 @@ IngressClass is created only when ALL of the following are true:
 When running multiple ingress controllers:
 
 **Ensure unique identification:**
+
 ```yaml
 # Controller 1 (haproxy-template-ic)
 ingressClass:
@@ -204,6 +210,7 @@ ingressClass:
 ```
 
 **Only one should be default:**
+
 ```yaml
 # Set default on one controller only
 ingressClass:
@@ -284,6 +291,7 @@ The chart checks for `gateway.networking.k8s.io/v1/GatewayClass` before creating
 ### Creation Conditions
 
 GatewayClass is created only when ALL of the following are true:
+
 1. `gatewayClass.enabled: true` (default)
 2. `controller.templateLibraries.gateway.enabled: true` (must be explicitly enabled)
 3. `gateway.networking.k8s.io/v1/GatewayClass` API exists in cluster
@@ -293,15 +301,18 @@ GatewayClass is created only when ALL of the following are true:
 The GatewayClass automatically references the HAProxyTemplateConfig created by this chart via `parametersRef`. This links Gateway API configuration to the controller's template-based configuration system.
 
 **How it works:**
+
 1. GatewayClass points to HAProxyTemplateConfig via `spec.parametersRef`
 2. Controller reads HAProxyTemplateConfig for template snippets, maps, watched resources, and HAProxy configuration
 3. Gateway API consumers get the same routing capabilities as Ingress consumers
 
 **Default behavior:**
+
 - `parametersRef.name` defaults to `controller.crdName` (typically `haproxy-template-ic-config`)
 - `parametersRef.namespace` defaults to chart's release namespace
 
 **Inspect the reference:**
+
 ```bash
 kubectl get gatewayclass haproxy -o yaml
 ```
@@ -311,6 +322,7 @@ kubectl get gatewayclass haproxy -o yaml
 When running multiple Gateway API controllers:
 
 **Ensure unique identification:**
+
 ```yaml
 # Controller 1 (haproxy-template-ic)
 gatewayClass:
@@ -324,6 +336,7 @@ gatewayClass:
 ```
 
 **Only one should be default:**
+
 ```yaml
 # Set default on one controller only
 gatewayClass:
@@ -373,6 +386,7 @@ EOF
 Gateway resources reference the GatewayClass, and HTTPRoutes attach to Gateways:
 
 **1. Create a Gateway:**
+
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -387,6 +401,7 @@ spec:
 ```
 
 **2. Create HTTPRoutes that attach to the Gateway:**
+
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -423,6 +438,7 @@ The controller automatically detects and respects container resource limits:
 ### CPU Limits (GOMAXPROCS)
 
 **Go 1.25+ Native Support**: The controller uses Go 1.25, which includes built-in container-aware GOMAXPROCS. The Go runtime automatically:
+
 - Detects cgroup CPU limits (v1 and v2)
 - Sets GOMAXPROCS to match the container's CPU limit (not the host's core count)
 - Dynamically adjusts if CPU limits change at runtime
@@ -432,6 +448,7 @@ No configuration needed - this works automatically when you set CPU limits in th
 ### Memory Limits (GOMEMLIMIT)
 
 **automemlimit Library**: The controller uses the `automemlimit` library to automatically set GOMEMLIMIT based on cgroup memory limits. By default:
+
 - Sets GOMEMLIMIT to 90% of the container memory limit
 - Leaves 10% headroom for non-heap memory sources
 - Works with both cgroups v1 and v2
@@ -478,6 +495,7 @@ Valid range: 0.0 < AUTOMEMLIMIT ≤ 1.0
 ## NetworkPolicy Configuration
 
 The controller requires network access to:
+
 1. Kubernetes API Server (watch resources)
 2. HAProxy Dataplane API pods in ANY namespace
 3. DNS (CoreDNS/kube-dns)
@@ -485,6 +503,7 @@ The controller requires network access to:
 ### Default Configuration
 
 By default, the NetworkPolicy allows:
+
 - DNS: kube-system namespace
 - Kubernetes API: 0.0.0.0/0 (adjust for production)
 - HAProxy pods: All namespaces with matching labels
@@ -523,6 +542,7 @@ The chart deploys two separate Kubernetes Services:
 ### Controller Service
 
 Exposes the controller's operational endpoints:
+
 - **healthz** (8080): Liveness and readiness probes
 - **metrics** (9090): Prometheus metrics endpoint
 
@@ -538,6 +558,7 @@ service:
 ### HAProxy Service
 
 Exposes the HAProxy load balancer for ingress traffic:
+
 - **http** (80): HTTP traffic routing
 - **https** (443): HTTPS/TLS traffic routing
 - **stats** (8404): Health and statistics page
@@ -608,6 +629,7 @@ haproxy:
 ### Why Separate Services?
 
 Separating the controller and HAProxy services provides:
+
 - **Clear separation of concerns**: Operational metrics vs data plane traffic
 - **Independent scaling**: Controller runs as single replica, HAProxy scales independently
 - **Security**: Controller endpoints remain internal, only HAProxy exposed externally
@@ -978,9 +1000,11 @@ spec:
 | `haproxy.org/auth-realm` | HTTP auth realm shown to users | No | `"Restricted Area"` |
 
 **Supported authentication types:**
+
 - `basic-auth`: HTTP basic authentication with username/password
 
 **Secret reference formats:**
+
 - `"secret-name"`: Secret in same namespace as Ingress
 - `"namespace/secret-name"`: Secret in specific namespace
 
@@ -1013,6 +1037,7 @@ data:
 ```
 
 **Important:**
+
 - Multiple Ingress resources can reference the same secret
 - Secrets are fetched on-demand (requires `store: on-demand` in secrets configuration)
 - Password hashes must use crypt(3) SHA-512 format for HAProxy compatibility
@@ -1033,6 +1058,7 @@ This adds HAProxy + Dataplane sidecars to the controller pod for config validati
 ### Introspection HTTP Server
 
 The controller provides an introspection HTTP server that exposes:
+
 - `/healthz` - Health check endpoint used by Kubernetes liveness and readiness probes
 - `/debug/vars` - Internal state and runtime variables
 - `/debug/pprof` - Go profiling endpoints
@@ -1233,12 +1259,14 @@ controller:
 ```
 
 **How it works:**
+
 - All replicas watch resources, render templates, and validate configs
 - Only the elected leader deploys configurations to HAProxy instances
 - Automatic failover if leader fails (within leaseDuration, default 15s)
 - Leadership transitions are logged and tracked via Prometheus metrics
 
 **Check current leader:**
+
 ```bash
 # View Lease resource
 kubectl get lease haproxy-template-ic-leader -o yaml
@@ -1624,11 +1652,13 @@ This removes all resources created by the chart.
 ### Controller Not Starting
 
 Check logs:
+
 ```bash
 kubectl logs -f -l app.kubernetes.io/name=haproxy-template-ic
 ```
 
 Common issues:
+
 - HAProxyTemplateConfig CRD or Secret missing
 - RBAC permissions incorrect
 - NetworkPolicy blocking access
@@ -1636,17 +1666,20 @@ Common issues:
 ### Cannot Connect to HAProxy Pods
 
 1. **Check HAProxy pod labels** match `pod_selector`
+
    ```bash
    kubectl get pods --show-labels
    ```
 
 2. **Verify Dataplane API is accessible**
+
    ```bash
    kubectl port-forward <haproxy-pod> 5555:5555
    curl http://localhost:5555/v3/info
    ```
 
 3. **Check NetworkPolicy**
+
    ```bash
    kubectl describe networkpolicy
    ```
@@ -1654,11 +1687,13 @@ Common issues:
 ### NetworkPolicy Issues in kind
 
 For kind clusters, ensure:
+
 - Calico or Cilium CNI is installed
 - DNS access is allowed
 - Kubernetes API CIDR is correct
 
 Debug NetworkPolicy:
+
 ```bash
 # Check controller can resolve DNS
 kubectl exec <controller-pod> -- nslookup kubernetes.default
@@ -1670,6 +1705,7 @@ kubectl exec <controller-pod> -- curl http://<haproxy-pod-ip>:5555/v3/info
 ## Examples
 
 See the `examples/` directory for:
+
 - Basic Ingress setup
 - Multi-namespace configuration
 - Production-ready values

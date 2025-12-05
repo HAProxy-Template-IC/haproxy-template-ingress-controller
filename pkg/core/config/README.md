@@ -56,11 +56,13 @@ type Credentials struct {
 ## Validation
 
 **Basic Validation** (this package):
+
 - Required fields present
 - Port numbers valid (1-65535)
 - Enum values valid
 
 **Advanced Validation** (pkg/controller/validator):
+
 - Template syntax
 - JSONPath expressions
 - Cross-field validation

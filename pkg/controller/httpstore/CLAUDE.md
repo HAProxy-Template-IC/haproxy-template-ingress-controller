@@ -5,12 +5,14 @@ Development context for the HTTP store event adapter component.
 ## When to Work Here
 
 Work in this package when:
+
 - Modifying refresh timer behavior
 - Changing validation event handling (promote/reject)
 - Updating the template-callable wrapper interface
 - Adding new event types for HTTP resources
 
 **DO NOT** work here for:
+
 - Core HTTP fetching logic → Use `pkg/httpstore`
 - Template rendering → Use `pkg/controller/renderer`
 - Reconciliation triggers → Use `pkg/controller/reconciler`
@@ -20,6 +22,7 @@ Work in this package when:
 Event adapter wrapping the pure HTTP store (`pkg/httpstore`) with event bus coordination. This is a **Stage 5 component** that runs on all replicas.
 
 Responsibilities:
+
 - Manages periodic refresh timers for URLs with `delay > 0`
 - Listens for validation events to promote/reject pending content
 - Publishes HTTP resource events when content changes

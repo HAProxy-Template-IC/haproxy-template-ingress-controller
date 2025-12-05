@@ -8,12 +8,14 @@ Development context for working with event bus infrastructure.
 ## When to Work Here
 
 Modify this package when:
+
 - Fixing EventBus infrastructure bugs
 - Adding new coordination patterns (like scatter-gather)
 - Improving performance or memory usage of event system
 - Enhancing startup coordination logic
 
 **DO NOT** modify this package for:
+
 - Adding new event types → Use `pkg/controller/events`
 - Changing business logic → Use appropriate domain package
 - Adding domain-specific validation → Use `pkg/controller/validators`
@@ -53,6 +55,7 @@ type EventBus struct {
 ```
 
 Why this design?
+
 - RWMutex allows concurrent reads (publish checks subscriber list)
 - Separate startMu prevents deadlock between startup and publish
 - Buffering before Start() prevents lost events during component initialization
@@ -168,6 +171,7 @@ bus := NewEventBus(100)  // Based on expected init events
 ```
 
 **Rule of Thumb:**
+
 - Control events: 10-50
 - Resource events: 100-200
 - Pre-start buffer: 100-200
@@ -315,14 +319,17 @@ Expected: ~100-500ns per publish with 1 subscriber.
 ## Related Packages
 
 **Domain Event Types:**
+
 - `pkg/controller/events` - All domain-specific event definitions
 
 **Event Consumers:**
+
 - `pkg/controller/commentator` - Logs all events with domain context
 - `pkg/controller/reconciler` - Subscribes to change events
 - `pkg/controller/executor` - Subscribes to reconciliation events
 
 **Event Producers:**
+
 - `pkg/k8s/watcher` - Publishes resource change events
 - `pkg/controller/configloader` - Publishes config events
 - All controller components - Publish completion/failure events
@@ -429,6 +436,7 @@ func (r MyRequest) RequestID() string { return r.id }
 ### 4. Test Thoroughly
 
 Event infrastructure bugs affect the entire system. Write extensive tests:
+
 - Unit tests for basic behavior
 - Concurrent stress tests
 - Timeout tests
@@ -446,6 +454,7 @@ If modifying EventBus interface:
 6. Run full test suite including integration tests
 
 Example breaking change:
+
 ```go
 // Old
 bus.Publish(event Event) int

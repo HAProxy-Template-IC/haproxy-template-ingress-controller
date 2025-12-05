@@ -12,7 +12,7 @@
 
 A template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Gonja](https://github.com/NikolaLohinski/gonja) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
-> **Documentation**: https://haproxy-template-ic.github.io/
+> **Documentation**: <https://haproxy-template-ic.github.io/>
 
 ## Key Features
 

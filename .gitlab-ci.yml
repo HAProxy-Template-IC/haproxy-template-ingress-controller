@@ -42,6 +42,12 @@ variables:
         - scripts/**
         - .gitlab-ci.yml
         - .golangci.yml
+        # Config files (ensures lint job runs for config-only changes)
+        - "**/*.yaml"
+        - "**/*.yml"
+        - "**/*.json"
+        - "**/*.md"
+        - .markdownlint-cli2.jsonc
 
 .rules-helm:
   rules:

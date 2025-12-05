@@ -5,6 +5,7 @@ This guide covers performance tuning and optimization for the HAProxy Template I
 ## Overview
 
 Performance optimization involves three areas:
+
 - **Controller performance** - Template rendering, reconciliation cycles
 - **HAProxy performance** - Load balancer throughput and latency
 - **Kubernetes integration** - Resource watching and event handling
@@ -35,12 +36,14 @@ resources:
 ### Memory Considerations
 
 Memory usage scales with:
+
 - Number of watched resources (Ingresses, Services, Endpoints)
 - Size of template library
 - Event buffer size (default 1000 events)
 - Number of HAProxy pods being managed
 
 Monitor memory usage:
+
 ```promql
 container_memory_working_set_bytes{container="haproxy-template-ic"}
 ```
@@ -48,11 +51,13 @@ container_memory_working_set_bytes{container="haproxy-template-ic"}
 ### CPU Considerations
 
 CPU spikes occur during:
+
 - Template rendering (complex templates with many resources)
 - Initial resource synchronization (startup)
 - Burst of resource changes (rolling updates)
 
 Monitor CPU usage:
+
 ```promql
 rate(container_cpu_usage_seconds_total{container="haproxy-template-ic"}[5m])
 ```
@@ -72,6 +77,7 @@ spec:
 ```
 
 **Tuning guidelines:**
+
 - **Lower (100-300ms)**: Faster response to changes, higher CPU usage
 - **Default (500ms)**: Balanced for most workloads
 - **Higher (1-5s)**: Better for high-churn environments with many changes
@@ -93,6 +99,7 @@ histogram_quantile(0.95, rate(haproxy_ic_reconciliation_duration_seconds_bucket[
 ```
 
 **Target metrics:**
+
 - Average reconciliation: <500ms
 - P95 reconciliation: <2s
 - Error rate: <1%
@@ -102,6 +109,7 @@ histogram_quantile(0.95, rate(haproxy_ic_reconciliation_duration_seconds_bucket[
 ### Efficient Template Patterns
 
 **Use early filtering:**
+
 ```jinja2
 {#- GOOD: Filter early, process less data -#}
 {%- set matching_ingresses = resources.ingresses.List() | selectattr("spec.ingressClassName", "equalto", "haproxy") | list %}
@@ -118,6 +126,7 @@ histogram_quantile(0.95, rate(haproxy_ic_reconciliation_duration_seconds_bucket[
 ```
 
 **Use compute_once for expensive operations:**
+
 ```jinja2
 {%- set analysis = namespace(sorted_routes=[]) %}
 {%- compute_once analysis %}
@@ -129,6 +138,7 @@ histogram_quantile(0.95, rate(haproxy_ic_reconciliation_duration_seconds_bucket[
 ```
 
 **Avoid nested loops when possible:**
+
 ```jinja2
 {#- AVOID: O(n*m) complexity -#}
 {%- for ingress in ingresses %}
@@ -192,6 +202,7 @@ maxconn = (expected_concurrent_connections * safety_factor) / num_haproxy_pods
 ```
 
 Example:
+
 - Expected: 10,000 concurrent connections
 - Safety factor: 1.5
 - HAProxy pods: 3
@@ -296,6 +307,7 @@ histogram_quantile(0.95, rate(haproxy_ic_deployment_duration_seconds_bucket[5m])
 ```
 
 **Target metrics:**
+
 - Average deployment: <1s per HAProxy pod
 - P95 deployment: <3s
 
@@ -368,16 +380,19 @@ curl http://localhost:6060/debug/pprof/goroutine?debug=1
 ### Common Performance Issues
 
 **High memory usage:**
+
 - Check for memory leaks: growing heap over time
 - Reduce event buffer size
 - Limit watched resources
 
 **High CPU usage:**
+
 - Profile to find hot spots
 - Optimize template complexity
 - Increase debounce interval
 
 **Slow deployments:**
+
 - Check DataPlane API health
 - Verify network latency to HAProxy pods
 - Consider reducing config size
@@ -385,18 +400,21 @@ curl http://localhost:6060/debug/pprof/goroutine?debug=1
 ## Performance Checklist
 
 ### Initial Deployment
+
 - [ ] Set appropriate resource requests/limits
 - [ ] Configure debounce interval for workload
 - [ ] Set HAProxy maxconn based on expected load
 - [ ] Match nbthread to CPU allocation
 
 ### Ongoing Optimization
+
 - [ ] Monitor reconciliation latency
 - [ ] Monitor deployment latency
 - [ ] Watch for memory growth
 - [ ] Track event subscriber count
 
 ### High-Load Environments
+
 - [ ] Scale HAProxy pods horizontally
 - [ ] Enable HA mode for controller
 - [ ] Limit watched namespaces

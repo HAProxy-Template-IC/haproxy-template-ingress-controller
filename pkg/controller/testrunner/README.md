@@ -133,6 +133,7 @@ type OutputOptions struct {
 Controls output formatting and verbosity for test results.
 
 **Example:**
+
 ```go
 // Standard output
 output, _ := testrunner.FormatResults(results, testrunner.OutputOptions{
@@ -246,14 +247,17 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 Executes validation tests.
 
 **Parameters:**
+
 - `ctx` - Context for cancellation and timeouts
 - `testName` - Name of specific test to run (empty string runs all tests)
 
 **Returns:**
+
 - `*TestResults` - Aggregated test results
 - `error` - Fatal error (not test failures)
 
 **Behavior:**
+
 1. Filters tests if `testName` is specified
 2. For each test:
    - Creates resource stores from fixtures
@@ -313,6 +317,7 @@ results, err := runner.RunTests(ctx, "my-test")
 Validates HAProxy configuration syntax using the HAProxy binary.
 
 **Example:**
+
 ```yaml
 assertions:
   - type: haproxy_valid
@@ -320,6 +325,7 @@ assertions:
 ```
 
 **Validation Process:**
+
 1. Write config to temporary file
 2. Write auxiliary files to temp directory
 3. Execute: `haproxy -c -f <config-file>`
@@ -331,6 +337,7 @@ assertions:
 Checks if target content contains a regex pattern.
 
 **Example:**
+
 ```yaml
 assertions:
   - type: contains
@@ -340,6 +347,7 @@ assertions:
 ```
 
 **Target Options:**
+
 - `haproxy.cfg` - Main HAProxy configuration (default)
 - `map:<name>` - Map file content
 - `file:<name>` - General file content
@@ -350,6 +358,7 @@ assertions:
 Ensures target content does NOT contain a pattern.
 
 **Example:**
+
 ```yaml
 assertions:
   - type: not_contains
@@ -363,6 +372,7 @@ assertions:
 Verifies target content exactly equals expected value.
 
 **Example:**
+
 ```yaml
 assertions:
   - type: equals
@@ -378,6 +388,7 @@ assertions:
 Queries template context using JSONPath expressions.
 
 **Example:**
+
 ```yaml
 assertions:
   - type: jsonpath
@@ -387,6 +398,7 @@ assertions:
 ```
 
 **JSONPath Syntax:**
+
 - `.resources.services` - Access service store
 - `.resources.ingresses[0]` - First ingress
 - `.metadata.name` - Resource field
@@ -442,12 +454,14 @@ backend {{ svc.metadata.namespace }}-{{ svc.metadata.name }}
 Template rendering errors are simplified for user-friendliness:
 
 **Raw Error:**
+
 ```
 failed to render template 'haproxy.cfg': unable to execute template:
 failed to call function 'fail': Service 'api' not found in namespace 'default'
 ```
 
 **Simplified:**
+
 ```
 Service 'api' not found in namespace 'default'
 ```
@@ -457,12 +471,14 @@ Service 'api' not found in namespace 'default'
 HAProxy validation errors are simplified:
 
 **Raw Error:**
+
 ```
 [ALERT] 350/123456 (12345) : parsing [/tmp/haproxy.cfg:15] :
 'maxconn' : integer expected, got 'invalid' (line 15, column 12)
 ```
 
 **Simplified:**
+
 ```
 maxconn: integer expected, got 'invalid' (line 15)
 ```
@@ -550,6 +566,7 @@ output, err := testrunner.FormatResults(results, testrunner.OutputOptions{
 ```
 
 **Output includes:**
+
 - Target name and size
 - First 200 characters of content
 - Hint about `--dump-rendered` for full content
@@ -620,6 +637,7 @@ fmt.Println(trace)
 ```
 
 **Trace output:**
+
 ```
 Rendering: haproxy.cfg
 Completed: haproxy.cfg (0.007ms)

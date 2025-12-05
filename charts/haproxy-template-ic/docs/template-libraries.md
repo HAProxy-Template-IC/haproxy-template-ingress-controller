@@ -78,6 +78,7 @@ The base library uses `include_matching("prefix-*")` to automatically include al
 ```
 
 This includes all snippets with names starting with `backends-`:
+
 - `backends-ingress` (from ingress library)
 - `backends-gateway` (from gateway library)
 - `backends-custom` (from your values.yaml)

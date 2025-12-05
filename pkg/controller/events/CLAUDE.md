@@ -7,11 +7,13 @@ Development context for domain-specific event type definitions.
 ## When to Work Here
 
 Modify this package when:
+
 - Adding new event types for controller coordination
 - Modifying existing event structures
 - Documenting event contracts and usage
 
 **DO NOT** modify this package for:
+
 - Event infrastructure (publish/subscribe) → Use `pkg/events`
 - Business logic → Use appropriate domain package
 - Event handling → Use controller components (reconciler, executor, etc.)
@@ -21,6 +23,7 @@ Modify this package when:
 Defines all domain-specific event types used for controller coordination. This is the catalog of events that flow through the EventBus to coordinate controller components.
 
 **Separation of Concerns**:
+
 - `pkg/events` - Generic pub/sub infrastructure (domain-agnostic)
 - `pkg/controller/events` - Domain event types (controller-specific)
 
@@ -59,6 +62,7 @@ func NewResourceIndexUpdatedEvent(resourceType string, changes []types.ResourceC
 ```
 
 **Enforcement**:
+
 - Custom static analyzer detects parameter mutations
 - Code review
 - Documentation and team discipline
@@ -74,6 +78,7 @@ func (e *ConfigValidatedEvent) EventType() string {
 ```
 
 **Why pointers?**
+
 - Avoids copying large structs (200+ bytes)
 - Follows Go best practices
 - Consistent with Kubernetes API style
@@ -90,6 +95,7 @@ type ConfigValidatedEvent struct {
 ```
 
 **Why exported?**
+
 - JSON serialization support
 - Idiomatic Go access
 - Matches industry standards (Kubernetes, NATS)

@@ -37,7 +37,16 @@ version: ## Display version information
 
 ## Linting targets
 
-lint: ## Run all linters (golangci-lint + arch-go + eventimmutability)
+lint: ## Run all linters (YAML, JSON, Markdown, Go)
+	@echo "Linting YAML files..."
+	yamllint -c .yamllint.yml .
+	@echo "Linting JSON files..."
+	@for f in renovate.json; do \
+		echo "  Checking $$f..."; \
+		jq empty "$$f" || exit 1; \
+	done
+	@echo "Linting Markdown files..."
+	markdownlint-cli2 "**/*.md" "#node_modules" "#.claude"
 	@echo "Running golangci-lint..."
 ifdef CI
 	$(GOLANGCI_LINT) run --output.code-climate.path=gl-code-quality-report.json \

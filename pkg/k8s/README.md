@@ -152,18 +152,21 @@ The package provides two types of watchers for different use cases:
 Use `watcher.New()` when watching **multiple resources** (collections):
 
 **Best for:**
+
 - Many ingresses across namespaces
 - All services in a cluster
 - Multiple endpoint slices
 - Any collection where you need O(1) lookup by index keys
 
 **Features:**
+
 - Indexed storage for fast lookups
 - Debouncing to batch rapid changes
 - Field filtering to reduce memory
 - Aggregated change statistics
 
 **Example use cases:**
+
 - Watching all Ingress resources to generate HAProxy configuration
 - Watching Services and EndpointSlices for load balancing
 - Monitoring Pods with specific labels
@@ -173,17 +176,20 @@ Use `watcher.New()` when watching **multiple resources** (collections):
 Use `watcher.NewSingle()` when watching **one specific resource**:
 
 **Best for:**
+
 - Configuration in a specific ConfigMap
 - Credentials in a specific Secret
 - A particular Deployment or Service you depend on
 
 **Features:**
+
 - No indexing overhead (only one resource)
 - Immediate callbacks (no debouncing)
 - Simpler API (resource object in callback)
 - Lighter weight implementation
 
 **Example use cases:**
+
 - Watching ConfigMap containing HAProxy templates
 - Watching Secret containing dataplane credentials
 - Monitoring controller's own Deployment
@@ -206,6 +212,7 @@ cfg := types.WatcherConfig{
 ```
 
 **Use when:**
+
 - Resources are small to medium sized
 - Fast access is critical
 - Memory is not constrained
@@ -223,6 +230,7 @@ cfg := types.WatcherConfig{
 ```
 
 **Use when:**
+
 - Resources are large (e.g., Secrets with certificate data)
 - Memory usage must be minimized
 - Some API latency on cache misses is acceptable
@@ -240,12 +248,14 @@ IndexBy: []string{"metadata.labels['kubernetes.io/service-name']"}
 ```
 
 **JSONPath expressions:**
+
 - `metadata.namespace` - Resource namespace
 - `metadata.name` - Resource name
 - `metadata.labels['key']` - Label value
 - Any valid JSONPath expression supported by k8s.io/client-go/util/jsonpath
 
 **Lookup performance:**
+
 - Multiple index keys create composite keys: `{key1}:{key2}:...`
 - Store.Get() performs O(1) lookup using provided keys
 - Store.List() returns all resources: O(n)
@@ -836,16 +846,19 @@ The package uses fail-fast validation:
 ## Performance Considerations
 
 **Memory Usage:**
+
 - Memory store: Proportional to resource count and size
 - Cached store: Only keys in memory, ~O(n) where n = number of resources
 - Field filtering significantly reduces memory usage
 
 **Lookup Performance:**
+
 - Store.Get() with index keys: O(1)
 - Store.List(): O(n) where n = number of resources
 - Debouncing reduces callback frequency during rapid changes
 
 **API Calls (Cached Store):**
+
 - Initial sync: 1 LIST call per resource type
 - Real-time updates: Watch events via SharedInformer (no additional calls)
 - Cache misses: GET call to Kubernetes API (TTL-based caching reduces frequency)
