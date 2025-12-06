@@ -56,7 +56,7 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed on valid config: %v", err)
 	}
@@ -100,7 +100,7 @@ backend api-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed on valid complex config: %v", err)
 	}
@@ -124,7 +124,7 @@ backend
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err == nil {
 		t.Fatal("ValidateConfiguration() should fail on malformed config")
 	}
@@ -153,7 +153,7 @@ func TestValidateConfiguration_EmptyConfig(t *testing.T) {
 	config := ""
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err == nil {
 		t.Fatal("ValidateConfiguration() should fail on empty config")
 	}
@@ -194,7 +194,7 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err == nil {
 		t.Fatal("ValidateConfiguration() should fail on semantic error")
 	}
@@ -294,7 +294,7 @@ Kw==
 		},
 	}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed with SSL certificate: %v", err)
 	}
@@ -333,7 +333,7 @@ backend servers
 		},
 	}
 
-	err := ValidateConfiguration(config, auxFiles, paths, nil)
+	err := ValidateConfiguration(config, auxFiles, paths, nil, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed with absolute path map files: %v", err)
 	}
@@ -378,7 +378,7 @@ Content-Type: text/html
 		},
 	}
 
-	err := ValidateConfiguration(config, auxFiles, paths, nil)
+	err := ValidateConfiguration(config, auxFiles, paths, nil, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() failed with absolute path general files: %v", err)
 	}
@@ -404,7 +404,7 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	// This may or may not fail depending on HAProxy version and parser strictness
 	// Just verify the function doesn't panic
 	_ = err
@@ -460,7 +460,7 @@ backend protected
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err == nil {
 		t.Fatal("ValidateConfiguration() should fail on backend http-request rule with invalid auth_realm (contains spaces)")
 	}
@@ -513,7 +513,7 @@ backend mysql-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() should pass on valid TCP request rules: %v", err)
 	}
@@ -546,7 +546,7 @@ backend dynamic-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil)
+	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() should pass on valid server templates: %v", err)
 	}
