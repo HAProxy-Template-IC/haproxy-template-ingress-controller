@@ -27,6 +27,14 @@ import (
 	"time"
 )
 
+const (
+	// MaxPreStartBufferSize is the maximum number of events that can be buffered
+	// before EventBus.Start() is called. This prevents unbounded memory growth
+	// during startup if many events are published before subscribers are ready.
+	// Events exceeding this limit are dropped with a warning.
+	MaxPreStartBufferSize = 1000
+)
+
 // Event is the base interface for all events in the system.
 // Events are used for asynchronous pub/sub communication between components.
 type Event interface {
@@ -98,8 +106,14 @@ func (b *EventBus) Publish(event Event) int {
 	// Check if bus has started
 	b.startMu.Lock()
 	if !b.started {
-		// Buffer event for replay after Start()
-		b.preStartBuffer = append(b.preStartBuffer, event)
+		// Buffer event for replay after Start(), with capacity limit
+		if len(b.preStartBuffer) >= MaxPreStartBufferSize {
+			slog.Warn("pre-start buffer capacity exceeded, dropping event",
+				"capacity", MaxPreStartBufferSize,
+				"event_type", event.EventType())
+		} else {
+			b.preStartBuffer = append(b.preStartBuffer, event)
+		}
 		b.startMu.Unlock()
 		return 0
 	}

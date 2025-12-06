@@ -35,6 +35,9 @@ const (
 	DefaultDebounceInterval = 500 * time.Millisecond
 
 	// EventBufferSize is the size of the event subscription buffer.
+	// Size 100: Medium-volume component that receives resource change events from
+	// multiple watchers (Ingress, HTTPRoute, Service, Endpoints, Secrets, ConfigMaps).
+	// Higher than deployer to handle bursts when many resources change simultaneously.
 	EventBufferSize = 100
 )
 
