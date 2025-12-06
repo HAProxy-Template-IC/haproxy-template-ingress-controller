@@ -79,6 +79,12 @@ const (
 
 	// StatusStopped indicates the component has been gracefully stopped.
 	StatusStopped Status = "stopped"
+
+	// StatusStandby indicates the component is intentionally not active.
+	// This is used for leader-only components on non-leader pods that are waiting
+	// for potential leadership acquisition. Unlike StatusPending (which implies
+	// "about to start"), StatusStandby means "waiting for conditions to be met".
+	StatusStandby Status = "standby"
 )
 
 // ComponentInfo provides information about a registered component.

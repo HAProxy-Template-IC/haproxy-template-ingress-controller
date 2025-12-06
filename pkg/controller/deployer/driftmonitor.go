@@ -74,9 +74,11 @@ type DriftPreventionMonitor struct {
 // Returns:
 //   - A new DriftPreventionMonitor instance ready to be started
 func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger, driftPreventionInterval time.Duration) *DriftPreventionMonitor {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(DriftMonitorEventBufferSize)
+	// Use SubscribeLeaderOnly because this component only runs on the leader.
+	// It subscribes after EventBus.Start() when leadership is acquired.
+	// All-replica components replay their state on BecameLeaderEvent to ensure
+	// leader-only components don't miss critical state.
+	eventChan := eventBus.SubscribeLeaderOnly(DriftMonitorEventBufferSize)
 
 	return &DriftPreventionMonitor{
 		eventBus:                eventBus,

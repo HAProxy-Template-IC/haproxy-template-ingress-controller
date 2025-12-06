@@ -447,6 +447,26 @@ func setupInfrastructureServers(
 	// This must be done before starting the introspection server
 	debug.RegisterEventsHandler(setup.IntrospectionServer, eventBuffer)
 
+	// Set up health checker to expose component health via /health endpoint
+	// This integrates the lifecycle registry with the introspection server
+	setup.IntrospectionServer.SetHealthChecker(func() map[string]introspection.ComponentHealth {
+		status := setup.Registry.Status()
+		result := make(map[string]introspection.ComponentHealth, len(status))
+		for name, info := range status {
+			// StatusStandby is healthy - component is intentionally not active
+			// (e.g., leader-only components on non-leader pods)
+			healthy := info.Status == lifecycle.StatusRunning || info.Status == lifecycle.StatusStandby
+			if info.Healthy != nil {
+				healthy = *info.Healthy
+			}
+			result[name] = introspection.ComponentHealth{
+				Healthy: healthy,
+				Error:   info.Error,
+			}
+		}
+		return result
+	})
+
 	// Start introspection server now that custom handlers are registered
 	go func() {
 		if err := setup.IntrospectionServer.Start(ctx); err != nil {
@@ -753,23 +773,23 @@ func createReconciliationComponents(
 	purePublisher := configpublisher.New(k8sClient.Clientset(), crdClientset, logger)
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, bus, logger)
 
-	// Register all-replica components with the lifecycle registry
-	registry.Register(reconcilerComponent)
-	registry.Register(rendererComponent)
-	registry.Register(haproxyValidatorComponent)
-	registry.Register(executorComponent)
-	registry.Register(discoveryComponent)
-	registry.Register(httpStoreComponent)
-
-	// Register leader-only components with the lifecycle registry
-	registry.Register(deployerComponent, lifecycle.LeaderOnly())
-	registry.Register(deploymentSchedulerComponent, lifecycle.LeaderOnly())
-	registry.Register(driftMonitorComponent, lifecycle.LeaderOnly())
-	registry.Register(configPublisherComponent, lifecycle.LeaderOnly())
-
-	logger.Info("Reconciliation components registered with lifecycle registry",
-		"all_replica_count", 6,
-		"leader_only_count", 4)
+	// Register components with the lifecycle registry using builder pattern
+	registry.Build().
+		AllReplica(
+			reconcilerComponent,
+			rendererComponent,
+			haproxyValidatorComponent,
+			executorComponent,
+			discoveryComponent,
+			httpStoreComponent,
+		).
+		LeaderOnly(
+			deployerComponent,
+			deploymentSchedulerComponent,
+			driftMonitorComponent,
+			configPublisherComponent,
+		).
+		Done()
 
 	return &reconciliationComponents{
 		reconciler:          reconcilerComponent,
@@ -854,6 +874,61 @@ func stopLeaderOnlyComponents(components *leaderOnlyComponents, logger *slog.Log
 	time.Sleep(100 * time.Millisecond)
 
 	logger.Info("Leader-only components stopped")
+}
+
+// leaderCallbackDeps holds dependencies for leader election callbacks.
+// Extracting these to a struct makes the dependencies explicit rather than
+// relying on closure scope, improving code clarity and testability.
+type leaderCallbackDeps struct {
+	iterCtx         context.Context
+	reconComponents *reconciliationComponents
+	registry        *lifecycle.Registry
+	logger          *slog.Logger
+	cancel          context.CancelFunc
+	podName         string
+}
+
+// leaderCallbackState holds mutable state shared across leader callbacks.
+// This state is protected by a mutex since callbacks may be invoked concurrently.
+type leaderCallbackState struct {
+	mu         sync.Mutex
+	components *leaderOnlyComponents
+}
+
+// makeLeaderCallbacks creates leader election callbacks with explicit dependencies.
+// The returned state struct allows the caller to access leader component state.
+func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, *leaderCallbackState) {
+	state := &leaderCallbackState{}
+
+	callbacks := k8sleaderelection.Callbacks{
+		OnStartedLeading: func(_ context.Context) {
+			deps.logger.Info("Became leader, starting deployment components")
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			state.components = startLeaderOnlyComponents(
+				deps.iterCtx,
+				deps.reconComponents,
+				deps.registry,
+				deps.logger,
+				deps.cancel,
+			)
+		},
+		OnStoppedLeading: func() {
+			deps.logger.Warn("Lost leadership, stopping deployment components")
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			stopLeaderOnlyComponents(state.components, deps.logger)
+			state.components = nil
+		},
+		OnNewLeader: func(identity string) {
+			deps.logger.Info("New leader observed",
+				"leader_identity", identity,
+				"is_self", identity == deps.podName,
+			)
+		},
+	}
+
+	return callbacks, state
 }
 
 // setupWebhook creates and starts the webhook component if webhook validation is enabled.
@@ -1037,7 +1112,8 @@ func setupReconciliation(
 
 // setupLeaderElection initializes leader election or starts leader-only components immediately.
 //
-// Returns leader components struct and mutex for lifecycle management.
+// Returns leader callback state for lifecycle management. The state contains a mutex-protected
+// pointer to the leader-only components, which is nil until leadership is acquired.
 func setupLeaderElection(
 	iterCtx context.Context,
 	cfg *coreconfig.Config,
@@ -1048,10 +1124,7 @@ func setupLeaderElection(
 	logger *slog.Logger,
 	cancel context.CancelFunc,
 	g *errgroup.Group,
-) (*leaderOnlyComponents, *sync.Mutex) {
-	var leaderComponents *leaderOnlyComponents
-	var leaderComponentsMutex sync.Mutex
-
+) *leaderCallbackState {
 	if cfg.Controller.LeaderElection.Enabled {
 		// Read pod identity from environment
 		podName := os.Getenv("POD_NAME")
@@ -1080,31 +1153,21 @@ func setupLeaderElection(
 			ReleaseOnCancel: true,
 		}
 
-		// Define leader election callbacks
-		callbacks := k8sleaderelection.Callbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				logger.Info("Became leader, starting deployment components")
-				leaderComponentsMutex.Lock()
-				defer leaderComponentsMutex.Unlock()
-				leaderComponents = startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel)
-			},
-			OnStoppedLeading: func() {
-				logger.Warn("Lost leadership, stopping deployment components")
-				leaderComponentsMutex.Lock()
-				defer leaderComponentsMutex.Unlock()
-				stopLeaderOnlyComponents(leaderComponents, logger)
-				leaderComponents = nil
-			},
-			OnNewLeader: func(identity string) {
-				logger.Info("New leader observed", "leader_identity", identity, "is_self", identity == podName)
-			},
-		}
+		// Create callbacks with explicit dependencies
+		callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
+			iterCtx:         iterCtx,
+			reconComponents: reconComponents,
+			registry:        registry,
+			logger:          logger,
+			cancel:          cancel,
+			podName:         podName,
+		})
 
 		// Create leader election component (event adapter)
 		elector, err := leaderelectionctrl.New(leConfig, k8sClient.Clientset(), eventBus, callbacks, logger)
 		if err != nil {
 			logger.Error("Failed to create leader elector", "error", err)
-			return nil, &leaderComponentsMutex
+			return state
 		}
 
 		// Start leader election loop in errgroup for graceful shutdown
@@ -1118,13 +1181,15 @@ func setupLeaderElection(
 		})
 
 		logger.Info("Leader election initialized", "identity", podName, "lease_name", leConfig.LeaseName, "lease_namespace", leConfig.LeaseNamespace)
-	} else {
-		// Leader election disabled - start leader-only components immediately
-		logger.Info("Leader election disabled, starting all components")
-		leaderComponents = startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel)
+		return state
 	}
 
-	return leaderComponents, &leaderComponentsMutex
+	// Leader election disabled - start leader-only components immediately
+	logger.Info("Leader election disabled, starting all components")
+	state := &leaderCallbackState{
+		components: startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel),
+	}
+	return state
 }
 
 // runIteration runs a single controller iteration.
@@ -1206,7 +1271,14 @@ func runIteration(
 	}
 
 	// 5. Initialize StateCache and metrics component
-	// StateCache subscribes during construction to ensure proper startup synchronization
+	//
+	// Why StateCache is created here (not in a setup function):
+	// StateCache requires a reference to ResourceWatcher (created in step 2) to access
+	// resource stores for introspection. Since ResourceWatcher is created dynamically based
+	// on configuration, StateCache must be created after it's available.
+	//
+	// Subscription timing: StateCache subscribes in its constructor (before EventBus.Start())
+	// to ensure proper startup synchronization and receive all buffered events.
 	stateCache := NewStateCache(setup.Bus, resourceWatcher, logger)
 
 	// Start StateCache and metrics component in background goroutines
@@ -1241,7 +1313,7 @@ func runIteration(
 
 	// 7. Setup leader election
 	logger.Info("Stage 6: Initializing leader election")
-	leaderComponents, leaderComponentsMutex := setupLeaderElection(
+	leaderState := setupLeaderElection(
 		setup.IterCtx, cfg, k8sClient, reconComponents, setup.Registry, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
 	)
 
@@ -1259,32 +1331,31 @@ func runIteration(
 	// 10. Wait for config change signal or context cancellation
 	select {
 	case <-setup.IterCtx.Done():
-		handleIterationCancellation(leaderComponents, leaderComponentsMutex, setup, logger)
+		handleIterationCancellation(leaderState, setup, logger)
 		return nil
 
 	case newConfig := <-setup.ConfigChangeCh:
 		logger.Info("Configuration change detected, triggering reinitialization",
 			"new_config_version", fmt.Sprintf("%p", newConfig))
-		handleConfigurationChange(leaderComponents, leaderComponentsMutex, setup, logger)
+		handleConfigurationChange(leaderState, setup, logger)
 		return nil
 	}
 }
 
 // handleIterationCancellation handles cleanup when the controller iteration is cancelled.
 func handleIterationCancellation(
-	leaderComponents *leaderOnlyComponents,
-	leaderComponentsMutex *sync.Mutex,
+	leaderState *leaderCallbackState,
 	setup *componentSetup,
 	logger *slog.Logger,
 ) {
 	logger.Info("Controller iteration cancelled", "reason", setup.IterCtx.Err())
 
 	// Cleanup leader-only components if still running
-	leaderComponentsMutex.Lock()
-	if leaderComponents != nil {
-		stopLeaderOnlyComponents(leaderComponents, logger)
+	leaderState.mu.Lock()
+	if leaderState.components != nil {
+		stopLeaderOnlyComponents(leaderState.components, logger)
 	}
-	leaderComponentsMutex.Unlock()
+	leaderState.mu.Unlock()
 
 	// Wait for all goroutines to finish gracefully
 	waitForGoroutinesToFinish(setup.ErrGroup, logger, "Shutdown")
@@ -1292,17 +1363,16 @@ func handleIterationCancellation(
 
 // handleConfigurationChange handles cleanup and reinitialization when configuration changes.
 func handleConfigurationChange(
-	leaderComponents *leaderOnlyComponents,
-	leaderComponentsMutex *sync.Mutex,
+	leaderState *leaderCallbackState,
 	setup *componentSetup,
 	logger *slog.Logger,
 ) {
 	// Stop leader-only components before canceling context
-	leaderComponentsMutex.Lock()
-	if leaderComponents != nil {
-		stopLeaderOnlyComponents(leaderComponents, logger)
+	leaderState.mu.Lock()
+	if leaderState.components != nil {
+		stopLeaderOnlyComponents(leaderState.components, logger)
 	}
-	leaderComponentsMutex.Unlock()
+	leaderState.mu.Unlock()
 
 	// Cancel iteration context to stop all components and watchers
 	setup.Cancel()

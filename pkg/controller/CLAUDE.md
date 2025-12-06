@@ -836,6 +836,75 @@ for event := range eventChan {
 }
 ```
 
+### Scatter-Gather Pattern
+
+The EventBus.Request() method implements scatter-gather for operations requiring coordinated responses from multiple components.
+
+**Current Usage:**
+
+- Webhook validation (DryRunValidator responds to validation requests)
+
+**When to Use Scatter-Gather:**
+
+1. **Need responses from multiple components** - Validation where multiple validators must respond
+2. **Responses must be correlated** - Matching responses to the original request
+3. **Timeout handling required** - Can't wait forever for responses
+4. **Parallel processing** - All responders process the request simultaneously
+
+**When NOT to Use Scatter-Gather:**
+
+- Fire-and-forget notifications (use Publish)
+- Single responder (use direct function call)
+- High-frequency operations (overhead too high)
+- Uncoordinated observers (use regular Subscribe)
+
+**Example - Validation Request:**
+
+```go
+// Requester: WebhookComponent sends validation request
+func (w *WebhookComponent) validate(ctx context.Context, resource runtime.Object) error {
+    req := events.NewWebhookValidationRequest(resource, operation, namespace, name)
+
+    result, err := w.eventBus.Request(ctx, req, busevents.RequestOptions{
+        Timeout:            10 * time.Second,
+        ExpectedResponders: []string{"dry-run-validator"},
+    })
+    if err != nil {
+        return fmt.Errorf("validation request failed: %w", err)
+    }
+
+    // Check all responses
+    for _, resp := range result.Responses {
+        if valResp, ok := resp.(*events.WebhookValidationResponse); ok {
+            if !valResp.Allowed {
+                return errors.New(valResp.Message)
+            }
+        }
+    }
+    return nil
+}
+
+// Responder: DryRunValidator responds to requests
+func (v *DryRunValidator) handleValidationRequest(req *events.WebhookValidationRequest) {
+    // Perform validation...
+    allowed, message := v.validateResource(req.Object)
+
+    // Respond with matching request ID
+    v.eventBus.Publish(events.NewWebhookValidationResponse(
+        req.RequestID(),
+        "dry-run-validator",
+        allowed,
+        message,
+    ))
+}
+```
+
+**Potential Future Usage:**
+
+- Multi-stage HAProxy validation (syntax → semantic → connectivity)
+- Pre-deployment readiness checks (all pods ready, services healthy)
+- Distributed configuration queries (gather state from multiple stores)
+
 ## Leadership Transition Patterns
 
 ### The "Late Subscriber Problem"

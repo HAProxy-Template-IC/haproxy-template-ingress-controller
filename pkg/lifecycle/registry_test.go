@@ -855,3 +855,39 @@ func indexOf(slice []string, s string) int {
 	}
 	return -1
 }
+
+func TestRegistry_Build(t *testing.T) {
+	registry := NewRegistry()
+
+	allReplica1 := &mockComponent{name: "all-replica-1"}
+	allReplica2 := &mockComponent{name: "all-replica-2"}
+	leaderOnly1 := &mockComponent{name: "leader-only-1"}
+	leaderOnly2 := &mockComponent{name: "leader-only-2"}
+
+	count := registry.Build().
+		AllReplica(allReplica1, allReplica2).
+		LeaderOnly(leaderOnly1, leaderOnly2).
+		Done()
+
+	assert.Equal(t, 4, count, "Expected 4 components to be registered")
+	assert.Equal(t, 4, registry.Count(), "Registry count should be 4")
+
+	// Verify all-replica components are registered without leader-only flag
+	status := registry.Status()
+	info1, ok := status["all-replica-1"]
+	require.True(t, ok, "all-replica-1 should be registered")
+	assert.False(t, info1.LeaderOnly, "all-replica-1 should not be leader-only")
+
+	info2, ok := status["all-replica-2"]
+	require.True(t, ok, "all-replica-2 should be registered")
+	assert.False(t, info2.LeaderOnly, "all-replica-2 should not be leader-only")
+
+	// Verify leader-only components are registered with leader-only flag
+	info3, ok := status["leader-only-1"]
+	require.True(t, ok, "leader-only-1 should be registered")
+	assert.True(t, info3.LeaderOnly, "leader-only-1 should be leader-only")
+
+	info4, ok := status["leader-only-2"]
+	require.True(t, ok, "leader-only-2 should be registered")
+	assert.True(t, info4.LeaderOnly, "leader-only-2 should be leader-only")
+}

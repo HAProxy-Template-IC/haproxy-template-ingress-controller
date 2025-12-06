@@ -889,6 +889,30 @@ EOF
 	ok "Echo Server is ready."
 }
 
+# Deploy blocklist-server early so controller templates can fetch from it
+# This must be called BEFORE deploy_controller when not using --skip-echo
+deploy_blocklist_server() {
+	log INFO "Deploying blocklist-server for HTTP Store demo..."
+
+	# Create echo namespace if it doesn't exist
+	kubectl get ns "${ECHO_NAMESPACE}" >/dev/null 2>&1 || kubectl create ns "${ECHO_NAMESPACE}" >/dev/null
+
+	# Deploy blocklist-server
+	kubectl apply -f "${ASSETS_DIR}/blocklist-server.yaml" >/dev/null || {
+		err "Failed to deploy blocklist server"
+		return 1
+	}
+
+	# Wait for deployment to be ready
+	log INFO "Waiting for blocklist-server to become ready..."
+	if ! kubectl -n "${ECHO_NAMESPACE}" rollout status deployment/blocklist-server --timeout=60s >/dev/null 2>&1; then
+		warn "blocklist-server deployment did not become ready in time, controller startup may fail"
+		return 0
+	fi
+
+	ok "Blocklist server is ready."
+}
+
 deploy_ingress_demo() {
 	log INFO "Deploying Ingress demo resources..."
 
@@ -898,11 +922,8 @@ deploy_ingress_demo() {
 		return 1
 	}
 
-	# Deploy blocklist-server for HTTP Store demo
-	kubectl apply -f "${ASSETS_DIR}/blocklist-server.yaml" >/dev/null || {
-		err "Failed to deploy blocklist server"
-		return 1
-	}
+	# Note: blocklist-server is deployed earlier by deploy_blocklist_server()
+	# to ensure it's ready before controller starts template rendering
 
 	# Deploy comprehensive Ingress examples from ingress-demo.yaml
 	# This file demonstrates all supported haproxy.org/* annotations
@@ -1514,6 +1535,16 @@ dev_up() {
     ok "Dependencies present."
 
     ensure_cluster
+
+    # Deploy blocklist-server BEFORE controller if echo demos are enabled
+    # The controller's default template includes an HTTP Store demo that fetches
+    # from blocklist-server.echo.svc - it must exist before controller starts
+    if [[ "$SKIP_ECHO" != "true" ]]; then
+        deploy_blocklist_server || {
+            err "Blocklist server deployment failed"
+            return 1
+        }
+    fi
 
     deploy_controller || {
         err "Controller deployment failed"

@@ -21,6 +21,8 @@ package events
 
 import (
 	"context"
+	"log/slog"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -145,7 +147,59 @@ func (b *EventBus) Publish(event Event) int {
 // The returned channel is read-only and will never be closed.
 // To stop receiving events, the subscriber should call Unsubscribe()
 // to remove the subscription and prevent memory leaks.
+//
+// IMPORTANT: For all-replica components, call this method BEFORE EventBus.Start()
+// to ensure buffered events are received. Subscribing after Start() will trigger
+// a warning as it may indicate a bug. For leader-only components that intentionally
+// subscribe late (after leader election), use SubscribeLeaderOnly() instead.
 func (b *EventBus) Subscribe(bufferSize int) <-chan Event {
+	return b.subscribeInternal(bufferSize, false)
+}
+
+// SubscribeLeaderOnly creates a subscription for leader-only components.
+//
+// This method is identical to Subscribe() but does not log a warning when
+// called after EventBus.Start(). Use this for components that only run on the
+// leader replica and are intentionally started after leader election.
+//
+// Leader-only components rely on the state replay mechanism: all-replica components
+// re-publish their cached state when BecameLeaderEvent is received, ensuring
+// leader-only components don't miss critical state even though they subscribe late.
+//
+// The returned channel is read-only and will never be closed.
+// To stop receiving events, the subscriber should call Unsubscribe()
+// to remove the subscription and prevent memory leaks.
+func (b *EventBus) SubscribeLeaderOnly(bufferSize int) <-chan Event {
+	return b.subscribeInternal(bufferSize, true)
+}
+
+// subscribeInternal handles subscription creation with optional late subscription warning.
+func (b *EventBus) subscribeInternal(bufferSize int, isLeaderOnly bool) <-chan Event {
+	// Check if subscribing after Start() - may miss buffered events
+	b.startMu.Lock()
+	started := b.started
+	b.startMu.Unlock()
+
+	if started && !isLeaderOnly {
+		// Get caller info for debugging
+		_, file, line, ok := runtime.Caller(2)
+		caller := "unknown"
+		if ok {
+			// Extract just the filename for brevity
+			for i := len(file) - 1; i >= 0; i-- {
+				if file[i] == '/' {
+					file = file[i+1:]
+					break
+				}
+			}
+			caller = file
+		}
+
+		slog.Warn("subscription after EventBus.Start() may miss buffered events - use SubscribeLeaderOnly for leader-only components",
+			"caller", caller,
+			"line", line)
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

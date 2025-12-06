@@ -95,9 +95,13 @@ type DeploymentScheduler struct {
 // Returns:
 //   - A new DeploymentScheduler instance ready to be started
 func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, minDeploymentInterval time.Duration) *DeploymentScheduler {
+	// Use SubscribeLeaderOnly because this component only runs on the leader.
+	// It subscribes after EventBus.Start() when leadership is acquired.
+	// All-replica components replay their state on BecameLeaderEvent to ensure
+	// leader-only components don't miss critical state.
 	return &DeploymentScheduler{
 		eventBus:              eventBus,
-		eventChan:             eventBus.Subscribe(SchedulerEventBufferSize),
+		eventChan:             eventBus.SubscribeLeaderOnly(SchedulerEventBufferSize),
 		logger:                logger.With("component", "deployment-scheduler"),
 		minDeploymentInterval: minDeploymentInterval,
 	}
