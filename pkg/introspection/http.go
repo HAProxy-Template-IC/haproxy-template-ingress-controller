@@ -19,7 +19,7 @@ import (
 	"net/http"
 )
 
-// WriteJSON writes data as JSON to the HTTP response.
+// WriteJSON writes data as JSON to the HTTP response with status 200 OK.
 //
 // Sets appropriate Content-Type header and handles JSON marshaling.
 // If marshaling fails, writes an error response instead.
@@ -31,12 +31,27 @@ import (
 //	    "count": 42,
 //	})
 func WriteJSON(w http.ResponseWriter, data interface{}) {
+	WriteJSONWithStatus(w, http.StatusOK, data)
+}
+
+// WriteJSONWithStatus writes data as JSON with a custom HTTP status code.
+//
+// Use this when you need to return JSON with a non-200 status code.
+//
+// Example:
+//
+//	WriteJSONWithStatus(w, http.StatusServiceUnavailable, map[string]interface{}{
+//	    "status": "degraded",
+//	    "components": components,
+//	})
+func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// If encoding fails, write error
-		// Note: We can't set status code here as headers are already sent
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// If encoding fails, not much we can do - headers already sent
+		// Log would be ideal but we don't have logger access here
+		_ = err
 	}
 }
 
@@ -104,4 +119,21 @@ func WriteError(w http.ResponseWriter, code int, message string) {
 func WriteText(w http.ResponseWriter, text string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(text))
+}
+
+// requireGET wraps an HTTP handler to enforce GET method only.
+//
+// Returns 405 Method Not Allowed for non-GET requests.
+//
+// Example:
+//
+//	mux.HandleFunc("/debug/vars", requireGET(s.handleIndex))
+func requireGET(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, "only GET is allowed")
+			return
+		}
+		handler(w, r)
+	}
 }

@@ -165,9 +165,10 @@ func (r *Registry) prepareComponentsToStart(isLeader bool) ([]*registeredCompone
 	startSet := make(map[string]bool)
 
 	for _, comp := range r.components {
-		// Skip leader-only components if not leader
+		// Skip leader-only components if not leader, but mark them as standby
 		if comp.config.leaderOnly && !isLeader {
-			r.logger.Debug("Skipping leader-only component (not leader)",
+			comp.status = StatusStandby
+			r.logger.Debug("Setting leader-only component to standby (not leader)",
 				"name", comp.component.Name())
 			continue
 		}
@@ -442,8 +443,8 @@ func (r *Registry) StartLeaderOnlyComponents(ctx context.Context) error {
 	startSet := make(map[string]bool)
 
 	for _, comp := range r.components {
-		// Only start leader-only components that are pending
-		if comp.config.leaderOnly && comp.status == StatusPending {
+		// Only start leader-only components that are pending or standby
+		if comp.config.leaderOnly && (comp.status == StatusPending || comp.status == StatusStandby) {
 			comp.status = StatusStarting
 			// Re-create ready channel in case this is called multiple times
 			comp.ready = make(chan struct{})

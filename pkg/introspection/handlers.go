@@ -31,11 +31,6 @@ import (
 //	  "count": 3
 //	}
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		WriteError(w, http.StatusMethodNotAllowed, "only GET is allowed")
-		return
-	}
-
 	paths := s.registry.Paths()
 
 	response := map[string]interface{}{
@@ -60,11 +55,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 //
 // Warning: This can return large responses if many variables are registered.
 func (s *Server) handleAllVars(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		WriteError(w, http.StatusMethodNotAllowed, "only GET is allowed")
-		return
-	}
-
 	allVars, err := s.registry.All()
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, err.Error())
@@ -86,11 +76,6 @@ func (s *Server) handleAllVars(w http.ResponseWriter, r *http.Request) {
 //
 // The path parameter is extracted from the URL path after /debug/vars/.
 func (s *Server) handleVar(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		WriteError(w, http.StatusMethodNotAllowed, "only GET is allowed")
-		return
-	}
-
 	// Extract variable path from URL
 	// URL format: /debug/vars/{path}
 	path := strings.TrimPrefix(r.URL.Path, "/debug/vars/")
@@ -124,25 +109,60 @@ func (s *Server) handleVar(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, value)
 }
 
-// handleHealth serves a simple health check endpoint.
+// handleHealth serves a health check endpoint with component status.
 //
 // GET /health
 // GET /healthz
 //
-// Returns:
+// If no health checker is configured, returns simple OK response:
+//
+//	{"status": "ok"}
+//
+// If health checker is configured, returns component health:
 //
 //	{
-//	  "status": "ok"
+//	  "status": "ok" | "degraded",
+//	  "components": {
+//	    "reconciler": {"healthy": true},
+//	    "deployer": {"healthy": false, "error": "connection failed"}
+//	  }
 //	}
+//
+// Returns HTTP 200 if all components healthy, HTTP 503 if any component unhealthy.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		WriteError(w, http.StatusMethodNotAllowed, "only GET is allowed")
+	// Simple response if no health checker configured
+	if s.healthChecker == nil {
+		WriteJSON(w, map[string]string{
+			"status": "ok",
+		})
 		return
 	}
 
-	WriteJSON(w, map[string]string{
-		"status": "ok",
-	})
+	// Get component health status
+	components := s.healthChecker()
+
+	// Check if all components are healthy
+	allHealthy := true
+	for _, health := range components {
+		if !health.Healthy {
+			allHealthy = false
+			break
+		}
+	}
+
+	status := "ok"
+	httpStatus := http.StatusOK
+	if !allHealthy {
+		status = "degraded"
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	response := map[string]interface{}{
+		"status":     status,
+		"components": components,
+	}
+
+	WriteJSONWithStatus(w, httpStatus, response)
 }
 
 // handleNotFound serves a 404 response for unknown paths.

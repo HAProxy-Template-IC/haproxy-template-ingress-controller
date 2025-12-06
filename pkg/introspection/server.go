@@ -25,6 +25,16 @@ import (
 	_ "net/http/pprof" // Register pprof handlers
 )
 
+// HealthCheckFunc is a function that returns component health status.
+// Used to integrate with lifecycle registry or other health monitoring.
+type HealthCheckFunc func() map[string]ComponentHealth
+
+// ComponentHealth represents the health status of a single component.
+type ComponentHealth struct {
+	Healthy bool   `json:"healthy"`
+	Error   string `json:"error,omitempty"`
+}
+
 // Server serves debug variables over HTTP.
 //
 // The server provides HTTP endpoints for accessing variables registered in a Registry.
@@ -49,6 +59,7 @@ type Server struct {
 	logger         *slog.Logger
 	mux            *http.ServeMux
 	customHandlers []customHandler
+	healthChecker  HealthCheckFunc
 }
 
 // customHandler holds a pattern and handler for custom endpoint registration.
@@ -107,6 +118,33 @@ func (s *Server) RegisterHandler(pattern string, handler http.HandlerFunc) {
 	})
 }
 
+// SetHealthChecker sets a function to check component health.
+// This must be called before Start().
+//
+// The health checker function is called by the /health endpoint to get
+// the health status of all components. If not set, /health just returns "ok".
+//
+// Example integration with lifecycle registry:
+//
+//	server.SetHealthChecker(func() map[string]introspection.ComponentHealth {
+//	    status := registry.Status()
+//	    result := make(map[string]introspection.ComponentHealth)
+//	    for name, info := range status {
+//	        healthy := info.Status == lifecycle.StatusRunning
+//	        if info.Healthy != nil {
+//	            healthy = *info.Healthy
+//	        }
+//	        result[name] = introspection.ComponentHealth{
+//	            Healthy: healthy,
+//	            Error:   info.Error,
+//	        }
+//	    }
+//	    return result
+//	})
+func (s *Server) SetHealthChecker(checker HealthCheckFunc) {
+	s.healthChecker = checker
+}
+
 // setupRoutes registers all HTTP handlers.
 func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Register custom handlers first (allow overriding defaults)
@@ -114,14 +152,14 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 		mux.HandleFunc(h.pattern, h.handler)
 	}
 
-	// Variable endpoints
-	mux.HandleFunc("/debug/vars", s.handleIndex)
-	mux.HandleFunc("/debug/vars/", s.handleVar) // Trailing slash for path matching
-	mux.HandleFunc("/debug/vars/all", s.handleAllVars)
+	// Variable endpoints (GET only)
+	mux.HandleFunc("/debug/vars", requireGET(s.handleIndex))
+	mux.HandleFunc("/debug/vars/", requireGET(s.handleVar)) // Trailing slash for path matching
+	mux.HandleFunc("/debug/vars/all", requireGET(s.handleAllVars))
 
-	// Health check endpoints
-	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/healthz", s.handleHealth)
+	// Health check endpoints (GET only)
+	mux.HandleFunc("/health", requireGET(s.handleHealth))
+	mux.HandleFunc("/healthz", requireGET(s.handleHealth))
 
 	// pprof endpoints are registered via import side-effect
 	// Available at: /debug/pprof/*

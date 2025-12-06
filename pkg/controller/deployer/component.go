@@ -69,9 +69,13 @@ type Component struct {
 // Returns:
 //   - A new Component instance ready to be started
 func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
+	// Use SubscribeLeaderOnly because this component only runs on the leader.
+	// It subscribes after EventBus.Start() when leadership is acquired.
+	// All-replica components replay their state on BecameLeaderEvent to ensure
+	// leader-only components don't miss critical state.
 	return &Component{
 		eventBus:  eventBus,
-		eventChan: eventBus.Subscribe(EventBufferSize),
+		eventChan: eventBus.SubscribeLeaderOnly(EventBufferSize),
 		logger:    logger.With("component", "deployer"),
 	}
 }

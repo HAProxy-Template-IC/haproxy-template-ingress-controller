@@ -73,11 +73,15 @@ func New(
 		logger = slog.Default()
 	}
 
+	// Use SubscribeLeaderOnly because this component only runs on the leader.
+	// It subscribes after EventBus.Start() when leadership is acquired.
+	// All-replica components replay their state on BecameLeaderEvent to ensure
+	// leader-only components don't miss critical state.
 	return &Component{
 		publisher: publisher,
 		eventBus:  eventBus,
 		logger:    logger.With("component", "config_publisher"),
-		eventChan: eventBus.Subscribe(EventBufferSize),
+		eventChan: eventBus.SubscribeLeaderOnly(EventBufferSize),
 	}
 }
 
