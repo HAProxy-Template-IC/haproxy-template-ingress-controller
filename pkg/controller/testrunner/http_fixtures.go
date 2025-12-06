@@ -112,7 +112,7 @@ func fixtureToString(v interface{}) (string, error) {
 // Returns:
 //   - HTTPStore with fixtures loaded as accepted content
 func createHTTPStoreFromFixtures(fixtures []config.HTTPResourceFixture, logger *slog.Logger) *httpstore.HTTPStore {
-	store := httpstore.New(logger)
+	store := httpstore.New(logger, 0) // 0 = no eviction for test fixtures
 
 	for _, fixture := range fixtures {
 		store.LoadFixture(fixture.URL, fixture.Content)

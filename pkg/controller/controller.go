@@ -730,7 +730,10 @@ func createReconciliationComponents(
 
 	// Create HTTPStore component for dynamic HTTP content fetching
 	// This component manages periodic refreshes and content validation coordination
-	httpStoreComponent := httpstore.New(bus, logger)
+	// Eviction maxAge is 2x drift prevention interval to catch stale URLs
+	driftInterval := cfg.Dataplane.GetDriftPreventionInterval()
+	httpStoreEvictionMaxAge := 2 * driftInterval
+	httpStoreComponent := httpstore.New(bus, logger, httpStoreEvictionMaxAge)
 	rendererComponent.SetHTTPStoreComponent(httpStoreComponent)
 
 	// Create HAProxy Validator

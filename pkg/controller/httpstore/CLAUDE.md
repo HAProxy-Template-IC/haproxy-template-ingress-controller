@@ -27,6 +27,7 @@ Responsibilities:
 - Listens for validation events to promote/reject pending content
 - Publishes HTTP resource events when content changes
 - Provides template-callable wrapper for `http.Fetch()`
+- Periodic eviction of unused cache entries to prevent memory growth
 
 ## Architecture
 
@@ -138,7 +139,10 @@ This ensures validation tests new content while production uses validated conten
 
 ```go
 // Created during controller Stage 5
-httpStoreComponent := httpstore.New(eventBus, logger)
+// evictionMaxAge is typically 2x drift prevention interval
+driftInterval := cfg.Dataplane.GetDriftPreventionInterval()
+httpStoreEvictionMaxAge := 2 * driftInterval
+httpStoreComponent := httpstore.New(eventBus, logger, httpStoreEvictionMaxAge)
 
 // Attached to renderer for template access
 rendererComponent.SetHTTPStoreComponent(httpStoreComponent)
@@ -146,6 +150,8 @@ rendererComponent.SetHTTPStoreComponent(httpStoreComponent)
 // Started as all-replica component
 go httpStoreComponent.Start(ctx)
 ```
+
+The eviction interval runs at the same cadence as `evictionMaxAge`. Entries not accessed within `evictionMaxAge` are evicted (unless they have pending validation content).
 
 ## Event Types
 
@@ -191,7 +197,7 @@ The component uses the EventBus for all coordination, making it easy to test:
 ```go
 // Create components
 bus := events.NewEventBus(100)
-component := httpstore.New(bus, logger)
+component := httpstore.New(bus, logger, 2*time.Minute) // eviction maxAge
 
 // Start component
 go component.Start(ctx)

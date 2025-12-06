@@ -30,6 +30,7 @@ import (
 //   - Cached access to previously fetched content
 //   - Two-version cache for safe validation (pending vs accepted)
 //   - Conditional requests using ETag/If-Modified-Since
+//   - Automatic eviction of unused entries based on last access time
 //
 // Thread-safe for concurrent access.
 type HTTPStore struct {
@@ -37,10 +38,14 @@ type HTTPStore struct {
 	cache      map[string]*CacheEntry // URL -> CacheEntry
 	httpClient *http.Client
 	logger     *slog.Logger
+	maxAge     time.Duration // Maximum time an entry can remain unused before eviction (0 = disabled)
 }
 
-// New creates a new HTTPStore with the given logger.
-func New(logger *slog.Logger) *HTTPStore {
+// New creates a new HTTPStore with the given logger and maximum cache age.
+//
+// maxAge is the maximum time an entry can remain unused before becoming eligible
+// for eviction. If maxAge is 0, entries are never evicted based on access time.
+func New(logger *slog.Logger, maxAge time.Duration) *HTTPStore {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -58,6 +63,7 @@ func New(logger *slog.Logger) *HTTPStore {
 			},
 		},
 		logger: logger.With("component", "httpstore"),
+		maxAge: maxAge,
 	}
 }
 
@@ -82,18 +88,19 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	opts = opts.WithDefaults()
 
 	// Check cache first
-	s.mu.RLock()
+	s.mu.Lock()
 	entry, exists := s.cache[url]
 	if exists && entry.AcceptedContent != "" {
 		content := entry.AcceptedContent
-		s.mu.RUnlock()
+		entry.LastAccessTime = time.Now() // Track access for eviction
+		s.mu.Unlock()
 		s.logger.Debug("returning cached content",
 			"url", url,
 			"size", len(content),
 			"age", time.Since(entry.AcceptedTime).String())
 		return content, nil
 	}
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
 	// Cache miss - perform synchronous fetch
 	s.logger.Info("performing initial HTTP fetch",
@@ -115,12 +122,14 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 
 	// Store in cache
 	checksum := Checksum(content)
+	now := time.Now()
 	s.mu.Lock()
 	s.cache[url] = &CacheEntry{
 		URL:              url,
 		AcceptedContent:  content,
 		AcceptedChecksum: checksum,
-		AcceptedTime:     time.Now(),
+		AcceptedTime:     now,
+		LastAccessTime:   now,
 		ValidationState:  StateAccepted,
 		ETag:             etag,
 		LastModified:     lastModified,
@@ -139,41 +148,48 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 
 // Get returns the accepted content for a URL if it exists in cache.
 // Returns empty string and false if not cached.
+// Updates LastAccessTime to track usage for cache eviction.
 func (s *HTTPStore) Get(url string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	entry, exists := s.cache[url]
 	if !exists || entry.AcceptedContent == "" {
 		return "", false
 	}
+	entry.LastAccessTime = time.Now()
 	return entry.AcceptedContent, true
 }
 
 // GetPending returns the pending content for a URL if it exists.
 // This is used during validation to render with pending content.
 // Returns empty string and false if no pending content.
+// Updates LastAccessTime to track usage for cache eviction.
 func (s *HTTPStore) GetPending(url string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	entry, exists := s.cache[url]
 	if !exists || !entry.HasPending {
 		return "", false
 	}
+	entry.LastAccessTime = time.Now()
 	return entry.PendingContent, true
 }
 
 // GetForValidation returns content for validation rendering.
 // If pending content exists, returns pending; otherwise returns accepted.
+// Updates LastAccessTime to track usage for cache eviction.
 func (s *HTTPStore) GetForValidation(url string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	entry, exists := s.cache[url]
 	if !exists {
 		return "", false
 	}
+
+	entry.LastAccessTime = time.Now()
 
 	if entry.HasPending {
 		return entry.PendingContent, true
@@ -478,6 +494,50 @@ func (s *HTTPStore) RejectAllPending() int {
 	return count
 }
 
+// EvictUnused removes cache entries that haven't been accessed within maxAge.
+// Entries with pending validation are never evicted to protect the two-version cache.
+// Returns the count of evicted entries.
+//
+// This method is called periodically by the event adapter to prevent unbounded
+// memory growth when templates change and old URLs are no longer used.
+func (s *HTTPStore) EvictUnused() int {
+	if s.maxAge == 0 {
+		return 0 // Eviction disabled
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-s.maxAge)
+	evicted := 0
+
+	for url, entry := range s.cache {
+		// Never evict entries with pending validation
+		if entry.HasPending {
+			continue
+		}
+
+		// Evict if last access time is before cutoff
+		if entry.LastAccessTime.Before(cutoff) {
+			s.logger.Info("evicting unused HTTP cache entry",
+				"url", url,
+				"last_access", entry.LastAccessTime,
+				"age", now.Sub(entry.LastAccessTime))
+			delete(s.cache, url)
+			evicted++
+		}
+	}
+
+	if evicted > 0 {
+		s.logger.Info("HTTP store eviction complete",
+			"evicted", evicted,
+			"remaining", len(s.cache))
+	}
+
+	return evicted
+}
+
 // LoadFixture loads a single HTTP fixture directly into the store as accepted content.
 // This is used by validation tests to provide mock HTTP responses without making
 // actual HTTP requests.
@@ -489,11 +549,13 @@ func (s *HTTPStore) LoadFixture(url, content string) {
 	defer s.mu.Unlock()
 
 	checksum := Checksum(content)
+	now := time.Now()
 	s.cache[url] = &CacheEntry{
 		URL:              url,
 		AcceptedContent:  content,
 		AcceptedChecksum: checksum,
-		AcceptedTime:     time.Now(),
+		AcceptedTime:     now,
+		LastAccessTime:   now,
 		ValidationState:  StateAccepted,
 		// No pending content, no ETag - fixtures are immediately accepted
 	}

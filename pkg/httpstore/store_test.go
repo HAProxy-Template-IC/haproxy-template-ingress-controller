@@ -37,7 +37,7 @@ func TestHTTPStore_FetchAndGet(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -67,7 +67,7 @@ func TestHTTPStore_FetchWithRetries(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -92,7 +92,7 @@ func TestHTTPStore_FetchTimeout(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -121,7 +121,7 @@ func TestHTTPStore_PendingContent(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -161,7 +161,7 @@ func TestHTTPStore_PromotePending(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -198,7 +198,7 @@ func TestHTTPStore_RejectPending(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -250,7 +250,7 @@ func TestHTTPStore_GetPendingURLs(t *testing.T) {
 	defer server2.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -286,7 +286,7 @@ func TestHTTPStore_BasicAuth(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -318,7 +318,7 @@ func TestHTTPStore_BearerAuth(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -343,7 +343,7 @@ func TestHTTPStore_CustomHeaders(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -375,7 +375,7 @@ func TestHTTPStore_ConditionalRequest(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -399,7 +399,7 @@ func TestHTTPStore_GetDelay(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger)
+	store := New(logger, 0)
 
 	ctx := context.Background()
 
@@ -413,4 +413,120 @@ func TestHTTPStore_GetDelay(t *testing.T) {
 
 	// Get delay returns configured value
 	assert.Equal(t, expectedDelay, store.GetDelay(server.URL))
+}
+
+func TestHTTPStore_EvictUnused(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Create store with 100ms maxAge for fast testing
+	store := New(logger, 100*time.Millisecond)
+
+	// Load two fixtures
+	store.LoadFixture("http://example.com/old", "old content")
+	store.LoadFixture("http://example.com/new", "new content")
+
+	assert.Equal(t, 2, store.Size())
+
+	// Access one of them to update its LastAccessTime
+	time.Sleep(50 * time.Millisecond)
+	_, ok := store.Get("http://example.com/new")
+	require.True(t, ok)
+
+	// Wait for old entry to expire
+	time.Sleep(60 * time.Millisecond)
+
+	// Evict - should remove old, keep new
+	evicted := store.EvictUnused()
+
+	assert.Equal(t, 1, evicted)
+	assert.Equal(t, 1, store.Size())
+
+	// Verify correct entry was evicted
+	_, ok = store.Get("http://example.com/old")
+	assert.False(t, ok)
+
+	_, ok = store.Get("http://example.com/new")
+	assert.True(t, ok)
+}
+
+func TestHTTPStore_EvictUnused_NeverEvictsPending(t *testing.T) {
+	// Create test server that returns changing content
+	content := "original"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(content))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Create store with very short maxAge
+	store := New(logger, 1*time.Millisecond)
+
+	ctx := context.Background()
+
+	// Initial fetch
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute}, nil)
+	require.NoError(t, err)
+
+	// Update content and refresh to create pending
+	content = "updated"
+	changed, err := store.RefreshURL(ctx, server.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	// Entry now has pending content
+	assert.True(t, store.HasPendingValidation())
+
+	// Wait for maxAge to expire
+	time.Sleep(10 * time.Millisecond)
+
+	// Evict - should not evict entry with pending content
+	evicted := store.EvictUnused()
+	assert.Equal(t, 0, evicted)
+	assert.Equal(t, 1, store.Size())
+}
+
+func TestHTTPStore_EvictUnused_DisabledWithZeroMaxAge(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Create store with 0 maxAge (eviction disabled)
+	store := New(logger, 0)
+
+	store.LoadFixture("http://example.com/test", "content")
+
+	// Evict returns 0 when disabled
+	evicted := store.EvictUnused()
+	assert.Equal(t, 0, evicted)
+	assert.Equal(t, 1, store.Size())
+}
+
+func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Create store with 80ms maxAge
+	store := New(logger, 80*time.Millisecond)
+
+	store.LoadFixture("http://example.com/test", "content")
+
+	// Wait 50ms, then access
+	time.Sleep(50 * time.Millisecond)
+	_, ok := store.Get("http://example.com/test")
+	require.True(t, ok)
+
+	// Wait another 50ms (total 100ms since load, but only 50ms since access)
+	time.Sleep(50 * time.Millisecond)
+
+	// Should not be evicted because access reset the timer
+	evicted := store.EvictUnused()
+	assert.Equal(t, 0, evicted)
+	assert.Equal(t, 1, store.Size())
+
+	// Wait for the full maxAge from last access
+	time.Sleep(40 * time.Millisecond)
+
+	// Now it should be evicted
+	evicted = store.EvictUnused()
+	assert.Equal(t, 1, evicted)
+	assert.Equal(t, 0, store.Size())
 }
