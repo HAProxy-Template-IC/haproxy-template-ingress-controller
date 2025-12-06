@@ -436,9 +436,10 @@ func TestHTTPStore_EvictUnused(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 
 	// Evict - should remove old, keep new
-	evicted := store.EvictUnused()
+	evictedURLs := store.EvictUnused()
 
-	assert.Equal(t, 1, evicted)
+	assert.Equal(t, 1, len(evictedURLs))
+	assert.Equal(t, "http://example.com/old", evictedURLs[0])
 	assert.Equal(t, 1, store.Size())
 
 	// Verify correct entry was evicted
@@ -482,8 +483,8 @@ func TestHTTPStore_EvictUnused_NeverEvictsPending(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Evict - should not evict entry with pending content
-	evicted := store.EvictUnused()
-	assert.Equal(t, 0, evicted)
+	evictedURLs := store.EvictUnused()
+	assert.Empty(t, evictedURLs)
 	assert.Equal(t, 1, store.Size())
 }
 
@@ -495,9 +496,9 @@ func TestHTTPStore_EvictUnused_DisabledWithZeroMaxAge(t *testing.T) {
 
 	store.LoadFixture("http://example.com/test", "content")
 
-	// Evict returns 0 when disabled
-	evicted := store.EvictUnused()
-	assert.Equal(t, 0, evicted)
+	// Evict returns nil when disabled
+	evictedURLs := store.EvictUnused()
+	assert.Nil(t, evictedURLs)
 	assert.Equal(t, 1, store.Size())
 }
 
@@ -518,15 +519,16 @@ func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Should not be evicted because access reset the timer
-	evicted := store.EvictUnused()
-	assert.Equal(t, 0, evicted)
+	evictedURLs := store.EvictUnused()
+	assert.Empty(t, evictedURLs)
 	assert.Equal(t, 1, store.Size())
 
 	// Wait for the full maxAge from last access
 	time.Sleep(40 * time.Millisecond)
 
 	// Now it should be evicted
-	evicted = store.EvictUnused()
-	assert.Equal(t, 1, evicted)
+	evictedURLs = store.EvictUnused()
+	assert.Equal(t, 1, len(evictedURLs))
+	assert.Equal(t, "http://example.com/test", evictedURLs[0])
 	assert.Equal(t, 0, store.Size())
 }

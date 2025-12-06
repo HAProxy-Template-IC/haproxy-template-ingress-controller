@@ -496,13 +496,13 @@ func (s *HTTPStore) RejectAllPending() int {
 
 // EvictUnused removes cache entries that haven't been accessed within maxAge.
 // Entries with pending validation are never evicted to protect the two-version cache.
-// Returns the count of evicted entries.
+// Returns the list of evicted URLs (empty if none evicted or eviction disabled).
 //
 // This method is called periodically by the event adapter to prevent unbounded
 // memory growth when templates change and old URLs are no longer used.
-func (s *HTTPStore) EvictUnused() int {
+func (s *HTTPStore) EvictUnused() []string {
 	if s.maxAge == 0 {
-		return 0 // Eviction disabled
+		return nil // Eviction disabled
 	}
 
 	s.mu.Lock()
@@ -510,7 +510,7 @@ func (s *HTTPStore) EvictUnused() int {
 
 	now := time.Now()
 	cutoff := now.Add(-s.maxAge)
-	evicted := 0
+	var evictedURLs []string
 
 	for url, entry := range s.cache {
 		// Never evict entries with pending validation
@@ -525,17 +525,17 @@ func (s *HTTPStore) EvictUnused() int {
 				"last_access", entry.LastAccessTime,
 				"age", now.Sub(entry.LastAccessTime))
 			delete(s.cache, url)
-			evicted++
+			evictedURLs = append(evictedURLs, url)
 		}
 	}
 
-	if evicted > 0 {
+	if len(evictedURLs) > 0 {
 		s.logger.Info("HTTP store eviction complete",
-			"evicted", evicted,
+			"evicted", len(evictedURLs),
 			"remaining", len(s.cache))
 	}
 
-	return evicted
+	return evictedURLs
 }
 
 // LoadFixture loads a single HTTP fixture directly into the store as accepted content.

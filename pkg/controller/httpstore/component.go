@@ -128,9 +128,13 @@ func (c *Component) Start(ctx context.Context) error {
 			c.handleEvent(event)
 
 		case <-evictionChan:
-			evicted := c.store.EvictUnused()
-			if evicted > 0 {
-				c.logger.Debug("HTTP store eviction ran", "evicted", evicted)
+			evictedURLs := c.store.EvictUnused()
+			if len(evictedURLs) > 0 {
+				c.logger.Debug("HTTP store eviction ran", "evicted", len(evictedURLs))
+				// Stop refresh timers for evicted URLs to prevent timer leaks
+				for _, url := range evictedURLs {
+					c.StopRefresher(url)
+				}
 			}
 
 		case <-c.ctx.Done():
