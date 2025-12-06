@@ -10,48 +10,82 @@
     "customManagers:makefileVersions",
     "customManagers:helmChartYamlAppVersions"
   ],
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "platformAutomerge": true,
-  "postUpdateOptions": ["gomodTidy"],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
   "packageRules": [
     {
       "description": "Automerge patch and minor updates",
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
       "automerge": true
     },
     {
       "description": "Automerge Go patch and minor",
-      "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "automerge": true
     },
     {
       "description": "Update Go version in go.mod",
-      "matchManagers": ["gomod"],
-      "matchDepNames": ["go"],
-      "matchDepTypes": ["golang"],
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
       "rangeStrategy": "bump"
     },
     {
       "description": "Group Go version updates from go.mod and .tool-versions",
-      "matchManagers": ["gomod", "asdf"],
-      "matchDepNames": ["go", "golang"],
+      "matchManagers": [
+        "gomod",
+        "asdf"
+      ],
+      "matchDepNames": [
+        "go",
+        "golang"
+      ],
       "groupName": "go version"
     },
     {
       "description": "Group Kubernetes dependencies",
-      "matchPackagePrefixes": ["k8s.io/", "sigs.k8s.io/"],
-      "groupName": "kubernetes packages"
+      "groupName": "kubernetes packages",
+      "matchPackageNames": [
+        "k8s.io/{/,}**",
+        "sigs.k8s.io/{/,}**"
+      ]
     },
     {
       "description": "Group linter dependencies",
-      "matchPackagePatterns": ["golangci", "staticcheck"],
-      "groupName": "linting tools"
+      "groupName": "linting tools",
+      "matchPackageNames": [
+        "/golangci/",
+        "/staticcheck/"
+      ]
     },
     {
       "description": "Group HAProxy dependencies",
-      "matchPackagePrefixes": ["github.com/haproxytech/"],
-      "groupName": "haproxy packages"
+      "groupName": "haproxy packages",
+      "matchPackageNames": [
+        "github.com/haproxytech/{/,}**"
+      ]
     }
   ]
 }
