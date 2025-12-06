@@ -145,6 +145,39 @@ The store automatically uses conditional requests when refreshing:
 
 This minimizes bandwidth usage for frequently-refreshed resources.
 
+## Cache Eviction
+
+The HTTP store automatically evicts cache entries that haven't been accessed for a configurable duration. This prevents memory growth when templates change and old URLs are no longer used.
+
+### Eviction Rules
+
+1. **Access time tracking**: Every `Get()`, `GetForValidation()`, and `GetPending()` call updates the entry's `LastAccessTime`
+2. **Never evict pending**: Entries with pending validation (`HasPending=true`) are never evicted, even if expired
+3. **Configurable maxAge**: Set via constructor parameter, typically 2x the drift prevention interval
+4. **Periodic cleanup**: The event adapter runs eviction at regular intervals
+
+### Default Behavior
+
+With default drift prevention interval of 60s:
+
+- `maxAge` = 2 minutes (2x drift interval)
+- Eviction runs every 2 minutes
+- Entries unused for 2+ minutes are evicted (unless they have pending content)
+
+### Eviction API
+
+```go
+// Create store with 2-minute eviction
+store := New(logger, 2*time.Minute)
+
+// Manually trigger eviction (called periodically by event adapter)
+evicted := store.EvictUnused()
+// Returns count of evicted entries
+
+// Disable eviction (for test fixtures)
+store := New(logger, 0)
+```
+
 ## Common Pitfalls
 
 ### Non-Critical Fetch Returns Empty String
@@ -181,10 +214,10 @@ The event adapter (`pkg/controller/httpstore`) wraps this pure component:
 
 ```go
 // Pure component (this package)
-store := httpstore.New(logger)
+store := httpstore.New(logger, 2*time.Minute)  // maxAge for eviction
 
 // Event adapter wraps it
-component := httpstore.New(eventBus, logger)  // different package!
+component := httpstore.New(eventBus, logger, 2*time.Minute)  // different package!
 
 // Wrapper provides template-callable interface
 wrapper := httpstore.NewHTTPStoreWrapper(component, logger, isValidation, ctx)

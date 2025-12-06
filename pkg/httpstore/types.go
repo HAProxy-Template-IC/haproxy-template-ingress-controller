@@ -136,6 +136,10 @@ type CacheEntry struct {
 	AcceptedChecksum string
 	AcceptedTime     time.Time
 
+	// LastAccessTime tracks when this entry was last accessed via Get/Fetch.
+	// Used for cache eviction of unused entries.
+	LastAccessTime time.Time
+
 	// Pending version (fetched, awaiting validation)
 	PendingContent  string
 	PendingChecksum string

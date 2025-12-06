@@ -45,6 +45,7 @@ const (
 //   - Refresh timers for URLs with delay > 0
 //   - Event publishing when content changes
 //   - Pending content promotion/rejection based on validation results
+//   - Periodic eviction of unused cache entries
 //
 // Event subscriptions:
 //   - ValidationCompletedEvent: Promote pending content to accepted
@@ -65,13 +66,21 @@ type Component struct {
 	refreshers map[string]*time.Timer // URL -> refresh timer
 	ctx        context.Context
 	cancel     context.CancelFunc
+
+	// Eviction configuration
+	evictionInterval time.Duration // How often to run eviction (0 = disabled)
 }
 
 // New creates a new HTTPStore event adapter component.
 //
 // The component subscribes to the EventBus during construction (before EventBus.Start())
 // to ensure proper startup synchronization.
-func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
+//
+// Parameters:
+//   - eventBus: The event bus for coordination
+//   - logger: Logger for debug messages
+//   - evictionMaxAge: Maximum age for unused entries before eviction (0 disables eviction)
+func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.Duration) *Component {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -80,11 +89,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 	eventChan := eventBus.Subscribe(EventBufferSize)
 
 	return &Component{
-		eventBus:   eventBus,
-		eventChan:  eventChan,
-		store:      httpstore.New(logger),
-		logger:     logger.With("component", "httpstore-adapter"),
-		refreshers: make(map[string]*time.Timer),
+		eventBus:         eventBus,
+		eventChan:        eventChan,
+		store:            httpstore.New(logger, evictionMaxAge),
+		logger:           logger.With("component", "httpstore-adapter"),
+		refreshers:       make(map[string]*time.Timer),
+		evictionInterval: evictionMaxAge, // Run eviction at same cadence as maxAge
 	}
 }
 
@@ -100,12 +110,28 @@ func (c *Component) Name() string {
 func (c *Component) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
-	c.logger.Info("HTTPStore adapter starting")
+	c.logger.Info("HTTPStore adapter starting",
+		"eviction_interval", c.evictionInterval)
+
+	// Create eviction ticker if eviction is enabled
+	var evictionTicker *time.Ticker
+	var evictionChan <-chan time.Time
+	if c.evictionInterval > 0 {
+		evictionTicker = time.NewTicker(c.evictionInterval)
+		evictionChan = evictionTicker.C
+		defer evictionTicker.Stop()
+	}
 
 	for {
 		select {
 		case event := <-c.eventChan:
 			c.handleEvent(event)
+
+		case <-evictionChan:
+			evicted := c.store.EvictUnused()
+			if evicted > 0 {
+				c.logger.Debug("HTTP store eviction ran", "evicted", evicted)
+			}
 
 		case <-c.ctx.Done():
 			c.logger.Info("HTTPStore adapter shutting down")
