@@ -31,6 +31,8 @@ import "time"
 // The event also carries two versions of auxiliary files:
 // - Production version with accepted HTTP content only (for deployment)
 // - Validation version with pending HTTP content (for testing new content before promotion).
+//
+// This event propagates the correlation ID from ReconciliationTriggeredEvent.
 type TemplateRenderedEvent struct {
 	// HAProxyConfig is the rendered main HAProxy configuration for production deployment.
 	// Contains absolute paths like /etc/haproxy/maps/host.map for HAProxy pods.
@@ -64,10 +66,18 @@ type TemplateRenderedEvent struct {
 	DurationMs            int64 // Total rendering duration (both configs)
 
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewTemplateRenderedEvent creates a new TemplateRenderedEvent.
 // Performs defensive copy of the haproxyConfig strings.
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewTemplateRenderedEvent(...,
+//	    events.PropagateCorrelation(triggeredEvent))
 func NewTemplateRenderedEvent(
 	haproxyConfig string,
 	validationHAProxyConfig string,
@@ -76,6 +86,7 @@ func NewTemplateRenderedEvent(
 	validationAuxiliaryFiles interface{},
 	auxFileCount int,
 	durationMs int64,
+	opts ...CorrelationOption,
 ) *TemplateRenderedEvent {
 	// Calculate config sizes
 	configBytes := len(haproxyConfig)
@@ -92,6 +103,7 @@ func NewTemplateRenderedEvent(
 		AuxiliaryFileCount:       auxFileCount,
 		DurationMs:               durationMs,
 		timestamp:                time.Now(),
+		Correlation:              NewCorrelation(opts...),
 	}
 }
 
@@ -99,6 +111,8 @@ func (e *TemplateRenderedEvent) EventType() string    { return EventTypeTemplate
 func (e *TemplateRenderedEvent) Timestamp() time.Time { return e.timestamp }
 
 // TemplateRenderFailedEvent is published when template rendering fails.
+//
+// This event propagates the correlation ID from ReconciliationTriggeredEvent.
 type TemplateRenderFailedEvent struct {
 	// TemplateName is the name of the template that failed to render.
 	TemplateName string
@@ -110,15 +124,24 @@ type TemplateRenderFailedEvent struct {
 	StackTrace string
 
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewTemplateRenderFailedEvent creates a new TemplateRenderFailedEvent.
-func NewTemplateRenderFailedEvent(templateName, err, stackTrace string) *TemplateRenderFailedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewTemplateRenderFailedEvent(name, err, stackTrace,
+//	    events.PropagateCorrelation(triggeredEvent))
+func NewTemplateRenderFailedEvent(templateName, err, stackTrace string, opts ...CorrelationOption) *TemplateRenderFailedEvent {
 	return &TemplateRenderFailedEvent{
 		TemplateName: templateName,
 		Error:        err,
 		StackTrace:   stackTrace,
 		timestamp:    time.Now(),
+		Correlation:  NewCorrelation(opts...),
 	}
 }
 

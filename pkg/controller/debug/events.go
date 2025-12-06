@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"haproxy-template-ic/pkg/controller/events"
 	busevents "haproxy-template-ic/pkg/events"
 	"haproxy-template-ic/pkg/events/ringbuffer"
 )
@@ -27,10 +28,11 @@ import (
 // This is a simplified representation of controller events for debug purposes.
 // It captures the essential information without exposing internal event structures.
 type Event struct {
-	Timestamp time.Time   `json:"timestamp"`
-	Type      string      `json:"type"`
-	Summary   string      `json:"summary"`
-	Details   interface{} `json:"details,omitempty"`
+	Timestamp     time.Time   `json:"timestamp"`
+	Type          string      `json:"type"`
+	Summary       string      `json:"summary"`
+	Details       interface{} `json:"details,omitempty"`
+	CorrelationID string      `json:"correlation_id,omitempty"`
 }
 
 // EventBuffer maintains a ring buffer of recent events for debug purposes.
@@ -102,6 +104,31 @@ func (eb *EventBuffer) Len() int {
 	return eb.buffer.Len()
 }
 
+// FindByCorrelationID returns events matching the specified correlation ID.
+//
+// This method searches through all events in the buffer and returns those
+// that have a matching correlation ID. Events are returned in chronological order.
+//
+// Example:
+//
+//	events := eventBuffer.FindByCorrelationID("550e8400-e29b-41d4-a716-446655440000")
+func (eb *EventBuffer) FindByCorrelationID(correlationID string) []Event {
+	if correlationID == "" {
+		return nil
+	}
+
+	allEvents := eb.buffer.GetAll()
+	var result []Event
+
+	for _, event := range allEvents {
+		if event.CorrelationID == correlationID {
+			result = append(result, event)
+		}
+	}
+
+	return result
+}
+
 // convertEvent converts a controller event to a debug Event.
 //
 // This extracts the event type and creates a summary string.
@@ -116,14 +143,21 @@ func (eb *EventBuffer) convertEvent(event interface{}) Event {
 		eventType = "unknown"
 	}
 
+	// Extract correlation ID if available
+	var correlationID string
+	if correlated, ok := event.(events.CorrelatedEvent); ok {
+		correlationID = correlated.CorrelationID()
+	}
+
 	// Create summary based on event type
 	summary := eb.createSummary(event, eventType)
 
 	return Event{
-		Timestamp: time.Now(),
-		Type:      eventType,
-		Summary:   summary,
-		Details:   nil, // Avoid exposing full event details for stability
+		Timestamp:     time.Now(),
+		Type:          eventType,
+		Summary:       summary,
+		Details:       nil, // Avoid exposing full event details for stability
+		CorrelationID: correlationID,
 	}
 }
 

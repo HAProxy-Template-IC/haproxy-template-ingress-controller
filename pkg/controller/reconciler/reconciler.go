@@ -38,6 +38,9 @@ const (
 	EventBufferSize = 100
 )
 
+// ComponentName is the unique identifier for this component.
+const ComponentName = "reconciler"
+
 // Reconciler implements the reconciliation debouncer component.
 //
 // It subscribes to resource change events and configuration change events,
@@ -96,6 +99,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config) *Rec
 		pendingTrigger:    false,
 		lastTriggerReason: "",
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (r *Reconciler) Name() string {
+	return ComponentName
 }
 
 // Start begins the reconciler's event loop.
@@ -289,11 +298,20 @@ func (r *Reconciler) getDebounceTimerChan() <-chan time.Time {
 	return r.debounceTimer.C
 }
 
-// triggerReconciliation publishes a ReconciliationTriggeredEvent.
+// triggerReconciliation publishes a ReconciliationTriggeredEvent with a new correlation ID.
+//
+// The correlation ID is generated here and will be propagated through the entire
+// reconciliation pipeline (Renderer → Validator → Scheduler → Deployer) enabling
+// end-to-end tracing of all events in a single reconciliation cycle.
 func (r *Reconciler) triggerReconciliation(reason string) {
-	r.logger.Info("Triggering reconciliation", "reason", reason)
+	// Create event with new correlation ID to trace this reconciliation cycle
+	event := events.NewReconciliationTriggeredEvent(reason, events.WithNewCorrelation())
 
-	r.eventBus.Publish(events.NewReconciliationTriggeredEvent(reason))
+	r.logger.Info("Triggering reconciliation",
+		"reason", reason,
+		"correlation_id", event.CorrelationID())
+
+	r.eventBus.Publish(event)
 	r.pendingTrigger = false
 }
 

@@ -48,9 +48,14 @@ type Event interface {
 // Startup Coordination:
 // Events published before Start() is called are buffered and replayed after Start().
 // This prevents race conditions during component initialization.
+//
+// Typed Subscriptions:
+// In addition to universal subscriptions (Subscribe), the EventBus supports typed
+// subscriptions (SubscribeTypes) that filter events at the bus level for efficiency.
 type EventBus struct {
-	subscribers []chan Event
-	mu          sync.RWMutex
+	subscribers      []chan Event
+	typedSubscribers []*typedSubscription
+	mu               sync.RWMutex
 
 	// Startup coordination
 	started        bool
@@ -68,9 +73,10 @@ type EventBus struct {
 // Recommended: 100 for most applications.
 func NewEventBus(capacity int) *EventBus {
 	return &EventBus{
-		subscribers:    make([]chan Event, 0),
-		started:        false,
-		preStartBuffer: make([]Event, 0, capacity),
+		subscribers:      make([]chan Event, 0),
+		typedSubscribers: make([]*typedSubscription, 0),
+		started:          false,
+		preStartBuffer:   make([]Event, 0, capacity),
 	}
 }
 
@@ -102,6 +108,7 @@ func (b *EventBus) Publish(event Event) int {
 	defer b.mu.RUnlock()
 
 	sent := 0
+	// Send to universal subscribers
 	for _, ch := range b.subscribers {
 		select {
 		case ch <- event:
@@ -109,6 +116,18 @@ func (b *EventBus) Publish(event Event) int {
 		default:
 			// Channel full, subscriber is lagging - drop event
 			// This prevents slow consumers from blocking the system
+		}
+	}
+
+	// Send to typed subscribers (filtered at bus level)
+	for _, sub := range b.typedSubscribers {
+		if sub.filterFunc(event) {
+			select {
+			case sub.outputChan <- event:
+				sent++
+			default:
+				// Channel full, subscriber is lagging - drop event
+			}
 		}
 	}
 	return sent
@@ -124,8 +143,8 @@ func (b *EventBus) Publish(event Event) int {
 // dropped events. A bufferSize of 100 is recommended for most use cases.
 //
 // The returned channel is read-only and will never be closed.
-// To stop receiving events, the subscriber should stop reading
-// and allow the channel to be garbage collected.
+// To stop receiving events, the subscriber should call Unsubscribe()
+// to remove the subscription and prevent memory leaks.
 func (b *EventBus) Subscribe(bufferSize int) <-chan Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -133,6 +152,54 @@ func (b *EventBus) Subscribe(bufferSize int) <-chan Event {
 	ch := make(chan Event, bufferSize)
 	b.subscribers = append(b.subscribers, ch)
 	return ch
+}
+
+// Unsubscribe removes a subscription from the event bus.
+//
+// This method should be called when a subscriber no longer needs to receive
+// events, to prevent memory leaks. After calling Unsubscribe, the channel
+// will no longer receive events.
+//
+// Note: The channel is not closed by this method. The subscriber is responsible
+// for draining any remaining events from the channel if needed.
+//
+// This method is safe to call multiple times for the same channel.
+func (b *EventBus) Unsubscribe(ch <-chan Event) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i, sub := range b.subscribers {
+		if sub == ch {
+			// Remove subscriber by replacing with last element and truncating
+			b.subscribers[i] = b.subscribers[len(b.subscribers)-1]
+			b.subscribers = b.subscribers[:len(b.subscribers)-1]
+			return
+		}
+	}
+}
+
+// UnsubscribeTyped removes a typed subscription from the event bus.
+//
+// This method should be called when a subscriber no longer needs to receive
+// events from a typed subscription (created via SubscribeTypes), to prevent
+// memory leaks.
+//
+// Note: The channel is not closed by this method. The subscriber is responsible
+// for draining any remaining events from the channel if needed.
+//
+// This method is safe to call multiple times for the same channel.
+func (b *EventBus) UnsubscribeTyped(ch <-chan Event) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i, sub := range b.typedSubscribers {
+		if sub.outputChan == ch {
+			// Remove subscriber by replacing with last element and truncating
+			b.typedSubscribers[i] = b.typedSubscribers[len(b.typedSubscribers)-1]
+			b.typedSubscribers = b.typedSubscribers[:len(b.typedSubscribers)-1]
+			return
+		}
+	}
 }
 
 // Start releases all buffered events and switches the bus to normal operation mode.
@@ -174,25 +241,51 @@ func (b *EventBus) Start() {
 	b.started = true
 
 	// Replay buffered events to subscribers
-	if len(b.preStartBuffer) > 0 {
-		b.mu.RLock()
-		subscribers := b.subscribers
-		b.mu.RUnlock()
+	b.replayBufferedEvents()
+}
 
-		for _, event := range b.preStartBuffer {
-			// Publish each buffered event
-			for _, ch := range subscribers {
-				select {
-				case ch <- event:
-					// Event sent
-				default:
-					// Channel full - drop event (same behavior as normal Publish)
-				}
+// replayBufferedEvents sends all buffered events to subscribers.
+// Must be called while holding startMu lock.
+func (b *EventBus) replayBufferedEvents() {
+	if len(b.preStartBuffer) == 0 {
+		return
+	}
+
+	b.mu.RLock()
+	subscribers := b.subscribers
+	typedSubs := b.typedSubscribers
+	b.mu.RUnlock()
+
+	for _, event := range b.preStartBuffer {
+		b.replayEventToSubscribers(event, subscribers, typedSubs)
+	}
+
+	// Clear buffer
+	b.preStartBuffer = nil
+}
+
+// replayEventToSubscribers sends a single event to all subscribers.
+func (b *EventBus) replayEventToSubscribers(event Event, subscribers []chan Event, typedSubs []*typedSubscription) {
+	// Send to universal subscribers
+	for _, ch := range subscribers {
+		select {
+		case ch <- event:
+			// Event sent
+		default:
+			// Channel full - drop event (same behavior as normal Publish)
+		}
+	}
+
+	// Send to typed subscribers (filtered at bus level)
+	for _, sub := range typedSubs {
+		if sub.filterFunc(event) {
+			select {
+			case sub.outputChan <- event:
+				// Event sent
+			default:
+				// Channel full - drop event
 			}
 		}
-
-		// Clear buffer
-		b.preStartBuffer = nil
 	}
 }
 

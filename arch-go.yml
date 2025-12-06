@@ -16,6 +16,7 @@ dependenciesRules:
         - "**.pkg.httpstore.**"
         - "**.pkg.introspection.**"
         - "**.pkg.k8s.**"
+        - "**.pkg.lifecycle.**"    # Component lifecycle management
         - "**.pkg.metrics.**"
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
@@ -227,5 +228,20 @@ dependenciesRules:
         - "**.pkg.httpstore.**"
         - "**.pkg.introspection.**"
         - "**.pkg.k8s.**"
+        - "**.pkg.templating.**"
+        - "**.pkg.webhook.**"
+
+  # Rule 19: lifecycle package should NOT depend on other top-level packages (pure infrastructure)
+  - package: "**.pkg.lifecycle.**"
+    shouldNotDependsOn:
+      internal:
+        - "**.pkg.controller.**"
+        - "**.pkg.core.**"
+        - "**.pkg.dataplane.**"
+        - "**.pkg.events.**"
+        - "**.pkg.httpstore.**"
+        - "**.pkg.introspection.**"
+        - "**.pkg.k8s.**"
+        - "**.pkg.metrics.**"
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"

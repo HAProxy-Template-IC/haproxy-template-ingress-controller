@@ -31,6 +31,9 @@ import (
 )
 
 const (
+	// HAProxyValidatorComponentName is the unique identifier for this component.
+	HAProxyValidatorComponentName = "haproxy-validator"
+
 	// EventBufferSize is the size of the event subscription buffer.
 	EventBufferSize = 50
 )
@@ -57,6 +60,7 @@ type HAProxyValidatorComponent struct {
 	lastValidationSucceeded  bool
 	lastValidationWarnings   []string
 	lastValidationDurationMs int64
+	lastCorrelationID        string // Correlation ID from triggering event
 	hasValidationResult      bool
 }
 
@@ -84,6 +88,12 @@ func NewHAProxyValidator(
 		eventChan: eventChan,
 		logger:    logger,
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (v *HAProxyValidatorComponent) Name() string {
+	return HAProxyValidatorComponentName
 }
 
 // Start begins the validator's event loop.
@@ -130,15 +140,20 @@ func (v *HAProxyValidatorComponent) handleEvent(event busevents.Event) {
 }
 
 // handleTemplateRendered validates the rendered HAProxy configuration.
+// Propagates correlation ID from the triggering event to validation events.
 func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.TemplateRenderedEvent) {
 	startTime := time.Now()
+	correlationID := event.CorrelationID()
 
 	v.logger.Info("HAProxy configuration validation started",
 		"validation_config_bytes", event.ValidationConfigBytes,
-		"auxiliary_files", event.AuxiliaryFileCount)
+		"auxiliary_files", event.AuxiliaryFileCount,
+		"correlation_id", correlationID)
 
-	// Publish validation started event
-	v.eventBus.Publish(events.NewValidationStartedEvent())
+	// Publish validation started event with correlation
+	v.eventBus.Publish(events.NewValidationStartedEvent(
+		events.PropagateCorrelation(event),
+	))
 
 	// Extract validation auxiliary files from event
 	// These contain pending HTTP content (for testing new content before promotion)
@@ -148,6 +163,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 		v.publishValidationFailure(
 			[]string{"failed to extract validation auxiliary files from event"},
 			time.Since(startTime).Milliseconds(),
+			correlationID,
 		)
 		return
 	}
@@ -159,6 +175,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 		v.publishValidationFailure(
 			[]string{"failed to extract validation paths from event"},
 			time.Since(startTime).Milliseconds(),
+			correlationID,
 		)
 		return
 	}
@@ -173,11 +190,13 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 		simplified := dataplane.SimplifyValidationError(err)
 
 		v.logger.Error("HAProxy configuration validation failed",
-			"error", simplified)
+			"error", simplified,
+			"correlation_id", correlationID)
 
 		v.publishValidationFailure(
 			[]string{simplified},
 			time.Since(startTime).Milliseconds(),
+			correlationID,
 		)
 		return
 	}
@@ -186,19 +205,22 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	durationMs := time.Since(startTime).Milliseconds()
 
 	v.logger.Info("HAProxy configuration validation completed",
-		"duration_ms", durationMs)
+		"duration_ms", durationMs,
+		"correlation_id", correlationID)
 
 	// Cache validation result for leadership transition replay
 	v.mu.Lock()
 	v.lastValidationSucceeded = true
 	v.lastValidationWarnings = []string{} // No warnings
 	v.lastValidationDurationMs = durationMs
+	v.lastCorrelationID = correlationID
 	v.hasValidationResult = true
 	v.mu.Unlock()
 
 	v.eventBus.Publish(events.NewValidationCompletedEvent(
 		[]string{}, // No warnings
 		durationMs,
+		events.PropagateCorrelation(event),
 	))
 }
 
@@ -215,6 +237,7 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 	succeeded := v.lastValidationSucceeded
 	warnings := v.lastValidationWarnings
 	durationMs := v.lastValidationDurationMs
+	correlationID := v.lastCorrelationID
 	v.mu.RUnlock()
 
 	if !hasResult {
@@ -225,11 +248,14 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 	if succeeded {
 		v.logger.Info("became leader, re-publishing last validation result (success) for DeploymentScheduler",
 			"warnings", len(warnings),
-			"duration_ms", durationMs)
+			"duration_ms", durationMs,
+			"correlation_id", correlationID)
 
+		// Re-publish with original correlation ID so the deployment can be traced
 		v.eventBus.Publish(events.NewValidationCompletedEvent(
 			warnings,
 			durationMs,
+			events.WithCorrelation(correlationID, correlationID),
 		))
 	} else {
 		v.logger.Info("became leader, last validation failed, skipping state replay")
@@ -240,16 +266,18 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 }
 
 // publishValidationFailure publishes a validation failure event and caches the failure state.
-func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, durationMs int64) {
+func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, durationMs int64, correlationID string) {
 	// Cache validation failure for leadership transition state
 	v.mu.Lock()
 	v.lastValidationSucceeded = false
 	v.lastValidationDurationMs = durationMs
+	v.lastCorrelationID = correlationID
 	v.hasValidationResult = true
 	v.mu.Unlock()
 
 	v.eventBus.Publish(events.NewValidationFailedEvent(
 		errors,
 		durationMs,
+		events.WithCorrelation(correlationID, correlationID),
 	))
 }

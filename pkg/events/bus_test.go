@@ -823,3 +823,482 @@ func BenchmarkEventBus_Request(b *testing.B) {
 		})
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Additional Test Event Types for Typed Subscriptions
+// -----------------------------------------------------------------------------
+
+// otherTestEvent is a different test event type.
+type otherTestEvent struct {
+	value int
+}
+
+func (e otherTestEvent) EventType() string    { return "other.test.event" }
+func (e otherTestEvent) Timestamp() time.Time { return time.Now() }
+
+// -----------------------------------------------------------------------------
+// Typed Subscription Tests
+// -----------------------------------------------------------------------------
+
+func TestEventBus_SubscribeTypes_FiltersCorrectly(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Subscribe to only "test.event" type
+	typedSub := bus.SubscribeTypes(10, "test.event")
+
+	// Also subscribe universally to verify events are published
+	universalSub := bus.Subscribe(10)
+
+	// Start the bus
+	bus.Start()
+
+	// Publish both event types
+	bus.Publish(testEvent{message: "should receive"})
+	bus.Publish(otherTestEvent{value: 42})
+	bus.Publish(testEvent{message: "should also receive"})
+
+	// Typed subscription should only receive testEvent
+	receivedTyped := 0
+	timeout := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case evt := <-typedSub:
+			if _, ok := evt.(testEvent); !ok {
+				t.Errorf("typed subscription received wrong type: %T", evt)
+			}
+			receivedTyped++
+		case <-timeout:
+			if receivedTyped != 2 {
+				t.Errorf("expected 2 testEvent events, got %d", receivedTyped)
+			}
+			goto checkUniversal
+		}
+	}
+
+checkUniversal:
+	// Universal subscription should receive all 3 events
+	receivedUniversal := 0
+	timeout = time.After(200 * time.Millisecond)
+	for {
+		select {
+		case <-universalSub:
+			receivedUniversal++
+		case <-timeout:
+			if receivedUniversal != 3 {
+				t.Errorf("expected 3 total events in universal sub, got %d", receivedUniversal)
+			}
+			return
+		}
+	}
+}
+
+func TestEventBus_SubscribeTypes_MultipleTypes(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Subscribe to both event types
+	typedSub := bus.SubscribeTypes(10, "test.event", "other.test.event")
+
+	// Start the bus
+	bus.Start()
+
+	// Publish both types
+	bus.Publish(testEvent{message: "test1"})
+	bus.Publish(otherTestEvent{value: 1})
+	bus.Publish(testEvent{message: "test2"})
+	bus.Publish(otherTestEvent{value: 2})
+
+	// Should receive all 4 events
+	receivedCount := 0
+	timeout := time.After(200 * time.Millisecond)
+	for receivedCount < 4 {
+		select {
+		case <-typedSub:
+			receivedCount++
+		case <-timeout:
+			t.Fatalf("expected 4 events, got %d", receivedCount)
+		}
+	}
+}
+
+func TestEventBus_SubscribeTypes_BufferedBeforeStart(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Publish events before subscription
+	bus.Publish(testEvent{message: "buffered1"})
+	bus.Publish(otherTestEvent{value: 999})
+	bus.Publish(testEvent{message: "buffered2"})
+
+	// Subscribe to only testEvent type
+	typedSub := bus.SubscribeTypes(10, "test.event")
+
+	// Start - should replay only matching events
+	bus.Start()
+
+	// Should receive only the 2 testEvent events
+	receivedCount := 0
+	timeout := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case evt := <-typedSub:
+			if _, ok := evt.(testEvent); !ok {
+				t.Errorf("received non-testEvent type: %T", evt)
+			}
+			receivedCount++
+		case <-timeout:
+			if receivedCount != 2 {
+				t.Errorf("expected 2 buffered testEvent events, got %d", receivedCount)
+			}
+			return
+		}
+	}
+}
+
+func TestEventBus_Subscribe_Generic(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Use generic Subscribe function
+	typedChan := Subscribe[testEvent](ctx, bus, 10)
+
+	// Start the bus
+	bus.Start()
+
+	// Publish events
+	bus.Publish(testEvent{message: "typed1"})
+	bus.Publish(otherTestEvent{value: 42}) // Should be filtered out
+	bus.Publish(testEvent{message: "typed2"})
+
+	// Should receive only testEvent events with correct type
+	receivedCount := 0
+	timeout := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case evt := <-typedChan:
+			// evt is already testEvent type (no assertion needed)
+			if evt.message == "" {
+				t.Error("received event with empty message")
+			}
+			receivedCount++
+		case <-timeout:
+			if receivedCount != 2 {
+				t.Errorf("expected 2 typed events, got %d", receivedCount)
+			}
+			return
+		}
+	}
+}
+
+func TestEventBus_Subscribe_Generic_ContextCancellation(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Use generic Subscribe function
+	typedChan := Subscribe[testEvent](ctx, bus, 10)
+
+	// Start the bus
+	bus.Start()
+
+	// Publish one event
+	bus.Publish(testEvent{message: "before-cancel"})
+
+	// Receive the event
+	select {
+	case <-typedChan:
+		// Good
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for first event")
+	}
+
+	// Cancel context
+	cancel()
+
+	// Give goroutine time to exit
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish more events - the forwarding goroutine should have stopped
+	bus.Publish(testEvent{message: "after-cancel"})
+
+	// Should not receive more events (or only events that were already in buffer)
+	select {
+	case <-typedChan:
+		// May receive events that were buffered before cancellation
+	case <-time.After(100 * time.Millisecond):
+		// Expected - goroutine stopped
+	}
+}
+
+func TestEventBus_SubscribeMultiple(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Subscribe to specific event types
+	multiChan := SubscribeMultiple(ctx, bus, 10, "test.event", "test.request")
+
+	// Start the bus
+	bus.Start()
+
+	// Publish different events
+	bus.Publish(testEvent{message: "test1"})
+	bus.Publish(otherTestEvent{value: 42})          // Should be filtered out
+	bus.Publish(testRequest{id: "r1", message: ""}) // Should be received
+	bus.Publish(testEvent{message: "test2"})
+
+	// Should receive 3 events (2 testEvent + 1 testRequest)
+	receivedCount := 0
+	timeout := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case evt := <-multiChan:
+			switch evt.(type) {
+			case testEvent, testRequest:
+				receivedCount++
+			default:
+				t.Errorf("received unexpected event type: %T", evt)
+			}
+		case <-timeout:
+			if receivedCount != 3 {
+				t.Errorf("expected 3 events, got %d", receivedCount)
+			}
+			return
+		}
+	}
+}
+
+func TestEventBus_SubscribeTypes_SlowSubscriberDropsEvents(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Create typed subscriber with buffer size 2
+	typedSub := bus.SubscribeTypes(2, "test.event")
+
+	// Start the bus
+	bus.Start()
+
+	// Fill the buffer
+	bus.Publish(testEvent{message: "1"})
+	bus.Publish(testEvent{message: "2"})
+
+	// This event should be dropped (buffer full)
+	sent := bus.Publish(testEvent{message: "3"})
+
+	// Should show that some subscribers couldn't receive (but universal subs may still get it)
+	// The sent count includes both universal and typed subscribers
+	_ = sent // Just verify no panic
+
+	// Drain first two events
+	<-typedSub
+	<-typedSub
+
+	// Verify third event was dropped for typed subscriber
+	select {
+	case <-typedSub:
+		t.Error("expected no more events in typed subscriber, but received one")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: no event received
+	}
+}
+
+func BenchmarkEventBus_SubscribeTypes(b *testing.B) {
+	bus := NewEventBus(100)
+	event := testEvent{message: "benchmark"}
+
+	// Create typed subscriber
+	typedSub := bus.SubscribeTypes(1000, "test.event")
+
+	// Drain events in background
+	go func() {
+		for range typedSub {
+		}
+	}()
+
+	// Start the bus
+	bus.Start()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bus.Publish(event)
+	}
+}
+
+func BenchmarkEventBus_SubscribeTypes_NonMatchingEvents(b *testing.B) {
+	bus := NewEventBus(100)
+	event := otherTestEvent{value: 42} // Different type
+
+	// Create typed subscriber for different type
+	typedSub := bus.SubscribeTypes(1000, "test.event")
+
+	// Drain events in background
+	go func() {
+		for range typedSub {
+		}
+	}()
+
+	// Start the bus
+	bus.Start()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bus.Publish(event) // Should not match typed subscriber
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Unsubscribe Tests
+// -----------------------------------------------------------------------------
+
+func TestEventBus_Unsubscribe(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Create subscriber
+	sub := bus.Subscribe(10)
+
+	// Start the bus
+	bus.Start()
+
+	// Verify subscription works
+	bus.Publish(testEvent{message: "before-unsub"})
+
+	select {
+	case <-sub:
+		// Good - received event
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for event")
+	}
+
+	// Unsubscribe
+	bus.Unsubscribe(sub)
+
+	// Publish after unsubscribe
+	sent := bus.Publish(testEvent{message: "after-unsub"})
+
+	// Should report 0 subscribers received (since we unsubscribed)
+	if sent != 0 {
+		t.Errorf("expected 0 subscribers after Unsubscribe, got %d", sent)
+	}
+}
+
+func TestEventBus_Unsubscribe_ReducesSubscriberCount(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Create 3 subscribers
+	sub1 := bus.Subscribe(10)
+	sub2 := bus.Subscribe(10)
+	sub3 := bus.Subscribe(10)
+
+	// Start the bus
+	bus.Start()
+
+	// Verify all 3 receive events
+	sent := bus.Publish(testEvent{message: "all3"})
+	if sent != 3 {
+		t.Errorf("expected 3 subscribers, got %d", sent)
+	}
+
+	// Drain channels
+	<-sub1
+	<-sub2
+	<-sub3
+
+	// Unsubscribe one
+	bus.Unsubscribe(sub2)
+
+	// Now only 2 should receive
+	sent = bus.Publish(testEvent{message: "only2"})
+	if sent != 2 {
+		t.Errorf("expected 2 subscribers after unsubscribe, got %d", sent)
+	}
+}
+
+func TestEventBus_Unsubscribe_Idempotent(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Create subscriber
+	sub := bus.Subscribe(10)
+
+	// Unsubscribe multiple times - should not panic
+	bus.Unsubscribe(sub)
+	bus.Unsubscribe(sub)
+	bus.Unsubscribe(sub)
+
+	// No error expected
+}
+
+func TestEventBus_Subscribe_Generic_UnsubscribesOnCancel(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Subscribe generically
+	_ = Subscribe[testEvent](ctx, bus, 10)
+
+	// Start the bus
+	bus.Start()
+
+	// Verify subscription is active
+	sent := bus.Publish(testEvent{message: "before"})
+	if sent < 1 {
+		t.Errorf("expected at least 1 subscriber, got %d", sent)
+	}
+
+	// Cancel context
+	cancel()
+
+	// Give goroutine time to exit and call Unsubscribe
+	time.Sleep(100 * time.Millisecond)
+
+	// Publish again - the generic subscription should have been removed
+	// Note: We need to check that the universal subscription count decreased
+	bus.mu.RLock()
+	subsCount := len(bus.subscribers)
+	bus.mu.RUnlock()
+
+	// There should be 0 universal subscribers after unsubscribe
+	if subsCount != 0 {
+		t.Errorf("expected 0 universal subscribers after context cancel, got %d", subsCount)
+	}
+}
+
+func TestEventBus_SubscribeMultiple_UnsubscribesOnCancel(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Subscribe to multiple types
+	_ = SubscribeMultiple(ctx, bus, 10, "test.event", "other.test.event")
+
+	// Start the bus
+	bus.Start()
+
+	// Verify subscription is active
+	sent := bus.Publish(testEvent{message: "before"})
+	if sent < 1 {
+		t.Errorf("expected at least 1 subscriber, got %d", sent)
+	}
+
+	// Cancel context
+	cancel()
+
+	// Give goroutine time to exit and call Unsubscribe
+	time.Sleep(100 * time.Millisecond)
+
+	// Check that the universal subscription count decreased
+	bus.mu.RLock()
+	subsCount := len(bus.subscribers)
+	bus.mu.RUnlock()
+
+	// There should be 0 universal subscribers after unsubscribe
+	if subsCount != 0 {
+		t.Errorf("expected 0 universal subscribers after context cancel, got %d", subsCount)
+	}
+}

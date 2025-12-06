@@ -40,6 +40,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "renderer"
+
 	// EventBufferSize is the size of the event subscription buffer.
 	EventBufferSize = 50
 )
@@ -82,6 +85,7 @@ type Component struct {
 	lastValidationAuxiliaryFiles *dataplane.AuxiliaryFiles
 	lastAuxFileCount             int
 	lastRenderDurationMs         int64
+	lastCorrelationID            string // Correlation ID from triggering event
 	hasRenderedConfig            bool
 
 	// capabilities defines which features are available for the local HAProxy version.
@@ -171,6 +175,12 @@ func New(
 // This must be called before Start() to enable http.Fetch() in templates.
 func (c *Component) SetHTTPStoreComponent(httpStoreComponent *httpstore.Component) {
 	c.httpStoreComponent = httpStoreComponent
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (c *Component) Name() string {
+	return ComponentName
 }
 
 // Start begins the renderer's event loop.
@@ -300,9 +310,13 @@ func (c *Component) createPathResolvers(env *validationEnvironment) (production,
 
 // handleReconciliationTriggered renders all templates when reconciliation is triggered.
 // Renders configuration twice: once for production deployment, once for validation.
+// Propagates correlation ID from the triggering event to the rendered event.
 func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTriggeredEvent) {
 	startTime := time.Now()
-	c.logger.Info("Template rendering triggered", "reason", event.Reason)
+	correlationID := event.CorrelationID()
+	c.logger.Info("Template rendering triggered",
+		"reason", event.Reason,
+		"correlation_id", correlationID)
 
 	// Setup validation environment
 	validationEnv, cleanup, err := c.setupValidationEnvironment()
@@ -374,10 +388,11 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 	c.lastValidationAuxiliaryFiles = validationAuxiliaryFiles
 	c.lastAuxFileCount = auxFileCount
 	c.lastRenderDurationMs = durationMs
+	c.lastCorrelationID = correlationID
 	c.hasRenderedConfig = true
 	c.mu.Unlock()
 
-	// Publish success event with both rendered configs
+	// Publish success event with both rendered configs, propagating correlation
 	c.eventBus.Publish(events.NewTemplateRenderedEvent(
 		productionHAProxyConfig,
 		validationHAProxyConfig,
@@ -386,6 +401,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 		validationAuxiliaryFiles,
 		auxFileCount,
 		durationMs,
+		events.PropagateCorrelation(event),
 	))
 }
 
@@ -406,6 +422,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	validationAuxiliaryFiles := c.lastValidationAuxiliaryFiles
 	auxFileCount := c.lastAuxFileCount
 	durationMs := c.lastRenderDurationMs
+	correlationID := c.lastCorrelationID
 	c.mu.RUnlock()
 
 	if !hasState {
@@ -416,9 +433,11 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	c.logger.Info("became leader, re-publishing last rendered config for DeploymentScheduler",
 		"production_config_bytes", len(haproxyConfig),
 		"validation_config_bytes", len(validationConfig),
-		"auxiliary_files", auxFileCount)
+		"auxiliary_files", auxFileCount,
+		"correlation_id", correlationID)
 
 	// Re-publish the last rendered event to ensure new leader-only components receive it
+	// Include the original correlation ID so the deployment can be traced
 	c.eventBus.Publish(events.NewTemplateRenderedEvent(
 		haproxyConfig,
 		validationConfig,
@@ -427,6 +446,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 		validationAuxiliaryFiles,
 		auxFileCount,
 		durationMs,
+		events.WithCorrelation(correlationID, correlationID),
 	))
 }
 

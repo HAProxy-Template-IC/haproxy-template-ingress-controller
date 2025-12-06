@@ -26,6 +26,9 @@ import (
 )
 
 const (
+	// DriftMonitorComponentName is the unique identifier for the drift prevention monitor component.
+	DriftMonitorComponentName = "drift-monitor"
+
 	// DriftMonitorEventBufferSize is the size of the event subscription buffer for the drift monitor.
 	DriftMonitorEventBufferSize = 50
 )
@@ -81,6 +84,12 @@ func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger
 		logger:                  logger.With("component", "drift-prevention-monitor"),
 		driftPreventionInterval: driftPreventionInterval,
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (m *DriftPreventionMonitor) Name() string {
+	return DriftMonitorComponentName
 }
 
 // Start begins the drift prevention monitor's event loop.

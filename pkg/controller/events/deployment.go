@@ -21,14 +21,24 @@ import "time"
 // -----------------------------------------------------------------------------
 
 // DeploymentStartedEvent is published when deployment to HAProxy instances begins.
+//
+// This event propagates the correlation ID from DeploymentScheduledEvent.
 type DeploymentStartedEvent struct {
 	Endpoints []interface{}
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewDeploymentStartedEvent creates a new DeploymentStartedEvent.
 // Performs defensive copy of the endpoints slice.
-func NewDeploymentStartedEvent(endpoints []interface{}) *DeploymentStartedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewDeploymentStartedEvent(endpoints,
+//	    events.PropagateCorrelation(scheduledEvent))
+func NewDeploymentStartedEvent(endpoints []interface{}, opts ...CorrelationOption) *DeploymentStartedEvent {
 	// Defensive copy of slice
 	var endpointsCopy []interface{}
 	if len(endpoints) > 0 {
@@ -37,8 +47,9 @@ func NewDeploymentStartedEvent(endpoints []interface{}) *DeploymentStartedEvent 
 	}
 
 	return &DeploymentStartedEvent{
-		Endpoints: endpointsCopy,
-		timestamp: time.Now(),
+		Endpoints:   endpointsCopy,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 
@@ -46,20 +57,31 @@ func (e *DeploymentStartedEvent) EventType() string    { return EventTypeDeploym
 func (e *DeploymentStartedEvent) Timestamp() time.Time { return e.timestamp }
 
 // InstanceDeployedEvent is published when deployment to a single HAProxy instance succeeds.
+//
+// This event propagates the correlation ID from DeploymentStartedEvent.
 type InstanceDeployedEvent struct {
 	Endpoint       interface{} // The HAProxy endpoint that was deployed to
 	DurationMs     int64
 	ReloadRequired bool // Whether this deployment required an HAProxy reload
 	timestamp      time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewInstanceDeployedEvent creates a new InstanceDeployedEvent.
-func NewInstanceDeployedEvent(endpoint interface{}, durationMs int64, reloadRequired bool) *InstanceDeployedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewInstanceDeployedEvent(endpoint, durationMs, reloadRequired,
+//	    events.PropagateCorrelation(startedEvent))
+func NewInstanceDeployedEvent(endpoint interface{}, durationMs int64, reloadRequired bool, opts ...CorrelationOption) *InstanceDeployedEvent {
 	return &InstanceDeployedEvent{
 		Endpoint:       endpoint,
 		DurationMs:     durationMs,
 		ReloadRequired: reloadRequired,
 		timestamp:      time.Now(),
+		Correlation:    NewCorrelation(opts...),
 	}
 }
 
@@ -67,20 +89,31 @@ func (e *InstanceDeployedEvent) EventType() string    { return EventTypeInstance
 func (e *InstanceDeployedEvent) Timestamp() time.Time { return e.timestamp }
 
 // InstanceDeploymentFailedEvent is published when deployment to a single HAProxy instance fails.
+//
+// This event propagates the correlation ID from DeploymentStartedEvent.
 type InstanceDeploymentFailedEvent struct {
 	Endpoint  interface{}
 	Error     string
 	Retryable bool // Whether this failure is retryable
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewInstanceDeploymentFailedEvent creates a new InstanceDeploymentFailedEvent.
-func NewInstanceDeploymentFailedEvent(endpoint interface{}, err string, retryable bool) *InstanceDeploymentFailedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewInstanceDeploymentFailedEvent(endpoint, err, retryable,
+//	    events.PropagateCorrelation(startedEvent))
+func NewInstanceDeploymentFailedEvent(endpoint interface{}, err string, retryable bool, opts ...CorrelationOption) *InstanceDeploymentFailedEvent {
 	return &InstanceDeploymentFailedEvent{
-		Endpoint:  endpoint,
-		Error:     err,
-		Retryable: retryable,
-		timestamp: time.Now(),
+		Endpoint:    endpoint,
+		Error:       err,
+		Retryable:   retryable,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 
@@ -88,22 +121,33 @@ func (e *InstanceDeploymentFailedEvent) EventType() string    { return EventType
 func (e *InstanceDeploymentFailedEvent) Timestamp() time.Time { return e.timestamp }
 
 // DeploymentCompletedEvent is published when deployment to all HAProxy instances completes.
+//
+// This event propagates the correlation ID from DeploymentStartedEvent.
 type DeploymentCompletedEvent struct {
 	Total      int // Total number of instances
 	Succeeded  int // Number of successful deployments
 	Failed     int // Number of failed deployments
 	DurationMs int64
 	timestamp  time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewDeploymentCompletedEvent creates a new DeploymentCompletedEvent.
-func NewDeploymentCompletedEvent(total, succeeded, failed int, durationMs int64) *DeploymentCompletedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewDeploymentCompletedEvent(total, succeeded, failed, durationMs,
+//	    events.PropagateCorrelation(startedEvent))
+func NewDeploymentCompletedEvent(total, succeeded, failed int, durationMs int64, opts ...CorrelationOption) *DeploymentCompletedEvent {
 	return &DeploymentCompletedEvent{
-		Total:      total,
-		Succeeded:  succeeded,
-		Failed:     failed,
-		DurationMs: durationMs,
-		timestamp:  time.Now(),
+		Total:       total,
+		Succeeded:   succeeded,
+		Failed:      failed,
+		DurationMs:  durationMs,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 
@@ -116,6 +160,8 @@ func (e *DeploymentCompletedEvent) Timestamp() time.Time { return e.timestamp }
 //
 // Published by: DeploymentScheduler.
 // Consumed by: Deployer component.
+//
+// This event propagates the correlation ID from ValidationCompletedEvent.
 type DeploymentScheduledEvent struct {
 	// Config is the rendered HAProxy configuration to deploy.
 	Config string
@@ -141,11 +187,19 @@ type DeploymentScheduledEvent struct {
 	Reason string
 
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewDeploymentScheduledEvent creates a new DeploymentScheduledEvent.
 // Performs defensive copy of endpoints slice.
-func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason string) *DeploymentScheduledEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewDeploymentScheduledEvent(config, auxFiles, endpoints, name, ns, reason,
+//	    events.PropagateCorrelation(validationEvent))
+func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason string, opts ...CorrelationOption) *DeploymentScheduledEvent {
 	// Defensive copy of endpoints slice
 	var endpointsCopy []interface{}
 	if len(endpoints) > 0 {
@@ -161,6 +215,7 @@ func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints 
 		RuntimeConfigNamespace: runtimeConfigNamespace,
 		Reason:                 reason,
 		timestamp:              time.Now(),
+		Correlation:            NewCorrelation(opts...),
 	}
 }
 

@@ -36,6 +36,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "deployer"
+
 	// EventBufferSize is the size of the event subscription buffer.
 	EventBufferSize = 50
 )
@@ -71,6 +74,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 		eventChan: eventBus.Subscribe(EventBufferSize),
 		logger:    logger.With("component", "deployer"),
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (c *Component) Name() string {
+	return ComponentName
 }
 
 // Start begins the deployer's event loop.
@@ -111,12 +120,15 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 // This executes the deployment to all specified endpoints in parallel.
 // Defensive: drops duplicate events if a deployment is already in progress.
 func (c *Component) handleDeploymentScheduled(ctx context.Context, event *events.DeploymentScheduledEvent) {
+	correlationID := event.CorrelationID()
+
 	// Defensive check: atomically set deploymentInProgress from false to true
 	// This prevents concurrent deployments if scheduler has bugs
 	if !c.deploymentInProgress.CompareAndSwap(false, true) {
 		c.logger.Error("dropping duplicate DeploymentScheduledEvent - deployment already in progress",
 			"reason", event.Reason,
-			"endpoint_count", len(event.Endpoints))
+			"endpoint_count", len(event.Endpoints),
+			"correlation_id", correlationID)
 		return
 	}
 	// Note: flag will be cleared by deployToEndpoints after deployment completes
@@ -124,10 +136,11 @@ func (c *Component) handleDeploymentScheduled(ctx context.Context, event *events
 	c.logger.Info("deployment scheduled, starting execution",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
-		"config_bytes", len(event.Config))
+		"config_bytes", len(event.Config),
+		"correlation_id", correlationID)
 
-	// Execute deployment
-	c.deployToEndpoints(ctx, event.Config, event.AuxiliaryFiles, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason)
+	// Execute deployment with correlation
+	c.deployToEndpoints(ctx, event.Config, event.AuxiliaryFiles, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, correlationID)
 }
 
 // convertEndpoints converts []interface{} to []dataplane.Endpoint.
@@ -179,6 +192,7 @@ func (c *Component) deployToEndpoints(
 	runtimeConfigName string,
 	runtimeConfigNamespace string,
 	reason string,
+	correlationID string,
 ) {
 	// Clear deployment flag after this function completes (after wg.Wait())
 	defer c.deploymentInProgress.Store(false)
@@ -202,10 +216,14 @@ func (c *Component) deployToEndpoints(
 		"reason", reason,
 		"endpoint_count", len(endpoints),
 		"config_bytes", len(config),
-		"has_aux_files", auxFiles != nil)
+		"has_aux_files", auxFiles != nil,
+		"correlation_id", correlationID)
 
-	// Publish DeploymentStartedEvent
-	c.eventBus.Publish(events.NewDeploymentStartedEvent(endpointsRaw))
+	// Publish DeploymentStartedEvent with correlation
+	c.eventBus.Publish(events.NewDeploymentStartedEvent(
+		endpointsRaw,
+		events.WithCorrelation(correlationID, correlationID),
+	))
 
 	// Deploy to all endpoints in parallel
 	var wg sync.WaitGroup
@@ -230,13 +248,15 @@ func (c *Component) deployToEndpoints(
 					"endpoint", ep.URL,
 					"pod", ep.PodName,
 					"error", err,
-					"duration_ms", durationMs)
+					"duration_ms", durationMs,
+					"correlation_id", correlationID)
 
-				// Publish InstanceDeploymentFailedEvent
+				// Publish InstanceDeploymentFailedEvent with correlation
 				c.eventBus.Publish(events.NewInstanceDeploymentFailedEvent(
 					ep,
 					err.Error(),
 					true, // retryable
+					events.WithCorrelation(correlationID, correlationID),
 				))
 
 				// Publish ConfigAppliedToPodEvent with error info (for status tracking)
@@ -263,13 +283,15 @@ func (c *Component) deployToEndpoints(
 					"endpoint", ep.URL,
 					"pod", ep.PodName,
 					"duration_ms", durationMs,
-					"reload_triggered", syncResult.ReloadTriggered)
+					"reload_triggered", syncResult.ReloadTriggered,
+					"correlation_id", correlationID)
 
-				// Publish InstanceDeployedEvent
+				// Publish InstanceDeployedEvent with correlation
 				c.eventBus.Publish(events.NewInstanceDeployedEvent(
 					ep,
 					durationMs,
-					syncResult.ReloadTriggered, // Now tracking this accurately
+					syncResult.ReloadTriggered,
+					events.WithCorrelation(correlationID, correlationID),
 				))
 
 				// Publish ConfigAppliedToPodEvent (for runtime config status updates)
@@ -304,14 +326,16 @@ func (c *Component) deployToEndpoints(
 		"total_endpoints", len(endpoints),
 		"succeeded", successCount,
 		"failed", failureCount,
-		"duration_ms", totalDurationMs)
+		"duration_ms", totalDurationMs,
+		"correlation_id", correlationID)
 
-	// Publish DeploymentCompletedEvent
+	// Publish DeploymentCompletedEvent with correlation
 	c.eventBus.Publish(events.NewDeploymentCompletedEvent(
 		len(endpoints),
 		successCount,
 		failureCount,
 		totalDurationMs,
+		events.WithCorrelation(correlationID, correlationID),
 	))
 }
 

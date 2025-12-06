@@ -88,7 +88,7 @@ func TestDeployToEndpoints_InvalidEndpointType(t *testing.T) {
 	// Invalid endpoint type (string instead of dataplane.Endpoint)
 	invalidEndpoints := []interface{}{"not-an-endpoint"}
 
-	deployer.deployToEndpoints(ctx, config, auxFiles, invalidEndpoints, "test-runtime-config", "default", "test")
+	deployer.deployToEndpoints(ctx, config, auxFiles, invalidEndpoints, "test-runtime-config", "default", "test", "test-correlation-id")
 
 	// Should not crash, just log error
 	// When all endpoints are invalid, we return early without publishing events

@@ -617,3 +617,57 @@ func assertContainsAttr(t *testing.T, attrs []any, key string, value any) {
 	}
 	t.Errorf("attribute %s not found in attrs", key)
 }
+
+func TestEventCommentator_AppendCorrelation(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("adds all correlation fields for CorrelatedEvent", func(t *testing.T) {
+		// Create event with correlation
+		event := events.NewReconciliationTriggeredEvent("test", events.WithNewCorrelation())
+		eventID := event.EventID()
+		correlationID := event.CorrelationID()
+
+		// Start with base attrs
+		attrs := []any{"event_type", "test"}
+
+		// Append correlation
+		result := ec.appendCorrelation(event, attrs)
+
+		// Verify event_id and correlation_id were added (6 items: event_type, test, event_id, uuid, correlation_id, uuid)
+		assert.Len(t, result, 6)
+		assertContainsAttr(t, result, "event_id", eventID)
+		assertContainsAttr(t, result, "correlation_id", correlationID)
+	})
+
+	t.Run("adds only event_id when no correlation", func(t *testing.T) {
+		// Create event without correlation - still gets event_id
+		event := events.NewReconciliationTriggeredEvent("test")
+		eventID := event.EventID()
+
+		// Start with base attrs
+		attrs := []any{"event_type", "test"}
+
+		// Append correlation - should add event_id but not correlation_id
+		result := ec.appendCorrelation(event, attrs)
+
+		// Verify only event_id was added (4 items: event_type, test, event_id, uuid)
+		assert.Len(t, result, 4)
+		assertContainsAttr(t, result, "event_id", eventID)
+	})
+
+	t.Run("skips non-CorrelatedEvent", func(t *testing.T) {
+		// Create event that does not implement CorrelatedEvent
+		event := events.NewControllerStartedEvent("v1", "s1")
+
+		// Start with base attrs
+		attrs := []any{"event_type", "test"}
+
+		// Append correlation - should not modify attrs
+		result := ec.appendCorrelation(event, attrs)
+
+		// Verify attrs unchanged
+		assert.Len(t, result, 2)
+	})
+}

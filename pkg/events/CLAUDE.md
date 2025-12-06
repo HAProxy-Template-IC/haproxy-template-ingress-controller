@@ -60,6 +60,62 @@ Why this design?
 - Separate startMu prevents deadlock between startup and publish
 - Buffering before Start() prevents lost events during component initialization
 
+### Typed Subscriptions
+
+Filter events at the bus level for improved performance and type safety.
+
+**Three patterns available:**
+
+1. **SubscribeTypes()** - Filter by event type strings at bus level (most efficient)
+2. **Subscribe\[T\]()** - Generic function returning typed channel (best type safety)
+3. **SubscribeMultiple()** - Filter multiple types with context cancellation
+
+**When to Use:**
+
+- Component only cares about specific event types
+- You want compile-time type safety
+- High-volume event streams where filtering matters
+
+**When NOT to Use:**
+
+- Commentator/logging (needs all events)
+- Components that already use type switches
+- Debugging (universal subscription is clearer)
+
+**Examples:**
+
+```go
+// Method 1: SubscribeTypes - efficient, filters at bus level
+eventChan := bus.SubscribeTypes(100, "reconciliation.triggered", "reconciliation.completed")
+for event := range eventChan {
+    // Only receives the specified event types
+    switch e := event.(type) {
+    case *events.ReconciliationTriggeredEvent:
+        // handle
+    case *events.ReconciliationCompletedEvent:
+        // handle
+    }
+}
+
+// Method 2: Generic Subscribe - typed channel, best for single type
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+triggerChan := events.Subscribe[*events.ReconciliationTriggeredEvent](ctx, bus, 100)
+for trigger := range triggerChan {
+    // trigger is already *ReconciliationTriggeredEvent - no assertion needed
+    fmt.Println(trigger.Reason)
+}
+
+// Method 3: SubscribeMultiple - context-aware filtering
+multiChan := events.SubscribeMultiple(ctx, bus, 100,
+    "template.rendered",
+    "template.render.failed")
+for event := range multiChan {
+    // event matches one of the specified types
+}
+```
+
 ### Request-Response (Scatter-Gather)
 
 Synchronous coordination using timeout and response correlation.

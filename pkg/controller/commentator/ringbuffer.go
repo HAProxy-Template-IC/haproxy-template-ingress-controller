@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"haproxy-template-ic/pkg/controller/events"
 	busevents "haproxy-template-ic/pkg/events"
 )
 
@@ -221,4 +222,36 @@ func (rb *RingBuffer) Size() int {
 // Capacity returns the maximum capacity of the buffer.
 func (rb *RingBuffer) Capacity() int {
 	return rb.capacity
+}
+
+// FindByCorrelationID returns events with the specified correlation ID, newest first.
+//
+// Parameters:
+//   - correlationID: The correlation ID to search for
+//   - maxCount: Maximum number of events to return (0 = no limit)
+//
+// Returns:
+//   - Slice of events matching the correlation ID, newest first
+//
+// Example:
+//
+//	// Find all events in a reconciliation cycle
+//	events := rb.FindByCorrelationID("550e8400-e29b-41d4-a716-446655440000", 100)
+func (rb *RingBuffer) FindByCorrelationID(correlationID string, maxCount int) []busevents.Event {
+	if correlationID == "" {
+		return nil
+	}
+
+	predicate := func(e busevents.Event) bool {
+		if correlated, ok := e.(events.CorrelatedEvent); ok {
+			return correlated.CorrelationID() == correlationID
+		}
+		return false
+	}
+
+	if maxCount <= 0 {
+		maxCount = rb.capacity // Return all matching events
+	}
+
+	return rb.FindRecentByPredicate(maxCount, predicate)
 }
