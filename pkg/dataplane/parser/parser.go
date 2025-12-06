@@ -28,7 +28,13 @@ import (
 // This mutex serializes all parsing operations to prevent the race condition.
 // See: https://github.com/haproxytech/client-native/blob/v6.2.5/config-parser/parser.go#L65
 //
-// TODO: Remove this mutex once upstream fixes the thread-safety issue.
+// PERFORMANCE IMPACT: This mutex serializes ALL parsing operations across the entire
+// controller, including concurrent webhook validations and reconciliations. In high-load
+// scenarios with many concurrent validations, this can become a bottleneck.
+//
+// STATUS (checked 2025-12-06): Issue still exists in client-native v6.2.5. The global
+// variable has a //nolint:gochecknoglobals comment indicating awareness but no fix.
+// Consider checking for updates in newer versions or filing an upstream issue.
 var parserMutex sync.Mutex
 
 // Parser wraps client-native's config-parser for parsing HAProxy configurations.

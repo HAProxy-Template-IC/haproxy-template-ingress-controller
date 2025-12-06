@@ -90,8 +90,7 @@ func TestDeployToEndpoints_InvalidEndpointType(t *testing.T) {
 
 	deployer.deployToEndpoints(ctx, config, auxFiles, invalidEndpoints, "test-runtime-config", "default", "test", "test-correlation-id")
 
-	// Should not crash, just log error
-	// When all endpoints are invalid, we return early without publishing events
+	// Should not crash, just log error and publish completion event with zero endpoints
 	timeout := time.After(100 * time.Millisecond)
 	receivedEvents := []busevents.Event{}
 
@@ -105,8 +104,13 @@ loop:
 		}
 	}
 
-	// No events should be published when all endpoints are invalid
-	assert.Len(t, receivedEvents, 0)
+	// Should publish a DeploymentCompletedEvent with 0 endpoints to notify downstream components
+	assert.Len(t, receivedEvents, 1)
+	completedEvent, ok := receivedEvents[0].(*events.DeploymentCompletedEvent)
+	assert.True(t, ok, "expected DeploymentCompletedEvent")
+	assert.Equal(t, 0, completedEvent.Total)
+	assert.Equal(t, 0, completedEvent.Succeeded)
+	assert.Equal(t, 0, completedEvent.Failed)
 }
 
 // TestDeployToEndpoints_EventPublishing tests that all expected events are published.
@@ -171,7 +175,7 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 	// Wait for event processing
 	time.Sleep(50 * time.Millisecond)
 
-	// Verify no deployment events were published (no valid endpoints)
+	// Should receive DeploymentScheduledEvent + DeploymentCompletedEvent (with 0 endpoints)
 	timeout := time.After(100 * time.Millisecond)
 	receivedEvents := 0
 
@@ -185,8 +189,8 @@ loop:
 		}
 	}
 
-	// Only the DeploymentScheduledEvent we published should be received
-	assert.Equal(t, 1, receivedEvents)
+	// DeploymentScheduledEvent we published + DeploymentCompletedEvent from deployer
+	assert.Equal(t, 2, receivedEvents)
 
 	// Cleanup
 	cancel()

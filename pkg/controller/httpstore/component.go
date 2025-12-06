@@ -36,6 +36,8 @@ const (
 	ComponentName = "httpstore"
 
 	// EventBufferSize is the size of the event subscription buffer.
+	// Size 50: Low-volume component handling validation events (~1-2 per reconciliation).
+	// HTTP refresh operations are timer-driven, not event-driven.
 	EventBufferSize = 50
 )
 
@@ -253,6 +255,14 @@ func (c *Component) RegisterURL(url string) {
 func (c *Component) refreshURL(url string) {
 	// Check if we're still running
 	if c.ctx == nil || c.ctx.Err() != nil {
+		return
+	}
+
+	// Defensive check: verify entry still exists (may have been evicted)
+	// This handles the race condition where the eviction timer fires between
+	// EvictUnused() and StopRefresher() calls.
+	if c.store.GetEntry(url) == nil {
+		c.logger.Debug("skipping refresh for evicted URL", "url", url)
 		return
 	}
 
