@@ -13,6 +13,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "commentator"
+
 	// maxErrorPreviewLength is the maximum length for error message previews
 	// in validation failure summaries. Longer errors are truncated.
 	maxErrorPreviewLength = 80
@@ -42,6 +45,12 @@ func NewEventCommentator(bus *busevents.EventBus, logger *slog.Logger, bufferSiz
 		ringBuffer: NewRingBuffer(bufferSize),
 		stopCh:     make(chan struct{}),
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (ec *EventCommentator) Name() string {
+	return ComponentName
 }
 
 // Start begins processing events from the EventBus.
@@ -77,6 +86,25 @@ func (ec *EventCommentator) Stop() {
 	close(ec.stopCh)
 }
 
+// FindByCorrelationID returns events matching the specified correlation ID.
+// This method is used for debugging event flows through the reconciliation pipeline.
+//
+// Parameters:
+//   - correlationID: The correlation ID to search for
+//   - maxCount: Maximum number of events to return (0 = no limit)
+//
+// Returns:
+//   - Slice of events matching the correlation ID, newest first
+func (ec *EventCommentator) FindByCorrelationID(correlationID string, maxCount int) []busevents.Event {
+	return ec.ringBuffer.FindByCorrelationID(correlationID, maxCount)
+}
+
+// FindRecent returns the N most recent events, newest first.
+// This method is used for debugging recent event activity.
+func (ec *EventCommentator) FindRecent(n int) []busevents.Event {
+	return ec.ringBuffer.FindRecent(n)
+}
+
 // processEvent handles a single event: adds to buffer and logs with domain insights.
 func (ec *EventCommentator) processEvent(event busevents.Event) {
 	// Add to ring buffer first (for correlation)
@@ -99,8 +127,28 @@ func (ec *EventCommentator) logWithInsight(event busevents.Event) {
 	// Generate contextual message and structured attributes
 	message, attrs := ec.generateInsight(event)
 
+	// Add correlation ID if the event supports it
+	attrs = ec.appendCorrelation(event, attrs)
+
 	// Log with appropriate level
 	ec.logger.Log(context.Background(), level, message, attrs...)
+}
+
+// appendCorrelation adds event tracking IDs to attributes if the event implements CorrelatedEvent.
+// It adds event_id, correlation_id, and causation_id for tracing event flows.
+func (ec *EventCommentator) appendCorrelation(event busevents.Event, attrs []any) []any {
+	if correlated, ok := event.(events.CorrelatedEvent); ok {
+		if eventID := correlated.EventID(); eventID != "" {
+			attrs = append(attrs, "event_id", eventID)
+		}
+		if correlationID := correlated.CorrelationID(); correlationID != "" {
+			attrs = append(attrs, "correlation_id", correlationID)
+		}
+		if causationID := correlated.CausationID(); causationID != "" {
+			attrs = append(attrs, "causation_id", causationID)
+		}
+	}
+	return attrs
 }
 
 // determineLogLevel maps event types to appropriate log levels.

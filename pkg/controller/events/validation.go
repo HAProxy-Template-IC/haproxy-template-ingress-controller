@@ -24,14 +24,25 @@ import "time"
 //
 // Validation is performed locally using the HAProxy binary to check configuration syntax.
 // It does not involve HAProxy endpoints - those are only used later for deployment.
+//
+// This event propagates the correlation ID from TemplateRenderedEvent.
 type ValidationStartedEvent struct {
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewValidationStartedEvent creates a new ValidationStartedEvent.
-func NewValidationStartedEvent() *ValidationStartedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewValidationStartedEvent(
+//	    events.PropagateCorrelation(renderedEvent))
+func NewValidationStartedEvent(opts ...CorrelationOption) *ValidationStartedEvent {
 	return &ValidationStartedEvent{
-		timestamp: time.Now(),
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 
@@ -41,15 +52,25 @@ func (e *ValidationStartedEvent) Timestamp() time.Time { return e.timestamp }
 // ValidationCompletedEvent is published when local configuration validation succeeds.
 //
 // Validation is performed locally using the HAProxy binary. Endpoints are not involved.
+//
+// This event propagates the correlation ID from ValidationStartedEvent.
 type ValidationCompletedEvent struct {
 	Warnings   []string // Non-fatal warnings from HAProxy validation
 	DurationMs int64
 	timestamp  time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewValidationCompletedEvent creates a new ValidationCompletedEvent.
 // Performs defensive copy of the warnings slice.
-func NewValidationCompletedEvent(warnings []string, durationMs int64) *ValidationCompletedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewValidationCompletedEvent(warnings, durationMs,
+//	    events.PropagateCorrelation(startedEvent))
+func NewValidationCompletedEvent(warnings []string, durationMs int64, opts ...CorrelationOption) *ValidationCompletedEvent {
 	// Defensive copy of warnings slice
 	var warningsCopy []string
 	if len(warnings) > 0 {
@@ -58,9 +79,10 @@ func NewValidationCompletedEvent(warnings []string, durationMs int64) *Validatio
 	}
 
 	return &ValidationCompletedEvent{
-		Warnings:   warningsCopy,
-		DurationMs: durationMs,
-		timestamp:  time.Now(),
+		Warnings:    warningsCopy,
+		DurationMs:  durationMs,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 
@@ -70,15 +92,25 @@ func (e *ValidationCompletedEvent) Timestamp() time.Time { return e.timestamp }
 // ValidationFailedEvent is published when local configuration validation fails.
 //
 // Validation is performed locally using the HAProxy binary. Endpoints are not involved.
+//
+// This event propagates the correlation ID from ValidationStartedEvent.
 type ValidationFailedEvent struct {
 	Errors     []string // Validation errors from HAProxy
 	DurationMs int64
 	timestamp  time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewValidationFailedEvent creates a new ValidationFailedEvent.
 // Performs defensive copy of the errors slice.
-func NewValidationFailedEvent(errors []string, durationMs int64) *ValidationFailedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewValidationFailedEvent(errors, durationMs,
+//	    events.PropagateCorrelation(startedEvent))
+func NewValidationFailedEvent(errors []string, durationMs int64, opts ...CorrelationOption) *ValidationFailedEvent {
 	// Defensive copy of errors slice
 	var errorsCopy []string
 	if len(errors) > 0 {
@@ -87,9 +119,10 @@ func NewValidationFailedEvent(errors []string, durationMs int64) *ValidationFail
 	}
 
 	return &ValidationFailedEvent{
-		Errors:     errorsCopy,
-		DurationMs: durationMs,
-		timestamp:  time.Now(),
+		Errors:      errorsCopy,
+		DurationMs:  durationMs,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 

@@ -38,13 +38,23 @@ import (
 //   - GET /health - health check
 //   - GET /debug/pprof/* - Go profiling endpoints (via import side-effect)
 //
+// Custom handlers can be registered using RegisterHandler() before Start().
+//
 // The server is designed to run in a separate goroutine and gracefully shut down
 // when the context is cancelled.
 type Server struct {
-	addr     string
-	registry *Registry
-	server   *http.Server
-	logger   *slog.Logger
+	addr           string
+	registry       *Registry
+	server         *http.Server
+	logger         *slog.Logger
+	mux            *http.ServeMux
+	customHandlers []customHandler
+}
+
+// customHandler holds a pattern and handler for custom endpoint registration.
+type customHandler struct {
+	pattern string
+	handler http.HandlerFunc
 }
 
 // NewServer creates a new HTTP server for serving debug variables.
@@ -62,31 +72,48 @@ type Server struct {
 //	go server.Start(ctx)
 func NewServer(addr string, registry *Registry) *Server {
 	logger := slog.Default().With("component", "introspection-server")
+	mux := http.NewServeMux()
 
 	s := &Server{
-		addr:     addr,
-		registry: registry,
-		logger:   logger,
+		addr:           addr,
+		registry:       registry,
+		logger:         logger,
+		mux:            mux,
+		customHandlers: []customHandler{},
 	}
 
-	// Create HTTP server
-	mux := http.NewServeMux()
-	s.setupRoutes(mux)
-
-	s.server = &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadTimeout:       10 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-
+	// Setup will be called in Start() to include custom handlers
 	return s
+}
+
+// RegisterHandler registers a custom HTTP handler for the given pattern.
+// This must be called before Start().
+//
+// Parameters:
+//   - pattern: URL pattern (e.g., "/debug/events")
+//   - handler: HTTP handler function
+//
+// Example:
+//
+//	server.RegisterHandler("/debug/events", func(w http.ResponseWriter, r *http.Request) {
+//	    correlationID := r.URL.Query().Get("correlation_id")
+//	    events := commentator.FindByCorrelationID(correlationID, 100)
+//	    introspection.WriteJSON(w, events)
+//	})
+func (s *Server) RegisterHandler(pattern string, handler http.HandlerFunc) {
+	s.customHandlers = append(s.customHandlers, customHandler{
+		pattern: pattern,
+		handler: handler,
+	})
 }
 
 // setupRoutes registers all HTTP handlers.
 func (s *Server) setupRoutes(mux *http.ServeMux) {
+	// Register custom handlers first (allow overriding defaults)
+	for _, h := range s.customHandlers {
+		mux.HandleFunc(h.pattern, h.handler)
+	}
+
 	// Variable endpoints
 	mux.HandleFunc("/debug/vars", s.handleIndex)
 	mux.HandleFunc("/debug/vars/", s.handleVar) // Trailing slash for path matching
@@ -122,6 +149,18 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 //	// Later: cancel context to shutdown
 //	cancel()
 func (s *Server) Start(ctx context.Context) error {
+	// Setup routes (including custom handlers) and create HTTP server
+	s.setupRoutes(s.mux)
+
+	s.server = &http.Server{
+		Addr:              s.addr,
+		Handler:           s.mux,
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
 	// Channel to signal server has stopped
 	serverErr := make(chan error, 1)
 

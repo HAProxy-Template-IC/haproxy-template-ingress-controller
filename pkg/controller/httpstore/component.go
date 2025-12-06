@@ -32,6 +32,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "httpstore"
+
 	// EventBufferSize is the size of the event subscription buffer.
 	EventBufferSize = 50
 )
@@ -83,6 +86,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 		logger:     logger.With("component", "httpstore-adapter"),
 		refreshers: make(map[string]*time.Timer),
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (c *Component) Name() string {
+	return ComponentName
 }
 
 // Start begins the component's event loop.

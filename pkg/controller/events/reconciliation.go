@@ -24,18 +24,31 @@ import "time"
 //
 // This event is typically published by the Reconciler after the debounce timer.
 // expires, or immediately for config changes.
+//
+// This event starts a new correlation chain. Downstream events (TemplateRenderedEvent,
+// ValidationCompletedEvent, DeploymentScheduledEvent, etc.) should propagate
+// the correlation ID to enable end-to-end tracing.
 type ReconciliationTriggeredEvent struct {
 	// Reason describes why reconciliation was triggered.
 	// Examples: "debounce_timer", "config_change", "manual_trigger"
 	Reason    string
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewReconciliationTriggeredEvent creates a new ReconciliationTriggeredEvent.
-func NewReconciliationTriggeredEvent(reason string) *ReconciliationTriggeredEvent {
+//
+// Use WithNewCorrelation() to start a new correlation chain:
+//
+//	event := events.NewReconciliationTriggeredEvent("config_change",
+//	    events.WithNewCorrelation())
+func NewReconciliationTriggeredEvent(reason string, opts ...CorrelationOption) *ReconciliationTriggeredEvent {
 	return &ReconciliationTriggeredEvent{
-		Reason:    reason,
-		timestamp: time.Now(),
+		Reason:      reason,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 
@@ -43,17 +56,28 @@ func (e *ReconciliationTriggeredEvent) EventType() string    { return EventTypeR
 func (e *ReconciliationTriggeredEvent) Timestamp() time.Time { return e.timestamp }
 
 // ReconciliationStartedEvent is published when the Executor begins a reconciliation cycle.
+//
+// This event propagates the correlation ID from ReconciliationTriggeredEvent.
 type ReconciliationStartedEvent struct {
 	// Trigger describes what triggered this reconciliation.
 	Trigger   string
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewReconciliationStartedEvent creates a new ReconciliationStartedEvent.
-func NewReconciliationStartedEvent(trigger string) *ReconciliationStartedEvent {
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering event:
+//
+//	event := events.NewReconciliationStartedEvent(trigger,
+//	    events.PropagateCorrelation(triggeredEvent))
+func NewReconciliationStartedEvent(trigger string, opts ...CorrelationOption) *ReconciliationStartedEvent {
 	return &ReconciliationStartedEvent{
-		Trigger:   trigger,
-		timestamp: time.Now(),
+		Trigger:     trigger,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 
@@ -61,16 +85,27 @@ func (e *ReconciliationStartedEvent) EventType() string    { return EventTypeRec
 func (e *ReconciliationStartedEvent) Timestamp() time.Time { return e.timestamp }
 
 // ReconciliationCompletedEvent is published when a reconciliation cycle completes successfully.
+//
+// This event propagates the correlation ID from the reconciliation chain.
 type ReconciliationCompletedEvent struct {
 	DurationMs int64
 	timestamp  time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewReconciliationCompletedEvent creates a new ReconciliationCompletedEvent.
-func NewReconciliationCompletedEvent(durationMs int64) *ReconciliationCompletedEvent {
+//
+// Use WithCorrelation() to propagate correlation from the pipeline:
+//
+//	event := events.NewReconciliationCompletedEvent(durationMs,
+//	    events.WithCorrelation(correlationID, causationID))
+func NewReconciliationCompletedEvent(durationMs int64, opts ...CorrelationOption) *ReconciliationCompletedEvent {
 	return &ReconciliationCompletedEvent{
-		DurationMs: durationMs,
-		timestamp:  time.Now(),
+		DurationMs:  durationMs,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 
@@ -78,18 +113,29 @@ func (e *ReconciliationCompletedEvent) EventType() string    { return EventTypeR
 func (e *ReconciliationCompletedEvent) Timestamp() time.Time { return e.timestamp }
 
 // ReconciliationFailedEvent is published when a reconciliation cycle fails.
+//
+// This event propagates the correlation ID from the reconciliation chain.
 type ReconciliationFailedEvent struct {
 	Error     string
 	Phase     string // Which phase failed: "render", "validate", "deploy"
 	timestamp time.Time
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
 }
 
 // NewReconciliationFailedEvent creates a new ReconciliationFailedEvent.
-func NewReconciliationFailedEvent(err, phase string) *ReconciliationFailedEvent {
+//
+// Use WithCorrelation() to propagate correlation from the pipeline:
+//
+//	event := events.NewReconciliationFailedEvent(err, phase,
+//	    events.WithCorrelation(correlationID, causationID))
+func NewReconciliationFailedEvent(err, phase string, opts ...CorrelationOption) *ReconciliationFailedEvent {
 	return &ReconciliationFailedEvent{
-		Error:     err,
-		Phase:     phase,
-		timestamp: time.Now(),
+		Error:       err,
+		Phase:       phase,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
 	}
 }
 

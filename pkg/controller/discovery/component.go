@@ -35,6 +35,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "discovery"
+
 	// EventBufferSize is the buffer size for event subscriptions.
 	EventBufferSize = 100
 
@@ -130,6 +133,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) 
 		pendingRetries: make(map[string]*retryState),
 		warnedPods:     make(map[string]bool),
 	}, nil
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (c *Component) Name() string {
+	return ComponentName
 }
 
 // Start begins the Discovery component's event processing loop.

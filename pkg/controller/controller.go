@@ -73,6 +73,7 @@ import (
 	k8sleaderelection "haproxy-template-ic/pkg/k8s/leaderelection"
 	"haproxy-template-ic/pkg/k8s/types"
 	"haproxy-template-ic/pkg/k8s/watcher"
+	"haproxy-template-ic/pkg/lifecycle"
 	pkgmetrics "haproxy-template-ic/pkg/metrics"
 	"haproxy-template-ic/pkg/templating"
 )
@@ -244,9 +245,11 @@ func fetchAndValidateInitialConfig(
 // componentSetup contains all resources created during component initialization.
 type componentSetup struct {
 	Bus                   *busevents.EventBus
+	Registry              *lifecycle.Registry // Component lifecycle registry
 	MetricsComponent      *metrics.Component
 	MetricsRegistry       *prometheus.Registry
 	IntrospectionRegistry *introspection.Registry
+	IntrospectionServer   *introspection.Server // Server reference for custom handler registration
 	StoreManager          *resourcestore.Manager
 	IterCtx               context.Context
 	Cancel                context.CancelFunc
@@ -348,8 +351,12 @@ func setupComponents(
 	// This registry will be shared between early server startup and later variable registration
 	introspectionRegistry := introspection.NewRegistry()
 
+	// Create lifecycle registry for managing reconciliation components
+	lifecycleRegistry := lifecycle.NewRegistry().WithLogger(logger)
+
 	return &componentSetup{
 		Bus:                   bus,
+		Registry:              lifecycleRegistry,
 		MetricsComponent:      metricsComponent,
 		MetricsRegistry:       registry,
 		IntrospectionRegistry: introspectionRegistry,
@@ -375,22 +382,16 @@ func startEarlyInfrastructureServers(
 ) {
 	logger.Info("Starting infrastructure servers (early initialization)")
 
-	// Start introspection HTTP server (always enabled for health checks)
+	// Create introspection HTTP server (always enabled for health checks)
 	// Provides /healthz endpoint for Kubernetes probes and /debug/* endpoints for debugging
 	// Use shared introspection registry from setup
-	// Variables will be registered later by setupInfrastructureServers
-	introspectionServer := introspection.NewServer(fmt.Sprintf(":%d", debugPort), setup.IntrospectionRegistry)
-	go func() {
-		if err := introspectionServer.Start(ctx); err != nil {
-			logger.Error("introspection server failed", "error", err, "port", debugPort)
-		}
-	}()
-	logger.Info("Introspection HTTP server started (early)",
+	// Server is created here but started later in setupDebugVariables after custom handlers are registered
+	setup.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), setup.IntrospectionRegistry)
+	logger.Info("Introspection HTTP server created (will start after custom handlers registered)",
 		"port", debugPort,
 		"bind_address", fmt.Sprintf("0.0.0.0:%d", debugPort),
 		"access_method", "kubectl port-forward",
-		"endpoints", "/healthz, /debug/vars, /debug/pprof",
-		"note", "variables will be registered after config loads")
+		"endpoints", "/healthz, /debug/vars, /debug/pprof, /debug/events")
 
 	// Start metrics HTTP server with default port
 	// We use a default because config hasn't been loaded yet
@@ -429,7 +430,7 @@ func setupInfrastructureServers(
 	stateCache *StateCache,
 	logger *slog.Logger,
 ) {
-	logger.Info("Stage 6: Registering debug variables (servers already running)")
+	logger.Info("Stage 6: Registering debug variables and starting introspection server")
 
 	// Create event buffer for tracking recent events
 	eventBuffer := debug.NewEventBuffer(1000, setup.Bus)
@@ -440,13 +441,23 @@ func setupInfrastructureServers(
 	}()
 
 	// Register debug variables with the shared introspection registry
-	// The HTTP server started by startEarlyInfrastructureServers uses this registry
 	debug.RegisterVariables(setup.IntrospectionRegistry, stateCache, eventBuffer)
 
-	logger.Debug("Debug variables registered with shared registry",
+	// Register custom events handler with correlation query support
+	// This must be done before starting the introspection server
+	debug.RegisterEventsHandler(setup.IntrospectionServer, eventBuffer)
+
+	// Start introspection server now that custom handlers are registered
+	go func() {
+		if err := setup.IntrospectionServer.Start(ctx); err != nil {
+			logger.Error("introspection server failed", "error", err, "port", debugPort)
+		}
+	}()
+
+	logger.Info("Debug variables registered and introspection server started",
 		"debug_port", debugPort,
 		"metrics_port", cfg.Controller.MetricsPort,
-		"note", "debug endpoints now fully functional")
+		"endpoints", "/debug/vars, /debug/events, /debug/pprof, /healthz")
 }
 
 // setupResourceWatchers creates and starts resource watchers and index tracker, then waits for sync.
@@ -658,12 +669,13 @@ type leaderOnlyComponents struct {
 	cancel              context.CancelFunc
 }
 
-// createReconciliationComponents creates all reconciliation components.
+// createReconciliationComponents creates all reconciliation components and registers them with the lifecycle registry.
 func createReconciliationComponents(
 	cfg *coreconfig.Config,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	bus *busevents.EventBus,
+	registry *lifecycle.Registry,
 	logger *slog.Logger,
 ) (*reconciliationComponents, error) {
 	// Create Reconciler with default configuration
@@ -741,6 +753,24 @@ func createReconciliationComponents(
 	purePublisher := configpublisher.New(k8sClient.Clientset(), crdClientset, logger)
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, bus, logger)
 
+	// Register all-replica components with the lifecycle registry
+	registry.Register(reconcilerComponent)
+	registry.Register(rendererComponent)
+	registry.Register(haproxyValidatorComponent)
+	registry.Register(executorComponent)
+	registry.Register(discoveryComponent)
+	registry.Register(httpStoreComponent)
+
+	// Register leader-only components with the lifecycle registry
+	registry.Register(deployerComponent, lifecycle.LeaderOnly())
+	registry.Register(deploymentSchedulerComponent, lifecycle.LeaderOnly())
+	registry.Register(driftMonitorComponent, lifecycle.LeaderOnly())
+	registry.Register(configPublisherComponent, lifecycle.LeaderOnly())
+
+	logger.Info("Reconciliation components registered with lifecycle registry",
+		"all_replica_count", 6,
+		"leader_only_count", 4)
+
 	return &reconciliationComponents{
 		reconciler:          reconcilerComponent,
 		renderer:            rendererComponent,
@@ -756,113 +786,49 @@ func createReconciliationComponents(
 	}, nil
 }
 
-// startReconciliationComponents starts reconciliation components.
-// All replicas start: Reconciler, Renderer, HAProxyValidator, Executor, Discovery
+// startReconciliationComponents starts all-replica reconciliation components using the lifecycle registry.
 // Leader-only components (Deployer, DeploymentScheduler, DriftMonitor, ConfigPublisher) are NOT started here.
 func startReconciliationComponents(
 	iterCtx context.Context,
-	components *reconciliationComponents,
+	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	cancel context.CancelFunc,
 ) {
-	// Start reconciler in background (all replicas)
+	// Start all-replica components using the registry (non-blocking)
+	// The registry handles concurrent startup and error propagation
 	go func() {
-		if err := components.reconciler.Start(iterCtx); err != nil {
-			logger.Error("reconciler failed", "error", err)
+		if err := registry.StartAll(iterCtx, false); err != nil {
+			logger.Error("reconciliation component failed", "error", err)
 			cancel()
 		}
 	}()
 
-	// Start renderer in background (all replicas)
-	go func() {
-		if err := components.renderer.Start(iterCtx); err != nil {
-			logger.Error("renderer failed", "error", err)
-			cancel()
-		}
-	}()
-
-	// Start HAProxy validator in background (all replicas)
-	go func() {
-		if err := components.haproxyValidator.Start(iterCtx); err != nil {
-			logger.Error("HAProxy validator failed", "error", err)
-			cancel()
-		}
-	}()
-
-	// Start executor in background (all replicas)
-	go func() {
-		if err := components.executor.Start(iterCtx); err != nil {
-			logger.Error("executor failed", "error", err)
-			cancel()
-		}
-	}()
-
-	// Start discovery in background (all replicas)
-	go func() {
-		if err := components.discovery.Start(iterCtx); err != nil {
-			logger.Error("discovery failed", "error", err)
-			cancel()
-		}
-	}()
-
-	// Start httpstore in background (all replicas)
-	// Handles periodic HTTP content refresh and validation event coordination
-	go func() {
-		if err := components.httpStore.Start(iterCtx); err != nil {
-			logger.Error("httpstore failed", "error", err)
-			cancel()
-		}
-	}()
-
-	logger.Info("Reconciliation components started (all replicas)",
-		"components", "Reconciler, Renderer, HAProxyValidator, Executor, Discovery, HTTPStore")
+	logger.Info("Reconciliation components started via lifecycle registry (all replicas)",
+		"component_count", registry.Count())
 }
 
-// startLeaderOnlyComponents starts components that only the leader should run.
+// startLeaderOnlyComponents starts components that only the leader should run using the lifecycle registry.
 // Returns a leaderOnlyComponents struct with cancellation control.
 func startLeaderOnlyComponents(
 	parentCtx context.Context,
 	components *reconciliationComponents,
+	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	parentCancel context.CancelFunc,
 ) *leaderOnlyComponents {
 	// Create separate context for leader-only components
 	leaderCtx, leaderCancel := context.WithCancel(parentCtx)
 
-	// Start deployer in background (leader only)
+	// Start leader-only components using the registry (non-blocking)
+	// The registry handles concurrent startup and error propagation
 	go func() {
-		if err := components.deployer.Start(leaderCtx); err != nil && leaderCtx.Err() == nil {
-			logger.Error("deployer failed", "error", err)
+		if err := registry.StartLeaderOnlyComponents(leaderCtx); err != nil && leaderCtx.Err() == nil {
+			logger.Error("leader-only component failed", "error", err)
 			parentCancel()
 		}
 	}()
 
-	// Start deployment scheduler in background (leader only)
-	go func() {
-		if err := components.deploymentScheduler.Start(leaderCtx); err != nil && leaderCtx.Err() == nil {
-			logger.Error("deployment scheduler failed", "error", err)
-			parentCancel()
-		}
-	}()
-
-	// Start drift prevention monitor in background (leader only)
-	go func() {
-		if err := components.driftMonitor.Start(leaderCtx); err != nil && leaderCtx.Err() == nil {
-			logger.Error("drift prevention monitor failed", "error", err)
-			parentCancel()
-		}
-	}()
-
-	// Start config publisher in background (leader only)
-	// Publishes runtime config resources after successful validation (non-blocking)
-	go func() {
-		if err := components.configPublisher.Start(leaderCtx); err != nil && leaderCtx.Err() == nil {
-			logger.Error("config publisher failed", "error", err)
-			parentCancel()
-		}
-	}()
-
-	logger.Info("Leader-only components started",
+	logger.Info("Leader-only components started via lifecycle registry",
 		"components", "Deployer, DeploymentScheduler, DriftMonitor, ConfigPublisher")
 
 	return &leaderOnlyComponents{
@@ -1032,11 +998,12 @@ func setupReconciliation(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	bus *busevents.EventBus,
+	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	cancel context.CancelFunc,
 ) (*reconciliationComponents, error) {
 	// Create all components
-	components, err := createReconciliationComponents(cfg, k8sClient, resourceWatcher, bus, logger)
+	components, err := createReconciliationComponents(cfg, k8sClient, resourceWatcher, bus, registry, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -1044,7 +1011,7 @@ func setupReconciliation(
 	// Start all-replica components in background
 	// Leader-only components (Deployer, DeploymentScheduler, DriftMonitor) are NOT started here
 	// Note: Components already subscribed during construction, so they're ready to receive events
-	startReconciliationComponents(iterCtx, components, logger, cancel)
+	startReconciliationComponents(iterCtx, registry, logger, cancel)
 
 	// Publish initial config and credentials events
 	// These events are buffered by EventBus until Start() is called in the main controller loop
@@ -1059,8 +1026,11 @@ func setupReconciliation(
 
 	// Trigger initial reconciliation to bootstrap the pipeline
 	// This ensures at least one reconciliation cycle runs even with 0 resources
-	bus.Publish(events.NewReconciliationTriggeredEvent("initial_sync_complete"))
-	logger.Debug("Published initial reconciliation trigger (buffered until EventBus.Start())")
+	// A new correlation ID is generated to trace this initial reconciliation cycle
+	initialReconciliation := events.NewReconciliationTriggeredEvent("initial_sync_complete", events.WithNewCorrelation())
+	bus.Publish(initialReconciliation)
+	logger.Debug("Published initial reconciliation trigger (buffered until EventBus.Start())",
+		"correlation_id", initialReconciliation.CorrelationID())
 
 	return components, nil
 }
@@ -1073,6 +1043,7 @@ func setupLeaderElection(
 	cfg *coreconfig.Config,
 	k8sClient *client.Client,
 	reconComponents *reconciliationComponents,
+	registry *lifecycle.Registry,
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 	cancel context.CancelFunc,
@@ -1115,7 +1086,7 @@ func setupLeaderElection(
 				logger.Info("Became leader, starting deployment components")
 				leaderComponentsMutex.Lock()
 				defer leaderComponentsMutex.Unlock()
-				leaderComponents = startLeaderOnlyComponents(iterCtx, reconComponents, logger, cancel)
+				leaderComponents = startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel)
 			},
 			OnStoppedLeading: func() {
 				logger.Warn("Lost leadership, stopping deployment components")
@@ -1150,7 +1121,7 @@ func setupLeaderElection(
 	} else {
 		// Leader election disabled - start leader-only components immediately
 		logger.Info("Leader election disabled, starting all components")
-		leaderComponents = startLeaderOnlyComponents(iterCtx, reconComponents, logger, cancel)
+		leaderComponents = startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel)
 	}
 
 	return leaderComponents, &leaderComponentsMutex
@@ -1257,7 +1228,7 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, setup.Bus, logger, setup.Cancel)
+	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, setup.Bus, setup.Registry, logger, setup.Cancel)
 	if err != nil {
 		return err
 	}
@@ -1271,7 +1242,7 @@ func runIteration(
 	// 7. Setup leader election
 	logger.Info("Stage 6: Initializing leader election")
 	leaderComponents, leaderComponentsMutex := setupLeaderElection(
-		setup.IterCtx, cfg, k8sClient, reconComponents, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
+		setup.IterCtx, cfg, k8sClient, reconComponents, setup.Registry, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
 	)
 
 	// 8. Setup webhook validation if enabled

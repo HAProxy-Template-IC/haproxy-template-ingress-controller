@@ -28,6 +28,9 @@ import (
 )
 
 const (
+	// SchedulerComponentName is the unique identifier for the DeploymentScheduler component.
+	SchedulerComponentName = "deployment-scheduler"
+
 	// SchedulerEventBufferSize is the size of the event subscription buffer for the scheduler.
 	SchedulerEventBufferSize = 50
 )
@@ -35,10 +38,11 @@ const (
 // scheduledDeployment represents a deployment that was triggered while another
 // deployment was in progress. Only the latest scheduled deployment is kept (latest wins).
 type scheduledDeployment struct {
-	config    string
-	auxFiles  interface{}
-	endpoints []interface{}
-	reason    string
+	config        string
+	auxFiles      interface{}
+	endpoints     []interface{}
+	reason        string
+	correlationID string // Correlation ID for event tracing
 }
 
 // DeploymentScheduler implements deployment scheduling with rate limiting.
@@ -66,6 +70,7 @@ type DeploymentScheduler struct {
 	lastAuxiliaryFiles      interface{}   // Last rendered auxiliary files
 	lastValidatedConfig     string        // Last validated HAProxy config
 	lastValidatedAux        interface{}   // Last validated auxiliary files
+	lastCorrelationID       string        // Correlation ID from last validation event
 	currentEndpoints        []interface{} // Current HAProxy pod endpoints
 	hasValidConfig          bool          // Whether we have a validated config to deploy
 	runtimeConfigName       string        // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
@@ -96,6 +101,12 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 		logger:                logger.With("component", "deployment-scheduler"),
 		minDeploymentInterval: minDeploymentInterval,
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (s *DeploymentScheduler) Name() string {
+	return SchedulerComponentName
 }
 
 // Start begins the deployment scheduler's event loop.
@@ -199,9 +210,11 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 // This caches the validated configuration and schedules deployment to current endpoints.
 // This is called during full reconciliation cycles (config or resource changes).
 func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, event *events.ValidationCompletedEvent) {
+	correlationID := event.CorrelationID()
 	s.logger.Info("validation completed, preparing deployment",
 		"warnings", len(event.Warnings),
-		"duration_ms", event.DurationMs)
+		"duration_ms", event.DurationMs,
+		"correlation_id", correlationID)
 
 	// Log warnings if any
 	for _, warning := range event.Warnings {
@@ -217,6 +230,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	// Cache validated config immediately to prevent race condition
 	s.lastValidatedConfig = config
 	s.lastValidatedAux = auxFiles
+	s.lastCorrelationID = correlationID
 	s.hasValidConfig = true
 	s.mu.Unlock()
 
@@ -231,7 +245,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	}
 
 	// Schedule deployment to current endpoints (or queue if deployment in progress)
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "config_validation")
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "config_validation", correlationID)
 }
 
 // handlePodsDiscovered handles HAProxy pod discovery/changes.
@@ -244,6 +258,7 @@ func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *e
 	endpointCount := len(event.Endpoints)
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
+	correlationID := s.lastCorrelationID
 	hasValidConfig := s.hasValidConfig
 	s.mu.Unlock()
 
@@ -261,7 +276,8 @@ func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *e
 	}
 
 	// Schedule deployment of last validated config to new endpoints (or queue if in progress)
-	s.scheduleOrQueue(ctx, config, auxFiles, event.Endpoints, "pod_discovery")
+	// Use the correlation ID from the last validation for traceability
+	s.scheduleOrQueue(ctx, config, auxFiles, event.Endpoints, "pod_discovery", correlationID)
 }
 
 // handleDriftPreventionTriggered handles drift prevention trigger events.
@@ -273,6 +289,7 @@ func (s *DeploymentScheduler) handleDriftPreventionTriggered(ctx context.Context
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
 	endpoints := s.currentEndpoints
+	correlationID := s.lastCorrelationID
 	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
 
@@ -290,7 +307,8 @@ func (s *DeploymentScheduler) handleDriftPreventionTriggered(ctx context.Context
 	}
 
 	// Schedule drift prevention deployment (or queue if in progress)
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "drift_prevention")
+	// Use the correlation ID from the last validation for traceability
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "drift_prevention", correlationID)
 }
 
 // handleDeploymentCompleted handles deployment completion events.
@@ -312,11 +330,12 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 
 		s.logger.Info("deployment completed, processing queued deployment",
 			"pending_reason", pending.reason,
-			"pending_endpoint_count", len(pending.endpoints))
+			"pending_endpoint_count", len(pending.endpoints),
+			"correlation_id", pending.correlationID)
 
 		// Use scheduleOrQueue for proper mutex management and goroutine control
 		// This ensures only one scheduling goroutine runs at a time
-		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.endpoints, pending.reason)
+		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.endpoints, pending.reason, pending.correlationID)
 		return
 	}
 
@@ -333,21 +352,24 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 	auxFiles interface{},
 	endpoints []interface{},
 	reason string,
+	correlationID string,
 ) {
 	s.schedulerMutex.Lock()
 
 	if s.deploymentInProgress {
 		// Deployment already in progress - overwrite pending (latest wins)
 		s.pendingDeployment = &scheduledDeployment{
-			config:    config,
-			auxFiles:  auxFiles,
-			endpoints: endpoints,
-			reason:    reason,
+			config:        config,
+			auxFiles:      auxFiles,
+			endpoints:     endpoints,
+			reason:        reason,
+			correlationID: correlationID,
 		}
 		s.schedulerMutex.Unlock()
 		s.logger.Info("deployment in progress, queued for later",
 			"reason", reason,
-			"endpoint_count", len(endpoints))
+			"endpoint_count", len(endpoints),
+			"correlation_id", correlationID)
 		return
 	}
 
@@ -357,7 +379,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 
 	// Schedule deployment asynchronously to avoid blocking event loop
 	// This allows new events to be received and queued while we handle rate limiting
-	go s.scheduleWithRateLimitUnlocked(ctx, config, auxFiles, endpoints, reason)
+	go s.scheduleWithRateLimitUnlocked(ctx, config, auxFiles, endpoints, reason, correlationID)
 }
 
 // scheduleWithRateLimitUnlocked schedules a deployment, enforcing rate limiting.
@@ -370,6 +392,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	auxFiles interface{},
 	endpoints []interface{},
 	reason string,
+	correlationID string,
 ) {
 	// Get last deployment time for rate limiting
 	s.schedulerMutex.Lock()
@@ -423,13 +446,17 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 			"template_config_name", templateConfigName)
 	}
 
-	// Publish DeploymentScheduledEvent
+	// Publish DeploymentScheduledEvent with correlation
 	s.logger.Info("scheduling deployment",
 		"reason", reason,
 		"endpoint_count", len(endpoints),
-		"config_bytes", len(config))
+		"config_bytes", len(config),
+		"correlation_id", correlationID)
 
-	s.eventBus.Publish(events.NewDeploymentScheduledEvent(config, auxFiles, endpoints, runtimeConfigName, runtimeConfigNamespace, reason))
+	s.eventBus.Publish(events.NewDeploymentScheduledEvent(
+		config, auxFiles, endpoints, runtimeConfigName, runtimeConfigNamespace, reason,
+		events.WithCorrelation(correlationID, correlationID),
+	))
 
 	// Note: We wait for DeploymentCompletedEvent to update lastDeploymentEndTime
 	// This is handled in handleDeploymentCompleted()
@@ -464,11 +491,12 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 
 	s.logger.Info("processing queued deployment",
 		"reason", pending.reason,
-		"endpoint_count", len(pending.endpoints))
+		"endpoint_count", len(pending.endpoints),
+		"correlation_id", pending.correlationID)
 
 	// Recursive: schedule pending (we're still marked as in-progress)
 	s.scheduleWithRateLimitUnlocked(ctx, pending.config, pending.auxFiles,
-		pending.endpoints, pending.reason)
+		pending.endpoints, pending.reason, pending.correlationID)
 }
 
 // handleConfigPublished handles ConfigPublishedEvent by caching runtime config metadata.

@@ -383,7 +383,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.pendingDeployment = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, []interface{}{}, "test")
+		scheduler.scheduleOrQueue(ctx, "config", nil, []interface{}{}, "test", "test-correlation-id")
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -398,8 +398,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.pendingDeployment = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, []interface{}{}, "first")
-		scheduler.scheduleOrQueue(ctx, "config2", nil, []interface{}{}, "second")
+		scheduler.scheduleOrQueue(ctx, "config1", nil, []interface{}{}, "first", "correlation-1")
+		scheduler.scheduleOrQueue(ctx, "config2", nil, []interface{}{}, "second", "correlation-2")
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()

@@ -32,6 +32,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "config-publisher"
+
 	// EventBufferSize is the buffer size for the event subscription channel.
 	EventBufferSize = 50
 )
@@ -76,6 +79,12 @@ func New(
 		logger:    logger.With("component", "config_publisher"),
 		eventChan: eventBus.Subscribe(EventBufferSize),
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (c *Component) Name() string {
+	return ComponentName
 }
 
 // Start begins the config publisher's event loop.

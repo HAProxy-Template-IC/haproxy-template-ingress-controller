@@ -31,6 +31,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "executor"
+
 	// EventBufferSize is the size of the event subscription buffer.
 	EventBufferSize = 50
 )
@@ -74,6 +77,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Executor {
 		eventChan: eventChan,
 		logger:    logger,
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (e *Executor) Name() string {
+	return ComponentName
 }
 
 // Start begins the executor's event loop.
