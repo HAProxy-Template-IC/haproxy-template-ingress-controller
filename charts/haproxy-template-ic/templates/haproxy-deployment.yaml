@@ -63,7 +63,8 @@ spec:
               cp /config/haproxy.cfg /etc/haproxy/haproxy.cfg
 
               # Start HAProxy in master-worker mode with master socket
-              exec {{ include "haproxy-template-ic.haproxy.bin" . }} -W -db -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
+              # -dr: Skip DNS resolution failures - servers start in DOWN state instead of failing startup
+              exec {{ include "haproxy-template-ic.haproxy.bin" . }} -dr -W -db -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
           ports:
             - name: http
               containerPort: {{ .Values.haproxy.ports.http }}
@@ -146,6 +147,9 @@ spec:
               haproxy:
                 config_file: {{ .Values.controller.config.dataplane.configFile }}
                 haproxy_bin: {{ include "haproxy-template-ic.haproxy.bin" . }}
+                # validate_cmd: Use -dr to skip DNS resolution failures during config validation
+                # This prevents config rejection when DNS is temporarily unavailable
+                validate_cmd: {{ include "haproxy-template-ic.haproxy.bin" . }} -dr -c -f %s
                 master_worker_mode: true
                 master_runtime: /etc/haproxy/haproxy-master.sock
                 reload:

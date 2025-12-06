@@ -94,11 +94,14 @@ type ValidationPaths struct {
 //   - auxFiles: All auxiliary files (maps, certificates, general files)
 //   - paths: Filesystem paths for validation (must be isolated for parallel execution)
 //   - version: HAProxy/DataPlane API version for schema selection (nil uses default v3.0)
+//   - skipDNSValidation: If true, adds -dr flag to skip DNS resolution failures. Use true for
+//     runtime validation (permissive, prevents blocking when DNS fails) and false for webhook
+//     validation (strict, catches DNS issues before resource admission).
 //
 // Returns:
 //   - nil if validation succeeds
 //   - ValidationError with phase information if validation fails
-func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version) error {
+func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) error {
 	// Phase 1: Syntax validation with client-native parser
 	// This also returns the parsed configuration for Phase 1.5
 	parsedConfig, err := validateSyntax(mainConfig)
@@ -120,7 +123,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	}
 
 	// Phase 2: Semantic validation with haproxy binary
-	if err := validateSemantics(mainConfig, auxFiles, paths); err != nil {
+	if err := validateSemantics(mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
 		return &ValidationError{
 			Phase:   "semantic",
 			Message: "configuration has semantic errors",
@@ -549,7 +552,9 @@ func validateAgainstSchema(spec *openapi3.T, schemaName string, model interface{
 
 // validateSemantics performs semantic validation using haproxy binary.
 // This writes files to actual /etc/haproxy/ directories and runs haproxy -c.
-func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths) error {
+// If skipDNSValidation is true, the -dr flag is passed to HAProxy to skip DNS resolution
+// failures (servers with unresolvable hostnames start in DOWN state instead of failing).
+func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
 	// Clear validation directories to remove any pre-existing files
 	if err := clearValidationDirectories(paths); err != nil {
 		return fmt.Errorf("failed to clear validation directories: %w", err)
@@ -566,7 +571,7 @@ func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *Valid
 	}
 
 	// Run haproxy -c -f <ConfigFile>
-	if err := runHAProxyCheck(paths.ConfigFile, mainConfig); err != nil {
+	if err := runHAProxyCheck(paths.ConfigFile, mainConfig, skipDNSValidation); err != nil {
 		return err
 	}
 
@@ -704,7 +709,12 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 // runHAProxyCheck runs haproxy binary with -c flag to validate configuration.
 // The configuration can reference auxiliary files using relative paths
 // (e.g., maps/host.map) which will be resolved relative to the config file directory.
-func runHAProxyCheck(configPath, configContent string) error {
+//
+// If skipDNSValidation is true, the -dr flag is passed to HAProxy. This causes HAProxy
+// to append "none" to all server resolution methods, allowing startup/validation to
+// proceed even when DNS resolution fails. Servers with unresolvable hostnames will
+// start in RMAINT (DOWN) state instead of causing validation failure.
+func runHAProxyCheck(configPath, configContent string, skipDNSValidation bool) error {
 	// Serialize HAProxy execution to work around concurrent execution issues
 	haproxyCheckMutex.Lock()
 	defer haproxyCheckMutex.Unlock()
@@ -721,9 +731,20 @@ func runHAProxyCheck(configPath, configContent string) error {
 		return fmt.Errorf("failed to get absolute config path: %w", err)
 	}
 
-	// Run haproxy -c -f <configPath>
+	// Build haproxy command arguments
+	// -c: check configuration and exit
+	// -f: path to configuration file
+	// -dr: (optional) skip DNS resolution failures - servers start in DOWN state instead of failing
+	var args []string
+	if skipDNSValidation {
+		args = []string{"-dr", "-c", "-f", filepath.Base(absConfigPath)}
+	} else {
+		args = []string{"-c", "-f", filepath.Base(absConfigPath)}
+	}
+
+	// Run haproxy with the constructed arguments
 	// Set working directory to config file directory so relative paths work
-	cmd := exec.Command(haproxyBin, "-c", "-f", filepath.Base(absConfigPath))
+	cmd := exec.Command(haproxyBin, args...)
 	cmd.Dir = filepath.Dir(absConfigPath)
 
 	// Capture both stdout and stderr

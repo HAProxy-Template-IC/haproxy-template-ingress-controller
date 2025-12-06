@@ -183,7 +183,8 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	// Validate configuration using validation config and paths from event
 	// Use ValidationHAProxyConfig (rendered with temp paths) instead of HAProxyConfig (production paths)
 	// Pass nil version to use default v3.0 schema (safest for validation)
-	err := dataplane.ValidateConfiguration(event.ValidationHAProxyConfig, auxiliaryFiles, validationPaths, nil)
+	// Use permissive validation (skipDNSValidation=true) to prevent blocking when DNS fails at runtime
+	err := dataplane.ValidateConfiguration(event.ValidationHAProxyConfig, auxiliaryFiles, validationPaths, nil, true)
 	if err != nil {
 		// Simplify error message for user-facing output
 		// Keep full error in logs for debugging

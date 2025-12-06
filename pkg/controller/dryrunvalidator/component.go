@@ -206,7 +206,8 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 
 	// Validate the rendered configuration
 	// Pass nil version to use default v3.0 schema (safest for validation)
-	err = dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, c.validationPaths, nil)
+	// Use strict validation (skipDNSValidation=false) for webhook to catch DNS issues before admission
+	err = dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, c.validationPaths, nil, false)
 	if err != nil {
 		c.logger.Info("Dry-run validation failed",
 			"request_id", req.ID,
