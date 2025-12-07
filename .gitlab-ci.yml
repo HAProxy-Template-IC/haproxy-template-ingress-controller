@@ -28,6 +28,8 @@ variables:
   KIND_NODE_VERSION: "v1.34.0"
   # Container registry
   CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+  # Coverage packages (excludes generated code) - keep in sync with Makefile
+  COVERAGE_PACKAGES: "./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/..."
 
 # Reusable rules for path-based filtering
 .rules-code:
@@ -201,7 +203,7 @@ test:
     - |
       go tool gotestsum --junitfile report.xml --format testname -- \
         -race -coverprofile=coverage.out -covermode=atomic \
-        -coverpkg=./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/... \
+        -coverpkg=${COVERAGE_PACKAGES} \
         ./...
     # Show coverage summary and extract percentage for badge
     - go tool cover -func=coverage.out | tail -1
@@ -209,6 +211,8 @@ test:
     - gocover-cobertura < coverage.out > coverage.xml
   coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
   artifacts:
+    paths:
+      - coverage.out
     reports:
       junit: report.xml
       coverage_report:
@@ -348,6 +352,80 @@ test-integration:
   extends:
     - .test-integration-base
     - .haproxy-version-matrix
+
+# Integration test with coverage collection (single HAProxy version - coverage doesn't vary by version)
+test-integration-coverage:
+  stage: integration
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .docker-dind
+    - .rules-code
+  tags:
+    - saas-linux-2xlarge-amd64
+  timeout: 30 minutes
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+  variables:
+    KEEP_CLUSTER: "false"
+  script:
+    - mkdir -p coverage
+    - |
+      go test -tags=integration -race -timeout 15m \
+        -coverprofile=coverage/integration.out -covermode=atomic \
+        -coverpkg=${COVERAGE_PACKAGES} \
+        ./tests/integration/...
+  artifacts:
+    paths:
+      - coverage/integration.out
+    reports:
+      junit: report-integration.xml
+    when: always
+    expire_in: 1 week
+
+# Combined unit + integration coverage report
+coverage-combined:
+  stage: integration
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  extends:
+    - .rules-code
+  tags:
+    - saas-linux-medium-amd64
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+    - job: test
+      artifacts: true
+    - job: test-integration-coverage
+      artifacts: true
+  script:
+    - mkdir -p coverage
+    - cp coverage.out coverage/unit.out
+    - |
+      echo "Unit test coverage:"
+      go tool cover -func=coverage/unit.out | tail -5
+    - |
+      echo "Integration test coverage:"
+      go tool cover -func=coverage/integration.out | tail -5
+    - |
+      echo "Merging coverage profiles..."
+      go run github.com/wadey/gocovmerge@latest coverage/unit.out coverage/integration.out > coverage/combined.out
+    - |
+      echo "Combined coverage:"
+      go tool cover -func=coverage/combined.out | tail -1
+    # Convert combined coverage to Cobertura for GitLab diff visualization
+    - gocover-cobertura < coverage/combined.out > coverage/combined.xml
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+  artifacts:
+    paths:
+      - coverage/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/combined.xml
+    expire_in: 1 week
 
 test-acceptance:
   stage: integration

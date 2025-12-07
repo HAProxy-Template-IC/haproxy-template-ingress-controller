@@ -1,5 +1,6 @@
 .PHONY: help version lint lint-fix audit check-all \
-        test test-integration test-acceptance test-acceptance-parallel build-integration-test test-coverage \
+        test test-integration test-acceptance test-acceptance-parallel build-integration-test \
+        test-coverage test-integration-coverage test-coverage-combined \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         tidy verify generate clean fmt vet install-tools dev
 
@@ -23,6 +24,9 @@ FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NA
 KIND_CLUSTER ?= haproxy-template-ic-dev  # Kind cluster name for local testing
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
+
+# Coverage packages (excludes generated code)
+COVERAGE_PACKAGES := ./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/...
 
 # Default target
 help: ## Show this help message
@@ -120,11 +124,28 @@ build-integration-test: ## Build integration test binary (without running)
 	@mkdir -p bin
 	$(GO) test -c -o bin/integration.test ./tests/integration/...
 
-test-coverage: ## Run tests with coverage report
-	@echo "Running tests with coverage..."
-	$(GO) test -race -coverprofile=coverage.out -covermode=atomic ./...
+test-coverage: ## Run unit tests with coverage report
+	@echo "Running unit tests with coverage..."
+	$(GO) test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=$(COVERAGE_PACKAGES) ./pkg/...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated at coverage.html"
+
+test-integration-coverage: ## Run integration tests with coverage (requires kind cluster)
+	@echo "Running integration tests with coverage..."
+	@mkdir -p coverage
+	$(GO) test -tags=integration -race -timeout 15m -coverprofile=coverage/integration.out -covermode=atomic -coverpkg=$(COVERAGE_PACKAGES) ./tests/integration/...
+	@echo "Integration coverage report generated at coverage/integration.out"
+
+test-coverage-combined: ## Run unit and integration tests with combined coverage
+	@echo "Running combined coverage (unit + integration tests)..."
+	@mkdir -p coverage
+	$(GO) test -race -coverprofile=coverage/unit.out -covermode=atomic -coverpkg=$(COVERAGE_PACKAGES) ./pkg/...
+	$(GO) test -tags=integration -race -timeout 15m -coverprofile=coverage/integration.out -covermode=atomic -coverpkg=$(COVERAGE_PACKAGES) ./tests/integration/...
+	@echo "Merging coverage profiles..."
+	$(GO) run github.com/wadey/gocovmerge@latest coverage/unit.out coverage/integration.out > coverage/combined.out
+	$(GO) tool cover -func=coverage/combined.out
+	$(GO) tool cover -html=coverage/combined.out -o coverage/combined.html
+	@echo "Combined coverage report generated at coverage/combined.html"
 
 ## Build targets
 
@@ -301,6 +322,7 @@ generate-dataplaneapi-all: generate-dataplaneapi-v30 generate-dataplaneapi-v31 g
 clean: ## Clean build artifacts
 	@echo "Cleaning..."
 	rm -rf bin/
+	rm -rf coverage/
 	rm -f coverage.out coverage.html
 	rm -f controller integration.test *.test
 

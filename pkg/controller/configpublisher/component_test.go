@@ -345,3 +345,213 @@ func TestComponent_MultiplePods(t *testing.T) {
 	assert.Contains(t, podNames, "haproxy-pod-3")
 	assert.NotContains(t, podNames, "haproxy-pod-2")
 }
+
+// TestComponent_Name tests that Name returns the correct component name.
+func TestComponent_Name(t *testing.T) {
+	// Setup
+	k8sClient := k8sfake.NewSimpleClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
+	component := New(publisher, eventBus, testLogger())
+
+	// Verify name
+	assert.Equal(t, ComponentName, component.Name())
+	assert.Equal(t, "config-publisher", component.Name())
+}
+
+// TestComponent_LostLeadership tests that cached state is cleared when leadership is lost.
+func TestComponent_LostLeadership(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Setup
+	k8sClient := k8sfake.NewSimpleClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
+	component := New(publisher, eventBus, testLogger())
+
+	// Subscribe to capture events
+	eventChan := eventBus.Subscribe(50)
+
+	// Start event bus and component
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Give component time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create template config for ConfigValidatedEvent
+	templateConfig := &v1alpha1.HAProxyTemplateConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-config",
+			Namespace: "default",
+			UID:       "test-uid-123",
+		},
+	}
+
+	// Step 1: Publish ConfigValidatedEvent to cache template config
+	eventBus.Publish(events.NewConfigValidatedEvent(
+		nil, // Config (not used by component)
+		templateConfig,
+		"v1",
+		"secret-v1",
+	))
+
+	// Step 2: Publish TemplateRenderedEvent to cache rendered config
+	testHAProxyConfig := "global\n  daemon\n"
+	eventBus.Publish(events.NewTemplateRenderedEvent(
+		testHAProxyConfig,
+		testHAProxyConfig,
+		nil,
+		nil,
+		nil,
+		0,
+		100,
+	))
+
+	// Give component time to process events
+	time.Sleep(200 * time.Millisecond)
+
+	// Step 3: Publish LostLeadershipEvent to clear cached state
+	eventBus.Publish(events.NewLostLeadershipEvent("lost-leader-id", "test_reason"))
+
+	// Give component time to process event
+	time.Sleep(200 * time.Millisecond)
+
+	// Step 4: Now publish ValidationCompletedEvent - should NOT publish config
+	// because cached state was cleared
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50))
+
+	// Give time for any potential ConfigPublishedEvent (which shouldn't happen)
+	timeout := time.After(500 * time.Millisecond)
+	var receivedConfigPublished bool
+
+drainLoop:
+	for {
+		select {
+		case event := <-eventChan:
+			if _, ok := event.(*events.ConfigPublishedEvent); ok {
+				receivedConfigPublished = true
+			}
+		case <-timeout:
+			break drainLoop
+		}
+	}
+
+	// Verify no ConfigPublishedEvent was received (state should have been cleared)
+	assert.False(t, receivedConfigPublished, "ConfigPublishedEvent should not be published after leadership loss")
+}
+
+// TestComponent_ValidationFailed tests the handling of validation failure events.
+func TestComponent_ValidationFailed(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Setup
+	k8sClient := k8sfake.NewSimpleClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
+	component := New(publisher, eventBus, testLogger())
+
+	// Start event bus and component
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Give component time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create template config for ConfigValidatedEvent
+	templateConfig := &v1alpha1.HAProxyTemplateConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-config",
+			Namespace: "default",
+			UID:       "test-uid-789",
+		},
+	}
+
+	// Step 1: Publish ConfigValidatedEvent to cache template config
+	eventBus.Publish(events.NewConfigValidatedEvent(
+		nil,
+		templateConfig,
+		"v1",
+		"secret-v1",
+	))
+
+	// Step 2: Publish TemplateRenderedEvent to cache rendered config
+	testHAProxyConfig := "global\n  daemon\n  maxconn invalid\n"
+	eventBus.Publish(events.NewTemplateRenderedEvent(
+		testHAProxyConfig,
+		testHAProxyConfig,
+		nil,
+		nil,
+		nil,
+		0,
+		100,
+	))
+
+	// Give component time to process events
+	time.Sleep(200 * time.Millisecond)
+
+	// Step 3: Publish ValidationFailedEvent
+	eventBus.Publish(events.NewValidationFailedEvent(
+		[]string{"maxconn must be numeric", "invalid configuration directive"},
+		100,
+	))
+
+	// Give component time to process event
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify invalid config was published (for observability) - note the -invalid suffix
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg-invalid", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	assert.Equal(t, "test-config-haproxycfg-invalid", runtimeConfig.Name)
+	assert.Contains(t, runtimeConfig.Spec.Content, "maxconn invalid")
+	// Check validation error is recorded in status
+	assert.Contains(t, runtimeConfig.Status.ValidationError, "maxconn must be numeric")
+}
+
+// TestComponent_ValidationFailed_NoCachedState tests that validation failure is ignored without cached state.
+func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Setup
+	k8sClient := k8sfake.NewSimpleClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
+	component := New(publisher, eventBus, testLogger())
+
+	// Start event bus and component
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Give component time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Publish ValidationFailedEvent without any prior cached state
+	eventBus.Publish(events.NewValidationFailedEvent(
+		[]string{"some error"},
+		100,
+	))
+
+	// Give component time to process event
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify no config was created (should have been skipped due to missing cached state)
+	_, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.Error(t, err, "Should get error because no config should be created")
+}
