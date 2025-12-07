@@ -701,6 +701,455 @@ defaults
 	}
 }
 
+// TestParseFromString_UserlistSection tests userlist section parsing with users and groups.
+func TestParseFromString_UserlistSection(t *testing.T) {
+	config := `
+global
+    daemon
+
+userlist myusers
+    group admins users admin1,admin2
+    group readers users user1
+    user admin1 password $6$somepasswordhash
+    user admin2 password $6$anotherpasswordhash
+    user user1 password $6$userpasswordhash
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	if len(conf.Userlists) != 1 {
+		t.Fatalf("Expected 1 userlist, got: %d", len(conf.Userlists))
+	}
+
+	userlist := conf.Userlists[0]
+
+	// Verify userlist name
+	if userlist.Name != "myusers" {
+		t.Errorf("Expected userlist name='myusers', got: %q", userlist.Name)
+	}
+
+	// Verify users were parsed
+	if len(userlist.Users) != 3 {
+		t.Errorf("Expected 3 users, got: %d", len(userlist.Users))
+	}
+
+	// Verify specific users exist
+	if _, ok := userlist.Users["admin1"]; !ok {
+		t.Error("User 'admin1' not found")
+	}
+	if _, ok := userlist.Users["admin2"]; !ok {
+		t.Error("User 'admin2' not found")
+	}
+	if _, ok := userlist.Users["user1"]; !ok {
+		t.Error("User 'user1' not found")
+	}
+
+	// Verify groups were parsed
+	if len(userlist.Groups) != 2 {
+		t.Errorf("Expected 2 groups, got: %d", len(userlist.Groups))
+	}
+
+	// Verify specific groups exist
+	if _, ok := userlist.Groups["admins"]; !ok {
+		t.Error("Group 'admins' not found")
+	}
+	if _, ok := userlist.Groups["readers"]; !ok {
+		t.Error("Group 'readers' not found")
+	}
+}
+
+// TestParseFromString_ProgramSection tests program section parsing.
+func TestParseFromString_ProgramSection(t *testing.T) {
+	config := `
+global
+    daemon
+
+program myprogram
+    command /usr/bin/myprogram --config /etc/myprogram.cfg
+    user nobody
+    group nogroup
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	if len(conf.Programs) != 1 {
+		t.Fatalf("Expected 1 program, got: %d", len(conf.Programs))
+	}
+
+	program := conf.Programs[0]
+
+	// Verify program name
+	if program.Name != "myprogram" {
+		t.Errorf("Expected program name='myprogram', got: %q", program.Name)
+	}
+
+	// Verify program command
+	if program.Command == nil || *program.Command == "" {
+		t.Error("Expected program command to be set")
+	}
+}
+
+// TestParseFromString_LogForwardSection tests log-forward section parsing.
+func TestParseFromString_LogForwardSection(t *testing.T) {
+	config := `
+global
+    daemon
+
+log-forward mylogforward
+    dgram-bind 127.0.0.1:1514
+    log global
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	if len(conf.LogForwards) != 1 {
+		t.Fatalf("Expected 1 log-forward, got: %d", len(conf.LogForwards))
+	}
+
+	logForward := conf.LogForwards[0]
+
+	// Verify log-forward name
+	if logForward.Name != "mylogforward" {
+		t.Errorf("Expected log-forward name='mylogforward', got: %q", logForward.Name)
+	}
+}
+
+// TestParseFromString_FCGIAppSection tests fcgi-app section parsing.
+func TestParseFromString_FCGIAppSection(t *testing.T) {
+	config := `
+global
+    daemon
+
+fcgi-app php
+    log-stderr global
+    docroot /var/www/html
+    path-info ^(/.+\.php)(/.*)?$
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	if len(conf.FCGIApps) != 1 {
+		t.Fatalf("Expected 1 fcgi-app, got: %d", len(conf.FCGIApps))
+	}
+
+	fcgiApp := conf.FCGIApps[0]
+
+	// Verify fcgi-app name
+	if fcgiApp.Name != "php" {
+		t.Errorf("Expected fcgi-app name='php', got: %q", fcgiApp.Name)
+	}
+}
+
+// TestParseFromString_CrtStoreSection tests crt-store section parsing.
+func TestParseFromString_CrtStoreSection(t *testing.T) {
+	config := `
+global
+    daemon
+
+crt-store mystore
+    crt-base /etc/haproxy/certs
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	if len(conf.CrtStores) != 1 {
+		t.Fatalf("Expected 1 crt-store, got: %d", len(conf.CrtStores))
+	}
+
+	crtStore := conf.CrtStores[0]
+
+	// Verify crt-store name
+	if crtStore.Name != "mystore" {
+		t.Errorf("Expected crt-store name='mystore', got: %q", crtStore.Name)
+	}
+}
+
+// TestParseFromString_EmptyUserlist tests empty userlist parsing.
+func TestParseFromString_EmptyUserlist(t *testing.T) {
+	config := `
+global
+    daemon
+
+userlist emptylist
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	if len(conf.Userlists) != 1 {
+		t.Fatalf("Expected 1 userlist, got: %d", len(conf.Userlists))
+	}
+
+	userlist := conf.Userlists[0]
+
+	// Verify userlist name
+	if userlist.Name != "emptylist" {
+		t.Errorf("Expected userlist name='emptylist', got: %q", userlist.Name)
+	}
+
+	// Verify no users
+	if len(userlist.Users) != 0 {
+		t.Errorf("Expected 0 users, got: %d", len(userlist.Users))
+	}
+
+	// Verify no groups
+	if len(userlist.Groups) != 0 {
+		t.Errorf("Expected 0 groups, got: %d", len(userlist.Groups))
+	}
+}
+
+// TestParseFromString_AllExtendedSections tests parsing config with all extended sections.
+func TestParseFromString_AllExtendedSections(t *testing.T) {
+	config := `
+global
+    daemon
+
+userlist auth
+    user admin password $6$hash
+
+program dataplaned
+    command dataplaneapi
+    user haproxy
+
+log-forward syslog
+    dgram-bind 127.0.0.1:1514
+    log global
+
+fcgi-app php-fpm
+    log-stderr global
+    docroot /var/www
+
+crt-store ssl
+    crt-base /etc/haproxy/certs
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	// Verify all extended sections are parsed
+	if len(conf.Userlists) != 1 {
+		t.Errorf("Expected 1 userlist, got: %d", len(conf.Userlists))
+	}
+	if len(conf.Programs) != 1 {
+		t.Errorf("Expected 1 program, got: %d", len(conf.Programs))
+	}
+	if len(conf.LogForwards) != 1 {
+		t.Errorf("Expected 1 log-forward, got: %d", len(conf.LogForwards))
+	}
+	if len(conf.FCGIApps) != 1 {
+		t.Errorf("Expected 1 fcgi-app, got: %d", len(conf.FCGIApps))
+	}
+	if len(conf.CrtStores) != 1 {
+		t.Errorf("Expected 1 crt-store, got: %d", len(conf.CrtStores))
+	}
+}
+
+// TestParseFromString_MultipleExtendedSections tests multiple sections of same type.
+func TestParseFromString_MultipleExtendedSections(t *testing.T) {
+	config := `
+global
+    daemon
+
+userlist users1
+    user user1 password $6$hash1
+
+userlist users2
+    user user2 password $6$hash2
+
+program prog1
+    command /usr/bin/prog1
+
+program prog2
+    command /usr/bin/prog2
+
+fcgi-app fcgi1
+    docroot /var/www1
+
+fcgi-app fcgi2
+    docroot /var/www2
+
+crt-store store1
+    crt-base /etc/certs1
+
+crt-store store2
+    crt-base /etc/certs2
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	// Verify multiple sections of same type
+	if len(conf.Userlists) != 2 {
+		t.Errorf("Expected 2 userlists, got: %d", len(conf.Userlists))
+	}
+	if len(conf.Programs) != 2 {
+		t.Errorf("Expected 2 programs, got: %d", len(conf.Programs))
+	}
+	if len(conf.FCGIApps) != 2 {
+		t.Errorf("Expected 2 fcgi-apps, got: %d", len(conf.FCGIApps))
+	}
+	if len(conf.CrtStores) != 2 {
+		t.Errorf("Expected 2 crt-stores, got: %d", len(conf.CrtStores))
+	}
+}
+
+// TestParseFromString_MultipleCachesAndRings tests multiple cache and ring sections.
+func TestParseFromString_MultipleCachesAndRings(t *testing.T) {
+	config := `
+global
+    daemon
+
+cache cache1
+
+cache cache2
+
+ring ring1
+    size 32764
+
+ring ring2
+    size 65528
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	// Verify multiple caches and rings
+	if len(conf.Caches) != 2 {
+		t.Errorf("Expected 2 caches, got: %d", len(conf.Caches))
+	}
+	if len(conf.Rings) != 2 {
+		t.Errorf("Expected 2 rings, got: %d", len(conf.Rings))
+	}
+}
+
+// TestParseFromString_MultipleHTTPErrors tests multiple http-errors sections.
+func TestParseFromString_MultipleHTTPErrors(t *testing.T) {
+	config := `
+global
+    daemon
+
+http-errors errors1
+    errorfile 400 /etc/haproxy/errors1/400.http
+
+http-errors errors2
+    errorfile 500 /etc/haproxy/errors2/500.http
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	// Verify multiple http-errors
+	if len(conf.HTTPErrors) != 2 {
+		t.Errorf("Expected 2 http-errors sections, got: %d", len(conf.HTTPErrors))
+	}
+}
+
+// TestParseFromString_MultipleLogForwards tests multiple log-forward sections.
+func TestParseFromString_MultipleLogForwards(t *testing.T) {
+	config := `
+global
+    daemon
+
+log-forward forward1
+    dgram-bind 127.0.0.1:1514
+    log global
+
+log-forward forward2
+    dgram-bind 127.0.0.2:1514
+    log global
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	conf, err := p.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("ParseFromString() failed: %v", err)
+	}
+
+	// Verify multiple log-forwards
+	if len(conf.LogForwards) != 2 {
+		t.Errorf("Expected 2 log-forwards, got: %d", len(conf.LogForwards))
+	}
+}
+
 // TestStructuredConfig_AllFieldsPresent verifies all StructuredConfig fields can be populated.
 func TestStructuredConfig_AllFieldsPresent(t *testing.T) {
 	// Create instance and verify all fields are accessible

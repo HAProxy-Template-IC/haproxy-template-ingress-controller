@@ -16,8 +16,6 @@ package executor
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 
@@ -25,13 +23,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/testutil"
 	busevents "haproxy-template-ic/pkg/events"
 )
 
 // TestExecutor_BasicReconciliationFlow tests the basic event flow of a reconciliation cycle.
 func TestExecutor_BasicReconciliationFlow(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	executor := New(bus, logger)
 
@@ -44,41 +42,17 @@ func TestExecutor_BasicReconciliationFlow(t *testing.T) {
 
 	// Start executor in background
 	go executor.Start(ctx)
-
-	// Give the executor time to start listening
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Trigger reconciliation
 	bus.Publish(events.NewReconciliationTriggeredEvent("test_trigger"))
 
-	// Collect events
-	timeout := time.After(500 * time.Millisecond)
-	var receivedStarted *events.ReconciliationStartedEvent
-	var receivedCompleted *events.ReconciliationCompletedEvent
-
-	for {
-		select {
-		case event := <-eventChan:
-			switch e := event.(type) {
-			case *events.ReconciliationStartedEvent:
-				receivedStarted = e
-			case *events.ReconciliationCompletedEvent:
-				receivedCompleted = e
-			}
-
-			// Check if we got both events
-			if receivedStarted != nil && receivedCompleted != nil {
-				goto Done
-			}
-
-		case <-timeout:
-			t.Fatal("Timeout waiting for reconciliation events")
-		}
-	}
-
-Done:
-	// Verify events were received
+	// Wait for started event
+	receivedStarted := testutil.WaitForEvent[*events.ReconciliationStartedEvent](t, eventChan, testutil.EventTimeout)
 	require.NotNil(t, receivedStarted, "Should receive ReconciliationStartedEvent")
+
+	// Wait for completed event
+	receivedCompleted := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
 	require.NotNil(t, receivedCompleted, "Should receive ReconciliationCompletedEvent")
 
 	// Verify event content
@@ -88,8 +62,7 @@ Done:
 
 // TestExecutor_EventOrder tests that events are published in the correct order.
 func TestExecutor_EventOrder(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	executor := New(bus, logger)
 
@@ -100,15 +73,13 @@ func TestExecutor_EventOrder(t *testing.T) {
 	defer cancel()
 
 	go executor.Start(ctx)
-
-	// Give the executor time to start listening
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Trigger reconciliation
 	bus.Publish(events.NewReconciliationTriggeredEvent("order_test"))
 
 	// Collect events in order
-	timeout := time.After(500 * time.Millisecond)
+	timeout := time.After(testutil.EventTimeout)
 	var orderedEvents []busevents.Event
 
 	for {
@@ -142,8 +113,7 @@ Done:
 
 // TestExecutor_MultipleReconciliations tests handling of multiple reconciliation triggers.
 func TestExecutor_MultipleReconciliations(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	executor := New(bus, logger)
 
@@ -154,9 +124,7 @@ func TestExecutor_MultipleReconciliations(t *testing.T) {
 	defer cancel()
 
 	go executor.Start(ctx)
-
-	// Give the executor time to start listening
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Trigger multiple reconciliations
 	bus.Publish(events.NewReconciliationTriggeredEvent("trigger_1"))
@@ -164,7 +132,7 @@ func TestExecutor_MultipleReconciliations(t *testing.T) {
 	bus.Publish(events.NewReconciliationTriggeredEvent("trigger_3"))
 
 	// Collect completed events
-	timeout := time.After(1 * time.Second)
+	timeout := time.After(testutil.LongTimeout)
 	var completedEvents []*events.ReconciliationCompletedEvent
 
 	for {
@@ -196,8 +164,7 @@ Done:
 
 // TestExecutor_DurationMeasurement tests that reconciliation duration is measured.
 func TestExecutor_DurationMeasurement(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	executor := New(bus, logger)
 
@@ -208,31 +175,14 @@ func TestExecutor_DurationMeasurement(t *testing.T) {
 	defer cancel()
 
 	go executor.Start(ctx)
-
-	// Give the executor time to start listening
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Trigger reconciliation
 	bus.Publish(events.NewReconciliationTriggeredEvent("duration_test"))
 
 	// Wait for completion event
-	timeout := time.After(500 * time.Millisecond)
-	var completedEvent *events.ReconciliationCompletedEvent
+	completedEvent := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
 
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.ReconciliationCompletedEvent); ok {
-				completedEvent = e
-				goto Done
-			}
-
-		case <-timeout:
-			t.Fatal("Timeout waiting for ReconciliationCompletedEvent")
-		}
-	}
-
-Done:
 	require.NotNil(t, completedEvent)
 
 	// Duration should be measured (even if minimal for stub implementation)
@@ -244,8 +194,7 @@ Done:
 
 // TestExecutor_ContextCancellation tests graceful shutdown on context cancellation.
 func TestExecutor_ContextCancellation(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	executor := New(bus, logger)
 
@@ -261,23 +210,22 @@ func TestExecutor_ContextCancellation(t *testing.T) {
 	}()
 
 	// Give it time to start
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Trigger a reconciliation
 	bus.Publish(events.NewReconciliationTriggeredEvent("cancel_test"))
 
 	// Wait a bit for the reconciliation to start
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Cancel context
 	cancel()
 
 	// Should return quickly
-	timeout := time.After(1 * time.Second)
 	select {
 	case err := <-done:
 		assert.NoError(t, err, "Start should return nil on context cancellation")
-	case <-timeout:
+	case <-time.After(testutil.LongTimeout):
 		t.Fatal("Executor did not shut down within timeout")
 	}
 
@@ -295,8 +243,7 @@ func TestExecutor_ContextCancellation(t *testing.T) {
 
 // TestExecutor_IgnoresUnrelatedEvents tests that executor only handles ReconciliationTriggeredEvent.
 func TestExecutor_IgnoresUnrelatedEvents(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	executor := New(bus, logger)
 
@@ -307,16 +254,14 @@ func TestExecutor_IgnoresUnrelatedEvents(t *testing.T) {
 	defer cancel()
 
 	go executor.Start(ctx)
-
-	// Give the executor time to start listening
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Publish various unrelated events
 	bus.Publish(events.NewConfigParsedEvent(nil, nil, "v1", "s1"))
 	bus.Publish(events.NewIndexSynchronizedEvent(map[string]int{"ingresses": 10}))
 
 	// Wait a bit
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(testutil.DebounceWait)
 
 	// Should not receive any reconciliation events
 	select {
@@ -332,31 +277,214 @@ func TestExecutor_IgnoresUnrelatedEvents(t *testing.T) {
 	// Now trigger actual reconciliation
 	bus.Publish(events.NewReconciliationTriggeredEvent("real_trigger"))
 
-	// Should receive reconciliation events
-	timeout := time.After(500 * time.Millisecond)
-	var receivedCompleted bool
+	// Should receive reconciliation completed event
+	completedEvent := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.NotNil(t, completedEvent, "Should process ReconciliationTriggeredEvent")
+}
 
-	for {
-		select {
-		case event := <-eventChan:
-			if _, ok := event.(*events.ReconciliationCompletedEvent); ok {
-				receivedCompleted = true
-				goto Done
-			}
+// TestExecutor_Name tests the Name() method.
+func TestExecutor_Name(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
 
-		case <-timeout:
-			t.Fatal("Timeout waiting for reconciliation completion")
-		}
+	executor := New(bus, logger)
+
+	assert.Equal(t, ComponentName, executor.Name())
+	assert.Equal(t, "executor", executor.Name())
+}
+
+// TestExecutor_HandleTemplateRendered tests handling of template rendered event.
+func TestExecutor_HandleTemplateRendered(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	executor := New(bus, logger)
+
+	// Subscribe to events
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start executor in background
+	go executor.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish template rendered event with correct signature
+	bus.Publish(events.NewTemplateRenderedEvent(
+		"config content",    // haproxyConfig
+		"validation config", // validationHAProxyConfig
+		nil,                 // validationPaths
+		nil,                 // auxiliaryFiles
+		nil,                 // validationAuxiliaryFiles
+		2,                   // auxFileCount
+		100,                 // durationMs
+	))
+
+	// Wait a bit for processing
+	time.Sleep(testutil.DebounceWait)
+
+	// The executor logs the event but doesn't publish new events
+	// Just verify it doesn't crash and event was processed
+	// Drain the event channel
+	select {
+	case <-eventChan:
+		// Event received (the TemplateRenderedEvent we published)
+	default:
+		// No problem if nothing received
 	}
+}
 
-Done:
-	assert.True(t, receivedCompleted, "Should process ReconciliationTriggeredEvent")
+// TestExecutor_HandleTemplateRenderFailed tests handling of template render failed event.
+func TestExecutor_HandleTemplateRenderFailed(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	executor := New(bus, logger)
+
+	// Subscribe to events
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start executor in background
+	go executor.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish template render failed event
+	bus.Publish(events.NewTemplateRenderFailedEvent("haproxy.cfg", "template syntax error at line 42", ""))
+
+	// Wait for ReconciliationFailedEvent
+	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
+
+	require.NotNil(t, failedEvent)
+	assert.Equal(t, "template syntax error at line 42", failedEvent.Error)
+	assert.Equal(t, "render", failedEvent.Phase)
+}
+
+// TestExecutor_HandleValidationCompleted tests handling of validation completed event.
+func TestExecutor_HandleValidationCompleted(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	executor := New(bus, logger)
+
+	// Subscribe to events
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start executor in background
+	go executor.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish validation completed event
+	bus.Publish(events.NewValidationCompletedEvent([]string{"warning: unused acl"}, 50))
+
+	// Wait a bit for processing
+	time.Sleep(testutil.DebounceWait)
+
+	// The executor logs the event and warnings but doesn't publish new events
+	// Just verify it doesn't crash
+	select {
+	case <-eventChan:
+		// Event received
+	default:
+		// No problem if nothing received
+	}
+}
+
+// TestExecutor_HandleValidationCompleted_NoWarnings tests handling with no warnings.
+func TestExecutor_HandleValidationCompleted_NoWarnings(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	executor := New(bus, logger)
+
+	// Subscribe to events
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start executor in background
+	go executor.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish validation completed event with no warnings
+	bus.Publish(events.NewValidationCompletedEvent(nil, 30))
+
+	// Wait a bit for processing
+	time.Sleep(testutil.DebounceWait)
+
+	select {
+	case <-eventChan:
+		// Event received
+	default:
+		// Expected
+	}
+}
+
+// TestExecutor_HandleValidationFailed tests handling of validation failed event.
+func TestExecutor_HandleValidationFailed(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	executor := New(bus, logger)
+
+	// Subscribe to events
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start executor in background
+	go executor.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish validation failed event
+	bus.Publish(events.NewValidationFailedEvent([]string{"invalid backend reference", "duplicate frontend name"}, 75))
+
+	// Wait for ReconciliationFailedEvent
+	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
+
+	require.NotNil(t, failedEvent)
+	assert.Equal(t, "invalid backend reference", failedEvent.Error) // First error
+	assert.Equal(t, "validate", failedEvent.Phase)
+}
+
+// TestExecutor_HandleValidationFailed_NoErrors tests handling with empty errors.
+func TestExecutor_HandleValidationFailed_NoErrors(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	executor := New(bus, logger)
+
+	// Subscribe to events
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start executor in background
+	go executor.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish validation failed event with empty errors
+	bus.Publish(events.NewValidationFailedEvent([]string{}, 50))
+
+	// Wait for ReconciliationFailedEvent
+	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
+
+	require.NotNil(t, failedEvent)
+	assert.Equal(t, "validation failed", failedEvent.Error) // Fallback message
+	assert.Equal(t, "validate", failedEvent.Phase)
 }
 
 // TestExecutor_ReasonPropagation tests that trigger reason is propagated to started event.
 func TestExecutor_ReasonPropagation(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	executor := New(bus, logger)
 
@@ -367,9 +495,7 @@ func TestExecutor_ReasonPropagation(t *testing.T) {
 	defer cancel()
 
 	go executor.Start(ctx)
-
-	// Give the executor time to start listening
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Test various trigger reasons
 	testReasons := []string{
@@ -384,37 +510,13 @@ func TestExecutor_ReasonPropagation(t *testing.T) {
 		bus.Publish(events.NewReconciliationTriggeredEvent(reason))
 
 		// Wait for started event
-		timeout := time.After(500 * time.Millisecond)
-		var startedEvent *events.ReconciliationStartedEvent
+		startedEvent := testutil.WaitForEvent[*events.ReconciliationStartedEvent](t, eventChan, testutil.EventTimeout)
 
-		for {
-			select {
-			case event := <-eventChan:
-				if e, ok := event.(*events.ReconciliationStartedEvent); ok {
-					startedEvent = e
-					goto CheckReason
-				}
-
-			case <-timeout:
-				t.Fatalf("Timeout waiting for ReconciliationStartedEvent for reason: %s", reason)
-			}
-		}
-
-	CheckReason:
 		require.NotNil(t, startedEvent, "Should receive started event for reason: %s", reason)
 		assert.Equal(t, reason, startedEvent.Trigger,
 			"Started event should have same trigger reason: %s", reason)
 
 		// Drain remaining events before next iteration
-		time.Sleep(50 * time.Millisecond)
-	drainLoop:
-		for {
-			select {
-			case <-eventChan:
-				// Drain
-			default:
-				break drainLoop
-			}
-		}
+		testutil.DrainChannel(eventChan)
 	}
 }

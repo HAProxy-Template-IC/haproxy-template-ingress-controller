@@ -461,3 +461,159 @@ func TestTransaction_IsCommittedIsAborted(t *testing.T) {
 	assert.False(t, tx.IsCommitted())
 	assert.True(t, tx.IsAborted())
 }
+
+func TestCreateTransaction_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v3/info":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, `{"api":{"version":"v3.2.6 87ad0bcf"}}`)
+			return
+		case "/services/haproxy/transactions":
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusCreated)
+				fmt.Fprintln(w, `{invalid json}`)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client, err := New(context.Background(), &Config{
+		BaseURL:  server.URL,
+		Username: "admin",
+		Password: "password",
+	})
+	require.NoError(t, err)
+
+	tx, err := client.CreateTransaction(context.Background(), 42)
+	require.Error(t, err)
+	assert.Nil(t, tx)
+	assert.Contains(t, err.Error(), "failed to parse transaction response")
+}
+
+func TestTransaction_AbortIdempotent(t *testing.T) {
+	callCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v3/info" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, `{"api":{"version":"v3.2.6 87ad0bcf"}}`)
+			return
+		}
+
+		if r.URL.Path == "/services/haproxy/transactions/tx-123" && r.Method == "DELETE" {
+			callCount++
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client, err := New(context.Background(), &Config{
+		BaseURL:  server.URL,
+		Username: "admin",
+		Password: "password",
+	})
+	require.NoError(t, err)
+
+	tx := &Transaction{
+		ID:      "tx-123",
+		Version: 42,
+		client:  client,
+	}
+
+	// First abort
+	err = tx.Abort(context.Background())
+	require.NoError(t, err)
+	assert.True(t, tx.IsAborted())
+	assert.Equal(t, 1, callCount)
+
+	// Second abort - should be idempotent (not call server again)
+	err = tx.Abort(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, callCount) // Still 1 - didn't call server again
+}
+
+func TestTransaction_CommitVersionConflict406WithHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v3/info" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, `{"api":{"version":"v3.2.6 87ad0bcf"}}`)
+			return
+		}
+
+		if r.URL.Path == "/services/haproxy/transactions/tx-123" && r.Method == "PUT" {
+			w.Header().Set("Configuration-Version", "55")
+			w.WriteHeader(http.StatusNotAcceptable) // 406
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client, err := New(context.Background(), &Config{
+		BaseURL:  server.URL,
+		Username: "admin",
+		Password: "password",
+	})
+	require.NoError(t, err)
+
+	tx := &Transaction{
+		ID:      "tx-123",
+		Version: 42,
+		client:  client,
+	}
+
+	result, err := tx.Commit(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, result)
+
+	var conflictErr *VersionConflictError
+	require.ErrorAs(t, err, &conflictErr)
+	assert.Equal(t, "55", conflictErr.ActualVersion)
+}
+
+func TestTransaction_CommitVersionConflict409WithoutHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v3/info" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, `{"api":{"version":"v3.2.6 87ad0bcf"}}`)
+			return
+		}
+
+		if r.URL.Path == "/services/haproxy/transactions/tx-123" && r.Method == "PUT" {
+			// 409 without Configuration-Version header
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client, err := New(context.Background(), &Config{
+		BaseURL:  server.URL,
+		Username: "admin",
+		Password: "password",
+	})
+	require.NoError(t, err)
+
+	tx := &Transaction{
+		ID:      "tx-123",
+		Version: 42,
+		client:  client,
+	}
+
+	result, err := tx.Commit(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, result)
+
+	var conflictErr *VersionConflictError
+	require.ErrorAs(t, err, &conflictErr)
+	assert.Equal(t, "unknown", conflictErr.ActualVersion)
+}

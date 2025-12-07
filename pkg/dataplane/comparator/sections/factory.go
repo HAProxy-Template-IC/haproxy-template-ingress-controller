@@ -901,7 +901,8 @@ func describeTCPRequestRule(opType OperationType, rule *models.TCPRequestRule, p
 }
 
 // describeTCPResponseRule generates a human-readable description for a TCP response rule operation.
-func describeTCPResponseRule(opType OperationType, rule *models.TCPResponseRule, parentType, parentName string, index int) string {
+// TCP response rules can only exist in backends.
+func describeTCPResponseRule(opType OperationType, rule *models.TCPResponseRule, parentName string, index int) string {
 	identifier := rule.Type
 	if identifier == "" {
 		identifier = fmt.Sprintf("at index %d", index)
@@ -910,13 +911,13 @@ func describeTCPResponseRule(opType OperationType, rule *models.TCPResponseRule,
 	}
 	switch opType {
 	case OperationCreate:
-		return fmt.Sprintf("Create TCP response rule %s in %s '%s'", identifier, parentType, parentName)
+		return fmt.Sprintf("Create TCP response rule %s in backend '%s'", identifier, parentName)
 	case OperationUpdate:
-		return fmt.Sprintf("Update TCP response rule %s in %s '%s'", identifier, parentType, parentName)
+		return fmt.Sprintf("Update TCP response rule %s in backend '%s'", identifier, parentName)
 	case OperationDelete:
-		return fmt.Sprintf("Delete TCP response rule %s from %s '%s'", identifier, parentType, parentName)
+		return fmt.Sprintf("Delete TCP response rule %s from backend '%s'", identifier, parentName)
 	default:
-		return fmt.Sprintf("Unknown operation on TCP response rule %s in %s '%s'", identifier, parentType, parentName)
+		return fmt.Sprintf("Unknown operation on TCP response rule %s in backend '%s'", identifier, parentName)
 	}
 }
 
@@ -1963,7 +1964,7 @@ func NewTCPResponseRuleBackendCreate(backendName string, rule *models.TCPRespons
 		rule,
 		IdentityTCPResponseRule,
 		executors.TCPResponseRuleBackendCreate(),
-		func() string { return describeTCPResponseRule(OperationCreate, rule, "backend", backendName, index) },
+		func() string { return describeTCPResponseRule(OperationCreate, rule, backendName, index) },
 	)
 }
 
@@ -1978,7 +1979,7 @@ func NewTCPResponseRuleBackendUpdate(backendName string, rule *models.TCPRespons
 		rule,
 		IdentityTCPResponseRule,
 		executors.TCPResponseRuleBackendUpdate(),
-		func() string { return describeTCPResponseRule(OperationUpdate, rule, "backend", backendName, index) },
+		func() string { return describeTCPResponseRule(OperationUpdate, rule, backendName, index) },
 	)
 }
 
@@ -1993,7 +1994,7 @@ func NewTCPResponseRuleBackendDelete(backendName string, rule *models.TCPRespons
 		rule,
 		NilTCPResponseRule,
 		executors.TCPResponseRuleBackendDelete(),
-		func() string { return describeTCPResponseRule(OperationDelete, rule, "backend", backendName, index) },
+		func() string { return describeTCPResponseRule(OperationDelete, rule, backendName, index) },
 	)
 }
 

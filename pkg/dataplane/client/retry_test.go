@@ -12,6 +12,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDefaultRetryConfig(t *testing.T) {
+	config := DefaultRetryConfig()
+
+	assert.Equal(t, 1, config.MaxAttempts)
+	assert.Nil(t, config.RetryIf)
+	assert.Equal(t, BackoffNone, config.Backoff)
+	assert.Equal(t, 100*time.Millisecond, config.BaseDelay)
+	assert.Nil(t, config.Logger)
+}
+
 func TestWithRetry_Success(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,

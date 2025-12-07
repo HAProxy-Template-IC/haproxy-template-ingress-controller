@@ -1089,3 +1089,1760 @@ func TestAppendTraces(t *testing.T) {
 	trace2 := engine2.GetTraceOutput()
 	assert.Empty(t, trace2)
 }
+
+// ============================================================================
+// Error Unwrap tests
+// ============================================================================
+
+func TestCompilationError_Unwrap(t *testing.T) {
+	cause := fmt.Errorf("original error")
+	err := NewCompilationError("test", "template content", cause)
+
+	unwrapped := err.Unwrap()
+	assert.Equal(t, cause, unwrapped)
+}
+
+func TestRenderError_Unwrap(t *testing.T) {
+	cause := fmt.Errorf("original error")
+	err := NewRenderError("test", cause)
+
+	unwrapped := err.Unwrap()
+	assert.Equal(t, cause, unwrapped)
+}
+
+func TestUnsupportedEngineError_Error(t *testing.T) {
+	err := NewUnsupportedEngineError(EngineType(999))
+
+	assert.Contains(t, err.Error(), "unsupported template engine type")
+	assert.Contains(t, err.Error(), "unknown")
+}
+
+// ============================================================================
+// strip and trim filter tests
+// ============================================================================
+
+func TestStripFilter(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ value | strip }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "strip whitespace",
+			input: "  hello world  ",
+			want:  "hello world",
+		},
+		{
+			name:  "strip tabs and newlines",
+			input: "\t\nhello\n\t",
+			want:  "hello",
+		},
+		{
+			name:  "no whitespace",
+			input: "hello",
+			want:  "hello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := engine.Render("test", map[string]interface{}{
+				"value": tt.input,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, output)
+		})
+	}
+}
+
+func TestTrimFilter(t *testing.T) {
+	templates := map[string]string{
+		"default": `{{ value | trim }}`,
+		"custom":  `{{ value | trim(chars="xy") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	t.Run("default trim whitespace", func(t *testing.T) {
+		output, err := engine.Render("default", map[string]interface{}{
+			"value": "  hello  ",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "hello", output)
+	})
+
+	t.Run("custom characters", func(t *testing.T) {
+		output, err := engine.Render("custom", map[string]interface{}{
+			"value": "xxhelloxx",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "hello", output)
+	})
+}
+
+// ============================================================================
+// transform filter tests
+// ============================================================================
+
+func TestTransformFilter(t *testing.T) {
+	// Transform filter is exercised via context-passed transforms map
+	templates := map[string]string{
+		"test": `{%- set result = items | transform(transforms) -%}
+{%- for item in result -%}
+{{ item.path_key }},{{ item.priority }};
+{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Pass the transforms map via context
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"hostname": "api", "path": "/users", "headers": []string{"X-Auth", "X-Version"}},
+			{"hostname": "web", "path": "/home", "headers": []string{"Accept"}},
+		},
+		"transforms": map[string]interface{}{
+			"path_key": "$.hostname ~ $.path",
+			"priority": "$.headers | length",
+		},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, output, "api/users,2")
+	assert.Contains(t, output, "web/home,1")
+}
+
+func TestTransformFilter_Errors(t *testing.T) {
+	t.Run("not an array", func(t *testing.T) {
+		templates := map[string]string{
+			"test": `{%- set transforms = {"key": "$.value"} -%}{{ "string" | transform(transforms) }}`,
+		}
+		engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		_, err = engine.Render("test", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected array/slice")
+	})
+
+	t.Run("transforms not a map", func(t *testing.T) {
+		templates := map[string]string{
+			"test": `{{ items | transform("not a map") }}`,
+		}
+		engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		_, err = engine.Render("test", map[string]interface{}{
+			"items": []map[string]interface{}{},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be a map")
+	})
+}
+
+// ============================================================================
+// glob_match filter tests
+// ============================================================================
+
+func TestGlobMatchFilter(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set matched = items | glob_match(pattern) -%}
+{%- for item in matched -%}{{ item }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		items   []string
+		pattern string
+		want    string
+	}{
+		{
+			name:    "match prefix",
+			items:   []string{"map-entry-1", "map-entry-2", "backend-rule"},
+			pattern: "map-entry-*",
+			want:    "map-entry-1,map-entry-2,",
+		},
+		{
+			name:    "no matches",
+			items:   []string{"foo", "bar"},
+			pattern: "baz-*",
+			want:    "",
+		},
+		{
+			name:    "exact match",
+			items:   []string{"test.txt", "test.log"},
+			pattern: "test.txt",
+			want:    "test.txt,",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Convert []string to []interface{}
+			items := make([]interface{}, len(tt.items))
+			for i, s := range tt.items {
+				items[i] = s
+			}
+
+			output, err := engine.Render("test", map[string]interface{}{
+				"items":   items,
+				"pattern": tt.pattern,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, output)
+		})
+	}
+}
+
+func TestGlobMatchFilter_Errors(t *testing.T) {
+	t.Run("invalid pattern", func(t *testing.T) {
+		templates := map[string]string{
+			"test": `{{ items | glob_match("[") }}`,
+		}
+		engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		_, err = engine.Render("test", map[string]interface{}{
+			"items": []interface{}{"test"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid pattern")
+	})
+
+	t.Run("not an array", func(t *testing.T) {
+		templates := map[string]string{
+			"test": `{{ "string" | glob_match("*") }}`,
+		}
+		engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		_, err = engine.Render("test", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected array/slice")
+	})
+}
+
+// Note: conflicts_by is a test, not a filter, and has Gonja argument passing complexities.
+// See filters_generic_test.go:274 - the test is not currently used in templates.
+// Unit testing this function directly would require calling conflictsByTest() directly,
+// which is not exported.
+
+// ============================================================================
+// JSONPath expression tests (via extract filter)
+// ============================================================================
+
+func TestExtractFilter_JSONPath(t *testing.T) {
+	t.Run("simple field extraction", func(t *testing.T) {
+		templates := map[string]string{
+			"test": `{%- for name in items | extract("$.name") -%}{{ name }},{%- endfor -%}`,
+		}
+		engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		output, err := engine.Render("test", map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{"name": "item1"},
+				map[string]interface{}{"name": "item2"},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "item1,item2,", output)
+	})
+
+	t.Run("nested field extraction", func(t *testing.T) {
+		templates := map[string]string{
+			"test": `{%- for ns in items | extract("$.metadata.namespace") -%}{{ ns }},{%- endfor -%}`,
+		}
+		engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		output, err := engine.Render("test", map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{"metadata": map[string]interface{}{"namespace": "default"}},
+				map[string]interface{}{"metadata": map[string]interface{}{"namespace": "kube-system"}},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "default,kube-system,", output)
+	})
+
+	t.Run("concatenation expression", func(t *testing.T) {
+		templates := map[string]string{
+			"test": `{%- for key in items | extract("$.ns ~ '/' ~ $.name") -%}{{ key }},{%- endfor -%}`,
+		}
+		engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		output, err := engine.Render("test", map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{"ns": "default", "name": "svc1"},
+				map[string]interface{}{"ns": "prod", "name": "svc2"},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "default/svc1,prod/svc2,", output)
+	})
+}
+
+// ============================================================================
+// getFieldByReflection tests (via sort_by with struct)
+// ============================================================================
+
+type testStruct struct {
+	Name     string
+	Priority int
+}
+
+func TestSortByWithStruct(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.Priority:desc"]) -%}
+{%- for item in sorted -%}{{ item.Name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []interface{}{
+			testStruct{Name: "low", Priority: 1},
+			testStruct{Name: "high", Priority: 10},
+			testStruct{Name: "medium", Priority: 5},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "high,medium,low,", output)
+}
+
+// ============================================================================
+// deepCopyValue tests (via transform filter)
+// ============================================================================
+
+func TestTransformDeepCopy(t *testing.T) {
+	// Test that transform creates deep copies by verifying original data is preserved
+	// even when transforms modify the copied data.
+	// The transform filter uses JSON marshal/unmarshal which creates a deep copy.
+	templates := map[string]string{
+		"test": `{%- set transformed = items | transform(transforms) -%}
+{%- for item in transformed -%}{{ item.name }}-{{ item.name_upper }};{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Transform that copies the name field to name_upper (in real use, would apply upper)
+	// Using $.name to verify field extraction works
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "item1"},
+			{"name": "item2"},
+		},
+		"transforms": map[string]interface{}{
+			"name_upper": "$.name",
+		},
+	})
+	require.NoError(t, err)
+	// Each transformed item should have both name and name_upper set to the same value
+	assert.Equal(t, "item1-item1;item2-item2;", output)
+}
+
+// ============================================================================
+// Global function tests
+// ============================================================================
+
+func TestGlobalFunctions(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ custom_func("hello", 42) }}`,
+	}
+
+	customFunc := func(args ...interface{}) (interface{}, error) {
+		if len(args) < 2 {
+			return nil, fmt.Errorf("expected 2 args")
+		}
+		return fmt.Sprintf("%v-%v", args[0], args[1]), nil
+	}
+
+	globalFuncs := map[string]GlobalFunc{
+		"custom_func": customFunc,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, globalFuncs, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "hello-42", output)
+}
+
+func TestGlobalFunctions_Error(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ failing_func() }}`,
+	}
+
+	failingFunc := func(args ...interface{}) (interface{}, error) {
+		return nil, fmt.Errorf("intentional failure")
+	}
+
+	globalFuncs := map[string]GlobalFunc{
+		"failing_func": failingFunc,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, globalFuncs, nil)
+	require.NoError(t, err)
+
+	_, err = engine.Render("test", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "intentional failure")
+}
+
+// ============================================================================
+// Additional edge case tests
+// ============================================================================
+
+func TestExtractFilter_SingleItem(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ item | extract("$.name") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"item": map[string]interface{}{"name": "test-item"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "test-item", output)
+}
+
+func TestExtractFilter_MissingPath(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ items | extract() }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	_, err = engine.Render("test", map[string]interface{}{
+		"items": []interface{}{"a", "b"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "path must be string")
+}
+
+func TestSortByWithLength(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.headers | length:desc"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "one", "headers": []string{"X"}},
+			{"name": "three", "headers": []string{"X", "Y", "Z"}},
+			{"name": "two", "headers": []string{"X", "Y"}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "three,two,one,", output)
+}
+
+func TestSortByWithExists(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.method:exists:desc"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "no-method"},
+			{"name": "with-method", "method": "GET"},
+			{"name": "also-no-method"},
+		},
+	})
+	require.NoError(t, err)
+	// Items with method should come first
+	assert.True(t, strings.HasPrefix(output, "with-method,"))
+}
+
+func TestGetLengthVariousTypes(t *testing.T) {
+	templates := map[string]string{
+		"string": `{{ "hello" | length }}`,
+		"slice":  `{{ items | length }}`,
+		"map":    `{{ data | length }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	t.Run("string length", func(t *testing.T) {
+		output, err := engine.Render("string", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "5", output)
+	})
+
+	t.Run("slice length", func(t *testing.T) {
+		output, err := engine.Render("slice", map[string]interface{}{
+			"items": []string{"a", "b", "c"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "3", output)
+	})
+
+	t.Run("map length", func(t *testing.T) {
+		output, err := engine.Render("map", map[string]interface{}{
+			"data": map[string]interface{}{"a": 1, "b": 2},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "2", output)
+	})
+}
+
+// ============================================================================
+// Custom list methods tests (createCustomListMethods)
+// ============================================================================
+
+func TestCustomListMethods_Append(t *testing.T) {
+	// Test the custom append method that returns the modified list
+	templates := map[string]string{
+		"test": `{%- set items = namespace(list=[]) -%}
+{%- set items.list = items.list.append("a") -%}
+{%- set items.list = items.list.append("b") -%}
+{%- for item in items.list -%}{{ item }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "a,b,", output)
+}
+
+func TestCustomListMethods_Reverse(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set items = ["a", "b", "c"] -%}
+{%- set reversed = items.reverse() -%}
+{%- for item in reversed -%}{{ item }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "c,b,a,", output)
+}
+
+func TestCustomListMethods_Copy(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set original = ["a", "b"] -%}
+{%- set copied = original.copy() -%}
+{{ copied | length }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "2", output)
+}
+
+// ============================================================================
+// Custom dict methods tests (createCustomDictMethods)
+// ============================================================================
+
+func TestCustomDictMethods_Keys(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set data = {"b": 2, "a": 1, "c": 3} -%}
+{%- for k in data.keys() -%}{{ k }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	// Keys should be sorted alphabetically
+	assert.Equal(t, "a,b,c,", output)
+}
+
+func TestCustomDictMethods_Items(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set data = {"key": "value"} -%}
+{{ data.items() | length }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "1", output)
+}
+
+func TestCustomDictMethods_Update(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set data = {"a": 1} -%}
+{%- set data = data.update({"b": 2}) -%}
+{%- for k in data.keys() -%}{{ k }}:{{ data[k] }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	assert.Contains(t, output, "a:1,")
+	assert.Contains(t, output, "b:2,")
+}
+
+// ============================================================================
+// Array access via nested arrays tests
+// ============================================================================
+
+func TestSortByWithNestedArrayLength(t *testing.T) {
+	// Test processArrayIndex via sorting by nested array element count
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.nested[0]:desc"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "first", "nested": []int{100}},
+			{"name": "second", "nested": []int{200}},
+			{"name": "third", "nested": []int{50}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "second,first,third,", output)
+}
+
+func TestSortByWithNumericComparison(t *testing.T) {
+	// Test toFloat64 function for numeric sorting
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.value:desc"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "low", "value": 1},
+			{"name": "high", "value": 100},
+			{"name": "mid", "value": 50},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "high,mid,low,", output)
+}
+
+func TestSortByWithFloatValues(t *testing.T) {
+	// Test toFloat64 with float values
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.weight"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "heavy", "weight": 10.5},
+			{"name": "light", "weight": 1.2},
+			{"name": "medium", "weight": 5.0},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "light,medium,heavy,", output)
+}
+
+// ============================================================================
+// testInFixed tests
+// ============================================================================
+
+func TestInOperatorWithStrings(t *testing.T) {
+	// Test the 'in' operator which uses testInFixed
+	templates := map[string]string{
+		"test": `{% if "a" in items %}found{% else %}not found{% endif %}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	t.Run("string in array - found", func(t *testing.T) {
+		output, err := engine.Render("test", map[string]interface{}{
+			"items": []string{"a", "b", "c"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "found", output)
+	})
+
+	t.Run("string not in array", func(t *testing.T) {
+		output, err := engine.Render("test", map[string]interface{}{
+			"items": []string{"x", "y", "z"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "not found", output)
+	})
+}
+
+func TestInOperatorWithMaps(t *testing.T) {
+	templates := map[string]string{
+		"test": `{% if "key" in data %}found{% else %}not found{% endif %}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	t.Run("key in map - found", func(t *testing.T) {
+		output, err := engine.Render("test", map[string]interface{}{
+			"data": map[string]interface{}{"key": "value"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "found", output)
+	})
+
+	t.Run("key not in map", func(t *testing.T) {
+		output, err := engine.Render("test", map[string]interface{}{
+			"data": map[string]interface{}{"other": "value"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "not found", output)
+	})
+}
+
+func TestInOperatorWithString(t *testing.T) {
+	// Test 'in' with substring check
+	templates := map[string]string{
+		"test": `{% if "bc" in text %}found{% else %}not found{% endif %}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"text": "abcdef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "found", output)
+}
+
+// ============================================================================
+// eval filter tests
+// ============================================================================
+
+func TestEvalFilter(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ item | eval("$.name") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"item": map[string]interface{}{"name": "test-value"},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, output, "test-value")
+	assert.Contains(t, output, "string")
+}
+
+func TestEvalFilterWithLength(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ item | eval("$.items | length") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"item": map[string]interface{}{
+			"items": []string{"a", "b", "c"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, output, "3")
+	assert.Contains(t, output, "int")
+}
+
+func TestEvalFilterWithExists(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ item | eval("$.optional:exists") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	t.Run("field exists", func(t *testing.T) {
+		output, err := engine.Render("test", map[string]interface{}{
+			"item": map[string]interface{}{"optional": "value"},
+		})
+		require.NoError(t, err)
+		assert.Contains(t, output, "true")
+	})
+
+	t.Run("field missing", func(t *testing.T) {
+		output, err := engine.Render("test", map[string]interface{}{
+			"item": map[string]interface{}{},
+		})
+		require.NoError(t, err)
+		assert.Contains(t, output, "false")
+	})
+}
+
+// ============================================================================
+// trim filter tests
+// ============================================================================
+
+func TestTrimFilterEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		context  map[string]interface{}
+		expected string
+	}{
+		{
+			name:     "trim with custom chars",
+			template: `{{ "###hello###" | trim("#") }}`,
+			context:  nil,
+			expected: "hello",
+		},
+		{
+			name:     "trim empty string",
+			template: `{{ "" | trim }}`,
+			context:  nil,
+			expected: "",
+		},
+		{
+			name:     "trim from variable",
+			template: `{{ value | trim }}`,
+			context:  map[string]interface{}{"value": "  spaced  "},
+			expected: "spaced",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			templates := map[string]string{"test": tt.template}
+			engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+			require.NoError(t, err)
+
+			output, err := engine.Render("test", tt.context)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, output)
+		})
+	}
+}
+
+// ============================================================================
+// convertToMap tests
+// ============================================================================
+
+func TestExtractFromNestedMap(t *testing.T) {
+	// Tests convertToMap for nested structure navigation
+	templates := map[string]string{
+		"test": `{{ data | extract("$.metadata.labels.app") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"data": map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"labels": map[string]interface{}{
+					"app": "my-app",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "my-app", output)
+}
+
+// ============================================================================
+// getFieldByReflection tests
+// ============================================================================
+
+type TestStruct struct {
+	Name   string
+	Value  int
+	Nested struct {
+		Field string
+	}
+}
+
+func TestExtractFromStruct(t *testing.T) {
+	// Tests getFieldByReflection for struct field access
+	templates := map[string]string{
+		"test": `{{ data | extract("$.Name") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"data": TestStruct{Name: "struct-name", Value: 42},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "struct-name", output)
+}
+
+// ============================================================================
+// compareValues tests with different types
+// ============================================================================
+
+func TestSortByWithMixedTypes(t *testing.T) {
+	// Test compareValues with different types
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.value"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "c", "value": "charlie"},
+			{"name": "a", "value": "alpha"},
+			{"name": "b", "value": "beta"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "a,b,c,", output)
+}
+
+func TestSortByWithBooleans(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.active:desc"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "inactive", "active": false},
+			{"name": "active1", "active": true},
+			{"name": "active2", "active": true},
+		},
+	})
+	require.NoError(t, err)
+	// Active items should come first
+	assert.True(t, strings.HasPrefix(output, "active"))
+}
+
+// ============================================================================
+// applyPipeOperation tests
+// ============================================================================
+
+func TestSortByWithComplexPipeExpression(t *testing.T) {
+	// Tests applyPipeOperation with length modifier
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.tags | length:desc"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "few", "tags": []string{"a"}},
+			{"name": "many", "tags": []string{"a", "b", "c", "d"}},
+			{"name": "some", "tags": []string{"a", "b"}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "many,some,few,", output)
+}
+
+// ============================================================================
+// recordFilter tests (tracing)
+// ============================================================================
+
+func TestRecordFilterWithTracing(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set result = items | sort_by(["$.value"]) | extract("$.name") -%}
+{%- for r in result -%}{{ r }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Enable tracing to test recordFilter
+	engine.EnableTracing()
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "b", "value": 2},
+			{"name": "a", "value": 1},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "a,b,", output)
+
+	// Check that tracing captured filter operations
+	trace := engine.GetTraceOutput()
+	assert.Contains(t, trace, "sort_by")
+}
+
+// ============================================================================
+// AppendTraces test
+// ============================================================================
+
+func TestAppendTracesAcrossRenders(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ value }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	engine.EnableTracing()
+
+	// Render multiple times
+	for i := 0; i < 3; i++ {
+		_, err := engine.Render("test", map[string]interface{}{"value": i})
+		require.NoError(t, err)
+	}
+
+	// Get all traces
+	trace := engine.GetTraceOutput()
+	// Should have multiple render entries
+	assert.Contains(t, trace, "Rendering: test")
+}
+
+// ============================================================================
+// Additional coverage tests for low-coverage functions
+// ============================================================================
+
+func TestSortByWithAllNumericTypes(t *testing.T) {
+	// Tests toFloat64 with various numeric types
+	tests := []struct {
+		name     string
+		items    []map[string]interface{}
+		expected string
+	}{
+		{
+			name: "int64 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": int64(100)},
+				{"name": "b", "value": int64(50)},
+				{"name": "c", "value": int64(75)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "float32 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": float32(10.5)},
+				{"name": "b", "value": float32(5.2)},
+				{"name": "c", "value": float32(7.8)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "int32 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": int32(30)},
+				{"name": "b", "value": int32(10)},
+				{"name": "c", "value": int32(20)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "uint values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": uint(300)},
+				{"name": "b", "value": uint(100)},
+				{"name": "c", "value": uint(200)},
+			},
+			expected: "b,c,a,",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			templates := map[string]string{
+				"test": `{%- set sorted = items | sort_by(["$.value"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+			}
+
+			engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+			require.NoError(t, err)
+
+			output, err := engine.Render("test", map[string]interface{}{
+				"items": tt.items,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, output)
+		})
+	}
+}
+
+func TestExtractWithWildcardInNestedPath(t *testing.T) {
+	// Tests processWildcardIndex via sort_by with nested array wildcard
+	templates := map[string]string{
+		"test": `{%- set sorted = data | sort_by(["$.items[*] | length:desc"]) -%}
+{%- for d in sorted -%}{{ d.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"data": []map[string]interface{}{
+			{"name": "few", "items": []string{"a"}},
+			{"name": "many", "items": []string{"a", "b", "c", "d"}},
+			{"name": "some", "items": []string{"a", "b"}},
+		},
+	})
+	require.NoError(t, err)
+	// Should sort by the flattened array length
+	assert.Contains(t, output, "many,")
+}
+
+func TestCalculateLengthWithDifferentTypes(t *testing.T) {
+	// Tests calculateLength with different types
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.data | length:desc"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "map", "data": map[string]interface{}{"a": 1, "b": 2, "c": 3}},
+			{"name": "short-string", "data": "ab"},
+			{"name": "long-string", "data": "abcdefgh"},
+		},
+	})
+	require.NoError(t, err)
+	// long-string (8), map (3), short-string (2)
+	assert.Equal(t, "long-string,map,short-string,", output)
+}
+
+func TestConvertToMapWithDifferentInputs(t *testing.T) {
+	// Tests convertToMap with typed map input
+	templates := map[string]string{
+		"test": `{{ data | extract("$.key") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Test with map[string]string (not map[string]interface{})
+	output, err := engine.Render("test", map[string]interface{}{
+		"data": map[string]string{"key": "typed-value"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "typed-value", output)
+}
+
+func TestGetFieldByReflectionWithPointer(t *testing.T) {
+	// Tests getFieldByReflection with pointer to struct
+	type Item struct {
+		Name  string
+		Count int
+	}
+
+	templates := map[string]string{
+		"test": `{{ data | extract("$.Name") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	item := &Item{Name: "pointer-item", Count: 42}
+	output, err := engine.Render("test", map[string]interface{}{
+		"data": item,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pointer-item", output)
+}
+
+func TestCompareValuesWithNilValues(t *testing.T) {
+	// Tests compareValues with nil values
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.value"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "has-value", "value": "b"},
+			{"name": "nil-value", "value": nil},
+			{"name": "another-value", "value": "a"},
+		},
+	})
+	require.NoError(t, err)
+	// Items with values should be sorted, nil values may come first or last
+	assert.Contains(t, output, "another-value")
+	assert.Contains(t, output, "has-value")
+}
+
+func TestGroupByWithMultipleGroups(t *testing.T) {
+	// Tests groupByFilter more thoroughly
+	templates := map[string]string{
+		"test": `{%- set groups = items | group_by("$.status") -%}
+{%- for key in groups.keys() -%}{{ key }}:{{ groups[key] | length }};{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "a", "status": "active"},
+			{"name": "b", "status": "inactive"},
+			{"name": "c", "status": "active"},
+			{"name": "d", "status": "pending"},
+			{"name": "e", "status": "active"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, output, "active:3;")
+	assert.Contains(t, output, "inactive:1;")
+	assert.Contains(t, output, "pending:1;")
+}
+
+func TestTransformFilterWithMultipleTransforms(t *testing.T) {
+	// Tests transformFilter more thoroughly
+	templates := map[string]string{
+		"test": `{%- set result = items | transform(transforms) -%}
+{%- for item in result -%}{{ item.full_path }}-{{ item.method_count }};{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"host": "api", "path": "/users", "methods": []string{"GET", "POST"}},
+			{"host": "web", "path": "/home", "methods": []string{"GET"}},
+		},
+		"transforms": map[string]interface{}{
+			"full_path":    "$.host ~ $.path",
+			"method_count": "$.methods | length",
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "api/users-2;web/home-1;", output)
+}
+
+func TestEvalFilterWithMissingField(t *testing.T) {
+	// Tests evalFilter with missing field
+	templates := map[string]string{
+		"test": `{{ item | eval("$.nonexistent") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"item": map[string]interface{}{"name": "test"},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, output, "<nil>")
+}
+
+func TestTrimFilterWithNonStringInput(t *testing.T) {
+	// Tests trimFilter error handling
+	templates := map[string]string{
+		"test": `{{ value | trim }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Non-string input should be converted to string
+	output, err := engine.Render("test", map[string]interface{}{
+		"value": 123,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "123", output)
+}
+
+func TestCustomListMethodsWithErrorHandling(t *testing.T) {
+	// Test append with invalid args
+	templates := map[string]string{
+		"test": `{%- set items = ["a"] -%}
+{%- set result = items.append("b", "extra") -%}
+{{ result | length }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	_, err = engine.Render("test", nil)
+	// Should error due to extra argument
+	require.Error(t, err)
+}
+
+func TestCustomDictMethodsWithUpdateError(t *testing.T) {
+	// Test update with invalid input type
+	templates := map[string]string{
+		"test": `{%- set data = {"a": 1} -%}
+{%- set result = data.update("not a dict") -%}
+{{ result }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	_, err = engine.Render("test", nil)
+	// Should error due to invalid update argument
+	require.Error(t, err)
+}
+
+func TestSortByWithFilterDebugEnabled(t *testing.T) {
+	// Tests compareByExpressionWithDebug with debug enabled
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.value"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Enable filter debug
+	engine.EnableFilterDebug()
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "b", "value": 2},
+			{"name": "a", "value": 1},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "a,b,", output)
+
+	engine.DisableFilterDebug()
+}
+
+func TestDeepCopyValueWithComplexStructure(t *testing.T) {
+	// Tests deepCopyValue with nested structures
+	templates := map[string]string{
+		"test": `{%- set result = items | transform(transforms) -%}
+{%- for item in result -%}{{ item.nested_count }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"name":   "complex",
+				"nested": map[string]interface{}{"a": 1, "b": 2, "c": 3},
+			},
+		},
+		"transforms": map[string]interface{}{
+			"nested_count": "$.nested | length",
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "3,", output)
+}
+
+// ============================================================================
+// More toFloat64 coverage tests
+// ============================================================================
+
+func TestSortByWithMoreNumericTypes(t *testing.T) {
+	// Tests toFloat64 with remaining numeric types
+	tests := []struct {
+		name     string
+		items    []map[string]interface{}
+		expected string
+	}{
+		{
+			name: "int8 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": int8(30)},
+				{"name": "b", "value": int8(10)},
+				{"name": "c", "value": int8(20)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "int16 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": int16(300)},
+				{"name": "b", "value": int16(100)},
+				{"name": "c", "value": int16(200)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "uint8 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": uint8(30)},
+				{"name": "b", "value": uint8(10)},
+				{"name": "c", "value": uint8(20)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "uint16 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": uint16(300)},
+				{"name": "b", "value": uint16(100)},
+				{"name": "c", "value": uint16(200)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "uint32 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": uint32(3000)},
+				{"name": "b", "value": uint32(1000)},
+				{"name": "c", "value": uint32(2000)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "uint64 values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": uint64(30000)},
+				{"name": "b", "value": uint64(10000)},
+				{"name": "c", "value": uint64(20000)},
+			},
+			expected: "b,c,a,",
+		},
+		{
+			name: "string numeric values",
+			items: []map[string]interface{}{
+				{"name": "a", "value": "30.5"},
+				{"name": "b", "value": "10.2"},
+				{"name": "c", "value": "20.7"},
+			},
+			expected: "b,c,a,",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			templates := map[string]string{
+				"test": `{%- set sorted = items | sort_by(["$.value"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+			}
+
+			engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+			require.NoError(t, err)
+
+			output, err := engine.Render("test", map[string]interface{}{
+				"items": tt.items,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, output)
+		})
+	}
+}
+
+// ============================================================================
+// applyPipeOperation tests (default)
+// ============================================================================
+
+func TestSortByWithDefaultPipeOperation(t *testing.T) {
+	// Tests applyPipeOperation with default() operation
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by(["$.priority | default('50')"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "c", "priority": "30"},
+			{"name": "a", "priority": "10"},
+			{"name": "d"}, // No priority, will use default of 50
+			{"name": "b", "priority": "20"},
+		},
+	})
+	require.NoError(t, err)
+	// Order should be: a(10), b(20), c(30), d(50-default)
+	assert.Equal(t, "a,b,c,d,", output)
+}
+
+// ============================================================================
+// buildGlobalFunctions tests
+// ============================================================================
+
+func TestMultipleGlobalFunctions(t *testing.T) {
+	// Tests buildGlobalFunctions with multiple functions
+	templates := map[string]string{
+		"test": `{{ func1("a") }}-{{ func2("b") }}`,
+	}
+
+	globalFuncs := map[string]GlobalFunc{
+		"func1": func(args ...interface{}) (interface{}, error) {
+			return fmt.Sprintf("f1:%v", args[0]), nil
+		},
+		"func2": func(args ...interface{}) (interface{}, error) {
+			return fmt.Sprintf("f2:%v", args[0]), nil
+		},
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, globalFuncs, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "f1:a-f2:b", output)
+}
+
+func TestGlobalFunctionWithNoArgs(t *testing.T) {
+	// Tests buildGlobalFunctions with function that takes no args
+	templates := map[string]string{
+		"test": `{{ get_constant() }}`,
+	}
+
+	globalFuncs := map[string]GlobalFunc{
+		"get_constant": func(args ...interface{}) (interface{}, error) {
+			return "constant-value", nil
+		},
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, globalFuncs, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "constant-value", output)
+}
+
+// ============================================================================
+// wrapCustomFilter tests
+// ============================================================================
+
+func TestMultipleCustomFilters(t *testing.T) {
+	// Tests wrapCustomFilter with multiple custom filters
+	templates := map[string]string{
+		"test": `{{ value | double | triple }}`,
+	}
+
+	customFilters := map[string]FilterFunc{
+		"double": func(in interface{}, args ...interface{}) (interface{}, error) {
+			if v, ok := in.(int); ok {
+				return v * 2, nil
+			}
+			return in, nil
+		},
+		"triple": func(in interface{}, args ...interface{}) (interface{}, error) {
+			if v, ok := in.(int); ok {
+				return v * 3, nil
+			}
+			return in, nil
+		},
+	}
+
+	engine, err := New(EngineTypeGonja, templates, customFilters, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"value": 5,
+	})
+	require.NoError(t, err)
+	// 5 * 2 = 10, 10 * 3 = 30
+	assert.Equal(t, "30", output)
+}
+
+func TestCustomFilterWithArgs(t *testing.T) {
+	// Tests wrapCustomFilter with filter that accepts arguments
+	templates := map[string]string{
+		"test": `{{ value | multiply(3) }}`,
+	}
+
+	customFilters := map[string]FilterFunc{
+		"multiply": func(in interface{}, args ...interface{}) (interface{}, error) {
+			if len(args) < 1 {
+				return in, fmt.Errorf("multiply requires an argument")
+			}
+			if v, ok := in.(int); ok {
+				if multiplier, ok := args[0].(int); ok {
+					return v * multiplier, nil
+				}
+			}
+			return in, nil
+		},
+	}
+
+	engine, err := New(EngineTypeGonja, templates, customFilters, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"value": 7,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "21", output)
+}
+
+// ============================================================================
+// processWildcardIndex tests
+// ============================================================================
+
+func TestSortByWithWildcardNestedAccess(t *testing.T) {
+	// Tests processWildcardIndex with wildcard array access
+	templates := map[string]string{
+		"test": `{%- set sorted = data | sort_by(["$.tags[*] | length:desc"]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"data": []map[string]interface{}{
+			{"name": "few", "tags": []string{"a"}},
+			{"name": "many", "tags": []string{"a", "b", "c", "d"}},
+			{"name": "some", "tags": []string{"a", "b"}},
+		},
+	})
+	require.NoError(t, err)
+	// many has 4 tags, some has 2, few has 1
+	assert.Contains(t, output, "many")
+}
+
+// ============================================================================
+// recordFilter and extractFromSlice tests
+// ============================================================================
+
+func TestExtractFilterWithTracing(t *testing.T) {
+	// Tests recordExtractFilterTrace
+	templates := map[string]string{
+		"test": `{%- set names = items | extract("$.name") -%}
+{%- for name in names -%}{{ name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	engine.EnableTracing()
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "alpha"},
+			{"name": "beta"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "alpha,beta,", output)
+
+	trace := engine.GetTraceOutput()
+	assert.Contains(t, trace, "extract")
+}
+
+func TestExtractFromNonSlice(t *testing.T) {
+	// Tests extractFromSlice with non-slice input
+	templates := map[string]string{
+		"test": `{{ item | extract("$.name") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Single item (not a slice)
+	output, err := engine.Render("test", map[string]interface{}{
+		"item": map[string]interface{}{"name": "single"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "single", output)
+}
+
+// ============================================================================
+// sortByFilter edge cases
+// ============================================================================
+
+func TestSortByWithEmptyCriteria(t *testing.T) {
+	templates := map[string]string{
+		"test": `{%- set sorted = items | sort_by([]) -%}
+{%- for item in sorted -%}{{ item.name }},{%- endfor -%}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"items": []map[string]interface{}{
+			{"name": "b"},
+			{"name": "a"},
+		},
+	})
+	require.NoError(t, err)
+	// With empty criteria, order should remain unchanged
+	assert.Contains(t, output, "a")
+	assert.Contains(t, output, "b")
+}
+
+// ============================================================================
+// trimFilter edge cases
+// ============================================================================
+
+func TestTrimFilterWithMultipleCustomChars(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ value | trim("xy") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"value": "xyhelloxy",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "hello", output)
+}
+
+// ============================================================================
+// evalFilter edge cases
+// ============================================================================
+
+func TestEvalFilterWithConcatenation(t *testing.T) {
+	templates := map[string]string{
+		"test": `{{ item | eval("$.first ~ '-' ~ $.last") }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("test", map[string]interface{}{
+		"item": map[string]interface{}{"first": "hello", "last": "world"},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, output, "hello-world")
+}

@@ -331,6 +331,46 @@ func TestServer_NoGlobalState(t *testing.T) {
 	assert.NotContains(t, metricsContent2, "iteration_counter 150")
 }
 
+func TestServer_StartFailsWhenPortInUse(t *testing.T) {
+	registry := prometheus.NewRegistry()
+
+	// Start first server on a fixed port
+	server1 := NewServer("localhost:19098", registry)
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+
+	errChan1 := make(chan error, 1)
+	go func() {
+		errChan1 <- server1.Start(ctx1)
+	}()
+
+	// Give server time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Try to start second server on same port
+	server2 := NewServer("localhost:19098", registry)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+
+	errChan2 := make(chan error, 1)
+	go func() {
+		errChan2 <- server2.Start(ctx2)
+	}()
+
+	// Second server should fail
+	select {
+	case err := <-errChan2:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "server error")
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected server to fail due to port in use")
+	}
+
+	// Cleanup first server
+	cancel1()
+	time.Sleep(100 * time.Millisecond)
+}
+
 // BenchmarkServer_MetricsEndpoint benchmarks the /metrics endpoint.
 func BenchmarkServer_MetricsEndpoint(b *testing.B) {
 	registry := prometheus.NewRegistry()

@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -148,4 +149,184 @@ func TestSetDefaults_Idempotent(t *testing.T) {
 	// Should be idempotent
 	assert.Equal(t, firstHealthz, secondHealthz)
 	assert.Equal(t, firstMetrics, secondMetrics)
+}
+
+func TestDataplaneConfig_GetMinDeploymentInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval string
+		want     time.Duration
+	}{
+		{
+			name:     "empty returns default",
+			interval: "",
+			want:     DefaultMinDeploymentInterval,
+		},
+		{
+			name:     "valid duration parsed",
+			interval: "5s",
+			want:     5 * time.Second,
+		},
+		{
+			name:     "valid milliseconds",
+			interval: "500ms",
+			want:     500 * time.Millisecond,
+		},
+		{
+			name:     "invalid duration returns default",
+			interval: "invalid",
+			want:     DefaultMinDeploymentInterval,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &DataplaneConfig{
+				MinDeploymentInterval: tt.interval,
+			}
+			got := cfg.GetMinDeploymentInterval()
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDataplaneConfig_GetDriftPreventionInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval string
+		want     time.Duration
+	}{
+		{
+			name:     "empty returns default",
+			interval: "",
+			want:     DefaultDriftPreventionInterval,
+		},
+		{
+			name:     "valid duration parsed",
+			interval: "120s",
+			want:     120 * time.Second,
+		},
+		{
+			name:     "valid minutes",
+			interval: "5m",
+			want:     5 * time.Minute,
+		},
+		{
+			name:     "invalid duration returns default",
+			interval: "notaduration",
+			want:     DefaultDriftPreventionInterval,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &DataplaneConfig{
+				DriftPreventionInterval: tt.interval,
+			}
+			got := cfg.GetDriftPreventionInterval()
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestLeaderElectionConfig_GetLeaseDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration string
+		want     time.Duration
+	}{
+		{
+			name:     "empty returns default",
+			duration: "",
+			want:     DefaultLeaderElectionLeaseDuration,
+		},
+		{
+			name:     "valid duration parsed",
+			duration: "30s",
+			want:     30 * time.Second,
+		},
+		{
+			name:     "invalid duration returns default",
+			duration: "bad",
+			want:     DefaultLeaderElectionLeaseDuration,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &LeaderElectionConfig{
+				LeaseDuration: tt.duration,
+			}
+			got := cfg.GetLeaseDuration()
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestLeaderElectionConfig_GetRenewDeadline(t *testing.T) {
+	tests := []struct {
+		name     string
+		deadline string
+		want     time.Duration
+	}{
+		{
+			name:     "empty returns default",
+			deadline: "",
+			want:     DefaultLeaderElectionRenewDeadline,
+		},
+		{
+			name:     "valid duration parsed",
+			deadline: "20s",
+			want:     20 * time.Second,
+		},
+		{
+			name:     "invalid duration returns default",
+			deadline: "xyz",
+			want:     DefaultLeaderElectionRenewDeadline,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &LeaderElectionConfig{
+				RenewDeadline: tt.deadline,
+			}
+			got := cfg.GetRenewDeadline()
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestLeaderElectionConfig_GetRetryPeriod(t *testing.T) {
+	tests := []struct {
+		name   string
+		period string
+		want   time.Duration
+	}{
+		{
+			name:   "empty returns default",
+			period: "",
+			want:   DefaultLeaderElectionRetryPeriod,
+		},
+		{
+			name:   "valid duration parsed",
+			period: "5s",
+			want:   5 * time.Second,
+		},
+		{
+			name:   "invalid duration returns default",
+			period: "garbage",
+			want:   DefaultLeaderElectionRetryPeriod,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &LeaderElectionConfig{
+				RetryPeriod: tt.period,
+			}
+			got := cfg.GetRetryPeriod()
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

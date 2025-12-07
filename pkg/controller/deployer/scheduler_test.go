@@ -16,33 +16,22 @@ package deployer
 
 import (
 	"context"
-	"io"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/testutil"
 	"haproxy-template-ic/pkg/dataplane"
-	busevents "haproxy-template-ic/pkg/events"
 )
-
-// testSchedulerLogger creates a logger for scheduler tests.
-func testSchedulerLogger() *slog.Logger {
-	var w = io.Discard
-	if testing.Verbose() {
-		w = os.Stderr
-	}
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
-}
 
 // TestNewDeploymentScheduler tests scheduler creation.
 func TestNewDeploymentScheduler(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := testSchedulerLogger()
+	bus, logger := testutil.NewTestBusAndLogger()
 	minInterval := 100 * time.Millisecond
 
 	scheduler := NewDeploymentScheduler(bus, logger, minInterval)
@@ -54,8 +43,8 @@ func TestNewDeploymentScheduler(t *testing.T) {
 
 // TestDeploymentScheduler_Start tests scheduler startup and shutdown.
 func TestDeploymentScheduler_Start(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -68,8 +57,8 @@ func TestDeploymentScheduler_Start(t *testing.T) {
 
 // TestDeploymentScheduler_HandleTemplateRendered tests template rendered event handling.
 func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	event := events.NewTemplateRenderedEvent(
 		"global\n  daemon\n",        // haproxyConfig
@@ -92,11 +81,11 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 
 // TestDeploymentScheduler_HandleValidationCompleted tests validation completed event handling.
 func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
-	bus := busevents.NewEventBus(100)
+	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -165,11 +154,11 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 
 // TestDeploymentScheduler_HandlePodsDiscovered tests pod discovery event handling.
 func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
-	bus := busevents.NewEventBus(100)
+	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -243,11 +232,11 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 
 // TestDeploymentScheduler_HandleDriftPreventionTriggered tests drift prevention handling.
 func TestDeploymentScheduler_HandleDriftPreventionTriggered(t *testing.T) {
-	bus := busevents.NewEventBus(100)
+	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -304,8 +293,8 @@ func TestDeploymentScheduler_HandleDriftPreventionTriggered(t *testing.T) {
 
 // TestDeploymentScheduler_HandleDeploymentCompleted tests deployment completion handling.
 func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 0)
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
 
 	scheduler.schedulerMutex.Lock()
 	scheduler.deploymentInProgress = true
@@ -324,8 +313,8 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 
 // TestDeploymentScheduler_HandleConfigPublished tests config published handling.
 func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 0)
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
 
 	event := events.NewConfigPublishedEvent(
 		"test-config",
@@ -345,8 +334,8 @@ func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {
 
 // TestDeploymentScheduler_HandleLostLeadership tests leadership loss handling.
 func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 0)
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
 
 	// Set up state that should be cleared
 	scheduler.schedulerMutex.Lock()
@@ -370,10 +359,10 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 
 // TestDeploymentScheduler_ScheduleOrQueue tests queueing behavior.
 func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
-	bus := busevents.NewEventBus(100)
+	bus := testutil.NewTestBus()
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
 	ctx := context.Background()
 	scheduler.ctx = ctx
 
@@ -412,8 +401,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 
 // TestDeploymentScheduler_HandleEvent tests event type routing.
 func TestDeploymentScheduler_HandleEvent(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	scheduler := NewDeploymentScheduler(bus, testSchedulerLogger(), 0)
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -496,9 +485,345 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		assert.False(t, scheduler.deploymentInProgress)
 	})
 
+	t.Run("routes DeploymentCompletedEvent", func(t *testing.T) {
+		scheduler.schedulerMutex.Lock()
+		scheduler.deploymentInProgress = true
+		scheduler.schedulerMutex.Unlock()
+
+		event := events.NewDeploymentCompletedEvent(1, 1, 0, 50)
+
+		scheduler.handleEvent(ctx, event)
+
+		scheduler.schedulerMutex.Lock()
+		defer scheduler.schedulerMutex.Unlock()
+
+		assert.False(t, scheduler.deploymentInProgress)
+	})
+
+	t.Run("routes DriftPreventionTriggeredEvent", func(t *testing.T) {
+		scheduler.mu.Lock()
+		scheduler.hasValidConfig = false // Ensure no deployment scheduled
+		scheduler.mu.Unlock()
+
+		event := events.NewDriftPreventionTriggeredEvent(5 * time.Minute)
+
+		// Should not panic
+		scheduler.handleEvent(ctx, event)
+	})
+
 	t.Run("ignores unknown events", func(t *testing.T) {
 		// Should not panic
 		otherEvent := events.NewValidationStartedEvent()
 		scheduler.handleEvent(ctx, otherEvent)
 	})
+
+	t.Run("routes ConfigValidatedEvent", func(t *testing.T) {
+		templateConfig := &v1alpha1.HAProxyTemplateConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-template",
+				Namespace: "my-namespace",
+			},
+		}
+		event := events.NewConfigValidatedEvent(nil, templateConfig, "v1", "sv1")
+
+		scheduler.handleEvent(ctx, event)
+
+		scheduler.mu.RLock()
+		defer scheduler.mu.RUnlock()
+
+		assert.Equal(t, "my-template", scheduler.templateConfigName)
+		assert.Equal(t, "my-namespace", scheduler.templateConfigNamespace)
+	})
+}
+
+// TestDeploymentScheduler_Name tests the Name method.
+func TestDeploymentScheduler_Name(t *testing.T) {
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond)
+
+	assert.Equal(t, SchedulerComponentName, scheduler.Name())
+}
+
+// TestDeploymentScheduler_HandleConfigValidated tests config validated event handling.
+func TestDeploymentScheduler_HandleConfigValidated(t *testing.T) {
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+
+	t.Run("caches template config metadata", func(t *testing.T) {
+		templateConfig := &v1alpha1.HAProxyTemplateConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-template",
+				Namespace: "test-ns",
+			},
+		}
+		event := events.NewConfigValidatedEvent(nil, templateConfig, "v1", "sv1")
+
+		scheduler.handleConfigValidated(event)
+
+		scheduler.mu.RLock()
+		defer scheduler.mu.RUnlock()
+
+		assert.Equal(t, "test-template", scheduler.templateConfigName)
+		assert.Equal(t, "test-ns", scheduler.templateConfigNamespace)
+	})
+
+	t.Run("ignores non-HAProxyTemplateConfig", func(t *testing.T) {
+		// Reset state
+		scheduler.mu.Lock()
+		scheduler.templateConfigName = ""
+		scheduler.templateConfigNamespace = ""
+		scheduler.mu.Unlock()
+
+		// Create event with a non-HAProxyTemplateConfig
+		event := events.NewConfigValidatedEvent(nil, "not-a-template-config", "v1", "sv1")
+
+		// Should not panic and should not change state
+		scheduler.handleConfigValidated(event)
+
+		scheduler.mu.RLock()
+		defer scheduler.mu.RUnlock()
+
+		assert.Equal(t, "", scheduler.templateConfigName)
+		assert.Equal(t, "", scheduler.templateConfigNamespace)
+	})
+}
+
+// TestDeploymentScheduler_HandleDeploymentCompleted_WithPending tests deployment completion
+// with a pending deployment.
+func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler.ctx = context.Background()
+
+	// Set up state with deployment in progress and pending
+	scheduler.schedulerMutex.Lock()
+	scheduler.deploymentInProgress = true
+	scheduler.pendingDeployment = &scheduledDeployment{
+		config:        "pending-config",
+		auxFiles:      nil,
+		endpoints:     []interface{}{dataplane.Endpoint{URL: "http://localhost:5555"}},
+		reason:        "pending-deployment",
+		correlationID: "correlation-123",
+	}
+	scheduler.schedulerMutex.Unlock()
+
+	event := events.NewDeploymentCompletedEvent(1, 1, 0, 100)
+
+	scheduler.handleDeploymentCompleted(event)
+
+	// The pending deployment should be scheduled
+	timeout := time.After(500 * time.Millisecond)
+waitLoop:
+	for {
+		select {
+		case e := <-eventChan:
+			if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
+				assert.Equal(t, "pending-config", scheduled.Config)
+				assert.Equal(t, "pending-deployment", scheduled.Reason)
+				break waitLoop
+			}
+		case <-timeout:
+			t.Fatal("timeout waiting for DeploymentScheduledEvent")
+		}
+	}
+}
+
+// TestDeploymentScheduler_ScheduleWithRateLimit tests rate limiting.
+func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	// Use longer rate limit to test the path
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond)
+	scheduler.ctx = context.Background()
+
+	// Set last deployment time to recent past
+	scheduler.schedulerMutex.Lock()
+	scheduler.lastDeploymentEndTime = time.Now()
+	scheduler.schedulerMutex.Unlock()
+
+	start := time.Now()
+
+	// Schedule deployment - should be rate limited
+	go scheduler.scheduleWithRateLimitUnlocked(
+		context.Background(),
+		"config",
+		nil,
+		[]interface{}{dataplane.Endpoint{URL: "http://localhost:5555"}},
+		"test-rate-limit",
+		"correlation-456",
+	)
+
+	// Wait for deployment scheduled event
+	timeout := time.After(500 * time.Millisecond)
+waitLoop:
+	for {
+		select {
+		case e := <-eventChan:
+			if _, ok := e.(*events.DeploymentScheduledEvent); ok {
+				elapsed := time.Since(start)
+				// Should have been delayed by rate limiting (at least 50ms)
+				assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(40)) // Allow some tolerance
+				break waitLoop
+			}
+		case <-timeout:
+			t.Fatal("timeout waiting for DeploymentScheduledEvent")
+		}
+	}
+}
+
+// TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation tests context cancellation during rate limiting.
+func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testing.T) {
+	bus := testutil.NewTestBus()
+	bus.Start()
+
+	// Use long rate limit
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 5*time.Second)
+
+	// Set last deployment time to recent past
+	scheduler.schedulerMutex.Lock()
+	scheduler.deploymentInProgress = true
+	scheduler.lastDeploymentEndTime = time.Now()
+	scheduler.schedulerMutex.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		scheduler.scheduleWithRateLimitUnlocked(
+			ctx,
+			"config",
+			nil,
+			[]interface{}{},
+			"test-cancel",
+			"correlation-789",
+		)
+		close(done)
+	}()
+
+	// Cancel context after short delay
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	// Should return quickly due to context cancellation
+	select {
+	case <-done:
+		// Expected
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("scheduling should have been cancelled")
+	}
+
+	// deploymentInProgress should be cleared
+	scheduler.schedulerMutex.Lock()
+	defer scheduler.schedulerMutex.Unlock()
+	assert.False(t, scheduler.deploymentInProgress)
+}
+
+// TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig tests runtime config name computation.
+func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler.ctx = context.Background()
+
+	// Set template config name but not runtime config name
+	scheduler.mu.Lock()
+	scheduler.templateConfigName = "my-template"
+	scheduler.templateConfigNamespace = "my-namespace"
+	scheduler.runtimeConfigName = "" // Not set
+	scheduler.mu.Unlock()
+
+	go scheduler.scheduleWithRateLimitUnlocked(
+		context.Background(),
+		"config",
+		nil,
+		[]interface{}{},
+		"test-compute-runtime",
+		"correlation-compute",
+	)
+
+	// Wait for deployment scheduled event
+	timeout := time.After(500 * time.Millisecond)
+waitLoop:
+	for {
+		select {
+		case e := <-eventChan:
+			if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
+				// Runtime config name should be computed from template config name
+				assert.NotEmpty(t, scheduled.RuntimeConfigName)
+				assert.Equal(t, "my-namespace", scheduled.RuntimeConfigNamespace)
+				break waitLoop
+			}
+		case <-timeout:
+			t.Fatal("timeout waiting for DeploymentScheduledEvent")
+		}
+	}
+}
+
+// TestDeploymentScheduler_ScheduleWithPendingWhileScheduling tests handling pending deployment during scheduling.
+func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond)
+	scheduler.ctx = context.Background()
+
+	// Set last deployment time to trigger rate limiting
+	scheduler.schedulerMutex.Lock()
+	scheduler.lastDeploymentEndTime = time.Now()
+	scheduler.schedulerMutex.Unlock()
+
+	// Start first scheduling
+	go scheduler.scheduleWithRateLimitUnlocked(
+		context.Background(),
+		"config1",
+		nil,
+		[]interface{}{},
+		"first",
+		"correlation-1",
+	)
+
+	// Add pending deployment while first is being rate limited
+	time.Sleep(10 * time.Millisecond)
+	scheduler.schedulerMutex.Lock()
+	scheduler.pendingDeployment = &scheduledDeployment{
+		config:        "config2",
+		auxFiles:      nil,
+		endpoints:     []interface{}{},
+		reason:        "second",
+		correlationID: "correlation-2",
+	}
+	scheduler.schedulerMutex.Unlock()
+
+	// Collect events - should see both deployments
+	eventsReceived := 0
+	timeout := time.After(1 * time.Second)
+collectLoop:
+	for {
+		select {
+		case e := <-eventChan:
+			if _, ok := e.(*events.DeploymentScheduledEvent); ok {
+				eventsReceived++
+				if eventsReceived >= 2 {
+					break collectLoop
+				}
+			}
+		case <-timeout:
+			// At minimum we should have received the first deployment
+			if eventsReceived == 0 {
+				t.Fatal("timeout waiting for first DeploymentScheduledEvent")
+			}
+			break collectLoop
+		}
+	}
+
+	// Should have received at least the first deployment
+	assert.GreaterOrEqual(t, eventsReceived, 1)
 }
