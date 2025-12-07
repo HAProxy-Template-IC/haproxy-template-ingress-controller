@@ -6,7 +6,7 @@
 
 </div>
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/badges/custom.svg?key_text=License&key_width=60&value_text=Apache%202.0&value_width=80&key_color=555&value_color=007ec6)](https://opensource.org/licenses/Apache-2.0)
 [![Build Status](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/pipeline.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/pipelines)
 [![Coverage](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/coverage.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/graphs/main/charts)
 
