@@ -137,8 +137,16 @@ func TestStoreWrapper_Fetch(t *testing.T) {
 			continue
 		}
 
-		metadata := m["metadata"].(map[string]interface{})
-		name := metadata["name"].(string)
+		metadata, ok := m["metadata"].(map[string]interface{})
+		if !ok {
+			t.Errorf("expected metadata to be map[string]interface{}, got %T", m["metadata"])
+			continue
+		}
+		name, ok := metadata["name"].(string)
+		if !ok {
+			t.Errorf("expected name to be string, got %T", metadata["name"])
+			continue
+		}
 		names[name] = true
 	}
 
@@ -202,8 +210,14 @@ func TestStoreWrapper_GetSingle(t *testing.T) {
 		t.Fatalf("expected map[string]interface{}, got %T", result)
 	}
 
-	metadata := m["metadata"].(map[string]interface{})
-	name := metadata["name"].(string)
+	metadata, ok := m["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected metadata to be map[string]interface{}, got %T", m["metadata"])
+	}
+	name, ok := metadata["name"].(string)
+	if !ok {
+		t.Fatalf("expected name to be string, got %T", metadata["name"])
+	}
 	if name != "my-ingress" {
 		t.Errorf("expected name 'my-ingress', got %q", name)
 	}

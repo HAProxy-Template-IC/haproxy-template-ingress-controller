@@ -183,10 +183,10 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 		"auxiliary_file_count", event.AuxiliaryFileCount,
 	)
 
-	// Extract auxiliary files from the interface{}
+	// Extract auxiliary files using typed accessor for compile-time type safety
 	var auxFiles *dataplane.AuxiliaryFiles
 	if event.AuxiliaryFiles != nil {
-		if files, ok := event.AuxiliaryFiles.(*dataplane.AuxiliaryFiles); ok {
+		if files, ok := event.GetAuxiliaryFiles(); ok {
 			auxFiles = files
 		} else {
 			c.logger.Warn("template rendered event contains unexpected auxiliary files type - expected *dataplane.AuxiliaryFiles",

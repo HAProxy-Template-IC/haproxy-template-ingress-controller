@@ -134,14 +134,9 @@ func (eb *EventBuffer) FindByCorrelationID(correlationID string) []Event {
 // This extracts the event type and creates a summary string.
 // It intentionally doesn't expose all internal event details to keep
 // the debug API stable and simple.
-func (eb *EventBuffer) convertEvent(event interface{}) Event {
-	// Use type assertion to extract EventType if available
-	var eventType string
-	if typed, ok := event.(interface{ EventType() string }); ok {
-		eventType = typed.EventType()
-	} else {
-		eventType = "unknown"
-	}
+func (eb *EventBuffer) convertEvent(event busevents.Event) Event {
+	// busevents.Event always provides EventType
+	eventType := event.EventType()
 
 	// Extract correlation ID if available
 	var correlationID string
