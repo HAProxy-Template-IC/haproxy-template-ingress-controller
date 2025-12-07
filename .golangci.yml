@@ -77,17 +77,19 @@ linters:
         - performance
         - experimental
       disabled-checks:
-        - dupImport # False positives with different package versions
-        - ifElseChain # Can make code harder to read sometimes
-        - octalLiteral
-        - whyNoLint
-        - wrapperFunc
+        # Style suggestion often unhelpful for boolean conditions.
+        # See: github.com/go-critic/go-critic/issues/453
+        - ifElseChain
 
     govet:
       enable-all: true
       disable:
-        - fieldalignment # Too noisy for this project
-        - shadow # Sometimes shadowing is intentional
+        # Reordering fields for memory optimization hurts readability and auto-fix
+        # removes comments. See: github.com/influxdata/telegraf/issues/15540
+        - fieldalignment
+        # Intentional shadowing (e.g., tc := tc for closures) is idiomatic Go.
+        # Shadow check was removed from stable go vet (#29260, #34053).
+        - shadow
 
     revive:
       rules:
@@ -128,9 +130,12 @@ linters:
 
     gosec:
       excludes:
-        - G114 # Use of net/http serve functions without timeouts - handled at infrastructure level
-        - G204 # Subprocess launched with variable - safe when path comes from exec.LookPath with constant binary name
-        - G404 # Use of weak random - not used for security purposes
+        # net/http serve timeouts handled at infrastructure level
+        - G114
+        # Safe: binary name "haproxy" is hardcoded, LookPath only resolves path
+        - G204
+        # math/rand not used for cryptographic purposes
+        - G404
 
     godot:
       scope: declarations

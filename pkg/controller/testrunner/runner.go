@@ -326,7 +326,7 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 	}
 
 	for _, dir := range dirsToCreate {
-		if err := os.MkdirAll(dir, 0750); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create test directory %s: %w", dir, err)
 		}
 	}

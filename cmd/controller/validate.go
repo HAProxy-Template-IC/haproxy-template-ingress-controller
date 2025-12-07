@@ -447,7 +447,7 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	}
 
 	for _, dir := range dirsToCreate {
-		if err := os.MkdirAll(dir, 0750); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			_ = os.RemoveAll(tempDir)
 			return nil, dataplane.Capabilities{}, nil, fmt.Errorf("failed to create directory: %w", err)
 		}
