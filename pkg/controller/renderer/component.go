@@ -254,7 +254,7 @@ func (c *Component) setupValidationEnvironment() (*validationEnvironment, func()
 	}
 
 	for _, dir := range []string{env.mapsDir, env.sslDir, env.generalDir} {
-		if err := os.MkdirAll(dir, 0750); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			_ = os.RemoveAll(tmpDir)
 			return nil, nil, fmt.Errorf("failed to create validation directory %s: %w", dir, err)
 		}
