@@ -298,11 +298,10 @@ func (r *Registry) waitForDependencies(ctx context.Context, comp *registeredComp
 // startComponent starts a single component and updates its status.
 //
 // Design note on timing: Status is set to Running and ready channel is closed
-// BEFORE calling Start(). This is intentional because:
-//  1. Component.Start() blocks until context cancellation (long-running)
+// after Start() has been entered. This ensures:
+//  1. Dependent components don't race ahead of their dependencies
 //  2. Components subscribe to EventBus in their constructor, not in Start()
 //  3. Therefore, components ARE ready to receive events as soon as Start() begins
-//  4. Waiting for Start() to return would block forever for healthy components
 //
 // This design requires that components complete any critical initialization
 // in their constructor, not in Start().
@@ -311,16 +310,28 @@ func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent
 
 	r.logger.Info("Starting component", "name", name)
 
-	// Set status to Running and signal ready BEFORE calling Start()
-	// because Start() blocks until context cancellation.
-	// Components must complete initialization in constructor, not Start().
+	// Set status to Running before calling Start()
 	r.updateStatus(name, StatusRunning, nil)
+
+	// Use channels to coordinate Start() entry with ready signal
+	startEntered := make(chan struct{})
+	errChan := make(chan error, 1)
+
+	go func() {
+		// Signal that Start() has been entered
+		close(startEntered)
+		// Run the component (blocks until context cancelled or error)
+		errChan <- comp.component.Start(ctx)
+	}()
+
+	// Wait for Start() to be entered before signaling ready to dependents
+	<-startEntered
 
 	// Signal that this component is ready for dependents
 	close(comp.ready)
 
-	// Run the component (blocks until context cancelled or error)
-	err := comp.component.Start(ctx)
+	// Wait for Start() to complete
+	err := <-errChan
 
 	// Update status after Start() returns
 	if err != nil && err != context.Canceled {
