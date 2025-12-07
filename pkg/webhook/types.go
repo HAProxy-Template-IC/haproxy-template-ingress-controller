@@ -59,6 +59,7 @@ import (
 	"time"
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -100,7 +101,7 @@ type ValidationContext struct {
 	// UserInfo contains information about the user making the request.
 	// Includes username, UID, groups, and extra fields.
 	// Can be used for authorization decisions.
-	UserInfo interface{}
+	UserInfo authenticationv1.UserInfo
 }
 
 // ValidationFunc is called to validate a Kubernetes resource admission request.

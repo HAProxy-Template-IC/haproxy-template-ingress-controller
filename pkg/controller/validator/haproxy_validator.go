@@ -157,8 +157,8 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 
 	// Extract validation auxiliary files from event
 	// These contain pending HTTP content (for testing new content before promotion)
-	// Type-assert from interface{} to *dataplane.AuxiliaryFiles
-	auxiliaryFiles, ok := event.ValidationAuxiliaryFiles.(*dataplane.AuxiliaryFiles)
+	// Uses typed accessor method for compile-time type safety
+	auxiliaryFiles, ok := event.GetValidationAuxiliaryFiles()
 	if !ok {
 		v.publishValidationFailure(
 			[]string{"failed to extract validation auxiliary files from event"},
@@ -169,8 +169,8 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	}
 
 	// Extract validation paths from event
-	// Type-assert from interface{} to *dataplane.ValidationPaths
-	validationPaths, ok := event.ValidationPaths.(*dataplane.ValidationPaths)
+	// Uses typed accessor method for compile-time type safety
+	validationPaths, ok := event.GetValidationPaths()
 	if !ok {
 		v.publishValidationFailure(
 			[]string{"failed to extract validation paths from event"},

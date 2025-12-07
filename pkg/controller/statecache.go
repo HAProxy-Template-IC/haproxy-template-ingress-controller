@@ -143,7 +143,7 @@ func (sc *StateCache) Start(ctx context.Context) error {
 }
 
 // handleEvent processes events and updates cached state.
-func (sc *StateCache) handleEvent(event interface{}) {
+func (sc *StateCache) handleEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.ConfigValidatedEvent:
 		sc.handleConfigValidated(e)
@@ -206,7 +206,7 @@ func (sc *StateCache) handleTemplateRendered(e *events.TemplateRenderedEvent) {
 	sc.renderError = ""
 	sc.renderTime = e.Timestamp()
 
-	if auxFiles, ok := e.AuxiliaryFiles.(*dataplane.AuxiliaryFiles); ok {
+	if auxFiles, ok := e.GetAuxiliaryFiles(); ok {
 		sc.lastAuxFiles = auxFiles
 		sc.lastAuxFilesTime = time.Now()
 	} else if e.AuxiliaryFiles != nil {

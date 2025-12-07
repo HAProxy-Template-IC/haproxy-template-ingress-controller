@@ -29,6 +29,13 @@ func LoadConfig(configYAML string) (*Config, error) {
 
 	SetDefaults(cfg)
 
+	// Validate ExtraContext contains only JSON-compatible types
+	if cfg.TemplatingSettings.ExtraContext != nil {
+		if err := ValidateExtraContext(cfg.TemplatingSettings.ExtraContext); err != nil {
+			return nil, fmt.Errorf("invalid extra_context: %w", err)
+		}
+	}
+
 	return cfg, nil
 }
 
