@@ -16,9 +16,6 @@ package deployer
 
 import (
 	"context"
-	"io"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 
@@ -26,22 +23,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
+	"haproxy-template-ic/pkg/controller/testutil"
 )
-
-// testDriftMonitorLogger creates a logger for drift monitor tests.
-func testDriftMonitorLogger() *slog.Logger {
-	var w = io.Discard
-	if testing.Verbose() {
-		w = os.Stderr
-	}
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
-}
 
 // TestNewDriftPreventionMonitor tests monitor creation.
 func TestNewDriftPreventionMonitor(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := testDriftMonitorLogger()
+	bus, logger := testutil.NewTestBusAndLogger()
 	interval := 5 * time.Minute
 
 	monitor := NewDriftPreventionMonitor(bus, logger, interval)
@@ -53,8 +40,8 @@ func TestNewDriftPreventionMonitor(t *testing.T) {
 
 // TestDriftPreventionMonitor_Start tests monitor startup and shutdown.
 func TestDriftPreventionMonitor_Start(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -67,8 +54,8 @@ func TestDriftPreventionMonitor_Start(t *testing.T) {
 
 // TestDriftPreventionMonitor_ResetDriftTimer tests timer reset.
 func TestDriftPreventionMonitor_ResetDriftTimer(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	// Reset timer
 	monitor.resetDriftTimer()
@@ -84,8 +71,8 @@ func TestDriftPreventionMonitor_ResetDriftTimer(t *testing.T) {
 
 // TestDriftPreventionMonitor_StopDriftTimer tests timer stop.
 func TestDriftPreventionMonitor_StopDriftTimer(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	// Start timer first
 	monitor.resetDriftTimer()
@@ -101,8 +88,8 @@ func TestDriftPreventionMonitor_StopDriftTimer(t *testing.T) {
 
 // TestDriftPreventionMonitor_GetDriftTimerChan tests getting timer channel.
 func TestDriftPreventionMonitor_GetDriftTimerChan(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	t.Run("returns closed channel when no timer", func(t *testing.T) {
 		// Timer not started yet
@@ -133,8 +120,8 @@ func TestDriftPreventionMonitor_GetDriftTimerChan(t *testing.T) {
 
 // TestDriftPreventionMonitor_HandleDeploymentCompleted tests deployment completion handling.
 func TestDriftPreventionMonitor_HandleDeploymentCompleted(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	// Set initial state
 	monitor.resetDriftTimer()
@@ -155,8 +142,8 @@ func TestDriftPreventionMonitor_HandleDeploymentCompleted(t *testing.T) {
 
 // TestDriftPreventionMonitor_HandleLostLeadership tests leadership loss handling.
 func TestDriftPreventionMonitor_HandleLostLeadership(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	// Start timer first
 	monitor.resetDriftTimer()
@@ -179,11 +166,11 @@ func TestDriftPreventionMonitor_HandleLostLeadership(t *testing.T) {
 
 // TestDriftPreventionMonitor_HandleDriftTimerExpired tests timer expiration.
 func TestDriftPreventionMonitor_HandleDriftTimerExpired(t *testing.T) {
-	bus := busevents.NewEventBus(100)
+	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 100*time.Millisecond)
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	// Initialize timer state
 	monitor.resetDriftTimer()
@@ -209,8 +196,8 @@ waitLoop:
 
 // TestDriftPreventionMonitor_HandleEvent tests event type routing.
 func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 100*time.Millisecond)
+	bus := testutil.NewTestBus()
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
 
 	t.Run("routes DeploymentCompletedEvent", func(t *testing.T) {
 		monitor.resetDriftTimer()
@@ -248,12 +235,12 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 
 // TestDriftPreventionMonitor_TimerTriggersEvent tests the full timer flow.
 func TestDriftPreventionMonitor_TimerTriggersEvent(t *testing.T) {
-	bus := busevents.NewEventBus(100)
+	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
 	// Use short interval for testing
-	monitor := NewDriftPreventionMonitor(bus, testDriftMonitorLogger(), 50*time.Millisecond)
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 50*time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -274,4 +261,12 @@ waitLoop:
 			t.Fatal("timeout waiting for DriftPreventionTriggeredEvent from timer")
 		}
 	}
+}
+
+// TestDriftMonitor_Name tests the Name method.
+func TestDriftMonitor_Name(t *testing.T) {
+	bus := testutil.NewTestBus()
+	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 1*time.Minute)
+
+	assert.Equal(t, DriftMonitorComponentName, monitor.Name())
 }

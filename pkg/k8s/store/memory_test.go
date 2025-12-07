@@ -226,6 +226,187 @@ func TestMemoryStore_WrongKeyCount(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for wrong key count")
 	}
+
+	// Try to update with wrong number of keys
+	err = store.Update(resource, []string{"only-one-key"})
+	if err == nil {
+		t.Error("expected error for wrong key count in Update")
+	}
+}
+
+// TestNewMemoryStore_MinKeys verifies store creation with numKeys < 1 defaults to 1.
+func TestNewMemoryStore_MinKeys(t *testing.T) {
+	tests := []struct {
+		name         string
+		numKeys      int
+		expectedKeys int
+	}{
+		{name: "zero keys defaults to 1", numKeys: 0, expectedKeys: 1},
+		{name: "negative keys defaults to 1", numKeys: -1, expectedKeys: 1},
+		{name: "one key stays 1", numKeys: 1, expectedKeys: 1},
+		{name: "two keys stays 2", numKeys: 2, expectedKeys: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewMemoryStore(tt.numKeys)
+			if store == nil {
+				t.Fatal("NewMemoryStore returned nil")
+			}
+
+			// Verify the store works with the expected number of keys
+			resource := map[string]string{"name": "test"}
+			keys := make([]string, tt.expectedKeys)
+			for i := range keys {
+				keys[i] = "key" + string(rune('A'+i))
+			}
+
+			err := store.Add(resource, keys)
+			if err != nil {
+				t.Errorf("Add with %d keys failed: %v", tt.expectedKeys, err)
+			}
+		})
+	}
+}
+
+// TestMemoryStore_GetErrors verifies error handling in Get.
+func TestMemoryStore_GetErrors(t *testing.T) {
+	store := NewMemoryStore(2)
+
+	// Add a resource first
+	resource := map[string]string{"name": "test"}
+	if err := store.Add(resource, []string{"default", "test"}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		keys      []string
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name:      "no keys provided",
+			keys:      []string{},
+			wantError: true,
+			errorMsg:  "at least one key required",
+		},
+		{
+			name:      "too many keys",
+			keys:      []string{"a", "b", "c"},
+			wantError: true,
+			errorMsg:  "too many keys",
+		},
+		{
+			name:      "valid single key (partial match)",
+			keys:      []string{"default"},
+			wantError: false,
+		},
+		{
+			name:      "valid exact keys",
+			keys:      []string{"default", "test"},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := store.Get(tt.keys...)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error but got nil")
+				} else if !contains(err.Error(), tt.errorMsg) {
+					t.Errorf("expected error containing %q, got %q", tt.errorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestMemoryStore_UpdateToNewKey verifies Update creates when no resources exist with key.
+func TestMemoryStore_UpdateToNewKey(t *testing.T) {
+	store := NewMemoryStore(2)
+
+	resource := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"namespace": "default",
+			"name":      "new-resource",
+		},
+		"version": "v1",
+	}
+
+	RunUpdateToNewKeyTest(t, store, store, resource, []string{"default", "new-resource"})
+}
+
+// TestMemoryStore_DeleteNonExistent verifies deleting non-existent resource is a no-op.
+func TestMemoryStore_DeleteNonExistent(t *testing.T) {
+	store := NewMemoryStore(2)
+
+	resource := map[string]string{"name": "test"}
+
+	RunDeleteNonExistentTest(t, store, store, resource,
+		[]string{"default", "test"},
+		[]string{"other", "nonexistent"})
+}
+
+// TestMemoryStore_ListRebuildsCache verifies List properly rebuilds when dirty.
+func TestMemoryStore_ListRebuildsCache(t *testing.T) {
+	store := NewMemoryStore(2)
+
+	// Add multiple resources
+	for i := 0; i < 3; i++ {
+		resource := map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"namespace": "default",
+				"name":      string(rune('a' + i)),
+			},
+		}
+		if err := store.Add(resource, []string{"default", string(rune('a' + i))}); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+
+	// First List call builds cache
+	results1, err := store.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(results1) != 3 {
+		t.Errorf("expected 3 results, got %d", len(results1))
+	}
+
+	// Second List call uses cache (no dirty flag)
+	results2, err := store.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(results2) != 3 {
+		t.Errorf("expected 3 results, got %d", len(results2))
+	}
+
+	// Add another resource (makes dirty)
+	resource := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"namespace": "default",
+			"name":      "d",
+		},
+	}
+	if err := store.Add(resource, []string{"default", "d"}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	// Third List call rebuilds cache
+	results3, err := store.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(results3) != 4 {
+		t.Errorf("expected 4 results after add, got %d", len(results3))
+	}
 }
 
 // TestMemoryStore_NonUniqueKeys verifies multiple resources with same index keys.

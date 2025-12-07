@@ -16,8 +16,6 @@ package renderer
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 
@@ -25,9 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/testutil"
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/dataplane"
-	busevents "haproxy-template-ic/pkg/events"
+	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
 	"haproxy-template-ic/pkg/k8s/types"
 	"haproxy-template-ic/pkg/templating"
 )
@@ -63,10 +62,14 @@ func (m *mockStore) Clear() error {
 	return nil
 }
 
+// defaultCapabilities returns HAProxy 3.2+ capabilities for tests.
+func defaultCapabilities() dataplane.Capabilities {
+	return dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
+}
+
 // TestNew_Success tests successful renderer creation with valid configuration.
 func TestNew_Success(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -83,9 +86,7 @@ func TestNew_Success(t *testing.T) {
 
 	haproxyPodStore := &mockStore{}
 
-	// Use capabilities for HAProxy 3.2+ to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
 
 	require.NoError(t, err)
 	assert.NotNil(t, renderer)
@@ -96,8 +97,7 @@ func TestNew_Success(t *testing.T) {
 
 // TestNew_InvalidTemplate tests renderer creation with invalid template syntax.
 func TestNew_InvalidTemplate(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -111,9 +111,7 @@ func TestNew_InvalidTemplate(t *testing.T) {
 
 	haproxyPodStore := &mockStore{}
 
-	// Use capabilities for HAProxy 3.2+ to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
 
 	assert.Error(t, err)
 	assert.Nil(t, renderer)
@@ -122,8 +120,7 @@ func TestNew_InvalidTemplate(t *testing.T) {
 
 // TestRenderer_SuccessfulRendering tests successful template rendering.
 func TestRenderer_SuccessfulRendering(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -156,9 +153,7 @@ defaults
 		"ingresses": ingressStore,
 	}
 
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Subscribe to events
@@ -170,30 +165,14 @@ defaults
 
 	// Start renderer
 	go renderer.Start(ctx)
-
-	// Give renderer time to start
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Trigger reconciliation
 	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
 
 	// Wait for rendered event
-	timeout := time.After(1 * time.Second)
-	var renderedEvent *events.TemplateRenderedEvent
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.TemplateRenderedEvent); ok {
-				renderedEvent = e
-				goto Done
-			}
-		case <-timeout:
-			t.Fatal("Timeout waiting for TemplateRenderedEvent")
-		}
-	}
-
-Done:
 	require.NotNil(t, renderedEvent)
 	assert.Contains(t, renderedEvent.HAProxyConfig, "global")
 	assert.Contains(t, renderedEvent.HAProxyConfig, "# Ingress: test-ingress")
@@ -203,8 +182,7 @@ Done:
 
 // TestRenderer_WithAuxiliaryFiles tests rendering with maps, files, and SSL certificates.
 func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -241,9 +219,7 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -253,26 +229,12 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	defer cancel()
 
 	go renderer.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
 
-	timeout := time.After(1 * time.Second)
-	var renderedEvent *events.TemplateRenderedEvent
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.TemplateRenderedEvent); ok {
-				renderedEvent = e
-				goto Done
-			}
-		case <-timeout:
-			t.Fatal("Timeout waiting for TemplateRenderedEvent")
-		}
-	}
-
-Done:
 	require.NotNil(t, renderedEvent)
 	assert.Equal(t, 3, renderedEvent.AuxiliaryFileCount, "Should have 1 map + 1 file + 1 SSL cert")
 
@@ -282,8 +244,7 @@ Done:
 
 // TestRenderer_RenderFailure tests handling of template rendering failures.
 func TestRenderer_RenderFailure(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -303,9 +264,7 @@ func TestRenderer_RenderFailure(t *testing.T) {
 
 	haproxyPodStore := &mockStore{}
 
-	// Use capabilities for HAProxy 3.2+ to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -315,26 +274,12 @@ func TestRenderer_RenderFailure(t *testing.T) {
 	defer cancel()
 
 	go renderer.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
 
-	timeout := time.After(1 * time.Second)
-	var failureEvent *events.TemplateRenderFailedEvent
+	failureEvent := testutil.WaitForEvent[*events.TemplateRenderFailedEvent](t, eventChan, testutil.LongTimeout)
 
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.TemplateRenderFailedEvent); ok {
-				failureEvent = e
-				goto Done
-			}
-		case <-timeout:
-			t.Fatal("Timeout waiting for TemplateRenderFailedEvent")
-		}
-	}
-
-Done:
 	require.NotNil(t, failureEvent)
 	assert.Equal(t, "broken.map", failureEvent.TemplateName)
 	assert.NotEmpty(t, failureEvent.Error)
@@ -342,8 +287,7 @@ Done:
 
 // TestRenderer_EmptyStores tests rendering with empty resource stores.
 func TestRenderer_EmptyStores(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -361,9 +305,7 @@ func TestRenderer_EmptyStores(t *testing.T) {
 		"ingresses": &mockStore{items: []interface{}{}}, // Empty store
 	}
 
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -373,34 +315,19 @@ func TestRenderer_EmptyStores(t *testing.T) {
 	defer cancel()
 
 	go renderer.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
 
-	timeout := time.After(1 * time.Second)
-	var renderedEvent *events.TemplateRenderedEvent
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.TemplateRenderedEvent); ok {
-				renderedEvent = e
-				goto Done
-			}
-		case <-timeout:
-			t.Fatal("Timeout waiting for TemplateRenderedEvent")
-		}
-	}
-
-Done:
 	require.NotNil(t, renderedEvent)
 	assert.Contains(t, renderedEvent.HAProxyConfig, "# No ingresses configured")
 }
 
 // TestRenderer_MultipleStores tests rendering with multiple resource types.
 func TestRenderer_MultipleStores(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -435,9 +362,7 @@ func TestRenderer_MultipleStores(t *testing.T) {
 		},
 	}
 
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -447,26 +372,12 @@ func TestRenderer_MultipleStores(t *testing.T) {
 	defer cancel()
 
 	go renderer.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
 
-	timeout := time.After(1 * time.Second)
-	var renderedEvent *events.TemplateRenderedEvent
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.TemplateRenderedEvent); ok {
-				renderedEvent = e
-				goto Done
-			}
-		case <-timeout:
-			t.Fatal("Timeout waiting for TemplateRenderedEvent")
-		}
-	}
-
-Done:
 	require.NotNil(t, renderedEvent)
 	assert.Contains(t, renderedEvent.HAProxyConfig, "# Ingresses: 2")
 	assert.Contains(t, renderedEvent.HAProxyConfig, "# Services: 1")
@@ -475,8 +386,7 @@ Done:
 
 // TestRenderer_ContextCancellation tests graceful shutdown on context cancellation.
 func TestRenderer_ContextCancellation(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -490,9 +400,7 @@ func TestRenderer_ContextCancellation(t *testing.T) {
 
 	haproxyPodStore := &mockStore{}
 
-	// Use capabilities for HAProxy 3.2+ to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	bus.Start()
@@ -506,23 +414,21 @@ func TestRenderer_ContextCancellation(t *testing.T) {
 	}()
 
 	// Cancel context
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 	cancel()
 
 	// Should return quickly
-	timeout := time.After(1 * time.Second)
 	select {
 	case err := <-done:
 		assert.NoError(t, err, "Start should return nil on context cancellation")
-	case <-timeout:
+	case <-time.After(testutil.LongTimeout):
 		t.Fatal("Renderer did not shut down within timeout")
 	}
 }
 
 // TestRenderer_MultipleReconciliations tests handling multiple reconciliation triggers.
 func TestRenderer_MultipleReconciliations(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -540,9 +446,7 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -552,29 +456,13 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	defer cancel()
 
 	go renderer.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Trigger first reconciliation
 	bus.Publish(events.NewReconciliationTriggeredEvent("first"))
 
 	// Wait for first render
-	timeout1 := time.After(500 * time.Millisecond)
-	receivedFirst := false
-
-Loop1:
-	for {
-		select {
-		case event := <-eventChan:
-			if _, ok := event.(*events.TemplateRenderedEvent); ok {
-				receivedFirst = true
-				break Loop1
-			}
-		case <-timeout1:
-			t.Fatal("Timeout waiting for first render")
-		}
-	}
-
-	assert.True(t, receivedFirst)
+	_ = testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.EventTimeout)
 
 	// Add more ingresses to store
 	ingressStore.items = append(ingressStore.items, map[string]interface{}{"name": "ing2"})
@@ -583,21 +471,7 @@ Loop1:
 	bus.Publish(events.NewReconciliationTriggeredEvent("second"))
 
 	// Wait for second render
-	timeout2 := time.After(500 * time.Millisecond)
-	var secondEvent *events.TemplateRenderedEvent
-
-Loop2:
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.TemplateRenderedEvent); ok {
-				secondEvent = e
-				break Loop2
-			}
-		case <-timeout2:
-			t.Fatal("Timeout waiting for second render")
-		}
-	}
+	secondEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.EventTimeout)
 
 	require.NotNil(t, secondEvent)
 	assert.Contains(t, secondEvent.HAProxyConfig, "# Count: 2")
@@ -605,8 +479,7 @@ Loop2:
 
 // TestBuildRenderingContext tests the context building logic.
 func TestBuildRenderingContext(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -628,9 +501,7 @@ func TestBuildRenderingContext(t *testing.T) {
 		},
 	}
 
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Build context
@@ -707,8 +578,7 @@ func TestPathResolverWithCapabilities_CRTListFallback(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			bus := busevents.NewEventBus(100)
-			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+			bus, logger := testutil.NewTestBusAndLogger()
 
 			cfg := &config.Config{
 				HAProxyConfig: config.HAProxyConfig{
@@ -744,11 +614,11 @@ frontend test
 			defer cancel()
 
 			go renderer.Start(ctx)
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(testutil.StartupDelay)
 
 			bus.Publish(events.NewReconciliationTriggeredEvent("test"))
 
-			renderedEvent := waitForTemplateRenderedEvent(t, eventChan, 1*time.Second)
+			renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 			require.NotNil(t, renderedEvent)
 
 			if tt.expectSSLDir {
@@ -766,28 +636,10 @@ frontend test
 	}
 }
 
-// waitForTemplateRenderedEvent waits for a TemplateRenderedEvent on the event channel.
-func waitForTemplateRenderedEvent(t *testing.T, eventChan <-chan busevents.Event, timeout time.Duration) *events.TemplateRenderedEvent {
-	t.Helper()
-	timer := time.After(timeout)
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.TemplateRenderedEvent); ok {
-				return e
-			}
-		case <-timer:
-			t.Fatal("Timeout waiting for TemplateRenderedEvent")
-			return nil
-		}
-	}
-}
-
 // TestPathResolverInitialization tests that the PathResolver is correctly initialized
 // with all required directory paths for the pathResolver.GetPath() method.
 func TestPathResolverInitialization(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	bus, logger := testutil.NewTestBusAndLogger()
 
 	// Create a config with templates that use pathResolver.GetPath() method for crt-list
 	cfg := &config.Config{
@@ -811,9 +663,7 @@ frontend test
 		"ingresses": &mockStore{},
 	}
 
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	renderer, err := New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Get the path resolver from the engine
@@ -825,28 +675,14 @@ frontend test
 	defer cancel()
 
 	go renderer.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(testutil.StartupDelay)
 
 	// Trigger rendering
 	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
 
 	// Wait for rendered event
-	timeout := time.After(1 * time.Second)
-	var renderedEvent *events.TemplateRenderedEvent
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.TemplateRenderedEvent); ok {
-				renderedEvent = e
-				goto Done
-			}
-		case <-timeout:
-			t.Fatal("Timeout waiting for TemplateRenderedEvent")
-		}
-	}
-
-Done:
 	require.NotNil(t, renderedEvent)
 
 	// CRITICAL: Verify that pathResolver.GetPath("crt-list") returns the full path, not just the filename
@@ -857,4 +693,434 @@ Done:
 	// Ensure it doesn't contain just the filename (which is what happens when CRTListDir is empty)
 	assert.NotContains(t, renderedEvent.HAProxyConfig, "crt-list certificate-list.txt",
 		"pathResolver.GetPath() should not return just the filename without directory")
+}
+
+// TestRenderer_Name tests the Name method.
+func TestRenderer_Name(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	assert.Equal(t, ComponentName, renderer.Name())
+	assert.Equal(t, "renderer", renderer.Name())
+}
+
+// TestRenderer_SetHTTPStoreComponent tests setting the HTTP store component.
+func TestRenderer_SetHTTPStoreComponent(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	// Initially nil
+	assert.Nil(t, renderer.httpStoreComponent)
+
+	// Set HTTP store component
+	renderer.SetHTTPStoreComponent(nil) // Just test setting works
+	assert.Nil(t, renderer.httpStoreComponent)
+}
+
+// TestRenderer_HandleBecameLeader_NoState tests BecameLeaderEvent when no state is available.
+func TestRenderer_HandleBecameLeader_NoState(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Send BecameLeaderEvent without any prior rendering (no state to replay)
+	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
+
+	// Wait a bit to ensure event is processed
+	time.Sleep(testutil.DebounceWait)
+
+	// No TemplateRenderedEvent should be published since there's no state to replay
+	select {
+	case event := <-eventChan:
+		// Skip the BecameLeaderEvent itself if received
+		if _, ok := event.(*events.BecameLeaderEvent); ok {
+			// Try to get another event briefly
+			select {
+			case event := <-eventChan:
+				_, isRendered := event.(*events.TemplateRenderedEvent)
+				assert.False(t, isRendered, "Should not publish TemplateRenderedEvent when no state available")
+			case <-time.After(testutil.DebounceWait):
+				// Expected - no event
+			}
+		}
+	case <-time.After(testutil.NoEventTimeout):
+		// Expected - no events beyond the one we sent
+	}
+}
+
+// TestRenderer_HandleBecameLeader_WithState tests BecameLeaderEvent when state is available.
+func TestRenderer_HandleBecameLeader_WithState(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n# leader-test\n",
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	eventChan := bus.Subscribe(100)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// First, trigger a normal reconciliation to populate state
+	bus.Publish(events.NewReconciliationTriggeredEvent("initial"))
+
+	// Wait for first render
+	firstRenderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, firstRenderedEvent)
+
+	// Now send BecameLeaderEvent - should replay state
+	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
+
+	// Wait for replayed render event
+	replayedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+
+	require.NotNil(t, replayedEvent)
+	assert.Contains(t, replayedEvent.HAProxyConfig, "# leader-test")
+	assert.Equal(t, firstRenderedEvent.HAProxyConfig, replayedEvent.HAProxyConfig)
+}
+
+// TestRenderer_WithPostProcessors tests rendering with post-processors configured.
+func TestRenderer_WithPostProcessors(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			// Template with MARKER text that will be replaced by regex_replace
+			Template: "global\n    daemon\n\nfrontend fe1\n    bind *:80 #MARKER#\n",
+			PostProcessing: []config.PostProcessorConfig{
+				{
+					Type: "regex_replace",
+					Params: map[string]string{
+						"pattern": "#MARKER#",
+						"replace": "replaced",
+					},
+				},
+			},
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, renderedEvent)
+
+	// Verify post-processor was applied (MARKER should be replaced)
+	assert.Contains(t, renderedEvent.HAProxyConfig, "global")
+	assert.Contains(t, renderedEvent.HAProxyConfig, "replaced")
+	assert.NotContains(t, renderedEvent.HAProxyConfig, "#MARKER#")
+}
+
+// TestRenderer_WithTemplateSnippets tests rendering with template snippets.
+func TestRenderer_WithTemplateSnippets(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: `global
+    daemon
+
+{% include "defaults-snippet" %}
+
+frontend fe1
+    bind *:80
+`,
+		},
+		TemplateSnippets: map[string]config.TemplateSnippet{
+			"defaults-snippet": {
+				Template: `defaults
+    mode http
+    timeout client 30s
+    timeout server 30s
+`,
+			},
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, renderedEvent)
+
+	// Verify snippet was included
+	assert.Contains(t, renderedEvent.HAProxyConfig, "defaults")
+	assert.Contains(t, renderedEvent.HAProxyConfig, "timeout client 30s")
+}
+
+// TestFailFunction tests the fail() global function.
+func TestFailFunction(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []interface{}
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "valid string argument",
+			args:        []interface{}{"Secret 'foo/bar' not found"},
+			wantErr:     true,
+			errContains: "Secret 'foo/bar' not found",
+		},
+		{
+			name:        "no arguments",
+			args:        []interface{}{},
+			wantErr:     true,
+			errContains: "requires exactly one string argument",
+		},
+		{
+			name:        "too many arguments",
+			args:        []interface{}{"first", "second"},
+			wantErr:     true,
+			errContains: "requires exactly one string argument",
+		},
+		{
+			name:        "non-string argument (int)",
+			args:        []interface{}{42},
+			wantErr:     true,
+			errContains: "must be a string",
+		},
+		{
+			name:        "non-string argument (nil)",
+			args:        []interface{}{nil},
+			wantErr:     true,
+			errContains: "must be a string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := failFunction(tt.args...)
+			assert.Nil(t, result)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestExtractTemplates tests template extraction from config.
+func TestExtractTemplates(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+		TemplateSnippets: map[string]config.TemplateSnippet{
+			"snippet1": {Template: "snippet1-content"},
+			"snippet2": {Template: "snippet2-content"},
+		},
+		Maps: map[string]config.MapFile{
+			"map1.map": {Template: "map1-content"},
+		},
+		Files: map[string]config.GeneralFile{
+			"file1.http": {Template: "file1-content"},
+		},
+		SSLCertificates: map[string]config.SSLCertificate{
+			"cert1.pem": {Template: "cert1-content"},
+		},
+	}
+
+	templates := extractTemplates(cfg)
+
+	// Verify all templates extracted
+	assert.Contains(t, templates, "haproxy.cfg")
+	assert.Contains(t, templates, "snippet1")
+	assert.Contains(t, templates, "snippet2")
+	assert.Contains(t, templates, "map1.map")
+	assert.Contains(t, templates, "file1.http")
+	assert.Contains(t, templates, "cert1.pem")
+
+	// Verify content
+	assert.Equal(t, "global\n    daemon\n", templates["haproxy.cfg"])
+	assert.Equal(t, "snippet1-content", templates["snippet1"])
+	assert.Equal(t, "map1-content", templates["map1.map"])
+}
+
+// TestExtractPostProcessorConfigs tests post-processor config extraction.
+func TestExtractPostProcessorConfigs(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n",
+			PostProcessing: []config.PostProcessorConfig{
+				{Type: "remove_empty_lines", Params: map[string]string{}},
+			},
+		},
+		Maps: map[string]config.MapFile{
+			"map1.map": {
+				Template: "map content",
+				PostProcessing: []config.PostProcessorConfig{
+					{Type: "sort_lines", Params: map[string]string{}},
+				},
+			},
+		},
+		Files: map[string]config.GeneralFile{
+			"file1.http": {
+				Template: "file content",
+				PostProcessing: []config.PostProcessorConfig{
+					{Type: "trim", Params: map[string]string{}},
+				},
+			},
+		},
+		SSLCertificates: map[string]config.SSLCertificate{
+			"cert1.pem": {
+				Template: "cert content",
+				PostProcessing: []config.PostProcessorConfig{
+					{Type: "trim", Params: map[string]string{}},
+				},
+			},
+		},
+	}
+
+	ppConfigs := extractPostProcessorConfigs(cfg)
+
+	// Verify main haproxy config has post-processor
+	require.Contains(t, ppConfigs, "haproxy.cfg")
+	assert.Len(t, ppConfigs["haproxy.cfg"], 1)
+	assert.Equal(t, templating.PostProcessorType("remove_empty_lines"), ppConfigs["haproxy.cfg"][0].Type)
+
+	// Verify map has post-processor
+	require.Contains(t, ppConfigs, "map1.map")
+	assert.Equal(t, templating.PostProcessorType("sort_lines"), ppConfigs["map1.map"][0].Type)
+
+	// Verify file has post-processor
+	require.Contains(t, ppConfigs, "file1.http")
+	assert.Equal(t, templating.PostProcessorType("trim"), ppConfigs["file1.http"][0].Type)
+
+	// Verify SSL cert has post-processor
+	require.Contains(t, ppConfigs, "cert1.pem")
+	assert.Equal(t, templating.PostProcessorType("trim"), ppConfigs["cert1.pem"][0].Type)
+}
+
+// TestMergeAuxiliaryFiles tests merging static and dynamic auxiliary files.
+func TestMergeAuxiliaryFiles(t *testing.T) {
+	static := &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{
+			{Path: "static-map.map", Content: "static"},
+		},
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{Filename: "static-file.http", Content: "static"},
+		},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{
+			{Path: "static-cert.pem", Content: "static"},
+		},
+		CRTListFiles: []auxiliaryfiles.CRTListFile{
+			{Path: "static-crtlist.txt", Content: "static"},
+		},
+	}
+
+	dynamic := &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{
+			{Path: "dynamic-map.map", Content: "dynamic"},
+		},
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{Filename: "dynamic-file.http", Content: "dynamic"},
+		},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{
+			{Path: "dynamic-cert.pem", Content: "dynamic"},
+		},
+		CRTListFiles: []auxiliaryfiles.CRTListFile{
+			{Path: "dynamic-crtlist.txt", Content: "dynamic"},
+		},
+	}
+
+	merged := MergeAuxiliaryFiles(static, dynamic)
+
+	assert.Len(t, merged.MapFiles, 2)
+	assert.Len(t, merged.GeneralFiles, 2)
+	assert.Len(t, merged.SSLCertificates, 2)
+	assert.Len(t, merged.CRTListFiles, 2)
+
+	// Verify static files come first
+	assert.Equal(t, "static-map.map", merged.MapFiles[0].Path)
+	assert.Equal(t, "dynamic-map.map", merged.MapFiles[1].Path)
 }

@@ -3,6 +3,7 @@ package resourcewatcher
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	coreconfig "haproxy-template-ic/pkg/core/config"
 	busevents "haproxy-template-ic/pkg/events"
 	"haproxy-template-ic/pkg/k8s/client"
+	"haproxy-template-ic/pkg/k8s/types"
+	"haproxy-template-ic/pkg/k8s/watcher"
 )
 
 func TestToGVR(t *testing.T) {
@@ -167,6 +170,258 @@ func TestMergeIgnoreFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := mergeIgnoreFields(tt.global, tt.perResource)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDetermineStoreType(t *testing.T) {
+	tests := []struct {
+		name        string
+		storeConfig string
+		want        types.StoreType
+	}{
+		{
+			name:        "on-demand returns cached",
+			storeConfig: "on-demand",
+			want:        types.StoreTypeCached,
+		},
+		{
+			name:        "full returns memory",
+			storeConfig: "full",
+			want:        types.StoreTypeMemory,
+		},
+		{
+			name:        "empty returns memory",
+			storeConfig: "",
+			want:        types.StoreTypeMemory,
+		},
+		{
+			name:        "other value returns memory",
+			storeConfig: "some-other",
+			want:        types.StoreTypeMemory,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := determineStoreType(tt.storeConfig)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// mockStore implements types.Store for testing.
+type mockStore struct {
+	name string
+}
+
+func (m *mockStore) Get(...string) ([]interface{}, error)            { return nil, nil }
+func (m *mockStore) List() ([]interface{}, error)                    { return nil, nil }
+func (m *mockStore) Add(interface{}, []string) error                 { return nil }
+func (m *mockStore) Update(interface{}, []string) error              { return nil }
+func (m *mockStore) Delete(...string) error                          { return nil }
+func (m *mockStore) Clear() error                                    { return nil }
+func (m *mockStore) GetKeys(interface{}, []string) ([]string, error) { return nil, nil }
+
+func (m *mockStore) Refresh(interface{}, []string, []string) (changed, deleted bool) {
+	return false, false
+}
+func (m *mockStore) Count() int { return 0 }
+
+// createTestComponent creates a minimal ResourceWatcherComponent for testing
+// without requiring a Kubernetes cluster.
+func createTestComponent() *ResourceWatcherComponent {
+	return &ResourceWatcherComponent{
+		watchers: map[string]*watcher.Watcher{
+			"services":  nil,
+			"ingresses": nil,
+		},
+		stores: map[string]types.Store{
+			"services":  &mockStore{name: "services"},
+			"ingresses": &mockStore{name: "ingresses"},
+		},
+		eventBus:  busevents.NewEventBus(10),
+		k8sClient: nil,
+		logger:    slog.Default(),
+		synced:    make(map[string]bool),
+	}
+}
+
+func TestGetStore_UnitTest(t *testing.T) {
+	rwc := createTestComponent()
+
+	t.Run("existing resource type", func(t *testing.T) {
+		store := rwc.GetStore("services")
+		assert.NotNil(t, store)
+	})
+
+	t.Run("another existing resource type", func(t *testing.T) {
+		store := rwc.GetStore("ingresses")
+		assert.NotNil(t, store)
+	})
+
+	t.Run("non-existent resource type", func(t *testing.T) {
+		store := rwc.GetStore("pods")
+		assert.Nil(t, store)
+	})
+
+	t.Run("empty string", func(t *testing.T) {
+		store := rwc.GetStore("")
+		assert.Nil(t, store)
+	})
+}
+
+func TestGetAllStores_UnitTest(t *testing.T) {
+	rwc := createTestComponent()
+
+	stores := rwc.GetAllStores()
+
+	t.Run("returns correct count", func(t *testing.T) {
+		assert.Len(t, stores, 2)
+	})
+
+	t.Run("contains expected stores", func(t *testing.T) {
+		assert.NotNil(t, stores["services"])
+		assert.NotNil(t, stores["ingresses"])
+	})
+
+	t.Run("returns copy not original", func(t *testing.T) {
+		// Modify returned map
+		stores["services"] = nil
+		// Original should be unchanged
+		assert.NotNil(t, rwc.stores["services"])
+	})
+}
+
+func TestIsSynced_UnitTest(t *testing.T) {
+	rwc := createTestComponent()
+
+	t.Run("initially not synced", func(t *testing.T) {
+		assert.False(t, rwc.IsSynced("services"))
+		assert.False(t, rwc.IsSynced("ingresses"))
+	})
+
+	t.Run("synced after marking", func(t *testing.T) {
+		rwc.syncMu.Lock()
+		rwc.synced["services"] = true
+		rwc.syncMu.Unlock()
+
+		assert.True(t, rwc.IsSynced("services"))
+		assert.False(t, rwc.IsSynced("ingresses"))
+	})
+
+	t.Run("non-existent resource returns false", func(t *testing.T) {
+		assert.False(t, rwc.IsSynced("pods"))
+	})
+}
+
+func TestAllSynced_UnitTest(t *testing.T) {
+	rwc := createTestComponent()
+
+	t.Run("initially not all synced", func(t *testing.T) {
+		assert.False(t, rwc.AllSynced())
+	})
+
+	t.Run("partially synced returns false", func(t *testing.T) {
+		rwc.syncMu.Lock()
+		rwc.synced["services"] = true
+		rwc.syncMu.Unlock()
+
+		assert.False(t, rwc.AllSynced())
+	})
+
+	t.Run("all synced returns true", func(t *testing.T) {
+		rwc.syncMu.Lock()
+		rwc.synced["services"] = true
+		rwc.synced["ingresses"] = true
+		rwc.syncMu.Unlock()
+
+		assert.True(t, rwc.AllSynced())
+	})
+}
+
+func TestAllSynced_EmptyWatchers(t *testing.T) {
+	rwc := &ResourceWatcherComponent{
+		watchers: map[string]*watcher.Watcher{},
+		stores:   map[string]types.Store{},
+		synced:   make(map[string]bool),
+		syncMu:   sync.RWMutex{},
+	}
+
+	// With no watchers, AllSynced should return true (vacuously true)
+	assert.True(t, rwc.AllSynced())
+}
+
+func TestAllSynced_ConcurrentAccess(t *testing.T) {
+	rwc := createTestComponent()
+
+	// Test concurrent reads and writes
+	done := make(chan bool)
+
+	// Writer goroutine
+	go func() {
+		for i := 0; i < 100; i++ {
+			rwc.syncMu.Lock()
+			rwc.synced["services"] = i%2 == 0
+			rwc.syncMu.Unlock()
+		}
+		done <- true
+	}()
+
+	// Reader goroutine
+	go func() {
+		for i := 0; i < 100; i++ {
+			_ = rwc.AllSynced()
+			_ = rwc.IsSynced("services")
+		}
+		done <- true
+	}()
+
+	// Wait for both to complete
+	<-done
+	<-done
+}
+
+func TestDetermineNamespace(t *testing.T) {
+	// Create a dummy client - Namespace() returns empty string for uninitialized client
+	dummyClient := &client.Client{}
+
+	tests := []struct {
+		name             string
+		resourceTypeName string
+		want             string
+	}{
+		{
+			name:             "haproxy-pods returns client namespace",
+			resourceTypeName: "haproxy-pods",
+			want:             "", // Empty because dummyClient.Namespace() returns ""
+		},
+		{
+			name:             "services returns empty (cluster-wide)",
+			resourceTypeName: "services",
+			want:             "",
+		},
+		{
+			name:             "ingresses returns empty (cluster-wide)",
+			resourceTypeName: "ingresses",
+			want:             "",
+		},
+		{
+			name:             "pods returns empty (cluster-wide)",
+			resourceTypeName: "pods",
+			want:             "",
+		},
+		{
+			name:             "custom resource returns empty (cluster-wide)",
+			resourceTypeName: "my-custom-resource",
+			want:             "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := determineNamespace(tt.resourceTypeName, dummyClient)
 			assert.Equal(t, tt.want, got)
 		})
 	}

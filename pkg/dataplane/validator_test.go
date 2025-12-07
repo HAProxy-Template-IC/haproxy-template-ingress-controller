@@ -15,6 +15,8 @@
 package dataplane
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -549,6 +551,184 @@ backend dynamic-servers
 	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
 	if err != nil {
 		t.Fatalf("ValidateConfiguration() should pass on valid server templates: %v", err)
+	}
+}
+
+// TestRemoveNullValues tests recursive null value removal from JSON maps.
+func TestRemoveNullValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]interface{}
+		want  map[string]interface{}
+	}{
+		{
+			name:  "empty map",
+			input: map[string]interface{}{},
+			want:  map[string]interface{}{},
+		},
+		{
+			name: "no null values",
+			input: map[string]interface{}{
+				"name": "test",
+				"port": 8080,
+			},
+			want: map[string]interface{}{
+				"name": "test",
+				"port": 8080,
+			},
+		},
+		{
+			name: "with null values",
+			input: map[string]interface{}{
+				"name":   "test",
+				"port":   8080,
+				"weight": nil,
+			},
+			want: map[string]interface{}{
+				"name": "test",
+				"port": 8080,
+			},
+		},
+		{
+			name: "nested map with nulls",
+			input: map[string]interface{}{
+				"server": map[string]interface{}{
+					"name":   "srv1",
+					"weight": nil,
+				},
+			},
+			want: map[string]interface{}{
+				"server": map[string]interface{}{
+					"name": "srv1",
+				},
+			},
+		},
+		{
+			name: "empty nested map removed",
+			input: map[string]interface{}{
+				"name": "test",
+				"options": map[string]interface{}{
+					"value": nil,
+				},
+			},
+			want: map[string]interface{}{
+				"name": "test",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := removeNullValues(tt.input)
+			// Compare via JSON marshaling to handle nested maps
+			gotJSON, _ := json.Marshal(got)
+			wantJSON, _ := json.Marshal(tt.want)
+			if !bytes.Equal(gotJSON, wantJSON) {
+				t.Errorf("removeNullValues() = %s, want %s", gotJSON, wantJSON)
+			}
+		})
+	}
+}
+
+// TestCleanJSON tests JSON cleaning functionality.
+func TestCleanJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "valid JSON without nulls",
+			input: `{"name":"test","port":8080}`,
+			want:  `{"name":"test","port":8080}`,
+		},
+		{
+			name:  "JSON with null values",
+			input: `{"name":"test","weight":null}`,
+			want:  `{"name":"test"}`,
+		},
+		{
+			name:    "invalid JSON",
+			input:   `{"name":`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := cleanJSON([]byte(tt.input))
+			assertCleanJSONResult(t, got, err, tt.want, tt.wantErr)
+		})
+	}
+}
+
+// assertCleanJSONResult validates the result of cleanJSON.
+func assertCleanJSONResult(t *testing.T, got []byte, err error, want string, wantErr bool) {
+	t.Helper()
+
+	if wantErr {
+		if err == nil {
+			t.Errorf("cleanJSON() expected error, got nil")
+		}
+		return
+	}
+	if err != nil {
+		t.Errorf("cleanJSON() unexpected error: %v", err)
+		return
+	}
+	// Compare by unmarshaling to avoid whitespace differences
+	var gotMap, wantMap map[string]interface{}
+	if err := json.Unmarshal(got, &gotMap); err != nil {
+		t.Errorf("cleanJSON() output is not valid JSON: %v", err)
+		return
+	}
+	if err := json.Unmarshal([]byte(want), &wantMap); err != nil {
+		t.Errorf("test setup error: want is not valid JSON: %v", err)
+		return
+	}
+	if len(gotMap) != len(wantMap) {
+		t.Errorf("cleanJSON() = %s, want %s", got, want)
+	}
+}
+
+// TestVersionMinor tests minor version extraction.
+func TestVersionMinor(t *testing.T) {
+	tests := []struct {
+		name    string
+		version *Version
+		want    int
+	}{
+		{
+			name:    "nil version",
+			version: nil,
+			want:    0,
+		},
+		{
+			name: "version 3.2",
+			version: &Version{
+				Major: 3,
+				Minor: 2,
+			},
+			want: 2,
+		},
+		{
+			name: "version 3.0",
+			version: &Version{
+				Major: 3,
+				Minor: 0,
+			},
+			want: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := versionMinor(tt.version)
+			if got != tt.want {
+				t.Errorf("versionMinor() = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 

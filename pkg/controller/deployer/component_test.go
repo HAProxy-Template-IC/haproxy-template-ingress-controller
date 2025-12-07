@@ -16,9 +16,6 @@ package deployer
 
 import (
 	"context"
-	"io"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 
@@ -26,18 +23,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/testutil"
 	"haproxy-template-ic/pkg/dataplane"
 	busevents "haproxy-template-ic/pkg/events"
 )
 
 // Test helper to create a test deployer component.
 func createTestDeployer(eventBus *busevents.EventBus) *Component {
-	// Create logger that writes to discard or stderr
-	var w = io.Discard
-	if testing.Verbose() {
-		w = os.Stderr
-	}
-	logger := slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := testutil.NewTestLogger()
 	return New(eventBus, logger)
 }
 
@@ -384,4 +377,61 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 
 	// Flag should be cleared after deployToEndpoints completes (even with no endpoints)
 	assert.False(t, deployer.deploymentInProgress.Load())
+}
+
+// TestDeployer_Name tests the Name method.
+func TestDeployer_Name(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	deployer := createTestDeployer(bus)
+
+	assert.Equal(t, ComponentName, deployer.Name())
+}
+
+// TestComponent_DeploymentInProgressFlag_DuplicateRejected tests that duplicate deployments are rejected.
+func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	bus.Start()
+	deployer := createTestDeployer(bus)
+
+	ctx := context.Background()
+
+	// Set flag to simulate deployment in progress
+	deployer.deploymentInProgress.Store(true)
+
+	// Second deployment should be rejected
+	event := events.NewDeploymentScheduledEvent(
+		"test config",
+		nil,
+		[]interface{}{},
+		"test-runtime-config",
+		"test-namespace",
+		"duplicate",
+	)
+
+	// This should be rejected (flag was already set)
+	deployer.handleDeploymentScheduled(ctx, event)
+
+	// Flag should still be true (not modified)
+	assert.True(t, deployer.deploymentInProgress.Load())
+}
+
+// TestComponent_ConvertEndpoints_InvalidType tests conversion of invalid endpoint types.
+func TestComponent_ConvertEndpoints_InvalidType(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	deployer := createTestDeployer(bus)
+
+	// Mix of valid and invalid endpoint types
+	endpointsRaw := []interface{}{
+		dataplane.Endpoint{URL: "http://localhost:5555"},
+		"invalid-string-type",
+		dataplane.Endpoint{URL: "http://localhost:5556"},
+		123, // invalid int type
+	}
+
+	endpoints := deployer.convertEndpoints(endpointsRaw)
+
+	// Should only include valid endpoints
+	assert.Len(t, endpoints, 2)
+	assert.Equal(t, "http://localhost:5555", endpoints[0].URL)
+	assert.Equal(t, "http://localhost:5556", endpoints[1].URL)
 }

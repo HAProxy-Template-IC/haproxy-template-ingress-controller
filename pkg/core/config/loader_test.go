@@ -210,6 +210,51 @@ func TestLoadCredentials_EmptyValues(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_Success(t *testing.T) {
+	yamlConfig := `
+pod_selector:
+  match_labels:
+    app: haproxy
+
+watched_resources:
+  ingresses:
+    api_version: networking.k8s.io/v1
+    kind: Ingress
+    index_by: ["metadata.namespace"]
+
+haproxy_config:
+  template: "global"
+`
+
+	cfg, err := LoadConfig(yamlConfig)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// Verify defaults were applied
+	assert.Equal(t, DefaultHealthzPort, cfg.Controller.HealthzPort)
+	assert.Equal(t, DefaultMetricsPort, cfg.Controller.MetricsPort)
+	assert.Equal(t, DefaultDataplanePort, cfg.Dataplane.Port)
+}
+
+func TestLoadConfig_EmptyString(t *testing.T) {
+	cfg, err := LoadConfig("")
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "config YAML is empty")
+}
+
+func TestLoadConfig_InvalidYAML(t *testing.T) {
+	yamlConfig := `
+pod_selector:
+  invalid_indent
+`
+
+	cfg, err := LoadConfig(yamlConfig)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "failed to unmarshal YAML")
+}
+
 func TestParseConfig_WithAllSections(t *testing.T) {
 	yamlConfig := `
 pod_selector:

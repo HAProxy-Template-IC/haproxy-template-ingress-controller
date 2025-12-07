@@ -739,6 +739,187 @@ func TestCachedStore_TTLReset(t *testing.T) {
 	}
 }
 
+// TestCachedStore_WrongKeyCount verifies error handling for wrong key counts.
+func TestCachedStore_WrongKeyCount(t *testing.T) {
+	scheme := runtime.NewScheme()
+	resource := createTestResource("default", "test-cm")
+
+	client := fake.NewSimpleDynamicClient(scheme, resource)
+	testIndexer := createTestIndexer()
+
+	gvr := schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "configmaps",
+	}
+
+	cfg := &CachedStoreConfig{
+		NumKeys:   2,
+		CacheTTL:  5 * time.Minute,
+		Client:    client,
+		GVR:       gvr,
+		Namespace: "",
+		Indexer:   testIndexer,
+	}
+
+	store, err := NewCachedStore(cfg)
+	if err != nil {
+		t.Fatalf("NewCachedStore failed: %v", err)
+	}
+
+	// Test Add with wrong key count
+	err = store.Add(resource, []string{"only-one-key"})
+	if err == nil {
+		t.Error("expected error for wrong key count in Add")
+	}
+
+	// Test Update with wrong key count
+	err = store.Update(resource, []string{"only-one-key"})
+	if err == nil {
+		t.Error("expected error for wrong key count in Update")
+	}
+
+	// Test Delete with wrong key count
+	err = store.Delete("only-one-key")
+	if err == nil {
+		t.Error("expected error for wrong key count in Delete")
+	}
+
+	// Test Get with no keys
+	_, err = store.Get()
+	if err == nil {
+		t.Error("expected error for no keys in Get")
+	}
+
+	// Test Get with too many keys
+	_, err = store.Get("a", "b", "c")
+	if err == nil {
+		t.Error("expected error for too many keys in Get")
+	}
+}
+
+// TestCachedStore_UpdateAddsNewResourceToExistingKey verifies Update adds new
+// resource when refs exist but specific resource not found.
+func TestCachedStore_UpdateAddsNewResourceToExistingKey(t *testing.T) {
+	scheme := runtime.NewScheme()
+
+	slice1 := createTestResource("default", "nginx-slice-1")
+	slice2 := createTestResource("default", "nginx-slice-2")
+
+	client := fake.NewSimpleDynamicClient(scheme, slice1, slice2)
+	testIndexer := createTestIndexer()
+
+	gvr := schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "configmaps",
+	}
+
+	cfg := &CachedStoreConfig{
+		NumKeys:   1, // Index by service name only
+		CacheTTL:  5 * time.Minute,
+		Client:    client,
+		GVR:       gvr,
+		Namespace: "",
+		Indexer:   testIndexer,
+	}
+
+	store, err := NewCachedStore(cfg)
+	if err != nil {
+		t.Fatalf("NewCachedStore failed: %v", err)
+	}
+
+	// Add first resource
+	if err := store.Add(slice1, []string{"nginx"}); err != nil {
+		t.Fatalf("Add slice1 failed: %v", err)
+	}
+
+	// Update with a different resource that doesn't exist yet
+	// This tests the "resource not found - append" path in Update
+	if err := store.Update(slice2, []string{"nginx"}); err != nil {
+		t.Fatalf("Update slice2 failed: %v", err)
+	}
+
+	// Verify both resources now exist
+	if store.Size() != 2 {
+		t.Errorf("expected size 2, got %d", store.Size())
+	}
+
+	// Verify both can be retrieved
+	results, err := store.Get("nginx")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+}
+
+// TestCachedStore_UpdateToNewKey verifies Update creates entry when no refs exist.
+func TestCachedStore_UpdateToNewKey(t *testing.T) {
+	scheme := runtime.NewScheme()
+	resource := createTestResource("default", "test-cm")
+
+	client := fake.NewSimpleDynamicClient(scheme, resource)
+	testIndexer := createTestIndexer()
+
+	gvr := schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "configmaps",
+	}
+
+	cfg := &CachedStoreConfig{
+		NumKeys:   2,
+		CacheTTL:  5 * time.Minute,
+		Client:    client,
+		GVR:       gvr,
+		Namespace: "",
+		Indexer:   testIndexer,
+	}
+
+	store, err := NewCachedStore(cfg)
+	if err != nil {
+		t.Fatalf("NewCachedStore failed: %v", err)
+	}
+
+	RunUpdateToNewKeyTest(t, store, store, resource, []string{"default", "test-cm"})
+}
+
+// TestCachedStore_DeleteNonExistent verifies deleting non-existent resource is a no-op.
+func TestCachedStore_DeleteNonExistent(t *testing.T) {
+	scheme := runtime.NewScheme()
+	resource := createTestResource("default", "test-cm")
+
+	client := fake.NewSimpleDynamicClient(scheme, resource)
+	testIndexer := createTestIndexer()
+
+	gvr := schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "configmaps",
+	}
+
+	cfg := &CachedStoreConfig{
+		NumKeys:   2,
+		CacheTTL:  5 * time.Minute,
+		Client:    client,
+		GVR:       gvr,
+		Namespace: "",
+		Indexer:   testIndexer,
+	}
+
+	store, err := NewCachedStore(cfg)
+	if err != nil {
+		t.Fatalf("NewCachedStore failed: %v", err)
+	}
+
+	RunDeleteNonExistentTest(t, store, store, resource,
+		[]string{"default", "test-cm"},
+		[]string{"other", "nonexistent"})
+}
+
 // TestCachedStore_CacheMissLogging verifies that cache misses trigger API fetches and logging.
 // This test verifies the logging infrastructure is working, but doesn't
 // actually check the log output (that would require a test logger).

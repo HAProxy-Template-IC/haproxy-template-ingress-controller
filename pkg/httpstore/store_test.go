@@ -532,3 +532,438 @@ func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
 	assert.Equal(t, "http://example.com/test", evictedURLs[0])
 	assert.Equal(t, 0, store.Size())
 }
+
+func TestHTTPStore_GetPending(t *testing.T) {
+	// Create test server
+	content := "original"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(content))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+
+	// Initial fetch
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute}, nil)
+	require.NoError(t, err)
+
+	// No pending content yet
+	pending, ok := store.GetPending(server.URL)
+	assert.False(t, ok)
+	assert.Empty(t, pending)
+
+	// Unknown URL returns false
+	pending, ok = store.GetPending("http://unknown")
+	assert.False(t, ok)
+	assert.Empty(t, pending)
+
+	// Update content and refresh to create pending
+	content = "updated"
+	changed, err := store.RefreshURL(ctx, server.URL)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	// Now GetPending should return the pending content
+	pending, ok = store.GetPending(server.URL)
+	assert.True(t, ok)
+	assert.Equal(t, "updated", pending)
+}
+
+func TestHTTPStore_GetURLsWithDelay(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+
+	// Initially empty
+	urls := store.GetURLsWithDelay()
+	assert.Empty(t, urls)
+
+	// Fetch with delay
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: 5 * time.Minute}, nil)
+	require.NoError(t, err)
+
+	// Fetch without delay using fixture
+	store.LoadFixture("http://example.com/no-delay", "content")
+
+	// Only URL with delay should be returned
+	urls = store.GetURLsWithDelay()
+	assert.Equal(t, 1, len(urls))
+	assert.Equal(t, server.URL, urls[0])
+}
+
+func TestHTTPStore_GetEntry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"test-etag"`)
+		w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+
+	// Unknown URL returns nil
+	entry := store.GetEntry("http://unknown")
+	assert.Nil(t, entry)
+
+	// Fetch with auth headers
+	auth := &AuthConfig{
+		Type: "header",
+		Headers: map[string]string{
+			"X-API-Key": "secret",
+		},
+	}
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute}, auth)
+	require.NoError(t, err)
+
+	// GetEntry should return a copy with all fields
+	entry = store.GetEntry(server.URL)
+	require.NotNil(t, entry)
+	assert.Equal(t, "content", entry.AcceptedContent)
+	assert.Equal(t, time.Minute, entry.Options.Delay)
+	assert.NotNil(t, entry.Auth)
+	assert.Equal(t, "secret", entry.Auth.Headers["X-API-Key"])
+
+	// Verify it's a copy - modifying returned entry shouldn't affect store
+	entry.Auth.Headers["X-API-Key"] = "modified"
+	entry2 := store.GetEntry(server.URL)
+	assert.Equal(t, "secret", entry2.Auth.Headers["X-API-Key"])
+}
+
+func TestHTTPStore_Clear(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	// Load fixtures
+	store.LoadFixture("http://example.com/1", "content1")
+	store.LoadFixture("http://example.com/2", "content2")
+	store.LoadFixture("http://example.com/3", "content3")
+
+	assert.Equal(t, 3, store.Size())
+
+	// Clear store
+	store.Clear()
+
+	assert.Equal(t, 0, store.Size())
+
+	// Verify entries are gone
+	_, ok := store.Get("http://example.com/1")
+	assert.False(t, ok)
+}
+
+func TestHTTPStore_PromoteAllPending(t *testing.T) {
+	// Create test server
+	content := "original"
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(content))
+	}))
+	defer server1.Close()
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(content))
+	}))
+	defer server2.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+
+	// Initial fetch for both
+	_, err := store.Fetch(ctx, server1.URL, FetchOptions{Delay: time.Minute}, nil)
+	require.NoError(t, err)
+	_, err = store.Fetch(ctx, server2.URL, FetchOptions{Delay: time.Minute}, nil)
+	require.NoError(t, err)
+
+	// Update content and refresh both
+	content = "updated"
+	_, err = store.RefreshURL(ctx, server1.URL)
+	require.NoError(t, err)
+	_, err = store.RefreshURL(ctx, server2.URL)
+	require.NoError(t, err)
+
+	// Both should have pending
+	urls := store.GetPendingURLs()
+	assert.Equal(t, 2, len(urls))
+
+	// Promote all
+	promoted := store.PromoteAllPending()
+	assert.Equal(t, 2, promoted)
+
+	// No more pending
+	assert.False(t, store.HasPendingValidation())
+
+	// Both should have updated content as accepted
+	content1, ok := store.Get(server1.URL)
+	assert.True(t, ok)
+	assert.Equal(t, "updated", content1)
+
+	content2, ok := store.Get(server2.URL)
+	assert.True(t, ok)
+	assert.Equal(t, "updated", content2)
+}
+
+func TestHTTPStore_RejectAllPending(t *testing.T) {
+	// Create test server
+	content := "original"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(content))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+
+	// Initial fetch
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute}, nil)
+	require.NoError(t, err)
+
+	// Update content and refresh
+	content = "bad content"
+	_, err = store.RefreshURL(ctx, server.URL)
+	require.NoError(t, err)
+
+	// Should have pending
+	assert.True(t, store.HasPendingValidation())
+
+	// Reject all
+	rejected := store.RejectAllPending()
+	assert.Equal(t, 1, rejected)
+
+	// No more pending
+	assert.False(t, store.HasPendingValidation())
+
+	// Accepted content should still be original
+	accepted, ok := store.Get(server.URL)
+	assert.True(t, ok)
+	assert.Equal(t, "original", accepted)
+}
+
+func TestValidationState_String(t *testing.T) {
+	tests := []struct {
+		state    ValidationState
+		expected string
+	}{
+		{StateAccepted, "accepted"},
+		{StateValidating, "validating"},
+		{StateRejected, "rejected"},
+		{ValidationState(99), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.state.String())
+		})
+	}
+}
+
+func TestHTTPStore_NewWithNilLogger(t *testing.T) {
+	// Should not panic and should use default logger
+	store := New(nil, 0)
+	require.NotNil(t, store)
+}
+
+func TestHTTPStore_FetchHTTPErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantErr    string
+	}{
+		{"401 unauthorized", http.StatusUnauthorized, "authentication failed (401 Unauthorized)"},
+		{"403 forbidden", http.StatusForbidden, "access denied (403 Forbidden)"},
+		{"404 not found", http.StatusNotFound, "resource not found (404 Not Found)"},
+		{"400 bad request", http.StatusBadRequest, "client error: 400 Bad Request"},
+		{"500 internal error", http.StatusInternalServerError, "server error: 500 Internal Server Error"},
+		{"201 created", http.StatusCreated, "unexpected status: 201 Created"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+			}))
+			defer server.Close()
+
+			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+			store := New(logger, 0)
+
+			ctx := context.Background()
+			_, err := store.Fetch(ctx, server.URL, FetchOptions{Critical: true}, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestHTTPStore_FetchContentTooLarge(t *testing.T) {
+	// Create content larger than MaxContentSize
+	largeContent := make([]byte, MaxContentSize+100)
+	for i := range largeContent {
+		largeContent[i] = 'x'
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(largeContent)
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Critical: true}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum size")
+}
+
+func TestHTTPStore_FetchWithHeaderAuth(t *testing.T) {
+	var receivedHeaders http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+	auth := &AuthConfig{
+		Type: "header",
+		Headers: map[string]string{
+			"X-API-Key":    "my-api-key",
+			"X-Custom-Key": "custom-value",
+		},
+	}
+	content, err := store.Fetch(ctx, server.URL, FetchOptions{}, auth)
+	require.NoError(t, err)
+	assert.Equal(t, "content", content)
+	assert.Equal(t, "my-api-key", receivedHeaders.Get("X-API-Key"))
+	assert.Equal(t, "custom-value", receivedHeaders.Get("X-Custom-Key"))
+}
+
+func TestHTTPStore_FetchWithUnknownAuthType(t *testing.T) {
+	var receivedHeaders http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+	// Unknown auth type falls through to default which uses Headers
+	auth := &AuthConfig{
+		Type: "unknown",
+		Headers: map[string]string{
+			"X-Custom-Auth": "some-token",
+		},
+	}
+	content, err := store.Fetch(ctx, server.URL, FetchOptions{}, auth)
+	require.NoError(t, err)
+	assert.Equal(t, "content", content)
+	assert.Equal(t, "some-token", receivedHeaders.Get("X-Custom-Auth"))
+}
+
+func TestHTTPStore_RefreshURLNotInCache(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+	_, err := store.RefreshURL(ctx, "http://not-in-cache.example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "URL not in cache")
+}
+
+func TestHTTPStore_RefreshURLSkipsValidating(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+	// Initial fetch
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute}, nil)
+	require.NoError(t, err)
+
+	// Manually set state to validating (simulating pending validation)
+	store.mu.Lock()
+	entry := store.cache[server.URL]
+	entry.ValidationState = StateValidating
+	store.mu.Unlock()
+
+	// Refresh should be skipped
+	changed, err := store.RefreshURL(ctx, server.URL)
+	require.NoError(t, err)
+	assert.False(t, changed)
+}
+
+func TestHTTPStore_RefreshURLError(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.Write([]byte("initial"))
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+	// Initial fetch succeeds
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute, Retries: 0}, nil)
+	require.NoError(t, err)
+
+	// Refresh fails
+	_, err = store.RefreshURL(ctx, server.URL)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "server error")
+}
+
+func TestHTTPStore_FetchNonCriticalError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	ctx := context.Background()
+	// Non-critical fetch returns empty string without error
+	content, err := store.Fetch(ctx, server.URL, FetchOptions{Critical: false, Retries: 0}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "", content)
+}
+
+func TestHTTPStore_GetForValidationEmpty(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+
+	// URL not in cache
+	content, ok := store.GetForValidation("http://not-cached.example.com")
+	assert.False(t, ok)
+	assert.Equal(t, "", content)
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/testutil"
 	busevents "haproxy-template-ic/pkg/events"
 )
 
@@ -212,24 +213,9 @@ func TestStart_PublishesIndexSynchronizedEvent(t *testing.T) {
 	bus.Publish(events.NewResourceSyncCompleteEvent("services", 20))
 
 	// Wait for IndexSynchronizedEvent
-	timeout := time.After(1 * time.Second)
-	var indexSyncEvent *events.IndexSynchronizedEvent
-
-loop:
-	for {
-		select {
-		case event := <-eventChan:
-			if syncEvent, ok := event.(*events.IndexSynchronizedEvent); ok {
-				indexSyncEvent = syncEvent
-				break loop
-			}
-		case <-timeout:
-			t.Fatal("timeout waiting for IndexSynchronizedEvent")
-		}
-	}
+	indexSyncEvent := testutil.WaitForEvent[*events.IndexSynchronizedEvent](t, eventChan, testutil.LongTimeout)
 
 	// Verify event
-	require.NotNil(t, indexSyncEvent)
 	assert.Len(t, indexSyncEvent.ResourceCounts, 2)
 	assert.Equal(t, 10, indexSyncEvent.ResourceCounts["ingresses"])
 	assert.Equal(t, 20, indexSyncEvent.ResourceCounts["services"])
