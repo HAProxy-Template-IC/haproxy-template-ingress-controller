@@ -6,7 +6,7 @@ require (
 	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/arch-go/arch-go/v2 v2.1.1
 	github.com/getkin/kin-openapi v0.133.0
-	github.com/golangci/golangci-lint/v2 v2.7.1
+	github.com/golangci/golangci-lint/v2 v2.7.2
 	github.com/google/uuid v1.6.0
 	github.com/haproxytech/client-native/v6 v6.2.6
 	github.com/nikolalohinski/gonja/v2 v2.5.0
@@ -236,7 +236,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sashamelentyev/interfacebloat v1.1.0 // indirect
 	github.com/sashamelentyev/usestdlibvars v1.29.0 // indirect
-	github.com/securego/gosec/v2 v2.22.10 // indirect
+	github.com/securego/gosec/v2 v2.22.11-0.20251204091113-daccba6b93d7 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/sivchari/containedctx v1.0.3 // indirect
 	github.com/sonatard/noctx v0.4.0 // indirect

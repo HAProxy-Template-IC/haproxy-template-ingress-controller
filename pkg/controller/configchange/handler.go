@@ -12,6 +12,13 @@ import (
 	busevents "haproxy-template-ic/pkg/events"
 )
 
+const (
+	// DefaultReinitDebounceInterval is the default time to wait after the last config
+	// change before signaling controller reinitialization. This allows rapid CRD updates
+	// to be coalesced, ensuring templates are fully rendered before reinitialization starts.
+	DefaultReinitDebounceInterval = 500 * time.Millisecond
+)
+
 // ConfigChangeHandler coordinates configuration validation and detects config changes.
 //
 // This component has two main responsibilities:
@@ -21,7 +28,12 @@ import (
 //     ConfigValidatedEvent or ConfigInvalidEvent.
 //
 //  2. Change Detection: Subscribes to ConfigValidatedEvent and signals the controller to
-//     reinitialize via the configChangeCh channel.
+//     reinitialize via the configChangeCh channel with debouncing to coalesce rapid changes.
+//
+// Debouncing behavior:
+// When multiple CRD config changes arrive in rapid succession, the handler debounces the
+// reinitialization signal. This ensures all pending renders complete before reinitialization
+// starts, preventing the race condition where reinitialization cancels in-progress renders.
 //
 // Architecture:
 // This component bridges the gap between configuration parsing and validation, and between
@@ -38,6 +50,12 @@ type ConfigChangeHandler struct {
 	mu                       sync.RWMutex
 	lastConfigValidatedEvent *events.ConfigValidatedEvent
 	hasValidatedConfig       bool
+
+	// Debouncing for reinitialization signals
+	// Coalesces rapid CRD config changes to prevent reinitialization from interrupting renders
+	debounceInterval time.Duration
+	debounceTimer    *time.Timer
+	pendingConfig    *coreconfig.Config
 }
 
 // NewConfigChangeHandler creates a new ConfigChangeHandler.
@@ -47,6 +65,8 @@ type ConfigChangeHandler struct {
 //   - logger: Structured logger for diagnostics
 //   - configChangeCh: Channel to signal controller reinitialization with validated config
 //   - validators: List of expected validator names (e.g., ["basic", "template", "jsonpath"])
+//   - debounceInterval: Time to wait after last config change before triggering reinitialization.
+//     Use 0 for default (500ms).
 //
 // Returns:
 //   - *ConfigChangeHandler ready to start
@@ -55,13 +75,21 @@ func NewConfigChangeHandler(
 	logger *slog.Logger,
 	configChangeCh chan<- *coreconfig.Config,
 	validators []string,
+	debounceInterval time.Duration,
 ) *ConfigChangeHandler {
+	if debounceInterval <= 0 {
+		debounceInterval = DefaultReinitDebounceInterval
+	}
+
 	return &ConfigChangeHandler{
-		bus:            bus,
-		logger:         logger,
-		configChangeCh: configChangeCh,
-		validators:     validators,
-		stopCh:         make(chan struct{}),
+		bus:              bus,
+		logger:           logger,
+		configChangeCh:   configChangeCh,
+		validators:       validators,
+		stopCh:           make(chan struct{}),
+		debounceInterval: debounceInterval,
+		debounceTimer:    nil,
+		pendingConfig:    nil,
 	}
 }
 
@@ -82,10 +110,15 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			h.logger.Info("ConfigChangeHandler stopped", "reason", ctx.Err())
+			h.cleanup()
 			return
 		case <-h.stopCh:
 			h.logger.Info("ConfigChangeHandler stopped")
+			h.cleanup()
 			return
+		case <-h.getDebounceTimerChan():
+			// Debounce timer expired - send pending config
+			h.sendPendingConfig()
 		case event := <-eventCh:
 			switch e := event.(type) {
 			case *events.ConfigParsedEvent:
@@ -101,7 +134,13 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) {
 
 // Stop gracefully stops the component.
 func (h *ConfigChangeHandler) Stop() {
+	h.stopDebounceTimer()
 	close(h.stopCh)
+}
+
+// cleanup performs cleanup when the component is shutting down.
+func (h *ConfigChangeHandler) cleanup() {
+	h.stopDebounceTimer()
 }
 
 // handleConfigParsed coordinates validation for a parsed config using scatter-gather pattern.
@@ -208,6 +247,10 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 }
 
 // handleConfigValidated signals controller reinitialization when config is validated.
+//
+// Reinitialization signals are debounced to coalesce rapid CRD config changes.
+// This prevents the race condition where reinitialization interrupts in-progress renders,
+// ensuring all config changes are fully rendered before reinitialization starts.
 func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	// Cache the event for leadership transition replay
 	// This must happen BEFORE the early return for version="initial"
@@ -223,9 +266,6 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 		return
 	}
 
-	h.logger.Info("Config validated, signaling controller reinitialization",
-		"version", event.Version)
-
 	// Extract the config
 	cfg, ok := event.Config.(*coreconfig.Config)
 	if !ok {
@@ -234,6 +274,73 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 			"got", fmt.Sprintf("%T", event.Config))
 		return
 	}
+
+	// Store config and reset debounce timer
+	// The timer callback will send the config after the debounce interval
+	h.pendingConfig = cfg
+
+	h.logger.Debug("Config validated, reinitialization debounced",
+		"version", event.Version)
+
+	h.resetDebounceTimer()
+}
+
+// resetDebounceTimer resets the debounce timer to the configured interval.
+func (h *ConfigChangeHandler) resetDebounceTimer() {
+	if h.debounceTimer == nil {
+		// Create timer on first use
+		h.debounceTimer = time.NewTimer(h.debounceInterval)
+	} else {
+		// Stop and drain existing timer before resetting
+		if !h.debounceTimer.Stop() {
+			// Timer already fired, drain the channel
+			select {
+			case <-h.debounceTimer.C:
+			default:
+			}
+		}
+		h.debounceTimer.Reset(h.debounceInterval)
+	}
+}
+
+// stopDebounceTimer stops the debounce timer if it's running.
+func (h *ConfigChangeHandler) stopDebounceTimer() {
+	if h.debounceTimer != nil {
+		if !h.debounceTimer.Stop() {
+			// Timer already fired, drain the channel
+			select {
+			case <-h.debounceTimer.C:
+			default:
+			}
+		}
+	}
+	h.pendingConfig = nil
+}
+
+// getDebounceTimerChan returns the debounce timer's channel or a nil channel
+// if the timer hasn't been created yet.
+//
+// This allows the select statement to work correctly - a nil channel blocks forever,
+// which is the desired behavior when there's no active debounce timer.
+func (h *ConfigChangeHandler) getDebounceTimerChan() <-chan time.Time {
+	if h.debounceTimer == nil {
+		return nil
+	}
+	return h.debounceTimer.C
+}
+
+// sendPendingConfig sends the pending config to the controller.
+// This is called after the debounce interval expires, ensuring rapid config changes are coalesced.
+func (h *ConfigChangeHandler) sendPendingConfig() {
+	cfg := h.pendingConfig
+	h.pendingConfig = nil
+
+	if cfg == nil {
+		// No pending config (e.g., already sent or cleared)
+		return
+	}
+
+	h.logger.Info("Signaling controller reinitialization after debounce")
 
 	// Signal controller to reinitialize
 	// Use non-blocking send to avoid deadlock if channel is full

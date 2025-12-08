@@ -6,6 +6,30 @@ import (
 	"haproxy-template-ic/pkg/dataplane/comparator/sections"
 )
 
+// safeGetHTTPRequestRule safely retrieves a rule at the given index, returning nil if out of bounds.
+func safeGetHTTPRequestRule(rules models.HTTPRequestRules, i int) *models.HTTPRequestRule {
+	if i >= 0 && i < len(rules) {
+		return rules[i]
+	}
+	return nil
+}
+
+// safeGetHTTPResponseRule safely retrieves a rule at the given index, returning nil if out of bounds.
+func safeGetHTTPResponseRule(rules models.HTTPResponseRules, i int) *models.HTTPResponseRule {
+	if i >= 0 && i < len(rules) {
+		return rules[i]
+	}
+	return nil
+}
+
+// safeGetBackendSwitchingRule safely retrieves a rule at the given index, returning nil if out of bounds.
+func safeGetBackendSwitchingRule(rules models.BackendSwitchingRules, i int) *models.BackendSwitchingRule {
+	if i >= 0 && i < len(rules) {
+		return rules[i]
+	}
+	return nil
+}
+
 // compareACLs compares ACL configurations within a frontend or backend.
 // ACLs are identified by their name (ACLName field).
 func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, desiredACLs models.Acls, _ *DiffSummary) []Operation {
@@ -112,17 +136,18 @@ func (c *Comparator) compareHTTPRequestRules(parentType, parentName string, curr
 	}
 
 	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
+		currentRule := safeGetHTTPRequestRule(currentRules, i)
+		desiredRule := safeGetHTTPRequestRule(desiredRules, i)
 
-		if !hasCurrentRule && hasDesiredRule {
-			ops := c.createHTTPRequestRuleOperation(parentType, parentName, desiredRules[i], i)
+		switch {
+		case currentRule == nil && desiredRule != nil:
+			ops := c.createHTTPRequestRuleOperation(parentType, parentName, desiredRule, i)
 			operations = append(operations, ops...)
-		} else if hasCurrentRule && !hasDesiredRule {
-			ops := c.deleteHTTPRequestRuleOperation(parentType, parentName, currentRules[i], i)
+		case currentRule != nil && desiredRule == nil:
+			ops := c.deleteHTTPRequestRuleOperation(parentType, parentName, currentRule, i)
 			operations = append(operations, ops...)
-		} else if hasCurrentRule && hasDesiredRule {
-			ops := c.updateHTTPRequestRuleOperation(parentType, parentName, currentRules[i], desiredRules[i], i)
+		case currentRule != nil && desiredRule != nil:
+			ops := c.updateHTTPRequestRuleOperation(parentType, parentName, currentRule, desiredRule, i)
 			operations = append(operations, ops...)
 		}
 	}
@@ -166,17 +191,18 @@ func (c *Comparator) compareHTTPResponseRules(parentType, parentName string, cur
 	}
 
 	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
+		currentRule := safeGetHTTPResponseRule(currentRules, i)
+		desiredRule := safeGetHTTPResponseRule(desiredRules, i)
 
-		if !hasCurrentRule && hasDesiredRule {
-			ops := c.createHTTPResponseRuleOperation(parentType, parentName, desiredRules[i], i)
+		switch {
+		case currentRule == nil && desiredRule != nil:
+			ops := c.createHTTPResponseRuleOperation(parentType, parentName, desiredRule, i)
 			operations = append(operations, ops...)
-		} else if hasCurrentRule && !hasDesiredRule {
-			ops := c.deleteHTTPResponseRuleOperation(parentType, parentName, currentRules[i], i)
+		case currentRule != nil && desiredRule == nil:
+			ops := c.deleteHTTPResponseRuleOperation(parentType, parentName, currentRule, i)
 			operations = append(operations, ops...)
-		} else if hasCurrentRule && hasDesiredRule {
-			ops := c.updateHTTPResponseRuleOperation(parentType, parentName, currentRules[i], desiredRules[i], i)
+		case currentRule != nil && desiredRule != nil:
+			ops := c.updateHTTPResponseRuleOperation(parentType, parentName, currentRule, desiredRule, i)
 			operations = append(operations, ops...)
 		}
 	}
@@ -387,22 +413,18 @@ func (c *Comparator) compareBackendSwitchingRules(frontendName string, currentRu
 	}
 
 	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
+		currentRule := safeGetBackendSwitchingRule(currentRules, i)
+		desiredRule := safeGetBackendSwitchingRule(desiredRules, i)
 
-		if !hasCurrentRule && hasDesiredRule {
+		switch {
+		case currentRule == nil && desiredRule != nil:
 			// Rule added at this position
-			rule := desiredRules[i]
-			operations = append(operations, sections.NewBackendSwitchingRuleFrontendCreate(frontendName, rule, i))
-		} else if hasCurrentRule && !hasDesiredRule {
+			operations = append(operations, sections.NewBackendSwitchingRuleFrontendCreate(frontendName, desiredRule, i))
+		case currentRule != nil && desiredRule == nil:
 			// Rule removed at this position
-			rule := currentRules[i]
-			operations = append(operations, sections.NewBackendSwitchingRuleFrontendDelete(frontendName, rule, i))
-		} else if hasCurrentRule && hasDesiredRule {
+			operations = append(operations, sections.NewBackendSwitchingRuleFrontendDelete(frontendName, currentRule, i))
+		case currentRule != nil && desiredRule != nil:
 			// Both exist - check if modified
-			currentRule := currentRules[i]
-			desiredRule := desiredRules[i]
-
 			if !currentRule.Equal(*desiredRule) {
 				operations = append(operations, sections.NewBackendSwitchingRuleFrontendUpdate(frontendName, desiredRule, i))
 			}
