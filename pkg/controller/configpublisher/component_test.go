@@ -555,3 +555,217 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 
 	require.Error(t, err, "Should get error because no config should be created")
 }
+
+// TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata tests sync metadata processing.
+func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Setup
+	k8sClient := k8sfake.NewSimpleClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
+	component := New(publisher, eventBus, testLogger())
+
+	// Start event bus and component
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Give component time to subscribe
+	time.Sleep(100 * time.Millisecond)
+
+	// First create a runtime config manually
+	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       "test-uid-123",
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "checksum-sync",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles:          nil,
+	})
+	require.NoError(t, err)
+
+	// Publish ConfigAppliedToPodEvent with SyncMetadata including operations and reload
+	syncMetadata := &events.SyncMetadata{
+		ReloadTriggered:        true,
+		ReloadID:               "reload-123",
+		SyncDuration:           100 * time.Millisecond,
+		VersionConflictRetries: 2,
+		FallbackUsed:           false,
+		OperationCounts: events.OperationCounts{
+			TotalAPIOperations: 5,
+			BackendsAdded:      2,
+			ServersAdded:       3,
+		},
+		Error: "",
+	}
+
+	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+		"test-config-haproxycfg",
+		"default",
+		"haproxy-pod-sync",
+		"haproxy-ns",
+		"checksum-sync",
+		false, // isDriftCheck
+		syncMetadata,
+	))
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify deployment status was updated with sync metadata
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+
+	pod := runtimeConfig.Status.DeployedToPods[0]
+	assert.Equal(t, "haproxy-pod-sync", pod.PodName)
+	assert.NotNil(t, pod.DeployedAt, "DeployedAt should be set when operations were performed")
+	assert.NotNil(t, pod.LastReloadAt, "LastReloadAt should be set when reload was triggered")
+	assert.Equal(t, "reload-123", pod.LastReloadID)
+	assert.NotNil(t, pod.SyncDuration)
+	assert.Equal(t, 2, pod.VersionConflictRetries)
+	assert.NotNil(t, pod.LastOperationSummary)
+	assert.Equal(t, 5, pod.LastOperationSummary.TotalAPIOperations)
+	assert.Equal(t, 2, pod.LastOperationSummary.BackendsAdded)
+}
+
+// TestComponent_ConfigAppliedToPodEvent_DriftCheck tests drift check handling.
+func TestComponent_ConfigAppliedToPodEvent_DriftCheck(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Setup
+	k8sClient := k8sfake.NewSimpleClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
+	component := New(publisher, eventBus, testLogger())
+
+	// Start event bus and component
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Give component time to subscribe
+	time.Sleep(100 * time.Millisecond)
+
+	// First create a runtime config manually
+	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       "test-uid-drift",
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "checksum-drift",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles:          nil,
+	})
+	require.NoError(t, err)
+
+	// Publish ConfigAppliedToPodEvent as drift check (no operations)
+	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+		"test-config-haproxycfg",
+		"default",
+		"haproxy-pod-drift",
+		"haproxy-ns",
+		"checksum-drift",
+		true, // isDriftCheck
+		nil,  // no syncMetadata for drift check with no changes
+	))
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify deployment status was updated
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+
+	pod := runtimeConfig.Status.DeployedToPods[0]
+	assert.Equal(t, "haproxy-pod-drift", pod.PodName)
+	assert.NotNil(t, pod.LastCheckedAt, "LastCheckedAt should always be set")
+}
+
+// TestComponent_ConfigAppliedToPodEvent_WithError tests error handling in sync metadata.
+func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Setup
+	k8sClient := k8sfake.NewSimpleClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
+	component := New(publisher, eventBus, testLogger())
+
+	// Start event bus and component
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Give component time to subscribe
+	time.Sleep(100 * time.Millisecond)
+
+	// First create a runtime config manually
+	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       "test-uid-error",
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "checksum-error",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles:          nil,
+	})
+	require.NoError(t, err)
+
+	// Publish ConfigAppliedToPodEvent with error in sync metadata
+	syncMetadata := &events.SyncMetadata{
+		ReloadTriggered: false,
+		SyncDuration:    50 * time.Millisecond,
+		FallbackUsed:    true,
+		OperationCounts: events.OperationCounts{
+			TotalAPIOperations: 0, // No operations due to error
+		},
+		Error: "connection refused to dataplane API",
+	}
+
+	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+		"test-config-haproxycfg",
+		"default",
+		"haproxy-pod-error",
+		"haproxy-ns",
+		"checksum-error",
+		false,
+		syncMetadata,
+	))
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify deployment status was updated with error
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+
+	pod := runtimeConfig.Status.DeployedToPods[0]
+	assert.Equal(t, "haproxy-pod-error", pod.PodName)
+	assert.Equal(t, "connection refused to dataplane API", pod.LastError)
+	assert.True(t, pod.FallbackUsed)
+	// Error is recorded, other fields should be set correctly
+	assert.NotNil(t, pod.SyncDuration)
+}

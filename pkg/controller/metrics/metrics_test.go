@@ -242,3 +242,162 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 			"metric %s not registered", expected)
 	}
 }
+
+// =============================================================================
+// Webhook Metrics Tests
+// =============================================================================
+
+func TestMetrics_RecordWebhookRequest(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+
+	// Record successful webhook request
+	metrics.RecordWebhookRequest("v1.ConfigMap", "allowed", 0.5)
+
+	// Verify total counter incremented
+	webhookTotal, err := metrics.WebhookRequestsTotal.GetMetricWithLabelValues("v1.ConfigMap", "allowed")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(webhookTotal))
+
+	// Record denied webhook request
+	metrics.RecordWebhookRequest("v1.ConfigMap", "denied", 0.3)
+
+	webhookDenied, err := metrics.WebhookRequestsTotal.GetMetricWithLabelValues("v1.ConfigMap", "denied")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(webhookDenied))
+
+	// Record error webhook request
+	metrics.RecordWebhookRequest("v1.Secret", "error", 0.1)
+
+	webhookError, err := metrics.WebhookRequestsTotal.GetMetricWithLabelValues("v1.Secret", "error")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(webhookError))
+}
+
+func TestMetrics_RecordWebhookValidation(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+
+	// Record allowed validation
+	metrics.RecordWebhookValidation("v1.ConfigMap", "allowed")
+
+	validation, err := metrics.WebhookValidationTotal.GetMetricWithLabelValues("v1.ConfigMap", "allowed")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(validation))
+
+	// Record denied validation
+	metrics.RecordWebhookValidation("v1.ConfigMap", "denied")
+
+	denied, err := metrics.WebhookValidationTotal.GetMetricWithLabelValues("v1.ConfigMap", "denied")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(denied))
+
+	// Multiple validations of same type
+	metrics.RecordWebhookValidation("v1.ConfigMap", "allowed")
+	metrics.RecordWebhookValidation("v1.ConfigMap", "allowed")
+
+	validation, err = metrics.WebhookValidationTotal.GetMetricWithLabelValues("v1.ConfigMap", "allowed")
+	require.NoError(t, err)
+	assert.Equal(t, 3.0, testutil.ToFloat64(validation))
+}
+
+func TestMetrics_SetWebhookCertExpiry(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+
+	// Set certificate expiry
+	expiryTime := int64(1735689600) // Some future timestamp
+	metrics.SetWebhookCertExpiry(expiryTime)
+
+	assert.Equal(t, float64(expiryTime), testutil.ToFloat64(metrics.WebhookCertExpiry))
+
+	// Update certificate expiry
+	newExpiryTime := int64(1767225600) // Later timestamp
+	metrics.SetWebhookCertExpiry(newExpiryTime)
+
+	assert.Equal(t, float64(newExpiryTime), testutil.ToFloat64(metrics.WebhookCertExpiry))
+}
+
+func TestMetrics_RecordWebhookCertRotation(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+
+	metrics.RecordWebhookCertRotation()
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.WebhookCertRotations))
+
+	metrics.RecordWebhookCertRotation()
+	metrics.RecordWebhookCertRotation()
+	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.WebhookCertRotations))
+}
+
+// =============================================================================
+// Leader Election Metrics Tests
+// =============================================================================
+
+func TestMetrics_SetIsLeader(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+
+	// Not leader initially
+	metrics.SetIsLeader(false)
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
+
+	// Become leader
+	metrics.SetIsLeader(true)
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
+
+	// Lose leadership
+	metrics.SetIsLeader(false)
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
+}
+
+func TestMetrics_RecordLeadershipTransition(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+
+	// Record transitions
+	metrics.RecordLeadershipTransition()
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
+
+	metrics.RecordLeadershipTransition()
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
+
+	metrics.RecordLeadershipTransition()
+	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
+}
+
+func TestMetrics_AddTimeAsLeader(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+
+	// Add time as leader
+	metrics.AddTimeAsLeader(100.5)
+	assert.Equal(t, 100.5, testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds))
+
+	// Add more time
+	metrics.AddTimeAsLeader(50.25)
+	assert.Equal(t, 150.75, testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds))
+}
+
+// =============================================================================
+// Validation Tests Metrics
+// =============================================================================
+
+func TestMetrics_RecordValidationTests(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+
+	// Record test results
+	metrics.RecordValidationTests(10, 8, 2, 1.5)
+
+	assert.Equal(t, 10.0, testutil.ToFloat64(metrics.ValidationTestsTotal))
+	assert.Equal(t, 8.0, testutil.ToFloat64(metrics.ValidationTestsPassTotal))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTestsFailTotal))
+
+	// Record more test results
+	metrics.RecordValidationTests(5, 5, 0, 0.5)
+
+	assert.Equal(t, 15.0, testutil.ToFloat64(metrics.ValidationTestsTotal))
+	assert.Equal(t, 13.0, testutil.ToFloat64(metrics.ValidationTestsPassTotal))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTestsFailTotal))
+}

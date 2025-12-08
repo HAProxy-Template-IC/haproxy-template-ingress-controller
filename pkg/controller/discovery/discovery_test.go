@@ -493,3 +493,66 @@ func (m *mockStore) Delete(keys ...string) error {
 func (m *mockStore) Clear() error {
 	return nil
 }
+
+func (m *mockStore) GetKeys(resource interface{}, indexBy []string) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockStore) Refresh(resource interface{}, oldKeys, newKeys []string) (changed, deleted bool) {
+	return false, false
+}
+
+func (m *mockStore) Count() int {
+	return 0
+}
+
+// -----------------------------------------------------------------------------
+// LocalVersion Tests
+// -----------------------------------------------------------------------------
+
+func TestDiscovery_LocalVersion(t *testing.T) {
+	tests := []struct {
+		name          string
+		localVersion  *dataplane.Version
+		expectVersion *dataplane.Version
+	}{
+		{
+			name: "returns configured version",
+			localVersion: &dataplane.Version{
+				Major: 3,
+				Minor: 2,
+				Full:  "3.2.1",
+			},
+			expectVersion: &dataplane.Version{
+				Major: 3,
+				Minor: 2,
+				Full:  "3.2.1",
+			},
+		},
+		{
+			name:          "returns nil when not set",
+			localVersion:  nil,
+			expectVersion: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &Discovery{
+				dataplanePort: 5555,
+				localVersion:  tt.localVersion,
+			}
+
+			got := d.LocalVersion()
+
+			if tt.expectVersion == nil {
+				assert.Nil(t, got)
+			} else {
+				require.NotNil(t, got)
+				assert.Equal(t, tt.expectVersion.Major, got.Major)
+				assert.Equal(t, tt.expectVersion.Minor, got.Minor)
+				assert.Equal(t, tt.expectVersion.Full, got.Full)
+			}
+		})
+	}
+}

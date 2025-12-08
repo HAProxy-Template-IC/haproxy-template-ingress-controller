@@ -28,6 +28,7 @@ import (
 	"haproxy-template-ic/pkg/controller/events"
 	"haproxy-template-ic/pkg/controller/testutil"
 	coreconfig "haproxy-template-ic/pkg/core/config"
+	"haproxy-template-ic/pkg/dataplane"
 	busevents "haproxy-template-ic/pkg/events"
 	"haproxy-template-ic/pkg/k8s/store"
 	"haproxy-template-ic/pkg/k8s/types"
@@ -853,4 +854,178 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 	keys := []string{namespace, name}
 	err = podStore.Add(pod, keys)
 	require.NoError(t, err)
+}
+
+func TestComponent_CleanupRemovedPods(t *testing.T) {
+	skipIfNoHAProxy(t)
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component, err := New(bus, logger)
+	require.NoError(t, err)
+	bus.Start()
+
+	// Pre-populate with admitted pods
+	component.mu.Lock()
+	component.admittedPods["pod-1"] = &dataplane.Endpoint{PodName: "pod-1"}
+	component.admittedPods["pod-2"] = &dataplane.Endpoint{PodName: "pod-2"}
+	component.admittedPods["pod-3"] = &dataplane.Endpoint{PodName: "pod-3"}
+	component.pendingRetries["pod-2"] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.pendingRetries["pod-4"] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.warnedPods["pod-1"] = true
+	component.warnedPods["pod-3"] = true
+	component.mu.Unlock()
+
+	// Current candidates only have pod-1 and pod-3
+	currentCandidates := map[string]string{
+		"pod-1": "10.0.0.1",
+		"pod-3": "10.0.0.3",
+	}
+
+	// Call cleanup
+	component.cleanupRemovedPods(currentCandidates)
+
+	// Verify removed pods are cleaned up
+	component.mu.Lock()
+	defer component.mu.Unlock()
+
+	// pod-2 should be removed from admittedPods
+	_, exists := component.admittedPods["pod-2"]
+	assert.False(t, exists, "pod-2 should be removed from admittedPods")
+
+	// pod-2 and pod-4 should be removed from pendingRetries
+	_, exists = component.pendingRetries["pod-2"]
+	assert.False(t, exists, "pod-2 should be removed from pendingRetries")
+	_, exists = component.pendingRetries["pod-4"]
+	assert.False(t, exists, "pod-4 should be removed from pendingRetries")
+
+	// pod-1 and pod-3 should remain
+	assert.Len(t, component.admittedPods, 2)
+	_, exists = component.admittedPods["pod-1"]
+	assert.True(t, exists, "pod-1 should remain in admittedPods")
+	_, exists = component.admittedPods["pod-3"]
+	assert.True(t, exists, "pod-3 should remain in admittedPods")
+
+	// pod-1 and pod-3 warnings should remain
+	assert.Len(t, component.warnedPods, 2)
+	assert.True(t, component.warnedPods["pod-1"])
+	assert.True(t, component.warnedPods["pod-3"])
+}
+
+func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {
+	skipIfNoHAProxy(t)
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component, err := New(bus, logger)
+	require.NoError(t, err)
+	bus.Start()
+
+	// Start component so context is set
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error)
+	go func() {
+		done <- component.Start(ctx)
+	}()
+
+	// Wait for component to start
+	time.Sleep(testutil.StartupDelay)
+
+	// Ensure no pending retries
+	component.mu.Lock()
+	component.pendingRetries = make(map[string]*retryState)
+	component.mu.Unlock()
+
+	// Call handleRetryTimer - should return early
+	component.handleRetryTimer()
+
+	// Just verify it doesn't panic and returns
+	cancel()
+	<-done
+}
+
+func TestComponent_HandleRetryTimer_MissingRequirements(t *testing.T) {
+	skipIfNoHAProxy(t)
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component, err := New(bus, logger)
+	require.NoError(t, err)
+	bus.Start()
+
+	// Start component so context is set
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error)
+	go func() {
+		done <- component.Start(ctx)
+	}()
+
+	// Wait for component to start
+	time.Sleep(testutil.StartupDelay)
+
+	// Add pending retries but don't set credentials/port
+	component.mu.Lock()
+	component.pendingRetries["pod-1"] = &retryState{retryCount: 1, lastAttempt: time.Now()}
+	component.hasCredentials = false
+	component.hasDataplanePort = false
+	component.podStore = nil
+	component.mu.Unlock()
+
+	// Call handleRetryTimer - should log warning and return
+	component.handleRetryTimer()
+
+	// Just verify it doesn't panic and returns
+	cancel()
+	<-done
+}
+
+func TestComponent_ScheduleRetryTimerLocked_NoPendingRetries(t *testing.T) {
+	skipIfNoHAProxy(t)
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component, err := New(bus, logger)
+	require.NoError(t, err)
+	bus.Start()
+
+	// Ensure no pending retries
+	component.mu.Lock()
+	component.pendingRetries = make(map[string]*retryState)
+
+	// Call scheduleRetryTimerLocked - should return early without scheduling
+	component.scheduleRetryTimerLocked()
+
+	// Verify no timer was scheduled
+	component.retryTimerMu.Lock()
+	assert.Nil(t, component.retryTimer, "no timer should be scheduled when no pending retries")
+	component.retryTimerMu.Unlock()
+
+	component.mu.Unlock()
+}
+
+func TestComponent_ScheduleRetryTimerLocked_WithPendingRetries(t *testing.T) {
+	skipIfNoHAProxy(t)
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component, err := New(bus, logger)
+	require.NoError(t, err)
+	bus.Start()
+
+	// Add pending retries
+	component.mu.Lock()
+	component.pendingRetries["pod-1"] = &retryState{
+		retryCount:  1,
+		lastAttempt: time.Now(),
+	}
+
+	// Call scheduleRetryTimerLocked
+	component.scheduleRetryTimerLocked()
+
+	// Verify timer was scheduled
+	component.retryTimerMu.Lock()
+	assert.NotNil(t, component.retryTimer, "timer should be scheduled when pending retries exist")
+	component.retryTimer.Stop() // Clean up
+	component.retryTimerMu.Unlock()
+
+	component.mu.Unlock()
 }

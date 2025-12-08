@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	ctlevents "haproxy-template-ic/pkg/controller/events"
 	busevents "haproxy-template-ic/pkg/events"
 )
 
@@ -241,4 +242,40 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 	// Should be able to find them
 	events := rb.FindByType("concurrent.test")
 	assert.NotNil(t, events)
+}
+
+func TestRingBuffer_FindByCorrelationID(t *testing.T) {
+	rb := NewRingBuffer(10)
+
+	// Add events with correlation using real controller events
+	event1 := ctlevents.NewReconciliationTriggeredEvent("test", ctlevents.WithNewCorrelation())
+	correlationID := event1.CorrelationID()
+	rb.Add(event1)
+
+	// Add event with same correlation
+	event2 := ctlevents.NewReconciliationStartedEvent("test", ctlevents.WithCorrelation(correlationID, event1.EventID()))
+	rb.Add(event2)
+
+	// Add event with different correlation
+	event3 := ctlevents.NewReconciliationTriggeredEvent("other", ctlevents.WithNewCorrelation())
+	rb.Add(event3)
+
+	// Add non-correlated event (mockEvent doesn't implement CorrelatedEvent)
+	rb.Add(mockEvent{eventType: "test", timestamp: time.Now()})
+
+	// Find by correlation ID
+	found := rb.FindByCorrelationID(correlationID, 0) // 0 means no limit
+	assert.Len(t, found, 2)
+
+	// Find with max count = 1
+	found = rb.FindByCorrelationID(correlationID, 1)
+	assert.Len(t, found, 1)
+
+	// Find with empty correlation ID returns nil
+	found = rb.FindByCorrelationID("", 10)
+	assert.Nil(t, found)
+
+	// Find with non-existent correlation ID returns empty
+	found = rb.FindByCorrelationID("non-existent", 10)
+	assert.Empty(t, found)
 }
