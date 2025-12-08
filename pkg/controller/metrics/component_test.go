@@ -341,3 +341,164 @@ func TestComponent_HighEventVolume(t *testing.T) {
 
 	cancel()
 }
+
+func TestComponent_Metrics(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+	eventBus := pkgevents.NewEventBus(100)
+
+	component := NewComponent(metrics, eventBus)
+
+	// Test that Metrics() returns the same instance
+	got := component.Metrics()
+	assert.Same(t, metrics, got)
+}
+
+func TestComponent_ValidationTestsEvents(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+	eventBus := pkgevents.NewEventBus(100)
+
+	component := NewComponent(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go component.Start(ctx)
+	time.Sleep(10 * time.Millisecond)
+	eventBus.Start()
+
+	// Publish validation tests completed event
+	eventBus.Publish(events.NewValidationTestsCompletedEvent(10, 8, 2, 1500))
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify metrics updated
+	assert.Equal(t, 10.0, testutil.ToFloat64(metrics.ValidationTestsTotal))
+	assert.Equal(t, 8.0, testutil.ToFloat64(metrics.ValidationTestsPassTotal))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTestsFailTotal))
+
+	cancel()
+}
+
+func TestComponent_LeaderElectionEvents(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+	eventBus := pkgevents.NewEventBus(100)
+
+	component := NewComponent(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go component.Start(ctx)
+	time.Sleep(10 * time.Millisecond)
+	eventBus.Start()
+
+	// Initially not leader
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
+
+	// Publish BecameLeaderEvent
+	eventBus.Publish(events.NewBecameLeaderEvent("pod-1"))
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify leader metrics updated
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
+
+	// Wait a bit to accumulate time as leader
+	time.Sleep(100 * time.Millisecond)
+
+	// Publish LostLeadershipEvent
+	eventBus.Publish(events.NewLostLeadershipEvent("pod-1", "context cancelled"))
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify leader metrics updated
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
+
+	// Verify time as leader was recorded (should be > 0)
+	timeAsLeader := testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds)
+	assert.Greater(t, timeAsLeader, 0.0, "time as leader should be recorded")
+
+	cancel()
+}
+
+func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+	eventBus := pkgevents.NewEventBus(100)
+
+	component := NewComponent(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go component.Start(ctx)
+	time.Sleep(10 * time.Millisecond)
+	eventBus.Start()
+
+	// Publish LostLeadershipEvent without ever becoming leader
+	// This tests the edge case where becameLeaderAt is zero
+	eventBus.Publish(events.NewLostLeadershipEvent("pod-1", "context cancelled"))
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify metrics - should still record the transition
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.LeaderElectionTransitionsTotal))
+
+	// Time as leader should remain 0 since we never became leader
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds))
+
+	cancel()
+}
+
+func TestComponent_InitialSyncSkipped(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := New(registry)
+	eventBus := pkgevents.NewEventBus(100)
+
+	component := NewComponent(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go component.Start(ctx)
+	time.Sleep(10 * time.Millisecond)
+	eventBus.Start()
+
+	// Initialize counts first
+	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
+		"ingresses": 10,
+	}))
+
+	time.Sleep(100 * time.Millisecond)
+
+	ingresses, err := metrics.ResourceCount.GetMetricWithLabelValues("ingresses")
+	require.NoError(t, err)
+	assert.Equal(t, 10.0, testutil.ToFloat64(ingresses))
+
+	// Publish resource index updated event with IsInitialSync=true
+	// This should be skipped and not modify the count
+	eventBus.Publish(events.NewResourceIndexUpdatedEvent(
+		"ingresses",
+		types.ChangeStats{
+			Created:       100, // Large number that should be ignored
+			Deleted:       0,
+			IsInitialSync: true,
+		},
+	))
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Count should remain unchanged
+	ingresses, err = metrics.ResourceCount.GetMetricWithLabelValues("ingresses")
+	require.NoError(t, err)
+	assert.Equal(t, 10.0, testutil.ToFloat64(ingresses))
+
+	cancel()
+}

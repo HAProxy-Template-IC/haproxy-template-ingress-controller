@@ -282,8 +282,9 @@ assert_auth_required() {
     debug "Testing auth requirement: $description"
 
     # Retry logic for flaky CI environments
-    # HAProxy reload can cause brief period where old process handles requests
-    # with stale map files, resulting in 404 instead of 401
+    # HAProxy reload can cause brief periods where old process handles requests:
+    # - 404: stale map files causing route not found
+    # - 200: old worker without auth rules serving the request
     local max_retries=5
     local retry_delay=2
     local attempt=1
@@ -295,11 +296,12 @@ assert_auth_required() {
         if [[ "$response_code" == "401" ]]; then
             ok "$description - Auth required (401)"
             return 0
-        elif [[ "$response_code" == "404" ]]; then
-            # 404 likely means HAProxy reload race condition - retry
-            debug "  Attempt $attempt/$max_retries: Got 404 (HAProxy reload race), retrying..."
+        elif [[ "$response_code" == "404" || "$response_code" == "200" ]]; then
+            # 404: HAProxy reload race with stale map files
+            # 200: old worker without auth rules handling request
+            debug "  Attempt $attempt/$max_retries: Got $response_code (HAProxy reload race), retrying..."
         else
-            # Other codes (200, 500, etc.) are real failures
+            # Other codes (500, etc.) are real failures
             break
         fi
 
@@ -318,22 +320,39 @@ assert_auth_success() {
     local host="$2"
     local username="$3"
     local password="$4"
+    local max_retries=3
 
     debug "Testing auth success: $description"
 
     local response
-    if ! response=$(curl -s --max-time 5 -u "$username:$password" -H "Host: $host" "${BASE_URL}/" 2>&1); then
-        err "$description - Connection failed"
-        return 1
-    fi
+    local attempt
+    for attempt in $(seq 1 $max_retries); do
+        if ! response=$(curl -s --max-time 5 -u "$username:$password" -H "Host: $host" "${BASE_URL}/" 2>&1); then
+            debug "Connection failed (attempt $attempt/$max_retries)"
+            if [[ $attempt -lt $max_retries ]]; then
+                sleep 1
+                continue
+            fi
+            err "$description - Connection failed"
+            return 1
+        fi
 
-    if [[ "$response" == *'"http":'* ]]; then
-        ok "$description - Auth successful with $username:$password"
-    else
-        err "$description - Auth failed"
-        echo "  Received: ${response:0:500}"
-        return 1
-    fi
+        if [[ "$response" == *'"http":'* ]]; then
+            ok "$description - Auth successful with $username:$password"
+            return 0
+        fi
+
+        # Retry on empty or unexpected response (may hit old worker during reload)
+        debug "Unexpected response (attempt $attempt/$max_retries): ${response:0:200}"
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep 1
+            continue
+        fi
+    done
+
+    err "$description - Auth failed"
+    echo "  Received: ${response:0:500}"
+    return 1
 }
 
 assert_cors_headers() {

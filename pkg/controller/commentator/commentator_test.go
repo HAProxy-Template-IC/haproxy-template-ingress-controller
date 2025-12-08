@@ -25,6 +25,7 @@ import (
 
 	"haproxy-template-ic/pkg/controller/events"
 	busevents "haproxy-template-ic/pkg/events"
+	"haproxy-template-ic/pkg/k8s/types"
 )
 
 func TestNewEventCommentator(t *testing.T) {
@@ -583,6 +584,384 @@ func TestEventCommentator_EventCorrelation(t *testing.T) {
 	assert.Contains(t, insight, "Configuration validated")
 }
 
+func TestEventCommentator_GenerateInsight_IndexEvents(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("IndexSynchronizedEvent", func(t *testing.T) {
+		resourceCounts := map[string]int{
+			"services":  5,
+			"ingresses": 10,
+		}
+		event := events.NewIndexSynchronizedEvent(resourceCounts)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "synchronized")
+		assert.Contains(t, insight, "15 resources")
+		assert.Contains(t, insight, "2 types")
+		assertContainsAttr(t, attrs, "resource_types", 2)
+		assertContainsAttr(t, attrs, "total_resources", 15)
+	})
+
+	t.Run("ResourceIndexUpdatedEvent", func(t *testing.T) {
+		changeStats := types.ChangeStats{
+			Created:       2,
+			Modified:      1,
+			Deleted:       0,
+			IsInitialSync: false,
+		}
+		event := events.NewResourceIndexUpdatedEvent("services", changeStats)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Resource index updated")
+		assert.Contains(t, insight, "services")
+		assertContainsAttr(t, attrs, "resource_type", "services")
+	})
+
+	t.Run("ResourceIndexUpdatedEvent during initial sync", func(t *testing.T) {
+		changeStats := types.ChangeStats{
+			Created:       5,
+			Modified:      0,
+			Deleted:       0,
+			IsInitialSync: true,
+		}
+		event := events.NewResourceIndexUpdatedEvent("ingresses", changeStats)
+
+		insight, _ := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "loading")
+	})
+
+	t.Run("ResourceSyncCompleteEvent", func(t *testing.T) {
+		event := events.NewResourceSyncCompleteEvent("services", 25)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Initial sync complete")
+		assert.Contains(t, insight, "services")
+		assert.Contains(t, insight, "25 resources")
+		assertContainsAttr(t, attrs, "resource_type", "services")
+		assertContainsAttr(t, attrs, "initial_count", 25)
+	})
+}
+
+func TestEventCommentator_GenerateInsight_ValidationEvents(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("ConfigValidationRequest", func(t *testing.T) {
+		event := events.NewConfigValidationRequest(nil, "v1.0.0")
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Configuration validation started")
+		assertContainsAttr(t, attrs, "version", "v1.0.0")
+	})
+
+	t.Run("ConfigValidationResponse valid", func(t *testing.T) {
+		response := events.NewConfigValidationResponse(
+			"req-123",
+			"template",
+			true,
+			nil,
+		)
+
+		insight, attrs := ec.generateInsight(response)
+
+		assert.Contains(t, insight, "Validator")
+		assert.Contains(t, insight, "template")
+		assertContainsAttr(t, attrs, "validator", "template")
+		assertContainsAttr(t, attrs, "valid", true)
+	})
+
+	t.Run("ConfigValidationResponse invalid", func(t *testing.T) {
+		response := events.NewConfigValidationResponse(
+			"req-123",
+			"basic",
+			false,
+			[]string{"field required"},
+		)
+
+		insight, attrs := ec.generateInsight(response)
+
+		assert.Contains(t, insight, "Validator")
+		assert.Contains(t, insight, "basic")
+		assert.Contains(t, insight, "FAILED")
+		assertContainsAttr(t, attrs, "valid", false)
+		assertContainsAttr(t, attrs, "error_count", 1)
+	})
+}
+
+func TestEventCommentator_GenerateInsight_CertEvents(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("CertResourceChangedEvent", func(t *testing.T) {
+		// The event takes an interface{} representing the resource
+		event := events.NewCertResourceChangedEvent("cert-secret")
+
+		insight, _ := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "certificate Secret changed")
+	})
+
+	t.Run("CertParsedEvent", func(t *testing.T) {
+		// Signature: (certPEM, keyPEM []byte, version string)
+		event := events.NewCertParsedEvent([]byte("cert-data"), []byte("key-data"), "v1.0.0")
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "certificates parsed")
+		assert.Contains(t, insight, "v1.0.0")
+		assertContainsAttr(t, attrs, "version", "v1.0.0")
+	})
+}
+
+func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("ValidationStartedEvent", func(t *testing.T) {
+		event := events.NewValidationStartedEvent()
+
+		insight, _ := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "validation started")
+	})
+
+	t.Run("ValidationCompletedEvent without warnings", func(t *testing.T) {
+		event := events.NewValidationCompletedEvent(nil, 150)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "validation succeeded")
+		assert.Contains(t, insight, "150ms")
+		assertContainsAttr(t, attrs, "duration_ms", int64(150))
+	})
+
+	t.Run("ValidationCompletedEvent with warnings", func(t *testing.T) {
+		event := events.NewValidationCompletedEvent([]string{"warning1", "warning2"}, 200)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "validation succeeded")
+		assert.Contains(t, insight, "2 warnings")
+		assertContainsAttr(t, attrs, "warnings", 2)
+	})
+
+	t.Run("ValidationFailedEvent", func(t *testing.T) {
+		event := events.NewValidationFailedEvent([]string{"error1", "error2", "error3"}, 100)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "validation failed")
+		assert.Contains(t, insight, "3 errors")
+		assertContainsAttr(t, attrs, "error_count", 3)
+	})
+
+	t.Run("ValidationTestsStartedEvent", func(t *testing.T) {
+		event := events.NewValidationTestsStartedEvent(5)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Starting validation tests")
+		assert.Contains(t, insight, "5 tests")
+		assertContainsAttr(t, attrs, "test_count", 5)
+	})
+
+	t.Run("ValidationTestsCompletedEvent", func(t *testing.T) {
+		event := events.NewValidationTestsCompletedEvent(10, 8, 2, 500)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Validation tests completed")
+		assert.Contains(t, insight, "8 passed")
+		assert.Contains(t, insight, "2 failed")
+		assertContainsAttr(t, attrs, "total_tests", 10)
+	})
+
+	t.Run("ValidationTestsFailedEvent", func(t *testing.T) {
+		event := events.NewValidationTestsFailedEvent([]string{"test1", "test2"})
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Validation tests failed")
+		assert.Contains(t, insight, "2 tests")
+		assertContainsAttr(t, attrs, "failed_count", 2)
+	})
+}
+
+func TestEventCommentator_GenerateInsight_StorageEvents(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("StorageSyncStartedEvent", func(t *testing.T) {
+		endpoints := []interface{}{"pod1", "pod2"}
+		event := events.NewStorageSyncStartedEvent("maps", endpoints)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Auxiliary file sync started")
+		assert.Contains(t, insight, "maps phase")
+		assert.Contains(t, insight, "2 instances")
+		assertContainsAttr(t, attrs, "phase", "maps")
+	})
+
+	t.Run("StorageSyncCompletedEvent", func(t *testing.T) {
+		event := events.NewStorageSyncCompletedEvent("maps", nil, 300)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Auxiliary file sync completed")
+		assert.Contains(t, insight, "maps phase")
+		assertContainsAttr(t, attrs, "duration_ms", int64(300))
+	})
+
+	t.Run("StorageSyncFailedEvent", func(t *testing.T) {
+		event := events.NewStorageSyncFailedEvent("maps", "connection refused")
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Auxiliary file sync failed")
+		assert.Contains(t, insight, "maps phase")
+		assert.Contains(t, insight, "connection refused")
+		assertContainsAttr(t, attrs, "error", "connection refused")
+	})
+}
+
+func TestEventCommentator_GenerateInsight_HAProxyPodEvents(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("HAProxyPodsDiscoveredEvent", func(t *testing.T) {
+		endpoints := []interface{}{"pod1", "pod2", "pod3"}
+		event := events.NewHAProxyPodsDiscoveredEvent(endpoints, 3)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "HAProxy pods discovered")
+		assert.Contains(t, insight, "3 instances")
+		assertContainsAttr(t, attrs, "count", 3)
+	})
+
+	t.Run("HAProxyPodAddedEvent", func(t *testing.T) {
+		event := events.NewHAProxyPodAddedEvent("pod-123")
+
+		insight, _ := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "HAProxy pod added")
+	})
+
+	t.Run("HAProxyPodRemovedEvent", func(t *testing.T) {
+		event := events.NewHAProxyPodRemovedEvent("pod-123")
+
+		insight, _ := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "HAProxy pod removed")
+	})
+
+	t.Run("HAProxyPodTerminatedEvent", func(t *testing.T) {
+		event := events.NewHAProxyPodTerminatedEvent("haproxy-123", "haproxy-system")
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "HAProxy pod terminated")
+		assert.Contains(t, insight, "haproxy-system/haproxy-123")
+		assertContainsAttr(t, attrs, "pod_name", "haproxy-123")
+	})
+}
+
+func TestEventCommentator_GenerateInsight_WebhookObservabilityEvents(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("WebhookValidationRequestEvent", func(t *testing.T) {
+		event := events.NewWebhookValidationRequestEvent("uid-123", "Ingress", "my-ingress", "default", "CREATE")
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Webhook validation request")
+		assert.Contains(t, insight, "CREATE")
+		assert.Contains(t, insight, "Ingress")
+		assertContainsAttr(t, attrs, "operation", "CREATE")
+	})
+
+	t.Run("WebhookValidationRequestEvent without namespace", func(t *testing.T) {
+		event := events.NewWebhookValidationRequestEvent("uid-123", "ClusterRole", "my-role", "", "UPDATE")
+
+		insight, _ := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Webhook validation request")
+		assert.Contains(t, insight, "my-role")
+	})
+
+	t.Run("WebhookValidationAllowedEvent", func(t *testing.T) {
+		event := events.NewWebhookValidationAllowedEvent("uid-123", "Ingress", "my-ingress", "default")
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Webhook validation allowed")
+		assert.Contains(t, insight, "Ingress")
+		assertContainsAttr(t, attrs, "kind", "Ingress")
+	})
+
+	t.Run("WebhookValidationDeniedEvent", func(t *testing.T) {
+		event := events.NewWebhookValidationDeniedEvent("uid-123", "Ingress", "my-ingress", "default", "invalid backend")
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Webhook validation denied")
+		assert.Contains(t, insight, "invalid backend")
+		assertContainsAttr(t, attrs, "reason", "invalid backend")
+	})
+
+	t.Run("WebhookValidationDeniedEvent without namespace", func(t *testing.T) {
+		event := events.NewWebhookValidationDeniedEvent("uid-123", "ClusterRole", "my-role", "", "forbidden")
+
+		insight, _ := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Webhook validation denied")
+		assert.Contains(t, insight, "my-role")
+	})
+
+	t.Run("WebhookValidationErrorEvent", func(t *testing.T) {
+		event := events.NewWebhookValidationErrorEvent("uid-123", "Ingress", "internal error")
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Webhook validation error")
+		assert.Contains(t, insight, "internal error")
+		assertContainsAttr(t, attrs, "error", "internal error")
+	})
+}
+
+func TestEventCommentator_GenerateInsight_CredentialsEvents(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	t.Run("CredentialsInvalidEvent falls through to default", func(t *testing.T) {
+		// CredentialsInvalidEvent is not explicitly handled, falls through to default case
+		event := events.NewCredentialsInvalidEvent("v1.0.0", "missing password field")
+
+		insight, attrs := ec.generateInsight(event)
+
+		// Default case just returns "Event: {event_type}"
+		assert.Contains(t, insight, "Event:")
+		assert.Contains(t, insight, events.EventTypeCredentialsInvalid)
+		assertContainsAttr(t, attrs, "event_type", events.EventTypeCredentialsInvalid)
+	})
+}
+
 func TestEventCommentator_ReconciliationCorrelation(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.Default()
@@ -670,4 +1049,80 @@ func TestEventCommentator_AppendCorrelation(t *testing.T) {
 		// Verify attrs unchanged
 		assert.Len(t, result, 2)
 	})
+}
+
+func TestEventCommentator_Name(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	assert.Equal(t, ComponentName, ec.Name())
+	assert.Equal(t, "commentator", ec.Name())
+}
+
+func TestEventCommentator_FindByCorrelationID(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	// Add events with correlation
+	event1 := events.NewReconciliationTriggeredEvent("test", events.WithNewCorrelation())
+	correlationID := event1.CorrelationID()
+	ec.ringBuffer.Add(event1)
+
+	// Add event with same correlation (would be in same cycle)
+	event2 := events.NewReconciliationStartedEvent("test", events.WithCorrelation(correlationID, event1.EventID()))
+	ec.ringBuffer.Add(event2)
+
+	// Add event with different correlation
+	event3 := events.NewReconciliationTriggeredEvent("other", events.WithNewCorrelation())
+	ec.ringBuffer.Add(event3)
+
+	// Find by correlation ID
+	found := ec.FindByCorrelationID(correlationID, 10)
+	assert.Len(t, found, 2)
+
+	// Find with max count = 1
+	found = ec.FindByCorrelationID(correlationID, 1)
+	assert.Len(t, found, 1)
+
+	// Find with empty correlation ID
+	found = ec.FindByCorrelationID("", 10)
+	assert.Nil(t, found)
+
+	// Find with non-existent correlation ID
+	found = ec.FindByCorrelationID("non-existent", 10)
+	assert.Empty(t, found)
+}
+
+func TestEventCommentator_FindRecent(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	logger := slog.Default()
+	ec := NewEventCommentator(bus, logger, 100)
+
+	// Add some events
+	event1 := events.NewControllerStartedEvent("v1", "s1")
+	event2 := events.NewConfigParsedEvent(nil, nil, "v1", "s1")
+	event3 := events.NewConfigValidatedEvent(nil, nil, "v1", "s1")
+
+	ec.ringBuffer.Add(event1)
+	time.Sleep(10 * time.Millisecond)
+	ec.ringBuffer.Add(event2)
+	time.Sleep(10 * time.Millisecond)
+	ec.ringBuffer.Add(event3)
+
+	// Find 2 most recent
+	found := ec.FindRecent(2)
+	assert.Len(t, found, 2)
+	// Newest first
+	assert.Equal(t, events.EventTypeConfigValidated, found[0].EventType())
+	assert.Equal(t, events.EventTypeConfigParsed, found[1].EventType())
+
+	// Find more than available
+	found = ec.FindRecent(10)
+	assert.Len(t, found, 3)
+
+	// Find 0
+	found = ec.FindRecent(0)
+	assert.Empty(t, found)
 }

@@ -427,6 +427,67 @@ func TestDetermineNamespace(t *testing.T) {
 	}
 }
 
+// TestStart_EmptyWatchers verifies Start behavior with no watchers configured.
+func TestStart_EmptyWatchers(t *testing.T) {
+	rwc := &ResourceWatcherComponent{
+		watchers: map[string]*watcher.Watcher{},
+		stores:   map[string]types.Store{},
+		synced:   make(map[string]bool),
+		logger:   slog.Default(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// Start should return after context cancellation
+	done := make(chan error, 1)
+	go func() {
+		done <- rwc.Start(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(1 * time.Second):
+		t.Fatal("Start() did not return after context cancellation")
+	}
+}
+
+// TestWaitForAllSync_EmptyWatchers verifies WaitForAllSync with no watchers.
+func TestWaitForAllSync_EmptyWatchers(t *testing.T) {
+	rwc := &ResourceWatcherComponent{
+		watchers: map[string]*watcher.Watcher{},
+		stores:   map[string]types.Store{},
+		synced:   make(map[string]bool),
+		logger:   slog.Default(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// With no watchers, WaitForAllSync should return immediately
+	err := rwc.WaitForAllSync(ctx)
+	require.NoError(t, err)
+}
+
+// TestWaitForAllSync_ContextCancelled verifies WaitForAllSync respects context cancellation.
+func TestWaitForAllSync_ContextCancelled(t *testing.T) {
+	rwc := &ResourceWatcherComponent{
+		watchers: map[string]*watcher.Watcher{},
+		stores:   map[string]types.Store{},
+		synced:   make(map[string]bool),
+		logger:   slog.Default(),
+	}
+
+	// Create already-cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Should return immediately without error (no watchers to wait for)
+	err := rwc.WaitForAllSync(ctx)
+	require.NoError(t, err)
+}
+
 func TestNew_NilParameters(t *testing.T) {
 	cfg := &coreconfig.Config{}
 	bus := busevents.NewEventBus(10)

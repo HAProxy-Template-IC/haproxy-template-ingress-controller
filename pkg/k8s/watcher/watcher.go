@@ -403,10 +403,16 @@ func (w *Watcher) WaitForSync(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("failed to sync cache")
 	}
 
-	// Get initial count
-	w.syncMu.RLock()
+	// Mark sync as complete if not already done by Start()
+	// This prevents race conditions when WaitForSync completes before Start()
+	// has finished its post-sync work
+	w.syncMu.Lock()
+	if !w.synced {
+		w.synced = true
+		w.initialCount = w.debouncer.GetInitialCount()
+	}
 	count := w.initialCount
-	w.syncMu.RUnlock()
+	w.syncMu.Unlock()
 
 	return count, nil
 }

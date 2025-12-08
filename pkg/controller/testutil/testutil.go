@@ -358,3 +358,23 @@ func CreateTestConfigMap(name, namespace, resourceVersion string, data map[strin
 
 	return cm
 }
+
+// ValidHAProxyConfigTemplate is a minimal valid HAProxy configuration template
+// that passes HAProxy syntax validation. Use this in tests that need to render
+// and validate HAProxy configurations.
+const ValidHAProxyConfigTemplate = `global
+    log stdout format raw local0
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 50s
+    timeout server 50s
+
+frontend test_frontend
+    bind *:8080
+    default_backend test_backend
+
+backend test_backend
+    server test_server 127.0.0.1:8081
+`
