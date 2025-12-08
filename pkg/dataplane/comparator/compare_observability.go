@@ -63,52 +63,55 @@ func (c *Comparator) updateLogTargetOperation(parentType, parentName string, cur
 
 // compareLogForwards compares log-forward sections between current and desired configurations.
 func (c *Comparator) compareLogForwards(current, desired *parser.StructuredConfig) []Operation {
+	return compareNamedSections(
+		current.LogForwards,
+		desired.LogForwards,
+		func(lf *models.LogForward) string { return lf.Name },
+		func(l1, l2 *models.LogForward) bool { return l1.Equal(*l2) },
+		func(lf *models.LogForward) Operation { return sections.NewLogForwardCreate(lf) },
+		func(lf *models.LogForward) Operation { return sections.NewLogForwardDelete(lf) },
+		func(lf *models.LogForward) Operation { return sections.NewLogForwardUpdate(lf) },
+	)
+}
+
+// compareLogProfiles compares log-profile sections between current and desired configurations.
+// Log profiles are only available in HAProxy DataPlane API v3.1+.
+func (c *Comparator) compareLogProfiles(current, desired *parser.StructuredConfig) []Operation {
+	return compareNamedSections(
+		current.LogProfiles,
+		desired.LogProfiles,
+		func(lp *models.LogProfile) string { return lp.Name },
+		func(l1, l2 *models.LogProfile) bool { return l1.Equal(*l2) },
+		func(lp *models.LogProfile) Operation { return sections.NewLogProfileCreate(lp) },
+		func(lp *models.LogProfile) Operation { return sections.NewLogProfileDelete(lp) },
+		func(lp *models.LogProfile) Operation { return sections.NewLogProfileUpdate(lp) },
+	)
+}
+
+// compareTraces compares the traces section between current and desired configurations.
+// The traces section is a singleton - it can only be updated, not created or deleted separately.
+// Traces configuration is only available in HAProxy DataPlane API v3.1+.
+func (c *Comparator) compareTraces(current, desired *parser.StructuredConfig) []Operation {
 	var operations []Operation
 
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.LogForward)
-	for i := range current.LogForwards {
-		logForward := current.LogForwards[i]
-		if logForward.Name != "" {
-			currentMap[logForward.Name] = logForward
-		}
+	// If desired has no traces but current does, we still don't generate a delete
+	// because traces is a singleton that's always present (or not supported).
+	// If neither has traces, nothing to do.
+	if desired.Traces == nil {
+		return operations
 	}
 
-	desiredMap := make(map[string]*models.LogForward)
-	for i := range desired.LogForwards {
-		logForward := desired.LogForwards[i]
-		if logForward.Name != "" {
-			desiredMap[logForward.Name] = logForward
-		}
+	// If current is nil but desired has traces, treat as an update
+	// (the API will create/replace the traces section)
+	if current.Traces == nil {
+		operations = append(operations, sections.NewTracesUpdate(desired.Traces))
+		return operations
 	}
 
-	// Find added log-forward sections
-	for name, logForward := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			operations = append(operations, sections.NewLogForwardCreate(logForward))
-		}
-	}
-
-	// Find deleted log-forward sections
-	for name, logForward := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewLogForwardDelete(logForward))
-		}
-	}
-
-	// Find modified log-forward sections
-	for name, desiredLogForward := range desiredMap {
-		if currentLogForward, exists := currentMap[name]; exists {
-			if !logForwardEqual(currentLogForward, desiredLogForward) {
-				operations = append(operations, sections.NewLogForwardUpdate(desiredLogForward))
-			}
-		}
+	// Compare using built-in Equal() method
+	if !current.Traces.Equal(*desired.Traces) {
+		operations = append(operations, sections.NewTracesUpdate(desired.Traces))
 	}
 
 	return operations
-}
-
-// logForwardEqual compares two log-forward sections for equality.
-func logForwardEqual(l1, l2 *models.LogForward) bool {
-	return l1.Equal(*l2)
 }

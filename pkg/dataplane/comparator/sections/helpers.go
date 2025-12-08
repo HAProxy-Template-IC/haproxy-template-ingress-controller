@@ -158,6 +158,12 @@ func PeerEntryName(p *models.PeerEntry) string { return p.Name }
 // NameserverName extracts the name from a Nameserver model.
 func NameserverName(n *models.Nameserver) string { return n.Name }
 
+// LogProfileName extracts the name from a LogProfile model.
+func LogProfileName(l *models.LogProfile) string { return l.Name }
+
+// AcmeProviderName extracts the name from an AcmeProvider model.
+func AcmeProviderName(a *models.AcmeProvider) string { return a.Name }
+
 // =============================================================================
 // Nil Transform Functions (for delete operations)
 // =============================================================================
@@ -268,6 +274,12 @@ func NilLogTarget(_ *models.LogTarget) *models.LogTarget { return nil }
 
 // NilCapture returns nil, used for delete operations where model isn't needed.
 func NilCapture(_ *models.Capture) *models.Capture { return nil }
+
+// NilLogProfile returns nil, used for delete operations where model isn't needed.
+func NilLogProfile(_ *models.LogProfile) *models.LogProfile { return nil }
+
+// NilAcmeProvider returns nil, used for delete operations where model isn't needed.
+func NilAcmeProvider(_ *models.AcmeProvider) *models.AcmeProvider { return nil }
 
 // =============================================================================
 // Identity Transform Functions (for direct model passthrough)
@@ -386,3 +398,18 @@ func IdentityLogTarget(l *models.LogTarget) *models.LogTarget { return l }
 
 // IdentityCapture returns the model as-is.
 func IdentityCapture(c *models.Capture) *models.Capture { return c }
+
+// IdentityLogProfile returns the model as-is.
+func IdentityLogProfile(l *models.LogProfile) *models.LogProfile { return l }
+
+// IdentityTraces returns the model as-is.
+func IdentityTraces(t *models.Traces) *models.Traces { return t }
+
+// IdentityAcmeProvider returns the model as-is.
+func IdentityAcmeProvider(a *models.AcmeProvider) *models.AcmeProvider { return a }
+
+// NilQUICInitialRule returns nil, used for delete operations where model isn't needed.
+func NilQUICInitialRule(_ *models.QUICInitialRule) *models.QUICInitialRule { return nil }
+
+// IdentityQUICInitialRule returns the model as-is.
+func IdentityQUICInitialRule(r *models.QUICInitialRule) *models.QUICInitialRule { return r }

@@ -42,6 +42,13 @@ const (
 	PriorityCache    = 15
 	PriorityResolver = 15
 
+	// Priority 15 - Observability sections (v3.1+ features).
+	PriorityLogProfile = 15
+	PriorityTraces     = 15
+
+	// Priority 15 - Certificate automation sections (v3.2+ features).
+	PriorityAcmeProvider = 15
+
 	// Priority 20-25 - HTTP errors and other mid-level.
 	PriorityHTTPErrors = 25
 
@@ -70,6 +77,7 @@ const (
 	PriorityLogTarget            = 60
 	PriorityTCPCheck             = 60
 	PriorityFilter               = 60
+	PriorityQUICInitialRule      = 60 // v3.1+ only
 )
 
 // ExecuteTopLevelFunc is the function signature for top-level resource operations.

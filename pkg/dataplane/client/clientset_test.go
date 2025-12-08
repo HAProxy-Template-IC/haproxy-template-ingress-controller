@@ -120,6 +120,8 @@ func TestBuildCapabilities(t *testing.T) {
 				SupportsGeneralStorage: true,
 				SupportsHTTP2:          true,
 				SupportsQUIC:           true,
+				SupportsLogProfiles:    true, // v3.1+ has log_profiles
+				SupportsTraces:         true, // v3.1+ has traces
 				SupportsRuntimeMaps:    true,
 				SupportsRuntimeServers: true,
 			},
@@ -133,8 +135,12 @@ func TestBuildCapabilities(t *testing.T) {
 				SupportsCrtList:        true, // Only v3.2+ has /storage/ssl_crt_lists
 				SupportsMapStorage:     true,
 				SupportsGeneralStorage: true,
+				SupportsSslCaFiles:     true, // v3.2+ has /runtime/ssl_ca_files
+				SupportsSslCrlFiles:    true, // v3.2+ has /runtime/ssl_crl_files
 				SupportsHTTP2:          true,
 				SupportsQUIC:           true,
+				SupportsLogProfiles:    true, // v3.1+ has log_profiles
+				SupportsTraces:         true, // v3.1+ has traces
 				SupportsRuntimeMaps:    true,
 				SupportsRuntimeServers: true,
 			},
@@ -175,8 +181,12 @@ func TestBuildCapabilities(t *testing.T) {
 				SupportsCrtList:                   true, // v3.2+ has CRT-list
 				SupportsMapStorage:                true,
 				SupportsGeneralStorage:            true,
+				SupportsSslCaFiles:                true, // v3.2+ has /runtime/ssl_ca_files
+				SupportsSslCrlFiles:               true, // v3.2+ has /runtime/ssl_crl_files
 				SupportsHTTP2:                     true,
 				SupportsQUIC:                      true,
+				SupportsLogProfiles:               true, // v3.1+ has log_profiles
+				SupportsTraces:                    true, // v3.1+ has traces
 				SupportsRuntimeMaps:               true,
 				SupportsRuntimeServers:            true,
 				SupportsWAF:                       true,

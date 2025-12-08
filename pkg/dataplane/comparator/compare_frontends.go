@@ -94,6 +94,10 @@ func (c *Comparator) compareAddedFrontends(desiredFrontends, currentFrontends ma
 		logTargetOps := c.compareLogTargets(parentTypeFrontend, name, emptyFrontend.LogTargetList, frontend.LogTargetList)
 		operations = append(operations, logTargetOps...)
 
+		// Compare QUIC initial rules (v3.1+ only)
+		quicInitialRuleOps := c.compareQUICInitialRules(parentTypeFrontend, name, emptyFrontend.QUICInitialRuleList, frontend.QUICInitialRuleList)
+		operations = append(operations, quicInitialRuleOps...)
+
 		// Compare binds
 		emptyBinds := make(map[string]models.Bind)
 		bindOps := c.compareBinds(name, emptyBinds, frontend.Binds)
@@ -145,6 +149,10 @@ func (c *Comparator) compareModifiedFrontends(desiredFrontends, currentFrontends
 		// Compare log targets within this frontend
 		logTargetOps := c.compareLogTargets(parentTypeFrontend, name, currentFrontend.LogTargetList, desiredFrontend.LogTargetList)
 		appendOperationsIfNotEmpty(&operations, logTargetOps, &frontendModified)
+
+		// Compare QUIC initial rules within this frontend (v3.1+ only)
+		quicInitialRuleOps := c.compareQUICInitialRules(parentTypeFrontend, name, currentFrontend.QUICInitialRuleList, desiredFrontend.QUICInitialRuleList)
+		appendOperationsIfNotEmpty(&operations, quicInitialRuleOps, &frontendModified)
 
 		// Compare binds within this frontend
 		bindOps := c.compareBinds(name, currentFrontend.Binds, desiredFrontend.Binds)

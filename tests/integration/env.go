@@ -401,6 +401,50 @@ func skipIfPingNotSupported(t *testing.T, env fixenv.Env) {
 	}
 }
 
+// skipIfLogProfilesNotSupported skips the test if log profiles are not supported.
+// Log profiles require DataPlane API v3.1+.
+func skipIfLogProfilesNotSupported(t *testing.T, env fixenv.Env) {
+	t.Helper()
+	dataplaneClient := TestDataplaneClient(env)
+	if !dataplaneClient.Capabilities().SupportsLogProfiles {
+		t.Skipf("Skipping test: log profiles require DataPlane API v3.1+ (detected version: %s)",
+			dataplaneClient.DetectedVersion())
+	}
+}
+
+// skipIfTracesNotSupported skips the test if traces section is not supported.
+// Traces require DataPlane API v3.1+.
+func skipIfTracesNotSupported(t *testing.T, env fixenv.Env) {
+	t.Helper()
+	dataplaneClient := TestDataplaneClient(env)
+	if !dataplaneClient.Capabilities().SupportsTraces {
+		t.Skipf("Skipping test: traces section requires DataPlane API v3.1+ (detected version: %s)",
+			dataplaneClient.DetectedVersion())
+	}
+}
+
+// skipIfQUICInitialRulesNotSupported skips the test if QUIC initial rules are not supported.
+// QUIC initial rules require DataPlane API v3.1+.
+func skipIfQUICInitialRulesNotSupported(t *testing.T, env fixenv.Env) {
+	t.Helper()
+	dataplaneClient := TestDataplaneClient(env)
+	if !dataplaneClient.Capabilities().SupportsQUICInitialRules {
+		t.Skipf("Skipping test: QUIC initial rules require DataPlane API v3.1+ (detected version: %s)",
+			dataplaneClient.DetectedVersion())
+	}
+}
+
+// skipIfAcmeProvidersNotSupported skips the test if ACME providers are not supported.
+// ACME providers require DataPlane API v3.2+.
+func skipIfAcmeProvidersNotSupported(t *testing.T, env fixenv.Env) {
+	t.Helper()
+	dataplaneClient := TestDataplaneClient(env)
+	if !dataplaneClient.Capabilities().SupportsAcmeProviders {
+		t.Skipf("Skipping test: ACME providers require DataPlane API v3.2+ (detected version: %s)",
+			dataplaneClient.DetectedVersion())
+	}
+}
+
 // =============================================================================
 // Transaction Helper
 // =============================================================================

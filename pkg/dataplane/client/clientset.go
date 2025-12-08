@@ -57,10 +57,20 @@ type Capabilities struct {
 	SupportsCrtList        bool // /v3/storage/ssl_crt_lists (v3.2+)
 	SupportsMapStorage     bool // /v3/storage/maps (v3.0+)
 	SupportsGeneralStorage bool // /v3/storage/general (v3.0+)
+	SupportsSslCaFiles     bool // /v3/runtime/ssl_ca_files (v3.2+)
+	SupportsSslCrlFiles    bool // /v3/runtime/ssl_crl_files (v3.2+)
 
 	// Configuration capabilities
-	SupportsHTTP2 bool // HTTP/2 configuration (v3.0+)
-	SupportsQUIC  bool // QUIC/HTTP3 configuration (v3.0+)
+	SupportsHTTP2            bool // HTTP/2 configuration (v3.0+)
+	SupportsQUIC             bool // QUIC/HTTP3 configuration (v3.0+)
+	SupportsQUICInitialRules bool // QUIC initial rules endpoints (v3.1+)
+
+	// Observability capabilities
+	SupportsLogProfiles bool // /v3/services/haproxy/configuration/log_profiles (v3.1+)
+	SupportsTraces      bool // /v3/services/haproxy/configuration/traces (v3.1+)
+
+	// Certificate automation capabilities
+	SupportsAcmeProviders bool // /v3/services/haproxy/configuration/acmes (v3.2+)
 
 	// Runtime capabilities
 	SupportsRuntimeMaps    bool // Runtime map operations (v3.0+)
@@ -446,9 +456,17 @@ func buildCapabilities(_, minor int, isEnterprise bool) Capabilities {
 		SupportsRuntimeServers: true,
 	}
 
+	// v3.1+ features (community)
+	if minor >= 1 {
+		caps.SupportsLogProfiles = true // log_profiles configuration added in v3.1
+		caps.SupportsTraces = true      // traces configuration added in v3.1
+	}
+
 	// v3.2+ features (community)
 	if minor >= 2 {
-		caps.SupportsCrtList = true // Only v3.2+ has /storage/ssl_crt_lists
+		caps.SupportsCrtList = true     // Only v3.2+ has /storage/ssl_crt_lists
+		caps.SupportsSslCaFiles = true  // Only v3.2+ has /runtime/ssl_ca_files
+		caps.SupportsSslCrlFiles = true // Only v3.2+ has /runtime/ssl_crl_files
 	}
 
 	// Enterprise-only features (available in all enterprise versions)

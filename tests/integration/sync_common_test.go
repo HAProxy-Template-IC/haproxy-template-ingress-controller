@@ -86,6 +86,11 @@ type syncTestCase struct {
 	// Skip reason for unsupported features (test-first approach)
 	// If set, test will be skipped with this message
 	skipReason string
+
+	// skipFunc is a callback for dynamic capability-based skipping.
+	// Called after env is created but before test execution.
+	// Use this for version-gated features that require capability checks.
+	skipFunc func(t *testing.T, env fixenv.Env)
 }
 
 // runSyncTest executes a single sync test case with full validation
@@ -96,6 +101,12 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	}
 
 	env := fixenv.New(t)
+
+	// Dynamic capability-based skip (must be after env creation)
+	if tc.skipFunc != nil {
+		tc.skipFunc(t, env)
+	}
+
 	ctx := context.Background()
 
 	// Request fixtures
