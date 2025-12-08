@@ -10,6 +10,7 @@ import (
 const (
 	parentTypeFrontend = "frontend"
 	parentTypeBackend  = "backend"
+	parentTypeDefaults = "defaults"
 )
 
 // Comparator performs fine-grained comparison between HAProxy configurations.
@@ -83,6 +84,74 @@ func compareMapEntries[T any](
 		// Compare entry attributes
 		if !equalFunc(&currentEntry, &desiredEntry) {
 			operations = append(operations, updateOp(&desiredEntry))
+		}
+	}
+
+	return operations
+}
+
+// compareNamedSections is a generic helper for comparing named configuration sections.
+// It handles the common pattern of:
+//   - Converting slices to maps by Name
+//   - Finding added, deleted, and modified items
+//   - Generating appropriate operations
+//
+// Type Parameters:
+//   - T: The section type (must have Name field and Equal method)
+//
+// Parameters:
+//   - currentSlice: Current configuration sections
+//   - desiredSlice: Desired configuration sections
+//   - getName: Function to get the name from a section
+//   - equal: Function to compare two sections for equality
+//   - createOp: Factory function for create operations
+//   - deleteOp: Factory function for delete operations
+//   - updateOp: Factory function for update operations
+func compareNamedSections[T any](
+	currentSlice, desiredSlice []*T,
+	getName func(*T) string,
+	equal func(*T, *T) bool,
+	createOp func(*T) Operation,
+	deleteOp func(*T) Operation,
+	updateOp func(*T) Operation,
+) []Operation {
+	var operations []Operation
+
+	// Convert slices to maps for easier comparison by Name
+	currentMap := make(map[string]*T)
+	for _, item := range currentSlice {
+		if name := getName(item); name != "" {
+			currentMap[name] = item
+		}
+	}
+
+	desiredMap := make(map[string]*T)
+	for _, item := range desiredSlice {
+		if name := getName(item); name != "" {
+			desiredMap[name] = item
+		}
+	}
+
+	// Find added sections (in desired but not in current)
+	for name, item := range desiredMap {
+		if _, exists := currentMap[name]; !exists {
+			operations = append(operations, createOp(item))
+		}
+	}
+
+	// Find deleted sections (in current but not in desired)
+	for name, item := range currentMap {
+		if _, exists := desiredMap[name]; !exists {
+			operations = append(operations, deleteOp(item))
+		}
+	}
+
+	// Find modified sections (in both, but different)
+	for name, desiredItem := range desiredMap {
+		if currentItem, exists := currentMap[name]; exists {
+			if !equal(currentItem, desiredItem) {
+				operations = append(operations, updateOp(desiredItem))
+			}
 		}
 	}
 
@@ -164,6 +233,18 @@ func (c *Comparator) Compare(current, desired *parser.StructuredConfig) (*Config
 	// Compare log-forwards
 	logForwardsOps := c.compareLogForwards(current, desired)
 	operations = append(operations, logForwardsOps...)
+
+	// Compare log-profiles (v3.1+ only)
+	logProfilesOps := c.compareLogProfiles(current, desired)
+	operations = append(operations, logProfilesOps...)
+
+	// Compare traces (v3.1+ only, singleton)
+	tracesOps := c.compareTraces(current, desired)
+	operations = append(operations, tracesOps...)
+
+	// Compare acme-providers (v3.2+ only)
+	acmeProvidersOps := c.compareAcmeProviders(current, desired)
+	operations = append(operations, acmeProvidersOps...)
 
 	// Compare fcgi-apps
 	fcgiAppsOps := c.compareFCGIApps(current, desired)

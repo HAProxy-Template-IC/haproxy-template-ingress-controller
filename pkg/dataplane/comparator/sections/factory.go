@@ -2291,3 +2291,219 @@ func NewCaptureFrontendDelete(frontendName string, capture *models.Capture, inde
 		func() string { return describeCapture(OperationDelete, capture, frontendName, index) },
 	)
 }
+
+// =============================================================================
+// LogProfile Factory Functions (v3.1+ only)
+// =============================================================================
+
+// NewLogProfileCreate creates an operation to create a log-profile section.
+// Log profiles are only available in HAProxy DataPlane API v3.1+.
+func NewLogProfileCreate(logProfile *models.LogProfile) Operation {
+	return NewTopLevelOp(
+		OperationCreate,
+		"log_profile",
+		PriorityLogProfile,
+		logProfile,
+		IdentityLogProfile,
+		LogProfileName,
+		executors.LogProfileCreate(),
+		DescribeTopLevel(OperationCreate, "log-profile", logProfile.Name),
+	)
+}
+
+// NewLogProfileUpdate creates an operation to update a log-profile section.
+// Log profiles are only available in HAProxy DataPlane API v3.1+.
+func NewLogProfileUpdate(logProfile *models.LogProfile) Operation {
+	return NewTopLevelOp(
+		OperationUpdate,
+		"log_profile",
+		PriorityLogProfile,
+		logProfile,
+		IdentityLogProfile,
+		LogProfileName,
+		executors.LogProfileUpdate(),
+		DescribeTopLevel(OperationUpdate, "log-profile", logProfile.Name),
+	)
+}
+
+// NewLogProfileDelete creates an operation to delete a log-profile section.
+// Log profiles are only available in HAProxy DataPlane API v3.1+.
+func NewLogProfileDelete(logProfile *models.LogProfile) Operation {
+	return NewTopLevelOp(
+		OperationDelete,
+		"log_profile",
+		PriorityLogProfile,
+		logProfile,
+		NilLogProfile,
+		LogProfileName,
+		executors.LogProfileDelete(),
+		DescribeTopLevel(OperationDelete, "log-profile", logProfile.Name),
+	)
+}
+
+// =============================================================================
+// Traces Factory Functions (v3.1+ only, Singleton)
+// =============================================================================
+
+// NewTracesUpdate creates an operation to update the traces section.
+// The traces section is a singleton - it can be created or replaced.
+// Traces configuration is only available in HAProxy DataPlane API v3.1+.
+func NewTracesUpdate(traces *models.Traces) Operation {
+	return NewSingletonOp(
+		"traces",
+		PriorityTraces,
+		traces,
+		IdentityTraces,
+		executors.TracesUpdate(),
+		func() string { return "Update traces section" },
+	)
+}
+
+// =============================================================================
+// AcmeProvider Factory Functions (v3.2+ only)
+// =============================================================================
+
+// NewAcmeProviderCreate creates an operation to create an acme section.
+// ACME providers are only available in HAProxy DataPlane API v3.2+.
+func NewAcmeProviderCreate(acmeProvider *models.AcmeProvider) Operation {
+	return NewTopLevelOp(
+		OperationCreate,
+		"acme_provider",
+		PriorityAcmeProvider,
+		acmeProvider,
+		IdentityAcmeProvider,
+		AcmeProviderName,
+		executors.AcmeProviderCreate(),
+		DescribeTopLevel(OperationCreate, "acme-provider", acmeProvider.Name),
+	)
+}
+
+// NewAcmeProviderUpdate creates an operation to update an acme section.
+// ACME providers are only available in HAProxy DataPlane API v3.2+.
+func NewAcmeProviderUpdate(acmeProvider *models.AcmeProvider) Operation {
+	return NewTopLevelOp(
+		OperationUpdate,
+		"acme_provider",
+		PriorityAcmeProvider,
+		acmeProvider,
+		IdentityAcmeProvider,
+		AcmeProviderName,
+		executors.AcmeProviderUpdate(),
+		DescribeTopLevel(OperationUpdate, "acme-provider", acmeProvider.Name),
+	)
+}
+
+// NewAcmeProviderDelete creates an operation to delete an acme section.
+// ACME providers are only available in HAProxy DataPlane API v3.2+.
+func NewAcmeProviderDelete(acmeProvider *models.AcmeProvider) Operation {
+	return NewTopLevelOp(
+		OperationDelete,
+		"acme_provider",
+		PriorityAcmeProvider,
+		acmeProvider,
+		NilAcmeProvider,
+		AcmeProviderName,
+		executors.AcmeProviderDelete(),
+		DescribeTopLevel(OperationDelete, "acme-provider", acmeProvider.Name),
+	)
+}
+
+// =============================================================================
+// QUICInitialRule Factory Functions (v3.1+ only)
+// =============================================================================
+
+// NewQUICInitialRuleFrontendCreate creates an operation to create a QUIC initial rule in a frontend.
+// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
+func NewQUICInitialRuleFrontendCreate(frontendName string, rule *models.QUICInitialRule, index int) Operation {
+	return NewIndexChildOp(
+		OperationCreate,
+		"quic_initial_rule",
+		PriorityQUICInitialRule,
+		frontendName,
+		index,
+		rule,
+		IdentityQUICInitialRule,
+		executors.QUICInitialRuleFrontendCreate(),
+		DescribeIndexChild(OperationCreate, "quic-initial-rule", index, "frontend", frontendName),
+	)
+}
+
+// NewQUICInitialRuleFrontendUpdate creates an operation to update a QUIC initial rule in a frontend.
+// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
+func NewQUICInitialRuleFrontendUpdate(frontendName string, rule *models.QUICInitialRule, index int) Operation {
+	return NewIndexChildOp(
+		OperationUpdate,
+		"quic_initial_rule",
+		PriorityQUICInitialRule,
+		frontendName,
+		index,
+		rule,
+		IdentityQUICInitialRule,
+		executors.QUICInitialRuleFrontendUpdate(),
+		DescribeIndexChild(OperationUpdate, "quic-initial-rule", index, "frontend", frontendName),
+	)
+}
+
+// NewQUICInitialRuleFrontendDelete creates an operation to delete a QUIC initial rule from a frontend.
+// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
+func NewQUICInitialRuleFrontendDelete(frontendName string, rule *models.QUICInitialRule, index int) Operation {
+	return NewIndexChildOp(
+		OperationDelete,
+		"quic_initial_rule",
+		PriorityQUICInitialRule,
+		frontendName,
+		index,
+		rule,
+		NilQUICInitialRule,
+		executors.QUICInitialRuleFrontendDelete(),
+		DescribeIndexChild(OperationDelete, "quic-initial-rule", index, "frontend", frontendName),
+	)
+}
+
+// NewQUICInitialRuleDefaultsCreate creates an operation to create a QUIC initial rule in defaults.
+// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
+func NewQUICInitialRuleDefaultsCreate(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
+	return NewIndexChildOp(
+		OperationCreate,
+		"quic_initial_rule",
+		PriorityQUICInitialRule,
+		defaultsName,
+		index,
+		rule,
+		IdentityQUICInitialRule,
+		executors.QUICInitialRuleDefaultsCreate(),
+		DescribeIndexChild(OperationCreate, "quic-initial-rule", index, "defaults", defaultsName),
+	)
+}
+
+// NewQUICInitialRuleDefaultsUpdate creates an operation to update a QUIC initial rule in defaults.
+// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
+func NewQUICInitialRuleDefaultsUpdate(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
+	return NewIndexChildOp(
+		OperationUpdate,
+		"quic_initial_rule",
+		PriorityQUICInitialRule,
+		defaultsName,
+		index,
+		rule,
+		IdentityQUICInitialRule,
+		executors.QUICInitialRuleDefaultsUpdate(),
+		DescribeIndexChild(OperationUpdate, "quic-initial-rule", index, "defaults", defaultsName),
+	)
+}
+
+// NewQUICInitialRuleDefaultsDelete creates an operation to delete a QUIC initial rule from defaults.
+// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
+func NewQUICInitialRuleDefaultsDelete(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
+	return NewIndexChildOp(
+		OperationDelete,
+		"quic_initial_rule",
+		PriorityQUICInitialRule,
+		defaultsName,
+		index,
+		rule,
+		NilQUICInitialRule,
+		executors.QUICInitialRuleDefaultsDelete(),
+		DescribeIndexChild(OperationDelete, "quic-initial-rule", index, "defaults", defaultsName),
+	)
+}

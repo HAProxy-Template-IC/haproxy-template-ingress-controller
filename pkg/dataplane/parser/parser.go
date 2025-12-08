@@ -61,6 +61,11 @@ type StructuredConfig struct {
 	LogForwards []*models.LogForward
 	FCGIApps    []*models.FCGIApp
 	CrtStores   []*models.CrtStore
+	// Observability sections (v3.1+ features)
+	LogProfiles []*models.LogProfile // log-profile sections
+	Traces      *models.Traces       // traces section (singleton)
+	// Certificate automation (v3.2+ features)
+	AcmeProviders []*models.AcmeProvider // acme sections for Let's Encrypt/ACME automation
 }
 
 // New creates a new Parser instance.
@@ -154,6 +159,16 @@ func (p *Parser) extractConfiguration() (*StructuredConfig, error) {
 
 	// Extract program and application sections (programs, log-forwards, fcgi-apps, crt-stores)
 	if err := p.extractProgramSections(conf); err != nil {
+		return nil, err
+	}
+
+	// Extract observability sections (log-profiles, traces) - v3.1+ features
+	if err := p.extractObservabilitySections(conf); err != nil {
+		return nil, err
+	}
+
+	// Extract certificate automation sections (acme) - v3.2+ features
+	if err := p.extractCertificateSections(conf); err != nil {
 		return nil, err
 	}
 
@@ -322,6 +337,9 @@ func (p *Parser) extractDefaults() ([]*models.Defaults, error) {
 			def.LogTargetList = logTargets
 		}
 
+		// Parse QUIC initial rules (v3.2+ feature for HTTP/3 support)
+		def.QUICInitialRuleList, _ = configuration.ParseQUICInitialRules(string(parser.Defaults), sectionName, p.parser)
+
 		defaults = append(defaults, def)
 	}
 
@@ -372,6 +390,8 @@ func (p *Parser) extractFrontends() ([]*models.Frontend, error) {
 		fe.LogTargetList, _ = configuration.ParseLogTargets(string(parser.Frontends), sectionName, p.parser)
 		fe.BackendSwitchingRuleList, _ = configuration.ParseBackendSwitchingRules(sectionName, p.parser)
 		fe.CaptureList, _ = configuration.ParseDeclareCaptures(sectionName, p.parser)
+		// Parse QUIC initial rules (v3.2+ feature for HTTP/3 support)
+		fe.QUICInitialRuleList, _ = configuration.ParseQUICInitialRules(string(parser.Frontends), sectionName, p.parser)
 
 		frontends = append(frontends, fe)
 	}
@@ -803,4 +823,95 @@ func (p *Parser) extractCrtStores() ([]*models.CrtStore, error) {
 	}
 
 	return crtStores, nil
+}
+
+// extractObservabilitySections extracts observability sections (log-profiles, traces).
+// These are v3.1+ features for advanced logging and request tracing.
+func (p *Parser) extractObservabilitySections(conf *StructuredConfig) error {
+	logProfiles, err := p.extractLogProfiles()
+	if err != nil {
+		return fmt.Errorf("failed to extract log-profiles: %w", err)
+	}
+	conf.LogProfiles = logProfiles
+
+	conf.Traces = p.extractTraces()
+
+	return nil
+}
+
+// extractLogProfiles extracts all log-profile sections using client-native's ParseLogProfile.
+// Log profiles define logging profiles for one or more steps (v3.1+ feature).
+func (p *Parser) extractLogProfiles() ([]*models.LogProfile, error) {
+	sections, err := p.parser.SectionsGet(parser.LogProfile)
+	if err != nil {
+		return nil, err
+	}
+
+	logProfiles := make([]*models.LogProfile, 0, len(sections))
+	for _, sectionName := range sections {
+		// ParseLogProfile handles all log-profile fields automatically
+		logProfile, err := configuration.ParseLogProfile(p.parser, sectionName)
+		if err != nil {
+			slog.Warn("Failed to parse log-profile section", "section", sectionName, "error", err)
+			continue
+		}
+
+		logProfiles = append(logProfiles, logProfile)
+	}
+
+	return logProfiles, nil
+}
+
+// extractTraces extracts the traces section using client-native's ParseTraces.
+// Traces is a singleton section for request tracing configuration (v3.1+ feature).
+// Returns nil when no traces section exists (which is valid - traces is optional).
+func (p *Parser) extractTraces() *models.Traces {
+	// Traces is a singleton - check if section exists
+	if !p.parser.SectionExists(parser.Traces, parser.TracesSectionName) {
+		return nil
+	}
+
+	// ParseTraces handles all traces fields automatically
+	traces, err := configuration.ParseTraces(p.parser)
+	if err != nil {
+		slog.Warn("Failed to parse traces section", "error", err)
+		return nil
+	}
+
+	return traces
+}
+
+// extractCertificateSections extracts certificate automation sections (acme).
+// These are v3.2+ features for ACME/Let's Encrypt certificate automation.
+func (p *Parser) extractCertificateSections(conf *StructuredConfig) error {
+	acmeProviders, err := p.extractAcmeProviders()
+	if err != nil {
+		return fmt.Errorf("failed to extract acme providers: %w", err)
+	}
+	conf.AcmeProviders = acmeProviders
+
+	return nil
+}
+
+// extractAcmeProviders extracts all acme sections using client-native's ParseAcmeProvider.
+// ACME providers define Let's Encrypt/ACME certificate automation configuration (v3.2+ feature).
+func (p *Parser) extractAcmeProviders() ([]*models.AcmeProvider, error) {
+	sections, err := p.parser.SectionsGet(parser.Acme)
+	if err != nil {
+		return nil, err
+	}
+
+	acmeProviders := make([]*models.AcmeProvider, 0, len(sections))
+	for _, sectionName := range sections {
+		// ParseAcmeProvider handles all acme fields automatically
+		acmeProvider, err := configuration.ParseAcmeProvider(p.parser, sectionName)
+		if err != nil {
+			slog.Warn("Failed to parse acme section", "section", sectionName, "error", err)
+			continue
+		}
+
+		acmeProviders = append(acmeProviders, acmeProvider)
+	}
+
+	return acmeProviders, nil
 }

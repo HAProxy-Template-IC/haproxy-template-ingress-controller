@@ -191,3 +191,85 @@ type CRTListDiff struct {
 func (d *CRTListDiff) HasChanges() bool {
 	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
 }
+
+// SSLCaFile represents an SSL CA certificate file containing trusted CA certificates.
+// These files are used for client certificate verification and SSL chain validation.
+// SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
+type SSLCaFile struct {
+	// Path is the file path or name of the CA file.
+	// Example: "ca-bundle.pem" or "/etc/haproxy/ssl/ca/trusted-cas.pem"
+	Path string
+
+	// Content is the PEM-encoded CA certificate data.
+	// Can contain multiple CA certificates concatenated together.
+	Content string
+}
+
+// GetIdentifier implements the FileItem interface.
+func (s SSLCaFile) GetIdentifier() string {
+	return s.Path
+}
+
+// GetContent implements the FileItem interface.
+func (s SSLCaFile) GetContent() string {
+	return s.Content
+}
+
+// SSLCaFileDiff represents the differences between current and desired SSL CA file states.
+// It contains lists of CA files that need to be created, updated, or deleted.
+type SSLCaFileDiff struct {
+	// ToCreate contains CA files that exist in the desired state but not in the current state.
+	ToCreate []SSLCaFile
+
+	// ToUpdate contains CA files that exist in both states but have different content.
+	ToUpdate []SSLCaFile
+
+	// ToDelete contains CA file names that exist in the current state but not in the desired state.
+	ToDelete []string
+}
+
+// HasChanges returns true if there are any changes to SSL CA files.
+func (d *SSLCaFileDiff) HasChanges() bool {
+	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
+}
+
+// SSLCrlFile represents an SSL Certificate Revocation List (CRL) file.
+// These files contain lists of revoked certificates and are used to validate
+// that client certificates have not been revoked.
+// SSL CRL file storage is only available in HAProxy DataPlane API v3.2+.
+type SSLCrlFile struct {
+	// Path is the file path or name of the CRL file.
+	// Example: "revoked.crl" or "/etc/haproxy/ssl/crl/revoked.crl"
+	Path string
+
+	// Content is the PEM or DER-encoded CRL data.
+	Content string
+}
+
+// GetIdentifier implements the FileItem interface.
+func (s SSLCrlFile) GetIdentifier() string {
+	return s.Path
+}
+
+// GetContent implements the FileItem interface.
+func (s SSLCrlFile) GetContent() string {
+	return s.Content
+}
+
+// SSLCrlFileDiff represents the differences between current and desired SSL CRL file states.
+// It contains lists of CRL files that need to be created, updated, or deleted.
+type SSLCrlFileDiff struct {
+	// ToCreate contains CRL files that exist in the desired state but not in the current state.
+	ToCreate []SSLCrlFile
+
+	// ToUpdate contains CRL files that exist in both states but have different content.
+	ToUpdate []SSLCrlFile
+
+	// ToDelete contains CRL file names that exist in the current state but not in the desired state.
+	ToDelete []string
+}
+
+// HasChanges returns true if there are any changes to SSL CRL files.
+func (d *SSLCrlFileDiff) HasChanges() bool {
+	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
+}
