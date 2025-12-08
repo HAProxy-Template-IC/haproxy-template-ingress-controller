@@ -16,6 +16,7 @@ package configchange
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,12 +28,16 @@ import (
 	coreconfig "haproxy-template-ic/pkg/core/config"
 )
 
+// testDebounceInterval is a short debounce interval for tests.
+// Using a short interval (50ms) keeps tests fast while still exercising debounce logic.
+const testDebounceInterval = 50 * time.Millisecond
+
 func TestNewConfigChangeHandler(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 	validators := []string{"basic", "template"}
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, validators)
+	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	require.NotNil(t, handler)
 	assert.Equal(t, bus, handler.bus)
@@ -41,13 +46,14 @@ func TestNewConfigChangeHandler(t *testing.T) {
 	assert.NotNil(t, handler.configChangeCh)
 	assert.Equal(t, validators, handler.validators)
 	assert.NotNil(t, handler.stopCh)
+	assert.Equal(t, testDebounceInterval, handler.debounceInterval)
 }
 
 func TestConfigChangeHandler_StartAndStop(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -79,7 +85,7 @@ func TestConfigChangeHandler_StartWithContextCancel(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -106,7 +112,7 @@ func TestConfigChangeHandler_HandleConfigParsed_NoValidators(t *testing.T) {
 	configCh := make(chan *coreconfig.Config, 1)
 
 	// No validators configured
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
 	eventChan := bus.Subscribe(50)
 	bus.Start()
@@ -131,7 +137,7 @@ func TestConfigChangeHandler_HandleConfigValidated_SignalController(t *testing.T
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
 	bus.Start()
 
@@ -158,7 +164,7 @@ func TestConfigChangeHandler_HandleConfigValidated_InitialVersion_SkipsSignal(t 
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
 	bus.Start()
 
@@ -185,7 +191,7 @@ func TestConfigChangeHandler_HandleConfigValidated_InvalidConfigType(t *testing.
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
 	bus.Start()
 
@@ -212,7 +218,7 @@ func TestConfigChangeHandler_HandleConfigValidated_ChannelFull(t *testing.T) {
 	// Channel with no buffer
 	configCh := make(chan *coreconfig.Config)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
 	bus.Start()
 
@@ -234,7 +240,7 @@ func TestConfigChangeHandler_HandleBecameLeader_NoValidatedConfig(t *testing.T) 
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
 	eventChan := bus.Subscribe(50)
 	bus.Start()
@@ -256,7 +262,7 @@ func TestConfigChangeHandler_HandleBecameLeader_WithValidatedConfig(t *testing.T
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
 	eventChan := bus.Subscribe(50)
 	bus.Start()
@@ -287,7 +293,7 @@ func TestConfigChangeHandler_StateCaching(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
 	bus.Start()
 
@@ -320,7 +326,7 @@ func TestConfigChangeHandler_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
 
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -342,7 +348,7 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_AllValid(t *testi
 
 	// Configure validators
 	validators := []string{"basic", "template"}
-	handler := NewConfigChangeHandler(bus, logger, configCh, validators)
+	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	// Subscribe to output events BEFORE bus.Start()
 	eventChan := bus.Subscribe(50)
@@ -397,7 +403,7 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_ValidationFailed(
 
 	// Configure validators
 	validators := []string{"basic", "template"}
-	handler := NewConfigChangeHandler(bus, logger, configCh, validators)
+	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	// Subscribe to output events BEFORE bus.Start()
 	eventChan := bus.Subscribe(50)
@@ -453,7 +459,7 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_Timeout(t *testin
 
 	// Configure validators that will never respond
 	validators := []string{"nonexistent"}
-	handler := NewConfigChangeHandler(bus, logger, configCh, validators)
+	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	eventChan := bus.Subscribe(50)
 	bus.Start()
@@ -481,7 +487,7 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_MissingResponder(
 
 	// Configure validators - "missing" won't respond
 	validators := []string{"basic", "missing"}
-	handler := NewConfigChangeHandler(bus, logger, configCh, validators)
+	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	// Subscribe to output events BEFORE bus.Start()
 	eventChan := bus.Subscribe(50)
@@ -524,4 +530,181 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_MissingResponder(
 	assert.Equal(t, "v1", invalid.Version)
 	// Coordinator error due to missing responder
 	assert.Contains(t, invalid.ValidationErrors, "coordinator")
+}
+
+func TestConfigChangeHandler_RapidConfigChangesDebounced(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 10)
+
+	// Use longer debounce interval for reliable testing
+	debounceInterval := 100 * time.Millisecond
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, debounceInterval)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go handler.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish 5 rapid config changes, each faster than the debounce interval
+	for i := 1; i <= 5; i++ {
+		cfg := &coreconfig.Config{}
+		version := fmt.Sprintf("v%d", i)
+		bus.Publish(events.NewConfigValidatedEvent(cfg, nil, version, ""))
+		time.Sleep(20 * time.Millisecond) // Much less than debounce interval
+	}
+
+	// Wait for debounce to complete (debounce interval + buffer)
+	time.Sleep(debounceInterval + 50*time.Millisecond)
+
+	// Should receive exactly ONE signal (the last config)
+	select {
+	case <-configCh:
+		// First signal received - expected
+	default:
+		t.Fatal("expected at least one signal after debounce")
+	}
+
+	// Verify no additional signals were sent
+	select {
+	case <-configCh:
+		t.Fatal("expected only one signal due to debouncing, but got more")
+	case <-time.After(50 * time.Millisecond):
+		// Expected - no additional signals
+	}
+}
+
+func TestConfigChangeHandler_DebounceTimerResetOnEachChange(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 10)
+
+	debounceInterval := 80 * time.Millisecond
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, debounceInterval)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go handler.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish first config change
+	cfg1 := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(cfg1, nil, "v1", ""))
+
+	// Wait 50ms (less than debounce interval)
+	time.Sleep(50 * time.Millisecond)
+
+	// No signal should be sent yet
+	select {
+	case <-configCh:
+		t.Fatal("signal sent too early - debounce not working")
+	default:
+		// Expected - still debouncing
+	}
+
+	// Publish second config change - this should reset the timer
+	cfg2 := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(cfg2, nil, "v2", ""))
+
+	// Wait another 50ms (total 100ms since first, but only 50ms since second)
+	time.Sleep(50 * time.Millisecond)
+
+	// Still no signal - timer was reset
+	select {
+	case <-configCh:
+		t.Fatal("signal sent too early - debounce timer not reset properly")
+	default:
+		// Expected - still debouncing from second event
+	}
+
+	// Wait for the full debounce interval from the second event
+	time.Sleep(debounceInterval)
+
+	// Now we should have the signal
+	select {
+	case cfg := <-configCh:
+		assert.Equal(t, cfg2, cfg, "should receive the last config")
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("expected signal after debounce completed")
+	}
+}
+
+func TestConfigChangeHandler_CleanupWithPendingDebounce(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 10)
+
+	// Use longer debounce to ensure we can stop before it fires
+	debounceInterval := 500 * time.Millisecond
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, debounceInterval)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		handler.Start(ctx)
+		close(done)
+	}()
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish config change to start debounce timer
+	cfg := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(cfg, nil, "v1", ""))
+
+	// Wait a bit for the event to be processed
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel context while debounce is pending
+	cancel()
+
+	// Wait for handler to stop
+	select {
+	case <-done:
+		// Handler stopped
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("handler did not stop in time")
+	}
+
+	// Verify no signal was sent (debounce was cancelled)
+	select {
+	case <-configCh:
+		t.Fatal("signal should not be sent after shutdown")
+	default:
+		// Expected - no signal because handler stopped
+	}
+
+	// Wait longer than the original debounce interval
+	time.Sleep(debounceInterval + 100*time.Millisecond)
+
+	// Still no signal - timer was properly stopped
+	select {
+	case <-configCh:
+		t.Fatal("signal should not be sent after shutdown - timer not stopped properly")
+	default:
+		// Expected - timer was cleaned up
+	}
+}
+
+func TestConfigChangeHandler_DefaultDebounceInterval(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+
+	// Pass 0 to use default
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, 0)
+
+	assert.Equal(t, DefaultReinitDebounceInterval, handler.debounceInterval,
+		"zero debounce interval should use default")
+}
+
+func TestConfigChangeHandler_NegativeDebounceInterval(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+
+	// Pass negative to use default
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, -100*time.Millisecond)
+
+	assert.Equal(t, DefaultReinitDebounceInterval, handler.debounceInterval,
+		"negative debounce interval should use default")
 }
