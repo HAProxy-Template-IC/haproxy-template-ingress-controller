@@ -7,12 +7,31 @@ import (
 	"strings"
 )
 
+// BaseKindConfig is the default kind cluster configuration with increased pod limits.
+// The default maxPods (110) is too restrictive for integration tests running in parallel.
+const BaseKindConfig = `kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    maxPods: 500
+`
+
 // DindKindConfig is the kind cluster configuration for Docker-in-Docker environments.
-// It binds the API server to 0.0.0.0 and adds "docker" as a certificate SAN.
+// It binds the API server to 0.0.0.0, adds "docker" as a certificate SAN, and increases
+// the pod limit for parallel test execution.
 const DindKindConfig = `kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   apiServerAddress: "0.0.0.0"
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    maxPods: 500
 kubeadmConfigPatchesJSON6902:
   - group: kubeadm.k8s.io
     version: v1beta3

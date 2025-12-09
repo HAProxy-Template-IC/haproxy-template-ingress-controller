@@ -38,6 +38,21 @@ func appendOperationsIfNotEmpty(dst *[]Operation, src []Operation, modified *boo
 	}
 }
 
+// updateSummaryFromOperations updates the summary counts based on the operations.
+// This is extracted to reduce statement count in the Compare function.
+func updateSummaryFromOperations(summary *DiffSummary, operations []Operation) {
+	for _, op := range operations {
+		switch op.Type() {
+		case sections.OperationCreate:
+			summary.TotalCreates++
+		case sections.OperationUpdate:
+			summary.TotalUpdates++
+		case sections.OperationDelete:
+			summary.TotalDeletes++
+		}
+	}
+}
+
 // compareMapEntries is a generic helper for comparing map-based child entries (nameservers, mailer entries, peer entries).
 // This reduces code duplication for the common pattern of comparing map[string]T entries.
 func compareMapEntries[T any](
@@ -246,6 +261,10 @@ func (c *Comparator) Compare(current, desired *parser.StructuredConfig) (*Config
 	acmeProvidersOps := c.compareAcmeProviders(current, desired)
 	operations = append(operations, acmeProvidersOps...)
 
+	// Compare Enterprise Edition sections (EE only)
+	eeOps := c.compareEnterpriseSections(current, desired)
+	operations = append(operations, eeOps...)
+
 	// Compare fcgi-apps
 	fcgiAppsOps := c.compareFCGIApps(current, desired)
 	operations = append(operations, fcgiAppsOps...)
@@ -262,38 +281,8 @@ func (c *Comparator) Compare(current, desired *parser.StructuredConfig) (*Config
 	backendOps := c.compareBackends(current, desired, &summary)
 	operations = append(operations, backendOps...)
 
-	// Future: Add more section comparisons here using the .Equal() pattern:
-	//
-	// PATTERN: Always use models' built-in .Equal() methods instead of manual field comparison.
-	// This approach:
-	//   - Automatically handles ALL attributes (current + future)
-	//   - Zero maintenance burden when HAProxy adds new parameters
-	//   - Since we sync entire directives/lines anyway, there's no benefit to field-level comparison
-	//
-	// Example for Frontends:
-	//   if !frontend1.Equal(*frontend2) {
-	//       operations = append(operations, sections.NewFrontendUpdate(frontend2))
-	//   }
-	//
-	// Sections to implement:
-	// - Global settings (models.Global.Equal)
-	// - Defaults (models.Defaults.Equal)
-	// - Frontends (models.Frontend.Equal)
-	// - ACLs (models.ACL.Equal)
-	// - Rules (models.Rule.Equal)
-	// etc.
-
-	// Update summary counts
-	for _, op := range operations {
-		switch op.Type() {
-		case sections.OperationCreate:
-			summary.TotalCreates++
-		case sections.OperationUpdate:
-			summary.TotalUpdates++
-		case sections.OperationDelete:
-			summary.TotalDeletes++
-		}
-	}
+	// Update summary counts from operations
+	updateSummaryFromOperations(&summary, operations)
 
 	// Order operations by dependencies
 	orderedOps := OrderOperations(operations)

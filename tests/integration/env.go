@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"haproxy-template-ic/pkg/dataplane/client"
 	"haproxy-template-ic/pkg/dataplane/comparator"
 	"haproxy-template-ic/pkg/dataplane/parser"
+	"haproxy-template-ic/pkg/dataplane/parser/enterprise"
+	"haproxy-template-ic/pkg/dataplane/parser/parserconfig"
 )
 
 const (
@@ -187,12 +190,35 @@ func TestDataplaneClient(env fixenv.Env) *client.DataplaneClient {
 	})
 }
 
-// TestParser provides a configuration parser instance
-func TestParser(env fixenv.Env) *parser.Parser {
-	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*parser.Parser], error) {
-		p, err := parser.New()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create parser: %w", err)
+// ConfigParser defines the interface for HAProxy configuration parsing.
+// Both CE (parser.Parser) and EE (enterprise.Parser) parsers implement this interface.
+type ConfigParser interface {
+	ParseFromString(config string) (*parserconfig.StructuredConfig, error)
+}
+
+// TestParser provides a configuration parser instance.
+// It automatically selects the appropriate parser based on whether the test HAProxy
+// is Enterprise or Community edition.
+func TestParser(env fixenv.Env) ConfigParser {
+	// Depend on client to check for EE status
+	dpClient := TestDataplaneClient(env)
+
+	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[ConfigParser], error) {
+		var p ConfigParser
+		var err error
+
+		// Use EE parser when connected to HAProxy Enterprise
+		if dpClient.Clientset().IsEnterprise() {
+			fmt.Println("Using Enterprise Edition parser for test HAProxy")
+			p, err = enterprise.NewParser()
+			if err != nil {
+				return nil, fmt.Errorf("failed to create EE parser: %w", err)
+			}
+		} else {
+			p, err = parser.New()
+			if err != nil {
+				return nil, fmt.Errorf("failed to create parser: %w", err)
+			}
 		}
 		return fixenv.NewGenericResult(p), nil
 	})
@@ -343,6 +369,40 @@ func skipIfBotManagementNotSupported(t *testing.T, env fixenv.Env) {
 	if !dataplaneClient.Capabilities().SupportsBotManagement {
 		t.Skipf("Skipping test: Bot management requires HAProxy Enterprise (detected version: %s)",
 			dataplaneClient.DetectedVersion())
+	}
+}
+
+// skipIfBotManagementSyncNotSupported skips sync tests if bot management data file is not available.
+// Bot management sync tests require HAPEE_KEY environment variable to download the data file
+// from haproxy.com. The data file is downloaded during HAProxy deployment when HAPEE_KEY is set.
+func skipIfBotManagementSyncNotSupported(t *testing.T, env fixenv.Env) {
+	t.Helper()
+	dataplaneClient := TestDataplaneClient(env)
+	if !dataplaneClient.Capabilities().SupportsBotManagement {
+		t.Skipf("Skipping test: Bot management requires HAProxy Enterprise (detected version: %s)",
+			dataplaneClient.DetectedVersion())
+	}
+	if os.Getenv("HAPEE_KEY") == "" {
+		t.Skip("Skipping test: Bot management sync tests require HAPEE_KEY environment variable " +
+			"to download the data file from haproxy.com")
+	}
+}
+
+// skipIfCaptchaNotSupported skips the test if captcha features are not available.
+// Captcha is available in all HAProxy Enterprise versions but uses a separate module
+// (hapee-lb-captcha.so) that is NOT included in standard HAPEE container images.
+// The module is installed automatically when HAPEE_KEY is set (used to authenticate
+// with HAProxy Enterprise apt repository).
+func skipIfCaptchaNotSupported(t *testing.T, env fixenv.Env) {
+	t.Helper()
+	dataplaneClient := TestDataplaneClient(env)
+	if !dataplaneClient.Capabilities().SupportsBotManagement {
+		t.Skipf("Skipping test: Captcha requires HAProxy Enterprise (detected version: %s)",
+			dataplaneClient.DetectedVersion())
+	}
+	if os.Getenv("HAPEE_KEY") == "" {
+		t.Skip("Skipping test: Captcha tests require HAPEE_KEY environment variable " +
+			"to install the hapee-lb-captcha.so module from HAProxy Enterprise repository")
 	}
 }
 

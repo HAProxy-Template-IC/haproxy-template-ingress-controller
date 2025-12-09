@@ -6,10 +6,15 @@ This document provides an overview of HAProxy configuration sections and child c
 
 The controller supports all configuration sections that can be managed through the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Configuration changes are applied using fine-grained operations to minimize HAProxy reloads and maximize use of the Runtime API for zero-downtime updates.
 
+**API Version Support:** The controller supports Dataplane API versions 3.0, 3.1, and 3.2. The API version is auto-detected at runtime.
+
+**HAProxy Editions:** Both HAProxy Community and HAProxy Enterprise are supported. Enterprise-only features are automatically detected and enabled when connected to an Enterprise instance.
+
 **Coverage:**
 
 - **15 main configuration sections** (global, defaults, frontends, backends, etc.)
 - **23 child component types** across frontends and backends (servers, ACLs, rules, etc.)
+- **12 Enterprise-only sections** (WAF, bot management, UDP load balancing, etc.)
 - **Complete Dataplane API compatibility** - All manageable resources are supported
 
 ## Supported Configuration Sections
@@ -196,6 +201,49 @@ The controller uses fine-grained comparison to detect changes at the attribute l
 
 Since both Frontend and Backend are fully supported, this provides equivalent functionality.
 
+## HAProxy Enterprise Sections
+
+The following sections are available only when connected to HAProxy Enterprise. The controller automatically detects the Enterprise edition and enables support for these features.
+
+| Section | Description | API Version |
+|---------|-------------|-------------|
+| **WAF Profiles** | Web Application Firewall profile definitions | Enterprise 3.0+ |
+| **WAF Body Rules** | WAF request body inspection rules | Enterprise 3.0+ |
+| **WAF Rulesets** | ModSecurity ruleset file references | Enterprise 3.0+ |
+| **WAF Global** | Global WAF configuration settings | Enterprise 3.2+ |
+| **Bot Management Profiles** | Bot detection and mitigation profiles | Enterprise 3.0+ |
+| **CAPTCHAs** | CAPTCHA challenge configurations | Enterprise 3.0+ |
+| **UDP Load Balancers** | UDP protocol load balancer sections | Enterprise 3.0+ |
+| **Keepalived VRRP** | VRRP instances for high availability | Enterprise 3.0+ |
+| **Keepalived Sync Groups** | VRRP synchronization groups | Enterprise 3.0+ |
+| **Dynamic Updates** | Runtime configuration update rules | Enterprise 3.0+ |
+| **Advanced Logging** | Extended log inputs and outputs | Enterprise 3.0+ |
+| **Git Integration** | Configuration version control settings | Enterprise 3.0+ |
+
+### UDP Load Balancer Child Components
+
+UDP Load Balancers support child components similar to TCP frontends/backends:
+
+| Component | Description | API Version |
+|-----------|-------------|-------------|
+| **Binds** | UDP listen addresses and ports | Enterprise 3.0+ |
+| **Servers** | Backend UDP server definitions | Enterprise 3.0+ |
+| **ACLs** | Access control lists | Enterprise 3.2+ |
+| **Server Switching Rules** | Dynamic server selection | Enterprise 3.2+ |
+
+### Keepalived Child Components
+
+Keepalived sections support fine-grained management of VRRP configuration:
+
+| Component | Description |
+|-----------|-------------|
+| **Track Interfaces** | Network interfaces to monitor |
+| **Track Scripts** | Health check scripts for failover |
+| **Virtual IP Addresses** | VIPs managed by VRRP instance |
+
+!!! note
+    Enterprise features require HAProxy Enterprise license and the Enterprise Dataplane API. When connected to HAProxy Community, these sections are ignored without error.
+
 ## Implementation Details
 
 ### Comparison Strategies
@@ -238,12 +286,13 @@ The comparator uses the `haproxytech/client-native` models' built-in `.Equal()` 
 
 The haproxy-template-ic provides complete HAProxy Dataplane API coverage:
 
-- ✅ **15 main sections** fully supported
-- ✅ **23 child component types** with fine-grained operations
-- ✅ **Runtime API optimization** for zero-reload server updates
-- ✅ **Dependency-aware operation ordering** for safe deployments
-- ✅ **Future-proof comparison** using HAProxy models' `.Equal()` methods
-- ❌ **Listen sections** not supported (Dataplane API limitation)
+- 15 main sections fully supported
+- 23 child component types with fine-grained operations
+- 12 Enterprise-only sections (WAF, bot management, UDP, Keepalived, etc.)
+- Runtime API optimization for zero-reload server updates
+- Dependency-aware operation ordering for safe deployments
+- Future-proof comparison using HAProxy models' `.Equal()` methods
+- Listen sections not supported (Dataplane API limitation)
 
 For implementation details, see:
 

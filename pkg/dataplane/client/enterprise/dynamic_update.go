@@ -138,6 +138,11 @@ func (d *DynamicUpdateOperations) GetAllRules(ctx context.Context, txID string) 
 	}
 	defer resp.Body.Close()
 
+	// 404 means dynamic-update section doesn't exist - return empty list
+	if resp.StatusCode == http.StatusNotFound {
+		return []DynamicUpdateRule{}, nil
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("get dynamic update rules failed with status %d", resp.StatusCode)
 	}

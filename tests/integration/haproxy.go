@@ -102,6 +102,65 @@ type HAProxyInstance struct {
 	readyChan     chan struct{}
 }
 
+// getBotmgmtDataFileURL returns the URL to download the bot management data file
+// if HAPEE_KEY is set, otherwise returns empty string.
+func getBotmgmtDataFileURL() string {
+	hapeeKey := os.Getenv("HAPEE_KEY")
+	if hapeeKey == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://www.haproxy.com/download/hapee/key/%s-plus/blob/botmgmt/data-hapee", hapeeKey)
+}
+
+// getCaptchaModuleInstallScript returns a shell script to install the captcha module
+// and copy it to the shared volume. Returns empty string if HAPEE_KEY is not available.
+// The captcha module is not included in standard HAPEE container images and must be
+// installed via apt-get from the HAProxy Enterprise repository.
+// Uses the HAPEE_VER environment variable available in all HAPEE container images.
+func getCaptchaModuleInstallScript() string {
+	hapeeKey := os.Getenv("HAPEE_KEY")
+	if hapeeKey == "" {
+		return ""
+	}
+
+	// Uses ${HAPEE_VER} env var from the container (e.g., "3.2r1")
+	// Derives HAPEE_MAJOR_MINOR (e.g., "3.2") for module paths
+	// The captcha module is in the -plus repository
+	// Repository structure: .../key/<KEY>-plus/<VER>/ubuntu-<CODENAME>/amd64/dists/<CODENAME>/...
+	// GPG key is at public pks.haproxy.com server
+	return fmt.Sprintf(`
+echo "Installing captcha module from HAProxy Enterprise repository..."
+export DEBIAN_FRONTEND=noninteractive
+
+# Derive major.minor version from HAPEE_VER (e.g., "3.2r1" -> "3.2")
+HAPEE_MAJOR_MINOR=$(echo $HAPEE_VER | sed 's/r.*//')
+echo "HAPEE_VER=$HAPEE_VER, HAPEE_MAJOR_MINOR=$HAPEE_MAJOR_MINOR"
+
+apt-get update -qq
+apt-get install -y -qq curl gnupg ca-certificates
+
+# Add HAProxy Enterprise repository
+# GPG key from public key server (no auth needed)
+# Package repository requires HAPEE_KEY for access
+mkdir -p /etc/apt/keyrings
+curl -fsSL "https://pks.haproxy.com/linux/enterprise/HAPEE-key-${HAPEE_VER}.asc" \
+    -o /etc/apt/keyrings/HAPEE-key-${HAPEE_VER}.asc
+
+# Get OS codename and add -plus repository (contains captcha module)
+. /etc/os-release
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/HAPEE-key-${HAPEE_VER}.asc] https://www.haproxy.com/download/hapee/key/%s-plus/${HAPEE_VER}/ubuntu-${VERSION_CODENAME}/amd64/ ${VERSION_CODENAME} main" > /etc/apt/sources.list.d/hapee.list
+
+apt-get update -qq
+# Package name uses full version: hapee-3.2r1-lb-captcha
+apt-get install -y -qq hapee-${HAPEE_VER}-lb-captcha
+
+# Copy module to shared volume so main container can access it
+mkdir -p /etc/haproxy/modules
+cp /opt/hapee-${HAPEE_MAJOR_MINOR}/modules/hapee-lb-captcha.so /etc/haproxy/modules/
+echo "Captcha module installed and copied to /etc/haproxy/modules/"
+`, hapeeKey)
+}
+
 // DeployHAProxy deploys an HAProxy instance to the given namespace
 func DeployHAProxy(ns *Namespace, cfg *HAProxyConfig) (*HAProxyInstance, error) {
 	if cfg == nil {
@@ -166,22 +225,42 @@ log_targets:
   - app
 `, cfg.DataplanePort, cfg.DataplaneUser, cfg.DataplanePass, cfg.HAProxyBin)
 
-	// Create ConfigMap with both configs
+	// Create ConfigMap with configs
+	configMapData := map[string]string{
+		"haproxy.cfg":       initialHAProxyConfig,
+		"dataplaneapi.yaml": dataplaneConfig,
+	}
+
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name + "-config",
 			Namespace: ns.Name,
 		},
-		Data: map[string]string{
-			"haproxy.cfg":       initialHAProxyConfig,
-			"dataplaneapi.yaml": dataplaneConfig,
-		},
+		Data: configMapData,
 	}
 
 	_, err := ns.clientset.CoreV1().ConfigMaps(ns.Name).Create(ctx, configMap, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create configmap: %w", err)
 	}
+
+	// Get optional captcha module install script (requires HAPEE_KEY)
+	captchaInstallScript := getCaptchaModuleInstallScript()
+
+	// Build init container script
+	initScript := fmt.Sprintf(`
+%s
+mkdir -p /etc/haproxy/maps /etc/haproxy/ssl /etc/haproxy/general /etc/haproxy/spoe /etc/haproxy/modules
+mkdir -p /var/lib/dataplaneapi/transactions /var/lib/dataplaneapi/backups
+cp /config/haproxy.cfg /etc/haproxy/haproxy.cfg
+cp /config/dataplaneapi.yaml /etc/haproxy/dataplaneapi.yaml
+# Download botmgmt data file if URL is provided (for HAProxy Enterprise bot management)
+if [ -n "${BOTMGMT_DATA_URL}" ]; then
+	echo "Downloading bot management data file..."
+	curl -sSfL -o /etc/haproxy/data-hapee.dat "${BOTMGMT_DATA_URL}" || echo "Warning: Failed to download botmgmt data file"
+fi
+chown -R haproxy:haproxy /etc/haproxy /var/lib/dataplaneapi 2>/dev/null || true
+`, captchaInstallScript)
 
 	// Create Pod with HAProxy and Dataplane API sidecar
 	// Use two-container pattern: one for HAProxy, one for Dataplane API
@@ -200,13 +279,14 @@ log_targets:
 					Name:    "init-dirs",
 					Image:   cfg.Image,
 					Command: []string{"/bin/sh", "-c"},
-					Args: []string{`
-						mkdir -p /etc/haproxy/maps /etc/haproxy/ssl /etc/haproxy/general /etc/haproxy/spoe
-						mkdir -p /var/lib/dataplaneapi/transactions /var/lib/dataplaneapi/backups
-						cp /config/haproxy.cfg /etc/haproxy/haproxy.cfg
-						cp /config/dataplaneapi.yaml /etc/haproxy/dataplaneapi.yaml
-						chown -R haproxy:haproxy /etc/haproxy /var/lib/dataplaneapi 2>/dev/null || true
-					`},
+					Args:    []string{initScript},
+					Env: func() []corev1.EnvVar {
+						url := getBotmgmtDataFileURL()
+						if url != "" {
+							return []corev1.EnvVar{{Name: "BOTMGMT_DATA_URL", Value: url}}
+						}
+						return nil
+					}(),
 					VolumeMounts: []corev1.VolumeMount{
 						{
 							Name:      "haproxy-runtime",

@@ -314,9 +314,10 @@ func (op *NameChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Data
 	return op.executeFn(ctx, c, txID, op.parentName, op.childName, apiModel)
 }
 
-// SingletonOp handles operations for singleton sections like global.
-// These sections always exist and only support update operations.
+// SingletonOp handles operations for singleton sections like global, traces, or waf-global.
+// Supports create, update, and delete operations for singleton resources.
 type SingletonOp[TModel any, TAPI any] struct {
+	opType      OperationType
 	sectionName string
 	priorityVal int
 	model       TModel
@@ -325,8 +326,9 @@ type SingletonOp[TModel any, TAPI any] struct {
 	describeFn  func() string
 }
 
-// NewSingletonOp creates a new singleton operation.
+// NewSingletonOp creates a new singleton operation with the specified operation type.
 func NewSingletonOp[TModel any, TAPI any](
+	opType OperationType,
 	sectionName string,
 	priority int,
 	model TModel,
@@ -335,6 +337,7 @@ func NewSingletonOp[TModel any, TAPI any](
 	describeFn func() string,
 ) *SingletonOp[TModel, TAPI] {
 	return &SingletonOp[TModel, TAPI]{
+		opType:      opType,
 		sectionName: sectionName,
 		priorityVal: priority,
 		model:       model,
@@ -344,12 +347,18 @@ func NewSingletonOp[TModel any, TAPI any](
 	}
 }
 
-func (op *SingletonOp[TModel, TAPI]) Type() OperationType { return OperationUpdate }
+func (op *SingletonOp[TModel, TAPI]) Type() OperationType { return op.opType }
 func (op *SingletonOp[TModel, TAPI]) Section() string     { return op.sectionName }
 func (op *SingletonOp[TModel, TAPI]) Priority() int       { return op.priorityVal }
 func (op *SingletonOp[TModel, TAPI]) Describe() string    { return op.describeFn() }
 
 func (op *SingletonOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
+	// For delete operations, we don't need to transform
+	if op.opType == OperationDelete {
+		var zero TAPI
+		return op.executeFn(ctx, c, txID, zero)
+	}
+
 	apiModel := op.transformFn(op.model)
 	var zero TAPI
 	if any(apiModel) == any(zero) {
