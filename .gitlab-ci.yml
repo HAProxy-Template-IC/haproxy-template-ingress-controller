@@ -727,7 +727,7 @@ release-controller-images:
 
 release-chart:
   stage: deploy
-  image: alpine/helm:3
+  image: alpine/helm:4
   tags:
     - saas-linux-medium-amd64
   needs: []
