@@ -42,16 +42,18 @@ ARG GIT_TAG
 # - CGO_ENABLED=0: static binary, no C dependencies
 # - GOOS/GOARCH: cross-compilation for target platform
 # - -trimpath: remove file system paths from binary
+# - -buildvcs=false: reproducible builds (no VCS info embedded)
 # - -ldflags: linker flags for optimization and version info
 #   - -s: strip debug information
 #   - -w: strip DWARF debug information
-#   - -X: inject version variables (placeholder for future)
+#   - -X: inject version variables
 RUN CGO_ENABLED=0 \
     GOOS=${TARGETOS} \
     GOARCH=${TARGETARCH} \
     go build \
     -trimpath \
-    -ldflags="-s -w -X main.GitCommit=${GIT_COMMIT} -X main.GitTag=${GIT_TAG}" \
+    -buildvcs=false \
+    -ldflags="-s -w -X main.version=${GIT_TAG} -X main.commit=${GIT_COMMIT}" \
     -o /build/controller \
     ./cmd/controller
 

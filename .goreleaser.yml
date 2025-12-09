@@ -1,0 +1,80 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+project_name: haproxy-template-ingress-controller
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: controller
+    main: ./cmd/controller
+    binary: controller
+    env:
+      - CGO_ENABLED=0
+    # Reproducible build flags
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.CommitDate}}
+    # Use commit timestamp for reproducibility
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+# No archives - attach raw binaries directly
+archives:
+  - format: binary
+    name_template: >-
+      {{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# Cosign keyless signing for supply chain security
+signs:
+  - cmd: cosign
+    env:
+      - COSIGN_EXPERIMENTAL=1
+    certificate: "${artifact}.pem"
+    signature: "${artifact}.sig"
+    artifacts: checksum
+    args:
+      - sign-blob
+      - --yes
+      - --output-certificate=${certificate}
+      - --output-signature=${signature}
+      - ${artifact}
+
+# Disable auto-generated changelog - use CHANGELOG.md instead
+changelog:
+  disable: true
+
+release:
+  gitlab:
+    owner: haproxy-template-ic
+    name: haproxy-template-ingress-controller
+
+  # GitLab CI-specific settings
+  use_job_token: true
+
+  # Release notes extracted from CHANGELOG.md
+  header: |
+    ## What's Changed
+
+  # Attach binaries and signature files to release
+  extra_files:
+    - glob: ./dist/checksums.txt.sig
+    - glob: ./dist/checksums.txt.pem

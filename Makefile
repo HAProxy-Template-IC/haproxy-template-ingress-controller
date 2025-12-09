@@ -2,7 +2,8 @@
         test test-integration test-acceptance test-acceptance-parallel build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
-        tidy verify generate clean fmt vet install-tools dev
+        tidy verify generate clean fmt vet install-tools dev \
+        release-controller release-chart goreleaser-snapshot
 
 .DEFAULT_GOAL := help
 
@@ -24,6 +25,8 @@ FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NA
 KIND_CLUSTER ?= haproxy-template-ic-dev  # Kind cluster name for local testing
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
+VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
+CHART_VERSION := $(shell grep '^version:' charts/haproxy-template-ic/Chart.yaml 2>/dev/null | awk '{print $$2}' || echo "dev")
 
 # Coverage packages (excludes generated code)
 COVERAGE_PACKAGES := ./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/...
@@ -35,6 +38,8 @@ help: ## Show this help message
 
 version: ## Display version information
 	@echo "Version Information:"
+	@echo "  Controller: $(VERSION)"
+	@echo "  Chart:      $(CHART_VERSION)"
 	@echo "  Git Commit: $(GIT_COMMIT)"
 	@echo "  Git Tag:    $(GIT_TAG)"
 	@echo "  Image:      $(FULL_IMAGE)"
@@ -151,11 +156,11 @@ test-coverage-combined: ## Run unit and integration tests with combined coverage
 
 build: ## Build the controller binary
 	@echo "Building controller..."
+	@echo "  Version: $(VERSION)"
 	@echo "  Git commit: $(GIT_COMMIT)"
-	@echo "  Git tag: $(GIT_TAG)"
 	@mkdir -p bin
 	$(GO) build \
-		-ldflags="-X main.GitCommit=$(GIT_COMMIT) -X main.GitTag=$(GIT_TAG)" \
+		-ldflags="-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		-o bin/controller \
 		./cmd/controller
 
@@ -351,3 +356,22 @@ install-tools: ## Install/sync all tool dependencies (from go.mod tools section)
 
 dev: clean build test lint ## Clean, build, test, and lint (common dev workflow)
 	@echo "✓ Development build complete!"
+
+## Release targets
+
+release-controller: ## Create a controller release (usage: make release-controller VERSION=0.1.0)
+	@if [ -z "$(VERSION)" ] || [ "$(VERSION)" = "dev" ]; then \
+		echo "Error: VERSION must be specified (e.g., make release-controller VERSION=0.1.0)"; \
+		exit 1; \
+	fi
+	@./scripts/release-controller.sh $(VERSION)
+
+release-chart: ## Create a chart release (usage: make release-chart CHART_VERSION=0.1.0)
+	@if [ -z "$(CHART_VERSION)" ] || [ "$(CHART_VERSION)" = "dev" ]; then \
+		echo "Error: CHART_VERSION must be specified (e.g., make release-chart CHART_VERSION=0.1.0)"; \
+		exit 1; \
+	fi
+	@./scripts/release-chart.sh $(CHART_VERSION)
+
+goreleaser-snapshot: ## Test GoReleaser locally (no push)
+	goreleaser release --snapshot --clean
