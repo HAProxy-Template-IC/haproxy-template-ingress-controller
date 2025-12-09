@@ -183,12 +183,13 @@ func NewDefaultsDelete(defaults *models.Defaults) Operation {
 }
 
 // =============================================================================
-// Global Factory Functions (Singleton - only update)
+// Global Factory Functions (Singleton)
 // =============================================================================
 
 // NewGlobalUpdate creates an operation to update the global section.
 func NewGlobalUpdate(global *models.Global) Operation {
 	return NewSingletonOp(
+		OperationUpdate,
 		"global",
 		PriorityGlobal,
 		global,
@@ -2350,6 +2351,7 @@ func NewLogProfileDelete(logProfile *models.LogProfile) Operation {
 // Traces configuration is only available in HAProxy DataPlane API v3.1+.
 func NewTracesUpdate(traces *models.Traces) Operation {
 	return NewSingletonOp(
+		OperationUpdate,
 		"traces",
 		PriorityTraces,
 		traces,

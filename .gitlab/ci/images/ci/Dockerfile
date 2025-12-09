@@ -34,8 +34,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install yamllint and markdownlint-cli2 for config file linting
+# Pin markdownlint-cli2@0.14.0 - newer versions pull string-width 7.x which requires Node.js 20+
 RUN pip3 install --break-system-packages yamllint \
-    && npm install -g markdownlint-cli2
+    && npm install -g markdownlint-cli2@0.14.0
 
 # Install kind
 RUN curl -fsSL -o /usr/local/bin/kind \

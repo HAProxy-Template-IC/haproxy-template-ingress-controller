@@ -89,11 +89,14 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 			createOpts = append(createOpts, cluster.CreateWithNodeImage(nodeImage))
 		}
 
-		// If running in Docker-in-Docker, use special config that binds to 0.0.0.0
-		// and adds "docker" as a certificate SAN
+		// Use custom config for increased pod limits (500 vs default 110)
+		// This is required for parallel integration tests that create many namespaces
 		if kindutil.IsDockerInDocker() {
 			fmt.Printf("📦 Detected Docker-in-Docker environment, using dind-compatible config\n")
 			createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.DindKindConfig)))
+		} else {
+			fmt.Printf("📦 Using base config with increased pod limits\n")
+			createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.BaseKindConfig)))
 		}
 
 		// Create the cluster

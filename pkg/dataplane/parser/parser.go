@@ -17,6 +17,8 @@ import (
 	parser "github.com/haproxytech/client-native/v6/config-parser"
 	"github.com/haproxytech/client-native/v6/configuration"
 	"github.com/haproxytech/client-native/v6/models"
+
+	"haproxy-template-ic/pkg/dataplane/parser/parserconfig"
 )
 
 // parserMutex protects against concurrent calls to the client-native parser.
@@ -42,31 +44,10 @@ type Parser struct {
 	parser parser.Parser
 }
 
-// StructuredConfig holds all parsed configuration sections.
-// This represents the complete HAProxy configuration in structured form
-// suitable for comparison and API operations.
-type StructuredConfig struct {
-	Global      *models.Global
-	Defaults    []*models.Defaults
-	Frontends   []*models.Frontend
-	Backends    []*models.Backend
-	Peers       []*models.PeerSection
-	Resolvers   []*models.Resolver
-	Mailers     []*models.MailersSection
-	Caches      []*models.Cache
-	Rings       []*models.Ring
-	HTTPErrors  []*models.HTTPErrorsSection
-	Userlists   []*models.Userlist
-	Programs    []*models.Program
-	LogForwards []*models.LogForward
-	FCGIApps    []*models.FCGIApp
-	CrtStores   []*models.CrtStore
-	// Observability sections (v3.1+ features)
-	LogProfiles []*models.LogProfile // log-profile sections
-	Traces      *models.Traces       // traces section (singleton)
-	// Certificate automation (v3.2+ features)
-	AcmeProviders []*models.AcmeProvider // acme sections for Let's Encrypt/ACME automation
-}
+// StructuredConfig is a type alias for types.StructuredConfig.
+// This alias is provided for backward compatibility with existing code.
+// New code should import from haproxy-template-ic/pkg/dataplane/parser/parserconfig.
+type StructuredConfig = parserconfig.StructuredConfig
 
 // New creates a new Parser instance.
 //

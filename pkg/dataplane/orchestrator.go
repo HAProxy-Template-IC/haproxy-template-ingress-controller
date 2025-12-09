@@ -14,22 +14,44 @@ import (
 	"haproxy-template-ic/pkg/dataplane/comparator"
 	"haproxy-template-ic/pkg/dataplane/comparator/sections"
 	"haproxy-template-ic/pkg/dataplane/parser"
+	"haproxy-template-ic/pkg/dataplane/parser/enterprise"
+	"haproxy-template-ic/pkg/dataplane/parser/parserconfig"
 	"haproxy-template-ic/pkg/dataplane/synchronizer"
 )
+
+// ConfigParser defines the interface for HAProxy configuration parsing.
+// Both CE (parser.Parser) and EE (enterprise.Parser) parsers implement this interface.
+type ConfigParser interface {
+	ParseFromString(config string) (*parserconfig.StructuredConfig, error)
+}
 
 // orchestrator handles the complete sync workflow.
 type orchestrator struct {
 	client     *client.DataplaneClient
-	parser     *parser.Parser
+	parser     ConfigParser
 	comparator *comparator.Comparator
 	logger     *slog.Logger
 }
 
 // newOrchestrator creates a new orchestrator instance.
+// It automatically selects the appropriate parser based on whether the client
+// is connected to HAProxy Enterprise or Community edition.
 func newOrchestrator(c *client.DataplaneClient, logger *slog.Logger) (*orchestrator, error) {
-	p, err := parser.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create parser: %w", err)
+	var p ConfigParser
+	var err error
+
+	// Use EE parser when connected to HAProxy Enterprise
+	if c.Clientset().IsEnterprise() {
+		logger.Info("Using Enterprise Edition parser for HAProxy EE")
+		p, err = enterprise.NewParser()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create EE parser: %w", err)
+		}
+	} else {
+		p, err = parser.New()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create parser: %w", err)
+		}
 	}
 
 	return &orchestrator{
