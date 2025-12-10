@@ -361,6 +361,8 @@ func TestConstants(t *testing.T) {
 // =============================================================================
 
 func TestNew(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
 	cfg := &config.Config{
 		TemplateSnippets: map[string]config.TemplateSnippet{},
 		ValidationTests:  map[string]config.ValidationTest{},
@@ -384,12 +386,14 @@ func TestNew(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	component := New(nil, nil, cfg, engine, validationPaths, capabilities, slog.Default())
+	// EventBus is required since constructor subscribes
+	component := New(bus, nil, cfg, engine, validationPaths, capabilities, logger)
 
 	require.NotNil(t, component)
 	assert.Equal(t, cfg, component.config)
 	assert.NotNil(t, component.testRunner)
 	assert.NotNil(t, component.logger)
+	assert.NotNil(t, component.eventChan, "eventChan should be set by constructor")
 }
 
 // =============================================================================

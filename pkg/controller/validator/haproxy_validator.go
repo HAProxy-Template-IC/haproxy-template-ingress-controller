@@ -61,6 +61,7 @@ type HAProxyValidatorComponent struct {
 	lastValidationWarnings   []string
 	lastValidationDurationMs int64
 	lastCorrelationID        string // Correlation ID from triggering event
+	lastTriggerReason        string // Reason from ReconciliationTriggeredEvent (e.g., "drift_prevention")
 	hasValidationResult      bool
 }
 
@@ -140,15 +141,11 @@ func (v *HAProxyValidatorComponent) handleEvent(event busevents.Event) {
 }
 
 // handleTemplateRendered validates the rendered HAProxy configuration.
-// Propagates correlation ID from the triggering event to validation events.
+// Propagates correlation ID and trigger reason from the triggering event to validation events.
 func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.TemplateRenderedEvent) {
 	startTime := time.Now()
 	correlationID := event.CorrelationID()
-
-	v.logger.Info("HAProxy configuration validation started",
-		"validation_config_bytes", event.ValidationConfigBytes,
-		"auxiliary_files", event.AuxiliaryFileCount,
-		"correlation_id", correlationID)
+	triggerReason := event.TriggerReason
 
 	// Publish validation started event with correlation
 	v.eventBus.Publish(events.NewValidationStartedEvent(
@@ -164,6 +161,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 			[]string{"failed to extract validation auxiliary files from event"},
 			time.Since(startTime).Milliseconds(),
 			correlationID,
+			triggerReason,
 		)
 		return
 	}
@@ -176,6 +174,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 			[]string{"failed to extract validation paths from event"},
 			time.Since(startTime).Milliseconds(),
 			correlationID,
+			triggerReason,
 		)
 		return
 	}
@@ -198,6 +197,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 			[]string{simplified},
 			time.Since(startTime).Milliseconds(),
 			correlationID,
+			triggerReason,
 		)
 		return
 	}
@@ -205,22 +205,20 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	// Validation succeeded
 	durationMs := time.Since(startTime).Milliseconds()
 
-	v.logger.Info("HAProxy configuration validation completed",
-		"duration_ms", durationMs,
-		"correlation_id", correlationID)
-
 	// Cache validation result for leadership transition replay
 	v.mu.Lock()
 	v.lastValidationSucceeded = true
 	v.lastValidationWarnings = []string{} // No warnings
 	v.lastValidationDurationMs = durationMs
 	v.lastCorrelationID = correlationID
+	v.lastTriggerReason = triggerReason
 	v.hasValidationResult = true
 	v.mu.Unlock()
 
 	v.eventBus.Publish(events.NewValidationCompletedEvent(
 		[]string{}, // No warnings
 		durationMs,
+		triggerReason,
 		events.PropagateCorrelation(event),
 	))
 }
@@ -239,6 +237,7 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 	warnings := v.lastValidationWarnings
 	durationMs := v.lastValidationDurationMs
 	correlationID := v.lastCorrelationID
+	triggerReason := v.lastTriggerReason
 	v.mu.RUnlock()
 
 	if !hasResult {
@@ -250,12 +249,14 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 		v.logger.Info("became leader, re-publishing last validation result (success) for DeploymentScheduler",
 			"warnings", len(warnings),
 			"duration_ms", durationMs,
-			"correlation_id", correlationID)
+			"correlation_id", correlationID,
+			"trigger_reason", triggerReason)
 
 		// Re-publish with original correlation ID so the deployment can be traced
 		v.eventBus.Publish(events.NewValidationCompletedEvent(
 			warnings,
 			durationMs,
+			triggerReason,
 			events.WithCorrelation(correlationID, correlationID),
 		))
 	} else {
@@ -267,18 +268,20 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 }
 
 // publishValidationFailure publishes a validation failure event and caches the failure state.
-func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, durationMs int64, correlationID string) {
+func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, durationMs int64, correlationID, triggerReason string) {
 	// Cache validation failure for leadership transition state
 	v.mu.Lock()
 	v.lastValidationSucceeded = false
 	v.lastValidationDurationMs = durationMs
 	v.lastCorrelationID = correlationID
+	v.lastTriggerReason = triggerReason
 	v.hasValidationResult = true
 	v.mu.Unlock()
 
 	v.eventBus.Publish(events.NewValidationFailedEvent(
 		errors,
 		durationMs,
+		triggerReason,
 		events.WithCorrelation(correlationID, correlationID),
 	))
 }

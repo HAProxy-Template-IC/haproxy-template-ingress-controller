@@ -55,7 +55,7 @@ type namespaceContextKey struct{}
 
 const (
 	// ControllerDeploymentName is the name of the controller deployment.
-	ControllerDeploymentName = "haproxy-template-ic"
+	ControllerDeploymentName = "haproxy-template-ic-controller"
 
 	// ControllerCRDName is the name of the HAProxyTemplateConfig CRD.
 	ControllerCRDName = "haproxy-config"
@@ -65,19 +65,19 @@ const (
 	ControllerSecretName = "haproxy-credentials"
 
 	// ControllerServiceAccountName is the name of the controller ServiceAccount.
-	ControllerServiceAccountName = "haproxy-template-ic"
+	ControllerServiceAccountName = "haproxy-template-ic-controller"
 
 	// ControllerRoleName is the name of the controller Role.
-	ControllerRoleName = "haproxy-template-ic"
+	ControllerRoleName = "haproxy-template-ic-controller"
 
 	// ControllerRoleBindingName is the name of the controller RoleBinding.
-	ControllerRoleBindingName = "haproxy-template-ic"
+	ControllerRoleBindingName = "haproxy-template-ic-controller"
 
 	// ControllerClusterRoleName is the name of the controller ClusterRole.
-	ControllerClusterRoleName = "haproxy-template-ic"
+	ControllerClusterRoleName = "haproxy-template-ic-controller"
 
 	// ControllerClusterRoleBindingName is the name of the controller ClusterRoleBinding.
-	ControllerClusterRoleBindingName = "haproxy-template-ic"
+	ControllerClusterRoleBindingName = "haproxy-template-ic-controller"
 
 	// DebugPort is the port for the debug HTTP server.
 	DebugPort = 6060

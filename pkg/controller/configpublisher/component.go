@@ -476,7 +476,7 @@ func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent)
 		return
 	}
 
-	c.logger.Info("pod references cleaned up successfully",
+	c.logger.Debug("pod references cleaned up successfully",
 		"pod_name", event.PodName,
 		"pod_namespace", event.PodNamespace,
 	)

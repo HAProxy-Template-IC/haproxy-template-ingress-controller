@@ -43,13 +43,13 @@ func CheckResponse(resp *http.Response, operation string) error {
 	// Read response body for detailed logging
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		slog.Error("dataplane API request failed",
+		slog.Error("Dataplane API request failed",
 			"operation", operation,
 			"status_code", resp.StatusCode,
 			"body_read_error", readErr.Error(),
 		)
 	} else {
-		slog.Error("dataplane API request failed",
+		slog.Error("Dataplane API request failed",
 			"operation", operation,
 			"status_code", resp.StatusCode,
 			"response_body", string(body),

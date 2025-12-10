@@ -35,6 +35,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -81,7 +82,50 @@ import (
 const (
 	// RetryDelay is the duration to wait before retrying after an iteration failure.
 	RetryDelay = 5 * time.Second
+	// ConfigPollInterval is the interval for polling HAProxyTemplateConfig availability.
+	ConfigPollInterval = 5 * time.Second
+	// DebugEventBufferSize is the size of the event buffer for debug/introspection.
+	DebugEventBufferSize = 1000
 )
+
+// configState tracks initialization state for health checks.
+// It allows the health endpoint to report unhealthy status until
+// the HAProxyTemplateConfig is successfully loaded.
+type configState struct {
+	mu           sync.RWMutex
+	configLoaded bool
+	message      string
+}
+
+// SetLoaded marks the config as successfully loaded.
+func (s *configState) SetLoaded() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.configLoaded = true
+	s.message = ""
+}
+
+// SetWaiting marks the config as not yet loaded with a status message.
+func (s *configState) SetWaiting(msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.configLoaded = false
+	s.message = msg
+}
+
+// IsLoaded returns true if the config has been successfully loaded.
+func (s *configState) IsLoaded() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.configLoaded
+}
+
+// Message returns the current status message (empty if config is loaded).
+func (s *configState) Message() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.message
+}
 
 // Run is the main entry point for the controller.
 //
@@ -242,6 +286,78 @@ func fetchAndValidateInitialConfig(
 	return cfg, crd, creds, webhookCerts, nil
 }
 
+// waitForInitialConfig polls for the HAProxyTemplateConfig until it exists.
+// This handles the race condition during fresh installs where the controller pod
+// may start before the HAProxyTemplateConfig CR is fully available in the API server.
+//
+// Returns nil when config is found, or ctx.Err() if context is cancelled.
+func waitForInitialConfig(
+	ctx context.Context,
+	k8sClient *client.Client,
+	crdName string,
+	crdGVR schema.GroupVersionResource,
+	state *configState,
+	logger *slog.Logger,
+) error {
+	state.SetWaiting("waiting for HAProxyTemplateConfig")
+
+	// Try immediately first
+	exists, _ := checkConfigExists(ctx, k8sClient, crdGVR, crdName)
+	if exists {
+		logger.Info("HAProxyTemplateConfig found", "name", crdName)
+		return nil
+	}
+
+	logger.Info("Waiting for HAProxyTemplateConfig to become available",
+		"name", crdName,
+		"poll_interval", ConfigPollInterval)
+
+	ticker := time.NewTicker(ConfigPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			exists, err := checkConfigExists(ctx, k8sClient, crdGVR, crdName)
+			if err != nil {
+				// Log at debug level - transient errors during polling are expected
+				logger.Debug("Error checking for HAProxyTemplateConfig", "error", err)
+				continue
+			}
+			if exists {
+				logger.Info("HAProxyTemplateConfig found", "name", crdName)
+				return nil
+			}
+			logger.Debug("HAProxyTemplateConfig not yet available, continuing to wait",
+				"name", crdName)
+		}
+	}
+}
+
+// checkConfigExists checks if the HAProxyTemplateConfig resource exists.
+// Returns (true, nil) if exists, (false, nil) if not found, or (false, err) on other errors.
+func checkConfigExists(ctx context.Context, k8sClient *client.Client, gvr schema.GroupVersionResource, name string) (bool, error) {
+	_, err := k8sClient.GetResource(ctx, gvr, name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// finalizeConfigLoad marks config as loaded for health checks and sets the initial config
+// version to prevent the infinite reinitialization loop. CRDWatcher.onAdd will trigger
+// ConfigValidatedEvent with this version - without tracking it, that event would trigger
+// reinitialization creating an infinite loop.
+func finalizeConfigLoad(state *configState, setup *componentSetup, resourceVersion string) {
+	state.SetLoaded()
+	setup.ConfigChangeHandler.SetInitialConfigVersion(resourceVersion)
+}
+
 // componentSetup contains all resources created during component initialization.
 type componentSetup struct {
 	Bus                   *busevents.EventBus
@@ -251,6 +367,7 @@ type componentSetup struct {
 	IntrospectionRegistry *introspection.Registry
 	IntrospectionServer   *introspection.Server // Server reference for custom handler registration
 	StoreManager          *resourcestore.Manager
+	ConfigChangeHandler   *configchange.ConfigChangeHandler // For setting initial config version
 	IterCtx               context.Context
 	Cancel                context.CancelFunc
 	ConfigChangeCh        chan *coreconfig.Config
@@ -362,6 +479,7 @@ func setupComponents(
 		MetricsRegistry:       registry,
 		IntrospectionRegistry: introspectionRegistry,
 		StoreManager:          storeManager,
+		ConfigChangeHandler:   configChangeHandlerComponent,
 		IterCtx:               gCtx, // Use errgroup context so cancellation propagates
 		Cancel:                cancel,
 		ConfigChangeCh:        configChangeCh,
@@ -375,23 +493,62 @@ func setupComponents(
 //
 // Unlike setupInfrastructureServers, this uses default/environment-based metrics port
 // since the config hasn't been loaded yet.
+//
+// The introspection server uses two-phase initialization (Setup + Serve):
+// 1. Register custom handlers (including /debug/events) before Setup()
+// 2. Call Setup() to finalize routes
+// 3. Call Serve() to start serving HTTP requests
+//
+// This pattern allows the /debug/events endpoint to be available while still starting
+// health checks early for Kubernetes probes during the config waiting phase.
 func startEarlyInfrastructureServers(
 	ctx context.Context,
 	debugPort int,
 	setup *componentSetup,
+	state *configState,
+	eventBuffer *debug.EventBuffer,
 	logger *slog.Logger,
 ) {
 	logger.Info("Starting infrastructure servers (early initialization)")
 
 	// Create introspection HTTP server (always enabled for health checks)
 	// Provides /healthz endpoint for Kubernetes probes and /debug/* endpoints for debugging
-	// Use shared introspection registry from setup
-	// Server is created here but started later in setupDebugVariables after custom handlers are registered
 	setup.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), setup.IntrospectionRegistry)
-	logger.Info("Introspection HTTP server created (will start after custom handlers registered)",
+
+	// Register /debug/events handler BEFORE Setup()
+	// EventBuffer was created before this function to ensure proper subscription ordering
+	debug.RegisterEventsHandler(setup.IntrospectionServer, eventBuffer)
+
+	// Set initial health checker that reports unhealthy until config is loaded
+	// This will be replaced by the full lifecycle-based checker in setupInfrastructureServers
+	setup.IntrospectionServer.SetHealthChecker(func() map[string]introspection.ComponentHealth {
+		if !state.IsLoaded() {
+			return map[string]introspection.ComponentHealth{
+				"config": {
+					Healthy: false,
+					Error:   state.Message(),
+				},
+			}
+		}
+		// Config loaded - return healthy (will be replaced by full checker later)
+		return map[string]introspection.ComponentHealth{
+			"config": {Healthy: true},
+		}
+	})
+
+	// Setup routes (including custom handlers) - must be called before Serve()
+	setup.IntrospectionServer.Setup()
+
+	// Start serving HTTP requests
+	go func() {
+		if err := setup.IntrospectionServer.Serve(ctx); err != nil {
+			logger.Error("introspection server failed", "error", err, "port", debugPort)
+		}
+	}()
+
+	logger.Info("Introspection HTTP server started (early startup)",
 		"port", debugPort,
 		"bind_address", fmt.Sprintf("0.0.0.0:%d", debugPort),
-		"access_method", "kubectl port-forward",
 		"endpoints", "/healthz, /debug/vars, /debug/pprof, /debug/events")
 
 	// Start metrics HTTP server with default port
@@ -410,10 +567,9 @@ func startEarlyInfrastructureServers(
 				logger.Error("metrics server failed", "error", err, "port", defaultMetricsPort)
 			}
 		}()
-		logger.Info("Metrics HTTP server started (early)",
+		logger.Info("Metrics HTTP server scheduled (early startup)",
 			"port", defaultMetricsPort,
 			"bind_address", fmt.Sprintf("0.0.0.0:%d", defaultMetricsPort),
-			"access_method", "kubectl port-forward",
 			"endpoint", "/metrics")
 	} else {
 		logger.Debug("Metrics HTTP server disabled (port=0)")
@@ -421,20 +577,22 @@ func startEarlyInfrastructureServers(
 }
 
 // setupInfrastructureServers registers debug variables after config is loaded.
-// The HTTP servers are already started by startEarlyInfrastructureServers, so this
-// function just registers debug variables that require config/state with the shared registry.
+// The introspection server is already started by startEarlyInfrastructureServers, so this
+// function registers debug variables and updates the health checker to use the lifecycle registry.
+//
+// Note: /debug/events is already registered in startEarlyInfrastructureServers via two-phase
+// initialization (Setup/Serve pattern), so it's available even during early startup.
 func setupInfrastructureServers(
 	ctx context.Context,
 	cfg *coreconfig.Config,
-	debugPort int,
 	setup *componentSetup,
 	stateCache *StateCache,
+	eventBuffer *debug.EventBuffer, // Pre-created buffer (created before EventBus.Start())
 	logger *slog.Logger,
 ) {
-	logger.Info("Stage 6: Registering debug variables and starting introspection server")
+	logger.Info("Stage 6: Registering debug variables and updating health checker")
 
-	// Create event buffer for tracking recent events
-	eventBuffer := debug.NewEventBuffer(1000, setup.Bus)
+	// Start event buffer (created before EventBus.Start() to ensure proper subscription)
 	go func() {
 		if err := eventBuffer.Start(ctx); err != nil {
 			logger.Error("event buffer failed", "error", err)
@@ -444,12 +602,8 @@ func setupInfrastructureServers(
 	// Register debug variables with the shared introspection registry
 	debug.RegisterVariables(setup.IntrospectionRegistry, stateCache, eventBuffer)
 
-	// Register custom events handler with correlation query support
-	// This must be done before starting the introspection server
-	debug.RegisterEventsHandler(setup.IntrospectionServer, eventBuffer)
-
-	// Set up health checker to expose component health via /health endpoint
-	// This integrates the lifecycle registry with the introspection server
+	// Update health checker to use the full lifecycle registry
+	// This replaces the initial simple health checker set in startEarlyInfrastructureServers
 	setup.IntrospectionServer.SetHealthChecker(func() map[string]introspection.ComponentHealth {
 		status := setup.Registry.Status()
 		result := make(map[string]introspection.ComponentHealth, len(status))
@@ -468,17 +622,9 @@ func setupInfrastructureServers(
 		return result
 	})
 
-	// Start introspection server now that custom handlers are registered
-	go func() {
-		if err := setup.IntrospectionServer.Start(ctx); err != nil {
-			logger.Error("introspection server failed", "error", err, "port", debugPort)
-		}
-	}()
-
-	logger.Info("Debug variables registered and introspection server started",
-		"debug_port", debugPort,
+	logger.Info("Debug variables registered and health checker updated",
 		"metrics_port", cfg.Controller.MetricsPort,
-		"endpoints", "/debug/vars, /debug/events, /debug/pprof, /healthz")
+		"endpoints", "/debug/vars, /debug/pprof, /healthz")
 }
 
 // setupResourceWatchers creates and starts resource watchers and index tracker, then waits for sync.
@@ -533,46 +679,6 @@ func setupResourceWatchers(
 	logger.Info("All resource indices synced successfully")
 
 	return resourceWatcher, nil
-}
-
-// startWatcherHealthCheck starts a periodic health check goroutine that logs watcher status.
-// This helps diagnose issues where watch connections silently drop.
-// With 30-second resync enabled, last_event_age should never exceed ~35 seconds in a healthy system.
-func startWatcherHealthCheck(
-	ctx context.Context,
-	crdWatcher *watcher.SingleWatcher,
-	secretWatcher *watcher.SingleWatcher,
-	logger *slog.Logger,
-) {
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				crdLastEvent := crdWatcher.LastEventTime()
-				secretLastEvent := secretWatcher.LastEventTime()
-
-				var crdEventAge, secretEventAge time.Duration
-				if !crdLastEvent.IsZero() {
-					crdEventAge = time.Since(crdLastEvent).Round(time.Second)
-				}
-				if !secretLastEvent.IsZero() {
-					secretEventAge = time.Since(secretLastEvent).Round(time.Second)
-				}
-
-				logger.Info("Watcher health check",
-					"crd_watcher_synced", crdWatcher.IsSynced(),
-					"crd_watcher_started", crdWatcher.IsStarted(),
-					"crd_last_event_age", crdEventAge,
-					"secret_watcher_synced", secretWatcher.IsSynced(),
-					"secret_watcher_started", secretWatcher.IsStarted(),
-					"secret_last_event_age", secretEventAge)
-			}
-		}
-	}()
 }
 
 // setupConfigWatchers creates and starts HAProxyTemplateConfig CRD and Secret watchers, then waits for sync.
@@ -631,9 +737,6 @@ func setupConfigWatchers(
 		}
 	}()
 
-	// Start periodic health check for diagnostics
-	startWatcherHealthCheck(iterCtx, crdWatcher, secretWatcher, logger)
-
 	logger.Debug("Watchers started, waiting for initial sync")
 
 	// Wait for watchers to complete initial sync in parallel
@@ -684,7 +787,6 @@ type reconciliationComponents struct {
 type leaderOnlyComponents struct {
 	deployer            *deployer.Component
 	deploymentScheduler *deployer.DeploymentScheduler
-	driftMonitor        *deployer.DriftPreventionMonitor
 	configPublisher     *ctrlconfigpublisher.Component
 	ctx                 context.Context
 	cancel              context.CancelFunc
@@ -778,6 +880,8 @@ func createReconciliationComponents(
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, bus, logger)
 
 	// Register components with the lifecycle registry using builder pattern
+	// DriftMonitor runs on all replicas to keep HTTP Store caches warm.
+	// Only leader's DeploymentScheduler will actually deploy.
 	registry.Build().
 		AllReplica(
 			reconcilerComponent,
@@ -786,11 +890,11 @@ func createReconciliationComponents(
 			executorComponent,
 			discoveryComponent,
 			httpStoreComponent,
+			driftMonitorComponent,
 		).
 		LeaderOnly(
 			deployerComponent,
 			deploymentSchedulerComponent,
-			driftMonitorComponent,
 			configPublisherComponent,
 		).
 		Done()
@@ -811,7 +915,7 @@ func createReconciliationComponents(
 }
 
 // startReconciliationComponents starts all-replica reconciliation components using the lifecycle registry.
-// Leader-only components (Deployer, DeploymentScheduler, DriftMonitor, ConfigPublisher) are NOT started here.
+// Leader-only components (Deployer, DeploymentScheduler, ConfigPublisher) are NOT started here.
 func startReconciliationComponents(
 	iterCtx context.Context,
 	registry *lifecycle.Registry,
@@ -853,12 +957,11 @@ func startLeaderOnlyComponents(
 	}()
 
 	logger.Info("Leader-only components started via lifecycle registry",
-		"components", "Deployer, DeploymentScheduler, DriftMonitor, ConfigPublisher")
+		"components", "Deployer, DeploymentScheduler, ConfigPublisher")
 
 	return &leaderOnlyComponents{
 		deployer:            components.deployer,
 		deploymentScheduler: components.deploymentScheduler,
-		driftMonitor:        components.driftMonitor,
 		configPublisher:     components.configPublisher,
 		ctx:                 leaderCtx,
 		cancel:              leaderCancel,
@@ -951,8 +1054,7 @@ func setupWebhook(
 	webhookCerts *WebhookCertificates,
 	k8sClient *client.Client,
 	bus *busevents.EventBus,
-	storeManager *resourcestore.Manager,
-	capabilities dataplane.Capabilities,
+	dryrunValidator *dryrunvalidator.Component, // Pre-created validator (may be nil)
 	logger *slog.Logger,
 	metricsRecorder webhook.MetricsRecorder,
 	cancel context.CancelFunc,
@@ -967,60 +1069,16 @@ func setupWebhook(
 	logger.Info("Webhook validation enabled",
 		"rule_count", len(rules))
 
-	// Create DryRunValidator for semantic validation
-	// This requires a template engine for rendering
-	logger.Debug("Creating template engine for dry-run validation")
-
-	// Extract templates (same as Renderer does)
-	templates := make(map[string]string)
-	templates["haproxy.cfg"] = cfg.HAProxyConfig.Template
-	for name, snippet := range cfg.TemplateSnippets {
-		templates[name] = snippet.Template
+	// Start DryRunValidator if provided (created before EventBus.Start())
+	if dryrunValidator != nil {
+		go func() {
+			if err := dryrunValidator.Start(iterCtx); err != nil {
+				logger.Error("dry-run validator failed", "error", err)
+				cancel()
+			}
+		}()
+		logger.Info("Dry-run validator started")
 	}
-	for name, mapDef := range cfg.Maps {
-		templates[name] = mapDef.Template
-	}
-	for name, fileDef := range cfg.Files {
-		templates[name] = fileDef.Template
-	}
-	for name, certDef := range cfg.SSLCertificates {
-		templates[name] = certDef.Template
-	}
-
-	// Register custom filters
-	// Note: pathResolver is created in DryRunValidator and passed via rendering context
-	filters := map[string]templating.FilterFunc{
-		"glob_match": templating.GlobMatch,
-		"b64decode":  templating.B64Decode,
-	}
-
-	// Create template engine
-	engine, err := templating.New(templating.EngineTypeGonja, templates, filters, nil, nil)
-	if err != nil {
-		logger.Error("Failed to create template engine for dry-run validation", "error", err)
-		return
-	}
-
-	// Create validation paths
-	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:           cfg.Dataplane.MapsDir,
-		SSLCertsDir:       cfg.Dataplane.SSLCertsDir,
-		GeneralStorageDir: cfg.Dataplane.GeneralStorageDir,
-		ConfigFile:        cfg.Dataplane.ConfigFile,
-	}
-
-	// Create DryRunValidator
-	dryrunValidator := dryrunvalidator.New(bus, storeManager, cfg, engine, validationPaths, capabilities, logger)
-
-	// Start DryRunValidator before webhook
-	go func() {
-		if err := dryrunValidator.Start(iterCtx); err != nil {
-			logger.Error("dry-run validator failed", "error", err)
-			cancel()
-		}
-	}()
-
-	logger.Info("Dry-run validator started")
 
 	// Create RESTMapper for resolving resource kinds from GVR
 	// This uses the Kubernetes API discovery to get authoritative mappings
@@ -1057,6 +1115,69 @@ func setupWebhook(
 	logger.Info("Webhook component started")
 }
 
+// createDryRunValidator creates a DryRunValidator component for webhook validation.
+//
+// This function is called BEFORE EventBus.Start() to ensure the validator subscribes
+// to events before any buffered events are released.
+//
+// Returns nil if webhook rules are empty (no resources to validate).
+func createDryRunValidator(
+	cfg *coreconfig.Config,
+	bus *busevents.EventBus,
+	storeManager *resourcestore.Manager,
+	capabilities dataplane.Capabilities,
+	logger *slog.Logger,
+) *dryrunvalidator.Component {
+	// Check if there are any webhook rules - if not, no validator needed
+	rules := webhook.ExtractWebhookRules(cfg)
+	if len(rules) == 0 {
+		logger.Debug("No webhook rules extracted, skipping DryRunValidator creation")
+		return nil
+	}
+
+	logger.Debug("Creating DryRunValidator for webhook validation")
+
+	// Extract templates (same as Renderer does)
+	templates := make(map[string]string)
+	templates["haproxy.cfg"] = cfg.HAProxyConfig.Template
+	for name, snippet := range cfg.TemplateSnippets {
+		templates[name] = snippet.Template
+	}
+	for name, mapDef := range cfg.Maps {
+		templates[name] = mapDef.Template
+	}
+	for name, fileDef := range cfg.Files {
+		templates[name] = fileDef.Template
+	}
+	for name, certDef := range cfg.SSLCertificates {
+		templates[name] = certDef.Template
+	}
+
+	// Register custom filters
+	filters := map[string]templating.FilterFunc{
+		"glob_match": templating.GlobMatch,
+		"b64decode":  templating.B64Decode,
+	}
+
+	// Create template engine
+	engine, err := templating.New(templating.EngineTypeGonja, templates, filters, nil, nil)
+	if err != nil {
+		logger.Error("Failed to create template engine for dry-run validation", "error", err)
+		return nil
+	}
+
+	// Create validation paths
+	validationPaths := &dataplane.ValidationPaths{
+		MapsDir:           cfg.Dataplane.MapsDir,
+		SSLCertsDir:       cfg.Dataplane.SSLCertsDir,
+		GeneralStorageDir: cfg.Dataplane.GeneralStorageDir,
+		ConfigFile:        cfg.Dataplane.ConfigFile,
+	}
+
+	// Create DryRunValidator (subscribes in constructor)
+	return dryrunvalidator.New(bus, storeManager, cfg, engine, validationPaths, capabilities, logger)
+}
+
 // setupReconciliation creates and starts the reconciliation components (Stage 5).
 //
 // The Reconciler debounces resource changes and triggers reconciliation events.
@@ -1088,7 +1209,7 @@ func setupReconciliation(
 	}
 
 	// Start all-replica components in background
-	// Leader-only components (Deployer, DeploymentScheduler, DriftMonitor) are NOT started here
+	// Leader-only components (Deployer, DeploymentScheduler, ConfigPublisher) are NOT started here
 	// Note: Components already subscribed during construction, so they're ready to receive events
 	startReconciliationComponents(iterCtx, registry, logger, cancel)
 
@@ -1235,15 +1356,33 @@ func runIteration(
 		Resource: "secrets",
 	}
 
+	// Create config state tracker for health checks
+	// This allows the health endpoint to report unhealthy status until config is loaded
+	state := &configState{}
+
 	// 0. Setup components BEFORE fetching config so we can start servers early
 	setup := setupComponents(ctx, logger)
 	defer setup.Cancel()
 
-	// 0.5. Start infrastructure servers EARLY (before config fetch)
-	// This allows debugging startup issues and makes metrics/debug endpoints available immediately
-	startEarlyInfrastructureServers(setup.IterCtx, debugPort, setup, logger)
+	// 0.25. Create EventBuffer early (subscribes in constructor)
+	// Must be created before startEarlyInfrastructureServers() to register /debug/events handler
+	// and before EventBus.Start() to ensure proper subscription ordering
+	eventBuffer := debug.NewEventBuffer(DebugEventBufferSize, setup.Bus)
 
-	// 1. Fetch and validate initial configuration
+	// 0.5. Start infrastructure servers EARLY (before config fetch)
+	// This allows debugging startup issues and makes health endpoint available immediately
+	// The health checker will report unhealthy until config is loaded
+	// Uses two-phase initialization (Setup/Serve) to register /debug/events before serving
+	startEarlyInfrastructureServers(setup.IterCtx, debugPort, setup, state, eventBuffer, logger)
+
+	// 1. Wait for HAProxyTemplateConfig to exist (polls every 5s)
+	// This handles the race condition during fresh installs where the controller pod
+	// may start before the HAProxyTemplateConfig CR is fully available
+	if err := waitForInitialConfig(ctx, k8sClient, crdName, crdGVR, state, logger); err != nil {
+		return err
+	}
+
+	// 2. Fetch and validate initial configuration (now guaranteed to exist)
 	cfg, crd, creds, webhookCerts, err := fetchAndValidateInitialConfig(
 		ctx, k8sClient, crdName, secretName, webhookCertSecretName,
 		crdGVR, secretGVR, logger,
@@ -1251,6 +1390,9 @@ func runIteration(
 	if err != nil {
 		return err
 	}
+
+	// Mark config as loaded and set initial version for bootstrap loop prevention
+	finalizeConfigLoad(state, setup, crd.GetResourceVersion())
 
 	// 3. Setup resource watchers
 	resourceWatcher, err := setupResourceWatchers(setup.IterCtx, cfg, k8sClient, setup.Bus, logger, setup.Cancel)
@@ -1309,6 +1451,16 @@ func runIteration(
 		return err
 	}
 
+	// 6.1. EventBuffer was already created early (step 0.25) for /debug/events handler
+	// It subscribes in constructor before EventBus.Start() for proper subscription ordering
+
+	// 6.2. Create DryRunValidator for webhook validation (subscribes in constructor)
+	// Must be created before EventBus.Start() to ensure proper subscription
+	var dryrunValidator *dryrunvalidator.Component
+	if webhook.HasWebhookEnabled(cfg) {
+		dryrunValidator = createDryRunValidator(cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, logger)
+	}
+
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
 	// All components have now subscribed during their construction, so we can safely start
 	// the bus without race conditions or timing-based sleeps
@@ -1321,14 +1473,16 @@ func runIteration(
 		setup.IterCtx, cfg, k8sClient, reconComponents, setup.Registry, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
 	)
 
-	// 8. Setup webhook validation if enabled
+	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
 	if webhook.HasWebhookEnabled(cfg) {
 		logger.Info("Stage 7: Setting up webhook validation")
-		setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, setup.Bus, setup.StoreManager, reconComponents.capabilities, logger, setup.MetricsComponent.Metrics(), setup.Cancel)
+		setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, setup.Bus, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel)
 	}
 
-	// 9. Setup debug and metrics infrastructure
-	setupInfrastructureServers(setup.IterCtx, cfg, debugPort, setup, stateCache, logger)
+	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
+	// Note: The introspection server is already started by startEarlyInfrastructureServers
+	// This call registers debug variables and updates the health checker
+	setupInfrastructureServers(setup.IterCtx, cfg, setup, stateCache, eventBuffer, logger)
 
 	logger.Info("Controller iteration initialized successfully - entering event loop")
 

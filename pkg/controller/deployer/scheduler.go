@@ -53,8 +53,8 @@ type scheduledDeployment struct {
 // Event subscriptions:
 //   - TemplateRenderedEvent: Track rendered config and auxiliary files
 //   - ValidationCompletedEvent: Cache validated config and schedule deployment
+//   - ValidationFailedEvent: Deploy cached config for drift prevention fallback
 //   - HAProxyPodsDiscoveredEvent: Update endpoints and schedule deployment
-//   - DriftPreventionTriggeredEvent: Schedule drift prevention deployment
 //
 // The component publishes DeploymentScheduledEvent when a deployment should execute.
 type DeploymentScheduler struct {
@@ -154,11 +154,11 @@ func (s *DeploymentScheduler) handleEvent(ctx context.Context, event busevents.E
 	case *events.ValidationCompletedEvent:
 		s.handleValidationCompleted(ctx, e)
 
+	case *events.ValidationFailedEvent:
+		s.handleValidationFailed(ctx, e)
+
 	case *events.HAProxyPodsDiscoveredEvent:
 		s.handlePodsDiscovered(ctx, e)
-
-	case *events.DriftPreventionTriggeredEvent:
-		s.handleDriftPreventionTriggered(ctx, e)
 
 	case *events.DeploymentCompletedEvent:
 		s.handleDeploymentCompleted(e)
@@ -284,35 +284,51 @@ func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *e
 	s.scheduleOrQueue(ctx, config, auxFiles, event.Endpoints, "pod_discovery", correlationID)
 }
 
-// handleDriftPreventionTriggered handles drift prevention trigger events.
+// handleValidationFailed handles validation failure events.
 //
-// This schedules deployment of the last validated configuration to current endpoints
-// to prevent configuration drift caused by external factors.
-func (s *DeploymentScheduler) handleDriftPreventionTriggered(ctx context.Context, event *events.DriftPreventionTriggeredEvent) {
+// For drift prevention reconciliations, if validation fails, we deploy the cached
+// last known good config as a fallback. This ensures HAProxy pods stay in sync
+// even when the latest config is invalid (e.g., due to temporary HTTP fetch failures).
+//
+// For other reconciliation reasons (config_change, resource_change, etc.), validation
+// failures are logged but no fallback deployment is triggered.
+func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event *events.ValidationFailedEvent) {
+	correlationID := event.CorrelationID()
+
+	// Only trigger fallback deployment for drift prevention
+	if event.TriggerReason != "drift_prevention" {
+		s.logger.Debug("validation failed, no fallback deployment (not drift prevention)",
+			"trigger_reason", event.TriggerReason,
+			"errors", event.Errors,
+			"correlation_id", correlationID)
+		return
+	}
+
 	s.mu.RLock()
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
 	endpoints := s.currentEndpoints
-	correlationID := s.lastCorrelationID
 	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
 
-	s.logger.Info("drift prevention triggered",
-		"time_since_last_deployment", event.TimeSinceLastDeployment)
+	s.logger.Warn("drift prevention validation failed, deploying cached config as fallback",
+		"errors", event.Errors,
+		"correlation_id", correlationID)
 
 	if !hasValidConfig {
-		s.logger.Debug("no validated config available, skipping drift prevention deployment")
+		s.logger.Error("drift prevention fallback failed: no cached config available",
+			"correlation_id", correlationID)
 		return
 	}
 
 	if len(endpoints) == 0 {
-		s.logger.Debug("no endpoints available, skipping drift prevention deployment")
+		s.logger.Debug("drift prevention fallback skipped: no endpoints available",
+			"correlation_id", correlationID)
 		return
 	}
 
-	// Schedule drift prevention deployment (or queue if in progress)
-	// Use the correlation ID from the last validation for traceability
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "drift_prevention", correlationID)
+	// Schedule drift prevention fallback deployment with cached config
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "drift_prevention_fallback", correlationID)
 }
 
 // handleDeploymentCompleted handles deployment completion events.

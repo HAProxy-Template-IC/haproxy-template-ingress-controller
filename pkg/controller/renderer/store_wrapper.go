@@ -97,7 +97,7 @@ func (w *StoreWrapper) List() []interface{} {
 		return []interface{}{}
 	}
 
-	w.Logger.Info("unwrapping and caching list",
+	w.Logger.Debug("unwrapping and caching list",
 		"resource_type", w.ResourceType,
 		"count", len(items))
 
@@ -154,7 +154,7 @@ func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
 		return []interface{}{}
 	}
 
-	w.Logger.Info("store fetch called",
+	w.Logger.Debug("store fetch called",
 		"resource_type", w.ResourceType,
 		"keys", keys,
 		"found_count", len(items))
@@ -206,7 +206,7 @@ func (w *StoreWrapper) GetSingle(keys ...interface{}) interface{} {
 		return nil
 	}
 
-	w.Logger.Info("store GetSingle called",
+	w.Logger.Debug("store GetSingle called",
 		"resource_type", w.ResourceType,
 		"keys", keys,
 		"found_count", len(items))

@@ -204,7 +204,7 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		// Detect enterprise edition from version string
 		isEnterprise = IsEnterpriseVersion(detectedVersion)
 
-		logger.Info("detected DataPlane API version",
+		logger.Debug("detected DataPlane API version",
 			"version", detectedVersion,
 			"major", major,
 			"minor", minor,

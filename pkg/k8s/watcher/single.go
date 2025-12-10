@@ -171,8 +171,7 @@ func (w *SingleWatcher) handleAdd(obj interface{}) {
 	// Track last event time for health monitoring
 	w.lastEventTime.Store(time.Now().Unix())
 
-	// Use INFO level for diagnostics - helps debug watch connection issues
-	slog.Info("SingleWatcher received add event",
+	slog.Debug("SingleWatcher received add event",
 		"gvr", w.config.GVR.String(),
 		"synced", w.synced.Load())
 
@@ -182,7 +181,7 @@ func (w *SingleWatcher) handleAdd(obj interface{}) {
 		return
 	}
 
-	slog.Info("SingleWatcher processing add",
+	slog.Debug("SingleWatcher processing add",
 		"resource_name", resource.GetName(),
 		"resource_namespace", resource.GetNamespace(),
 		"resource_version", resource.GetResourceVersion())
@@ -192,7 +191,7 @@ func (w *SingleWatcher) handleAdd(obj interface{}) {
 	// that happen after sync completes.
 	if !w.synced.Load() {
 		// During initial sync, skip callback
-		slog.Info("SingleWatcher skipping add callback - not yet synced")
+		slog.Debug("SingleWatcher skipping add callback - not yet synced")
 		return
 	}
 
@@ -206,7 +205,7 @@ func (w *SingleWatcher) handleAdd(obj interface{}) {
 				"resource_namespace", resource.GetNamespace(),
 				"resource_kind", resource.GetKind())
 		} else {
-			slog.Info("SingleWatcher add callback succeeded",
+			slog.Debug("SingleWatcher add callback succeeded",
 				"resource_name", resource.GetName(),
 				"resource_version", resource.GetResourceVersion())
 		}
@@ -218,8 +217,7 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
 	// Track last event time for health monitoring
 	w.lastEventTime.Store(time.Now().Unix())
 
-	// Use INFO level for diagnostics - helps debug watch connection issues
-	slog.Info("SingleWatcher received update event",
+	slog.Debug("SingleWatcher received update event",
 		"gvr", w.config.GVR.String(),
 		"synced", w.synced.Load())
 
@@ -249,7 +247,7 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
 		return
 	}
 
-	slog.Info("SingleWatcher processing update",
+	slog.Debug("SingleWatcher processing update",
 		"resource_name", resource.GetName(),
 		"resource_namespace", resource.GetNamespace(),
 		"resource_version", resource.GetResourceVersion())
@@ -259,7 +257,7 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
 	// for real updates that happen after sync completes.
 	if !w.synced.Load() {
 		// During initial sync, skip callback
-		slog.Info("SingleWatcher skipping callback - not yet synced")
+		slog.Debug("SingleWatcher skipping callback - not yet synced")
 		return
 	}
 
@@ -273,7 +271,7 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
 				"resource_namespace", resource.GetNamespace(),
 				"resource_kind", resource.GetKind())
 		} else {
-			slog.Info("SingleWatcher update callback succeeded",
+			slog.Debug("SingleWatcher update callback succeeded",
 				"resource_name", resource.GetName(),
 				"resource_version", resource.GetResourceVersion())
 		}
@@ -285,8 +283,7 @@ func (w *SingleWatcher) handleDelete(obj interface{}) {
 	// Track last event time for health monitoring
 	w.lastEventTime.Store(time.Now().Unix())
 
-	// Use INFO level for diagnostics - helps debug watch connection issues
-	slog.Info("SingleWatcher received delete event",
+	slog.Debug("SingleWatcher received delete event",
 		"gvr", w.config.GVR.String(),
 		"synced", w.synced.Load())
 
@@ -302,7 +299,7 @@ func (w *SingleWatcher) handleDelete(obj interface{}) {
 		}
 	}
 
-	slog.Info("SingleWatcher processing delete",
+	slog.Debug("SingleWatcher processing delete",
 		"resource_name", resource.GetName(),
 		"resource_namespace", resource.GetNamespace(),
 		"resource_version", resource.GetResourceVersion())
@@ -311,7 +308,7 @@ func (w *SingleWatcher) handleDelete(obj interface{}) {
 	// Only invoke callback for real deletions that happen after sync completes.
 	if !w.synced.Load() {
 		// During initial sync, skip callback
-		slog.Info("SingleWatcher skipping delete callback - not yet synced")
+		slog.Debug("SingleWatcher skipping delete callback - not yet synced")
 		return
 	}
 
@@ -325,7 +322,7 @@ func (w *SingleWatcher) handleDelete(obj interface{}) {
 				"resource_namespace", resource.GetNamespace(),
 				"resource_kind", resource.GetKind())
 		} else {
-			slog.Info("SingleWatcher delete callback succeeded",
+			slog.Debug("SingleWatcher delete callback succeeded",
 				"resource_name", resource.GetName(),
 				"resource_version", resource.GetResourceVersion())
 		}

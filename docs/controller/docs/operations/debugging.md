@@ -33,7 +33,7 @@ Use kubectl port-forward to access the debug server:
 
 ```bash
 # Forward debug port from controller pod
-kubectl port-forward -n <namespace> deployment/haproxy-template-ic 6060:6060
+kubectl port-forward -n <namespace> deployment/haproxy-template-ic-controller 6060:6060
 
 # Access endpoints
 curl http://localhost:6060/debug/vars
@@ -286,7 +286,7 @@ go tool pprof -http=:8080 cpu.pprof
 2. If error "config not loaded yet", check controller logs for parsing errors:
 
    ```bash
-   kubectl logs -n <namespace> deployment/haproxy-template-ic | grep -i error
+   kubectl logs -n <namespace> deployment/haproxy-template-ic-controller | grep -i error
    ```
 
 3. Verify HAProxyTemplateConfig exists:

@@ -162,7 +162,7 @@ func TestComponent_HandleValidationCompleted_NoPending(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish ValidationCompletedEvent with no pending content
-	bus.Publish(events.NewValidationCompletedEvent(nil, 0))
+	bus.Publish(events.NewValidationCompletedEvent(nil, 0, ""))
 
 	// Should not publish any HTTPResourceAcceptedEvent
 	select {
@@ -190,7 +190,7 @@ func TestComponent_HandleValidationFailed_NoPending(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish ValidationFailedEvent with no pending content
-	bus.Publish(events.NewValidationFailedEvent([]string{"error"}, 0))
+	bus.Publish(events.NewValidationFailedEvent([]string{"error"}, 0, ""))
 
 	// Should not publish any HTTPResourceRejectedEvent
 	select {
@@ -218,7 +218,7 @@ func TestComponent_HandleValidationFailed_EmptyErrors(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish ValidationFailedEvent with empty errors slice
-	bus.Publish(events.NewValidationFailedEvent([]string{}, 0))
+	bus.Publish(events.NewValidationFailedEvent([]string{}, 0, ""))
 
 	// Should not panic and not publish any events
 	select {
@@ -401,7 +401,7 @@ func TestComponent_HandleValidationCompleted_WithPending(t *testing.T) {
 	// Publish ValidationCompletedEvent
 	// Note: Without actual pending content, this won't publish any events
 	// This test verifies the code path executes without error
-	bus.Publish(events.NewValidationCompletedEvent(nil, 0))
+	bus.Publish(events.NewValidationCompletedEvent(nil, 0, ""))
 
 	// Give time for event processing
 	time.Sleep(testutil.DebounceWait)
@@ -433,7 +433,7 @@ func TestComponent_HandleValidationFailed_WithErrors(t *testing.T) {
 	bus.Publish(events.NewValidationFailedEvent([]string{
 		"validation error 1",
 		"validation error 2",
-	}, 0))
+	}, 0, ""))
 
 	// Give time for event processing
 	time.Sleep(testutil.DebounceWait)
@@ -553,7 +553,7 @@ func TestComponent_HandleEvent_ValidationCompletedType(t *testing.T) {
 	component := New(bus, logger, 0)
 
 	// Test that handleEvent properly routes ValidationCompletedEvent
-	event := events.NewValidationCompletedEvent(nil, 0)
+	event := events.NewValidationCompletedEvent(nil, 0, "")
 	component.handleEvent(event)
 
 	// Should not panic - just verify the routing works
@@ -565,7 +565,7 @@ func TestComponent_HandleEvent_ValidationFailedType(t *testing.T) {
 	component := New(bus, logger, 0)
 
 	// Test that handleEvent properly routes ValidationFailedEvent
-	event := events.NewValidationFailedEvent([]string{"error"}, 0)
+	event := events.NewValidationFailedEvent([]string{"error"}, 0, "")
 	component.handleEvent(event)
 
 	// Should not panic - just verify the routing works
@@ -614,7 +614,7 @@ func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	require.Len(t, pendingURLs, 1, "should have one URL with pending content")
 
 	// Publish ValidationCompletedEvent
-	bus.Publish(events.NewValidationCompletedEvent(nil, 0))
+	bus.Publish(events.NewValidationCompletedEvent(nil, 0, ""))
 
 	// Wait for and verify HTTPResourceAcceptedEvent
 	timeout := time.After(2 * time.Second)
@@ -680,7 +680,7 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	require.True(t, changed)
 
 	// Publish ValidationFailedEvent
-	bus.Publish(events.NewValidationFailedEvent([]string{"validation failed: bad content"}, 0))
+	bus.Publish(events.NewValidationFailedEvent([]string{"validation failed: bad content"}, 0, ""))
 
 	// Wait for HTTPResourceRejectedEvent
 	timeout := time.After(2 * time.Second)

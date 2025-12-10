@@ -455,13 +455,13 @@ func TestLeaderElection_BothReplicasRenderConfigs(t *testing.T)
 
 ```bash
 # Deploy with 3 replicas
-kubectl scale deployment haproxy-template-ic --replicas=3
+kubectl scale deployment haproxy-template-ic-controller --replicas=3
 
 # Check lease status
 kubectl get lease -n haproxy-system haproxy-template-ic-leader -o yaml
 
 # Verify leader via metrics
-kubectl port-forward deployment/haproxy-template-ic 9090:9090
+kubectl port-forward deployment/haproxy-template-ic-controller 9090:9090
 curl http://localhost:9090/metrics | grep controller_is_leader
 
 # Check logs for leadership events

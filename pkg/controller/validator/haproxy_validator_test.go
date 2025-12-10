@@ -699,6 +699,7 @@ func TestHAProxyValidator_InvalidValidationPaths(t *testing.T) {
 		&dataplane.AuxiliaryFiles{}, // Valid validation aux files
 		0,
 		0,
+		"", // triggerReason
 	)
 	bus.Publish(event)
 
@@ -748,6 +749,7 @@ func TestHAProxyValidator_InvalidAuxiliaryFiles(t *testing.T) {
 		"invalid-aux-files-type",     // Invalid ValidationAuxiliaryFiles type
 		0,
 		0,
+		"", // triggerReason
 	)
 	bus.Publish(event)
 

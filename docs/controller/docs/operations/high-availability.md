@@ -97,10 +97,10 @@ Scale the deployment dynamically:
 
 ```bash
 # Scale to 3 replicas
-kubectl scale deployment haproxy-template-ic --replicas=3
+kubectl scale deployment haproxy-template-ic-controller --replicas=3
 
 # Scale back to 2
-kubectl scale deployment haproxy-template-ic --replicas=2
+kubectl scale deployment haproxy-template-ic-controller --replicas=2
 ```
 
 ### RBAC Requirements
@@ -132,7 +132,7 @@ kubectl get lease -n <namespace> haproxy-template-ic-leader -o yaml
 
 ```bash
 # Leader logs show:
-kubectl logs -n <namespace> deployment/haproxy-template-ic | grep -E "leader|election"
+kubectl logs -n <namespace> deployment/haproxy-template-ic-controller | grep -E "leader|election"
 
 # Example output:
 # level=INFO msg="Leader election started" identity=pod-abc12 lease=haproxy-template-ic-leader
@@ -144,7 +144,7 @@ kubectl logs -n <namespace> deployment/haproxy-template-ic | grep -E "leader|ele
 Monitor leader election via metrics endpoint:
 
 ```bash
-kubectl port-forward -n <namespace> deployment/haproxy-template-ic 9090:9090
+kubectl port-forward -n <namespace> deployment/haproxy-template-ic-controller 9090:9090
 curl http://localhost:9090/metrics | grep leader_election
 ```
 
@@ -225,7 +225,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 3. Restart all controller pods:
 
    ```bash
-   kubectl rollout restart deployment haproxy-template-ic
+   kubectl rollout restart deployment haproxy-template-ic-controller
    ```
 
 ### Frequent Leadership Changes
@@ -399,17 +399,17 @@ To migrate an existing single-replica deployment to HA:
 4. **Verify leadership:**
 
    ```bash
-   kubectl logs -f deployment/haproxy-template-ic | grep leader
+   kubectl logs -f deployment/haproxy-template-ic-controller | grep leader
    ```
 
 5. **Confirm one leader:**
 
    ```bash
-   kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic \
+   kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller \
      -o custom-columns=NAME:.metadata.name,LEADER:.status.podIP
 
    # Check metrics to identify leader
-   for pod in $(kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic -o name); do
+   for pod in $(kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller -o name); do
      echo "$pod:"
      kubectl exec $pod -- wget -qO- localhost:9090/metrics | grep is_leader
    done

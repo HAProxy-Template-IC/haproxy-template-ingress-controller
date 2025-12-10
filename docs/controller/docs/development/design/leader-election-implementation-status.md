@@ -176,7 +176,7 @@ No new external dependencies needed.
 5. Check metrics:
 
    ```bash
-   kubectl port-forward deployment/haproxy-template-ic 9090:9090
+   kubectl port-forward deployment/haproxy-template-ic-controller 9090:9090
    curl http://localhost:9090/metrics | grep controller_is_leader
    ```
 

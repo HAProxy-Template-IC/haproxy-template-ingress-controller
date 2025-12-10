@@ -17,11 +17,13 @@ package dataplane
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/haproxytech/client-native/v6/models"
@@ -37,6 +39,20 @@ import (
 // concurrent haproxy -c execution. Without this, concurrent validations can
 // interfere with each other even though they use isolated temp directories.
 var haproxyCheckMutex sync.Mutex
+
+// Cached OpenAPI specs - parsed once and reused for performance.
+// GetSwagger() parses the embedded spec on every call (~500ms), so caching is critical.
+var (
+	cachedSpecV30 *openapi3.T
+	cachedSpecV31 *openapi3.T
+	cachedSpecV32 *openapi3.T
+	specOnceV30   sync.Once
+	specOnceV31   sync.Once
+	specOnceV32   sync.Once
+	specErrV30    error
+	specErrV31    error
+	specErrV32    error
+)
 
 // =============================================================================
 // Version-aware Model Conversion (using centralized client converters)
@@ -102,9 +118,15 @@ type ValidationPaths struct {
 //   - nil if validation succeeds
 //   - ValidationError with phase information if validation fails
 func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) error {
+	// Timing variables for phase breakdown
+	var syntaxMs, schemaMs, semanticMs int64
+	startTime := time.Now()
+
 	// Phase 1: Syntax validation with client-native parser
 	// This also returns the parsed configuration for Phase 1.5
+	syntaxStart := time.Now()
 	parsedConfig, err := validateSyntax(mainConfig)
+	syntaxMs = time.Since(syntaxStart).Milliseconds()
 	if err != nil {
 		return &ValidationError{
 			Phase:   "syntax",
@@ -114,6 +136,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	}
 
 	// Phase 1.5: API schema validation with OpenAPI spec
+	schemaStart := time.Now()
 	if err := validateAPISchema(parsedConfig, version); err != nil {
 		return &ValidationError{
 			Phase:   "schema",
@@ -121,8 +144,10 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 			Err:     err,
 		}
 	}
+	schemaMs = time.Since(schemaStart).Milliseconds()
 
 	// Phase 2: Semantic validation with haproxy binary
+	semanticStart := time.Now()
 	if err := validateSemantics(mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
 		return &ValidationError{
 			Phase:   "semantic",
@@ -130,6 +155,15 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 			Err:     err,
 		}
 	}
+	semanticMs = time.Since(semanticStart).Milliseconds()
+
+	// Log timing breakdown for visibility when debugging
+	slog.Debug("validation phase timing breakdown",
+		"total_ms", time.Since(startTime).Milliseconds(),
+		"syntax_ms", syntaxMs,
+		"schema_ms", schemaMs,
+		"semantic_ms", semanticMs,
+	)
 
 	return nil
 }
@@ -152,33 +186,58 @@ func validateSyntax(config string) (*parser.StructuredConfig, error) {
 	return parsed, nil
 }
 
-// getSwaggerForVersion returns the OpenAPI spec for the given HAProxy/DataPlane API version.
+// getSwaggerForVersion returns the cached OpenAPI spec for the given HAProxy/DataPlane API version.
 // If version is nil, defaults to v3.0 (safest, most compatible).
+// Specs are parsed once and cached for subsequent calls (~500ms → ~0ms after first call).
 func getSwaggerForVersion(version *Version) (*openapi3.T, error) {
 	if version == nil {
 		// Default to v3.0 - safest default when version is unknown
-		return v30.GetSwagger()
+		return getCachedSwaggerV30()
 	}
 
 	// Select OpenAPI spec based on major.minor version
 	if version.Major == 3 {
 		switch {
 		case version.Minor >= 2:
-			return v32.GetSwagger()
+			return getCachedSwaggerV32()
 		case version.Minor >= 1:
-			return v31.GetSwagger()
+			return getCachedSwaggerV31()
 		default:
-			return v30.GetSwagger()
+			return getCachedSwaggerV30()
 		}
 	}
 
 	// For versions > 3.x, use the latest available spec
 	if version.Major > 3 {
-		return v32.GetSwagger()
+		return getCachedSwaggerV32()
 	}
 
 	// For versions < 3.0, use v3.0 as fallback
-	return v30.GetSwagger()
+	return getCachedSwaggerV30()
+}
+
+// getCachedSwaggerV30 returns the cached v3.0 OpenAPI spec, parsing it on first call.
+func getCachedSwaggerV30() (*openapi3.T, error) {
+	specOnceV30.Do(func() {
+		cachedSpecV30, specErrV30 = v30.GetSwagger()
+	})
+	return cachedSpecV30, specErrV30
+}
+
+// getCachedSwaggerV31 returns the cached v3.1 OpenAPI spec, parsing it on first call.
+func getCachedSwaggerV31() (*openapi3.T, error) {
+	specOnceV31.Do(func() {
+		cachedSpecV31, specErrV31 = v31.GetSwagger()
+	})
+	return cachedSpecV31, specErrV31
+}
+
+// getCachedSwaggerV32 returns the cached v3.2 OpenAPI spec, parsing it on first call.
+func getCachedSwaggerV32() (*openapi3.T, error) {
+	specOnceV32.Do(func() {
+		cachedSpecV32, specErrV32 = v32.GetSwagger()
+	})
+	return cachedSpecV32, specErrV32
 }
 
 // validateAPISchema performs API schema validation using OpenAPI spec.
@@ -555,25 +614,44 @@ func validateAgainstSchema(spec *openapi3.T, schemaName string, model interface{
 // If skipDNSValidation is true, the -dr flag is passed to HAProxy to skip DNS resolution
 // failures (servers with unresolvable hostnames start in DOWN state instead of failing).
 func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
+	// Timing for file I/O setup vs haproxy check
+	var clearMs, writeAuxMs, writeConfigMs, haproxyCheckMs int64
+
 	// Clear validation directories to remove any pre-existing files
+	clearStart := time.Now()
 	if err := clearValidationDirectories(paths); err != nil {
 		return fmt.Errorf("failed to clear validation directories: %w", err)
 	}
+	clearMs = time.Since(clearStart).Milliseconds()
 
 	// Write auxiliary files to their respective directories
+	writeAuxStart := time.Now()
 	if err := writeAuxiliaryFiles(auxFiles, paths); err != nil {
 		return fmt.Errorf("failed to write auxiliary files: %w", err)
 	}
+	writeAuxMs = time.Since(writeAuxStart).Milliseconds()
 
 	// Write main configuration to ConfigFile path
+	writeConfigStart := time.Now()
 	if err := os.WriteFile(paths.ConfigFile, []byte(mainConfig), 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
+	writeConfigMs = time.Since(writeConfigStart).Milliseconds()
 
 	// Run haproxy -c -f <ConfigFile>
+	haproxyCheckStart := time.Now()
 	if err := runHAProxyCheck(paths.ConfigFile, mainConfig, skipDNSValidation); err != nil {
 		return err
 	}
+	haproxyCheckMs = time.Since(haproxyCheckStart).Milliseconds()
+
+	// Log semantic validation timing breakdown
+	slog.Debug("semantic validation timing breakdown",
+		"clear_dirs_ms", clearMs,
+		"write_aux_ms", writeAuxMs,
+		"write_config_ms", writeConfigMs,
+		"haproxy_check_ms", haproxyCheckMs,
+	)
 
 	return nil
 }

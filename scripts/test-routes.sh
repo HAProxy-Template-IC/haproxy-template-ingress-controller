@@ -912,7 +912,7 @@ wait_for_services_ready() {
             jq -r '.items[0].spec.content' | grep -c "^backend" 2>/dev/null || echo "  0"
         echo
         echo "Controller logs (last 30 lines):"
-        kubectl -n haproxy-template-ic logs -l app.kubernetes.io/name=haproxy-template-ic --tail=30 2>/dev/null || echo "  (no logs available)"
+        kubectl -n haproxy-template-ic logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=30 2>/dev/null || echo "  (no logs available)"
         echo
         exit 1
     fi
@@ -1041,7 +1041,7 @@ wait_for_services_ready() {
         kubectl -n haproxy-template-ic logs -l app.kubernetes.io/component=loadbalancer --tail=20 -c haproxy 2>/dev/null || echo "  (no logs available)"
         echo
         echo "  Controller logs (last 20 lines):"
-        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic --tail=20 2>/dev/null || echo "  (no logs available)"
+        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic-controller --tail=20 2>/dev/null || echo "  (no logs available)"
         echo
         exit 1
     fi

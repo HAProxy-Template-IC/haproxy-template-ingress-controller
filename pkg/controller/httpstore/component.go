@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/core/logging"
 	busevents "haproxy-template-ic/pkg/events"
 	"haproxy-template-ic/pkg/httpstore"
 )
@@ -262,11 +263,11 @@ func (c *Component) refreshURL(url string) {
 	// This handles the race condition where the eviction timer fires between
 	// EvictUnused() and StopRefresher() calls.
 	if c.store.GetEntry(url) == nil {
-		c.logger.Debug("skipping refresh for evicted URL", "url", url)
+		c.logger.Log(context.Background(), logging.LevelTrace, "skipping refresh for evicted URL", "url", url)
 		return
 	}
 
-	c.logger.Debug("refreshing HTTP URL", "url", url)
+	c.logger.Log(context.Background(), logging.LevelTrace, "refreshing HTTP URL", "url", url)
 
 	// Perform refresh
 	changed, err := c.store.RefreshURL(c.ctx, url)
@@ -310,7 +311,7 @@ func (c *Component) stopAllRefreshers() {
 
 	for url, timer := range c.refreshers {
 		timer.Stop()
-		c.logger.Debug("stopped refresh timer", "url", url)
+		c.logger.Log(context.Background(), logging.LevelTrace, "stopped refresh timer", "url", url)
 	}
 
 	c.refreshers = make(map[string]*time.Timer)
@@ -324,6 +325,6 @@ func (c *Component) StopRefresher(url string) {
 	if timer, exists := c.refreshers[url]; exists {
 		timer.Stop()
 		delete(c.refreshers, url)
-		c.logger.Debug("stopped refresh timer", "url", url)
+		c.logger.Log(context.Background(), logging.LevelTrace, "stopped refresh timer", "url", url)
 	}
 }

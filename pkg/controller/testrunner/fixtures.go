@@ -15,11 +15,13 @@
 package testrunner
 
 import (
+	"context"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"haproxy-template-ic/pkg/controller/resourcestore"
+	"haproxy-template-ic/pkg/core/logging"
 	"haproxy-template-ic/pkg/k8s/indexer"
 	"haproxy-template-ic/pkg/k8s/store"
 	"haproxy-template-ic/pkg/k8s/types"
@@ -171,7 +173,7 @@ func (r *Runner) createStoresFromFixtures(fixtures map[string][]interface{}) (ma
 	// PHASE 1: Create empty stores for ALL watched resources
 	// This ensures templates can safely reference any watched resource type
 	for resourceType, watchedResource := range r.config.WatchedResources {
-		r.logger.Debug("Creating empty store for watched resource",
+		r.logger.Log(context.Background(), logging.LevelTrace, "Creating empty store for watched resource",
 			"resource_type", resourceType)
 
 		// Use number of index fields for numKeys parameter
@@ -183,12 +185,12 @@ func (r *Runner) createStoresFromFixtures(fixtures map[string][]interface{}) (ma
 	}
 
 	// Create store for haproxy-pods (special controller metadata, not a watched resource)
-	r.logger.Debug("Creating empty store for haproxy-pods (controller metadata)")
+	r.logger.Log(context.Background(), logging.LevelTrace, "Creating empty store for haproxy-pods (controller metadata)")
 	stores["haproxy-pods"] = store.NewMemoryStore(2) // namespace + name keys
 
 	// PHASE 2: Populate stores with fixture data
 	for resourceType, resources := range fixtures {
-		r.logger.Debug("Populating fixture store",
+		r.logger.Log(context.Background(), logging.LevelTrace, "Populating fixture store",
 			"resource_type", resourceType,
 			"count", len(resources))
 
@@ -212,7 +214,7 @@ func (r *Runner) createStoresFromFixtures(fixtures map[string][]interface{}) (ma
 					resource.SetKind("Pod")
 				}
 
-				r.logger.Debug("Adding haproxy-pods fixture to store",
+				r.logger.Log(context.Background(), logging.LevelTrace, "Adding haproxy-pods fixture to store",
 					"index", i,
 					"name", resource.GetName(),
 					"namespace", resource.GetNamespace())
@@ -267,7 +269,7 @@ func (r *Runner) createStoresFromFixtures(fixtures map[string][]interface{}) (ma
 				resource.SetKind(kind)
 			}
 
-			r.logger.Debug("Adding fixture resource to store",
+			r.logger.Log(context.Background(), logging.LevelTrace, "Adding fixture resource to store",
 				"resource_type", resourceType,
 				"index", i,
 				"name", resource.GetName(),

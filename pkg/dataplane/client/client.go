@@ -108,7 +108,7 @@ func New(ctx context.Context, cfg *Config) (*DataplaneClient, error) {
 		return nil, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	logger.Info("created DataPlane API client",
+	logger.Debug("created DataPlane API client",
 		"endpoint", endpoint.URL,
 		"version", clientset.DetectedVersion(),
 		"capabilities", clientset.Capabilities(),

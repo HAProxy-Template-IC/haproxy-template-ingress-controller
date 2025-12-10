@@ -41,8 +41,9 @@ type Event struct {
 // debug functionality to the commentator component. It subscribes to the EventBus
 // and stores simplified event representations.
 type EventBuffer struct {
-	buffer *ringbuffer.RingBuffer[Event]
-	bus    *busevents.EventBus
+	buffer    *ringbuffer.RingBuffer[Event]
+	bus       *busevents.EventBus
+	eventChan <-chan busevents.Event // Subscribed in constructor per CLAUDE.md guidelines
 }
 
 // NewEventBuffer creates a new event buffer with the specified capacity.
@@ -50,31 +51,37 @@ type EventBuffer struct {
 // The buffer subscribes to all events from the EventBus and stores the last
 // N events (where N is the size parameter).
 //
+// Note: The buffer subscribes during construction per CLAUDE.md guidelines
+// to ensure subscription happens before EventBus.Start() is called.
+//
 // Example:
 //
 //	eventBuffer := debug.NewEventBuffer(1000, bus)
 //	go eventBuffer.Start(ctx)
 func NewEventBuffer(size int, bus *busevents.EventBus) *EventBuffer {
+	// Subscribe in constructor per CLAUDE.md guidelines to ensure subscription
+	// happens before EventBus.Start() is called
+	eventChan := bus.Subscribe(1000)
+
 	return &EventBuffer{
-		buffer: ringbuffer.New[Event](size),
-		bus:    bus,
+		buffer:    ringbuffer.New[Event](size),
+		bus:       bus,
+		eventChan: eventChan,
 	}
 }
 
 // Start begins collecting events from the EventBus.
 //
-// This method blocks until the context is cancelled. It should be run
-// in a goroutine.
+// This method blocks until the context is cancelled. It processes events
+// from the pre-subscribed channel. It should be run in a goroutine.
 //
 // Example:
 //
 //	go eventBuffer.Start(ctx)
 func (eb *EventBuffer) Start(ctx context.Context) error {
-	eventChan := eb.bus.Subscribe(1000)
-
 	for {
 		select {
-		case event := <-eventChan:
+		case event := <-eb.eventChan:
 			// Convert to debug Event
 			debugEvent := eb.convertEvent(event)
 			eb.buffer.Add(debugEvent)

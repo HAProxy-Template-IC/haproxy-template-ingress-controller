@@ -23,12 +23,14 @@
 package discovery
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	coreconfig "haproxy-template-ic/pkg/core/config"
+	"haproxy-template-ic/pkg/core/logging"
 	"haproxy-template-ic/pkg/dataplane"
 	"haproxy-template-ic/pkg/k8s/types"
 )
@@ -135,7 +137,7 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 	}
 
 	if logger != nil {
-		logger.Debug("Found dataplane container in spec",
+		logger.Log(context.Background(), logging.LevelTrace, "Found dataplane container in spec",
 			"pod", pod.GetName(),
 			"container", dataplaneContainerName,
 			"port", d.dataplanePort)
@@ -146,7 +148,7 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 	if err != nil || !found {
 		// No container statuses yet
 		if logger != nil {
-			logger.Debug("No containerStatuses found in pod status",
+			logger.Log(context.Background(), logging.LevelTrace, "No containerStatuses found in pod status",
 				"pod", pod.GetName(),
 				"error", err)
 		}
@@ -167,7 +169,7 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 		if name == dataplaneContainerName {
 			ready, found, err := unstructured.NestedBool(status, "ready")
 
-			// Debug logging to investigate connection refused despite ready status
+			// Trace logging to investigate connection refused despite ready status
 			if logger != nil {
 				started, _, _ := unstructured.NestedBool(status, "started")
 				restartCount, _, _ := unstructured.NestedInt64(status, "restartCount")
@@ -185,7 +187,7 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 					}
 				}
 
-				logger.Debug("Dataplane container status check",
+				logger.Log(context.Background(), logging.LevelTrace, "Dataplane container status check",
 					"pod", pod.GetName(),
 					"container", name,
 					"ready", ready,
@@ -208,7 +210,7 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 
 	// Container not found in status (shouldn't happen)
 	if logger != nil {
-		logger.Debug("Dataplane container not found in containerStatuses",
+		logger.Log(context.Background(), logging.LevelTrace, "Dataplane container not found in containerStatuses",
 			"pod", pod.GetName(),
 			"expected_container", dataplaneContainerName)
 	}
@@ -276,7 +278,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 
 		// Log pod evaluation start
 		if logger != nil {
-			logger.Debug("Evaluating pod for discovery",
+			logger.Log(context.Background(), logging.LevelTrace, "Evaluating pod for discovery",
 				"pod", pod.GetName(),
 				"namespace", pod.GetNamespace(),
 				"uid", pod.GetUID())
@@ -287,7 +289,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 		// but their ports are shutting down and will refuse connections
 		if pod.GetDeletionTimestamp() != nil {
 			if logger != nil {
-				logger.Debug("Skipping terminating pod",
+				logger.Log(context.Background(), logging.LevelTrace, "Skipping terminating pod",
 					"pod", pod.GetName(),
 					"deletionTimestamp", pod.GetDeletionTimestamp())
 			}
@@ -303,7 +305,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 		if !found || podIP == "" {
 			// Skip pods without IP (not running yet)
 			if logger != nil {
-				logger.Debug("Skipping pod - no IP assigned",
+				logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - no IP assigned",
 					"pod", pod.GetName())
 			}
 			continue
@@ -318,7 +320,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 		if !found || phase != "Running" {
 			// Skip pods that aren't in Running phase
 			if logger != nil {
-				logger.Debug("Skipping pod - not in Running phase",
+				logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - not in Running phase",
 					"pod", pod.GetName(),
 					"phase", phase)
 			}
@@ -334,7 +336,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 		if !ready {
 			// Skip pods where dataplane container isn't ready yet
 			if logger != nil {
-				logger.Debug("Skipping pod - dataplane container not ready",
+				logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - dataplane container not ready",
 					"pod", pod.GetName(),
 					"podIP", podIP,
 					"phase", phase)
@@ -344,7 +346,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 
 		// Pod passed readiness check
 		if logger != nil {
-			logger.Debug("Including pod - dataplane container is ready",
+			logger.Log(context.Background(), logging.LevelTrace, "Including pod - dataplane container is ready",
 				"pod", pod.GetName(),
 				"podIP", podIP,
 				"phase", phase)

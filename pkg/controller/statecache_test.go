@@ -213,6 +213,7 @@ func TestStateCache_HandleTemplateRendered(t *testing.T) {
 		nil,
 		1,
 		100,
+		"",
 	))
 
 	// Allow time for event processing
@@ -324,11 +325,11 @@ func TestStateCache_HandleValidationCompleted(t *testing.T) {
 
 	// First set rendered config (validation stores this as validated config)
 	testConfig := "global\n  daemon\n"
-	bus.Publish(events.NewTemplateRenderedEvent(testConfig, testConfig, nil, nil, nil, 0, 100))
+	bus.Publish(events.NewTemplateRenderedEvent(testConfig, testConfig, nil, nil, nil, 0, 100, ""))
 	time.Sleep(50 * time.Millisecond)
 
 	// Publish validation completed event
-	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150))
+	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150, ""))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -360,7 +361,7 @@ func TestStateCache_HandleValidationFailed(t *testing.T) {
 	bus.Start()
 
 	// Publish validation failed event
-	bus.Publish(events.NewValidationFailedEvent([]string{"[ALERT] parsing error"}, 50))
+	bus.Publish(events.NewValidationFailedEvent([]string{"[ALERT] parsing error"}, 50, ""))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -646,7 +647,7 @@ func TestStateCache_GetErrors_ValidationError(t *testing.T) {
 	bus.Start()
 
 	// Trigger validation failure
-	bus.Publish(events.NewValidationFailedEvent([]string{"[ALERT] parsing error"}, 50))
+	bus.Publish(events.NewValidationFailedEvent([]string{"[ALERT] parsing error"}, 50, ""))
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -700,8 +701,8 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 	bus.Start()
 
 	// Set up some pipeline state
-	bus.Publish(events.NewTemplateRenderedEvent("config", "config", nil, nil, nil, 0, 100))
-	bus.Publish(events.NewValidationCompletedEvent(nil, 50))
+	bus.Publish(events.NewTemplateRenderedEvent("config", "config", nil, nil, nil, 0, 100, ""))
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, ""))
 	bus.Publish(events.NewDeploymentCompletedEvent(2, 2, 0, 500))
 	bus.Publish(events.NewInstanceDeploymentFailedEvent(&testEndpoint{url: "http://fail:5555"}, "error", false))
 

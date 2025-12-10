@@ -24,6 +24,7 @@ package executor
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"haproxy-template-ic/pkg/controller/events"
@@ -57,6 +58,11 @@ type Executor struct {
 	eventBus  *busevents.EventBus
 	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger    *slog.Logger
+
+	// reconciliationStarts tracks start times for in-progress reconciliations by correlation ID.
+	// This enables accurate duration calculation when validation completes.
+	reconciliationStarts map[string]time.Time
+	mu                   sync.Mutex
 }
 
 // New creates a new Executor component.
@@ -73,9 +79,10 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Executor {
 	eventChan := eventBus.Subscribe(EventBufferSize)
 
 	return &Executor{
-		eventBus:  eventBus,
-		eventChan: eventChan,
-		logger:    logger,
+		eventBus:             eventBus,
+		eventChan:            eventChan,
+		logger:               logger,
+		reconciliationStarts: make(map[string]time.Time),
 	}
 }
 
@@ -145,20 +152,19 @@ func (e *Executor) handleEvent(event busevents.Event) {
 //  3. Deployment to HAProxy instances
 //
 // Events are published at each phase for observability and coordination.
+// The ReconciliationCompletedEvent is published when validation completes,
+// not immediately, to capture the actual render+validate duration.
 func (e *Executor) handleReconciliationTriggered(event *events.ReconciliationTriggeredEvent) {
-	startTime := time.Now()
+	// Track start time by correlation ID for accurate duration calculation
+	e.mu.Lock()
+	e.reconciliationStarts[event.CorrelationID()] = time.Now()
+	e.mu.Unlock()
 
 	e.logger.Info("Reconciliation triggered", "reason", event.Reason)
 
 	// Publish reconciliation started event
 	e.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason))
-
-	// Publish reconciliation completed event
-	durationMs := time.Since(startTime).Milliseconds()
-	e.eventBus.Publish(events.NewReconciliationCompletedEvent(durationMs))
-
-	e.logger.Info("Reconciliation completed",
-		"duration_ms", durationMs)
+	// Note: ReconciliationCompletedEvent is published in handleValidationCompleted
 }
 
 // handleTemplateRendered handles successful template rendering.
@@ -166,13 +172,9 @@ func (e *Executor) handleReconciliationTriggered(event *events.ReconciliationTri
 // This is called when the Renderer component completes template rendering.
 // The HAProxyValidatorComponent will automatically validate the configuration
 // by subscribing to TemplateRenderedEvent and publishing validation result events.
-func (e *Executor) handleTemplateRendered(event *events.TemplateRenderedEvent) {
-	e.logger.Info("Template rendering completed",
-		"config_bytes", event.ConfigBytes,
-		"auxiliary_files", event.AuxiliaryFileCount,
-		"duration_ms", event.DurationMs)
-
+func (e *Executor) handleTemplateRendered(_ *events.TemplateRenderedEvent) {
 	// Validation is performed by the HAProxyValidatorComponent (event-driven)
+	// Logging is handled by the EventCommentator for consistent observability
 	e.logger.Debug("Waiting for validation to complete")
 }
 
@@ -181,6 +183,11 @@ func (e *Executor) handleTemplateRendered(event *events.TemplateRenderedEvent) {
 // This is called when the Renderer component fails to render templates.
 // The reconciliation cycle is aborted and a failure event is published.
 func (e *Executor) handleTemplateRenderFailed(event *events.TemplateRenderFailedEvent) {
+	// Clean up tracked start time (no completion event on failure)
+	e.mu.Lock()
+	delete(e.reconciliationStarts, event.CorrelationID())
+	e.mu.Unlock()
+
 	// Error is already formatted by renderer component
 	e.logger.Error("Template rendering failed\n"+event.Error,
 		"template", event.TemplateName)
@@ -196,12 +203,20 @@ func (e *Executor) handleTemplateRenderFailed(event *events.TemplateRenderFailed
 //
 // This is called when the Validator component completes configuration validation.
 // The executor will proceed to the next phase: deployment.
+// Note: Main completion logging is handled by EventCommentator for consistent observability.
 func (e *Executor) handleValidationCompleted(event *events.ValidationCompletedEvent) {
-	e.logger.Info("Configuration validation completed",
-		"duration_ms", event.DurationMs,
-		"warnings", len(event.Warnings))
+	// Calculate duration and publish completion event
+	e.mu.Lock()
+	startTime, exists := e.reconciliationStarts[event.CorrelationID()]
+	delete(e.reconciliationStarts, event.CorrelationID())
+	e.mu.Unlock()
 
-	// Log any warnings
+	if exists {
+		durationMs := time.Since(startTime).Milliseconds()
+		e.eventBus.Publish(events.NewReconciliationCompletedEvent(durationMs))
+	}
+
+	// Log individual warnings (not covered by EventCommentator)
 	for _, warning := range event.Warnings {
 		e.logger.Warn("Validation warning", "warning", warning)
 	}
@@ -215,6 +230,11 @@ func (e *Executor) handleValidationCompleted(event *events.ValidationCompletedEv
 // This is called when the Validator component fails to validate the configuration.
 // The reconciliation cycle is aborted and a failure event is published.
 func (e *Executor) handleValidationFailed(event *events.ValidationFailedEvent) {
+	// Clean up tracked start time (no completion event on failure)
+	e.mu.Lock()
+	delete(e.reconciliationStarts, event.CorrelationID())
+	e.mu.Unlock()
+
 	e.logger.Error("Configuration validation failed",
 		"errors", event.Errors,
 		"duration_ms", event.DurationMs)

@@ -108,7 +108,7 @@ func (b *EventBus) Publish(event Event) int {
 	if !b.started {
 		// Buffer event for replay after Start(), with capacity limit
 		if len(b.preStartBuffer) >= MaxPreStartBufferSize {
-			slog.Warn("pre-start buffer capacity exceeded, dropping event",
+			slog.Warn("Pre-start buffer capacity exceeded, dropping event",
 				"capacity", MaxPreStartBufferSize,
 				"event_type", event.EventType())
 		} else {
@@ -209,7 +209,7 @@ func (b *EventBus) subscribeInternal(bufferSize int, isLeaderOnly bool) <-chan E
 			caller = file
 		}
 
-		slog.Warn("subscription after EventBus.Start() may miss buffered events - use SubscribeLeaderOnly for leader-only components",
+		slog.Warn("Subscription after EventBus.Start() may miss buffered events - use SubscribeLeaderOnly for leader-only components",
 			"caller", caller,
 			"line", line)
 	}

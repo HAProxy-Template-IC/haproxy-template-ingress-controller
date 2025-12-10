@@ -94,7 +94,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 		content := entry.AcceptedContent
 		entry.LastAccessTime = time.Now() // Track access for eviction
 		s.mu.Unlock()
-		s.logger.Debug("returning cached content",
+		s.logger.Log(context.Background(), levelTrace, "returning cached content",
 			"url", url,
 			"size", len(content),
 			"age", time.Since(entry.AcceptedTime).String())
@@ -103,7 +103,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	s.mu.Unlock()
 
 	// Cache miss - perform synchronous fetch
-	s.logger.Info("performing initial HTTP fetch",
+	s.logger.Info("Performing initial HTTP fetch",
 		"url", url,
 		"timeout", opts.Timeout.String(),
 		"retries", opts.Retries,
@@ -138,7 +138,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	}
 	s.mu.Unlock()
 
-	s.logger.Info("cached HTTP content",
+	s.logger.Info("Cached HTTP content",
 		"url", url,
 		"size", len(content),
 		"checksum", checksum[:16]+"...")
@@ -211,7 +211,7 @@ func (s *HTTPStore) PromotePending(url string) bool {
 		return false
 	}
 
-	s.logger.Info("promoting pending content to accepted",
+	s.logger.Info("Promoting pending content to accepted",
 		"url", url,
 		"old_checksum", entry.AcceptedChecksum[:min(16, len(entry.AcceptedChecksum))]+"...",
 		"new_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...")
@@ -241,7 +241,7 @@ func (s *HTTPStore) RejectPending(url string) bool {
 		return false
 	}
 
-	s.logger.Warn("rejecting pending content, keeping accepted version",
+	s.logger.Warn("Rejecting pending content, keeping accepted version",
 		"url", url,
 		"rejected_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...",
 		"keeping_checksum", entry.AcceptedChecksum[:min(16, len(entry.AcceptedChecksum))]+"...")
@@ -277,7 +277,7 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	// Skip if already validating
 	if entry.ValidationState == StateValidating {
 		s.mu.RUnlock()
-		s.logger.Debug("skipping refresh, validation in progress", "url", url)
+		s.logger.Log(context.Background(), levelTrace, "skipping refresh, validation in progress", "url", url)
 		return false, nil
 	}
 
@@ -292,7 +292,7 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	content, newEtag, newLastModified, err := s.fetchWithRetry(ctx, url, opts, auth, etag, lastModified)
 	if err != nil {
 		// Check for 304 Not Modified (handled by fetchWithRetry returning empty content)
-		s.logger.Warn("refresh fetch failed",
+		s.logger.Warn("Refresh fetch failed",
 			"url", url,
 			"error", err)
 		return false, err
@@ -300,7 +300,7 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 
 	// Empty content with no error means 304 Not Modified
 	if content == "" && newEtag == etag {
-		s.logger.Debug("content not modified (304)",
+		s.logger.Log(context.Background(), levelTrace, "content not modified (304)",
 			"url", url,
 			"etag", etag)
 		return false, nil
@@ -309,7 +309,7 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	// Check if content actually changed
 	newChecksum := Checksum(content)
 	if newChecksum == acceptedChecksum {
-		s.logger.Debug("content unchanged (same checksum)",
+		s.logger.Log(context.Background(), levelTrace, "content unchanged (same checksum)",
 			"url", url,
 			"checksum", newChecksum[:16]+"...")
 
@@ -336,7 +336,7 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	}
 	s.mu.Unlock()
 
-	s.logger.Info("content changed, stored as pending",
+	s.logger.Info("Content changed, stored as pending",
 		"url", url,
 		"old_checksum", acceptedChecksum[:min(16, len(acceptedChecksum))]+"...",
 		"new_checksum", newChecksum[:16]+"...",
@@ -453,7 +453,7 @@ func (s *HTTPStore) PromoteAllPending() int {
 			continue
 		}
 
-		s.logger.Info("promoting pending content to accepted",
+		s.logger.Info("Promoting pending content to accepted",
 			"url", url,
 			"new_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...")
 
@@ -481,7 +481,7 @@ func (s *HTTPStore) RejectAllPending() int {
 			continue
 		}
 
-		s.logger.Warn("rejecting pending content",
+		s.logger.Warn("Rejecting pending content",
 			"url", url,
 			"rejected_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...")
 
@@ -520,7 +520,7 @@ func (s *HTTPStore) EvictUnused() []string {
 
 		// Evict if last access time is before cutoff
 		if entry.LastAccessTime.Before(cutoff) {
-			s.logger.Info("evicting unused HTTP cache entry",
+			s.logger.Info("Evicting unused HTTP cache entry",
 				"url", url,
 				"last_access", entry.LastAccessTime,
 				"age", now.Sub(entry.LastAccessTime))
@@ -560,7 +560,7 @@ func (s *HTTPStore) LoadFixture(url, content string) {
 		// No pending content, no ETag - fixtures are immediately accepted
 	}
 
-	s.logger.Debug("loaded HTTP fixture",
+	s.logger.Debug("Loaded HTTP fixture",
 		"url", url,
 		"size", len(content),
 		"checksum", checksum[:min(16, len(checksum))]+"...")

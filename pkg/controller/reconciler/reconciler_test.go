@@ -119,8 +119,8 @@ func TestReconciler_MultipleChangesResetDebounce(t *testing.T) {
 		"Reconciliation should be delayed by the full debounce interval after the second change")
 }
 
-// TestReconciler_ConfigChangeImmediateTrigger tests that config changes trigger immediately.
-func TestReconciler_ConfigChangeImmediateTrigger(t *testing.T) {
+// TestReconciler_IndexSynchronizedTriggersImmediate tests that IndexSynchronizedEvent triggers immediately.
+func TestReconciler_IndexSynchronizedTriggersImmediate(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	config := &Config{
@@ -140,14 +140,18 @@ func TestReconciler_ConfigChangeImmediateTrigger(t *testing.T) {
 	// Give the reconciler time to start listening
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish config change event
-	bus.Publish(events.NewConfigValidatedEvent(nil, nil, "v1", "s1"))
+	// Publish index synchronized event
+	resourceCounts := map[string]int{
+		"ingresses": 10,
+		"services":  5,
+	}
+	bus.Publish(events.NewIndexSynchronizedEvent(resourceCounts))
 
-	// Should trigger immediately (within 200ms, not after 500ms debounce)
+	// Should trigger immediately (within 200ms, not after long debounce)
 	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 
 	require.NotNil(t, receivedEvent)
-	assert.Equal(t, "config_change", receivedEvent.Reason)
+	assert.Equal(t, "index_synchronized", receivedEvent.Reason)
 }
 
 // TestReconciler_SkipInitialSyncEvents tests that initial sync events don't trigger reconciliation.
@@ -186,8 +190,8 @@ func TestReconciler_SkipInitialSyncEvents(t *testing.T) {
 	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, 300*time.Millisecond)
 }
 
-// TestReconciler_ConfigCancelsDebounce tests that config changes cancel pending debounce.
-func TestReconciler_ConfigCancelsDebounce(t *testing.T) {
+// TestReconciler_IndexSynchronizedCancelsDebounce tests that IndexSynchronizedEvent cancels pending debounce.
+func TestReconciler_IndexSynchronizedCancelsDebounce(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	config := &Config{
@@ -216,8 +220,8 @@ func TestReconciler_ConfigCancelsDebounce(t *testing.T) {
 	// Wait a bit but not long enough for debounce
 	time.Sleep(testutil.DebounceWait)
 
-	// Publish config change (should trigger immediately and cancel debounce)
-	bus.Publish(events.NewConfigValidatedEvent(nil, nil, "v2", "s2"))
+	// Publish index synchronized event (should trigger immediately and cancel debounce)
+	bus.Publish(events.NewIndexSynchronizedEvent(map[string]int{"ingresses": 10}))
 
 	// Collect events for a short window
 	timeout := time.After(testutil.NoEventTimeout)
@@ -235,9 +239,9 @@ Loop:
 		}
 	}
 
-	// Should only receive one event (config_change), not the debounced resource_change
+	// Should only receive one event (index_synchronized), not the debounced resource_change
 	require.Len(t, receivedEvents, 1, "Should only receive one reconciliation trigger")
-	assert.Equal(t, "config_change", receivedEvents[0].Reason)
+	assert.Equal(t, "index_synchronized", receivedEvents[0].Reason)
 }
 
 // TestReconciler_ContextCancellation tests graceful shutdown on context cancellation.

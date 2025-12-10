@@ -29,6 +29,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"haproxy-template-ic/pkg/controller/events"
 	"haproxy-template-ic/pkg/controller/httpstore"
 	"haproxy-template-ic/pkg/core/config"
@@ -46,6 +48,26 @@ const (
 	// EventBufferSize is the size of the event subscription buffer.
 	EventBufferSize = 50
 )
+
+// renderOutput holds the output of a successful render for caching.
+type renderOutput struct {
+	productionConfig   string
+	validationConfig   string
+	validationPaths    *dataplane.ValidationPaths
+	productionAuxFiles *dataplane.AuxiliaryFiles
+	validationAuxFiles *dataplane.AuxiliaryFiles
+	auxFileCount       int
+	durationMs         int64
+	correlationID      string
+	triggerReason      string
+}
+
+// singleRenderResult holds the output of a single render (production or validation).
+type singleRenderResult struct {
+	haproxyConfig  string
+	auxiliaryFiles *dataplane.AuxiliaryFiles
+	durationMs     int64
+}
 
 // Component implements the renderer component.
 //
@@ -86,12 +108,29 @@ type Component struct {
 	lastAuxFileCount             int
 	lastRenderDurationMs         int64
 	lastCorrelationID            string // Correlation ID from triggering event
+	lastTriggerReason            string // Reason from ReconciliationTriggeredEvent (e.g., "drift_prevention")
 	hasRenderedConfig            bool
 
 	// capabilities defines which features are available for the local HAProxy version.
 	// Determined from local HAProxy version at construction time via CapabilitiesFromVersion().
 	// When capabilities.SupportsCrtList is false, CRT-list paths resolve to general files directory.
 	capabilities dataplane.Capabilities
+}
+
+// cacheRenderOutput stores render output for leadership transition replay.
+func (c *Component) cacheRenderOutput(out *renderOutput) {
+	c.mu.Lock()
+	c.lastHAProxyConfig = out.productionConfig
+	c.lastValidationConfig = out.validationConfig
+	c.lastValidationPaths = out.validationPaths
+	c.lastAuxiliaryFiles = out.productionAuxFiles
+	c.lastValidationAuxiliaryFiles = out.validationAuxFiles
+	c.lastAuxFileCount = out.auxFileCount
+	c.lastRenderDurationMs = out.durationMs
+	c.lastCorrelationID = out.correlationID
+	c.lastTriggerReason = out.triggerReason
+	c.hasRenderedConfig = true
+	c.mu.Unlock()
 }
 
 // New creates a new Renderer component.
@@ -119,10 +158,10 @@ func New(
 	logger *slog.Logger,
 ) (*Component, error) {
 	// Log stores received during initialization
-	logger.Info("creating renderer component",
+	logger.Debug("Creating renderer component",
 		"store_count", len(stores))
 	for resourceTypeName := range stores {
-		logger.Info("renderer received store",
+		logger.Debug("Renderer received store",
 			"resource_type", resourceTypeName)
 	}
 
@@ -154,7 +193,7 @@ func New(
 	// This ensures proper startup synchronization without timing-based sleeps
 	eventChan := eventBus.Subscribe(EventBufferSize)
 
-	logger.Info("renderer initialized with capabilities",
+	logger.Debug("Renderer initialized with capabilities",
 		"supports_crt_list", capabilities.SupportsCrtList,
 		"supports_map_storage", capabilities.SupportsMapStorage,
 		"supports_general_storage", capabilities.SupportsGeneralStorage)
@@ -262,7 +301,7 @@ func (c *Component) setupValidationEnvironment() (*validationEnvironment, func()
 
 	cleanup := func() {
 		if err := os.RemoveAll(tmpDir); err != nil {
-			c.logger.Warn("failed to clean up validation temp directory",
+			c.logger.Warn("Failed to clean up validation temp directory",
 				"path", tmpDir, "error", err)
 		}
 	}
@@ -308,17 +347,90 @@ func (c *Component) createPathResolvers(env *validationEnvironment) (production,
 	return production, validation, validationPaths
 }
 
-// handleReconciliationTriggered renders all templates when reconciliation is triggered.
-// Renders configuration twice: once for production deployment, once for validation.
-// Propagates correlation ID from the triggering event to the rendered event.
+// handleReconciliationTriggered implements "latest wins" coalescing for reconciliation events.
+//
+// When multiple ReconciliationTriggeredEvents arrive while rendering is in progress,
+// intermediate events are superseded - only the latest pending trigger is processed.
+// This prevents queue backlog where measured reconciliation times grow progressively
+// when events arrive faster than they can be processed.
+//
+// Since the event loop is single-threaded, events buffer in eventChan during rendering.
+// After each render completes, we drain the channel to find the latest trigger and
+// process only that one, skipping intermediate triggers.
+//
+// Pattern:
+//
+//	t=0:     Trigger #1 → Render starts (takes ~3s)
+//	t=500:   Trigger #2 → Buffers in eventChan
+//	t=1000:  Trigger #3 → Buffers in eventChan
+//	t=3000:  #1 done → Drain channel, find #3 (latest), skip #2
+//	t=6000:  #3 done
+//
+// This follows the same pattern as DeploymentScheduler.
 func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTriggeredEvent) {
+	// Process current event
+	c.performRender(event)
+
+	// After rendering completes, drain the event channel for any pending reconciliation triggers.
+	// Since the event loop is single-threaded, events buffer in eventChan while performRender executes.
+	// We process only the latest trigger (coalescing), handling other event types normally.
+	for {
+		latest := c.drainReconciliationTriggers()
+		if latest == nil {
+			return
+		}
+
+		c.logger.Info("Processing coalesced reconciliation trigger",
+			"correlation_id", latest.CorrelationID(),
+			"reason", latest.Reason)
+		c.performRender(latest)
+	}
+}
+
+// drainReconciliationTriggers non-blocking drains the event channel for ReconciliationTriggeredEvents,
+// returning only the latest one. Other event types (e.g., BecameLeaderEvent) are handled inline.
+func (c *Component) drainReconciliationTriggers() *events.ReconciliationTriggeredEvent {
+	var latest *events.ReconciliationTriggeredEvent
+	supersededCount := 0
+
+	for {
+		select {
+		case event := <-c.eventChan:
+			switch ev := event.(type) {
+			case *events.ReconciliationTriggeredEvent:
+				if latest != nil {
+					supersededCount++
+				}
+				latest = ev
+			default:
+				// Handle non-reconciliation events normally
+				c.handleEvent(event)
+			}
+		default:
+			// No more events in channel
+			if supersededCount > 0 {
+				c.logger.Info("Coalesced reconciliation triggers",
+					"superseded_count", supersededCount,
+					"processing", latest.CorrelationID())
+			}
+			return latest
+		}
+	}
+}
+
+// performRender renders all templates for a reconciliation event.
+// Renders configuration twice in parallel: once for production deployment, once for validation.
+// Propagates correlation ID from the triggering event to the rendered event.
+// This method is called by handleReconciliationTriggered after coalescing logic.
+func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 	startTime := time.Now()
 	correlationID := event.CorrelationID()
-	c.logger.Info("Template rendering triggered",
+	c.logger.Debug("Template rendering triggered",
 		"reason", event.Reason,
 		"correlation_id", correlationID)
 
-	// Setup validation environment
+	// Setup validation environment (sequential - needed by both renders)
+	setupStart := time.Now()
 	validationEnv, cleanup, err := c.setupValidationEnvironment()
 	if err != nil {
 		c.publishRenderFailure("validation-setup", err)
@@ -326,83 +438,139 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 	}
 	defer cleanup()
 
-	// Create path resolvers (includes capability-aware CRTListDir)
+	// Create path resolvers (sequential - needed by both renders)
 	productionPathResolver, validationPathResolver, validationPaths := c.createPathResolvers(validationEnv)
+	setupMs := time.Since(setupStart).Milliseconds()
 
-	// RENDER 1: Production configuration (for deployment)
-	c.logger.Info("rendering production configuration")
-	productionContext, productionFileRegistry := c.buildRenderingContext(c.ctx, productionPathResolver, false)
+	// Run production and validation renders in parallel
+	var productionResult, validationResult *singleRenderResult
+	var renderErr error
 
-	productionHAProxyConfig, err := c.engine.Render("haproxy.cfg", productionContext)
-	if err != nil {
-		c.publishRenderFailure("haproxy.cfg", err)
+	g, _ := errgroup.WithContext(c.ctx)
+
+	// Production render goroutine
+	g.Go(func() error {
+		result, err := c.renderSingle(productionPathResolver, false)
+		if err != nil {
+			return err
+		}
+		productionResult = result
+		return nil
+	})
+
+	// Validation render goroutine
+	g.Go(func() error {
+		result, err := c.renderSingle(validationPathResolver, true)
+		if err != nil {
+			return err
+		}
+		validationResult = result
+		return nil
+	})
+
+	// Wait for both renders to complete
+	if renderErr = g.Wait(); renderErr != nil {
+		// Error already published by renderSingle
 		return
 	}
 
-	productionStaticFiles, err := c.renderAuxiliaryFiles(productionContext)
-	if err != nil {
-		// Error already published by renderAuxiliaryFiles
-		return
-	}
-
-	productionDynamicFiles := productionFileRegistry.GetFiles()
-	productionAuxiliaryFiles := MergeAuxiliaryFiles(productionStaticFiles, productionDynamicFiles)
-
-	// RENDER 2: Validation configuration (for controller validation)
-	c.logger.Info("rendering validation configuration")
-	validationContext, validationFileRegistry := c.buildRenderingContext(c.ctx, validationPathResolver, true)
-
-	validationHAProxyConfig, err := c.engine.Render("haproxy.cfg", validationContext)
-	if err != nil {
-		c.publishRenderFailure("haproxy.cfg-validation", err)
-		return
-	}
-
-	validationStaticFiles, err := c.renderAuxiliaryFiles(validationContext)
-	if err != nil {
-		// Error already published by renderAuxiliaryFiles
-		return
-	}
-
-	validationDynamicFiles := validationFileRegistry.GetFiles()
-	validationAuxiliaryFiles := MergeAuxiliaryFiles(validationStaticFiles, validationDynamicFiles)
-
-	// Calculate metrics
+	// Calculate metrics and log timing breakdown
 	durationMs := time.Since(startTime).Milliseconds()
-	auxFileCount := len(productionAuxiliaryFiles.MapFiles) +
-		len(productionAuxiliaryFiles.GeneralFiles) +
-		len(productionAuxiliaryFiles.SSLCertificates)
+	auxFileCount := len(productionResult.auxiliaryFiles.MapFiles) +
+		len(productionResult.auxiliaryFiles.GeneralFiles) +
+		len(productionResult.auxiliaryFiles.SSLCertificates)
 
-	c.logger.Info("Template rendering completed",
-		"production_config_bytes", len(productionHAProxyConfig),
-		"validation_config_bytes", len(validationHAProxyConfig),
+	c.logger.Info("Template rendering completed (parallel)",
+		"total_ms", durationMs,
+		"setup_ms", setupMs,
+		"prod_render_ms", productionResult.durationMs,
+		"val_render_ms", validationResult.durationMs,
+		"production_config_bytes", len(productionResult.haproxyConfig),
+		"validation_config_bytes", len(validationResult.haproxyConfig),
 		"auxiliary_files", auxFileCount,
-		"duration_ms", durationMs)
+	)
 
 	// Cache rendered output for leadership transition replay
-	c.mu.Lock()
-	c.lastHAProxyConfig = productionHAProxyConfig
-	c.lastValidationConfig = validationHAProxyConfig
-	c.lastValidationPaths = validationPaths
-	c.lastAuxiliaryFiles = productionAuxiliaryFiles
-	c.lastValidationAuxiliaryFiles = validationAuxiliaryFiles
-	c.lastAuxFileCount = auxFileCount
-	c.lastRenderDurationMs = durationMs
-	c.lastCorrelationID = correlationID
-	c.hasRenderedConfig = true
-	c.mu.Unlock()
+	c.cacheRenderOutput(&renderOutput{
+		productionConfig:   productionResult.haproxyConfig,
+		validationConfig:   validationResult.haproxyConfig,
+		validationPaths:    validationPaths,
+		productionAuxFiles: productionResult.auxiliaryFiles,
+		validationAuxFiles: validationResult.auxiliaryFiles,
+		auxFileCount:       auxFileCount,
+		durationMs:         durationMs,
+		correlationID:      correlationID,
+		triggerReason:      event.Reason,
+	})
 
 	// Publish success event with both rendered configs, propagating correlation
 	c.eventBus.Publish(events.NewTemplateRenderedEvent(
-		productionHAProxyConfig,
-		validationHAProxyConfig,
+		productionResult.haproxyConfig,
+		validationResult.haproxyConfig,
 		validationPaths,
-		productionAuxiliaryFiles,
-		validationAuxiliaryFiles,
+		productionResult.auxiliaryFiles,
+		validationResult.auxiliaryFiles,
 		auxFileCount,
 		durationMs,
+		event.Reason,
 		events.PropagateCorrelation(event),
 	))
+}
+
+// renderSingle performs a single render (production or validation) and returns the result.
+// This is called concurrently for production and validation renders.
+func (c *Component) renderSingle(pathResolver *templating.PathResolver, isValidation bool) (*singleRenderResult, error) {
+	renderStart := time.Now()
+	label := "production"
+	if isValidation {
+		label = "validation"
+	}
+
+	// Build rendering context
+	contextStart := time.Now()
+	renderContext, fileRegistry := c.buildRenderingContext(c.ctx, pathResolver, isValidation)
+	contextMs := time.Since(contextStart).Milliseconds()
+
+	// Render main HAProxy config
+	mainStart := time.Now()
+	haproxyConfig, err := c.engine.Render("haproxy.cfg", renderContext)
+	mainMs := time.Since(mainStart).Milliseconds()
+	if err != nil {
+		templateName := "haproxy.cfg"
+		if isValidation {
+			templateName = "haproxy.cfg-validation"
+		}
+		c.publishRenderFailure(templateName, err)
+		return nil, err
+	}
+
+	// Render auxiliary files
+	auxStart := time.Now()
+	staticFiles, err := c.renderAuxiliaryFiles(renderContext)
+	auxMs := time.Since(auxStart).Milliseconds()
+	if err != nil {
+		// Error already published by renderAuxiliaryFiles
+		return nil, err
+	}
+
+	dynamicFiles := fileRegistry.GetFiles()
+	auxiliaryFiles := MergeAuxiliaryFiles(staticFiles, dynamicFiles)
+
+	totalMs := time.Since(renderStart).Milliseconds()
+
+	c.logger.Debug("Render breakdown",
+		"path", label,
+		"context_ms", contextMs,
+		"main_template_ms", mainMs,
+		"aux_files_ms", auxMs,
+		"total_ms", totalMs,
+	)
+
+	return &singleRenderResult{
+		haproxyConfig:  haproxyConfig,
+		auxiliaryFiles: auxiliaryFiles,
+		durationMs:     totalMs,
+	}, nil
 }
 
 // handleBecameLeader handles BecameLeaderEvent by re-publishing the last rendered config.
@@ -423,14 +591,15 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	auxFileCount := c.lastAuxFileCount
 	durationMs := c.lastRenderDurationMs
 	correlationID := c.lastCorrelationID
+	triggerReason := c.lastTriggerReason
 	c.mu.RUnlock()
 
 	if !hasState {
-		c.logger.Debug("became leader but no rendered config available yet, skipping state replay")
+		c.logger.Debug("Became leader but no rendered config available yet, skipping state replay")
 		return
 	}
 
-	c.logger.Info("became leader, re-publishing last rendered config for DeploymentScheduler",
+	c.logger.Info("Became leader, re-publishing last rendered config for DeploymentScheduler",
 		"production_config_bytes", len(haproxyConfig),
 		"validation_config_bytes", len(validationConfig),
 		"auxiliary_files", auxFileCount,
@@ -446,54 +615,80 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 		validationAuxiliaryFiles,
 		auxFileCount,
 		durationMs,
+		triggerReason,
 		events.WithCorrelation(correlationID, correlationID),
 	))
 }
 
-// renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates).
+// renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) in parallel.
 func (c *Component) renderAuxiliaryFiles(renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+	totalFiles := len(c.config.Maps) + len(c.config.Files) + len(c.config.SSLCertificates)
+	if totalFiles == 0 {
+		return &dataplane.AuxiliaryFiles{}, nil
+	}
+
+	// Use mutex-protected slices for concurrent appends
+	var mu sync.Mutex
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
-	// Render map files
+	g, _ := errgroup.WithContext(context.Background())
+
+	// Render map files in parallel
 	for name := range c.config.Maps {
-		rendered, err := c.engine.Render(name, renderCtx)
-		if err != nil {
-			c.publishRenderFailure(name, err)
-			return nil, err
-		}
-
-		auxFiles.MapFiles = append(auxFiles.MapFiles, auxiliaryfiles.MapFile{
-			Path:    name,
-			Content: rendered,
+		g.Go(func() error {
+			rendered, err := c.engine.Render(name, renderCtx)
+			if err != nil {
+				c.publishRenderFailure(name, err)
+				return err
+			}
+			mu.Lock()
+			auxFiles.MapFiles = append(auxFiles.MapFiles, auxiliaryfiles.MapFile{
+				Path:    name,
+				Content: rendered,
+			})
+			mu.Unlock()
+			return nil
 		})
 	}
 
-	// Render general files
+	// Render general files in parallel
 	for name := range c.config.Files {
-		rendered, err := c.engine.Render(name, renderCtx)
-		if err != nil {
-			c.publishRenderFailure(name, err)
-			return nil, err
-		}
-
-		auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
-			Filename: name,
-			Content:  rendered,
+		g.Go(func() error {
+			rendered, err := c.engine.Render(name, renderCtx)
+			if err != nil {
+				c.publishRenderFailure(name, err)
+				return err
+			}
+			mu.Lock()
+			auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
+				Filename: name,
+				Content:  rendered,
+			})
+			mu.Unlock()
+			return nil
 		})
 	}
 
-	// Render SSL certificates
+	// Render SSL certificates in parallel
 	for name := range c.config.SSLCertificates {
-		rendered, err := c.engine.Render(name, renderCtx)
-		if err != nil {
-			c.publishRenderFailure(name, err)
-			return nil, err
-		}
-
-		auxFiles.SSLCertificates = append(auxFiles.SSLCertificates, auxiliaryfiles.SSLCertificate{
-			Path:    name,
-			Content: rendered,
+		g.Go(func() error {
+			rendered, err := c.engine.Render(name, renderCtx)
+			if err != nil {
+				c.publishRenderFailure(name, err)
+				return err
+			}
+			mu.Lock()
+			auxFiles.SSLCertificates = append(auxFiles.SSLCertificates, auxiliaryfiles.SSLCertificate{
+				Path:    name,
+				Content: rendered,
+			})
+			mu.Unlock()
+			return nil
 		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	return auxFiles, nil

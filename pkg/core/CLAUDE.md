@@ -470,24 +470,38 @@ slog.Info("credentials loaded", "creds", creds.Redacted())
 
 ```go
 // Debug - verbose diagnostic information
-slog.Debug("resource indexed",
+slog.Debug("Resource indexed",
     "resource", resourceName,
     "keys", indexKeys)
 
 // Info - general operational information
-slog.Info("reconciliation started",
+slog.Info("Reconciliation started",
     "trigger", trigger,
     "duration_ms", duration)
 
 // Warn - non-critical issues
-slog.Warn("retry attempt",
+slog.Warn("Retry attempt",
     "attempt", attempt,
     "max_attempts", maxAttempts)
 
 // Error - error conditions
-slog.Error("sync failed",
+slog.Error("Sync failed",
     "endpoint", endpoint,
     "error", err)
+```
+
+### Message Capitalization
+
+Log messages must start with a capital letter:
+
+```go
+// Good - capitalized
+slog.Info("Reconciliation started", "trigger", trigger)
+slog.Error("Failed to sync configuration", "error", err)
+
+// Bad - lowercase
+slog.Info("reconciliation started", "trigger", trigger)
+slog.Error("failed to sync configuration", "error", err)
 ```
 
 ### Structured Attributes
@@ -587,7 +601,7 @@ func ParseConfig(data map[string][]byte) (*Config, error) {
 kubectl get configmap haproxy-template-ic-config -o yaml
 
 # Check controller logs
-kubectl logs deployment/haproxy-template-ic | grep "config"
+kubectl logs deployment/haproxy-template-ic-controller | grep "config"
 ```
 
 ### Credentials Not Loading

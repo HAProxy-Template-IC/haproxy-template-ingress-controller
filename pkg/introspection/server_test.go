@@ -392,3 +392,96 @@ func TestServer_HandleVarEdgeCases(t *testing.T) {
 		assert.Contains(t, result, "paths")
 	})
 }
+
+// TestServer_TwoPhaseInitialization verifies the Setup/Serve pattern works correctly.
+func TestServer_TwoPhaseInitialization(t *testing.T) {
+	t.Run("setup then serve", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Publish("test", Func(func() (interface{}, error) {
+			return "test-value", nil
+		}))
+
+		server := NewServer("localhost:16071", registry)
+
+		// Register custom handler before Setup
+		server.RegisterHandler("/custom", func(w http.ResponseWriter, r *http.Request) {
+			WriteJSON(w, map[string]string{"result": "custom-handler"})
+		})
+
+		// Call Setup to finalize routes
+		server.Setup()
+
+		// Start serving
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		go func() {
+			err := server.Serve(ctx)
+			// Serve returns nil on graceful shutdown
+			if err != nil && ctx.Err() == nil {
+				t.Errorf("Serve returned unexpected error: %v", err)
+			}
+		}()
+		time.Sleep(100 * time.Millisecond)
+
+		// Verify standard endpoint works
+		resp, err := http.Get("http://localhost:16071/debug/vars/test")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Verify custom handler works
+		resp2, err := http.Get("http://localhost:16071/custom")
+		require.NoError(t, err)
+		defer resp2.Body.Close()
+		assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+		body, _ := io.ReadAll(resp2.Body)
+		assert.Contains(t, string(body), "custom-handler")
+	})
+
+	t.Run("serve without setup returns error", func(t *testing.T) {
+		registry := NewRegistry()
+		server := NewServer("localhost:16072", registry)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Calling Serve without Setup should return error
+		err := server.Serve(ctx)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Setup() must be called before Serve()")
+	})
+
+	t.Run("start calls setup implicitly", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Publish("test", Func(func() (interface{}, error) {
+			return "implicit-setup", nil
+		}))
+
+		server := NewServer("localhost:16073", registry)
+
+		// Register handler before Start
+		server.RegisterHandler("/custom2", func(w http.ResponseWriter, r *http.Request) {
+			WriteJSON(w, map[string]string{"result": "implicit"})
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Start should call Setup implicitly
+		go server.Start(ctx)
+		time.Sleep(100 * time.Millisecond)
+
+		// Verify both standard and custom endpoints work
+		resp, err := http.Get("http://localhost:16073/debug/vars/test")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		resp2, err := http.Get("http://localhost:16073/custom2")
+		require.NoError(t, err)
+		defer resp2.Body.Close()
+		assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	})
+}

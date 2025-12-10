@@ -48,10 +48,23 @@ type ComponentHealth struct {
 //   - GET /health - health check
 //   - GET /debug/pprof/* - Go profiling endpoints (via import side-effect)
 //
-// Custom handlers can be registered using RegisterHandler() before Start().
+// Custom handlers can be registered using RegisterHandler() before Setup() is called.
 //
-// The server is designed to run in a separate goroutine and gracefully shut down
-// when the context is cancelled.
+// The server supports two initialization patterns:
+//
+// 1. Simple (combined): Use Start() which calls Setup() and Serve() internally:
+//
+//	go server.Start(ctx)
+//
+// 2. Two-phase (for early health checks): Call Setup() first, then Serve() later:
+//
+//	server.RegisterHandler("/debug/events", eventsHandler)
+//	server.SetHealthChecker(checker)
+//	server.Setup()
+//	go server.Serve(ctx)
+//
+// The two-phase pattern allows registering handlers and health checkers before
+// routes are finalized, while enabling the server to start serving immediately.
 type Server struct {
 	addr           string
 	registry       *Registry
@@ -60,6 +73,7 @@ type Server struct {
 	mux            *http.ServeMux
 	customHandlers []customHandler
 	healthChecker  HealthCheckFunc
+	setupDone      bool // Tracks whether Setup() has been called
 }
 
 // customHandler holds a pattern and handler for custom endpoint registration.
@@ -98,7 +112,7 @@ func NewServer(addr string, registry *Registry) *Server {
 }
 
 // RegisterHandler registers a custom HTTP handler for the given pattern.
-// This must be called before Start().
+// This must be called before Setup() (or Start(), which calls Setup() internally).
 //
 // Parameters:
 //   - pattern: URL pattern (e.g., "/debug/events")
@@ -168,14 +182,30 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", s.handleNotFound)
 }
 
-// Start starts the HTTP server and blocks until the context is cancelled.
+// Setup initializes routes and prepares the server for serving.
+// This must be called before Serve(). Custom handlers and health checker
+// can be registered after NewServer() but before Setup().
+//
+// After Setup() is called, no new handlers can be registered.
+//
+// Example:
+//
+//	server.RegisterHandler("/debug/events", eventsHandler)
+//	server.SetHealthChecker(checker)
+//	server.Setup()
+//	go server.Serve(ctx)
+func (s *Server) Setup() {
+	s.setupRoutes(s.mux)
+	s.setupDone = true
+}
+
+// Start is a convenience method that calls Setup() then Serve().
+// For more control over timing (e.g., registering handlers after server creation
+// but before routes are finalized), call Setup() and Serve() separately.
 //
 // This method should typically be run in a goroutine:
 //
 //	go server.Start(ctx)
-//
-// The server performs graceful shutdown when the context is cancelled,
-// waiting for active connections to complete (up to a timeout).
 //
 // Example:
 //
@@ -187,8 +217,33 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 //	// Later: cancel context to shutdown
 //	cancel()
 func (s *Server) Start(ctx context.Context) error {
-	// Setup routes (including custom handlers) and create HTTP server
-	s.setupRoutes(s.mux)
+	if !s.setupDone {
+		s.Setup()
+	}
+	return s.Serve(ctx)
+}
+
+// Serve starts the HTTP server and blocks until the context is cancelled.
+// Setup() must be called before Serve().
+//
+// This method should typically be run in a goroutine:
+//
+//	server.Setup()
+//	go server.Serve(ctx)
+//
+// The server performs graceful shutdown when the context is cancelled,
+// waiting for active connections to complete (up to a timeout).
+//
+// Example (two-phase initialization for early health checks):
+//
+//	server.RegisterHandler("/debug/events", eventsHandler)
+//	server.SetHealthChecker(checker)
+//	server.Setup()
+//	go server.Serve(ctx)
+func (s *Server) Serve(ctx context.Context) error {
+	if !s.setupDone {
+		return fmt.Errorf("Setup() must be called before Serve()")
+	}
 
 	s.server = &http.Server{
 		Addr:              s.addr,

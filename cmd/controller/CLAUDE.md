@@ -570,14 +570,14 @@ func (c *Controller) Run(ctx context.Context) error {
 export LOG_LEVEL=debug
 
 # Or in Kubernetes
-kubectl set env deployment/haproxy-template-ic LOG_LEVEL=debug
+kubectl set env deployment/haproxy-template-ic-controller LOG_LEVEL=debug
 ```
 
 ### Check Stage Progress
 
 ```bash
 # Watch logs for stage messages
-kubectl logs -f deployment/haproxy-template-ic | grep "Stage"
+kubectl logs -f deployment/haproxy-template-ic-controller | grep "Stage"
 
 # Expected output:
 # Stage 1: Config management
@@ -592,23 +592,23 @@ kubectl logs -f deployment/haproxy-template-ic | grep "Stage"
 
 ```bash
 # If startup hangs, check which stage
-kubectl logs deployment/haproxy-template-ic | tail -1
+kubectl logs deployment/haproxy-template-ic-controller | tail -1
 
 # Stage 2 stuck? → Check ConfigMap
 kubectl get configmap haproxy-template-ic-config
 
 # Stage 4 stuck? → Check resource syncing
-kubectl logs deployment/haproxy-template-ic | grep "sync"
+kubectl logs deployment/haproxy-template-ic-controller | grep "sync"
 ```
 
 ### Enable Profiling
 
 ```bash
 # Set environment variable
-kubectl set env deployment/haproxy-template-ic ENABLE_PPROF=true
+kubectl set env deployment/haproxy-template-ic-controller ENABLE_PPROF=true
 
 # Port-forward profiling endpoint
-kubectl port-forward deployment/haproxy-template-ic 6060:6060
+kubectl port-forward deployment/haproxy-template-ic-controller 6060:6060
 
 # Profile CPU
 go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
@@ -625,7 +625,7 @@ go tool pprof http://localhost:6060/debug/pprof/heap
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: haproxy-template-ic
+  name: haproxy-template-ic-controller
 rules:
   # Read ConfigMap (configuration)
   - apiGroups: [""]
@@ -655,7 +655,7 @@ rules:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: haproxy-template-ic
+  name: haproxy-template-ic-controller
   namespace: default
 spec:
   replicas: 1  # Single replica (no leader election yet)
@@ -667,7 +667,7 @@ spec:
       labels:
         app: haproxy-template-ic
     spec:
-      serviceAccountName: haproxy-template-ic
+      serviceAccountName: haproxy-template-ic-controller
       containers:
       - name: controller
         image: haproxy-template-ic:latest

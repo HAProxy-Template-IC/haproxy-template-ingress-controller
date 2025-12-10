@@ -126,12 +126,14 @@ func runController(cmd *cobra.Command, args []string) error {
 	logLevel := slog.LevelInfo
 
 	// Check VERBOSE environment variable for log level
-	// 0 = WARNING, 1 = INFO (default), 2 = DEBUG
+	// 0 = WARNING, 1 = INFO (default), 2 = DEBUG, 3 = TRACE
 	switch os.Getenv("VERBOSE") {
 	case "0":
 		logLevel = slog.LevelWarn
 	case "2":
 		logLevel = slog.LevelDebug
+	case "3":
+		logLevel = slog.Level(-8) // TRACE level
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

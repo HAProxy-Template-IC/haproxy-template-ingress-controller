@@ -185,7 +185,7 @@ kubectl apply -f haproxy-deployment.yaml
 Verify the pods are running:
 
 ```bash
-kubectl get pods -l app=haproxy
+kubectl get pods -l app.kubernetes.io/component=loadbalancer
 ```
 
 You should see two pods with `2/2 RUNNING`.
@@ -215,8 +215,8 @@ The default Helm installation:
 Verify the controller is running:
 
 ```bash
-kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic --tail=20
+kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
+kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=20
 ```
 
 You should see logs indicating the controller has started and is watching resources.
@@ -307,7 +307,7 @@ kubectl apply -f echo-ingress.yaml
 Watch the controller process the Ingress:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic --tail=50 -f
+kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=50 -f
 ```
 
 You should see log entries showing:
@@ -323,7 +323,7 @@ Verify the generated HAProxy configuration was deployed:
 
 ```bash
 # Get one of the HAProxy pods
-HAPROXY_POD=$(kubectl get pods -l app=haproxy -o jsonpath='{.items[0].metadata.name}')
+HAPROXY_POD=$(kubectl get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
 
 # View the generated configuration
 kubectl exec $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg
@@ -455,7 +455,7 @@ See [Monitoring Guide](./operations/monitoring.md) for metrics and dashboards.
 Check the controller logs for errors:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic
+kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
 ```
 
 Common issues:
