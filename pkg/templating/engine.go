@@ -97,6 +97,11 @@ type tracingConfig struct {
 	traces       []string // Accumulated trace outputs from all renders
 }
 
+// Template tag keyword constants.
+const (
+	keywordWith = "with"
+)
+
 // recordFilter records a filter operation if tracing is enabled.
 // This is called by filters to add entries to the trace output.
 // ctx should be the execution context from exec.Evaluator.Environment.Context.
@@ -247,7 +252,10 @@ func New(engineType EngineType, templates map[string]string, customFilters map[s
 	cfg := createGonjaConfig()
 
 	// Build Gonja environment with custom extensions
-	environment := buildEnvironment(customFilters, customFunctions)
+	// Note: compiledTemplates is passed to enable the cached include parser.
+	// At this point the map is empty, but the parser stores a reference to it.
+	// Templates will be added to the map during compileTemplates().
+	environment := buildEnvironment(customFilters, customFunctions, engine.compiledTemplates)
 
 	// Compile all templates
 	if err := compileTemplates(engine, templates, cfg, loader, environment); err != nil {
@@ -348,7 +356,11 @@ func buildGlobalFunctions(customFunctions map[string]GlobalFunc) *exec.Context {
 }
 
 // buildEnvironment creates a Gonja environment with all custom extensions.
-func buildEnvironment(customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc) *exec.Environment {
+//
+// The compiledTemplates parameter is used to create a cached include parser that
+// looks up templates from the pre-compiled cache instead of re-parsing. This is
+// critical for thread-safety when rendering templates concurrently.
+func buildEnvironment(customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, compiledTemplates map[string]*exec.Template) *exec.Environment {
 	filters := buildFilters(customFilters)
 	globalFunctions := buildGlobalFunctions(customFunctions)
 
@@ -363,11 +375,41 @@ func buildEnvironment(customFilters map[string]FilterFunc, customFunctions map[s
 	customMethods := createCustomMethods()
 
 	// Register custom control structures (tags)
+	// Note: "include", "import", and "from" override Gonja's builtins to use cached templates
+	// for thread-safety. Gonja's builtins call exec.NewTemplate() on every invocation,
+	// which re-parses templates and is not thread-safe for concurrent access.
 	customControlStructures := map[string]parser.ControlStructureParser{
 		"compute_once": computeOnceParser,
+		"include":      createCachedIncludeParser(compiledTemplates),
+		"import":       createCachedImportParser(compiledTemplates),
+		"from":         createCachedFromParser(compiledTemplates),
 	}
-	customControlStructureSet := exec.NewControlStructureSet(customControlStructures)
-	controlStructures := builtins.ControlStructures.Update(customControlStructureSet)
+	// Build fresh control structure set by copying builtins + adding customs.
+	// IMPORTANT: Do NOT use builtins.ControlStructures.Update() as it mutates global state.
+	// When multiple engines are created (e.g., one per test), the custom parsers with
+	// their unique compiledTemplates references would pollute the global state.
+	controlStructureMap := map[string]parser.ControlStructureParser{}
+
+	// builtinNames lists Gonja's builtin control structures.
+	// NOTE: This list must be kept in sync with Gonja's builtins.ControlStructures.
+	// If Gonja adds new control structures, they won't be available until added here.
+	// Last verified against github.com/nikolalohinski/gonja/v2 v2.x
+	builtinNames := []string{
+		"autoescape", "block", "extends", "filter", "for", "from",
+		"if", "import", "include", "macro", "raw", "set", "with",
+	}
+	for _, name := range builtinNames {
+		if p, ok := builtins.ControlStructures.Get(name); ok {
+			controlStructureMap[name] = p
+		}
+	}
+
+	// Override with custom parsers (include, import, from use cached templates)
+	for name, p := range customControlStructures {
+		controlStructureMap[name] = p
+	}
+
+	controlStructures := exec.NewControlStructureSet(controlStructureMap)
 
 	return &exec.Environment{
 		Filters:           filters,
@@ -541,18 +583,26 @@ func createCustomDictMethods() *exec.MethodSet[map[string]interface{}] {
 //	}
 //	fmt.Println(output) // Output: Hello World!
 func (e *TemplateEngine) Render(templateName string, context map[string]interface{}) (string, error) {
+	renderStart := time.Now()
+
 	// Look up the compiled template
 	template, exists := e.compiledTemplates[templateName]
 	if !exists {
 		return "", e.templateNotFoundError(templateName)
 	}
 
-	// Create execution context
-	if context == nil {
-		context = make(map[string]interface{})
+	// Create execution context - MUST copy the input map!
+	// Gonja's NewContext() shares the input map directly, and Context.Set()
+	// writes to that shared map. When multiple goroutines render in parallel
+	// with the same context map, each creates a Context with its own mutex,
+	// but they all write to the SAME underlying map, causing "concurrent map writes".
+	// Solution: create a shallow copy so each render has its own map.
+	contextCopy := make(map[string]interface{}, len(context))
+	for k, v := range context {
+		contextCopy[k] = v
 	}
 
-	ctx := exec.NewContext(context)
+	ctx := exec.NewContext(contextCopy)
 
 	// Setup tracing if enabled
 	cleanup := e.setupTracing(ctx, templateName)
@@ -561,15 +611,32 @@ func (e *TemplateEngine) Render(templateName string, context map[string]interfac
 	}
 
 	// Execute the template with the provided context
+	executeStart := time.Now()
 	output, err := template.ExecuteToString(ctx)
+	executeMs := time.Since(executeStart).Milliseconds()
 	if err != nil {
 		return "", NewRenderError(templateName, err)
 	}
 
 	// Apply post-processors if configured for this template
+	postProcessStart := time.Now()
 	output, err = e.applyPostProcessors(templateName, output)
+	postProcessMs := time.Since(postProcessStart).Milliseconds()
 	if err != nil {
 		return "", err
+	}
+
+	totalMs := time.Since(renderStart).Milliseconds()
+
+	// Log timing for slow renders (>50ms) or the main haproxy.cfg template
+	if totalMs > 50 || templateName == "haproxy.cfg" {
+		slog.Debug("template render timing",
+			"template", templateName,
+			"total_ms", totalMs,
+			"execute_ms", executeMs,
+			"postprocess_ms", postProcessMs,
+			"output_bytes", len(output),
+		)
 	}
 
 	return output, nil
@@ -1513,8 +1580,8 @@ func compareByExpressionWithDebug(a, b interface{}, criterion string, tracing *t
 	// Call comparison
 	result := compareByExpression(a, b, criterion)
 
-	// Log the comparison
-	slog.Info("SORT comparison",
+	// Log the comparison at Debug level (this is a debug feature)
+	slog.Debug("SORT comparison",
 		"criterion", criterion,
 		"valA", valA,
 		"valA_type", fmt.Sprintf("%T", valA),
@@ -2067,4 +2134,380 @@ func computeOnceParser(p, args *parser.Parser) (nodes.ControlStructure, error) {
 	cs.wrapper = wrapper
 
 	return cs, nil
+}
+
+// ============================================================================
+// Custom Gonja Tag: include (cached)
+// ============================================================================
+
+// CachedIncludeControlStructure implements a thread-safe include that uses pre-compiled templates.
+// Unlike Gonja's builtin include which re-parses templates on every call, this version
+// looks up templates from the engine's compiledTemplates cache.
+//
+// This is critical for thread-safety: Gonja's builtin include calls exec.NewTemplate()
+// which re-lexes and re-parses the template. The lexer/parser have internal mutable state
+// and are not thread-safe for concurrent access. With GOMAXPROCS > 2, parallel template
+// rendering can cause race conditions and crashes.
+//
+// By using pre-compiled templates, we avoid the re-parsing entirely and only execute
+// the pre-compiled AST, which is thread-safe (each render creates a new Renderer).
+//
+// Note: The `withContext` option is parsed for Jinja2 compatibility but not implemented,
+// matching Gonja's behavior where this option is also ignored.
+type CachedIncludeControlStructure struct {
+	location           *tokens.Token
+	filenameExpression nodes.Expression
+	ignoreMissing      bool
+	withContext        bool // Parsed but not used (matches Gonja's behavior)
+
+	// Reference to the engine's compiled templates (set during environment creation)
+	compiledTemplates map[string]*exec.Template
+}
+
+// Position returns the token position for error reporting.
+func (cs *CachedIncludeControlStructure) Position() *tokens.Token {
+	return cs.location
+}
+
+// String returns a string representation for debugging.
+func (cs *CachedIncludeControlStructure) String() string {
+	t := cs.Position()
+	return fmt.Sprintf("CachedIncludeControlStructure(Line=%d Col=%d)", t.Line, t.Col)
+}
+
+// Execute looks up the pre-compiled template and executes it.
+func (cs *CachedIncludeControlStructure) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock) error {
+	// Evaluate filename expression
+	filenameValue := r.Eval(cs.filenameExpression)
+	if filenameValue.IsError() {
+		return errors.Wrap(filenameValue, "unable to evaluate include filename")
+	}
+
+	filename := filenameValue.String()
+
+	// Look up from pre-compiled cache (thread-safe read)
+	template, exists := cs.compiledTemplates[filename]
+	if !exists {
+		if cs.ignoreMissing {
+			return nil
+		}
+		return fmt.Errorf("template '%s' not found in cache (available: %d templates)", filename, len(cs.compiledTemplates))
+	}
+
+	// Execute with inherited config (creates new renderer - thread-safe)
+	return exec.NewRenderer(r.Environment, r.Output, r.Config.Inherit(), r.Loader, template).Execute()
+}
+
+// createCachedIncludeParser returns a parser function that creates CachedIncludeControlStructure
+// with access to the pre-compiled templates cache.
+//
+// Parser syntax matches Gonja's include:
+//
+//	{% include "template.html" %}
+//	{% include "template.html" ignore missing %}
+//	{% include "template.html" with context %}
+//	{% include "template.html" without context %}
+func createCachedIncludeParser(compiledTemplates map[string]*exec.Template) parser.ControlStructureParser {
+	return func(p *parser.Parser, args *parser.Parser) (nodes.ControlStructure, error) {
+		cs := &CachedIncludeControlStructure{
+			location:          p.Current(),
+			compiledTemplates: compiledTemplates,
+		}
+
+		// Parse filename expression (required)
+		filenameExpr, err := args.ParseExpression()
+		if err != nil {
+			return nil, err
+		}
+		cs.filenameExpression = filenameExpr
+
+		// Parse optional "ignore missing"
+		if args.MatchName("ignore") != nil {
+			if args.MatchName("missing") != nil {
+				cs.ignoreMissing = true
+			} else {
+				args.Stream().Backup()
+			}
+		}
+
+		// Parse optional "with/without context" (parsed for compatibility, not used)
+		if tok := args.MatchName("with", "without"); tok != nil {
+			if args.MatchName("context") != nil {
+				cs.withContext = tok.Val == keywordWith
+			} else {
+				args.Stream().Backup()
+			}
+		}
+
+		// Ensure no trailing arguments
+		if !args.End() {
+			return nil, args.Error("malformed include tag arguments", nil)
+		}
+
+		return cs, nil
+	}
+}
+
+// ============================================================================
+// Custom Gonja Tag: import (cached)
+// ============================================================================
+
+// CachedImportControlStructure implements a thread-safe import that uses pre-compiled templates.
+// Unlike Gonja's builtin import which re-parses templates on every call, this version
+// looks up templates from the engine's compiledTemplates cache.
+//
+// Syntax: {% import "template.html" as macros %}
+// This makes all macros from template.html available as macros.macro_name().
+type CachedImportControlStructure struct {
+	location           *tokens.Token
+	filenameExpression nodes.Expression
+	as                 string
+	withContext        bool // Parsed but not used (matches Gonja's behavior)
+
+	compiledTemplates map[string]*exec.Template
+}
+
+// Position returns the token position for error reporting.
+func (cs *CachedImportControlStructure) Position() *tokens.Token {
+	return cs.location
+}
+
+// String returns a string representation for debugging.
+func (cs *CachedImportControlStructure) String() string {
+	t := cs.Position()
+	return fmt.Sprintf("CachedImportControlStructure(Line=%d Col=%d)", t.Line, t.Col)
+}
+
+// Execute looks up the pre-compiled template and imports all its macros.
+func (cs *CachedImportControlStructure) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock) error {
+	// Evaluate filename expression
+	filenameValue := r.Eval(cs.filenameExpression)
+	if filenameValue.IsError() {
+		return errors.Wrap(filenameValue, "unable to evaluate import filename")
+	}
+
+	filename := filenameValue.String()
+
+	// Look up from pre-compiled cache (thread-safe read)
+	template, exists := cs.compiledTemplates[filename]
+	if !exists {
+		return fmt.Errorf("template '%s' not found in cache for import (available: %d templates)", filename, len(cs.compiledTemplates))
+	}
+
+	// Convert all macros to functions and store as a map
+	macros := map[string]exec.Macro{}
+	for name, macro := range template.Macros() {
+		fn, err := exec.MacroNodeToFunc(macro, r)
+		if err != nil {
+			return errors.Wrapf(err, "unable to import macro '%s'", name)
+		}
+		macros[name] = fn
+	}
+
+	// Make macros available as namespace: {% import "x" as ns %} -> ns.macro_name()
+	r.Environment.Context.Set(cs.as, macros)
+
+	return nil
+}
+
+// createCachedImportParser returns a parser function that creates CachedImportControlStructure.
+//
+// Parser syntax matches Gonja's import:
+//
+//	{% import "template.html" as macros %}
+//	{% import "template.html" as macros with context %}
+func createCachedImportParser(compiledTemplates map[string]*exec.Template) parser.ControlStructureParser {
+	return func(p *parser.Parser, args *parser.Parser) (nodes.ControlStructure, error) {
+		cs := &CachedImportControlStructure{
+			location:          p.Current(),
+			compiledTemplates: compiledTemplates,
+		}
+
+		if args.End() {
+			return nil, args.Error("import requires a filename expression", nil)
+		}
+
+		// Parse filename expression
+		expression, err := args.ParseExpression()
+		if err != nil {
+			return nil, err
+		}
+		cs.filenameExpression = expression
+
+		// Parse "as alias" (required)
+		if args.MatchName("as") == nil {
+			return nil, args.Error("expected 'as' keyword", args.Current())
+		}
+
+		alias := args.Match(tokens.Name)
+		if alias == nil {
+			return nil, args.Error("expected alias name (identifier)", args.Current())
+		}
+		cs.as = alias.Val
+
+		// Parse optional "with/without context" (parsed for compatibility, not used)
+		if tok := args.MatchName("with", "without"); tok != nil {
+			if args.MatchName("context") != nil {
+				cs.withContext = tok.Val == keywordWith
+			} else {
+				args.Stream().Backup()
+			}
+		}
+
+		if !args.End() {
+			return nil, args.Error("malformed import tag arguments", nil)
+		}
+
+		return cs, nil
+	}
+}
+
+// ============================================================================
+// Custom Gonja Tag: from (cached)
+// ============================================================================
+
+// CachedFromImportControlStructure implements a thread-safe from-import that uses pre-compiled templates.
+// Unlike Gonja's builtin from which re-parses templates on every call, this version
+// looks up templates from the engine's compiledTemplates cache.
+//
+// Syntax: {% from "template.html" import macro1, macro2 as alias %}
+// This makes specific macros available directly in the current scope.
+type CachedFromImportControlStructure struct {
+	location           *tokens.Token
+	filenameExpression nodes.Expression
+	withContext        bool              // Parsed but not used (matches Gonja's behavior)
+	as                 map[string]string // alias -> original name
+
+	compiledTemplates map[string]*exec.Template
+}
+
+// Position returns the token position for error reporting.
+func (cs *CachedFromImportControlStructure) Position() *tokens.Token {
+	return cs.location
+}
+
+// String returns a string representation for debugging.
+func (cs *CachedFromImportControlStructure) String() string {
+	t := cs.Position()
+	return fmt.Sprintf("CachedFromImportControlStructure(Line=%d Col=%d)", t.Line, t.Col)
+}
+
+// Execute looks up the pre-compiled template and imports specific macros.
+func (cs *CachedFromImportControlStructure) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock) error {
+	// Evaluate filename expression
+	filenameValue := r.Eval(cs.filenameExpression)
+	if filenameValue.IsError() {
+		return errors.Wrap(filenameValue, "unable to evaluate from-import filename")
+	}
+
+	filename := filenameValue.String()
+
+	// Look up from pre-compiled cache (thread-safe read)
+	template, exists := cs.compiledTemplates[filename]
+	if !exists {
+		return fmt.Errorf("template '%s' not found in cache for from-import (available: %d templates)", filename, len(cs.compiledTemplates))
+	}
+
+	// Get all macros from the template
+	imported := template.Macros()
+
+	// Import only the requested macros
+	for alias, name := range cs.as {
+		node := imported[name]
+		if node == nil {
+			return fmt.Errorf("macro '%s' not found in template '%s'", name, filename)
+		}
+
+		fn, err := exec.MacroNodeToFunc(node, r)
+		if err != nil {
+			return errors.Wrapf(err, "unable to import macro '%s'", name)
+		}
+
+		// Make macro available directly: {% from "x" import foo %} -> foo()
+		r.Environment.Context.Set(alias, fn)
+	}
+
+	return nil
+}
+
+// parseMacroImports parses comma-separated macro names with optional aliases and context.
+// Returns true if parsing should stop (end of args or context keyword found).
+func (cs *CachedFromImportControlStructure) parseMacroImports(args *parser.Parser) error {
+	for !args.End() {
+		name := args.Match(tokens.Name)
+		if name == nil {
+			return args.Error("expected macro name (identifier)", args.Current())
+		}
+
+		// Check for "as alias"
+		if args.MatchName("as") != nil {
+			alias := args.Match(tokens.Name)
+			if alias == nil {
+				return args.Error("expected alias name (identifier)", nil)
+			}
+			cs.as[alias.Val] = name.Val
+		} else {
+			cs.as[name.Val] = name.Val
+		}
+
+		// Check for "with/without context" (ends parsing)
+		if tok := args.MatchName("with", "without"); tok != nil {
+			if args.MatchName("context") != nil {
+				cs.withContext = tok.Val == keywordWith
+				return nil
+			}
+			args.Stream().Backup()
+		}
+
+		if args.End() {
+			return nil
+		}
+
+		// Expect comma for more macros
+		if args.Match(tokens.Comma) == nil {
+			return args.Error("expected ','", nil)
+		}
+	}
+	return nil
+}
+
+// createCachedFromParser returns a parser function that creates CachedFromImportControlStructure.
+//
+// Parser syntax matches Gonja's from:
+//
+//	{% from "template.html" import macro_name %}
+//	{% from "template.html" import macro_name as alias %}
+//	{% from "template.html" import macro1, macro2, macro3 %}
+//	{% from "template.html" import macro1 with context %}
+func createCachedFromParser(compiledTemplates map[string]*exec.Template) parser.ControlStructureParser {
+	return func(p *parser.Parser, args *parser.Parser) (nodes.ControlStructure, error) {
+		cs := &CachedFromImportControlStructure{
+			location:          p.Current(),
+			compiledTemplates: compiledTemplates,
+			as:                map[string]string{},
+		}
+
+		if args.End() {
+			return nil, args.Error("from requires at least one macro to import", nil)
+		}
+
+		// Parse filename expression
+		filename, err := args.ParseExpression()
+		if err != nil {
+			return nil, err
+		}
+		cs.filenameExpression = filename
+
+		// Parse "import" keyword
+		if args.MatchName("import") == nil {
+			return nil, args.Error("expected 'import' keyword", args.Current())
+		}
+
+		// Parse macro names (comma-separated)
+		if err := cs.parseMacroImports(args); err != nil {
+			return nil, err
+		}
+
+		return cs, nil
+	}
 }

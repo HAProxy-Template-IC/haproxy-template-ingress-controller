@@ -67,7 +67,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 	startTime := time.Now()
 
 	// Step 1: Fetch current configuration from dataplane API (with retry for transient connection errors)
-	o.logger.Info("Fetching current configuration from dataplane API",
+	o.logger.Debug("Fetching current configuration from dataplane API",
 		"endpoint", o.client.Endpoint.URL)
 
 	// Configure retry for transient connection errors (e.g., dataplane API not yet ready)
@@ -381,7 +381,7 @@ func (o *orchestrator) syncGeneralFilesPreConfig(ctx context.Context, generalFil
 		return &auxiliaryfiles.FileDiff{}, nil
 	}
 
-	o.logger.Info("Comparing general files", "desired_files", len(generalFiles))
+	o.logger.Debug("Comparing general files", "desired_files", len(generalFiles))
 
 	fileDiff, err := auxiliaryfiles.CompareGeneralFiles(ctx, o.client, generalFiles)
 	if err != nil {
@@ -398,7 +398,7 @@ func (o *orchestrator) syncGeneralFilesPreConfig(ctx context.Context, generalFil
 
 	hasChanges := len(fileDiff.ToCreate) > 0 || len(fileDiff.ToUpdate) > 0 || len(fileDiff.ToDelete) > 0
 	if !hasChanges {
-		o.logger.Info("No general file changes detected")
+		o.logger.Debug("No general file changes detected")
 		return fileDiff, nil
 	}
 
@@ -438,7 +438,7 @@ func (o *orchestrator) syncSSLCertificatesPreConfig(ctx context.Context, sslCert
 		return &auxiliaryfiles.SSLCertificateDiff{}, nil
 	}
 
-	o.logger.Info("Comparing SSL certificates", "desired_certs", len(sslCertificates))
+	o.logger.Debug("Comparing SSL certificates", "desired_certs", len(sslCertificates))
 
 	sslDiff, err := auxiliaryfiles.CompareSSLCertificates(ctx, o.client, sslCertificates)
 	if err != nil {
@@ -455,7 +455,7 @@ func (o *orchestrator) syncSSLCertificatesPreConfig(ctx context.Context, sslCert
 
 	hasChanges := len(sslDiff.ToCreate) > 0 || len(sslDiff.ToUpdate) > 0 || len(sslDiff.ToDelete) > 0
 	if !hasChanges {
-		o.logger.Info("No SSL certificate changes detected")
+		o.logger.Debug("No SSL certificate changes detected")
 		return sslDiff, nil
 	}
 
@@ -495,7 +495,7 @@ func (o *orchestrator) syncMapFilesPreConfig(ctx context.Context, mapFiles []aux
 		return &auxiliaryfiles.MapFileDiff{}, nil
 	}
 
-	o.logger.Info("Comparing map files", "desired_maps", len(mapFiles))
+	o.logger.Debug("Comparing map files", "desired_maps", len(mapFiles))
 
 	mapDiff, err := auxiliaryfiles.CompareMapFiles(ctx, o.client, mapFiles)
 	if err != nil {
@@ -512,7 +512,7 @@ func (o *orchestrator) syncMapFilesPreConfig(ctx context.Context, mapFiles []aux
 
 	hasChanges := len(mapDiff.ToCreate) > 0 || len(mapDiff.ToUpdate) > 0 || len(mapDiff.ToDelete) > 0
 	if !hasChanges {
-		o.logger.Info("No map file changes detected")
+		o.logger.Debug("No map file changes detected")
 		return mapDiff, nil
 	}
 
@@ -552,7 +552,7 @@ func (o *orchestrator) syncCRTListsPreConfig(ctx context.Context, crtListFiles [
 		return &auxiliaryfiles.CRTListDiff{}, nil
 	}
 
-	o.logger.Info("Comparing crt-list files", "desired_crtlists", len(crtListFiles))
+	o.logger.Debug("Comparing crt-list files", "desired_crtlists", len(crtListFiles))
 
 	crtListDiff, err := auxiliaryfiles.CompareCRTLists(ctx, o.client, crtListFiles)
 	if err != nil {
@@ -569,7 +569,7 @@ func (o *orchestrator) syncCRTListsPreConfig(ctx context.Context, crtListFiles [
 
 	hasChanges := len(crtListDiff.ToCreate) > 0 || len(crtListDiff.ToUpdate) > 0 || len(crtListDiff.ToDelete) > 0
 	if !hasChanges {
-		o.logger.Info("No crt-list file changes detected")
+		o.logger.Debug("No crt-list file changes detected")
 		return crtListDiff, nil
 	}
 
@@ -722,7 +722,7 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 	}
 
 	// Compare configurations
-	o.logger.Info("Comparing configurations")
+	o.logger.Debug("Comparing configurations")
 	diff, err := o.comparator.Compare(currentConfig, desiredParsed)
 	if err != nil {
 		return nil, &SyncError{

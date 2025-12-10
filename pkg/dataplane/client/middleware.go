@@ -51,7 +51,7 @@ func (t *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		var err error
 		requestBody, err = io.ReadAll(req.Body)
 		if err != nil {
-			t.logger.Warn("failed to read request body for logging", "error", err)
+			t.logger.Warn("Failed to read request body for logging", "error", err)
 		}
 		// Restore the body for the actual request
 		req.Body = io.NopCloser(bytes.NewBuffer(requestBody))
@@ -67,7 +67,7 @@ func (t *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		if resp.Body != nil {
 			responseBody, err = io.ReadAll(resp.Body)
 			if err != nil {
-				t.logger.Warn("failed to read response body for logging", "error", err)
+				t.logger.Warn("Failed to read response body for logging", "error", err)
 			}
 			// Restore the response body for the caller
 			resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))

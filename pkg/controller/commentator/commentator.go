@@ -374,9 +374,13 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 	// Template Events
 	case *events.TemplateRenderedEvent:
 		sizeKB := float64(e.ConfigBytes) / 1024.0
-		return fmt.Sprintf("Template rendered: %.1f KB config + %d auxiliary files in %dms",
-				sizeKB, e.AuxiliaryFileCount, e.DurationMs),
-			append(attrs, "config_bytes", e.ConfigBytes, "aux_files", e.AuxiliaryFileCount, "duration_ms", e.DurationMs)
+		triggerInfo := ""
+		if e.TriggerReason != "" {
+			triggerInfo = fmt.Sprintf(" (trigger: %s)", e.TriggerReason)
+		}
+		return fmt.Sprintf("Template rendered: %.1f KB config + %d auxiliary files in %dms%s",
+				sizeKB, e.AuxiliaryFileCount, e.DurationMs, triggerInfo),
+			append(attrs, "config_bytes", e.ConfigBytes, "aux_files", e.AuxiliaryFileCount, "duration_ms", e.DurationMs, "trigger_reason", e.TriggerReason)
 
 	case *events.TemplateRenderFailedEvent:
 		// Error is already formatted by renderer component, just pass it through
@@ -385,7 +389,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 
 	// Validation Events
 	case *events.ValidationStartedEvent:
-		return "Configuration validation started",
+		return "HAProxy configuration validation started",
 			attrs
 
 	case *events.ValidationCompletedEvent:
@@ -393,13 +397,21 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		if len(e.Warnings) > 0 {
 			warningInfo = fmt.Sprintf(" with %d warnings", len(e.Warnings))
 		}
-		return fmt.Sprintf("Configuration validation succeeded%s (%dms)", warningInfo, e.DurationMs),
-			append(attrs, "warnings", len(e.Warnings), "duration_ms", e.DurationMs)
+		triggerInfo := ""
+		if e.TriggerReason != "" {
+			triggerInfo = fmt.Sprintf(" (trigger: %s)", e.TriggerReason)
+		}
+		return fmt.Sprintf("HAProxy configuration validation succeeded%s (%dms)%s", warningInfo, e.DurationMs, triggerInfo),
+			append(attrs, "warnings", len(e.Warnings), "duration_ms", e.DurationMs, "trigger_reason", e.TriggerReason)
 
 	case *events.ValidationFailedEvent:
-		return fmt.Sprintf("Configuration validation failed with %d errors (%dms)",
-				len(e.Errors), e.DurationMs),
-			append(attrs, "error_count", len(e.Errors), "duration_ms", e.DurationMs)
+		triggerInfo := ""
+		if e.TriggerReason != "" {
+			triggerInfo = fmt.Sprintf(" (trigger: %s)", e.TriggerReason)
+		}
+		return fmt.Sprintf("HAProxy configuration validation failed with %d errors (%dms)%s",
+				len(e.Errors), e.DurationMs, triggerInfo),
+			append(attrs, "error_count", len(e.Errors), "duration_ms", e.DurationMs, "trigger_reason", e.TriggerReason)
 
 	// Validation Test Events
 	case *events.ValidationTestsStartedEvent:

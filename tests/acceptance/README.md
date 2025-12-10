@@ -262,7 +262,7 @@ curl http://localhost:6060/debug/vars/events
 kubectl get all -n haproxy-test
 
 # Describe deployment
-kubectl describe deployment -n haproxy-test haproxy-template-ic
+kubectl describe deployment -n haproxy-test haproxy-template-ic-controller
 
 # Get ConfigMap
 kubectl get configmap -n haproxy-test haproxy-config -o yaml
@@ -429,7 +429,7 @@ kubectl get pod -n haproxy-test haproxy-template-ic-xxx -o jsonpath='{.status.co
 ```go
 const (
     TestNamespace           = "haproxy-test"
-    ControllerDeploymentName = "haproxy-template-ic"
+    ControllerDeploymentName = "haproxy-template-ic-controller"
     ControllerConfigMapName  = "haproxy-config"
     ControllerSecretName     = "haproxy-credentials"
     DebugPort               = 6060

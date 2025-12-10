@@ -11,9 +11,9 @@ Common issues and solutions for the HAProxy Template Ingress Controller.
 **Diagnosis**:
 
 ```bash
-kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic --tail=100
-kubectl describe pod -l app.kubernetes.io/name=haproxy-template-ic
+kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
+kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=100
+kubectl describe pod -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
 ```
 
 **Common Causes**:
@@ -31,7 +31,7 @@ kubectl describe pod -l app.kubernetes.io/name=haproxy-template-ic
 **Diagnosis**:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "watch\|sync complete"
+kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller | grep -i "watch\|sync complete"
 ```
 
 **Common Causes**:
@@ -51,7 +51,7 @@ kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "watch\|syn
 **Diagnosis**:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "template\|render"
+kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller | grep -i "template\|render"
 ```
 
 **Solution**:
@@ -100,7 +100,7 @@ See [Validation Tests](./validation-tests.md#debugging-failed-tests) for detaile
 **Diagnosis**:
 
 ```bash
-HAPROXY_POD=$(kubectl get pods -l app=haproxy -o jsonpath='{.items[0].metadata.name}')
+HAPROXY_POD=$(kubectl get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
 kubectl port-forward $HAPROXY_POD 5555:5555
 curl -u admin:password http://localhost:5555/v2/info
 ```
@@ -121,7 +121,7 @@ curl -u admin:password http://localhost:5555/v2/info
 
 ```bash
 kubectl exec $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic | grep -i "deployment.*succeeded"
+kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller | grep -i "deployment.*succeeded"
 ```
 
 **Common Causes**:
@@ -179,7 +179,7 @@ openssl s_client -connect localhost:443 -servername your-host.example.com < /dev
 **Diagnosis**:
 
 ```bash
-kubectl port-forward deployment/haproxy-template-ic 9090:9090
+kubectl port-forward deployment/haproxy-template-ic-controller 9090:9090
 curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 ```
 
@@ -222,10 +222,10 @@ watchedResources:
 
 ```bash
 # Controller version
-kubectl get deployment haproxy-template-ic -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment haproxy-template-ic-controller -o jsonpath='{.spec.template.spec.containers[0].image}'
 
 # Controller logs
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic --tail=500 > controller-logs.txt
+kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=500 > controller-logs.txt
 
 # Configuration
 kubectl get haproxytemplateconfig haproxy-template-ic-config -o yaml > config.yaml
@@ -236,15 +236,31 @@ kubectl exec $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.c
 
 ### Enable Debug Logging
 
+The controller supports multiple verbosity levels via the `VERBOSE` environment variable:
+
+| Level | Value | Description |
+|-------|-------|-------------|
+| Warn | `0` | Warnings and errors only |
+| Info | `1` | Important state changes (default) |
+| Debug | `2` | Detailed debugging information |
+| Trace | `3` | Very verbose, per-item iteration logs |
+
 ```bash
-kubectl set env deployment/haproxy-template-ic VERBOSE=2
+# Enable debug logging
+kubectl set env deployment/haproxy-template-ic-controller VERBOSE=2
+
+# Enable trace logging (very verbose)
+kubectl set env deployment/haproxy-template-ic-controller VERBOSE=3
 ```
+
+!!! note
+    Trace level (`VERBOSE=3`) produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Use only when debugging specific issues.
 
 ### Enable Debug Server
 
 ```bash
 helm upgrade haproxy-ic ./charts/haproxy-template-ic --reuse-values --set controller.debugPort=6060
-kubectl port-forward deployment/haproxy-template-ic 6060:6060
+kubectl port-forward deployment/haproxy-template-ic-controller 6060:6060
 ```
 
 **Available endpoints**:

@@ -64,7 +64,7 @@ func New(k8sClient kubernetes.Interface, crdClient versioned.Interface, logger *
 //
 // Returns PublishResult containing the names of created/updated resources.
 func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*PublishResult, error) {
-	p.logger.Info("publishing runtime config",
+	p.logger.Debug("publishing runtime config",
 		"templateConfig", req.TemplateConfigName,
 		"namespace", req.TemplateConfigNamespace,
 	)
@@ -119,7 +119,7 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		// Non-blocking - status update is informational
 	}
 
-	p.logger.Info("published runtime config",
+	p.logger.Debug("published runtime config",
 		"runtimeConfig", runtimeConfig.Name,
 		"mapFiles", len(result.MapFileNames),
 		"secrets", len(result.SecretNames),

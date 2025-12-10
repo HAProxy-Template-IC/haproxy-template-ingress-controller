@@ -843,7 +843,7 @@ See [CRD Reference](./crd-reference.md#watchedresources) for namespace restricti
 
 If `.List()` or `.Fetch()` returns empty results:
 
-1. **Check initial sync**: `kubectl logs deployment/haproxy-template-ic | grep "initial sync"`
+1. **Check initial sync**: `kubectl logs deployment/haproxy-template-ic-controller | grep "initial sync"`
 2. **Verify resources exist**: `kubectl get <resource> -A`
 3. **Check RBAC**: `kubectl auth can-i list <resource> --all-namespaces --as=system:serviceaccount:<namespace>:<sa>`
 4. **Verify indexBy matches template**: `.Fetch()` parameters must match `indexBy` order

@@ -65,7 +65,7 @@ serviceMonitor:
 
 ```bash
 # Port-forward to metrics endpoint
-kubectl port-forward -n <namespace> deployment/haproxy-template-ic 9090:9090
+kubectl port-forward -n <namespace> deployment/haproxy-template-ic-controller 9090:9090
 
 # Fetch metrics
 curl http://localhost:9090/metrics

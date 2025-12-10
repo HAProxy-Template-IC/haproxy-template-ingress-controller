@@ -97,10 +97,11 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		nil,               // validation auxiliary files
 		0,                 // aux file count
 		100,               // duration ms
+		"",                // trigger reason
 	))
 
 	// Step 3: Publish ValidationCompletedEvent to trigger publishing
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50))
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, ""))
 
 	// Wait for ConfigPublishedEvent
 	var receivedEvent *events.ConfigPublishedEvent
@@ -411,6 +412,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 		nil,
 		0,
 		100,
+		"",
 	))
 
 	// Give component time to process events
@@ -424,7 +426,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 
 	// Step 4: Now publish ValidationCompletedEvent - should NOT publish config
 	// because cached state was cleared
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50))
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, ""))
 
 	// Give time for any potential ConfigPublishedEvent (which shouldn't happen)
 	timeout := time.After(500 * time.Millisecond)
@@ -493,6 +495,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 		nil,
 		0,
 		100,
+		"",
 	))
 
 	// Give component time to process events
@@ -502,6 +505,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	eventBus.Publish(events.NewValidationFailedEvent(
 		[]string{"maxconn must be numeric", "invalid configuration directive"},
 		100,
+		"",
 	))
 
 	// Give component time to process event
@@ -543,6 +547,7 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	eventBus.Publish(events.NewValidationFailedEvent(
 		[]string{"some error"},
 		100,
+		"",
 	))
 
 	// Give component time to process event

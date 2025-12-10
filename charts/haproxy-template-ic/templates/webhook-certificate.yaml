@@ -2,12 +2,12 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.webhook.secretName }}
+  name: {{ .Values.webhook.secretName | default (printf "%s-webhook-cert" (include "haproxy-template-ic.fullname" .)) }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haproxy-template-ic.labels" . | nindent 4 }}
 spec:
-  secretName: {{ .Values.webhook.secretName }}
+  secretName: {{ .Values.webhook.secretName | default (printf "%s-webhook-cert" (include "haproxy-template-ic.fullname" .)) }}
   duration: {{ .Values.webhook.certManager.duration | default "8760h" }}  # 1 year
   renewBefore: {{ .Values.webhook.certManager.renewBefore | default "720h" }}  # 30 days
   dnsNames:

@@ -22,7 +22,7 @@ The Helm chart creates a service account with minimal required permissions:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: haproxy-template-ic
+  name: haproxy-template-ic-controller
 ```
 
 ### ClusterRole Permissions
@@ -374,7 +374,7 @@ The controller logs security-relevant events:
 
 ```bash
 # View security-related logs
-kubectl logs -n haproxy-template-ic deployment/haproxy-template-ic | grep -E "auth|credential|secret"
+kubectl logs -n haproxy-template-ic deployment/haproxy-template-ic-controller | grep -E "auth|credential|secret"
 ```
 
 ### Kubernetes Audit Policy

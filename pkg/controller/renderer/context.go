@@ -98,7 +98,7 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 
 	// Wrap each store to provide template-friendly methods
 	for resourceTypeName, store := range c.stores {
-		c.logger.Info("wrapping store for rendering context",
+		c.logger.Debug("wrapping store for rendering context",
 			"resource_type", resourceTypeName)
 		resources[resourceTypeName] = &StoreWrapper{
 			Store:        store,
@@ -110,7 +110,7 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 	// Create controller namespace with HAProxy pods store
 	controller := make(map[string]interface{})
 	if c.haproxyPodStore != nil {
-		c.logger.Info("wrapping HAProxy pods store for rendering context")
+		c.logger.Debug("wrapping HAProxy pods store for rendering context")
 		controller["haproxy_pods"] = &StoreWrapper{
 			Store:        c.haproxyPodStore,
 			ResourceType: "haproxy-pods",
@@ -126,7 +126,7 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 	// Create file registry for dynamic auxiliary file registration
 	fileRegistry := NewFileRegistry(pathResolver)
 
-	c.logger.Info("rendering context built",
+	c.logger.Debug("rendering context built",
 		"resource_count", len(resources),
 		"controller_fields", len(controller),
 		"snippet_count", len(snippetNames))
@@ -150,7 +150,7 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 			isValidation,
 			ctx,
 		)
-		c.logger.Info("http object added to template context",
+		c.logger.Debug("http object added to template context",
 			"http_wrapper_type", fmt.Sprintf("%T", httpWrapper))
 		templateContext["http"] = httpWrapper
 	} else {
@@ -161,7 +161,7 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 	MergeExtraContextInto(templateContext, c.config)
 
 	if c.config.TemplatingSettings.ExtraContext != nil {
-		c.logger.Info("added extra context variables to template context",
+		c.logger.Debug("added extra context variables to template context",
 			"variable_count", len(c.config.TemplatingSettings.ExtraContext))
 	}
 

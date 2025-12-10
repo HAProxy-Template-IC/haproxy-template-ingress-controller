@@ -368,9 +368,9 @@ troubleshooting() {
 		rollout-timeout)
 			warn "Rollout timed out. Inspect events and logs:"
 			echo "  kubectl -n ${CTRL_NAMESPACE} get events --sort-by=.lastTimestamp | tail -n 50"
-			echo "  kubectl -n ${CTRL_NAMESPACE} describe deploy/haproxy-production"
+			echo "  kubectl -n ${CTRL_NAMESPACE} describe deploy/${HELM_RELEASE_NAME}-controller"
 			echo "  kubectl -n ${CTRL_NAMESPACE} get pods -o wide"
-			echo "  kubectl -n ${CTRL_NAMESPACE} logs deploy/${HELM_RELEASE_NAME} --previous || true"
+			echo "  kubectl -n ${CTRL_NAMESPACE} logs deploy/${HELM_RELEASE_NAME}-controller --previous || true"
 			;;
 		*) ;;
 	 esac
@@ -739,10 +739,10 @@ deploy_controller() {
     # Wait for controller deployment to become ready
     # (readiness probes are disabled in dev mode, so we wait for pods to exist)
     log INFO "Waiting for controller deployment to become ready..."
-    if ! kubectl -n "${CTRL_NAMESPACE}" rollout status deployment/${HELM_RELEASE_NAME} --timeout="${TIMEOUT}s"; then
+    if ! kubectl -n "${CTRL_NAMESPACE}" rollout status deployment/${HELM_RELEASE_NAME}-controller --timeout="${TIMEOUT}s"; then
         warn "Controller deployment rollout did not complete in ${TIMEOUT}s."
-        echo "  - Check controller deployment status: kubectl -n ${CTRL_NAMESPACE} describe deploy/${HELM_RELEASE_NAME}"
-        echo "  - Check controller pod logs: kubectl -n ${CTRL_NAMESPACE} logs deploy/${HELM_RELEASE_NAME}"
+        echo "  - Check controller deployment status: kubectl -n ${CTRL_NAMESPACE} describe deploy/${HELM_RELEASE_NAME}-controller"
+        echo "  - Check controller pod logs: kubectl -n ${CTRL_NAMESPACE} logs deploy/${HELM_RELEASE_NAME}-controller"
         return 1
     fi
 
@@ -982,14 +982,14 @@ deploy_ingress_demo() {
 dev_logs() {
     verify_cluster_context
     # Use label selector to find controller deployment
-    kubectl -n "$CTRL_NAMESPACE" logs -f -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic"
+    kubectl -n "$CTRL_NAMESPACE" logs -f -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller"
 }
 
 dev_exec() {
     verify_cluster_context
     # Get the deployment name using label selector
     local deploy_name
-    deploy_name=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic" -o jsonpath='{.items[0].metadata.name}')
+    deploy_name=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}')
     kubectl -n "$CTRL_NAMESPACE" exec -it deploy/"$deploy_name" -- sh
 }
 
@@ -1175,7 +1175,7 @@ test_ingress() {
             warn "Could not reach echo service through ingress controller after $max_attempts attempts"
             echo
             echo "Troubleshooting steps:"
-            echo "  1. Check HAProxy status: kubectl -n $CTRL_NAMESPACE get pods -l app=haproxy"
+            echo "  1. Check HAProxy status: kubectl -n $CTRL_NAMESPACE get pods -l app.kubernetes.io/component=loadbalancer"
             echo "  2. Check HAProxy logs: kubectl -n $CTRL_NAMESPACE logs deploy/haproxy-production -c haproxy"
             echo "  3. Check dataplane logs: kubectl -n $CTRL_NAMESPACE logs deploy/haproxy-production -c dataplane"
             echo "  4. Check controller logs: $0 logs"
@@ -1221,7 +1221,7 @@ port_forward_haproxy() {
 
     # Get controller deployment name and verify it exists
     local ctrl_deploy
-    ctrl_deploy=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    ctrl_deploy=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     if [[ -z "$ctrl_deploy" ]]; then
         warn "Controller deployment not found"
@@ -1408,7 +1408,7 @@ dev_metrics() {
 
 	# Get controller deployment
 	local ctrl_deploy
-	ctrl_deploy=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+	ctrl_deploy=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
 	if [[ -z "$ctrl_deploy" ]]; then
 		err "Controller deployment not found in namespace '$CTRL_NAMESPACE'"

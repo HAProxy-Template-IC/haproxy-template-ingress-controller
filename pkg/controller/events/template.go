@@ -65,6 +65,12 @@ type TemplateRenderedEvent struct {
 	AuxiliaryFileCount    int   // Number of auxiliary files
 	DurationMs            int64 // Total rendering duration (both configs)
 
+	// TriggerReason is the reason that triggered this reconciliation.
+	// Propagated from ReconciliationTriggeredEvent.Reason.
+	// Examples: "config_change", "debounce_timer", "drift_prevention"
+	// Used by downstream components (e.g., DeploymentScheduler) to determine fallback behavior.
+	TriggerReason string
+
 	timestamp time.Time
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -76,7 +82,7 @@ type TemplateRenderedEvent struct {
 //
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewTemplateRenderedEvent(...,
+//	event := events.NewTemplateRenderedEvent(..., triggerReason,
 //	    events.PropagateCorrelation(triggeredEvent))
 func NewTemplateRenderedEvent(
 	haproxyConfig string,
@@ -86,6 +92,7 @@ func NewTemplateRenderedEvent(
 	validationAuxiliaryFiles interface{},
 	auxFileCount int,
 	durationMs int64,
+	triggerReason string,
 	opts ...CorrelationOption,
 ) *TemplateRenderedEvent {
 	// Calculate config sizes
@@ -102,6 +109,7 @@ func NewTemplateRenderedEvent(
 		ValidationConfigBytes:    validationConfigBytes,
 		AuxiliaryFileCount:       auxFileCount,
 		DurationMs:               durationMs,
+		TriggerReason:            triggerReason,
 		timestamp:                time.Now(),
 		Correlation:              NewCorrelation(opts...),
 	}

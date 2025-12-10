@@ -310,10 +310,10 @@ func TestEventCommentator_GenerateInsight_TemplateEvents(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	t.Run("TemplateRenderedEvent", func(t *testing.T) {
-		// haproxyConfig, validationHAProxyConfig, validationPaths, auxiliaryFiles, validationAuxiliaryFiles, auxFileCount, durationMs
+		// haproxyConfig, validationHAProxyConfig, validationPaths, auxiliaryFiles, validationAuxiliaryFiles, auxFileCount, durationMs, triggerReason
 		// ConfigBytes is calculated from len(haproxyConfig)
 		haproxyConfig := "test haproxy config content"
-		event := events.NewTemplateRenderedEvent(haproxyConfig, "validation-config", nil, nil, nil, 3, 50)
+		event := events.NewTemplateRenderedEvent(haproxyConfig, "validation-config", nil, nil, nil, 3, 50, "")
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -736,7 +736,7 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationCompletedEvent without warnings", func(t *testing.T) {
-		event := events.NewValidationCompletedEvent(nil, 150)
+		event := events.NewValidationCompletedEvent(nil, 150, "")
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -746,7 +746,7 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationCompletedEvent with warnings", func(t *testing.T) {
-		event := events.NewValidationCompletedEvent([]string{"warning1", "warning2"}, 200)
+		event := events.NewValidationCompletedEvent([]string{"warning1", "warning2"}, 200, "")
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -756,7 +756,7 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationFailedEvent", func(t *testing.T) {
-		event := events.NewValidationFailedEvent([]string{"error1", "error2", "error3"}, 100)
+		event := events.NewValidationFailedEvent([]string{"error1", "error2", "error3"}, 100, "")
 
 		insight, attrs := ec.generateInsight(event)
 

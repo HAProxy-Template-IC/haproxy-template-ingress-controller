@@ -63,7 +63,7 @@ haproxy:
 # Resource limits for development (allow more flexibility)
 resources:
   limits:
-    cpu: 500m
+    cpu: "4"
     memory: 512Mi
   requests:
     cpu: 100m

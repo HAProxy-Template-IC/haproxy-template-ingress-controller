@@ -68,6 +68,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 		&dataplane.AuxiliaryFiles{}, // validationAuxiliaryFiles
 		2,                           // auxFileCount
 		50,                          // durationMs
+		"",                          // triggerReason
 	)
 
 	scheduler.handleTemplateRendered(event)
@@ -97,7 +98,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "")
 
 		scheduler.handleValidationCompleted(ctx, event)
 
@@ -115,7 +116,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "")
 
 		// Should not panic when no config available
 		scheduler.handleValidationCompleted(ctx, event)
@@ -132,7 +133,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "")
 
 		scheduler.handleValidationCompleted(ctx, event)
 
@@ -230,8 +231,8 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_HandleDriftPreventionTriggered tests drift prevention handling.
-func TestDeploymentScheduler_HandleDriftPreventionTriggered(t *testing.T) {
+// TestDeploymentScheduler_HandleValidationFailed tests validation failure handling for drift prevention fallback.
+func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe(50)
 	bus.Start()
@@ -241,14 +242,40 @@ func TestDeploymentScheduler_HandleDriftPreventionTriggered(t *testing.T) {
 	ctx := context.Background()
 	scheduler.ctx = ctx
 
-	t.Run("skips without valid config", func(t *testing.T) {
+	t.Run("ignores non-drift-prevention failures", func(t *testing.T) {
+		scheduler.mu.Lock()
+		scheduler.hasValidConfig = true
+		scheduler.lastValidatedConfig = "global\n  daemon\n"
+		scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
+		scheduler.currentEndpoints = []interface{}{
+			dataplane.Endpoint{URL: "http://localhost:5555"},
+		}
+		scheduler.mu.Unlock()
+
+		// Non-drift-prevention failure (empty trigger reason)
+		event := events.NewValidationFailedEvent([]string{"error"}, 100, "")
+
+		scheduler.handleValidationFailed(ctx, event)
+
+		// Should not schedule deployment
+		select {
+		case e := <-eventChan:
+			if _, ok := e.(*events.DeploymentScheduledEvent); ok {
+				t.Fatal("should not schedule deployment for non-drift-prevention failure")
+			}
+		case <-time.After(50 * time.Millisecond):
+			// Expected
+		}
+	})
+
+	t.Run("skips fallback without valid config", func(t *testing.T) {
 		scheduler.mu.Lock()
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewDriftPreventionTriggeredEvent(5 * time.Minute)
+		event := events.NewValidationFailedEvent([]string{"error"}, 100, "drift_prevention")
 
-		scheduler.handleDriftPreventionTriggered(ctx, event)
+		scheduler.handleValidationFailed(ctx, event)
 
 		// Should not schedule deployment
 		select {
@@ -261,7 +288,7 @@ func TestDeploymentScheduler_HandleDriftPreventionTriggered(t *testing.T) {
 		}
 	})
 
-	t.Run("schedules deployment with valid config and endpoints", func(t *testing.T) {
+	t.Run("deploys cached config on drift prevention validation failure", func(t *testing.T) {
 		scheduler.mu.Lock()
 		scheduler.hasValidConfig = true
 		scheduler.lastValidatedConfig = "global\n  daemon\n"
@@ -271,9 +298,9 @@ func TestDeploymentScheduler_HandleDriftPreventionTriggered(t *testing.T) {
 		}
 		scheduler.mu.Unlock()
 
-		event := events.NewDriftPreventionTriggeredEvent(5 * time.Minute)
+		event := events.NewValidationFailedEvent([]string{"error"}, 100, "drift_prevention")
 
-		scheduler.handleDriftPreventionTriggered(ctx, event)
+		scheduler.handleValidationFailed(ctx, event)
 
 		// Wait for deployment scheduled event
 		timeout := time.After(500 * time.Millisecond)
@@ -281,7 +308,8 @@ func TestDeploymentScheduler_HandleDriftPreventionTriggered(t *testing.T) {
 		for {
 			select {
 			case e := <-eventChan:
-				if _, ok := e.(*events.DeploymentScheduledEvent); ok {
+				if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
+					assert.Equal(t, "drift_prevention_fallback", scheduled.Reason)
 					break waitLoop
 				}
 			case <-timeout:
@@ -416,6 +444,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 			&dataplane.AuxiliaryFiles{}, // validationAuxiliaryFiles
 			2,                           // auxFileCount
 			50,                          // durationMs
+			"",                          // triggerReason
 		)
 
 		scheduler.handleEvent(ctx, event)
@@ -431,7 +460,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.lastRenderedConfig = "global\n"
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "")
 
 		scheduler.handleEvent(ctx, event)
 

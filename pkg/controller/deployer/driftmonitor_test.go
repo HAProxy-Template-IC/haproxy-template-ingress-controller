@@ -140,30 +140,6 @@ func TestDriftPreventionMonitor_HandleDeploymentCompleted(t *testing.T) {
 	assert.True(t, monitor.lastDeploymentTime.After(oldTime))
 }
 
-// TestDriftPreventionMonitor_HandleLostLeadership tests leadership loss handling.
-func TestDriftPreventionMonitor_HandleLostLeadership(t *testing.T) {
-	bus := testutil.NewTestBus()
-	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
-
-	// Start timer first
-	monitor.resetDriftTimer()
-
-	// Verify timer is active
-	monitor.mu.Lock()
-	assert.True(t, monitor.timerActive)
-	monitor.mu.Unlock()
-
-	// Handle leadership loss
-	event := events.NewLostLeadershipEvent("test-pod", "test")
-	monitor.handleLostLeadership(event)
-
-	monitor.mu.Lock()
-	defer monitor.mu.Unlock()
-
-	assert.False(t, monitor.timerActive)
-	assert.True(t, monitor.lastDeploymentTime.IsZero())
-}
-
 // TestDriftPreventionMonitor_HandleDriftTimerExpired tests timer expiration.
 func TestDriftPreventionMonitor_HandleDriftTimerExpired(t *testing.T) {
 	bus := testutil.NewTestBus()
@@ -212,18 +188,6 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 		defer monitor.mu.Unlock()
 
 		assert.True(t, monitor.lastDeploymentTime.After(oldTime))
-	})
-
-	t.Run("routes LostLeadershipEvent", func(t *testing.T) {
-		monitor.resetDriftTimer()
-
-		event := events.NewLostLeadershipEvent("test-pod", "test")
-		monitor.handleEvent(event)
-
-		monitor.mu.Lock()
-		defer monitor.mu.Unlock()
-
-		assert.False(t, monitor.timerActive)
 	})
 
 	t.Run("ignores unknown events", func(t *testing.T) {

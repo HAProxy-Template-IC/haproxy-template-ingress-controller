@@ -28,6 +28,7 @@ import (
 )
 
 // TestExecutor_BasicReconciliationFlow tests the basic event flow of a reconciliation cycle.
+// The flow is: ReconciliationTriggered -> ReconciliationStarted -> ValidationCompleted -> ReconciliationCompleted.
 func TestExecutor_BasicReconciliationFlow(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -44,14 +45,18 @@ func TestExecutor_BasicReconciliationFlow(t *testing.T) {
 	go executor.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Trigger reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("test_trigger"))
+	// Trigger reconciliation with correlation ID
+	triggeredEvent := events.NewReconciliationTriggeredEvent("test_trigger", events.WithNewCorrelation())
+	bus.Publish(triggeredEvent)
 
 	// Wait for started event
 	receivedStarted := testutil.WaitForEvent[*events.ReconciliationStartedEvent](t, eventChan, testutil.EventTimeout)
 	require.NotNil(t, receivedStarted, "Should receive ReconciliationStartedEvent")
 
-	// Wait for completed event
+	// Simulate validation completing (with same correlation ID)
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", events.PropagateCorrelation(triggeredEvent)))
+
+	// Wait for completed event (now published after validation)
 	receivedCompleted := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
 	require.NotNil(t, receivedCompleted, "Should receive ReconciliationCompletedEvent")
 
@@ -61,6 +66,7 @@ func TestExecutor_BasicReconciliationFlow(t *testing.T) {
 }
 
 // TestExecutor_EventOrder tests that events are published in the correct order.
+// The flow is: ReconciliationTriggered -> ReconciliationStarted -> ValidationCompleted -> ReconciliationCompleted.
 func TestExecutor_EventOrder(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -75,22 +81,30 @@ func TestExecutor_EventOrder(t *testing.T) {
 	go executor.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Trigger reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("order_test"))
+	// Trigger reconciliation with correlation ID
+	triggeredEvent := events.NewReconciliationTriggeredEvent("order_test", events.WithNewCorrelation())
+	bus.Publish(triggeredEvent)
+
+	// Wait for started event first
+	startedEvent := testutil.WaitForEvent[*events.ReconciliationStartedEvent](t, eventChan, testutil.EventTimeout)
+	require.NotNil(t, startedEvent, "Should receive ReconciliationStartedEvent")
+
+	// Simulate validation completing (with same correlation ID)
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", events.PropagateCorrelation(triggeredEvent)))
 
 	// Collect events in order
 	timeout := time.After(testutil.EventTimeout)
 	var orderedEvents []busevents.Event
+	orderedEvents = append(orderedEvents, startedEvent) // Already received
 
 	for {
 		select {
 		case event := <-eventChan:
-			switch event.(type) {
-			case *events.ReconciliationStartedEvent, *events.ReconciliationCompletedEvent:
+			if _, ok := event.(*events.ReconciliationCompletedEvent); ok {
 				orderedEvents = append(orderedEvents, event)
 			}
 
-			// Stop after receiving both events
+			// Stop after receiving completed event
 			if len(orderedEvents) >= 2 {
 				goto Done
 			}
@@ -112,6 +126,7 @@ Done:
 }
 
 // TestExecutor_MultipleReconciliations tests handling of multiple reconciliation triggers.
+// Each reconciliation requires a matching ValidationCompletedEvent with the same correlation ID.
 func TestExecutor_MultipleReconciliations(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -126,10 +141,22 @@ func TestExecutor_MultipleReconciliations(t *testing.T) {
 	go executor.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Trigger multiple reconciliations
-	bus.Publish(events.NewReconciliationTriggeredEvent("trigger_1"))
-	bus.Publish(events.NewReconciliationTriggeredEvent("trigger_2"))
-	bus.Publish(events.NewReconciliationTriggeredEvent("trigger_3"))
+	// Trigger multiple reconciliations with correlation IDs
+	trigger1 := events.NewReconciliationTriggeredEvent("trigger_1", events.WithNewCorrelation())
+	trigger2 := events.NewReconciliationTriggeredEvent("trigger_2", events.WithNewCorrelation())
+	trigger3 := events.NewReconciliationTriggeredEvent("trigger_3", events.WithNewCorrelation())
+
+	bus.Publish(trigger1)
+	bus.Publish(trigger2)
+	bus.Publish(trigger3)
+
+	// Wait for started events
+	time.Sleep(testutil.StartupDelay)
+
+	// Simulate validation completing for all triggers (with matching correlation IDs)
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", events.PropagateCorrelation(trigger1)))
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", events.PropagateCorrelation(trigger2)))
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", events.PropagateCorrelation(trigger3)))
 
 	// Collect completed events
 	timeout := time.After(testutil.LongTimeout)
@@ -163,6 +190,7 @@ Done:
 }
 
 // TestExecutor_DurationMeasurement tests that reconciliation duration is measured.
+// Duration is measured from trigger to validation completion.
 func TestExecutor_DurationMeasurement(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -177,19 +205,26 @@ func TestExecutor_DurationMeasurement(t *testing.T) {
 	go executor.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Trigger reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("duration_test"))
+	// Trigger reconciliation with correlation ID
+	triggeredEvent := events.NewReconciliationTriggeredEvent("duration_test", events.WithNewCorrelation())
+	bus.Publish(triggeredEvent)
+
+	// Wait a bit to simulate render+validate time
+	time.Sleep(50 * time.Millisecond)
+
+	// Simulate validation completing (with same correlation ID)
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", events.PropagateCorrelation(triggeredEvent)))
 
 	// Wait for completion event
 	completedEvent := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
 
 	require.NotNil(t, completedEvent)
 
-	// Duration should be measured (even if minimal for stub implementation)
-	assert.GreaterOrEqual(t, completedEvent.DurationMs, int64(0))
-	// For stub implementation, duration should be very small (< 100ms)
-	assert.Less(t, completedEvent.DurationMs, int64(100),
-		"Stub implementation should complete quickly")
+	// Duration should be measured (at least 50ms due to the sleep)
+	assert.GreaterOrEqual(t, completedEvent.DurationMs, int64(50))
+	// Duration should be reasonable (< 500ms for test)
+	assert.Less(t, completedEvent.DurationMs, int64(500),
+		"Duration should be reasonable for test")
 }
 
 // TestExecutor_ContextCancellation tests graceful shutdown on context cancellation.
@@ -241,7 +276,7 @@ func TestExecutor_ContextCancellation(t *testing.T) {
 	}
 }
 
-// TestExecutor_IgnoresUnrelatedEvents tests that executor only handles ReconciliationTriggeredEvent.
+// TestExecutor_IgnoresUnrelatedEvents tests that executor only handles expected events.
 func TestExecutor_IgnoresUnrelatedEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -274,8 +309,16 @@ func TestExecutor_IgnoresUnrelatedEvents(t *testing.T) {
 		// Expected - no reconciliation events
 	}
 
-	// Now trigger actual reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("real_trigger"))
+	// Now trigger actual reconciliation with correlation ID
+	triggeredEvent := events.NewReconciliationTriggeredEvent("real_trigger", events.WithNewCorrelation())
+	bus.Publish(triggeredEvent)
+
+	// Wait for started event
+	startedEvent := testutil.WaitForEvent[*events.ReconciliationStartedEvent](t, eventChan, testutil.EventTimeout)
+	assert.NotNil(t, startedEvent, "Should receive ReconciliationStartedEvent")
+
+	// Simulate validation completing (with same correlation ID)
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", events.PropagateCorrelation(triggeredEvent)))
 
 	// Should receive reconciliation completed event
 	completedEvent := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
@@ -318,6 +361,7 @@ func TestExecutor_HandleTemplateRendered(t *testing.T) {
 		nil,                 // validationAuxiliaryFiles
 		2,                   // auxFileCount
 		100,                 // durationMs
+		"",                  // triggerReason
 	))
 
 	// Wait a bit for processing
@@ -363,6 +407,7 @@ func TestExecutor_HandleTemplateRenderFailed(t *testing.T) {
 }
 
 // TestExecutor_HandleValidationCompleted tests handling of validation completed event.
+// When validation completes with a tracked correlation ID, ReconciliationCompletedEvent is published.
 func TestExecutor_HandleValidationCompleted(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -379,23 +424,22 @@ func TestExecutor_HandleValidationCompleted(t *testing.T) {
 	go executor.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish validation completed event
-	bus.Publish(events.NewValidationCompletedEvent([]string{"warning: unused acl"}, 50))
+	// First trigger a reconciliation to track the correlation ID
+	triggeredEvent := events.NewReconciliationTriggeredEvent("test", events.WithNewCorrelation())
+	bus.Publish(triggeredEvent)
+	time.Sleep(testutil.StartupDelay)
 
-	// Wait a bit for processing
-	time.Sleep(testutil.DebounceWait)
+	// Publish validation completed event with matching correlation ID
+	bus.Publish(events.NewValidationCompletedEvent([]string{"warning: unused acl"}, 50, "", events.PropagateCorrelation(triggeredEvent)))
 
-	// The executor logs the event and warnings but doesn't publish new events
-	// Just verify it doesn't crash
-	select {
-	case <-eventChan:
-		// Event received
-	default:
-		// No problem if nothing received
-	}
+	// Should receive ReconciliationCompletedEvent
+	completedEvent := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+	require.NotNil(t, completedEvent, "Should receive ReconciliationCompletedEvent")
+	assert.GreaterOrEqual(t, completedEvent.DurationMs, int64(0))
 }
 
 // TestExecutor_HandleValidationCompleted_NoWarnings tests handling with no warnings.
+// When validation completes with a tracked correlation ID, ReconciliationCompletedEvent is published.
 func TestExecutor_HandleValidationCompleted_NoWarnings(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -412,18 +456,17 @@ func TestExecutor_HandleValidationCompleted_NoWarnings(t *testing.T) {
 	go executor.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish validation completed event with no warnings
-	bus.Publish(events.NewValidationCompletedEvent(nil, 30))
+	// First trigger a reconciliation to track the correlation ID
+	triggeredEvent := events.NewReconciliationTriggeredEvent("test", events.WithNewCorrelation())
+	bus.Publish(triggeredEvent)
+	time.Sleep(testutil.StartupDelay)
 
-	// Wait a bit for processing
-	time.Sleep(testutil.DebounceWait)
+	// Publish validation completed event with no warnings but matching correlation ID
+	bus.Publish(events.NewValidationCompletedEvent(nil, 30, "", events.PropagateCorrelation(triggeredEvent)))
 
-	select {
-	case <-eventChan:
-		// Event received
-	default:
-		// Expected
-	}
+	// Should receive ReconciliationCompletedEvent
+	completedEvent := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+	require.NotNil(t, completedEvent, "Should receive ReconciliationCompletedEvent")
 }
 
 // TestExecutor_HandleValidationFailed tests handling of validation failed event.
@@ -444,7 +487,7 @@ func TestExecutor_HandleValidationFailed(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish validation failed event
-	bus.Publish(events.NewValidationFailedEvent([]string{"invalid backend reference", "duplicate frontend name"}, 75))
+	bus.Publish(events.NewValidationFailedEvent([]string{"invalid backend reference", "duplicate frontend name"}, 75, ""))
 
 	// Wait for ReconciliationFailedEvent
 	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
@@ -472,7 +515,7 @@ func TestExecutor_HandleValidationFailed_NoErrors(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish validation failed event with empty errors
-	bus.Publish(events.NewValidationFailedEvent([]string{}, 50))
+	bus.Publish(events.NewValidationFailedEvent([]string{}, 50, ""))
 
 	// Wait for ReconciliationFailedEvent
 	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)

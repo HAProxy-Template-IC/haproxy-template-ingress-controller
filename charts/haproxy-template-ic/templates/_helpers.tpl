@@ -24,6 +24,14 @@ If release name contains chart name it will be used as a full name.
 {{- end }}
 
 {{/*
+Create controller deployment name with -controller suffix.
+Only used for the controller Deployment resource.
+*/}}
+{{- define "haproxy-template-ic.controllerFullname" -}}
+{{- printf "%s-controller" (include "haproxy-template-ic.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "haproxy-template-ic.chart" -}}

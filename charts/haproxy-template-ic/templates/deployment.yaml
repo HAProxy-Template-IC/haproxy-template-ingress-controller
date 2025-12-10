@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "haproxy-template-ic.fullname" . }}
+  name: {{ include "haproxy-template-ic.controllerFullname" . }}
   labels:
     {{- include "haproxy-template-ic.labels" . | nindent 4 }}
 spec:
@@ -11,6 +11,7 @@ spec:
   selector:
     matchLabels:
       {{- include "haproxy-template-ic.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controller
   template:
     metadata:
       annotations:
@@ -20,6 +21,7 @@ spec:
         {{- end }}
       labels:
         {{- include "haproxy-template-ic.labels" . | nindent 8 }}
+        app.kubernetes.io/component: controller
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

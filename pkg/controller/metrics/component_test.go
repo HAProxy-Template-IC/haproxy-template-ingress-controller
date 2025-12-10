@@ -142,7 +142,7 @@ func TestComponent_ValidationEvents(t *testing.T) {
 	eventBus.Start()
 
 	// Publish validation completed event
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100))
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, ""))
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -150,7 +150,7 @@ func TestComponent_ValidationEvents(t *testing.T) {
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ValidationErrors))
 
 	// Publish validation failed event
-	eventBus.Publish(events.NewValidationFailedEvent([]string{"syntax error"}, 50))
+	eventBus.Publish(events.NewValidationFailedEvent([]string{"syntax error"}, 50, ""))
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -247,7 +247,7 @@ func TestComponent_AllEventTypes(t *testing.T) {
 	// Publish various event types
 	eventBus.Publish(events.NewReconciliationCompletedEvent(1000))
 	eventBus.Publish(events.NewDeploymentCompletedEvent(2, 2, 0, 2000))
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100))
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, ""))
 	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
 		"services": 15,
 	}))
@@ -326,7 +326,7 @@ func TestComponent_HighEventVolume(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		eventBus.Publish(events.NewReconciliationCompletedEvent(int64(i)))
 		if i%10 == 0 {
-			eventBus.Publish(events.NewValidationCompletedEvent(nil, 100))
+			eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, ""))
 		}
 	}
 

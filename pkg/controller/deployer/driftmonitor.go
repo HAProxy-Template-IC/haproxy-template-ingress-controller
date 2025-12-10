@@ -33,17 +33,19 @@ const (
 	DriftMonitorEventBufferSize = 50
 )
 
-// DriftPreventionMonitor monitors deployment activity and triggers periodic
-// deployments to prevent configuration drift caused by external factors.
+// DriftPreventionMonitor triggers periodic reconciliation to prevent configuration
+// drift and keep HTTP Store caches warm across all replicas.
 //
 // When no deployment has occurred within the configured interval, it publishes
-// a DriftPreventionTriggeredEvent to trigger a deployment. This helps detect
+// a DriftPreventionTriggeredEvent to trigger reconciliation. This helps detect
 // and correct configuration drift caused by other Dataplane API clients or
 // manual changes.
 //
+// The component runs on ALL replicas (not just the leader) to ensure HTTP Store
+// caches stay warm. Only the leader's DeploymentScheduler will actually deploy.
+//
 // Event subscriptions:
 //   - DeploymentCompletedEvent: Reset drift prevention timer
-//   - LostLeadershipEvent: Stop drift prevention timer and clear state
 //
 // The component publishes DriftPreventionTriggeredEvent when drift prevention
 // is needed.
@@ -74,11 +76,11 @@ type DriftPreventionMonitor struct {
 // Returns:
 //   - A new DriftPreventionMonitor instance ready to be started
 func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger, driftPreventionInterval time.Duration) *DriftPreventionMonitor {
-	// Use SubscribeLeaderOnly because this component only runs on the leader.
-	// It subscribes after EventBus.Start() when leadership is acquired.
-	// All-replica components replay their state on BecameLeaderEvent to ensure
-	// leader-only components don't miss critical state.
-	eventChan := eventBus.SubscribeLeaderOnly(DriftMonitorEventBufferSize)
+	// Subscribe during construction (before EventBus.Start()) to ensure proper
+	// startup synchronization. DriftPreventionMonitor runs on all replicas to
+	// keep HTTP Store caches warm through regular reconciliation cycles.
+	// Only the leader's DeploymentScheduler will act on the resulting events.
+	eventChan := eventBus.Subscribe(DriftMonitorEventBufferSize)
 
 	return &DriftPreventionMonitor{
 		eventBus:                eventBus,
@@ -100,7 +102,6 @@ func (m *DriftPreventionMonitor) Name() string {
 // The component is already subscribed to the EventBus (subscription happens in NewDriftPreventionMonitor()),
 // so this method only processes events and manages the drift prevention timer:
 //   - DeploymentCompletedEvent: Resets the drift prevention timer
-//   - LostLeadershipEvent: Stops the drift prevention timer and clears state
 //   - Drift timer expiration: Publishes DriftPreventionTriggeredEvent
 //
 // The component runs until the context is cancelled, at which point it
@@ -137,12 +138,8 @@ func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
 
 // handleEvent processes events from the EventBus.
 func (m *DriftPreventionMonitor) handleEvent(event busevents.Event) {
-	switch e := event.(type) {
-	case *events.DeploymentCompletedEvent:
+	if _, ok := event.(*events.DeploymentCompletedEvent); ok {
 		m.handleDeploymentCompleted()
-
-	case *events.LostLeadershipEvent:
-		m.handleLostLeadership(e)
 	}
 }
 
@@ -162,7 +159,7 @@ func (m *DriftPreventionMonitor) handleDriftTimerExpired() {
 	timeSinceLastDeployment := time.Since(m.lastDeploymentTime)
 	m.mu.Unlock()
 
-	m.logger.Info("drift prevention timer expired, triggering deployment",
+	m.logger.Debug("Drift prevention timer expired, triggering deployment",
 		"time_since_last_deployment", timeSinceLastDeployment)
 
 	// Publish drift prevention trigger event
@@ -226,31 +223,4 @@ func (m *DriftPreventionMonitor) getDriftTimerChan() <-chan time.Time {
 	closed := make(chan time.Time)
 	close(closed)
 	return closed
-}
-
-// handleLostLeadership handles LostLeadershipEvent by stopping the drift prevention timer.
-//
-// When a replica loses leadership, leader-only components (including this monitor)
-// are stopped via context cancellation. However, we defensively stop the timer and
-// clear state to prevent potential issues during shutdown.
-//
-// This ensures:
-//   - The drift timer is properly stopped (no leaked goroutines)
-//   - lastDeploymentTime is cleared (fresh start if leadership is reacquired)
-func (m *DriftPreventionMonitor) handleLostLeadership(_ *events.LostLeadershipEvent) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.timerActive {
-		m.logger.Info("lost leadership, stopping drift prevention timer")
-	}
-
-	// Stop drift timer
-	if m.driftTimer != nil {
-		m.driftTimer.Stop()
-		m.timerActive = false
-	}
-
-	// Clear last deployment time (fresh start if leadership is reacquired)
-	m.lastDeploymentTime = time.Time{}
 }

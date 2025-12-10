@@ -41,6 +41,7 @@ import (
 
 	"haproxy-template-ic/pkg/controller/renderer"
 	"haproxy-template-ic/pkg/core/config"
+	"haproxy-template-ic/pkg/core/logging"
 	"haproxy-template-ic/pkg/dataplane"
 	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
 	"haproxy-template-ic/pkg/k8s/types"
@@ -379,7 +380,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 		numWorkers = len(testsToRun)
 	}
 
-	r.logger.Debug("Starting test execution",
+	r.logger.Log(context.Background(), logging.LevelTrace, "Starting test execution",
 		"total_tests", len(testsToRun),
 		"workers", numWorkers)
 
@@ -432,7 +433,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan testEntry, results chan<- TestResult, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	r.logger.Debug("Worker started", "worker_id", workerID)
+	r.logger.Log(context.Background(), logging.LevelTrace, "Worker started", "worker_id", workerID)
 
 	testNum := 0
 	for entry := range tests {
@@ -442,7 +443,7 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 			return
 		default:
 			testStartTime := time.Now()
-			r.logger.Debug("Worker processing test",
+			r.logger.Log(context.Background(), logging.LevelTrace, "Worker processing test",
 				"worker_id", workerID,
 				"test_num", testNum,
 				"test", entry.name)
@@ -469,7 +470,7 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 				continue
 			}
 
-			r.logger.Debug("Created test paths",
+			r.logger.Log(context.Background(), logging.LevelTrace, "Created test paths",
 				"worker_id", workerID,
 				"test_num", testNum,
 				"test", entry.name,
@@ -498,7 +499,7 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 				continue
 			}
 
-			r.logger.Debug("Created template engine",
+			r.logger.Log(context.Background(), logging.LevelTrace, "Created template engine",
 				"worker_id", workerID,
 				"test_num", testNum,
 				"test", entry.name,
@@ -508,7 +509,7 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 			result := r.runSingleTest(ctx, entry.name, entry.test, testEngine, testPaths)
 
 			testDuration := time.Since(testStartTime)
-			r.logger.Debug("Test completed",
+			r.logger.Log(context.Background(), logging.LevelTrace, "Test completed",
 				"worker_id", workerID,
 				"test_num", testNum,
 				"test", entry.name,
@@ -553,7 +554,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 
 	// Check for global fixtures in validationTests._global
 	if globalTest, hasGlobal := r.config.ValidationTests["_global"]; hasGlobal {
-		r.logger.Debug("Merging global fixtures with test fixtures",
+		r.logger.Log(context.Background(), logging.LevelTrace, "Merging global fixtures with test fixtures",
 			"test", testName,
 			"global_fixture_types", len(globalTest.Fixtures),
 			"test_fixture_types", len(test.Fixtures),
@@ -563,7 +564,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 		fixtures = mergeFixtures(globalTest.Fixtures, test.Fixtures)
 		httpFixtures = mergeHTTPFixtures(globalTest.HTTPFixtures, test.HTTPFixtures)
 
-		r.logger.Debug("Fixture merge completed",
+		r.logger.Log(context.Background(), logging.LevelTrace, "Fixture merge completed",
 			"test", testName,
 			"merged_fixture_types", len(fixtures),
 			"merged_http_fixtures", len(httpFixtures))
@@ -582,7 +583,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 	// Always create the wrapper so that http.Fetch() fails gracefully when a fixture is missing
 	store := createHTTPStoreFromFixtures(httpFixtures, r.logger)
 	httpStore := NewFixtureHTTPStoreWrapper(store, r.logger)
-	r.logger.Debug("Created HTTP fixture store",
+	r.logger.Log(context.Background(), logging.LevelTrace, "Created HTTP fixture store",
 		"test", testName,
 		"fixture_count", len(httpFixtures))
 
@@ -715,7 +716,7 @@ func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[
 	staticCount := len(staticFiles.MapFiles) + len(staticFiles.GeneralFiles) + len(staticFiles.SSLCertificates) + len(staticFiles.CRTListFiles)
 	dynamicCount := len(dynamicFiles.MapFiles) + len(dynamicFiles.GeneralFiles) + len(dynamicFiles.SSLCertificates) + len(dynamicFiles.CRTListFiles)
 	if dynamicCount > 0 {
-		r.logger.Debug("Merged auxiliary files",
+		r.logger.Log(context.Background(), logging.LevelTrace, "Merged auxiliary files",
 			"static_count", staticCount,
 			"dynamic_count", dynamicCount)
 	}
@@ -747,7 +748,7 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 	// Create controller namespace with haproxy_pods store
 	controller := make(map[string]interface{})
 	if haproxyPodStore, exists := stores["haproxy-pods"]; exists {
-		r.logger.Debug("wrapping haproxy-pods store for rendering context")
+		r.logger.Log(context.Background(), logging.LevelTrace, "wrapping haproxy-pods store for rendering context")
 		controller["haproxy_pods"] = &renderer.StoreWrapper{
 			Store:        haproxyPodStore,
 			ResourceType: "haproxy-pods",

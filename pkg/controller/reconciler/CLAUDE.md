@@ -25,7 +25,10 @@ Stage 5 component that debounces resource changes and triggers reconciliation ev
 
 ```
 ResourceIndexUpdatedEvent → Debounce Timer (500ms default)
-ConfigValidatedEvent → Immediate Trigger
+IndexSynchronizedEvent → Immediate Trigger (initial reconciliation)
+HTTPResourceUpdatedEvent → Debounce Timer (500ms default)
+HTTPResourceAcceptedEvent → Immediate Trigger
+DriftPreventionTriggeredEvent → Immediate Trigger
 
     ↓
 ReconciliationTriggeredEvent → Executor
@@ -44,13 +47,23 @@ t=800:  Timer expires → Trigger reconciliation
 
 Multiple rapid changes batched into single reconciliation.
 
-### Config Changes (Immediate)
+### Index Synchronized (Immediate)
 
 ```
-ConfigValidatedEvent → Immediate ReconciliationTriggeredEvent
+IndexSynchronizedEvent → Immediate ReconciliationTriggeredEvent
 ```
 
-No debouncing for configuration changes - apply immediately.
+When all resource watchers complete initial sync, trigger immediate reconciliation.
+This ensures the first render happens with a complete view of cluster state.
+
+### HTTP Resource Accepted (Immediate)
+
+```
+HTTPResourceAcceptedEvent → Immediate ReconciliationTriggeredEvent
+```
+
+When HTTP content is promoted from pending to accepted (after validation succeeds),
+trigger immediate reconciliation to deploy the new content.
 
 ## Configuration
 

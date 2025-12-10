@@ -9,7 +9,7 @@ Stage 5 component that applies debouncing logic to prevent excessive reconciliat
 ## Features
 
 - **Debouncing**: Batches rapid resource changes
-- **Immediate config triggers**: No debounce for configuration changes
+- **Immediate initial sync**: Triggers reconciliation when all resources synced
 - **Configurable interval**: Default 500ms
 - **Initial sync filtering**: Ignores initial resource sync events
 
@@ -38,18 +38,24 @@ go reconciler.Start(ctx)
 3. If another change arrives, timer reset again
 4. When timer expires (no changes for 500ms), publish ReconciliationTriggeredEvent
 
-### Config Changes (Immediate)
+### Index Synchronized (Immediate)
 
-1. ConfigValidatedEvent received
+1. IndexSynchronizedEvent received (all resource watchers synced)
 2. Stop any pending debounce timer
 3. Immediately publish ReconciliationTriggeredEvent
+
+This triggers the initial reconciliation after all resources are indexed,
+ensuring the first render has a complete view of cluster state.
 
 ## Events
 
 ### Subscribes To
 
 - **ResourceIndexUpdatedEvent**: Resource change (debounced)
-- **ConfigValidatedEvent**: Config change (immediate)
+- **IndexSynchronizedEvent**: All resources synced (immediate)
+- **HTTPResourceUpdatedEvent**: HTTP content change (debounced)
+- **HTTPResourceAcceptedEvent**: HTTP content accepted (immediate)
+- **DriftPreventionTriggeredEvent**: Drift prevention (immediate)
 
 ### Publishes
 

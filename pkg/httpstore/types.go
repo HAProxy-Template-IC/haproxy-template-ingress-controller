@@ -22,8 +22,14 @@ package httpstore
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"time"
 )
+
+// levelTrace is a log level below Debug, used for very verbose diagnostic output.
+// Following slog convention of 4-level gaps: TRACE=-8, DEBUG=-4, INFO=0, WARN=4, ERROR=8.
+// This is duplicated from pkg/core/logging to avoid architecture rule violation.
+const levelTrace = slog.Level(-8)
 
 // DefaultTimeout is the default HTTP request timeout.
 const DefaultTimeout = 30 * time.Second

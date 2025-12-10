@@ -58,7 +58,7 @@ func (s *HTTPStore) fetchWithRetry(
 				exp = 5
 			}
 			delay := opts.RetryDelay * time.Duration(1<<exp)
-			s.logger.Debug("retrying HTTP fetch",
+			s.logger.Log(context.Background(), levelTrace, "retrying HTTP fetch",
 				"url", url,
 				"attempt", attempt+1,
 				"delay", delay.String())
@@ -76,7 +76,7 @@ func (s *HTTPStore) fetchWithRetry(
 		}
 
 		lastErr = err
-		s.logger.Debug("HTTP fetch attempt failed",
+		s.logger.Log(context.Background(), levelTrace, "HTTP fetch attempt failed",
 			"url", url,
 			"attempt", attempt+1,
 			"error", err)

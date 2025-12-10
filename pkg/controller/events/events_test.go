@@ -456,6 +456,7 @@ func TestTemplateEvents(t *testing.T) {
 			valAuxFiles,
 			5,
 			100,
+			"resource_change",
 		)
 		require.NotNil(t, event)
 		assert.Equal(t, "haproxy config", event.HAProxyConfig)
@@ -472,7 +473,7 @@ func TestTemplateEvents(t *testing.T) {
 	})
 
 	t.Run("TemplateRenderedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0,
+		event := NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0, "",
 			WithCorrelation("corr-123", "cause-456"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
@@ -517,17 +518,18 @@ func TestValidationEvents(t *testing.T) {
 
 	t.Run("ValidationCompletedEvent", func(t *testing.T) {
 		warnings := []string{"warning1", "warning2"}
-		event := NewValidationCompletedEvent(warnings, 50)
+		event := NewValidationCompletedEvent(warnings, 50, "config_change")
 		require.NotNil(t, event)
 		assert.Equal(t, warnings, event.Warnings)
 		assert.Equal(t, int64(50), event.DurationMs)
+		assert.Equal(t, "config_change", event.TriggerReason)
 		assert.Equal(t, EventTypeValidationCompleted, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
 
 	t.Run("ValidationCompletedEvent_DefensiveCopy", func(t *testing.T) {
 		warnings := []string{"warning1"}
-		event := NewValidationCompletedEvent(warnings, 50)
+		event := NewValidationCompletedEvent(warnings, 50, "")
 
 		// Modify original
 		warnings[0] = "modified"
@@ -537,24 +539,25 @@ func TestValidationEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationCompletedEvent_EmptyWarnings", func(t *testing.T) {
-		event := NewValidationCompletedEvent(nil, 50)
+		event := NewValidationCompletedEvent(nil, 50, "")
 		require.NotNil(t, event)
 		assert.Nil(t, event.Warnings)
 	})
 
 	t.Run("ValidationFailedEvent", func(t *testing.T) {
 		errors := []string{"error1", "error2"}
-		event := NewValidationFailedEvent(errors, 100)
+		event := NewValidationFailedEvent(errors, 100, "drift_prevention")
 		require.NotNil(t, event)
 		assert.Equal(t, errors, event.Errors)
 		assert.Equal(t, int64(100), event.DurationMs)
+		assert.Equal(t, "drift_prevention", event.TriggerReason)
 		assert.Equal(t, EventTypeValidationFailed, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
 
 	t.Run("ValidationFailedEvent_DefensiveCopy", func(t *testing.T) {
 		errors := []string{"error1"}
-		event := NewValidationFailedEvent(errors, 100)
+		event := NewValidationFailedEvent(errors, 100, "")
 
 		// Modify original
 		errors[0] = "modified"
@@ -564,7 +567,7 @@ func TestValidationEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationFailedEvent_EmptyErrors", func(t *testing.T) {
-		event := NewValidationFailedEvent(nil, 100)
+		event := NewValidationFailedEvent(nil, 100, "")
 		require.NotNil(t, event)
 		assert.Nil(t, event.Errors)
 	})
@@ -1136,12 +1139,12 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},
 		// Template events
-		{"TemplateRendered", NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0)},
+		{"TemplateRendered", NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0, "")},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		// Validation events
 		{"ValidationStarted", NewValidationStartedEvent()},
-		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0)},
-		{"ValidationFailed", NewValidationFailedEvent(nil, 0)},
+		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "")},
+		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
 		{"ValidationTestsStarted", NewValidationTestsStartedEvent(0)},
 		{"ValidationTestsCompleted", NewValidationTestsCompletedEvent(0, 0, 0, 0)},
 		{"ValidationTestsFailed", NewValidationTestsFailedEvent(nil)},

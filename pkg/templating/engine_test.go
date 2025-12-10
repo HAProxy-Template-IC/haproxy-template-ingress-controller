@@ -2846,3 +2846,662 @@ func TestEvalFilterWithConcatenation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, output, "hello-world")
 }
+
+// ============================================================================
+// Thread-Safety Tests (run with -race flag)
+// ============================================================================
+
+func TestConcurrentRenders_SameContext(t *testing.T) {
+	// This test verifies that multiple goroutines can render with a shared context
+	// without causing concurrent map writes. Run with: go test -race
+	templates := map[string]string{
+		"main": `Hello {{ name }}, count={{ count }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Shared context - without context copying this would cause race conditions
+	sharedContext := map[string]interface{}{
+		"name":  "World",
+		"count": 42,
+	}
+
+	const numGoroutines = 20
+	done := make(chan bool, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer func() { done <- true }()
+
+			for j := 0; j < 10; j++ {
+				output, err := engine.Render("main", sharedContext)
+				assert.NoError(t, err)
+				assert.Contains(t, output, "Hello World")
+				assert.Contains(t, output, "count=42")
+			}
+		}()
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+}
+
+func TestConcurrentRenders_WithIncludes(t *testing.T) {
+	// Test that concurrent rendering with includes is thread-safe
+	// The cached include parser should not cause race conditions
+	templates := map[string]string{
+		"main":   `Header: {% include "header" %}Body: {% include "body" %}Footer: {% include "footer" %}`,
+		"header": `[HEADER {{ title }}]`,
+		"body":   `[BODY {{ content }}]`,
+		"footer": `[FOOTER]`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	const numGoroutines = 15
+	done := make(chan bool, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer func() { done <- true }()
+
+			for j := 0; j < 8; j++ {
+				context := map[string]interface{}{
+					"title":   fmt.Sprintf("Title-%d-%d", id, j),
+					"content": fmt.Sprintf("Content-%d-%d", id, j),
+				}
+				output, err := engine.Render("main", context)
+				assert.NoError(t, err)
+				assert.Contains(t, output, "[HEADER")
+				assert.Contains(t, output, "[BODY")
+				assert.Contains(t, output, "[FOOTER]")
+			}
+		}(i)
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+}
+
+func TestConcurrentRenders_WithImports(t *testing.T) {
+	// Test that concurrent rendering with imports is thread-safe
+	templates := map[string]string{
+		"main": `{% import "macros" as m %}{{ m.greet(name) }} - {{ m.farewell(name) }}`,
+		"macros": `{% macro greet(name) %}Hello {{ name }}{% endmacro %}
+{% macro farewell(name) %}Goodbye {{ name }}{% endmacro %}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	const numGoroutines = 15
+	done := make(chan bool, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer func() { done <- true }()
+
+			for j := 0; j < 8; j++ {
+				context := map[string]interface{}{
+					"name": fmt.Sprintf("User%d", id),
+				}
+				output, err := engine.Render("main", context)
+				assert.NoError(t, err)
+				assert.Contains(t, output, fmt.Sprintf("Hello User%d", id))
+				assert.Contains(t, output, fmt.Sprintf("Goodbye User%d", id))
+			}
+		}(i)
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+}
+
+func TestConcurrentRenders_WithFromImports(t *testing.T) {
+	// Test that concurrent rendering with from-imports is thread-safe
+	templates := map[string]string{
+		"main": `{% from "macros" import greet, farewell %}{{ greet(name) }} - {{ farewell(name) }}`,
+		"macros": `{% macro greet(name) %}Hello {{ name }}{% endmacro %}
+{% macro farewell(name) %}Goodbye {{ name }}{% endmacro %}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	const numGoroutines = 15
+	done := make(chan bool, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer func() { done <- true }()
+
+			for j := 0; j < 8; j++ {
+				context := map[string]interface{}{
+					"name": fmt.Sprintf("User%d", id),
+				}
+				output, err := engine.Render("main", context)
+				assert.NoError(t, err)
+				assert.Contains(t, output, fmt.Sprintf("Hello User%d", id))
+				assert.Contains(t, output, fmt.Sprintf("Goodbye User%d", id))
+			}
+		}(i)
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+}
+
+func TestConcurrentRenders_HighContention(t *testing.T) {
+	// Stress test with high goroutine count and mixed operations
+	templates := map[string]string{
+		"main":    `{% include "sub1" %}{% include "sub2" %}{% import "macros" as m %}{{ m.helper(value) }}`,
+		"sub1":    `[SUB1: {{ value }}]`,
+		"sub2":    `[SUB2: {{ value | upper }}]`,
+		"macros":  `{% macro helper(v) %}Helper({{ v }}){% endmacro %}`,
+		"simple":  `Simple: {{ value }}`,
+		"complex": `{% for i in items %}{{ i }}{% endfor %}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	const numGoroutines = 50
+	done := make(chan bool, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer func() { done <- true }()
+
+			templateNames := []string{"main", "simple", "complex"}
+			for j := 0; j < 10; j++ {
+				tmpl := templateNames[j%len(templateNames)]
+				context := map[string]interface{}{
+					"value": fmt.Sprintf("v%d-%d", id, j),
+					"items": []string{"a", "b", "c"},
+				}
+				output, err := engine.Render(tmpl, context)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, output)
+			}
+		}(i)
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+}
+
+// ============================================================================
+// Cached Parser Tests
+// ============================================================================
+
+func TestCachedInclude_BasicFunctionality(t *testing.T) {
+	tests := []struct {
+		name      string
+		templates map[string]string
+		render    string
+		context   map[string]interface{}
+		want      string
+		wantErr   bool
+	}{
+		{
+			name: "simple include",
+			templates: map[string]string{
+				"main": `Before{% include "sub" %}After`,
+				"sub":  `-INCLUDED-`,
+			},
+			render:  "main",
+			context: nil,
+			want:    "Before-INCLUDED-After",
+		},
+		{
+			name: "include with context variable",
+			templates: map[string]string{
+				"main": `{% include "sub" %}`,
+				"sub":  `Hello {{ name }}!`,
+			},
+			render:  "main",
+			context: map[string]interface{}{"name": "World"},
+			want:    "Hello World!",
+		},
+		{
+			name: "include non-existent template",
+			templates: map[string]string{
+				"main": `{% include "missing" %}`,
+			},
+			render:  "main",
+			context: nil,
+			wantErr: true,
+		},
+		{
+			name: "include with ignore missing",
+			templates: map[string]string{
+				"main": `Before{% include "missing" ignore missing %}After`,
+			},
+			render:  "main",
+			context: nil,
+			want:    "BeforeAfter",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := New(EngineTypeGonja, tt.templates, nil, nil, nil)
+			require.NoError(t, err)
+
+			output, err := engine.Render(tt.render, tt.context)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, output)
+		})
+	}
+}
+
+func TestCachedInclude_NestedIncludes(t *testing.T) {
+	// Test deeply nested includes: A includes B, B includes C
+	templates := map[string]string{
+		"level1": `[L1:{% include "level2" %}]`,
+		"level2": `[L2:{% include "level3" %}]`,
+		"level3": `[L3:{{ value }}]`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("level1", map[string]interface{}{"value": "DEEP"})
+	require.NoError(t, err)
+	assert.Equal(t, "[L1:[L2:[L3:DEEP]]]", output)
+}
+
+func TestCachedInclude_SameTemplateMultipleTimes(t *testing.T) {
+	// Test including same template from multiple parents
+	templates := map[string]string{
+		"main":   `{% include "shared" %}-{% include "shared" %}-{% include "shared" %}`,
+		"shared": `X`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("main", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "X-X-X", output)
+}
+
+func TestCachedImport_BasicFunctionality(t *testing.T) {
+	tests := []struct {
+		name      string
+		templates map[string]string
+		render    string
+		context   map[string]interface{}
+		want      string
+		wantErr   bool
+	}{
+		{
+			name: "import and call macro",
+			templates: map[string]string{
+				"main":   `{% import "macros" as m %}{{ m.greet("World") }}`,
+				"macros": `{% macro greet(name) %}Hello {{ name }}!{% endmacro %}`,
+			},
+			render:  "main",
+			context: nil,
+			want:    "Hello World!",
+		},
+		{
+			name: "import multiple macros",
+			templates: map[string]string{
+				"main": `{% import "macros" as m %}{{ m.foo() }}-{{ m.bar() }}`,
+				"macros": `{% macro foo() %}FOO{% endmacro %}
+{% macro bar() %}BAR{% endmacro %}`,
+			},
+			render:  "main",
+			context: nil,
+			want:    "FOO-BAR",
+		},
+		{
+			name: "import non-existent template",
+			templates: map[string]string{
+				"main": `{% import "missing" as m %}`,
+			},
+			render:  "main",
+			context: nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := New(EngineTypeGonja, tt.templates, nil, nil, nil)
+			require.NoError(t, err)
+
+			output, err := engine.Render(tt.render, tt.context)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, output)
+		})
+	}
+}
+
+func TestCachedFrom_BasicFunctionality(t *testing.T) {
+	tests := []struct {
+		name      string
+		templates map[string]string
+		render    string
+		context   map[string]interface{}
+		want      string
+		wantErr   bool
+	}{
+		{
+			name: "from import single macro",
+			templates: map[string]string{
+				"main":   `{% from "macros" import greet %}{{ greet("World") }}`,
+				"macros": `{% macro greet(name) %}Hello {{ name }}!{% endmacro %}`,
+			},
+			render:  "main",
+			context: nil,
+			want:    "Hello World!",
+		},
+		{
+			name: "from import multiple macros",
+			templates: map[string]string{
+				"main": `{% from "macros" import foo, bar %}{{ foo() }}-{{ bar() }}`,
+				"macros": `{% macro foo() %}FOO{% endmacro %}
+{% macro bar() %}BAR{% endmacro %}`,
+			},
+			render:  "main",
+			context: nil,
+			want:    "FOO-BAR",
+		},
+		{
+			name: "from import with alias",
+			templates: map[string]string{
+				"main":   `{% from "macros" import greet as say_hello %}{{ say_hello("World") }}`,
+				"macros": `{% macro greet(name) %}Hello {{ name }}!{% endmacro %}`,
+			},
+			render:  "main",
+			context: nil,
+			want:    "Hello World!",
+		},
+		{
+			name: "from import non-existent template",
+			templates: map[string]string{
+				"main": `{% from "missing" import foo %}`,
+			},
+			render:  "main",
+			context: nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := New(EngineTypeGonja, tt.templates, nil, nil, nil)
+			require.NoError(t, err)
+
+			output, err := engine.Render(tt.render, tt.context)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, output)
+		})
+	}
+}
+
+// ============================================================================
+// Context Isolation Tests
+// ============================================================================
+
+func TestContextIsolation_OriginalUnmodified(t *testing.T) {
+	// Verify that the original context map is not modified by template rendering
+	templates := map[string]string{
+		"main": `{% set x = "modified" %}{{ name }}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	originalContext := map[string]interface{}{
+		"name": "World",
+	}
+
+	// Make a copy of the original for comparison
+	expectedName := originalContext["name"]
+
+	output, err := engine.Render("main", originalContext)
+	require.NoError(t, err)
+	assert.Equal(t, "World", output)
+
+	// Verify original context is unchanged
+	assert.Equal(t, expectedName, originalContext["name"])
+	// The "x" variable should NOT exist in original context
+	_, exists := originalContext["x"]
+	assert.False(t, exists, "Template-set variable should not leak to original context")
+}
+
+func TestContextIsolation_IndependentRenders(t *testing.T) {
+	// Verify that sequential renders don't share state
+	templates := map[string]string{
+		"setter": `{% set shared = "was_set" %}done`,
+		"getter": `{% if shared is defined %}{{ shared }}{% else %}undefined{% endif %}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// First render sets a variable
+	_, err = engine.Render("setter", nil)
+	require.NoError(t, err)
+
+	// Second render should NOT see the variable from first render
+	output, err := engine.Render("getter", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "undefined", output, "Variables from previous render should not persist")
+}
+
+func TestContextIsolation_ConcurrentMutations(t *testing.T) {
+	// Verify that concurrent renders with templates that set variables
+	// don't cause concurrent map write panics.
+	// The key test here is that multiple goroutines can call Render()
+	// with a shared input context without causing a "concurrent map writes" panic.
+	templates := map[string]string{
+		"mutating": `{% set x = "value" %}{% for i in range(5) %}{{ i }}{% endfor %}`,
+	}
+
+	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Shared context - this would cause race conditions without context copying
+	sharedContext := map[string]interface{}{
+		"existing": "data",
+	}
+
+	const numGoroutines = 20
+	done := make(chan bool, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer func() { done <- true }()
+
+			for j := 0; j < 10; j++ {
+				output, err := engine.Render("mutating", sharedContext)
+				assert.NoError(t, err)
+				// Just verify it renders without panic/error
+				assert.Contains(t, output, "01234")
+			}
+		}()
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+
+	// Verify original context was not modified
+	assert.Equal(t, "data", sharedContext["existing"])
+	_, hasX := sharedContext["x"]
+	assert.False(t, hasX, "Template variable 'x' should not leak to original context")
+}
+
+// ============================================================================
+// Multiple Engine Instance Tests
+// ============================================================================
+
+func TestMultipleEngines_IndependentControlStructures(t *testing.T) {
+	// Verify each engine has its own control structure set
+	// and they don't pollute each other's template caches
+	templates1 := map[string]string{
+		"main": `{% include "sub1" %}`,
+		"sub1": `ENGINE1`,
+	}
+
+	templates2 := map[string]string{
+		"main": `{% include "sub2" %}`,
+		"sub2": `ENGINE2`,
+	}
+
+	engine1, err := New(EngineTypeGonja, templates1, nil, nil, nil)
+	require.NoError(t, err)
+
+	engine2, err := New(EngineTypeGonja, templates2, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Engine1 should render with its templates
+	output1, err := engine1.Render("main", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ENGINE1", output1)
+
+	// Engine2 should render with its templates
+	output2, err := engine2.Render("main", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ENGINE2", output2)
+
+	// Engine1 should NOT have engine2's templates
+	assert.False(t, engine1.HasTemplate("sub2"))
+	// Engine2 should NOT have engine1's templates
+	assert.False(t, engine2.HasTemplate("sub1"))
+}
+
+func TestMultipleEngines_ConcurrentCreation(t *testing.T) {
+	// Verify multiple engines can be created concurrently without races
+	const numEngines = 10
+	engines := make(chan *TemplateEngine, numEngines)
+	errors := make(chan error, numEngines)
+
+	for i := 0; i < numEngines; i++ {
+		go func(id int) {
+			templates := map[string]string{
+				"main": fmt.Sprintf(`Engine %d: {%% include "sub" %%}`, id),
+				"sub":  fmt.Sprintf(`SUB%d`, id),
+			}
+
+			engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+			if err != nil {
+				errors <- err
+				return
+			}
+			engines <- engine
+		}(i)
+	}
+
+	// Collect all engines
+	createdEngines := make([]*TemplateEngine, 0, numEngines)
+	for i := 0; i < numEngines; i++ {
+		select {
+		case engine := <-engines:
+			createdEngines = append(createdEngines, engine)
+		case err := <-errors:
+			t.Fatalf("Engine creation failed: %v", err)
+		}
+	}
+
+	// Verify each engine works independently
+	for i, engine := range createdEngines {
+		output, err := engine.Render("main", nil)
+		require.NoError(t, err)
+		assert.Contains(t, output, "SUB")
+		// Just verify it renders without error - exact content depends on creation order
+		_ = i
+	}
+}
+
+func TestMultipleEngines_DifferentCustomFilters(t *testing.T) {
+	// Verify engines with different custom filters are independent
+	filter1 := func(in interface{}, args ...interface{}) (interface{}, error) {
+		return fmt.Sprintf("[FILTER1:%v]", in), nil
+	}
+
+	filter2 := func(in interface{}, args ...interface{}) (interface{}, error) {
+		return fmt.Sprintf("[FILTER2:%v]", in), nil
+	}
+
+	templates := map[string]string{
+		"test": `{{ value | custom }}`,
+	}
+
+	engine1, err := New(EngineTypeGonja, templates, map[string]FilterFunc{"custom": filter1}, nil, nil)
+	require.NoError(t, err)
+
+	engine2, err := New(EngineTypeGonja, templates, map[string]FilterFunc{"custom": filter2}, nil, nil)
+	require.NoError(t, err)
+
+	output1, err := engine1.Render("test", map[string]interface{}{"value": "X"})
+	require.NoError(t, err)
+	assert.Equal(t, "[FILTER1:X]", output1)
+
+	output2, err := engine2.Render("test", map[string]interface{}{"value": "X"})
+	require.NoError(t, err)
+	assert.Equal(t, "[FILTER2:X]", output2)
+}
+
+func TestMultipleEngines_CrossEngineTemplateIsolation(t *testing.T) {
+	// Verify that each engine's cached parsers reference the correct compiledTemplates map
+	// Engine1's {% include "sub2" %} should fail (not in its cache)
+	templates1 := map[string]string{
+		"main": `MAIN1`,
+		"sub1": `SUB1`,
+	}
+
+	templates2 := map[string]string{
+		"main": `MAIN2`,
+		"sub2": `SUB2`,
+	}
+
+	engine1, err := New(EngineTypeGonja, templates1, nil, nil, nil)
+	require.NoError(t, err)
+
+	engine2, err := New(EngineTypeGonja, templates2, nil, nil, nil)
+	require.NoError(t, err)
+
+	// Engine1 should have sub1 but not sub2
+	assert.True(t, engine1.HasTemplate("sub1"))
+	assert.False(t, engine1.HasTemplate("sub2"))
+
+	// Engine2 should have sub2 but not sub1
+	assert.True(t, engine2.HasTemplate("sub2"))
+	assert.False(t, engine2.HasTemplate("sub1"))
+
+	// Verify rendering works correctly for each engine
+	out1, err := engine1.Render("main", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "MAIN1", out1)
+
+	out2, err := engine2.Render("main", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "MAIN2", out2)
+}

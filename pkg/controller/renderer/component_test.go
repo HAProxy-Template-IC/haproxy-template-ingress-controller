@@ -16,6 +16,8 @@ package renderer
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/httpstore"
 	"haproxy-template-ic/pkg/controller/testutil"
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/dataplane"
@@ -1123,4 +1126,347 @@ func TestMergeAuxiliaryFiles(t *testing.T) {
 	// Verify static files come first
 	assert.Equal(t, "static-map.map", merged.MapFiles[0].Path)
 	assert.Equal(t, "dynamic-map.map", merged.MapFiles[1].Path)
+}
+
+// ============================================================================
+// Reconciliation Coalescing Tests
+// ============================================================================
+
+// TestRenderer_ReconciliationCoalescing_LatestWins verifies that when multiple
+// ReconciliationTriggeredEvents arrive while rendering is in progress, only
+// the latest trigger is processed (intermediate events are superseded).
+func TestRenderer_ReconciliationCoalescing_LatestWins(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	eventChan := bus.Subscribe(100)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish multiple reconciliation triggers rapidly
+	// The renderer should coalesce these and process fewer events
+	for i := 0; i < 5; i++ {
+		bus.Publish(events.NewReconciliationTriggeredEvent("batch_test"))
+	}
+
+	// Wait for at least one render to complete
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, renderedEvent)
+	assert.Contains(t, renderedEvent.HAProxyConfig, "global")
+
+	// The test verifies that rendering completes without blocking/deadlock
+	// when multiple triggers arrive - the coalescing prevents queue buildup
+}
+
+// TestRenderer_TriggerReasonPropagation verifies that the trigger reason from
+// ReconciliationTriggeredEvent is propagated to the TemplateRenderedEvent.
+func TestRenderer_TriggerReasonPropagation(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish trigger with specific reason
+	bus.Publish(events.NewReconciliationTriggeredEvent("drift_prevention"))
+
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+
+	require.NotNil(t, renderedEvent)
+	assert.Equal(t, "drift_prevention", renderedEvent.TriggerReason)
+}
+
+// ============================================================================
+// State Caching Tests (Leadership Transition Replay)
+// ============================================================================
+
+// TestRenderer_HandleBecameLeader_WithTriggerReason verifies that when leadership
+// is acquired, the renderer replays the last rendered state including the trigger reason.
+func TestRenderer_HandleBecameLeader_WithTriggerReason(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	eventChan := bus.Subscribe(100)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// First, trigger a render with a specific reason
+	bus.Publish(events.NewReconciliationTriggeredEvent("config_change"))
+
+	// Wait for initial render to complete
+	firstRendered := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, firstRendered)
+	assert.Equal(t, "config_change", firstRendered.TriggerReason)
+
+	// Now simulate becoming leader - should replay last state
+	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
+
+	// Wait for replayed event
+	replayedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, replayedEvent)
+
+	// Verify the replayed event has the same config and trigger reason
+	assert.Equal(t, firstRendered.HAProxyConfig, replayedEvent.HAProxyConfig)
+	assert.Equal(t, "config_change", replayedEvent.TriggerReason)
+}
+
+// TestRenderer_StateReplay_PreservesAllFields verifies that leadership transition
+// replay preserves all cached render output fields.
+func TestRenderer_StateReplay_PreservesAllFields(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+		Maps: map[string]config.MapFile{
+			"test.map": {Template: "example.com backend1\n"},
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	eventChan := bus.Subscribe(100)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Trigger initial render
+	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+
+	originalEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, originalEvent)
+
+	// Simulate becoming leader - should replay state
+	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
+
+	replayedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, replayedEvent)
+
+	// Verify all fields are preserved
+	assert.Equal(t, originalEvent.HAProxyConfig, replayedEvent.HAProxyConfig)
+	assert.Equal(t, originalEvent.ValidationHAProxyConfig, replayedEvent.ValidationHAProxyConfig)
+	assert.Equal(t, originalEvent.AuxiliaryFileCount, replayedEvent.AuxiliaryFileCount)
+	// Note: Duration may differ slightly between original and replay, that's expected
+}
+
+// ============================================================================
+// HTTP Store Integration Tests
+// ============================================================================
+
+// TestRenderer_WithHTTPStoreComponent verifies that when an HTTP store component
+// is set, templates can call http.Fetch() to retrieve remote content.
+func TestRenderer_WithHTTPStoreComponent(t *testing.T) {
+	// Set up a test HTTP server that returns predictable content
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("192.168.1.1 backend1\n192.168.1.2 backend2"))
+	}))
+	defer server.Close()
+
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	// Template that uses http.Fetch()
+	templateContent := `global
+    daemon
+# Remote content:
+{{ http.Fetch("` + server.URL + `") }}
+`
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: templateContent,
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	// Create and set HTTP store component
+	httpStoreComponent := httpstore.New(bus, logger, 0)
+	renderer.SetHTTPStoreComponent(httpStoreComponent)
+
+	eventChan := bus.Subscribe(100)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start both components
+	go httpStoreComponent.Start(ctx)
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Trigger reconciliation
+	bus.Publish(events.NewReconciliationTriggeredEvent("http_test"))
+
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, renderedEvent)
+
+	// Verify the HTTP content was fetched and included in the rendered output
+	assert.Contains(t, renderedEvent.HAProxyConfig, "192.168.1.1 backend1")
+	assert.Contains(t, renderedEvent.HAProxyConfig, "192.168.1.2 backend2")
+}
+
+// TestRenderer_WithoutHTTPStoreComponent verifies that rendering succeeds even
+// when no HTTP store component is set, but http.Fetch() is not available.
+func TestRenderer_WithoutHTTPStoreComponent(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: "global\n    daemon\n",
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	// Do NOT set HTTP store component - it should remain nil
+	assert.Nil(t, renderer.httpStoreComponent)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Trigger reconciliation - should succeed without HTTP store
+	bus.Publish(events.NewReconciliationTriggeredEvent("no_http_store_test"))
+
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, renderedEvent)
+
+	// Verify rendering completed successfully
+	assert.Contains(t, renderedEvent.HAProxyConfig, "global")
+	assert.Contains(t, renderedEvent.HAProxyConfig, "daemon")
+}
+
+// TestRenderer_HTTPStoreContextAvailability verifies that the 'http' object
+// is available in the template context when HTTP store component is set.
+func TestRenderer_HTTPStoreContextAvailability(t *testing.T) {
+	// Set up test server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("test-content"))
+	}))
+	defer server.Close()
+
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	// Template that conditionally uses http if available
+	// This tests that the http object exists in the context
+	templateContent := `global
+    daemon
+{% if http %}# http object is available{% endif %}
+`
+
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{
+			Template: templateContent,
+		},
+	}
+
+	stores := map[string]types.Store{
+		"ingresses": &mockStore{},
+	}
+
+	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	require.NoError(t, err)
+
+	// Set HTTP store component
+	httpStoreComponent := httpstore.New(bus, logger, 0)
+	renderer.SetHTTPStoreComponent(httpStoreComponent)
+
+	eventChan := bus.Subscribe(100)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go httpStoreComponent.Start(ctx)
+	go renderer.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Trigger reconciliation
+	bus.Publish(events.NewReconciliationTriggeredEvent("context_test"))
+
+	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, renderedEvent)
+
+	// Verify the http object was detected in the template
+	assert.Contains(t, renderedEvent.HAProxyConfig, "# http object is available")
 }

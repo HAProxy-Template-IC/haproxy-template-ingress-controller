@@ -387,10 +387,10 @@ func (r *Reconciler) Start(ctx context.Context) error {
                 // Reset debounce timer for resource changes
                 r.resetDebounceTimer()
 
-            case *events.ConfigValidatedEvent:
-                // Config changes trigger immediately (no debouncing)
+            case *events.IndexSynchronizedEvent:
+                // Initial sync complete - trigger immediate reconciliation
                 r.stopDebounceTimer()
-                r.triggerReconciliation("config_change")
+                r.triggerReconciliation("index_synchronized")
             }
 
         case <-r.getDebounceTimerChan():
@@ -407,7 +407,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 **Features:**
 
 - Debounces resource changes with configurable interval (default 500ms)
-- Triggers immediate reconciliation for config changes
+- Triggers immediate reconciliation when all indices are synchronized
 - Filters initial sync events to prevent premature reconciliation
 - Publishes ReconciliationTriggeredEvent
 
@@ -1075,10 +1075,10 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 
 ```bash
 # Deploy with 2 replicas
-kubectl -n haproxy-template-ic scale deployment haproxy-template-ic --replicas=2
+kubectl -n haproxy-template-ic scale deployment haproxy-template-ic-controller --replicas=2
 
 # Delete current leader to trigger election
-LEADER=$(kubectl -n haproxy-template-ic get pods -l app=haproxy-template-ic -o jsonpath='{.items[0].metadata.name}')
+LEADER=$(kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')
 kubectl -n haproxy-template-ic delete pod $LEADER
 
 # Expected log pattern after transition:

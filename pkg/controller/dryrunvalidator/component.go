@@ -59,6 +59,7 @@ const (
 // and responds with validation results.
 type Component struct {
 	eventBus        *busevents.EventBus
+	eventChan       <-chan busevents.Event // Subscribed in constructor per CLAUDE.md guidelines
 	storeManager    *resourcestore.Manager
 	config          *config.Config
 	engine          *templating.TemplateEngine
@@ -103,8 +104,13 @@ func New(
 		},
 	)
 
+	// Subscribe in constructor per CLAUDE.md guidelines to ensure subscription
+	// happens before EventBus.Start() is called
+	eventChan := eventBus.Subscribe(EventBufferSize)
+
 	return &Component{
 		eventBus:        eventBus,
+		eventChan:       eventChan,
 		storeManager:    storeManager,
 		config:          cfg,
 		engine:          engine,
@@ -117,16 +123,14 @@ func New(
 
 // Start begins the validator's event loop.
 //
-// This method blocks until the context is cancelled. It subscribes to
-// WebhookValidationRequest events and processes them.
+// This method blocks until the context is cancelled. It processes
+// WebhookValidationRequest events from the pre-subscribed channel.
 func (c *Component) Start(ctx context.Context) error {
 	c.logger.Info("DryRun validator starting")
 
-	eventChan := c.eventBus.Subscribe(EventBufferSize)
-
 	for {
 		select {
-		case event := <-eventChan:
+		case event := <-c.eventChan:
 			c.handleEvent(event)
 
 		case <-ctx.Done():

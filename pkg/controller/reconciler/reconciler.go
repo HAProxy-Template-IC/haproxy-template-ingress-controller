@@ -46,13 +46,13 @@ const ComponentName = "reconciler"
 
 // Reconciler implements the reconciliation debouncer component.
 //
-// It subscribes to resource change events and configuration change events,
+// It subscribes to resource change events and index synchronization events,
 // applies debouncing logic to prevent excessive reconciliations, and triggers
 // reconciliation when appropriate.
 //
 // Debouncing behavior:
 //   - Resource changes: Wait for quiet period (debounce interval) before triggering
-//   - Config changes: Trigger immediately (no debouncing)
+//   - Index synchronized: Trigger immediately (initial reconciliation after all resources synced)
 //
 // The component publishes ReconciliationTriggeredEvent to signal the Executor
 // to begin a reconciliation cycle.
@@ -116,7 +116,7 @@ func (r *Reconciler) Name() string {
 // The component is already subscribed to the EventBus (subscription happens in New()),
 // so this method only processes events:
 //   - ResourceIndexUpdatedEvent: Starts/resets debounce timer
-//   - ConfigValidatedEvent: Triggers immediate reconciliation
+//   - IndexSynchronizedEvent: Triggers initial reconciliation when all resources synced
 //   - Debounce timer expiration: Publishes ReconciliationTriggeredEvent
 //
 // The component runs until the context is cancelled, at which point it
@@ -155,14 +155,17 @@ func (r *Reconciler) handleEvent(event busevents.Event) {
 	case *events.ResourceIndexUpdatedEvent:
 		r.handleResourceChange(e)
 
-	case *events.ConfigValidatedEvent:
-		r.handleConfigChange(e)
+	case *events.IndexSynchronizedEvent:
+		r.handleIndexSynchronized(e)
 
 	case *events.HTTPResourceUpdatedEvent:
 		r.handleHTTPResourceChange(e)
 
 	case *events.HTTPResourceAcceptedEvent:
 		r.handleHTTPResourceAccepted(e)
+
+	case *events.DriftPreventionTriggeredEvent:
+		r.handleDriftPrevention(e)
 	}
 }
 
@@ -208,19 +211,20 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 	r.resetDebounceTimer()
 }
 
-// handleConfigChange processes config validated events.
+// handleIndexSynchronized processes index synchronized events.
 //
-// Config changes trigger immediate reconciliation without debouncing.
-// Any pending debounce timer is cancelled to prioritize config changes.
-func (r *Reconciler) handleConfigChange(event *events.ConfigValidatedEvent) {
-	r.logger.Debug("Config change detected, triggering immediate reconciliation",
-		"config_version", event.Version)
+// When all resource watchers have completed their initial sync, this triggers
+// the initial reconciliation. This ensures the first render happens only after
+// all resources are indexed, providing a complete view of the cluster state.
+func (r *Reconciler) handleIndexSynchronized(event *events.IndexSynchronizedEvent) {
+	r.logger.Info("All indices synchronized, triggering initial reconciliation",
+		"resource_counts", event.ResourceCounts)
 
-	// Stop pending debounce timer - config changes take priority
+	// Stop any pending debounce timer - initial sync takes priority
 	r.stopDebounceTimer()
 
 	// Trigger reconciliation immediately
-	r.triggerReconciliation("config_change")
+	r.triggerReconciliation("index_synchronized")
 }
 
 // handleHTTPResourceChange processes HTTP resource update events.
@@ -255,6 +259,22 @@ func (r *Reconciler) handleHTTPResourceAccepted(event *events.HTTPResourceAccept
 
 	// Trigger reconciliation immediately
 	r.triggerReconciliation("http_resource_accepted")
+}
+
+// handleDriftPrevention processes drift prevention triggered events.
+//
+// Drift prevention triggers immediate full reconciliation (render → validate → deploy).
+// This ensures HTTP store entries get their LastAccessTime updated during template rendering,
+// preventing premature eviction. If validation fails, the DeploymentScheduler will fall back
+// to deploying the cached last known good config.
+func (r *Reconciler) handleDriftPrevention(_ *events.DriftPreventionTriggeredEvent) {
+	// Stop pending debounce timer - drift prevention takes priority
+	r.stopDebounceTimer()
+
+	// Trigger reconciliation immediately with drift_prevention reason
+	// The TriggerReason will be propagated through the event chain and used by
+	// DeploymentScheduler to deploy cached config if validation fails
+	r.triggerReconciliation("drift_prevention")
 }
 
 // resetDebounceTimer resets the debounce timer to the configured interval.

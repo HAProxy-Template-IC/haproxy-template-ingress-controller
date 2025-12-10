@@ -1272,7 +1272,7 @@ controller:
 kubectl get lease haproxy-template-ic-leader -o yaml
 
 # Check metrics
-kubectl port-forward deployment/haproxy-template-ic 9090:9090
+kubectl port-forward deployment/haproxy-template-ic-controller 9090:9090
 curl http://localhost:9090/metrics | grep leader_election_is_leader
 ```
 
@@ -1654,7 +1654,7 @@ This removes all resources created by the chart.
 Check logs:
 
 ```bash
-kubectl logs -f -l app.kubernetes.io/name=haproxy-template-ic
+kubectl logs -f -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
 ```
 
 Common issues:

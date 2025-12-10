@@ -779,3 +779,249 @@ func TestValidationError_Error(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// OpenAPI Spec Caching Tests
+// =============================================================================
+
+// TestGetCachedSwaggerV30 tests v3.0 OpenAPI spec caching.
+func TestGetCachedSwaggerV30(t *testing.T) {
+	// First call should load and cache the spec
+	spec1, err1 := getCachedSwaggerV30()
+	if err1 != nil {
+		t.Fatalf("getCachedSwaggerV30() first call failed: %v", err1)
+	}
+	if spec1 == nil {
+		t.Fatal("getCachedSwaggerV30() returned nil spec on first call")
+	}
+
+	// Second call should return the same cached instance
+	spec2, err2 := getCachedSwaggerV30()
+	if err2 != nil {
+		t.Fatalf("getCachedSwaggerV30() second call failed: %v", err2)
+	}
+	if spec2 == nil {
+		t.Fatal("getCachedSwaggerV30() returned nil spec on second call")
+	}
+
+	// Verify it's the same instance (caching works)
+	if spec1 != spec2 {
+		t.Error("getCachedSwaggerV30() should return the same cached instance")
+	}
+
+	// Verify spec has expected content
+	if spec1.Components == nil || spec1.Components.Schemas == nil {
+		t.Error("getCachedSwaggerV30() spec should have components and schemas")
+	}
+}
+
+// TestGetCachedSwaggerV31 tests v3.1 OpenAPI spec caching.
+func TestGetCachedSwaggerV31(t *testing.T) {
+	// First call should load and cache the spec
+	spec1, err1 := getCachedSwaggerV31()
+	if err1 != nil {
+		t.Fatalf("getCachedSwaggerV31() first call failed: %v", err1)
+	}
+	if spec1 == nil {
+		t.Fatal("getCachedSwaggerV31() returned nil spec on first call")
+	}
+
+	// Second call should return the same cached instance
+	spec2, err2 := getCachedSwaggerV31()
+	if err2 != nil {
+		t.Fatalf("getCachedSwaggerV31() second call failed: %v", err2)
+	}
+	if spec2 == nil {
+		t.Fatal("getCachedSwaggerV31() returned nil spec on second call")
+	}
+
+	// Verify it's the same instance (caching works)
+	if spec1 != spec2 {
+		t.Error("getCachedSwaggerV31() should return the same cached instance")
+	}
+
+	// Verify spec has expected content
+	if spec1.Components == nil || spec1.Components.Schemas == nil {
+		t.Error("getCachedSwaggerV31() spec should have components and schemas")
+	}
+}
+
+// TestGetCachedSwaggerV32 tests v3.2 OpenAPI spec caching.
+func TestGetCachedSwaggerV32(t *testing.T) {
+	// First call should load and cache the spec
+	spec1, err1 := getCachedSwaggerV32()
+	if err1 != nil {
+		t.Fatalf("getCachedSwaggerV32() first call failed: %v", err1)
+	}
+	if spec1 == nil {
+		t.Fatal("getCachedSwaggerV32() returned nil spec on first call")
+	}
+
+	// Second call should return the same cached instance
+	spec2, err2 := getCachedSwaggerV32()
+	if err2 != nil {
+		t.Fatalf("getCachedSwaggerV32() second call failed: %v", err2)
+	}
+	if spec2 == nil {
+		t.Fatal("getCachedSwaggerV32() returned nil spec on second call")
+	}
+
+	// Verify it's the same instance (caching works)
+	if spec1 != spec2 {
+		t.Error("getCachedSwaggerV32() should return the same cached instance")
+	}
+
+	// Verify spec has expected content
+	if spec1.Components == nil || spec1.Components.Schemas == nil {
+		t.Error("getCachedSwaggerV32() spec should have components and schemas")
+	}
+}
+
+// TestGetSwaggerForVersion tests version-based spec selection.
+func TestGetSwaggerForVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     *Version
+		description string
+	}{
+		{
+			name:        "nil version defaults to v3.0",
+			version:     nil,
+			description: "nil version should default to v3.0 (safest default)",
+		},
+		{
+			name:        "version 3.0 uses v3.0",
+			version:     &Version{Major: 3, Minor: 0},
+			description: "explicit v3.0 should use v3.0 spec",
+		},
+		{
+			name:        "version 3.1 uses v3.1",
+			version:     &Version{Major: 3, Minor: 1},
+			description: "explicit v3.1 should use v3.1 spec",
+		},
+		{
+			name:        "version 3.2 uses v3.2",
+			version:     &Version{Major: 3, Minor: 2},
+			description: "explicit v3.2 should use v3.2 spec",
+		},
+		{
+			name:        "version 3.3 uses v3.2 (latest available)",
+			version:     &Version{Major: 3, Minor: 3},
+			description: "v3.3+ should use v3.2 spec (latest available)",
+		},
+		{
+			name:        "version 4.0 uses v3.2 (latest available)",
+			version:     &Version{Major: 4, Minor: 0},
+			description: "v4.0+ should use v3.2 spec (latest available)",
+		},
+		{
+			name:        "version 2.9 uses v3.0 (fallback)",
+			version:     &Version{Major: 2, Minor: 9},
+			description: "v2.x should fall back to v3.0 spec",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, err := getSwaggerForVersion(tt.version)
+			if err != nil {
+				t.Fatalf("getSwaggerForVersion() failed: %v", err)
+			}
+			if spec == nil {
+				t.Fatalf("getSwaggerForVersion() returned nil spec")
+			}
+
+			// Verify spec has expected structure
+			if spec.Components == nil {
+				t.Error("spec should have Components")
+			}
+			if spec.Components.Schemas == nil {
+				t.Error("spec should have Schemas")
+			}
+		})
+	}
+}
+
+// TestGetCachedSwagger_ConcurrentAccess tests thread-safe access to cached specs.
+func TestGetCachedSwagger_ConcurrentAccess(t *testing.T) {
+	const goroutines = 50
+
+	// Test concurrent access to all three cached specs
+	testFuncs := []struct {
+		name string
+		fn   func() error
+	}{
+		{
+			name: "V30",
+			fn: func() error {
+				_, err := getCachedSwaggerV30()
+				return err
+			},
+		},
+		{
+			name: "V31",
+			fn: func() error {
+				_, err := getCachedSwaggerV31()
+				return err
+			},
+		},
+		{
+			name: "V32",
+			fn: func() error {
+				_, err := getCachedSwaggerV32()
+				return err
+			},
+		},
+	}
+
+	for _, tf := range testFuncs {
+		t.Run(tf.name, func(t *testing.T) {
+			errs := make(chan error, goroutines)
+
+			for i := 0; i < goroutines; i++ {
+				go func() {
+					errs <- tf.fn()
+				}()
+			}
+
+			// Collect all errors
+			for i := 0; i < goroutines; i++ {
+				if err := <-errs; err != nil {
+					t.Errorf("concurrent getCachedSwagger%s() failed: %v", tf.name, err)
+				}
+			}
+		})
+	}
+}
+
+// TestGetSwaggerForVersion_ConcurrentAccess tests concurrent version-based spec selection.
+func TestGetSwaggerForVersion_ConcurrentAccess(t *testing.T) {
+	const goroutines = 50
+
+	versions := []*Version{
+		nil,
+		{Major: 3, Minor: 0},
+		{Major: 3, Minor: 1},
+		{Major: 3, Minor: 2},
+		{Major: 3, Minor: 3},
+		{Major: 4, Minor: 0},
+	}
+
+	errs := make(chan error, goroutines*len(versions))
+
+	for i := 0; i < goroutines; i++ {
+		for _, v := range versions {
+			go func() {
+				_, err := getSwaggerForVersion(v)
+				errs <- err
+			}()
+		}
+	}
+
+	// Collect all errors
+	for i := 0; i < goroutines*len(versions); i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent getSwaggerForVersion() failed: %v", err)
+		}
+	}
+}
