@@ -61,70 +61,16 @@ templateSnippets:
       {#-
         Gateway API SSL Passthrough Feature Registration
 
-        Purpose:
-          Scans Gateway API resources (HTTPRoute, TLSRoute) to detect SSL passthrough
-          needs and registers backends with the global feature registry.
-
-        Mechanism:
-          Checks for extension references that indicate SSL passthrough requirement.
-          The exact mechanism depends on how SSL passthrough is expressed in Gateway API:
-          - ExtensionRef in HTTPRoute.spec.rules[].filters
-          - TLSRoute resources (future support)
-
-        Registration Format:
-          {
-            'name': 'ssl-passthrough-<namespace>-<name>',
-            'sni': '<hostname>',
-            'namespace': '<namespace>',
-            'route': '<name>'
-          }
+        Uses util-gateway-ssl-passthrough to get cached SSL passthrough analysis
+        and registers detected backends with the global feature registry.
       -#}
-      {%- set ssl_passthrough_gateway_analysis = namespace(backends=[]) %}
-      {%- compute_once ssl_passthrough_gateway_analysis %}
-        {#- Scan HTTPRoutes for SSL passthrough extension refs #}
-        {%- set ns = namespace(seen="") %}
-        {%- for httproute in resources.httproutes.List() %}
-          {%- set has_ssl_passthrough = false %}
-          {#- Check if any rule has SSL passthrough filter #}
-          {%- for rule in (httproute.spec.rules | default([])) %}
-            {%- for filter in (rule.filters | default([])) %}
-              {%- if filter.type == "ExtensionRef" %}
-                {%- if filter.extensionRef.kind == "SSLPassthrough" %}
-                  {%- set has_ssl_passthrough = true %}
-                {%- elif filter.extensionRef.name and (filter.extensionRef.name | lower | regex_search("ssl.*passthrough")) %}
-                  {%- set has_ssl_passthrough = true %}
-                {%- endif %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endfor %}
-
-          {%- if has_ssl_passthrough %}
-            {#- Register each hostname as a passthrough backend #}
-            {%- for hostname in (httproute.spec.hostnames | default([])) %}
-              {%- if ("|" ~ hostname ~ "|") not in ns.seen %}
-                {%- set ns.seen = ns.seen ~ "|" ~ hostname ~ "|" %}
-                {%- set backend_name = "ssl-passthrough-" ~ httproute.metadata.namespace ~ "-" ~ httproute.metadata.name %}
-                {%- set ssl_passthrough_gateway_analysis.backends =
-                    ssl_passthrough_gateway_analysis.backends.append({
-                      'name': backend_name,
-                      'sni': hostname,
-                      'namespace': httproute.metadata.namespace,
-                      'route': httproute.metadata.name,
-                      'route_type': 'httproute'
-                    }) %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endfor %}
-
-        {#- TODO: Add TLSRoute support when available #}
-        {#- TLSRoute is the natural Gateway API resource for SSL passthrough #}
-      {%- endcompute_once %}
+      {#- Get cached SSL passthrough analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-ssl-passthrough" %}
 
       {#- Register backends with global feature registry (only if SSL library is loaded) #}
       {%- if global_features.ssl_passthrough_backends is defined %}
         {%- set global_features.ssl_passthrough_backends =
-            global_features.ssl_passthrough_backends + ssl_passthrough_gateway_analysis.backends %}
+            global_features.ssl_passthrough_backends + shared.gateway_ssl_passthrough.backends %}
       {%- endif %}
 
   # Register Gateway TLS Terminate mode certificates with SSL infrastructure
@@ -194,6 +140,104 @@ templateSnippets:
           {%- endfor %}
         {%- endif %}
       {%- endfor %}
+
+  # Utility snippet: Gateway Route Analysis Cache
+  # Provides cached analysis of HTTPRoute/GRPCRoute resources
+  util-gateway-analysis:
+    template: |
+      {#-
+        Gateway Route Analysis Cache
+
+        Provides cached analysis of HTTPRoute/GRPCRoute resources for efficient
+        template rendering. The analysis runs only ONCE per render, even when
+        this snippet is included from multiple locations.
+
+        After including this snippet, the following variable is available:
+          shared.gateway_analysis - namespace containing:
+            .sorted_routes - list of routes sorted by specificity (most specific first)
+            .path_groups   - dict of routes grouped by host+path for conflict detection
+            .all_routes    - flat list of all route objects
+
+        Usage:
+          {%- include "util-gateway-analysis" %}
+          {%- for route in shared.gateway_analysis.sorted_routes %}
+            ... process route ...
+          {%- endfor %}
+
+        Note: Uses 'shared' namespace to cache data across template renders
+        (haproxy.cfg, map files, etc.) within the same reconciliation.
+      -#}
+      {%- compute_once shared.gateway_analysis %}
+        {%- set shared.gateway_analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) %}
+        {%- from "util-analyze-routes" import analyze_routes %}
+        {{- analyze_routes(shared.gateway_analysis, resources) -}}
+      {%- endcompute_once %}
+
+  # Utility snippet: Gateway SSL Passthrough Cache
+  # Provides cached analysis of HTTPRoutes with SSL passthrough extensions
+  util-gateway-ssl-passthrough:
+    template: |
+      {#-
+        Gateway SSL Passthrough Analysis Cache
+
+        Scans HTTPRoutes for SSL passthrough extension refs and caches the results.
+        The analysis runs only ONCE per render, even when included from multiple locations.
+
+        After including this snippet, the following variable is available:
+          shared.gateway_ssl_passthrough - namespace containing:
+            .backends - list of SSL passthrough backend definitions
+                        Each entry has: name, sni, namespace, route, route_type
+
+        Usage:
+          {%- include "util-gateway-ssl-passthrough" %}
+          {%- for backend in shared.gateway_ssl_passthrough.backends %}
+            ... configure backend ...
+          {%- endfor %}
+
+        Note: Uses 'shared' namespace to cache data across template renders
+        (haproxy.cfg, map files, etc.) within the same reconciliation.
+      -#}
+      {%- compute_once shared.gateway_ssl_passthrough %}
+        {%- set shared.gateway_ssl_passthrough = namespace(backends=[]) %}
+        {#- Scan HTTPRoutes for SSL passthrough extension refs #}
+        {%- set ns = namespace(seen="") %}
+        {%- for httproute in resources.httproutes.List() %}
+          {%- set has_ssl_passthrough = false %}
+          {#- Check if any rule has SSL passthrough filter #}
+          {%- for rule in (httproute.spec.rules | default([])) %}
+            {%- for filter in (rule.filters | default([])) %}
+              {%- if filter.type == "ExtensionRef" %}
+                {%- if filter.extensionRef.kind == "SSLPassthrough" %}
+                  {%- set has_ssl_passthrough = true %}
+                {%- elif filter.extensionRef.name and (filter.extensionRef.name | lower | regex_search("ssl.*passthrough")) %}
+                  {%- set has_ssl_passthrough = true %}
+                {%- endif %}
+              {%- endif %}
+            {%- endfor %}
+          {%- endfor %}
+
+          {%- if has_ssl_passthrough %}
+            {#- Register each hostname as a passthrough backend #}
+            {%- for hostname in (httproute.spec.hostnames | default([])) %}
+              {%- if ("|" ~ hostname ~ "|") not in ns.seen %}
+                {%- set ns.seen = ns.seen ~ "|" ~ hostname ~ "|" %}
+                {%- set backend_name = "ssl-passthrough-" ~ httproute.metadata.namespace ~ "-" ~ httproute.metadata.name %}
+                {%- set shared.gateway_ssl_passthrough.backends =
+                    shared.gateway_ssl_passthrough.backends.append({
+                      'name': backend_name,
+                      'sni': hostname,
+                      'namespace': httproute.metadata.namespace,
+                      'route': httproute.metadata.name,
+                      'route_type': 'httproute'
+                    }) %}
+              {%- endif %}
+            {%- endfor %}
+          {%- endif %}
+        {%- endfor %}
+
+        {#- TODO: Add TLSRoute support when available #}
+        {#- TLSRoute is the natural Gateway API resource for SSL passthrough #}
+      {%- endcompute_once %}
 
   # Route analysis system - collects and analyzes all routes for conflicts
   util-analyze-routes:
@@ -509,59 +553,18 @@ templateSnippets:
         Purpose:
           TCP backends for SSL passthrough from Gateway API resources.
           Forwards encrypted traffic directly to pods without SSL termination.
-          Reuses cached analysis from features-gateway-ssl-passthrough.
-
-        Supported Resources:
-          - HTTPRoute with ExtensionRef filters indicating SSL passthrough
-          - TLSRoute (future support)
+          Uses util-gateway-ssl-passthrough for cached analysis.
 
         Generated HAProxy Config:
           backend ssl-passthrough-<namespace>-<name>
             mode tcp
             server SRV_1 <pod-ip>:<pod-port> check
       -#}
-      {#- Reuse cached analysis from features phase via compute_once #}
-      {%- set ssl_passthrough_gateway_analysis = namespace(backends=[]) %}
-      {%- compute_once ssl_passthrough_gateway_analysis %}
-        {#- Scan HTTPRoutes for SSL passthrough extension refs #}
-        {%- set ns = namespace(seen="") %}
-        {%- for httproute in resources.httproutes.List() %}
-          {%- set has_ssl_passthrough = false %}
-          {#- Check if any rule has SSL passthrough filter #}
-          {%- for rule in (httproute.spec.rules | default([])) %}
-            {%- for filter in (rule.filters | default([])) %}
-              {%- if filter.type == "ExtensionRef" %}
-                {%- if filter.extensionRef.kind == "SSLPassthrough" %}
-                  {%- set has_ssl_passthrough = true %}
-                {%- elif filter.extensionRef.name and (filter.extensionRef.name | lower | regex_search("ssl.*passthrough")) %}
-                  {%- set has_ssl_passthrough = true %}
-                {%- endif %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endfor %}
-
-          {%- if has_ssl_passthrough %}
-            {#- Register each hostname as a passthrough backend #}
-            {%- for hostname in (httproute.spec.hostnames | default([])) %}
-              {%- if ("|" ~ hostname ~ "|") not in ns.seen %}
-                {%- set ns.seen = ns.seen ~ "|" ~ hostname ~ "|" %}
-                {%- set backend_name = "ssl-passthrough-" ~ httproute.metadata.namespace ~ "-" ~ httproute.metadata.name %}
-                {%- set ssl_passthrough_gateway_analysis.backends =
-                    ssl_passthrough_gateway_analysis.backends.append({
-                      'name': backend_name,
-                      'sni': hostname,
-                      'namespace': httproute.metadata.namespace,
-                      'route': httproute.metadata.name,
-                      'route_type': 'httproute'
-                    }) %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endcompute_once %}
+      {#- Get cached SSL passthrough analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-ssl-passthrough" %}
 
       {%- set ns = namespace(processed="") %}
-      {%- for backend_info in ssl_passthrough_gateway_analysis.backends %}
+      {%- for backend_info in shared.gateway_ssl_passthrough.backends %}
         {%- set route_key = backend_info.namespace ~ "/" ~ backend_info.route %}
         {%- if ("|" ~ route_key ~ "|") not in ns.processed %}
           {%- set ns.processed = ns.processed ~ "|" ~ route_key ~ "|" %}
@@ -601,20 +604,16 @@ templateSnippets:
       {#- Usage: {% include "util-path-map-entry-gateway" with context %} where path_type = "Exact" or "PathPrefix" #}
       # gateway/util-path-map-entry-gateway
 
-      {#- Compute route analysis once per render (cached across all includes) #}
-      {%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) %}
-      {%- compute_once analysis %}
-        {%- from "util-analyze-routes" import analyze_routes %}
-        {{- analyze_routes(analysis, resources) -}}
-      {%- endcompute_once %}
+      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-analysis" %}
 
       {#- Iterate over all routes in precedence order (sorted_routes contains all routes) #}
       {%- set ns_seen = namespace(paths="") %}
-      {%- for route_info in analysis.sorted_routes %}
+      {%- for route_info in shared.gateway_analysis.sorted_routes %}
         {%- set path_key = route_info.hostname ~ '|' ~ route_info.path.type ~ '|' ~ route_info.path.value %}
         {%- if ("|" ~ path_key ~ "|") not in ns_seen.paths %}
           {%- set ns_seen.paths = ns_seen.paths ~ "|" ~ path_key ~ "|" %}
-          {%- set routes = analysis.path_groups[path_key] %}
+          {%- set routes = shared.gateway_analysis.path_groups[path_key] %}
           {%- set first_route = routes[0] %}
         {#- Only process routes matching the current path_type #}
         {%- if first_route.path and first_route.path.type == path_type %}
@@ -781,16 +780,12 @@ templateSnippets:
 
       {%- from "util-regex-sanitize" import sanitize_regex %}
 
-      {#- Compute route analysis once per render (cached across all includes) #}
-      {%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) %}
-      {%- compute_once analysis %}
-        {%- from "util-analyze-routes" import analyze_routes %}
-        {{- analyze_routes(analysis, resources) -}}
-      {%- endcompute_once %}
+      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-analysis" %}
 
-      {%- if analysis.sorted_routes | length > 0 %}
+      {%- if shared.gateway_analysis.sorted_routes | length > 0 %}
       # Advanced route matching (method/header/query)
-      {%- for route_info in analysis.sorted_routes %}
+      {%- for route_info in shared.gateway_analysis.sorted_routes %}
         {#- Early exit: skip if another matcher already won #}
         {%- set ns_cond = namespace(conditions=['!{ var(req.gw_rule_id) -m found }']) %}
 
@@ -890,15 +885,12 @@ templateSnippets:
       {#- Runs after frontend-matchers-advanced-gateway sets req.gw_rule_id (priority ensures late ordering) #}
       # gateway/frontend-matchers-advanced-gateway-path-match
 
-      {%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) %}
-      {%- compute_once analysis %}
-        {%- from "util-analyze-routes" import analyze_routes %}
-        {{- analyze_routes(analysis, resources) -}}
-      {%- endcompute_once %}
+      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-analysis" %}
 
-      {%- if analysis.all_routes | length > 0 %}
+      {%- if shared.gateway_analysis.all_routes | length > 0 %}
       # Set txn.path_match for backend selection based on req.gw_rule_id
-      {%- for route_info in analysis.all_routes %}
+      {%- for route_info in shared.gateway_analysis.all_routes %}
         {%- if route_info.rule.backendRefs %}
           {%- if (route_info.rule.backendRefs | length) == 1 %}
             {#- Single backend: BACKEND qualifier #}
@@ -925,18 +917,14 @@ templateSnippets:
       {#- This is injected into base template via the frontend-filters-* extension point #}
       {#- Runs AFTER routing decisions, BEFORE backend selection #}
       {%- from "util-regex-sanitize" import sanitize_regex -%}
-      {#- Compute route analysis once per render (cached across all includes) #}
-      {%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) -%}
-      {%- compute_once analysis -%}
-        {%- from "util-analyze-routes" import analyze_routes -%}
-        {{- analyze_routes(analysis, resources) -}}
-      {%- endcompute_once -%}
+      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-analysis" -%}
 
       {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
-      {%- if analysis.has_request_header_filter %}
+      {%- if shared.gateway_analysis.has_request_header_filter %}
       # gateway/frontend-filters-gateway-request-header
       # RequestHeaderModifier filters
-      {%- for route_info in analysis.all_routes %}
+      {%- for route_info in shared.gateway_analysis.all_routes %}
         {%- for filter in route_info.filters %}
           {%- if filter.type == "RequestHeaderModifier" %}
             {#- Simple route ID check - all condition evaluation done by advanced matchers #}
@@ -974,17 +962,13 @@ templateSnippets:
       {#- This is injected into base template via the frontend-filters-* extension point #}
       {#- Runs AFTER routing decisions, BEFORE backend selection #}
       {%- from "util-regex-sanitize" import sanitize_regex -%}
-      {#- Compute route analysis once per render (cached across all includes) #}
-      {%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) -%}
-      {%- compute_once analysis -%}
-        {%- from "util-analyze-routes" import analyze_routes -%}
-        {{- analyze_routes(analysis, resources) -}}
-      {%- endcompute_once -%}
+      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-analysis" -%}
 
       {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
-      {%- if analysis.has_response_header_filter %}
+      {%- if shared.gateway_analysis.has_response_header_filter %}
       # ResponseHeaderModifier filters
-      {%- for route_info in analysis.all_routes %}
+      {%- for route_info in shared.gateway_analysis.all_routes %}
         {%- for filter in route_info.filters %}
           {%- if filter.type == "ResponseHeaderModifier" %}
             {#- Simple route ID check - all condition evaluation done by advanced matchers #}
@@ -1023,18 +1007,14 @@ templateSnippets:
       {#- This is injected into base template via the frontend-filters-* extension point #}
       {#- Runs AFTER routing decisions, BEFORE backend selection #}
       {%- from "util-regex-sanitize" import sanitize_regex -%}
-      {#- Compute route analysis once per render (cached across all includes) #}
-      {%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) -%}
-      {%- compute_once analysis -%}
-        {%- from "util-analyze-routes" import analyze_routes -%}
-        {{- analyze_routes(analysis, resources) -}}
-      {%- endcompute_once -%}
+      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-analysis" -%}
 
       {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
-      {%- if analysis.has_redirect_filter %}
+      {%- if shared.gateway_analysis.has_redirect_filter %}
       # gateway/frontend-filters-gateway-redirect
       # RequestRedirect filters
-      {%- for route_info in analysis.all_routes %}
+      {%- for route_info in shared.gateway_analysis.all_routes %}
         {%- for filter in route_info.filters %}
           {%- if filter.type == "RequestRedirect" and route_info.resource_type == "httproute" %}
             {#- Simple route ID check - all condition evaluation done by advanced matchers #}
@@ -1102,18 +1082,14 @@ templateSnippets:
       {#- This is injected into base template via the frontend-filters-* extension point #}
       {#- Runs AFTER routing decisions, BEFORE backend selection #}
       {%- from "util-regex-sanitize" import sanitize_regex -%}
-      {#- Compute route analysis once per render (cached across all includes) #}
-      {%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) -%}
-      {%- compute_once analysis -%}
-        {%- from "util-analyze-routes" import analyze_routes -%}
-        {{- analyze_routes(analysis, resources) -}}
-      {%- endcompute_once -%}
+      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {%- include "util-gateway-analysis" -%}
 
       {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
-      {%- if analysis.has_urlrewrite_filter %}
+      {%- if shared.gateway_analysis.has_urlrewrite_filter %}
       # gateway/frontend-filters-gateway-urlrewrite
       # URLRewrite filters
-      {%- for route_info in analysis.all_routes %}
+      {%- for route_info in shared.gateway_analysis.all_routes %}
         {%- for filter in route_info.filters %}
           {%- if filter.type == "URLRewrite" and route_info.resource_type == "httproute" %}
             {#- Simple route ID check - all condition evaluation done by advanced matchers #}

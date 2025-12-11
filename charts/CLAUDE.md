@@ -487,136 +487,139 @@ templateSnippets:
 
 **Note**: This uses the string-based deduplication pattern with delimiters. Backend keys generated from template expressions hit Gonja PyString compatibility issues with list membership checks. See [String-Based vs List-Based Deduplication](#string-based-vs-list-based-deduplication) for details.
 
-### Optimizing Expensive Computations with compute_once
+### Optimizing Expensive Computations with Utility Snippets
 
-The `compute_once` custom tag prevents redundant execution of expensive template computations when the same template section is included multiple times.
+Libraries provide **utility snippets** that cache expensive computations using `compute_once`. These snippets encapsulate all the caching complexity, making it easy to use cached data from any template.
 
-**Problem**: Complex route analysis that runs 4 times per render
+**Problem**: Expensive computations run multiple times per render
 
-Without optimization, if you analyze routes in multiple places, the analysis runs every time:
+Without caching, analyzing routes or scanning resources runs every time a snippet includes the computation:
 
 ```jinja2
-{# snippet1.yaml #}
-{%- from "analyze_routes" import analyze_routes %}
-{%- set analysis = namespace(path_groups={}, sorted_routes=[]) %}
-{{- analyze_routes(analysis, resources) -}}  {# Analyzes ALL routes #}
+{# snippet1.yaml - analyzes all HTTPRoutes #}
+{%- for route in analyze_all_routes() %}  {# Expensive! #}
 
-{# snippet2.yaml #}
-{%- from "analyze_routes" import analyze_routes %}
-{%- set analysis = namespace(path_groups={}, sorted_routes=[]) %}
-{{- analyze_routes(analysis, resources) -}}  {# Analyzes ALL routes AGAIN #}
+{# snippet2.yaml - analyzes all HTTPRoutes AGAIN #}
+{%- for route in analyze_all_routes() %}  {# Runs again! #}
 
-{# Result: analyze_routes runs N times for N snippets #}
+{# Result: expensive computation runs N times for N snippets #}
 ```
 
-**Solution**: Use `compute_once` to execute expensive computations only once
+**Solution**: Use utility snippets for cached access
+
+Utility snippets handle all caching internally. Just include them and use the result:
 
 ```jinja2
-{# main template or early in base.yaml #}
-{%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) %}
+{# Any snippet that needs route analysis #}
+{%- include "util-gateway-analysis" %}
 
-{# snippet1.yaml #}
-{%- compute_once analysis %}
-  {%- from "analyze_routes" import analyze_routes %}
-  {{- analyze_routes(analysis, resources) -}}
-{%- endcompute_once %}
-{# Use analysis.sorted_routes here #}
-
-{# snippet2.yaml #}
-{%- compute_once analysis %}
-  {%- from "analyze_routes" import analyze_routes %}
-  {{- analyze_routes(analysis, resources) -}}  {# SKIPPED - already computed #}
-{%- endcompute_once %}
-{# Uses same analysis results #}
-```
-
-**Key Points:**
-
-1. **Variable must be created BEFORE compute_once block**:
-
-   ```jinja2
-   {%- set analysis = namespace(path_groups={}) %}  {# Create first #}
-   {%- compute_once analysis %}  {# Then guard computation #}
-     {%- set analysis.path_groups = ... %}
-   {%- endcompute_once %}
-   ```
-
-2. **Use namespace() for mutable state**:
-   - Allows modifications to persist across includes
-   - Same namespace variable shared across all templates in one render
-
-3. **Computation runs once per Render() call**:
-   - First include executes the body
-   - Subsequent includes skip the body
-   - Cache automatically cleared between renders
-
-**Real-World Example from gateway.yaml**:
-
-The Gateway API library uses `compute_once` to optimize route analysis (see `libraries/gateway.yaml:323-328`, `499-504`):
-
-```jinja2
-{#- gateway.yaml lines 323-328 -#}
-{%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) %}
-{%- compute_once analysis %}
-  {%- from "analyze_routes" import analyze_routes %}
-  {{- analyze_routes(analysis, resources) -}}
-{%- endcompute_once %}
-
-{#- Used in resource_gateway_path-map-entry (called 3 times for different map files) -#}
-{%- for route in analysis.sorted_routes %}
-  {# Generate path map entries #}
-{%- endfor %}
-
-{#- Used in advanced-matcher-gateway (called 1 time) -#}
-{%- for route in analysis.sorted_routes %}
-  {# Generate advanced matchers #}
+{# The gateway_analysis variable is now available with cached data #}
+{%- for route in gateway_analysis.sorted_routes %}
+  ... process route ...
 {%- endfor %}
 ```
 
-**Performance Impact**: Reduces analyze_routes calls from 4 to 1 per render (75% reduction).
+**Available Utility Snippets:**
 
-**When to Use compute_once**:
+| Snippet | Library | Provides | Description |
+|---------|---------|----------|-------------|
+| `util-gateway-analysis` | gateway.yaml | `gateway_analysis` | HTTPRoute sorting, grouping, conflict detection |
+| `util-gateway-ssl-passthrough` | gateway.yaml | `gateway_ssl_passthrough` | Gateway SSL passthrough backend scanning |
+| `util-haproxytech-ssl-passthrough` | haproxytech.yaml | `haproxytech_ssl_passthrough` | Ingress SSL passthrough backend scanning |
 
-✅ **Good use cases:**
+**Example Usage:**
 
-- Expensive loops over large resource lists (all HTTPRoutes, all Ingresses)
+```jinja2
+{# Gateway route analysis - used by 7+ snippets #}
+{%- include "util-gateway-analysis" %}
+{%- for route in gateway_analysis.sorted_routes %}
+backend {{ route.metadata.namespace }}_{{ route.metadata.name }}
+    {# ... backend config ... #}
+{%- endfor %}
+
+{# SSL passthrough backends - used by 2 snippets #}
+{%- include "util-gateway-ssl-passthrough" %}
+{%- for backend in gateway_ssl_passthrough.backends %}
+    use_backend {{ backend.name }} if { req.ssl_sni -i {{ backend.sni }} }
+{%- endfor %}
+```
+
+**How It Works (Internal Architecture):**
+
+The `compute_once` tag caches by **string variable name**. When the same variable name is used across different template contexts, the cached data is copied to the current variable on cache hit:
+
+1. First include: Creates namespace, runs expensive computation, caches result
+2. Subsequent includes: Retrieves cached result and copies to local variable
+3. Works across different template contexts (haproxyConfig, map files, etc.)
+
+```jinja2
+{# Inside util-gateway-analysis (simplified) #}
+{%- set gateway_analysis = namespace(sorted_routes=[], path_groups={}) %}
+{%- compute_once gateway_analysis %}
+  {# Expensive route analysis runs ONCE (first include only) #}
+  {%- from "util-analyze-routes" import analyze_routes %}
+  {{- analyze_routes(gateway_analysis, resources) -}}
+{%- endcompute_once %}
+{# gateway_analysis now contains cached data from first computation #}
+```
+
+**Creating New Utility Snippets:**
+
+When you have expensive computations used by multiple snippets:
+
+```yaml
+# In your library file (e.g., my-library.yaml)
+templateSnippets:
+  util-my-expensive-computation:
+    template: |
+      {#-
+        My Expensive Computation Cache
+
+        Description of what this computes and why it's expensive.
+
+        After including this snippet, the following variable is available:
+          my_computation - namespace containing:
+            .results - list of computed results
+            .lookup  - dict for fast lookups
+
+        Usage:
+          {%- include "util-my-expensive-computation" %}
+          {%- for item in my_computation.results %}
+            ... use item ...
+          {%- endfor %}
+      -#}
+      {%- set my_computation = namespace(results=[], lookup={}) %}
+      {%- compute_once my_computation %}
+        {# Your expensive computation here - runs only ONCE per render #}
+        {%- for resource in resources.my_resources.List() %}
+          {%- set my_computation.results = my_computation.results.append(resource) %}
+        {%- endfor %}
+      {%- endcompute_once %}
+```
+
+**Key Requirements:**
+
+1. Use a descriptive variable name (caching uses string name as key)
+2. Initialize with `namespace()` before `compute_once`
+3. Wrap computation in `compute_once` tag
+4. Include comprehensive documentation in the snippet
+
+**Performance Impact**: Reduces expensive computations from N to 1 per render (up to 70-90% reduction for heavy operations).
+
+**When to Create a Utility Snippet:**
+
+✅ **Good candidates:**
+
+- Expensive loops over all resources (HTTPRoutes, Ingresses, etc.)
 - Complex sorting, grouping, or conflict detection
-- Template sections included from multiple places
-- Macros that perform heavy computation
+- Resource scanning with filtering logic
+- Any computation used by 2+ snippets
 
-❌ **Don't use for:**
+❌ **Don't create for:**
 
 - Simple variable assignments
-- Computations that need different inputs each time
-- Code that should run multiple times with different state
-
-**Debugging**:
-
-Enable template tracing to verify the optimization:
-
-```go
-engine.EnableTracing()
-output, _ := engine.Render("haproxy.cfg", context)
-trace := engine.GetTraceOutput()
-
-// Verify expensive template only appears once in trace
-// (Note: tracing shows top-level renders, not individual includes)
-```
-
-**Common Mistake**:
-
-```jinja2
-{# WRONG - variable doesn't exist before compute_once #}
-{%- compute_once analysis %}
-  {%- set analysis = namespace(...) %}  {# ERROR: can't create here #}
-{%- endcompute_once %}
-
-{# CORRECT - create variable first #}
-{%- set analysis = namespace(...) %}
-{%- compute_once analysis %}
-  {%- set analysis.data = expensive_computation() %}
-{%- endcompute_once %}
-```
+- Computations specific to one snippet
+- Fast operations (under 10ms)
 
 ## Gonja/Jinja2 Templating Pitfalls
 

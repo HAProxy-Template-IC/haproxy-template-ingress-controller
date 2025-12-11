@@ -796,7 +796,8 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 		"template_snippets": snippetNames,
 		"file_registry":     fileRegistry,
 		"pathResolver":      pathResolver,
-		"dataplane":         r.config.Dataplane, // Add dataplane config for absolute path access
+		"dataplane":         r.config.Dataplane,           // Add dataplane config for absolute path access
+		"shared":            make(map[string]interface{}), // Shared namespace for cross-template data
 	}
 
 	// Add HTTP store wrapper for http.Fetch() calls in templates
