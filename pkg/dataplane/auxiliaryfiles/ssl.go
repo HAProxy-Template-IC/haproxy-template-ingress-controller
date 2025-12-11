@@ -3,18 +3,54 @@ package auxiliaryfiles
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	"haproxy-template-ic/pkg/dataplane/client"
 )
 
-// calculateCertificateFingerprint calculates the SHA256 fingerprint of certificate content.
-// This matches what the HAProxy Dataplane API returns in the sha256_finger_print field.
-func calculateCertificateFingerprint(content string) string {
+// calculateSHA256Fingerprint calculates the SHA256 hash of content.
+func calculateSHA256Fingerprint(content string) string {
 	hash := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(hash[:])
+}
+
+// calculateCertIdentifier returns a unique identifier for certificate comparison.
+// When the content is a valid PEM certificate, it returns a "cert:serial:XXX:issuers:YYY"
+// format to match the API response fallback (used when sha256_finger_print is unavailable).
+// For non-certificate content (keys, combined files), it falls back to SHA256 fingerprint.
+//
+// This is a workaround for https://github.com/haproxytech/dataplaneapi/pull/396
+// Once the upstream fix is released, the API will return sha256_finger_print and
+// this fallback format won't be used (both sides will use fingerprint directly).
+func calculateCertIdentifier(content string) string {
+	block, _ := pem.Decode([]byte(content))
+	if block == nil {
+		// Not valid PEM - use SHA256 fingerprint
+		return calculateSHA256Fingerprint(content)
+	}
+
+	// Only process CERTIFICATE blocks, not keys
+	if block.Type != "CERTIFICATE" {
+		// Might be a key or combined cert+key file
+		// Use SHA256 fingerprint for these
+		return calculateSHA256Fingerprint(content)
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		// Invalid certificate - use SHA256 fingerprint
+		return calculateSHA256Fingerprint(content)
+	}
+
+	// Return format matching API fallback: "cert:serial:XXX:issuers:YYY"
+	// The API returns issuers as a single string, and we use cert.Issuer.String()
+	// which also returns a single string like "CN=...,O=...,C=..." for consistency.
+	return fmt.Sprintf("cert:serial:%s:issuers:%s", cert.SerialNumber.String(), cert.Issuer.String())
 }
 
 // sslCertificateOps implements FileOperations for SSLCertificate.
@@ -63,13 +99,14 @@ func (o *sslCertificateOps) Delete(ctx context.Context, id string) error {
 // with the desired state, and returns a diff describing what needs to be created,
 // updated, or deleted.
 //
-// This function uses metadata-based comparison via sha256_finger_print from the HAProxy
-// Dataplane API, which provides accurate content comparison without downloading the full PEM data.
+// This function uses identifier-based comparison. When the HAProxy Dataplane API returns
+// sha256_finger_print, that is used for comparison. Otherwise, it falls back to comparing
+// certificate serial+issuer (a workaround for https://github.com/haproxytech/dataplaneapi/pull/396).
 //
 // Strategy:
 //  1. Fetch current certificate names from the Dataplane API
-//  2. Fetch SHA256 fingerprints for all current certificates
-//  3. Compare fingerprints with desired certificates
+//  2. Fetch identifiers for all current certificates (fingerprint or serial+issuer fallback)
+//  3. Compare identifiers with desired certificates
 //  4. Return diff with create, update, and delete operations
 //
 // Path normalization: The API returns filenames only (e.g., "cert.pem"), but SSLCertificate.Path
@@ -77,20 +114,20 @@ func (o *sslCertificateOps) Delete(ctx context.Context, id string) error {
 // for comparison.
 func CompareSSLCertificates(ctx context.Context, c *client.DataplaneClient, desired []SSLCertificate) (*SSLCertificateDiff, error) {
 	// Normalize desired certificates to use filenames for identifiers
-	// and calculate SHA256 fingerprints for content comparison
+	// and calculate unique identifiers for content comparison
 	// IMPORTANT: Sanitize names to match HAProxy Dataplane API behavior
 	// (dots in basename are replaced with underscores)
 	normalizedDesired := make([]SSLCertificate, len(desired))
 	for i, cert := range desired {
 		normalizedDesired[i] = SSLCertificate{
 			Path:    client.SanitizeSSLCertName(filepath.Base(cert.Path)),
-			Content: calculateCertificateFingerprint(cert.Content),
+			Content: calculateCertIdentifier(cert.Content),
 		}
 	}
 
 	ops := &sslCertificateOps{client: c}
 
-	// Use generic Compare function with fingerprint-based comparison
+	// Use generic Compare function with identifier-based comparison
 	genericDiff, err := Compare[SSLCertificate](
 		ctx,
 		ops,

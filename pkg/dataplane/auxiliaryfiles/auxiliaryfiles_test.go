@@ -669,8 +669,8 @@ func TestSync_DeleteError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to delete file")
 }
 
-// TestCalculateCertificateFingerprint tests the SHA256 fingerprint calculation.
-func TestCalculateCertificateFingerprint(t *testing.T) {
+// TestCalculateSHA256Fingerprint tests the SHA256 fingerprint calculation.
+func TestCalculateSHA256Fingerprint(t *testing.T) {
 	tests := []struct {
 		name     string
 		content  string
@@ -696,7 +696,7 @@ func TestCalculateCertificateFingerprint(t *testing.T) {
 	// Test the first two with known SHA256 values
 	for _, tt := range tests[:2] {
 		t.Run(tt.name, func(t *testing.T) {
-			result := calculateCertificateFingerprint(tt.content)
+			result := calculateSHA256Fingerprint(tt.content)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -704,16 +704,68 @@ func TestCalculateCertificateFingerprint(t *testing.T) {
 	// Test that fingerprints are consistent
 	t.Run("consistency check", func(t *testing.T) {
 		content := "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----"
-		result1 := calculateCertificateFingerprint(content)
-		result2 := calculateCertificateFingerprint(content)
+		result1 := calculateSHA256Fingerprint(content)
+		result2 := calculateSHA256Fingerprint(content)
 		assert.Equal(t, result1, result2)
 	})
 
 	// Test that different content produces different fingerprints
 	t.Run("different content produces different fingerprints", func(t *testing.T) {
-		fp1 := calculateCertificateFingerprint("content1")
-		fp2 := calculateCertificateFingerprint("content2")
+		fp1 := calculateSHA256Fingerprint("content1")
+		fp2 := calculateSHA256Fingerprint("content2")
 		assert.NotEqual(t, fp1, fp2)
+	})
+}
+
+// TestCalculateCertIdentifier tests the certificate identifier calculation.
+func TestCalculateCertIdentifier(t *testing.T) {
+	// A real self-signed certificate for testing
+	// Created with: openssl req -x509 -newkey rsa:2048 -keyout /dev/null -out /dev/stdout -days 1 -nodes -subj "/CN=test.example.com"
+	validCert := `-----BEGIN CERTIFICATE-----
+MIIDFzCCAf+gAwIBAgIUGLGWKDJjVLH8Sq6F3ueIbrzGWfMwDQYJKoZIhvcNAQEL
+BQAwGzEZMBcGA1UEAwwQdGVzdC5leGFtcGxlLmNvbTAeFw0yNTEyMTAyMTI2NTla
+Fw0yNTEyMTEyMTI2NTlaMBsxGTAXBgNVBAMMEHRlc3QuZXhhbXBsZS5jb20wggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDPHl2u1cXp/Wt58BQI9P7Ed5ed
+GY6bU+EfyrUnNr1lTe+YgFb/OnRgP3mKFDmuzLE6QfgTsnNlwuWjlIa4oR80u2hW
+qwPP9h4EWmKKHR+IFWnekgGe4tQ7x+9TlocUL1IcVUN7hl7DO24VxekpJ225jcyI
+4FGWugwaTWahVOCc1gglS2N8iCOdK7E3PFnGN5EIu0671QRWGcEQ56XMQo6C6VSB
+0KSMALcLihT94Lfs9jyoAHFzU06mF/Vq7igcX9mgbWlVKst5JUtG9tvf3I2V4luy
+6V0w6O+OijFsDpy2iDQkOmH213/d2h7SFdNVbxVQwOLo9gbFV4Vy6mwC8ADzAgMB
+AAGjUzBRMB0GA1UdDgQWBBSK/1+6h97tZgdcv69To/NWQX/a3TAfBgNVHSMEGDAW
+gBSK/1+6h97tZgdcv69To/NWQX/a3TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3
+DQEBCwUAA4IBAQCPtd0+M99AvTHrTkQF77r1TmtAQESOyqGOAvLjhC3A5m7nm9mZ
+CBMPK5wfK0JtAJj4AAKl+5ZMAkaEZ3xDZ0TGcUCzoaXhejhL6TdLGoY29vqNn9Oe
+cufJDxtcMRiLEIHMoGkrXDakZhLmJSYkgwwZu92De6ryc3t3pM8FrtLvFok3Y3jD
+hZXwDvkhmTvkhl76lMyqZY004rUclu4+yFWtqEvcUcusWZwabWYzYMmWfOfgRi2v
+9+HqFPD8HE2IqA7XFqAZbTnBXiJf1rIvPE293RkHAeVUSVF/JnpEthyFECvnDREC
+bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
+-----END CERTIFICATE-----`
+
+	t.Run("valid certificate returns serial:issuer format", func(t *testing.T) {
+		result := calculateCertIdentifier(validCert)
+		// Should return cert:serial:...:issuers:... format
+		assert.Contains(t, result, "cert:serial:")
+		assert.Contains(t, result, ":issuers:")
+	})
+
+	t.Run("invalid PEM returns SHA256 fingerprint", func(t *testing.T) {
+		result := calculateCertIdentifier("not a valid PEM")
+		// Should return SHA256 hex string (64 chars)
+		assert.Len(t, result, 64)
+		assert.NotContains(t, result, "cert:serial:")
+	})
+
+	t.Run("private key returns SHA256 fingerprint", func(t *testing.T) {
+		keyPEM := "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg...\n-----END PRIVATE KEY-----"
+		result := calculateCertIdentifier(keyPEM)
+		// Should return SHA256, not serial:issuer
+		assert.NotContains(t, result, "cert:serial:")
+	})
+
+	t.Run("consistency check", func(t *testing.T) {
+		result1 := calculateCertIdentifier(validCert)
+		result2 := calculateCertIdentifier(validCert)
+		assert.Equal(t, result1, result2)
 	})
 }
 
