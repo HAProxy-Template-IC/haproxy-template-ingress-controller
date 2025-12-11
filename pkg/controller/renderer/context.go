@@ -138,8 +138,9 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 		"template_snippets": snippetNames,
 		"file_registry":     fileRegistry,
 		"pathResolver":      pathResolver,
-		"dataplane":         c.config.Dataplane,    // Add dataplane config for absolute path access
-		"capabilities":      c.capabilitiesToMap(), // Add HAProxy/DataPlane API capabilities
+		"dataplane":         c.config.Dataplane,           // Add dataplane config for absolute path access
+		"capabilities":      c.capabilitiesToMap(),        // Add HAProxy/DataPlane API capabilities
+		"shared":            make(map[string]interface{}), // Shared namespace for cross-template data
 	}
 
 	// Add HTTP store wrapper if available

@@ -2171,12 +2171,77 @@ func (cs *ComputeOnceControlStructure) String() string {
 		cs.varName, t.Line, t.Col)
 }
 
+// resolveDottedPath resolves a dotted path like "library_data.gateway_analysis"
+// from the execution context. Returns the value and whether it was found.
+func resolveDottedPath(ctx *exec.Context, path string) (interface{}, bool) {
+	parts := strings.Split(path, ".")
+
+	// Get the root variable
+	current, exists := ctx.Get(parts[0])
+	if !exists {
+		return nil, false
+	}
+
+	// Navigate through the remaining parts
+	for _, part := range parts[1:] {
+		switch v := current.(type) {
+		case map[string]interface{}:
+			val, ok := v[part]
+			if !ok {
+				return nil, false
+			}
+			current = val
+		default:
+			// Try reflection for struct-like access
+			return nil, false
+		}
+	}
+
+	return current, true
+}
+
+// handleSharedNamespaceCache handles compute_once for shared.* variables.
+// Returns (handled, error) - if handled is true, the caller should return immediately.
+func (cs *ComputeOnceControlStructure) handleSharedNamespaceCache(r *exec.Renderer) (bool, error) {
+	if !strings.HasPrefix(cs.varName, "shared.") {
+		return false, nil
+	}
+
+	sharedNS, sharedExists := r.Environment.Context.Get("shared")
+	if !sharedExists {
+		return true, fmt.Errorf("compute_once: 'shared' namespace not found in context (this is a controller bug)")
+	}
+
+	sharedMap, ok := sharedNS.(map[string]interface{})
+	if !ok {
+		return true, fmt.Errorf("compute_once: 'shared' is not a namespace/map (got %T)", sharedNS)
+	}
+
+	key := strings.TrimPrefix(cs.varName, "shared.")
+	if _, exists := sharedMap[key]; exists {
+		return true, nil // Cache hit
+	}
+
+	// Cache miss - execute body
+	if err := r.ExecuteWrapper(cs.wrapper); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
 // Execute implements the compute_once logic.
 func (cs *ComputeOnceControlStructure) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock) error {
-	// Use a cache to store computed results. The key is the variable name.
+	// Check if using shared namespace (persists across template renders)
+	if handled, err := cs.handleSharedNamespaceCache(r); handled {
+		return err
+	}
+
+	cacheKey := cs.varName
+
+	// Standard per-render cache for non-shared variables
+	// Use a cache to store computed results. The key is the variable name (dotted path).
 	// Cache is shared across all includes via the root context map.
 	cacheName := "_compute_once_cache"
-	cacheKey := cs.varName
 
 	// Get or create the cache map
 	cache, _ := r.Environment.Context.Get(cacheName)
@@ -2191,7 +2256,7 @@ func (cs *ComputeOnceControlStructure) Execute(r *exec.Renderer, tag *nodes.Cont
 		if cachedValue, exists := cacheMap[cacheKey]; exists {
 			// Cached value exists - copy attributes to current variable
 			// Gonja namespace() returns map[string]interface{}
-			currentVar, _ := r.Environment.Context.Get(cs.varName)
+			currentVar, _ := resolveDottedPath(r.Environment.Context, cs.varName)
 			if currentNS, isNS := currentVar.(map[string]interface{}); isNS {
 				if cachedNS, cachedIsNS := cachedValue.(map[string]interface{}); cachedIsNS {
 					// Copy all attributes from cached namespace to current namespace
@@ -2205,7 +2270,7 @@ func (cs *ComputeOnceControlStructure) Execute(r *exec.Renderer, tag *nodes.Cont
 	}
 
 	// Get the variable value - it MUST exist before compute_once
-	currentVar, exists := r.Environment.Context.Get(cs.varName)
+	currentVar, exists := resolveDottedPath(r.Environment.Context, cs.varName)
 	if !exists {
 		return fmt.Errorf("compute_once: variable '%s' must be created before compute_once block (use {%% set %s = namespace(...) %%} before compute_once)", cs.varName, cs.varName)
 	}
@@ -2230,22 +2295,33 @@ func (cs *ComputeOnceControlStructure) Execute(r *exec.Renderer, tag *nodes.Cont
 
 // computeOnceParser parses the compute_once tag syntax.
 //
-// Expected syntax: {% compute_once variable_name %}.
+// Expected syntax: {% compute_once variable_name %} or {% compute_once namespace.attr %}.
+// Supports dotted paths for accessing namespace attributes (e.g., library_data.gateway_analysis).
 func computeOnceParser(p, args *parser.Parser) (nodes.ControlStructure, error) {
 	cs := &ComputeOnceControlStructure{
 		location: p.Current(),
 	}
 
-	// Parse variable name
+	// Parse variable name (first part)
 	varToken := args.Match(tokens.Name)
 	if varToken == nil {
 		return nil, args.Error("compute_once requires variable name", nil)
 	}
-	cs.varName = varToken.Val
+	varPath := varToken.Val
+
+	// Continue parsing dotted path (e.g., library_data.gateway_analysis)
+	for args.Match(tokens.Dot) != nil {
+		attrToken := args.Match(tokens.Name)
+		if attrToken == nil {
+			return nil, args.Error("expected attribute name after '.'", nil)
+		}
+		varPath += "." + attrToken.Val
+	}
+	cs.varName = varPath
 
 	// Ensure no extra arguments
 	if !args.Stream().End() {
-		return nil, args.Error("compute_once takes only variable name, no additional arguments", nil)
+		return nil, args.Error("compute_once takes only variable name (with optional dotted path), no additional arguments", nil)
 	}
 
 	// Parse body until {% endcompute_once %}

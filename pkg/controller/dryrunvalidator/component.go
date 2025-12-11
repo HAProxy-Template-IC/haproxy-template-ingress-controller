@@ -338,6 +338,7 @@ func (c *Component) buildRenderingContext(stores map[string]types.Store) map[str
 		"template_snippets": snippetNames,
 		"pathResolver":      pathResolver,
 		"config":            c.config,
+		"shared":            make(map[string]interface{}), // Shared namespace for cross-template data
 	}
 }
 

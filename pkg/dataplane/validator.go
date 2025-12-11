@@ -671,22 +671,8 @@ func clearValidationDirectories(paths *ValidationPaths) error {
 	}
 
 	for _, dir := range dirs {
-		// Create directory if it doesn't exist
-		if err := os.MkdirAll(dir, 0o750); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
-		}
-
-		// Remove all files in directory
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return fmt.Errorf("failed to read directory %s: %w", dir, err)
-		}
-
-		for _, entry := range entries {
-			path := filepath.Join(dir, entry.Name())
-			if err := os.RemoveAll(path); err != nil {
-				return fmt.Errorf("failed to remove %s: %w", path, err)
-			}
+		if err := clearDirectory(dir); err != nil {
+			return err
 		}
 	}
 
@@ -699,6 +685,39 @@ func clearValidationDirectories(paths *ValidationPaths) error {
 	// Remove old config file if it exists
 	if err := os.Remove(paths.ConfigFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove old config file: %w", err)
+	}
+
+	return nil
+}
+
+// clearDirectory creates a directory and removes all its contents.
+// Uses retry logic to handle race conditions where the directory is deleted
+// between MkdirAll and ReadDir (e.g., by concurrent cleanup).
+func clearDirectory(dir string) error {
+	var entries []os.DirEntry
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+
+		var err error
+		entries, err = os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) && attempt == 0 {
+				// Directory was deleted between MkdirAll and ReadDir
+				// (race with concurrent cleanup), retry once
+				continue
+			}
+			return fmt.Errorf("failed to read directory %s: %w", dir, err)
+		}
+		break // Success
+	}
+
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", path, err)
+		}
 	}
 
 	return nil

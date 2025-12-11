@@ -22,6 +22,56 @@ templateSnippets:
       {%- endif -%}
       {%- endmacro -%}
 
+  # Utility snippet: HAProxyTech SSL Passthrough Cache
+  # Provides cached analysis of Ingress resources with haproxy.org/ssl-passthrough annotation
+  util-haproxytech-ssl-passthrough:
+    template: |
+      {#-
+        HAProxyTech SSL Passthrough Analysis Cache
+
+        Scans Ingress resources for haproxy.org/ssl-passthrough annotation and caches results.
+        The analysis runs only ONCE per render, even when included from multiple locations.
+
+        After including this snippet, the following variable is available:
+          shared.haproxytech_ssl_passthrough - namespace containing:
+            .backends - list of SSL passthrough backend definitions
+                        Each entry has: name, sni, namespace, ingress
+
+        Usage:
+          {%- include "util-haproxytech-ssl-passthrough" %}
+          {%- for backend in shared.haproxytech_ssl_passthrough.backends %}
+            ... configure backend ...
+          {%- endfor %}
+
+        Note: Uses 'shared' namespace to cache data across template renders
+        (haproxy.cfg, map files, etc.) within the same reconciliation.
+      -#}
+      {%- compute_once shared.haproxytech_ssl_passthrough %}
+        {%- set shared.haproxytech_ssl_passthrough = namespace(backends=[]) %}
+        {%- set ns = namespace(seen="") %}
+        {%- for ingress in resources.ingresses.List() %}
+          {%- set ssl_passthrough = ingress.metadata.annotations["haproxy.org/ssl-passthrough"] | default("") %}
+          {%- if ssl_passthrough == "true" %}
+            {%- for rule in (ingress.spec.rules | default([])) %}
+              {%- if rule.host is defined %}
+                {%- set host_key = rule.host %}
+                {#- Deduplicate by hostname to prevent duplicate use_backend rules #}
+                {%- if ("|" ~ host_key ~ "|") not in ns.seen %}
+                  {%- set ns.seen = ns.seen ~ "|" ~ host_key ~ "|" %}
+                  {%- set backend_name = "ssl-passthrough-" ~ ingress.metadata.namespace ~ "-" ~ ingress.metadata.name %}
+                  {%- set shared.haproxytech_ssl_passthrough.backends = shared.haproxytech_ssl_passthrough.backends.append({
+                      'name': backend_name,
+                      'sni': host_key,
+                      'namespace': ingress.metadata.namespace,
+                      'ingress': ingress.metadata.name
+                  }) %}
+                {%- endif %}
+              {%- endif %}
+            {%- endfor %}
+          {%- endif %}
+        {%- endfor %}
+      {%- endcompute_once %}
+
   frontend-filters-haproxytech-ssl-redirect:
     priority: 400
     template: |
@@ -1132,36 +1182,12 @@ templateSnippets:
             'ingress': '<name>'
           }
       -#}
-      {%- set ssl_passthrough_analysis = namespace(backends=[]) %}
-      {%- compute_once ssl_passthrough_analysis %}
-        {%- set ns = namespace(seen="") %}
-        {%- for ingress in resources.ingresses.List() %}
-          {%- set ssl_passthrough = ingress.metadata.annotations["haproxy.org/ssl-passthrough"] | default("") %}
-          {%- if ssl_passthrough == "true" %}
-            {%- for rule in (ingress.spec.rules | default([])) %}
-              {%- if rule.host is defined %}
-                {%- set host_key = rule.host %}
-                {#- Deduplicate by hostname to prevent duplicate use_backend rules #}
-                {%- if ("|" ~ host_key ~ "|") not in ns.seen %}
-                  {%- set ns.seen = ns.seen ~ "|" ~ host_key ~ "|" %}
-                  {%- set backend_name = "ssl-passthrough-" ~ ingress.metadata.namespace ~ "-" ~ ingress.metadata.name %}
-                  {%- set ssl_passthrough_analysis.backends = ssl_passthrough_analysis.backends.append({
-                      'name': backend_name,
-                      'sni': host_key,
-                      'namespace': ingress.metadata.namespace,
-                      'ingress': ingress.metadata.name
-                  }) %}
-                {%- endif %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endcompute_once %}
+      {%- include "util-haproxytech-ssl-passthrough" %}
 
       {#- Register backends with global feature registry (only if SSL library is loaded) #}
       {%- if global_features.ssl_passthrough_backends is defined %}
         {%- set global_features.ssl_passthrough_backends =
-            global_features.ssl_passthrough_backends + ssl_passthrough_analysis.backends %}
+            global_features.ssl_passthrough_backends + shared.haproxytech_ssl_passthrough.backends %}
       {%- endif %}
 
   backends-haproxytech-ssl-passthrough:
@@ -1183,37 +1209,12 @@ templateSnippets:
               mode tcp
               server SRV_1 <pod-ip>:<pod-port> check
 
-          Note: Uses same compute_once block as features-haproxytech-ssl-passthrough (executes only once)
+          Note: Uses util-haproxytech-ssl-passthrough for cached analysis (runs only once per render)
       -#}
-      {#- Reuse cached analysis from features phase via compute_once (body executes only once across both snippets) #}
-      {%- set ssl_passthrough_analysis = namespace(backends=[]) %}
-      {%- compute_once ssl_passthrough_analysis %}
-        {%- set ns = namespace(seen="") %}
-        {%- for ingress in resources.ingresses.List() %}
-          {%- set ssl_passthrough = ingress.metadata.annotations["haproxy.org/ssl-passthrough"] | default("") %}
-          {%- if ssl_passthrough == "true" %}
-            {%- for rule in (ingress.spec.rules | default([])) %}
-              {%- if rule.host is defined %}
-                {%- set host_key = rule.host %}
-                {#- Deduplicate by hostname to prevent duplicate use_backend rules #}
-                {%- if ("|" ~ host_key ~ "|") not in ns.seen %}
-                  {%- set ns.seen = ns.seen ~ "|" ~ host_key ~ "|" %}
-                  {%- set backend_name = "ssl-passthrough-" ~ ingress.metadata.namespace ~ "-" ~ ingress.metadata.name %}
-                  {%- set ssl_passthrough_analysis.backends = ssl_passthrough_analysis.backends.append({
-                      'name': backend_name,
-                      'sni': host_key,
-                      'namespace': ingress.metadata.namespace,
-                      'ingress': ingress.metadata.name
-                  }) %}
-                {%- endif %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endcompute_once %}
+      {%- include "util-haproxytech-ssl-passthrough" %}
 
       {%- set ns = namespace(processed="") %}
-      {%- for backend_info in ssl_passthrough_analysis.backends %}
+      {%- for backend_info in shared.haproxytech_ssl_passthrough.backends %}
         {%- set ingress_key = backend_info.namespace ~ "/" ~ backend_info.ingress %}
         {%- if ("|" ~ ingress_key ~ "|") not in ns.processed %}
           {%- set ns.processed = ns.processed ~ "|" ~ ingress_key ~ "|" %}
