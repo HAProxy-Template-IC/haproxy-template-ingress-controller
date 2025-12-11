@@ -9,7 +9,7 @@ require (
 	github.com/golangci/golangci-lint/v2 v2.7.2
 	github.com/google/uuid v1.6.0
 	github.com/haproxytech/client-native/v6 v6.2.6
-	github.com/nikolalohinski/gonja/v2 v2.5.0
+	github.com/nikolalohinski/gonja/v2 v2.5.1
 	github.com/oapi-codegen/oapi-codegen/v2 v2.5.1
 	github.com/oapi-codegen/runtime v1.1.2
 	github.com/pkg/errors v0.9.1
