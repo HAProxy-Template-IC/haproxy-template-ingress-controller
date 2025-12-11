@@ -62,6 +62,7 @@ type Runner struct {
 	workers         int
 	debugFilters    bool                   // Enable detailed filter operation logging
 	traceTemplates  bool                   // Enable template execution tracing
+	profileIncludes bool                   // Enable include timing profiling
 	capabilities    dataplane.Capabilities // HAProxy/DataPlane API capabilities
 }
 
@@ -87,6 +88,10 @@ type Options struct {
 	// DebugFilters enables detailed filter operation logging.
 	// When enabled, each sort comparison is logged with values and results.
 	DebugFilters bool
+
+	// ProfileIncludes enables include timing profiling.
+	// When enabled, shows which included templates take the most time.
+	ProfileIncludes bool
 
 	// Capabilities defines which features are available for the local HAProxy version.
 	// Used to determine path resolution (e.g., CRT-list paths fallback when not supported).
@@ -147,6 +152,9 @@ type TestResult struct {
 
 	// RenderedCerts contains rendered SSL certificates (for --dump-rendered).
 	RenderedCerts map[string]string `json:"renderedCerts,omitempty" yaml:"renderedCerts,omitempty"`
+
+	// IncludeStats contains timing statistics for included templates (for --profile-includes).
+	IncludeStats []templating.IncludeStats `json:"includeStats,omitempty" yaml:"includeStats,omitempty"`
 }
 
 // AssertionResult contains the result of running a single assertion.
@@ -210,6 +218,7 @@ func New(
 		workers:         workers,
 		debugFilters:    options.DebugFilters,
 		traceTemplates:  traceTemplates,
+		profileIncludes: options.ProfileIncludes,
 		capabilities:    options.Capabilities,
 	}
 }
@@ -588,7 +597,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 		"fixture_count", len(httpFixtures))
 
 	// 4. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	haproxyConfig, auxiliaryFiles, err := r.renderWithStores(engine, stores, validationPaths, httpStore)
+	haproxyConfig, auxiliaryFiles, includeStats, err := r.renderWithStores(engine, stores, validationPaths, httpStore)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -605,6 +614,8 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 		// Store rendered content for --dump-rendered flag
 		result.RenderedConfig = haproxyConfig
 		r.storeAuxiliaryFiles(&result, auxiliaryFiles)
+		// Store include stats for --profile-includes flag
+		result.IncludeStats = includeStats
 	}
 
 	// 5. Build template context for JSONPath assertions
@@ -689,20 +700,29 @@ func hasRenderingErrorAssertions(assertions []config.ValidationAssertion) bool {
 // renderWithStores renders HAProxy configuration using test fixture stores and worker-specific engine.
 //
 // This follows the same pattern as DryRunValidator.renderWithOverlayStores.
-func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) (string, *dataplane.AuxiliaryFiles, error) {
+// When profileIncludes is enabled, it returns timing statistics for included templates.
+func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
 	// Build rendering context with fixture stores
 	renderCtx := r.buildRenderingContext(stores, validationPaths, httpStore)
 
 	// Render main HAProxy configuration using worker-specific engine
-	haproxyConfig, err := engine.Render("haproxy.cfg", renderCtx)
+	var haproxyConfig string
+	var includeStats []templating.IncludeStats
+	var err error
+
+	if r.profileIncludes {
+		haproxyConfig, includeStats, err = engine.RenderWithProfiling("haproxy.cfg", renderCtx)
+	} else {
+		haproxyConfig, err = engine.Render("haproxy.cfg", renderCtx)
+	}
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
 	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to render auxiliary files: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to render auxiliary files: %w", err)
 	}
 
 	// Extract dynamic files registered during template rendering
@@ -721,7 +741,7 @@ func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[
 			"dynamic_count", dynamicCount)
 	}
 
-	return haproxyConfig, auxiliaryFiles, nil
+	return haproxyConfig, auxiliaryFiles, includeStats, nil
 }
 
 // buildRenderingContext builds the template rendering context using fixture stores.

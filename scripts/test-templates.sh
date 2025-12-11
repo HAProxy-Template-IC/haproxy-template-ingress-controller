@@ -39,6 +39,7 @@ OPTIONS:
   --dump-rendered       Dump all rendered content
   --verbose             Show rendered content preview for failed assertions
   --trace-templates     Show template execution trace
+  --profile-includes    Show include timing statistics (top 20 slowest)
   --output FORMAT       Output format: summary, json, yaml (default: summary)
   --help                Show this help message
 
@@ -63,6 +64,9 @@ EXAMPLES:
 
   # Run sequentially (for debugging)
   $(basename "$0") --workers 1
+
+  # Profile include execution times
+  $(basename "$0") --profile-includes
 
 NOTES:
   - Gateway API tests require --api-versions flag (automatically included)

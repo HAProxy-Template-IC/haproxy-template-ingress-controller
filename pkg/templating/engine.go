@@ -97,9 +97,80 @@ type tracingConfig struct {
 	traces       []string // Accumulated trace outputs from all renders
 }
 
+// includeProfiler tracks timing information for template includes.
+type includeProfiler struct {
+	mu       sync.Mutex
+	counts   map[string]int           // Number of times each template was included
+	times    map[string]time.Duration // Total time spent in each template
+	maxTimes map[string]time.Duration // Maximum single include time
+}
+
+// newIncludeProfiler creates a new include profiler.
+func newIncludeProfiler() *includeProfiler {
+	return &includeProfiler{
+		counts:   make(map[string]int),
+		times:    make(map[string]time.Duration),
+		maxTimes: make(map[string]time.Duration),
+	}
+}
+
+// record records an include execution.
+func (p *includeProfiler) record(templateName string, duration time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.counts[templateName]++
+	p.times[templateName] += duration
+	if duration > p.maxTimes[templateName] {
+		p.maxTimes[templateName] = duration
+	}
+}
+
+// IncludeStats represents profiling statistics for a single template.
+type IncludeStats struct {
+	Name    string
+	Count   int
+	TotalMs float64
+	AvgMs   float64
+	MaxMs   float64
+}
+
+// GetStats returns profiling statistics sorted by total time descending.
+func (p *includeProfiler) GetStats() []IncludeStats {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	stats := make([]IncludeStats, 0, len(p.counts))
+	for name, count := range p.counts {
+		totalMs := float64(p.times[name].Microseconds()) / 1000.0
+		avgMs := totalMs / float64(count)
+		maxMs := float64(p.maxTimes[name].Microseconds()) / 1000.0
+		stats = append(stats, IncludeStats{
+			Name:    name,
+			Count:   count,
+			TotalMs: totalMs,
+			AvgMs:   avgMs,
+			MaxMs:   maxMs,
+		})
+	}
+
+	// Sort by total time descending
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].TotalMs > stats[j].TotalMs
+	})
+
+	return stats
+}
+
 // Template tag keyword constants.
 const (
 	keywordWith = "with"
+)
+
+// Sort modifier constants.
+const (
+	sortModifierExists = "exists"
+	sortModifierDesc   = "desc"
+	sortSuffixExists   = ":exists"
 )
 
 // recordFilter records a filter operation if tracing is enabled.
@@ -597,10 +668,16 @@ func (e *TemplateEngine) Render(templateName string, context map[string]interfac
 	// with the same context map, each creates a Context with its own mutex,
 	// but they all write to the SAME underlying map, causing "concurrent map writes".
 	// Solution: create a shallow copy so each render has its own map.
-	contextCopy := make(map[string]interface{}, len(context))
+	contextCopy := make(map[string]interface{}, len(context)+1)
 	for k, v := range context {
 		contextCopy[k] = v
 	}
+
+	// Initialize compute_once cache for this render.
+	// This shared map persists across all includes since it's in the root context
+	// and accessed by reference (Go maps are reference types).
+	// Stores computed namespace values keyed by variable name.
+	contextCopy["_compute_once_cache"] = make(map[string]interface{})
 
 	ctx := exec.NewContext(contextCopy)
 
@@ -640,6 +717,54 @@ func (e *TemplateEngine) Render(templateName string, context map[string]interfac
 	}
 
 	return output, nil
+}
+
+// RenderWithProfiling renders a template and returns profiling statistics for all includes.
+// This is useful for identifying which included templates take the most time.
+func (e *TemplateEngine) RenderWithProfiling(templateName string, context map[string]interface{}) (string, []IncludeStats, error) {
+	renderStart := time.Now()
+
+	// Find compiled template
+	template, exists := e.compiledTemplates[templateName]
+	if !exists {
+		return "", nil, e.templateNotFoundError(templateName)
+	}
+
+	// Create execution context with profiler
+	contextCopy := make(map[string]interface{}, len(context)+1)
+	for k, v := range context {
+		contextCopy[k] = v
+	}
+
+	profiler := newIncludeProfiler()
+	contextCopy["_include_profiler"] = profiler
+
+	ctx := exec.NewContext(contextCopy)
+
+	// Execute the template
+	executeStart := time.Now()
+	output, err := template.ExecuteToString(ctx)
+	executeMs := time.Since(executeStart).Milliseconds()
+	if err != nil {
+		return "", nil, NewRenderError(templateName, err)
+	}
+
+	// Apply post-processors
+	output, err = e.applyPostProcessors(templateName, output)
+	if err != nil {
+		return "", nil, err
+	}
+
+	totalMs := time.Since(renderStart).Milliseconds()
+
+	slog.Info("profiled render timing",
+		"template", templateName,
+		"total_ms", totalMs,
+		"execute_ms", executeMs,
+		"output_bytes", len(output),
+	)
+
+	return output, profiler.GetStats(), nil
 }
 
 // templateNotFoundError creates a TemplateNotFoundError with available template names.
@@ -816,14 +941,18 @@ func sortByFilter(e *exec.Evaluator, in *exec.Value, params *exec.VarArgs) *exec
 		}
 	}
 
-	// Create a sortable wrapper
+	// Create a sortable wrapper with pre-computed keys for O(n) evaluations
+	// instead of O(n log n × k) evaluations during comparisons
 	sortable := &sortableItems{
 		items:    itemsSlice,
 		criteria: criteria,
 		tracing:  tracingCfg,
 	}
 
-	// Sort using the criteria
+	// Pre-compute all criterion values once before sorting
+	sortable.precomputeKeys()
+
+	// Sort using cached keys
 	sort.Stable(sortable)
 
 	return exec.AsValue(sortable.items)
@@ -1204,10 +1333,74 @@ func conflictsByTest(ctx *exec.Context, in *exec.Value, params *exec.VarArgs) (b
 
 // Helper types and functions for the generic functions
 
+// sortableItems implements sort.Interface with pre-computed sort keys.
+// This optimization evaluates each criterion expression once per item (O(n))
+// rather than during each comparison (O(n log n) comparisons × k criteria).
+// For 40 items with 8 criteria, this reduces evaluations from ~1700 to 320.
 type sortableItems struct {
-	items    []interface{}
-	criteria []string
-	tracing  *tracingConfig // For filter debug logging
+	items      []interface{}
+	criteria   []string
+	tracing    *tracingConfig // For filter debug logging
+	cachedKeys [][]sortKey    // Pre-computed sort keys: cachedKeys[itemIndex][criterionIndex]
+	descending []bool         // Per-criterion descending flag
+}
+
+// sortKey holds a pre-computed value for sorting with its type preserved.
+type sortKey struct {
+	value   interface{} // The evaluated and transformed value (after length/exists operators)
+	isExist bool        // True if this was an :exists check (value is bool)
+}
+
+// precomputeKeys evaluates all criteria for all items once before sorting.
+func (s *sortableItems) precomputeKeys() {
+	s.cachedKeys = make([][]sortKey, len(s.items))
+	s.descending = make([]bool, len(s.criteria))
+
+	// Parse criteria once to extract descending flags
+	cleanCriteria := make([]string, len(s.criteria))
+	checkExists := make([]bool, len(s.criteria))
+	checkLength := make([]bool, len(s.criteria))
+
+	for ci, criterion := range s.criteria {
+		parts := strings.Split(criterion, ":")
+		expr := parts[0]
+
+		for pi := 1; pi < len(parts); pi++ {
+			modifier := strings.TrimSpace(parts[pi])
+			switch modifier {
+			case sortModifierDesc:
+				s.descending[ci] = true
+			case sortModifierExists:
+				checkExists[ci] = true
+			}
+		}
+
+		// Check for length operator in expression
+		if strings.Contains(expr, " | length") {
+			checkLength[ci] = true
+			expr = strings.Replace(expr, " | length", "", 1)
+		}
+
+		cleanCriteria[ci] = strings.TrimSpace(expr)
+	}
+
+	// Pre-compute all keys
+	for i, item := range s.items {
+		s.cachedKeys[i] = make([]sortKey, len(s.criteria))
+		for ci := range s.criteria {
+			value := evaluateExpression(item, cleanCriteria[ci])
+
+			if checkExists[ci] {
+				// Convert to boolean existence check
+				s.cachedKeys[i][ci] = sortKey{value: value != nil, isExist: true}
+			} else if checkLength[ci] {
+				// Convert to length
+				s.cachedKeys[i][ci] = sortKey{value: getLength(value), isExist: false}
+			} else {
+				s.cachedKeys[i][ci] = sortKey{value: value, isExist: false}
+			}
+		}
+	}
 }
 
 func (s *sortableItems) Len() int {
@@ -1215,9 +1408,12 @@ func (s *sortableItems) Len() int {
 }
 
 func (s *sortableItems) Less(i, j int) bool {
-	for _, criterion := range s.criteria {
-		cmp := compareByExpressionWithDebug(s.items[i], s.items[j], criterion, s.tracing)
+	for ci := range s.criteria {
+		cmp := comparePrecomputedKeys(s.cachedKeys[i][ci], s.cachedKeys[j][ci], s.tracing, s.criteria[ci])
 		if cmp != 0 {
+			if s.descending[ci] {
+				return cmp > 0
+			}
 			return cmp < 0
 		}
 	}
@@ -1226,6 +1422,33 @@ func (s *sortableItems) Less(i, j int) bool {
 
 func (s *sortableItems) Swap(i, j int) {
 	s.items[i], s.items[j] = s.items[j], s.items[i]
+	s.cachedKeys[i], s.cachedKeys[j] = s.cachedKeys[j], s.cachedKeys[i]
+}
+
+// comparePrecomputedKeys compares two pre-computed sort keys.
+func comparePrecomputedKeys(a, b sortKey, tracing *tracingConfig, criterion string) int {
+	// Handle debug logging if enabled
+	var debugEnabled bool
+	if tracing != nil {
+		tracing.mu.Lock()
+		debugEnabled = tracing.debugFilters
+		tracing.mu.Unlock()
+	}
+
+	if debugEnabled {
+		result := compareValues(a.value, b.value)
+		slog.Info("SORT comparison",
+			"criterion", criterion,
+			"valA", a.value,
+			"valA_type", fmt.Sprintf("%T", a.value),
+			"valB", b.value,
+			"valB_type", fmt.Sprintf("%T", b.value),
+			"result", result,
+		)
+		return result
+	}
+
+	return compareValues(a.value, b.value)
 }
 
 // evaluateExpression evaluates a JSONPath-like expression against an item.
@@ -1255,7 +1478,7 @@ func evaluateExpression(item interface{}, expr string) interface{} {
 	}
 
 	// Handle existence check
-	if strings.HasSuffix(expr, ":exists") {
+	if strings.HasSuffix(expr, sortSuffixExists) {
 		return handleExistenceCheck(item, expr)
 	}
 
@@ -1341,7 +1564,7 @@ func calculateLength(value interface{}) int {
 
 // handleExistenceCheck checks if a value exists (is not nil).
 func handleExistenceCheck(item interface{}, expr string) interface{} {
-	expr = strings.TrimSuffix(expr, ":exists")
+	expr = strings.TrimSuffix(expr, sortSuffixExists)
 	value := evaluateExpression(item, expr)
 	return value != nil
 }
@@ -1526,134 +1749,6 @@ func processDot(segments []string, current *strings.Builder) []string {
 		current.Reset()
 	}
 	return segments
-}
-
-// compareByExpressionWithDebug wraps compareByExpression and adds debug logging when enabled.
-func compareByExpressionWithDebug(a, b interface{}, criterion string, tracing *tracingConfig) int {
-	// Check if debug is enabled
-	var debugEnabled bool
-	if tracing != nil {
-		tracing.mu.Lock()
-		debugEnabled = tracing.debugFilters
-		tracing.mu.Unlock()
-	}
-
-	// If debug not enabled, just call compareByExpression
-	if !debugEnabled {
-		return compareByExpression(a, b, criterion)
-	}
-
-	// Debug enabled - clean expression and evaluate for logging
-	// Parse modifiers to get clean expression (same logic as compareByExpression)
-	checkExists := false
-	checkLength := false
-
-	parts := strings.Split(criterion, ":")
-	expr := parts[0]
-
-	for i := 1; i < len(parts); i++ {
-		modifier := strings.TrimSpace(parts[i])
-		if modifier == "exists" {
-			checkExists = true
-		}
-	}
-
-	// Check for length operator
-	if strings.Contains(expr, " | length") {
-		checkLength = true
-		expr = strings.Split(expr, " | ")[0]
-	}
-
-	// Evaluate cleaned expression
-	valA := evaluateExpression(a, expr)
-	valB := evaluateExpression(b, expr)
-
-	// Apply modifiers for debug display
-	if checkExists {
-		valA = (valA != nil)
-		valB = (valB != nil)
-	} else if checkLength {
-		valA = getLength(valA)
-		valB = getLength(valB)
-	}
-
-	// Call comparison
-	result := compareByExpression(a, b, criterion)
-
-	// Log the comparison at Debug level (this is a debug feature)
-	slog.Debug("SORT comparison",
-		"criterion", criterion,
-		"valA", valA,
-		"valA_type", fmt.Sprintf("%T", valA),
-		"valB", valB,
-		"valB_type", fmt.Sprintf("%T", valB),
-		"result", result)
-
-	return result
-}
-
-// compareByExpression compares two items based on an expression with optional modifiers.
-func compareByExpression(a, b interface{}, criterion string) int {
-	// Parse modifiers
-	descending := false
-	checkExists := false
-	checkLength := false
-
-	parts := strings.Split(criterion, ":")
-	expr := parts[0]
-
-	for i := 1; i < len(parts); i++ {
-		modifier := strings.TrimSpace(parts[i])
-		switch modifier {
-		case "desc":
-			descending = true
-		case "exists":
-			checkExists = true
-		}
-	}
-
-	// Check for length operator
-	if strings.Contains(expr, " | length") {
-		checkLength = true
-		expr = strings.Split(expr, " | ")[0]
-	}
-
-	// Evaluate expressions
-	valA := evaluateExpression(a, expr)
-	valB := evaluateExpression(b, expr)
-
-	// Handle special checks
-	if checkExists {
-		existsA := valA != nil
-		existsB := valB != nil
-		result := 0
-		if existsA && !existsB {
-			result = -1 // A exists, B doesn't → A comes first
-		} else if !existsA && existsB {
-			result = 1 // B exists, A doesn't → B comes first
-		}
-		// For :exists modifier, the descending flag means "items with field first"
-		// which is already the natural ordering above (exists = -1, not exists = 1).
-		// Don't negate - the semantics of :exists:desc are already captured.
-		return result
-	}
-
-	if checkLength {
-		lenA := getLength(valA)
-		lenB := getLength(valB)
-		result := lenA - lenB
-		if descending {
-			result = -result
-		}
-		return result
-	}
-
-	// Standard comparison
-	result := compareValues(valA, valB)
-	if descending {
-		result = -result
-	}
-	return result
 }
 
 // compareValues compares two values of potentially different types.
@@ -2078,18 +2173,39 @@ func (cs *ComputeOnceControlStructure) String() string {
 
 // Execute implements the compute_once logic.
 func (cs *ComputeOnceControlStructure) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock) error {
-	// Use a marker variable to track if computation has been done
-	// Marker is named "_computed_<varname>" and stored in the context
-	markerName := "_computed_" + cs.varName
+	// Use a cache to store computed results. The key is the variable name.
+	// Cache is shared across all includes via the root context map.
+	cacheName := "_compute_once_cache"
+	cacheKey := cs.varName
+
+	// Get or create the cache map
+	cache, _ := r.Environment.Context.Get(cacheName)
+	cacheMap, ok := cache.(map[string]interface{})
+	if !ok {
+		// Cache doesn't exist, first call
+		cacheMap = nil
+	}
 
 	// Check if computation already happened
-	if r.Environment.Context.Has(markerName) {
-		// Marker exists - computation already done, skip body
-		return nil
+	if cacheMap != nil {
+		if cachedValue, exists := cacheMap[cacheKey]; exists {
+			// Cached value exists - copy attributes to current variable
+			// Gonja namespace() returns map[string]interface{}
+			currentVar, _ := r.Environment.Context.Get(cs.varName)
+			if currentNS, isNS := currentVar.(map[string]interface{}); isNS {
+				if cachedNS, cachedIsNS := cachedValue.(map[string]interface{}); cachedIsNS {
+					// Copy all attributes from cached namespace to current namespace
+					for key, value := range cachedNS {
+						currentNS[key] = value
+					}
+				}
+			}
+			return nil
+		}
 	}
 
 	// Get the variable value - it MUST exist before compute_once
-	_, exists := r.Environment.Context.Get(cs.varName)
+	currentVar, exists := r.Environment.Context.Get(cs.varName)
 	if !exists {
 		return fmt.Errorf("compute_once: variable '%s' must be created before compute_once block (use {%% set %s = namespace(...) %%} before compute_once)", cs.varName, cs.varName)
 	}
@@ -2100,8 +2216,14 @@ func (cs *ComputeOnceControlStructure) Execute(r *exec.Renderer, tag *nodes.Cont
 		return err
 	}
 
-	// Mark computation as done
-	r.Environment.Context.Set(markerName, true)
+	// Store the computed result in the cache
+	// Get cache again (need fresh reference after potential context changes)
+	cache, _ = r.Environment.Context.Get(cacheName)
+	cacheMap, _ = cache.(map[string]interface{})
+	if cacheMap != nil {
+		// Store reference to the namespace (for namespaces)
+		cacheMap[cacheKey] = currentVar
+	}
 
 	return nil
 }
@@ -2192,6 +2314,16 @@ func (cs *CachedIncludeControlStructure) Execute(r *exec.Renderer, tag *nodes.Co
 			return nil
 		}
 		return fmt.Errorf("template '%s' not found in cache (available: %d templates)", filename, len(cs.compiledTemplates))
+	}
+
+	// Track include timing if profiling is enabled
+	if profiler, ok := r.Environment.Context.Get("_include_profiler"); ok {
+		if p, ok := profiler.(*includeProfiler); ok {
+			start := time.Now()
+			err := exec.NewRenderer(r.Environment, r.Output, r.Config.Inherit(), r.Loader, template).Execute()
+			p.record(filename, time.Since(start))
+			return err
+		}
 	}
 
 	// Execute with inherited config (creates new renderer - thread-safe)

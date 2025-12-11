@@ -134,7 +134,7 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 		return "", nil
 	}
 
-	// Parse response body - include sha256_finger_print field
+	// Parse response body - include sha256_finger_print field and fallback fields
 	// Try both underscore and dash versions as field name may vary by API version
 	var apiCert struct {
 		StorageName        *string `json:"storage_name"`
@@ -142,6 +142,8 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 		Description        *string `json:"description"`
 		SHA256Fingerprint  *string `json:"sha256_finger_print"`
 		SHA256Fingerprint2 *string `json:"sha256-finger-print"` // Try dash version
+		Serial             *string `json:"serial"`              // For fallback identification
+		Issuers            *string `json:"issuers"`             // For fallback identification (API returns string, not array)
 	}
 
 	if err := json.Unmarshal(bodyBytes, &apiCert); err != nil {
@@ -155,21 +157,31 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 
 	// Use whichever fingerprint field is populated
 	var fingerprint *string
-	if apiCert.SHA256Fingerprint != nil {
+	if apiCert.SHA256Fingerprint != nil && *apiCert.SHA256Fingerprint != "" {
 		fingerprint = apiCert.SHA256Fingerprint
-	} else if apiCert.SHA256Fingerprint2 != nil {
+	} else if apiCert.SHA256Fingerprint2 != nil && *apiCert.SHA256Fingerprint2 != "" {
 		fingerprint = apiCert.SHA256Fingerprint2
 	}
 
-	if fingerprint == nil {
-		// Fingerprint not available - this can happen with older Dataplane API versions.
-		// Return a placeholder that will trigger CREATE operations (which have fallback to UPDATE).
-		// This ensures compatibility with both old and new API versions.
-		return "__NO_FINGERPRINT__", nil
+	if fingerprint != nil {
+		// Return SHA256 fingerprint for content-based comparison
+		return *fingerprint, nil
 	}
 
-	// Return SHA256 fingerprint for content-based comparison
-	return *fingerprint, nil
+	// Fallback: construct identifier from serial+issuers when fingerprint unavailable.
+	// This is a workaround for https://github.com/haproxytech/dataplaneapi/pull/396
+	// A certificate is uniquely identified by its serial number within a CA (issuer).
+	if apiCert.Serial != nil && *apiCert.Serial != "" {
+		issuersStr := ""
+		if apiCert.Issuers != nil {
+			issuersStr = *apiCert.Issuers
+		}
+		return fmt.Sprintf("cert:serial:%s:issuers:%s", *apiCert.Serial, issuersStr), nil
+	}
+
+	// Neither fingerprint nor serial available - this should not happen in practice.
+	// Return placeholder that will trigger UPDATE operations.
+	return "__NO_FINGERPRINT__", nil
 }
 
 // CreateSSLCertificate creates a new SSL certificate using multipart form-data.

@@ -36,15 +36,16 @@ import (
 )
 
 var (
-	validateConfigFile     string
-	validateTestName       string
-	validateOutputFormat   string
-	validateHAProxyBinary  string
-	validateVerbose        bool
-	validateDumpRendered   bool
-	validateTraceTemplates bool
-	validateDebugFilters   bool
-	validateWorkers        int
+	validateConfigFile      string
+	validateTestName        string
+	validateOutputFormat    string
+	validateHAProxyBinary   string
+	validateVerbose         bool
+	validateDumpRendered    bool
+	validateTraceTemplates  bool
+	validateDebugFilters    bool
+	validateProfileIncludes bool
+	validateWorkers         int
 )
 
 // validateCmd represents the validate command.
@@ -87,6 +88,7 @@ func init() {
 	validateCmd.Flags().BoolVar(&validateDumpRendered, "dump-rendered", false, "Dump all rendered content (haproxy.cfg, maps, files)")
 	validateCmd.Flags().BoolVar(&validateTraceTemplates, "trace-templates", false, "Show template execution trace")
 	validateCmd.Flags().BoolVar(&validateDebugFilters, "debug-filters", false, "Show filter operation debugging (sort comparisons, etc.)")
+	validateCmd.Flags().BoolVar(&validateProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
 	validateCmd.Flags().IntVar(&validateWorkers, "workers", 0, "Number of parallel test workers (0=auto-detect CPUs, 1=sequential)")
 
 	_ = validateCmd.MarkFlagRequired("file")
@@ -198,10 +200,11 @@ func runValidationTests(
 		engine,
 		validationPaths,
 		testrunner.Options{
-			Logger:       logger,
-			Workers:      validateWorkers,
-			DebugFilters: validateDebugFilters,
-			Capabilities: capabilities,
+			Logger:          logger,
+			Workers:         validateWorkers,
+			DebugFilters:    validateDebugFilters,
+			ProfileIncludes: validateProfileIncludes,
+			Capabilities:    capabilities,
 		},
 	)
 
@@ -240,6 +243,11 @@ func outputResults(results *testrunner.TestResults, engine *templating.TemplateE
 	// Output template trace if requested
 	if validateTraceTemplates {
 		outputTemplateTrace(engine)
+	}
+
+	// Output include profile if requested
+	if validateProfileIncludes {
+		outputIncludeProfile(results)
 	}
 
 	return nil
@@ -303,6 +311,101 @@ func outputTemplateTrace(engine *templating.TemplateEngine) {
 		fmt.Println(strings.Repeat("=", 80))
 		fmt.Println(trace)
 	}
+}
+
+// outputIncludeProfile prints include timing statistics from test results.
+func outputIncludeProfile(results *testrunner.TestResults) {
+	stats := aggregateIncludeStats(results)
+	if len(stats) == 0 {
+		return
+	}
+
+	printIncludeProfile(stats)
+}
+
+// aggregateIncludeStats collects and aggregates include statistics from all test results.
+func aggregateIncludeStats(results *testrunner.TestResults) []templating.IncludeStats {
+	aggregated := make(map[string]*templating.IncludeStats)
+
+	for i := range results.TestResults {
+		test := &results.TestResults[i]
+		for _, stat := range test.IncludeStats {
+			mergeIncludeStat(aggregated, stat)
+		}
+	}
+
+	// Convert to slice and calculate averages
+	stats := make([]templating.IncludeStats, 0, len(aggregated))
+	for _, stat := range aggregated {
+		if stat.Count > 0 {
+			stat.AvgMs = stat.TotalMs / float64(stat.Count)
+		}
+		stats = append(stats, *stat)
+	}
+
+	// Sort by total time (slowest first)
+	sortIncludeStatsByTotalTime(stats)
+
+	return stats
+}
+
+// mergeIncludeStat merges a single include stat into the aggregation map.
+func mergeIncludeStat(aggregated map[string]*templating.IncludeStats, stat templating.IncludeStats) {
+	if existing, ok := aggregated[stat.Name]; ok {
+		existing.Count += stat.Count
+		existing.TotalMs += stat.TotalMs
+		if stat.MaxMs > existing.MaxMs {
+			existing.MaxMs = stat.MaxMs
+		}
+	} else {
+		aggregated[stat.Name] = &templating.IncludeStats{
+			Name:    stat.Name,
+			Count:   stat.Count,
+			TotalMs: stat.TotalMs,
+			MaxMs:   stat.MaxMs,
+		}
+	}
+}
+
+// sortIncludeStatsByTotalTime sorts include stats by total time (slowest first).
+func sortIncludeStatsByTotalTime(stats []templating.IncludeStats) {
+	for i := 0; i < len(stats)-1; i++ {
+		for j := i + 1; j < len(stats); j++ {
+			if stats[j].TotalMs > stats[i].TotalMs {
+				stats[i], stats[j] = stats[j], stats[i]
+			}
+		}
+	}
+}
+
+// printIncludeProfile prints the formatted include timing profile.
+func printIncludeProfile(stats []templating.IncludeStats) {
+	fmt.Println("\n" + strings.Repeat("=", 80))
+	fmt.Println("INCLUDE TIMING PROFILE (Top 20 slowest)")
+	fmt.Println(strings.Repeat("=", 80))
+	fmt.Printf("%-45s %8s %10s %10s %10s\n", "Include", "Count", "Total(ms)", "Avg(ms)", "Max(ms)")
+	fmt.Println(strings.Repeat("-", 80))
+
+	limit := 20
+	if len(stats) < limit {
+		limit = len(stats)
+	}
+
+	for i := 0; i < limit; i++ {
+		stat := stats[i]
+		fmt.Printf("%-45s %8d %10.2f %10.2f %10.2f\n",
+			stat.Name, stat.Count, stat.TotalMs, stat.AvgMs, stat.MaxMs)
+	}
+
+	// Summary
+	var totalTime float64
+	var totalCalls int
+	for _, stat := range stats {
+		totalTime += stat.TotalMs
+		totalCalls += stat.Count
+	}
+	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-45s %8d %10.2f\n", "TOTAL", totalCalls, totalTime)
 }
 
 // loadConfigFromFile loads a HAProxyTemplateConfig from a YAML file.

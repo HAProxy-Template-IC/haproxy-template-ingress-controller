@@ -558,7 +558,7 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver, isValida
 
 	totalMs := time.Since(renderStart).Milliseconds()
 
-	c.logger.Debug("Render breakdown",
+	c.logger.Info("Render breakdown",
 		"path", label,
 		"context_ms", contextMs,
 		"main_template_ms", mainMs,

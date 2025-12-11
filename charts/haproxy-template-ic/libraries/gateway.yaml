@@ -414,10 +414,36 @@ templateSnippets:
           "$.rule_idx"
         ]) %}
 
+        {#- Pre-compute filter existence flags (optimization: avoids repeated iteration) #}
+        {%- set ns_filters = namespace(
+          has_request_header=false,
+          has_response_header=false,
+          has_redirect=false,
+          has_urlrewrite=false
+        ) %}
+        {%- for route in ns_all.routes %}
+          {%- for filter in route.filters %}
+            {%- if filter.type == "RequestHeaderModifier" %}
+              {%- set ns_filters.has_request_header = true %}
+            {%- elif filter.type == "ResponseHeaderModifier" %}
+              {%- set ns_filters.has_response_header = true %}
+            {%- elif filter.type == "RequestRedirect" %}
+              {%- set ns_filters.has_redirect = true %}
+            {%- elif filter.type == "URLRewrite" %}
+              {%- set ns_filters.has_urlrewrite = true %}
+            {%- endif %}
+          {%- endfor %}
+        {%- endfor %}
+
         {#- Populate result namespace with analysis data #}
         {%- set result.path_groups = path_groups %}
         {%- set result.sorted_routes = sorted_routes %}
         {%- set result.all_routes = ns_all.routes %}
+        {#- Filter existence flags for optimized filter template rendering #}
+        {%- set result.has_request_header_filter = ns_filters.has_request_header %}
+        {%- set result.has_response_header_filter = ns_filters.has_response_header %}
+        {%- set result.has_redirect_filter = ns_filters.has_redirect %}
+        {%- set result.has_urlrewrite_filter = ns_filters.has_urlrewrite %}
       {%- endmacro %}
 
   util-backend-name-gateway:
@@ -906,17 +932,8 @@ templateSnippets:
         {{- analyze_routes(analysis, resources) -}}
       {%- endcompute_once -%}
 
-      {#- Process all routes that have RequestHeaderModifier filters #}
-      {%- set ns_has_filters = namespace(found=false) -%}
-      {%- for route_info in analysis.all_routes -%}
-        {%- for filter in route_info.filters -%}
-          {%- if filter.type == "RequestHeaderModifier" -%}
-            {%- set ns_has_filters.found = true -%}
-          {%- endif -%}
-        {%- endfor -%}
-      {%- endfor -%}
-
-      {%- if ns_has_filters.found %}
+      {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
+      {%- if analysis.has_request_header_filter %}
       # gateway/frontend-filters-gateway-request-header
       # RequestHeaderModifier filters
       {%- for route_info in analysis.all_routes %}
@@ -964,17 +981,8 @@ templateSnippets:
         {{- analyze_routes(analysis, resources) -}}
       {%- endcompute_once -%}
 
-      {#- Process all routes that have ResponseHeaderModifier filters #}
-      {%- set ns_has_filters = namespace(found=false) -%}
-      {%- for route_info in analysis.all_routes -%}
-        {%- for filter in route_info.filters -%}
-          {%- if filter.type == "ResponseHeaderModifier" -%}
-            {%- set ns_has_filters.found = true -%}
-          {%- endif -%}
-        {%- endfor -%}
-      {%- endfor -%}
-
-      {%- if ns_has_filters.found %}
+      {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
+      {%- if analysis.has_response_header_filter %}
       # ResponseHeaderModifier filters
       {%- for route_info in analysis.all_routes %}
         {%- for filter in route_info.filters %}
@@ -1022,17 +1030,8 @@ templateSnippets:
         {{- analyze_routes(analysis, resources) -}}
       {%- endcompute_once -%}
 
-      {#- Process all routes that have RequestRedirect filters #}
-      {%- set ns_has_filters = namespace(found=false) -%}
-      {%- for route_info in analysis.all_routes -%}
-        {%- for filter in route_info.filters -%}
-          {%- if filter.type == "RequestRedirect" and route_info.resource_type == "httproute" -%}
-            {%- set ns_has_filters.found = true -%}
-          {%- endif -%}
-        {%- endfor -%}
-      {%- endfor -%}
-
-      {%- if ns_has_filters.found %}
+      {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
+      {%- if analysis.has_redirect_filter %}
       # gateway/frontend-filters-gateway-redirect
       # RequestRedirect filters
       {%- for route_info in analysis.all_routes %}
@@ -1110,17 +1109,8 @@ templateSnippets:
         {{- analyze_routes(analysis, resources) -}}
       {%- endcompute_once -%}
 
-      {#- Process all routes that have URLRewrite filters #}
-      {%- set ns_has_filters = namespace(found=false) -%}
-      {%- for route_info in analysis.all_routes -%}
-        {%- for filter in route_info.filters -%}
-          {%- if filter.type == "URLRewrite" and route_info.resource_type == "httproute" -%}
-            {%- set ns_has_filters.found = true -%}
-          {%- endif -%}
-        {%- endfor -%}
-      {%- endfor -%}
-
-      {%- if ns_has_filters.found %}
+      {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
+      {%- if analysis.has_urlrewrite_filter %}
       # gateway/frontend-filters-gateway-urlrewrite
       # URLRewrite filters
       {%- for route_info in analysis.all_routes %}
