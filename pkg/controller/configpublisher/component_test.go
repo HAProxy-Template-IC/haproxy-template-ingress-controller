@@ -53,7 +53,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -143,7 +143,7 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -204,7 +204,7 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -273,7 +273,7 @@ func TestComponent_MultiplePods(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -350,7 +350,7 @@ func TestComponent_MultiplePods(t *testing.T) {
 // TestComponent_Name tests that Name returns the correct component name.
 func TestComponent_Name(t *testing.T) {
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -368,7 +368,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -454,7 +454,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -529,7 +529,7 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -567,7 +567,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -648,7 +648,7 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
@@ -708,7 +708,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 

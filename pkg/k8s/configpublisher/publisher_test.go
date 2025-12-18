@@ -40,7 +40,7 @@ func testLogger() *slog.Logger {
 // TestPublishConfig_CreateNew tests publishing a new runtime config with auxiliary files.
 func TestPublishConfig_CreateNew(t *testing.T) {
 	ctx := context.Background()
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 
 	publisher := New(k8sClient, crdClient, testLogger())
@@ -123,7 +123,7 @@ func TestPublishConfig_CreateNew(t *testing.T) {
 // TestPublishConfig_Update tests updating an existing runtime config.
 func TestPublishConfig_Update(t *testing.T) {
 	ctx := context.Background()
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 
 	publisher := New(k8sClient, crdClient, testLogger())
@@ -173,7 +173,7 @@ func TestPublishConfig_Update(t *testing.T) {
 // TestUpdateDeploymentStatus_AddPod tests adding a pod to deployment status.
 func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
 	ctx := context.Background()
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 
 	publisher := New(k8sClient, crdClient, testLogger())
@@ -221,7 +221,7 @@ func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
 // TestUpdateDeploymentStatus_UpdateExistingPod tests updating existing pod status.
 func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	ctx := context.Background()
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 
 	publisher := New(k8sClient, crdClient, testLogger())
@@ -280,7 +280,7 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 // TestUpdateDeploymentStatus_MultiplePods tests adding multiple pods.
 func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 	ctx := context.Background()
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 
 	publisher := New(k8sClient, crdClient, testLogger())
@@ -336,7 +336,7 @@ func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 // TestCleanupPodReferences_RemovePod tests removing a pod from deployment status.
 func TestCleanupPodReferences_RemovePod(t *testing.T) {
 	ctx := context.Background()
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 
 	publisher := New(k8sClient, crdClient, testLogger())
@@ -391,7 +391,7 @@ func TestCleanupPodReferences_RemovePod(t *testing.T) {
 // TestCleanupPodReferences_NonexistentPod tests cleaning up a pod that doesn't exist.
 func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 	ctx := context.Background()
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 
 	publisher := New(k8sClient, crdClient, testLogger())
@@ -433,7 +433,7 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 // TestUpdateDeploymentStatus_RuntimeConfigNotFound tests updating when runtime config doesn't exist.
 func TestUpdateDeploymentStatus_RuntimeConfigNotFound(t *testing.T) {
 	ctx := context.Background()
-	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 
 	publisher := New(k8sClient, crdClient, testLogger())

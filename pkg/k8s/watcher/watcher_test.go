@@ -43,7 +43,7 @@ var configMapGVR = schema.GroupVersionResource{
 
 func newTestClient(t *testing.T) *client.Client {
 	t.Helper()
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	// Register the list kind for configmaps
 	gvrToListKind := map[schema.GroupVersionResource]string{
 		configMapGVR: "ConfigMapList",
@@ -57,7 +57,7 @@ func newTestClient(t *testing.T) *client.Client {
 
 func newTestClientWithScheme(t *testing.T, objects ...runtime.Object) *client.Client {
 	t.Helper()
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	gvrToListKind := map[schema.GroupVersionResource]string{
 		configMapGVR: "ConfigMapList",
 	}

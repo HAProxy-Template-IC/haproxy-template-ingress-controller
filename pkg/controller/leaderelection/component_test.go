@@ -30,7 +30,7 @@ import (
 
 func TestNew_NilConfig(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	callbacks := k8sleaderelection.Callbacks{}
 
@@ -63,7 +63,7 @@ func TestNew_NilClientset(t *testing.T) {
 }
 
 func TestNew_NilEventBus(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	logger := testutil.NewTestLogger()
 
 	config := &k8sleaderelection.Config{
@@ -86,7 +86,7 @@ func TestNew_NilEventBus(t *testing.T) {
 
 func TestNew_NilLogger(t *testing.T) {
 	bus := testutil.NewTestBus()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,
@@ -109,7 +109,7 @@ func TestNew_NilLogger(t *testing.T) {
 
 func TestNew_ValidConfig(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,
@@ -136,7 +136,7 @@ func TestNew_ValidConfig(t *testing.T) {
 
 func TestNew_CallbackWrapping_OnStartedLeading(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,
@@ -180,7 +180,7 @@ func TestNew_CallbackWrapping_OnStartedLeading(t *testing.T) {
 
 func TestNew_CallbackWrapping_OnStoppedLeading(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,
@@ -207,7 +207,7 @@ func TestNew_CallbackWrapping_OnStoppedLeading(t *testing.T) {
 
 func TestNew_CallbackWrapping_OnNewLeader(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,
@@ -234,7 +234,7 @@ func TestNew_CallbackWrapping_OnNewLeader(t *testing.T) {
 
 func TestNew_CallbackWrapping_NilCallbacks(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,
@@ -258,7 +258,7 @@ func TestNew_CallbackWrapping_NilCallbacks(t *testing.T) {
 
 func TestComponent_Run_PublishesLeaderElectionStartedEvent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,
@@ -304,7 +304,7 @@ func TestComponent_Run_PublishesLeaderElectionStartedEvent(t *testing.T) {
 
 func TestComponent_IsLeader_BeforeElection(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,
@@ -326,7 +326,7 @@ func TestComponent_IsLeader_BeforeElection(t *testing.T) {
 
 func TestComponent_GetLeader_BeforeElection(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &k8sleaderelection.Config{
 		Enabled:        true,

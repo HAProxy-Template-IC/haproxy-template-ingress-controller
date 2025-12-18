@@ -20,7 +20,7 @@ import (
 // TestNewSingle verifies SingleWatcher creation.
 func TestNewSingle(t *testing.T) {
 	// Create fake clients
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
 
@@ -149,7 +149,7 @@ func TestSingleWatcher_IsSynced(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
 
 	// Create fake clients with registered GVK
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
@@ -204,7 +204,7 @@ func TestSingleWatcher_IsSynced(t *testing.T) {
 // TestSingleWatcher_WaitForSyncTimeout verifies timeout behavior.
 func TestSingleWatcher_WaitForSyncTimeout(t *testing.T) {
 	// Create fake clients
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
 
@@ -376,7 +376,7 @@ func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
 
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
@@ -439,7 +439,7 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
 
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
@@ -502,7 +502,7 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
 
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
@@ -561,7 +561,7 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 
 // TestSingleWatcher_StopIdempotency verifies Stop() can be called multiple times safely.
 func TestSingleWatcher_StopIdempotency(t *testing.T) {
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
 
@@ -601,7 +601,7 @@ func TestSingleWatcher_StopIdempotency(t *testing.T) {
 
 // TestSingleWatcher_ConcurrentCallbacks verifies thread-safe callback invocation after sync.
 func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
 
@@ -673,7 +673,7 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
 
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
@@ -902,7 +902,7 @@ func TestSingleWatcher_LastWatchErrorUpdatesOnError(t *testing.T) {
 
 // createFakeClientForSingleWatcher creates a fake Kubernetes client suitable for SingleWatcher tests.
 func createFakeClientForSingleWatcher() *client.Client {
-	fakeClientset := kubefake.NewSimpleClientset()
+	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	return client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
 }
