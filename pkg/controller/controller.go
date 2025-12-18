@@ -25,6 +25,7 @@ package controller
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -54,6 +55,7 @@ import (
 	dryrunvalidator "haproxy-template-ic/pkg/controller/dryrunvalidator"
 	"haproxy-template-ic/pkg/controller/events"
 	"haproxy-template-ic/pkg/controller/executor"
+	"haproxy-template-ic/pkg/controller/helpers"
 	"haproxy-template-ic/pkg/controller/httpstore"
 	"haproxy-template-ic/pkg/controller/indextracker"
 	leaderelectionctrl "haproxy-template-ic/pkg/controller/leaderelection"
@@ -76,7 +78,6 @@ import (
 	"haproxy-template-ic/pkg/k8s/watcher"
 	"haproxy-template-ic/pkg/lifecycle"
 	pkgmetrics "haproxy-template-ic/pkg/metrics"
-	"haproxy-template-ic/pkg/templating"
 )
 
 const (
@@ -87,6 +88,10 @@ const (
 	// DebugEventBufferSize is the size of the event buffer for debug/introspection.
 	DebugEventBufferSize = 1000
 )
+
+// errNoWebhookRules indicates that no webhook rules are configured.
+// This is used to signal that DryRunValidator should not be created.
+var errNoWebhookRules = errors.New("no webhook rules configured")
 
 // configState tracks initialization state for health checks.
 // It allows the health endpoint to report unhealthy status until
@@ -1120,50 +1125,28 @@ func setupWebhook(
 // This function is called BEFORE EventBus.Start() to ensure the validator subscribes
 // to events before any buffered events are released.
 //
-// Returns nil if webhook rules are empty (no resources to validate).
+// Returns (nil, nil) if webhook rules are empty (no resources to validate).
+// Returns (nil, error) if engine creation fails.
 func createDryRunValidator(
 	cfg *coreconfig.Config,
 	bus *busevents.EventBus,
 	storeManager *resourcestore.Manager,
 	capabilities dataplane.Capabilities,
 	logger *slog.Logger,
-) *dryrunvalidator.Component {
+) (*dryrunvalidator.Component, error) {
 	// Check if there are any webhook rules - if not, no validator needed
 	rules := webhook.ExtractWebhookRules(cfg)
 	if len(rules) == 0 {
 		logger.Debug("No webhook rules extracted, skipping DryRunValidator creation")
-		return nil
+		return nil, errNoWebhookRules
 	}
 
 	logger.Debug("Creating DryRunValidator for webhook validation")
 
-	// Extract templates (same as Renderer does)
-	templates := make(map[string]string)
-	templates["haproxy.cfg"] = cfg.HAProxyConfig.Template
-	for name, snippet := range cfg.TemplateSnippets {
-		templates[name] = snippet.Template
-	}
-	for name, mapDef := range cfg.Maps {
-		templates[name] = mapDef.Template
-	}
-	for name, fileDef := range cfg.Files {
-		templates[name] = fileDef.Template
-	}
-	for name, certDef := range cfg.SSLCertificates {
-		templates[name] = certDef.Template
-	}
-
-	// Register custom filters
-	filters := map[string]templating.FilterFunc{
-		"glob_match": templating.GlobMatch,
-		"b64decode":  templating.B64Decode,
-	}
-
-	// Create template engine
-	engine, err := templating.New(templating.EngineTypeGonja, templates, filters, nil, nil)
+	// Create template engine using helper (handles template extraction, filters, engine type parsing)
+	engine, err := helpers.NewEngineFromConfig(cfg, nil, nil)
 	if err != nil {
-		logger.Error("Failed to create template engine for dry-run validation", "error", err)
-		return nil
+		return nil, fmt.Errorf("failed to create template engine for dry-run validation: %w", err)
 	}
 
 	// Create validation paths
@@ -1175,7 +1158,7 @@ func createDryRunValidator(
 	}
 
 	// Create DryRunValidator (subscribes in constructor)
-	return dryrunvalidator.New(bus, storeManager, cfg, engine, validationPaths, capabilities, logger)
+	return dryrunvalidator.New(bus, storeManager, cfg, engine, validationPaths, capabilities, logger), nil
 }
 
 // setupReconciliation creates and starts the reconciliation components (Stage 5).
@@ -1401,12 +1384,7 @@ func runIteration(
 	}
 
 	// Register stores with ResourceStoreManager for webhook validation
-	logger.Debug("Registering resource stores with ResourceStoreManager")
-	stores := resourceWatcher.GetAllStores()
-	for resourceType, store := range stores {
-		setup.StoreManager.RegisterStore(resourceType, store)
-		logger.Debug("Registered store", "resource_type", resourceType)
-	}
+	registerResourceStores(resourceWatcher, setup.StoreManager, logger)
 
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(
@@ -1416,32 +1394,9 @@ func runIteration(
 		return err
 	}
 
-	// 5. Initialize StateCache and metrics component
-	//
-	// Why StateCache is created here (not in a setup function):
-	// StateCache requires a reference to ResourceWatcher (created in step 2) to access
-	// resource stores for introspection. Since ResourceWatcher is created dynamically based
-	// on configuration, StateCache must be created after it's available.
-	//
-	// Subscription timing: StateCache subscribes in its constructor (before EventBus.Start())
-	// to ensure proper startup synchronization and receive all buffered events.
+	// 5. Initialize StateCache and start background components
 	stateCache := NewStateCache(setup.Bus, resourceWatcher, logger)
-
-	// Start StateCache and metrics component in background goroutines
-	// These will subscribe immediately and wait for events
-	go func() {
-		if err := stateCache.Start(setup.IterCtx); err != nil {
-			logger.Error("state cache failed", "error", err)
-			// Non-fatal error - don't cancel iteration
-		}
-	}()
-
-	go func() {
-		if err := setup.MetricsComponent.Start(setup.IterCtx); err != nil {
-			logger.Error("metrics component failed", "error", err)
-			// Non-fatal error - don't cancel iteration
-		}
-	}()
+	startBackgroundComponents(setup.IterCtx, stateCache, setup.MetricsComponent, logger)
 
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
@@ -1458,7 +1413,14 @@ func runIteration(
 	// Must be created before EventBus.Start() to ensure proper subscription
 	var dryrunValidator *dryrunvalidator.Component
 	if webhook.HasWebhookEnabled(cfg) {
-		dryrunValidator = createDryRunValidator(cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, logger)
+		var err error
+		dryrunValidator, err = createDryRunValidator(cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, logger)
+		if err != nil && !errors.Is(err, errNoWebhookRules) {
+			return fmt.Errorf("failed to create dry-run validator: %w", err)
+		}
+		if errors.Is(err, errNoWebhookRules) {
+			logger.Debug("DryRunValidator not created: no webhook validation rules configured")
+		}
 	}
 
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
@@ -1539,6 +1501,41 @@ func handleConfigurationChange(
 	waitForGoroutinesToFinish(setup.ErrGroup, logger, "Reinitialization")
 
 	logger.Info("Reinitialization triggered - starting new iteration")
+}
+
+// registerResourceStores registers all resource stores from the watcher with the store manager.
+func registerResourceStores(
+	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
+	storeManager *resourcestore.Manager,
+	logger *slog.Logger,
+) {
+	logger.Debug("Registering resource stores with ResourceStoreManager")
+	stores := resourceWatcher.GetAllStores()
+	for resourceType, store := range stores {
+		storeManager.RegisterStore(resourceType, store)
+		logger.Debug("Registered store", "resource_type", resourceType)
+	}
+}
+
+// startBackgroundComponents starts the StateCache and metrics component in background goroutines.
+// These components subscribe immediately and wait for events. Errors are logged but non-fatal.
+func startBackgroundComponents(
+	ctx context.Context,
+	stateCache *StateCache,
+	metricsComponent *metrics.Component,
+	logger *slog.Logger,
+) {
+	go func() {
+		if err := stateCache.Start(ctx); err != nil {
+			logger.Error("state cache failed", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := metricsComponent.Start(ctx); err != nil {
+			logger.Error("metrics component failed", "error", err)
+		}
+	}()
 }
 
 // waitForGoroutinesToFinish waits for all goroutines in errgroup to finish with a timeout.

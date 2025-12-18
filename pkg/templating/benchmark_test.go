@@ -47,18 +47,6 @@ func BenchmarkEngine_Render_Filters(b *testing.B) {
 	b.Run("filter=sort_by", func(b *testing.B) {
 		benchmarkFilterSortBy(b)
 	})
-
-	b.Run("filter=group_by", func(b *testing.B) {
-		benchmarkFilterGroupBy(b)
-	})
-
-	b.Run("filter=extract", func(b *testing.B) {
-		benchmarkFilterExtract(b)
-	})
-
-	b.Run("filter=transform", func(b *testing.B) {
-		benchmarkFilterTransform(b)
-	})
 }
 
 // BenchmarkEngine_Render_Scale benchmarks rendering with varying data sizes.
@@ -89,10 +77,10 @@ func BenchmarkEngine_Compile(b *testing.B) {
 func benchmarkRenderSimple(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
-		"simple": "Hello {{ name }}! Welcome to {{ location }}.",
+		"simple": "Hello {{ .name }}! Welcome to {{ .location }}.",
 	}
 
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := NewScriggo(templates, []string{"simple"}, nil, nil, nil)
 	if err != nil {
 		b.Fatalf("failed to create engine: %v", err)
 	}
@@ -116,16 +104,14 @@ func benchmarkRenderSimple(b *testing.B) {
 func benchmarkRenderMedium(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
-		"medium": `
-{%- for server in servers %}
-server {{ server.name }} {{ server.address }}:{{ server.port }}
-{%- if server.weight %} weight {{ server.weight }}{% endif %}
-{%- if server.check %} check{% endif %}
-{%- endfor %}
-`,
+		"medium": `{% for _, server := range .servers -%}
+server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}
+{%- if server["weight"] %} weight {{ server["weight"] }}{% end %}
+{%- if server["check"] %} check{% end %}
+{% end %}`,
 	}
 
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := NewScriggo(templates, []string{"medium"}, nil, nil, nil)
 	if err != nil {
 		b.Fatalf("failed to create engine: %v", err)
 	}
@@ -157,47 +143,47 @@ func benchmarkRenderLarge(b *testing.B) {
 		"large": `
 {%- include "globals" %}
 {%- include "defaults" %}
-{%- for frontend in frontends %}
+{%- for _, frontend := range .frontends %}
 {%- include "frontend" %}
-{%- endfor %}
-{%- for backend in backends %}
+{%- end %}
+{%- for _, backend := range .backends %}
 {%- include "backend" %}
-{%- endfor %}
+{%- end %}
 `,
 		"globals": `
 global
-    maxconn {{ global.maxconn | default(4096) }}
+    maxconn {{ fallback(.global.maxconn, 4096) }}
     log stdout format raw local0
 `,
 		"defaults": `
 defaults
     mode http
-    timeout connect {{ defaults.connect_timeout | default("5s") }}
-    timeout client {{ defaults.client_timeout | default("50s") }}
-    timeout server {{ defaults.server_timeout | default("50s") }}
+    timeout connect {{ fallback(.defaults.connect_timeout, "5s") }}
+    timeout client {{ fallback(.defaults.client_timeout, "50s") }}
+    timeout server {{ fallback(.defaults.server_timeout, "50s") }}
 `,
 		"frontend": `
-frontend {{ frontend.name }}
-    bind *:{{ frontend.port }}
-{%- for acl in frontend.acls %}
+frontend {{ .frontend.name }}
+    bind *:{{ .frontend.port }}
+{%- for _, acl := range .frontend.acls %}
     acl {{ acl.name }} {{ acl.condition }}
-{%- endfor %}
-{%- for rule in frontend.rules %}
+{%- end %}
+{%- for _, rule := range .frontend.rules %}
     use_backend {{ rule.backend }} if {{ rule.condition }}
-{%- endfor %}
-    default_backend {{ frontend.default_backend }}
+{%- end %}
+    default_backend {{ .frontend.default_backend }}
 `,
 		"backend": `
-backend {{ backend.name }}
-    balance {{ backend.balance | default("roundrobin") }}
-{%- for server in backend.servers %}
-    server {{ server.name }} {{ server.address }}:{{ server.port }}{% if server.weight %} weight {{ server.weight }}{% endif %}{% if server.check %} check{% endif %}
+backend {{ .backend.name }}
+    balance {{ fallback(.backend.balance, "roundrobin") }}
+{%- for _, server := range .backend.servers %}
+    server {{ server.name }} {{ server.address }}:{{ server.port }}{% if server.weight %} weight {{ server.weight }}{% end %}{% if server.check %} check{% end %}
 
-{%- endfor %}
+{%- end %}
 `,
 	}
 
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
 	if err != nil {
 		b.Fatalf("failed to create engine: %v", err)
 	}
@@ -285,14 +271,14 @@ func benchmarkFilterSortBy(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
 		"sort": `
-{%- set sorted = items | sort_by(["$.priority:desc", "$.name"]) %}
-{%- for item in sorted %}
-{{ item.name }}: {{ item.priority }}
-{%- endfor %}
+{%- var sorted = sort_by(.items, []string{"$.priority:desc", "$.name"}) %}
+{%- for _, item := range sorted %}
+{{ item.(map[string]any)["name"] }}: {{ item.(map[string]any)["priority"] }}
+{%- end %}
 `,
 	}
 
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
 	if err != nil {
 		b.Fatalf("failed to create engine: %v", err)
 	}
@@ -320,134 +306,18 @@ func benchmarkFilterSortBy(b *testing.B) {
 	benchResultString = r
 }
 
-// benchmarkFilterGroupBy benchmarks the group_by filter.
-func benchmarkFilterGroupBy(b *testing.B) {
-	b.Helper()
-	templates := map[string]string{
-		"group": `
-{%- set grouped = items | group_by("$.category") %}
-{%- if "A" in grouped %}Category A: {{ grouped["A"] | length }} items{% endif %}
-{%- if "B" in grouped %}
-Category B: {{ grouped["B"] | length }} items{% endif %}
-{%- if "C" in grouped %}
-Category C: {{ grouped["C"] | length }} items{% endif %}
-`,
-	}
-
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
-	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
-	}
-
-	ctx := map[string]interface{}{
-		"items": []map[string]interface{}{
-			{"name": "item1", "category": "A"},
-			{"name": "item2", "category": "B"},
-			{"name": "item3", "category": "A"},
-			{"name": "item4", "category": "C"},
-			{"name": "item5", "category": "B"},
-			{"name": "item6", "category": "A"},
-			{"name": "item7", "category": "C"},
-			{"name": "item8", "category": "B"},
-		},
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	var r string
-	for i := 0; i < b.N; i++ {
-		r, _ = engine.Render("group", ctx)
-	}
-	benchResultString = r
-}
-
-// benchmarkFilterExtract benchmarks the extract filter.
-func benchmarkFilterExtract(b *testing.B) {
-	b.Helper()
-	templates := map[string]string{
-		"extract": `
-{%- set names = items | extract("$.metadata.name") %}
-{%- for name in names %}
-{{ name }}
-{%- endfor %}
-`,
-	}
-
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
-	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
-	}
-
-	ctx := map[string]interface{}{
-		"items": []map[string]interface{}{
-			{"metadata": map[string]interface{}{"name": "resource1", "namespace": "default"}},
-			{"metadata": map[string]interface{}{"name": "resource2", "namespace": "kube-system"}},
-			{"metadata": map[string]interface{}{"name": "resource3", "namespace": "default"}},
-			{"metadata": map[string]interface{}{"name": "resource4", "namespace": "production"}},
-			{"metadata": map[string]interface{}{"name": "resource5", "namespace": "default"}},
-		},
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	var r string
-	for i := 0; i < b.N; i++ {
-		r, _ = engine.Render("extract", ctx)
-	}
-	benchResultString = r
-}
-
-// benchmarkFilterTransform benchmarks the transform filter.
-func benchmarkFilterTransform(b *testing.B) {
-	b.Helper()
-	templates := map[string]string{
-		"transform": `
-{%- set transformed = items | transform("{ name: $.metadata.name, ns: $.metadata.namespace }") %}
-{%- for item in transformed %}
-{{ item.name }} in {{ item.ns }}
-{%- endfor %}
-`,
-	}
-
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
-	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
-	}
-
-	ctx := map[string]interface{}{
-		"items": []map[string]interface{}{
-			{"metadata": map[string]interface{}{"name": "resource1", "namespace": "default"}},
-			{"metadata": map[string]interface{}{"name": "resource2", "namespace": "kube-system"}},
-			{"metadata": map[string]interface{}{"name": "resource3", "namespace": "default"}},
-			{"metadata": map[string]interface{}{"name": "resource4", "namespace": "production"}},
-			{"metadata": map[string]interface{}{"name": "resource5", "namespace": "default"}},
-		},
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	var r string
-	for i := 0; i < b.N; i++ {
-		r, _ = engine.Render("transform", ctx)
-	}
-	benchResultString = r
-}
-
 // benchmarkRenderScale benchmarks rendering with different data sizes.
 func benchmarkRenderScale(b *testing.B, itemCount int) {
 	b.Helper()
 	templates := map[string]string{
 		"scale": `
-{%- for server in servers %}
-server {{ server.name }} {{ server.address }}:{{ server.port }} check
-{%- endfor %}
+{%- for _, server := range .servers %}
+server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address"] }}:{{ server.(map[string]any)["port"] }} check
+{%- end %}
 `,
 	}
 
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
 	if err != nil {
 		b.Fatalf("failed to create engine: %v", err)
 	}
@@ -480,16 +350,16 @@ server {{ server.name }} {{ server.address }}:{{ server.port }} check
 func benchmarkCompileSmall(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
-		"small": "Hello {{ name }}!",
+		"small": "Hello {{ .name }}!",
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	var engine *TemplateEngine
+	var engine Engine
 	var err error
 	for i := 0; i < b.N; i++ {
-		engine, err = New(EngineTypeGonja, templates, nil, nil, nil)
+		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
 			b.Fatalf("failed to create engine: %v", err)
 		}
@@ -503,21 +373,21 @@ func benchmarkCompileMedium(b *testing.B) {
 	b.Helper()
 	templates := map[string]string{
 		"medium": `
-{%- for server in servers %}
-server {{ server.name }} {{ server.address }}:{{ server.port }}
-{%- if server.weight %} weight {{ server.weight }}{% endif %}
-{%- if server.check %} check{% endif %}
-{%- endfor %}
+{%- for _, server := range .servers %}
+server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address"] }}:{{ server.(map[string]any)["port"] }}
+{%- if server.(map[string]any)["weight"] %} weight {{ server.(map[string]any)["weight"] }}{% end %}
+{%- if server.(map[string]any)["check"] %} check{% end %}
+{%- end %}
 `,
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	var engine *TemplateEngine
+	var engine Engine
 	var err error
 	for i := 0; i < b.N; i++ {
-		engine, err = New(EngineTypeGonja, templates, nil, nil, nil)
+		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
 			b.Fatalf("failed to create engine: %v", err)
 		}
@@ -533,42 +403,42 @@ func benchmarkCompileLarge(b *testing.B) {
 		"main": `
 {%- include "globals" %}
 {%- include "defaults" %}
-{%- for frontend in frontends %}
+{%- for _, frontend := range .frontends %}
 {%- include "frontend" %}
-{%- endfor %}
+{%- end %}
 `,
 		"globals": `
 global
-    maxconn {{ global.maxconn | default(4096) }}
+    maxconn {{ fallback(.global.maxconn, 4096) }}
     log stdout format raw local0
 `,
 		"defaults": `
 defaults
     mode http
-    timeout connect {{ defaults.connect_timeout | default("5s") }}
-    timeout client {{ defaults.client_timeout | default("50s") }}
-    timeout server {{ defaults.server_timeout | default("50s") }}
+    timeout connect {{ fallback(.defaults.connect_timeout, "5s") }}
+    timeout client {{ fallback(.defaults.client_timeout, "50s") }}
+    timeout server {{ fallback(.defaults.server_timeout, "50s") }}
 `,
 		"frontend": `
-frontend {{ frontend.name }}
-    bind *:{{ frontend.port }}
-{%- for acl in frontend.acls %}
+frontend {{ .frontend.name }}
+    bind *:{{ .frontend.port }}
+{%- for _, acl := range .frontend.acls %}
     acl {{ acl.name }} {{ acl.condition }}
-{%- endfor %}
-{%- for rule in frontend.rules %}
+{%- end %}
+{%- for _, rule := range .frontend.rules %}
     use_backend {{ rule.backend }} if {{ rule.condition }}
-{%- endfor %}
-    default_backend {{ frontend.default_backend }}
+{%- end %}
+    default_backend {{ .frontend.default_backend }}
 `,
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	var engine *TemplateEngine
+	var engine Engine
 	var err error
 	for i := 0; i < b.N; i++ {
-		engine, err = New(EngineTypeGonja, templates, nil, nil, nil)
+		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
 			b.Fatalf("failed to create engine: %v", err)
 		}

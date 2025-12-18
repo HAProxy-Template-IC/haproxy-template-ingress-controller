@@ -103,7 +103,7 @@ func fixtureToString(v interface{}) (string, error) {
 	}
 }
 
-// createHTTPStoreFromFixtures creates an HTTPStore pre-populated with fixture content.
+// CreateHTTPStoreFromFixtures creates an HTTPStore pre-populated with fixture content.
 //
 // Parameters:
 //   - fixtures: HTTP fixtures from test definition
@@ -111,7 +111,7 @@ func fixtureToString(v interface{}) (string, error) {
 //
 // Returns:
 //   - HTTPStore with fixtures loaded as accepted content
-func createHTTPStoreFromFixtures(fixtures []config.HTTPResourceFixture, logger *slog.Logger) *httpstore.HTTPStore {
+func CreateHTTPStoreFromFixtures(fixtures []config.HTTPResourceFixture, logger *slog.Logger) *httpstore.HTTPStore {
 	store := httpstore.New(logger, 0) // 0 = no eviction for test fixtures
 
 	for _, fixture := range fixtures {
@@ -124,7 +124,7 @@ func createHTTPStoreFromFixtures(fixtures []config.HTTPResourceFixture, logger *
 	return store
 }
 
-// mergeHTTPFixtures merges global and test-specific HTTP fixtures.
+// MergeHTTPFixtures merges global and test-specific HTTP fixtures.
 //
 // Test-specific fixtures override global fixtures for the same URL.
 //
@@ -134,7 +134,7 @@ func createHTTPStoreFromFixtures(fixtures []config.HTTPResourceFixture, logger *
 //
 // Returns:
 //   - Merged HTTP fixtures list
-func mergeHTTPFixtures(globalFixtures, testFixtures []config.HTTPResourceFixture) []config.HTTPResourceFixture {
+func MergeHTTPFixtures(globalFixtures, testFixtures []config.HTTPResourceFixture) []config.HTTPResourceFixture {
 	// Use map to deduplicate by URL (test fixtures override global)
 	fixtureMap := make(map[string]config.HTTPResourceFixture)
 

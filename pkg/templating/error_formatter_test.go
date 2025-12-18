@@ -240,7 +240,7 @@ func TestGenerateHints(t *testing.T) {
 			errorStr: "something broke",
 			wantContains: []string{
 				"Check your template syntax",
-				"Jinja2",
+				"Scriggo",
 			},
 		},
 	}

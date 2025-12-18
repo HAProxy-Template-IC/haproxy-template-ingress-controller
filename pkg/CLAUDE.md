@@ -39,7 +39,7 @@ pkg/
 **pkg/templating/**
 
 - Template compilation and rendering
-- Depends on: gonja, standard library
+- Depends on: Scriggo, standard library
 - Imported by: controller package
 
 **pkg/k8s/**
@@ -229,9 +229,9 @@ Test pure components in isolation:
 package templating
 
 func TestEngine_Render(t *testing.T) {
-    engine, _ := New(EngineTypeGonja, map[string]string{
+    engine, _ := New(EngineTypeScriggo, map[string]string{
         "test": "Hello {{ name }}",
-    })
+    }, nil, nil, nil)
 
     output, err := engine.Render("test", map[string]interface{}{
         "name": "World",

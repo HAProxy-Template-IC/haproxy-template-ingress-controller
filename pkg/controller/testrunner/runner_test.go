@@ -262,7 +262,7 @@ func TestRunner_RunTests(t *testing.T) {
 			templates := map[string]string{
 				"haproxy.cfg": tt.config.HAProxyConfig.Template,
 			}
-			engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+			engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 			require.NoError(t, err)
 
 			// Convert CRD spec to internal config format
@@ -310,16 +310,21 @@ func TestRunner_RunTests(t *testing.T) {
 func TestRunner_RunTests_WithFixtures(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	// Test with fixtures that are used in template
+	// Test with fixtures that are used in template (Scriggo syntax with direct method calls)
 	config := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplatingSettings: v1alpha1.TemplatingSettings{
+			Engine: "scriggo",
+		},
 		HAProxyConfig: v1alpha1.HAProxyConfig{
 			Template: `global
   maxconn 1000
 
-{%- for svc in resources.services.List() %}
-backend {{ svc.metadata.namespace }}-{{ svc.metadata.name }}
-  server {{ svc.metadata.name }} {{ svc.spec.clusterIP }}:80
-{%- endfor %}
+{% for _, svc := range resources.services.List() -%}
+{% var svcMeta = svc.(map[string]any)["metadata"].(map[string]any) -%}
+{% var svcSpec = svc.(map[string]any)["spec"].(map[string]any) -%}
+backend {{ svcMeta["namespace"] }}-{{ svcMeta["name"] }}
+  server {{ svcMeta["name"] }} {{ svcSpec["clusterIP"] }}:80
+{% end %}
 `,
 		},
 		WatchedResources: map[string]v1alpha1.WatchedResource{
@@ -366,7 +371,7 @@ backend {{ svc.metadata.namespace }}-{{ svc.metadata.name }}
 	templates := map[string]string{
 		"haproxy.cfg": config.HAProxyConfig.Template,
 	}
-	engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Convert CRD spec to internal config format
@@ -403,11 +408,14 @@ backend {{ svc.metadata.namespace }}-{{ svc.metadata.name }}
 func TestRunner_RenderError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	// Test with invalid template that causes rendering error
+	// Test with template that causes rendering error (calls fail())
 	config := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplatingSettings: v1alpha1.TemplatingSettings{
+			Engine: "scriggo",
+		},
 		HAProxyConfig: v1alpha1.HAProxyConfig{
-			// Use undefined filter to cause rendering error
-			Template: "{{ resources | undefined_filter }}",
+			// Use fail() to cause rendering error
+			Template: `{{ fail("intentional error") }}`,
 		},
 		WatchedResources: map[string]v1alpha1.WatchedResource{
 			"services": {
@@ -436,7 +444,7 @@ func TestRunner_RenderError(t *testing.T) {
 	templates := map[string]string{
 		"haproxy.cfg": config.HAProxyConfig.Template,
 	}
-	engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Convert CRD spec to internal config format
@@ -531,6 +539,9 @@ func TestRunner_RunTests_WithHTTPFixtures(t *testing.T) {
 
 	// Test with HTTP fixtures used in template
 	config := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplatingSettings: v1alpha1.TemplatingSettings{
+			Engine: "scriggo",
+		},
 		HAProxyConfig: v1alpha1.HAProxyConfig{
 			Template: `global
   maxconn 1000
@@ -538,13 +549,15 @@ func TestRunner_RunTests_WithHTTPFixtures(t *testing.T) {
 		},
 		Maps: map[string]v1alpha1.MapFile{
 			"blocklist.map": {
-				Template: `{%- set blocklist = http.Fetch("http://blocklist.example.com/list.txt") -%}
-{%- for line in blocklist.split("\n") -%}
-{%- set value = line | trim -%}
+				Template: `{%- var blocklist, err = http.Fetch("http://blocklist.example.com/list.txt") -%}
+{%- if err != nil %}{{ err }}{% end -%}
+{%- var blocklistStr = blocklist.(string) -%}
+{%- for _, line := range split(blocklistStr, "\n") -%}
+{%- var value = trim(line, " \t\n\r") -%}
 {%- if value != "" -%}
 {{ value }} 1
-{% endif -%}
-{%- endfor %}`,
+{% end -%}
+{%- end %}`,
 			},
 		},
 		WatchedResources: map[string]v1alpha1.WatchedResource{
@@ -595,7 +608,7 @@ func TestRunner_RunTests_WithHTTPFixtures(t *testing.T) {
 		"haproxy.cfg":   config.HAProxyConfig.Template,
 		"blocklist.map": config.Maps["blocklist.map"].Template,
 	}
-	engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Convert CRD spec to internal config format
@@ -637,8 +650,12 @@ func TestRunner_RunTests_HTTPFixtureMissing(t *testing.T) {
 
 	// Test that missing HTTP fixture causes test failure
 	config := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplatingSettings: v1alpha1.TemplatingSettings{
+			Engine: "scriggo",
+		},
 		HAProxyConfig: v1alpha1.HAProxyConfig{
-			Template: `{%- set content = http.Fetch("http://missing.example.com/data.txt") -%}
+			Template: `{%- var content, err = http.Fetch("http://missing.example.com/data.txt") -%}
+{%- if err != nil %}{{ fail(err.(error).Error()) }}{% end -%}
 global
   maxconn 1000
 `,
@@ -673,7 +690,7 @@ global
 	templates := map[string]string{
 		"haproxy.cfg": config.HAProxyConfig.Template,
 	}
-	engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Convert CRD spec to internal config format

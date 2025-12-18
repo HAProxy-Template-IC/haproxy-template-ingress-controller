@@ -22,55 +22,12 @@ import (
 	"haproxy-template-ic/pkg/core/config"
 )
 
-func TestSortSnippetsByPriority(t *testing.T) {
+func TestSortSnippetNames(t *testing.T) {
 	tests := []struct {
 		name     string
 		snippets map[string]config.TemplateSnippet
 		want     []string
 	}{
-		{
-			name: "sort by priority ascending",
-			snippets: map[string]config.TemplateSnippet{
-				"high":   {Name: "high", Priority: 100},
-				"medium": {Name: "medium", Priority: 500},
-				"low":    {Name: "low", Priority: 900},
-			},
-			want: []string{"high", "medium", "low"},
-		},
-		{
-			name: "same priority sorts alphabetically",
-			snippets: map[string]config.TemplateSnippet{
-				"charlie": {Name: "charlie", Priority: 100},
-				"alpha":   {Name: "alpha", Priority: 100},
-				"bravo":   {Name: "bravo", Priority: 100},
-			},
-			want: []string{"alpha", "bravo", "charlie"},
-		},
-		{
-			name: "zero priority defaults to 500",
-			snippets: map[string]config.TemplateSnippet{
-				"explicit-500": {Name: "explicit-500", Priority: 500},
-				"default":      {Name: "default", Priority: 0},
-				"low":          {Name: "low", Priority: 600},
-				"high":         {Name: "high", Priority: 400},
-			},
-			want: []string{"high", "default", "explicit-500", "low"},
-		},
-		{
-			name: "mixed priority and alphabetical",
-			snippets: map[string]config.TemplateSnippet{
-				"backend-annotation-500-haproxytech-auth":  {Priority: 500},
-				"backend-annotation-100-rate-limit":        {Priority: 100},
-				"top-level-annotation-500-haproxytech-tls": {Priority: 500},
-				"backend-annotation-500-cors":              {Priority: 500},
-			},
-			want: []string{
-				"backend-annotation-100-rate-limit",
-				"backend-annotation-500-cors",
-				"backend-annotation-500-haproxytech-auth",
-				"top-level-annotation-500-haproxytech-tls",
-			},
-		},
 		{
 			name:     "empty snippets",
 			snippets: map[string]config.TemplateSnippet{},
@@ -79,12 +36,12 @@ func TestSortSnippetsByPriority(t *testing.T) {
 		{
 			name: "single snippet",
 			snippets: map[string]config.TemplateSnippet{
-				"only": {Name: "only", Priority: 100},
+				"only": {Name: "only"},
 			},
 			want: []string{"only"},
 		},
 		{
-			name: "all default priority",
+			name: "alphabetical sorting",
 			snippets: map[string]config.TemplateSnippet{
 				"zebra":   {Name: "zebra"},
 				"alpha":   {Name: "alpha"},
@@ -93,32 +50,32 @@ func TestSortSnippetsByPriority(t *testing.T) {
 			want: []string{"alpha", "charlie", "zebra"},
 		},
 		{
-			name: "negative priorities",
+			name: "ordering encoded in names with numbers",
 			snippets: map[string]config.TemplateSnippet{
-				"negative": {Name: "negative", Priority: -100},
-				"zero":     {Name: "zero", Priority: 0}, // 0 defaults to 500
-				"positive": {Name: "positive", Priority: 100},
-			},
-			want: []string{"negative", "positive", "zero"}, // zero has default priority 500
-		},
-		{
-			name: "real-world annotation snippet ordering",
-			snippets: map[string]config.TemplateSnippet{
-				"backend-annotation-500-haproxytech-auth":   {Priority: 500},
-				"backend-annotation-200-rate-limit":         {Priority: 200},
-				"backend-annotation-800-logging":            {Priority: 800},
-				"top-level-annotation-500-haproxytech-auth": {Priority: 500},
-				"top-level-annotation-100-global-config":    {Priority: 100},
-				"backend-annotation-500-cors":               {Priority: 500},
-				"backend-annotation-500-compression":        {Priority: 500},
+				"features-500-ssl":            {},
+				"features-050-initialization": {},
+				"features-150-crtlist":        {},
 			},
 			want: []string{
-				"top-level-annotation-100-global-config",
+				"features-050-initialization",
+				"features-150-crtlist",
+				"features-500-ssl",
+			},
+		},
+		{
+			name: "real-world snippet ordering with priority-encoded names",
+			snippets: map[string]config.TemplateSnippet{
+				"backend-annotation-500-haproxytech-auth": {},
+				"backend-annotation-200-rate-limit":       {},
+				"backend-annotation-800-logging":          {},
+				"backend-annotation-100-global-config":    {},
+				"backend-annotation-500-cors":             {},
+			},
+			want: []string{
+				"backend-annotation-100-global-config",
 				"backend-annotation-200-rate-limit",
-				"backend-annotation-500-compression",
 				"backend-annotation-500-cors",
 				"backend-annotation-500-haproxytech-auth",
-				"top-level-annotation-500-haproxytech-auth",
 				"backend-annotation-800-logging",
 			},
 		},
@@ -126,7 +83,7 @@ func TestSortSnippetsByPriority(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sortSnippetsByPriority(tt.snippets)
+			got := sortSnippetNames(tt.snippets)
 			assert.Equal(t, tt.want, got)
 		})
 	}

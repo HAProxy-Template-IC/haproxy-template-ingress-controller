@@ -361,6 +361,125 @@ func TestFormatResults_VerboseWithSmallTarget(t *testing.T) {
 	assert.NotContains(t, output, "Hint: Use --dump-rendered")
 }
 
+func TestFormatMultilineError(t *testing.T) {
+	tests := []struct {
+		name     string
+		errorMsg string
+		indent   string
+		expected string
+	}{
+		{
+			name:     "single line error",
+			errorMsg: "simple error message",
+			indent:   "    ",
+			expected: "simple error message",
+		},
+		{
+			name:     "multi-line error with stack trace",
+			errorMsg: "failed to render: interface conversion\n\nscriggo goroutine 1 [running]:\nmain.BackendServers()\n        util-backend-servers:???",
+			indent:   "           ",
+			expected: "failed to render: interface conversion\n\n           scriggo goroutine 1 [running]:\n           main.BackendServers()\n                   util-backend-servers:???",
+		},
+		{
+			name:     "multi-line error with empty lines",
+			errorMsg: "error line 1\n\nerror line 3",
+			indent:   "    ",
+			expected: "error line 1\n\n    error line 3",
+		},
+		{
+			name:     "error with trailing newline",
+			errorMsg: "error message\n",
+			indent:   "    ",
+			expected: "error message\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatMultilineError(tt.errorMsg, tt.indent)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFormatResults_MultilineRenderError(t *testing.T) {
+	// Test multi-line render error formatting
+	results := &TestResults{
+		TotalTests:  1,
+		FailedTests: 1,
+		Duration:    100 * time.Millisecond,
+		TestResults: []TestResult{
+			{
+				TestName:    "test-scriggo-error",
+				Description: "Test with multi-line Scriggo error",
+				Passed:      false,
+				Duration:    100 * time.Millisecond,
+				RenderError: "failed to render haproxy.cfg: interface conversion\n\nscriggo goroutine 1 [running]:\nmain.BackendServers()\n        util-backend-servers:???",
+			},
+		},
+	}
+
+	output, err := FormatResults(results, OutputOptions{Format: OutputFormatSummary})
+	require.NoError(t, err)
+
+	// Verify the error message is properly indented
+	assert.Contains(t, output, "✗ Template rendering failed")
+	assert.Contains(t, output, "    Error: failed to render haproxy.cfg: interface conversion")
+	assert.Contains(t, output, "           scriggo goroutine 1 [running]:")
+	assert.Contains(t, output, "           main.BackendServers()")
+	assert.Contains(t, output, "                   util-backend-servers:???")
+
+	// Stack trace lines should NOT appear at the beginning of a line (column 0)
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "scriggo goroutine") {
+			// Should be indented with 11 spaces
+			assert.True(t, strings.HasPrefix(line, "           "), "Stack trace line should be indented")
+		}
+	}
+}
+
+func TestFormatResults_MultilineAssertionError(t *testing.T) {
+	// Test multi-line assertion error formatting
+	results := &TestResults{
+		TotalTests:  1,
+		FailedTests: 1,
+		Duration:    100 * time.Millisecond,
+		TestResults: []TestResult{
+			{
+				TestName: "test-assertion-error",
+				Passed:   false,
+				Duration: 100 * time.Millisecond,
+				Assertions: []AssertionResult{
+					{
+						Type:        "contains",
+						Description: "Pattern check",
+						Passed:      false,
+						Error:       "pattern not found\nDetails: line 1\nDetails: line 2",
+					},
+				},
+			},
+		},
+	}
+
+	output, err := FormatResults(results, OutputOptions{Format: OutputFormatSummary})
+	require.NoError(t, err)
+
+	// Verify the error message is properly indented
+	assert.Contains(t, output, "    Error: pattern not found")
+	assert.Contains(t, output, "           Details: line 1")
+	assert.Contains(t, output, "           Details: line 2")
+
+	// Multi-line error details should NOT appear at column 0
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "Details:") {
+			// Should be indented with 11 spaces
+			assert.True(t, strings.HasPrefix(line, "           "), "Error detail line should be indented")
+		}
+	}
+}
+
 func TestFormatResults_MultilinePreview(t *testing.T) {
 	results := &TestResults{
 		TotalTests:  1,

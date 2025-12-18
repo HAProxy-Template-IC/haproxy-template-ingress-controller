@@ -40,7 +40,7 @@ The design documentation is organized into focused documents:
 The controller provides these capabilities:
 
 **Template-Driven Configuration**
-Generate HAProxy configurations using Jinja2-like templates with access to any Kubernetes resources you choose to watch. Templates give you complete control over the HAProxy configuration without annotation limitations.
+Generate HAProxy configurations using Scriggo templates with access to any Kubernetes resources you choose to watch. Templates give you complete control over the HAProxy configuration without annotation limitations.
 
 **Dynamic Resource Watching**
 Monitor any Kubernetes resource types (Ingress, Service, ConfigMap, custom CRDs) you specify. Resources are indexed using JSONPath expressions for fast template lookups. You define which resources to watch and how to index them.

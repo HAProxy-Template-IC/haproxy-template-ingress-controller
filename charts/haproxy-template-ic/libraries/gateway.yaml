@@ -55,8 +55,7 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
 
 templateSnippets:
-  features-gateway-ssl-passthrough:
-    priority: 100
+  features-100-gateway-ssl-passthrough:
     template: |
       {#-
         Gateway API SSL Passthrough Feature Registration
@@ -65,20 +64,28 @@ templateSnippets:
         and registers detected backends with the global feature registry.
       -#}
       {#- Get cached SSL passthrough analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-ssl-passthrough" %}
+      {{ render "util-gateway-ssl-passthrough" }}
 
       {#- Register backends with global feature registry (only if SSL library is loaded) #}
-      {%- if global_features.ssl_passthrough_backends is defined %}
-        {%- set global_features.ssl_passthrough_backends =
-            global_features.ssl_passthrough_backends + shared.gateway_ssl_passthrough.backends %}
-      {%- endif %}
+      {%- if shared.globalFeatures != nil %}
+        {%- var globalFeatures map[string]any = shared.globalFeatures %}
+        {%- var sslBackends = globalFeatures | dig("sslPassthroughBackends") %}
+        {%- if sslBackends != nil %}
+          {%- var gwPassthrough map[string]any = shared.gateway_ssl_passthrough %}
+          {%- var gatewayBackends []any = gwPassthrough["backends"] %}
+          {%- for _, backend := range gatewayBackends %}
+            {%- var sslPassthroughBackends []any = globalFeatures["sslPassthroughBackends"] %}
+            {%- globalFeatures["sslPassthroughBackends"] = append(sslPassthroughBackends, backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
 
   # Register Gateway TLS Terminate mode certificates with SSL infrastructure
-  features-gateway-tls:
-    priority: 100
+  features-100-gateway-tls:
     template: |
       {#- Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
-      {#- Dynamically generates certificate files using file_registry.Register() #}
+      {#- Dynamically generates certificate files using fileRegistry.Register() #}
+      {%- var globalFeatures map[string]any = shared.globalFeatures %}
       {#- Gateway API TLS configuration structure:
           Gateway.spec.listeners[]:
             - name: https
@@ -92,54 +99,76 @@ templateSnippets:
                     name: example-tls
                     namespace: default  # optional, defaults to Gateway namespace
       #}
-      {%- set ns = namespace(registered_secrets=[]) %}
-      {%- for gateway in resources.gateways.List() %}
-        {%- if gateway.spec and gateway.spec.listeners %}
-          {%- for listener in gateway.spec.listeners %}
-            {#- Only process listeners with TLS Terminate mode #}
-            {%- if listener.tls and listener.tls.mode == "Terminate" %}
-              {%- if listener.tls.certificateRefs %}
-                {%- for certRef in listener.tls.certificateRefs %}
-                  {#- Determine secret namespace (defaults to Gateway namespace) #}
-                  {%- set cert_namespace = certRef.namespace | default(gateway.metadata.namespace) %}
-                  {%- set cert_name = certRef.name %}
-                  {#- Only process Secret references (skip other kinds) #}
-                  {%- if not certRef.kind or certRef.kind == "Secret" %}
-                    {#- Unique key for this secret #}
-                    {%- set secret_key = cert_namespace ~ "/" ~ cert_name %}
-                    {%- if secret_key not in ns.registered_secrets %}
-                      {%- set ns.registered_secrets = ns.registered_secrets.append(secret_key) %}
+      {%- var registeredSecrets = []any{} %}
+      {%- for _, gateway := range resources.gateways.List() %}
+        {%%
+          var gwSpec = gateway | dig("spec")
+          if gwSpec == nil {
+            continue
+          }
+        %%}
+        {%- for _, listener := range gwSpec | dig("listeners") | toSlice() %}
+          {%%
+            // Only process listeners with TLS Terminate mode
+            var listenerTls = listener | dig("tls")
+            var tlsMode = listenerTls | dig("mode") | fallback("")
+            if listenerTls == nil || tlsMode != "Terminate" {
+              continue
+            }
+          %%}
+          {%- for _, certRef := range listenerTls | dig("certificateRefs") | toSlice() %}
+            {%%
+              // Determine secret namespace (defaults to Gateway namespace)
+              var gatewayNs = gateway | dig("metadata", "namespace") | fallback("")
+              var certNamespace = certRef | dig("namespace") | fallback(gatewayNs)
+              var certName = certRef | dig("name") | fallback("")
 
-                      {#- Fetch Secret and extract cert+key #}
-                      {%- set secret = resources.secrets.GetSingle(cert_namespace, cert_name) %}
-                      {%- if secret and secret.data and secret.data["tls.crt"] and secret.data["tls.key"] %}
-                        {#- Combine cert and key into single PEM (HAProxy format) #}
-                        {%- set combined_pem = secret.data["tls.crt"] | b64decode ~ "\n" ~ secret.data["tls.key"] | b64decode %}
+              // Only process Secret references (skip other kinds)
+              var certKind = certRef | dig("kind") | fallback("")
+              if certKind != "" && certKind != "Secret" {
+                continue
+              }
 
-                        {#- Register certificate file dynamically using file_registry #}
-                        {%- set cert_filename = cert_namespace ~ "_" ~ cert_name ~ ".pem" %}
-                        {%- set _ = file_registry.Register("cert", cert_filename, combined_pem) %}
+              // Unique key for this secret
+              var secretKey = certNamespace + "/" + certName
+              if !first_seen("gateway_tls_certs", secretKey) {
+                continue
+              }
+              registeredSecrets = append(registeredSecrets, secretKey)
 
-                        {#- Register with SSL infrastructure for crt-list generation #}
-                        {%- set sni_patterns = [] %}
-                        {%- if listener.hostname %}
-                          {%- set sni_patterns = sni_patterns.append(listener.hostname) %}
-                        {%- endif %}
-                        {%- set tls_cert = {
-                          "secret_namespace": cert_namespace,
-                          "secret_name": cert_name,
-                          "sni_patterns": sni_patterns
-                        } %}
-                        {%- set global_features.tls_certificates = global_features.tls_certificates.append(tls_cert) %}
-                      {%- endif %}
-                    {%- endif %}
-                  {%- endif %}
-                {%- endfor %}
-              {%- endif %}
-            {%- endif %}
-          {%- endfor %}
-        {%- endif %}
-      {%- endfor %}
+              // Fetch Secret and extract cert+key
+              var secret = resources.secrets.GetSingle(certNamespace, certName)
+              var secretData = secret | dig("data")
+              var tlsCrt = secretData | dig("tls.crt") | fallback("")
+              var tlsKey = secretData | dig("tls.key") | fallback("")
+              if secret == nil || secretData == nil || tlsCrt == "" || tlsKey == "" {
+                continue
+              }
+
+              // Combine cert and key into single PEM (HAProxy format)
+              var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
+
+              // Register certificate file dynamically using fileRegistry
+              var certFilename = certNamespace + "_" + certName + ".pem"
+              fileRegistry.Register("cert", certFilename, combinedPem)
+
+              // Register with SSL infrastructure for crt-list generation
+              var sniPatterns = []any{}
+              var listenerHostname = listener | dig("hostname") | fallback("")
+              if listenerHostname != "" {
+                sniPatterns = append(sniPatterns, listenerHostname)
+              }
+              var tlsCert = map[string]any{
+                "secret_namespace": certNamespace,
+                "secret_name": certName,
+                "sni_patterns": sniPatterns,
+              }
+              var tlsCerts []any = globalFeatures["tlsCertificates"]
+              globalFeatures["tlsCertificates"] = append(tlsCerts, tlsCert)
+            %%}
+          {%- end %}
+        {%- end %}
+      {%- end %}
 
   # Utility snippet: Gateway Route Analysis Cache
   # Provides cached analysis of HTTPRoute/GRPCRoute resources
@@ -150,28 +179,32 @@ templateSnippets:
 
         Provides cached analysis of HTTPRoute/GRPCRoute resources for efficient
         template rendering. The analysis runs only ONCE per render, even when
-        this snippet is included from multiple locations.
+        this snippet is rendered from multiple locations.
 
-        After including this snippet, the following variable is available:
-          shared.gateway_analysis - namespace containing:
-            .sorted_routes - list of routes sorted by specificity (most specific first)
-            .path_groups   - dict of routes grouped by host+path for conflict detection
-            .all_routes    - flat list of all route objects
+        After rendering this snippet, the following variable is available:
+          shared["gatewayAnalysis"] - map containing:
+            ["sortedRoutes"] - list of routes sorted by specificity (most specific first)
+            ["pathGroups"]   - dict of routes grouped by host+path for conflict detection
+            ["allRoutes"]    - flat list of all route objects
 
         Usage:
-          {%- include "util-gateway-analysis" %}
-          {%- for route in shared.gateway_analysis.sorted_routes %}
+          {{ render "util-gateway-analysis" }}
+          {%- var ga map[string]any = shared["gatewayAnalysis"] %}
+          {%- var sortedRoutes []any = ga["sortedRoutes"] %}
+          {%- for _, route := range sortedRoutes %}
             ... process route ...
-          {%- endfor %}
+          {%- end %}
 
         Note: Uses 'shared' namespace to cache data across template renders
         (haproxy.cfg, map files, etc.) within the same reconciliation.
       -#}
-      {%- compute_once shared.gateway_analysis %}
-        {%- set shared.gateway_analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) %}
-        {%- from "util-analyze-routes" import analyze_routes %}
-        {{- analyze_routes(shared.gateway_analysis, resources) -}}
-      {%- endcompute_once %}
+      {%- import "util-analyze-routes" for AnalyzeRoutes %}
+      {%- if !has_cached("gatewayAnalysis") %}
+        {%- shared["gatewayAnalysis"] = map[string]any{"pathGroups": map[string]any{}, "sortedRoutes": []any{}, "allRoutes": []any{}} %}
+        {%- var ga map[string]any = shared["gatewayAnalysis"] %}
+        {{- AnalyzeRoutes(ga) -}}
+        {%- set_cached("gatewayAnalysis", true) %}
+      {%- end %}
 
   # Utility snippet: Gateway SSL Passthrough Cache
   # Provides cached analysis of HTTPRoutes with SSL passthrough extensions
@@ -181,68 +214,84 @@ templateSnippets:
         Gateway SSL Passthrough Analysis Cache
 
         Scans HTTPRoutes for SSL passthrough extension refs and caches the results.
-        The analysis runs only ONCE per render, even when included from multiple locations.
+        The analysis runs only ONCE per render, even when rendered from multiple locations.
 
-        After including this snippet, the following variable is available:
-          shared.gateway_ssl_passthrough - namespace containing:
-            .backends - list of SSL passthrough backend definitions
-                        Each entry has: name, sni, namespace, route, route_type
+        After rendering this snippet, the following variable is available:
+          shared["gateway_ssl_passthrough"] - map containing:
+            ["backends"] - list of SSL passthrough backend definitions
+                           Each entry has: name, sni, namespace, route, route_type
 
         Usage:
-          {%- include "util-gateway-ssl-passthrough" %}
-          {%- for backend in shared.gateway_ssl_passthrough.backends %}
+          {{ render "util-gateway-ssl-passthrough" }}
+          {%- var gsp map[string]any = shared["gateway_ssl_passthrough"] %}
+          {%- var backends []any = gsp["backends"] %}
+          {%- for _, backend := range backends %}
             ... configure backend ...
-          {%- endfor %}
+          {%- end %}
 
         Note: Uses 'shared' namespace to cache data across template renders
         (haproxy.cfg, map files, etc.) within the same reconciliation.
       -#}
-      {%- compute_once shared.gateway_ssl_passthrough %}
-        {%- set shared.gateway_ssl_passthrough = namespace(backends=[]) %}
+      {%- if !has_cached("gateway_ssl_passthrough") %}
+        {%- shared["gateway_ssl_passthrough"] = map[string]any{"backends": []any{}} %}
         {#- Scan HTTPRoutes for SSL passthrough extension refs #}
-        {%- set ns = namespace(seen="") %}
-        {%- for httproute in resources.httproutes.List() %}
-          {%- set has_ssl_passthrough = false %}
-          {#- Check if any rule has SSL passthrough filter #}
-          {%- for rule in (httproute.spec.rules | default([])) %}
-            {%- for filter in (rule.filters | default([])) %}
-              {%- if filter.type == "ExtensionRef" %}
-                {%- if filter.extensionRef.kind == "SSLPassthrough" %}
-                  {%- set has_ssl_passthrough = true %}
-                {%- elif filter.extensionRef.name and (filter.extensionRef.name | lower | regex_search("ssl.*passthrough")) %}
-                  {%- set has_ssl_passthrough = true %}
-                {%- endif %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endfor %}
+        {%- for _, httproute := range resources.httproutes.List() %}
+          {%%
+            var hasSslPassthrough = false
+            // Check if any rule has SSL passthrough filter
+            for _, rule := range httproute | dig("spec", "rules") | toSlice() {
+              for _, filter := range rule | dig("filters") | toSlice() {
+                var filterType = filter | dig("type") | fallback("")
+                if filterType == "ExtensionRef" {
+                  var extKind = filter | dig("extensionRef", "kind") | fallback("")
+                  var extName = filter | dig("extensionRef", "name") | fallback("")
+                  if extKind == "SSLPassthrough" {
+                    hasSslPassthrough = true
+                  } else if extName != "" && (extName | toLower() | regex_search("ssl.*passthrough")) {
+                    hasSslPassthrough = true
+                  }
+                }
+              }
+            }
 
-          {%- if has_ssl_passthrough %}
-            {#- Register each hostname as a passthrough backend #}
-            {%- for hostname in (httproute.spec.hostnames | default([])) %}
-              {%- if ("|" ~ hostname ~ "|") not in ns.seen %}
-                {%- set ns.seen = ns.seen ~ "|" ~ hostname ~ "|" %}
-                {%- set backend_name = "ssl-passthrough-" ~ httproute.metadata.namespace ~ "-" ~ httproute.metadata.name %}
-                {%- set shared.gateway_ssl_passthrough.backends =
-                    shared.gateway_ssl_passthrough.backends.append({
-                      'name': backend_name,
-                      'sni': hostname,
-                      'namespace': httproute.metadata.namespace,
-                      'route': httproute.metadata.name,
-                      'route_type': 'httproute'
-                    }) %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endfor %}
+            if !hasSslPassthrough {
+              continue
+            }
+
+            // Register each hostname as a passthrough backend
+            var routeNs = httproute | dig("metadata", "namespace") | fallback("")
+            var routeName = httproute | dig("metadata", "name") | fallback("")
+          %%}
+          {%- for _, hostname := range httproute | dig("spec", "hostnames") | toSlice() %}
+            {%%
+              var hostnameStr = hostname
+              if !first_seen("gateway_ssl_passthrough_hosts", hostnameStr) {
+                continue
+              }
+              var backendName = "ssl-passthrough-" + routeNs + "-" + routeName
+              var backendEntry = map[string]any{
+                "name": backendName,
+                "sni": hostnameStr,
+                "namespace": routeNs,
+                "route": routeName,
+                "route_type": "httproute",
+              }
+              var gsp map[string]any = shared["gateway_ssl_passthrough"]
+              var gspBackends []any = gsp["backends"]
+              gsp["backends"] = append(gspBackends, backendEntry)
+            %%}
+          {%- end %}
+        {%- end %}
 
         {#- TODO: Add TLSRoute support when available #}
         {#- TLSRoute is the natural Gateway API resource for SSL passthrough #}
-      {%- endcompute_once %}
+        {%- set_cached("gateway_ssl_passthrough", true) %}
+      {%- end %}
 
   # Route analysis system - collects and analyzes all routes for conflicts
   util-analyze-routes:
     template: |
-      {%- macro analyze_routes(result, resources) %}
+      {%- macro AnalyzeRoutes(result map[string]any) %}
         {#-
           Gateway API Conflict Resolution Precedence
 
@@ -259,195 +308,175 @@ templateSnippets:
           The analyze_routes macro:
           - Collects all routes with normalized structure
           - Detects conflicts (same host + path with different matchers)
-          - Builds conflict_group strings for VAR qualifier routing
+          - Builds conflictGroup strings for VAR qualifier routing
           - Sorts routes by precedence order for advanced matcher generation
-          - Modifies result namespace with: all_routes, path_groups, sorted_routes
+          - Modifies result map with: allRoutes, pathGroups, sortedRoutes
         -#}
-        {%- set ns_routes = namespace(all_routes=[]) %}
+        {%- var allRoutes = []any{} %}
 
         {#- Process HTTPRoutes #}
-        {%- for route in resources.httproutes.List() %}
-          {%- for hostname in (route.spec.hostnames | default([""])) %}
-            {%- set rule_counter = namespace(idx=0) %}
-            {%- for rule in route.spec.rules | default([]) %}
-              {%- set matches_list = rule.matches | default([]) %}
-              {%- if matches_list | length == 0 %}
-                {%- set matches_list = [{"path": {"type": "PathPrefix", "value": "/"}}] %}
-              {%- endif %}
+        {%- for _, route := range resources.httproutes.List() %}
+          {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
+          {%- if len(hostnames) == 0 %}
+            {%- hostnames = []any{""} %}
+          {%- end %}
+          {%- for _, hostname := range hostnames %}
+            {%- var ruleIdx = 0 %}
+            {%- for _, rule := range route | dig("spec", "rules") | toSlice() %}
+              {%- var matchesList = rule | dig("matches") | toSlice() %}
+              {%- if len(matchesList) == 0 %}
+                {%- matchesList = []any{map[string]any{"path": map[string]any{"type": "PathPrefix", "value": "/"}}} %}
+              {%- end %}
 
-              {%- for match in matches_list %}
-                {%- set path_value = match.path | default({"type": "PathPrefix", "value": "/"}) %}
-                {%- set route_info = {
+              {%- for _, match := range matchesList %}
+                {%- var pathValue = match | dig("path") | coalesce(map[string]any{"type": "PathPrefix", "value": "/"}) %}
+                {%- var filtersList = rule | dig("filters") | toSlice() | coalesce([]any{}) %}
+                {%- var pathKey = hostname + "|" + (pathValue["type"]) + "|" + (pathValue["value"]) %}
+                {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
                   "rule": rule,
-                  "rule_idx": rule_counter.idx,
+                  "ruleIdx": ruleIdx,
                   "match": match,
-                  "path": path_value,
-                  "filters": rule.filters | default([]),
+                  "path": pathValue,
+                  "filters": filtersList,
                   "is_grpc": false,
-                  "resource_type": "httproute"
+                  "resource_type": "httproute",
+                  "pathKey": pathKey,
                 } %}
-                {%- set ns_routes.all_routes = ns_routes.all_routes.append(route_info) %}
-              {%- endfor %}
+                {%- allRoutes = append(allRoutes, routeInfo) %}
+              {%- end %}
               {#- Increment rule counter after processing all matches for this rule #}
-              {%- set rule_counter.idx = rule_counter.idx + 1 %}
-            {%- endfor %}
-          {%- endfor %}
-        {%- endfor %}
+              {%- ruleIdx = ruleIdx + 1 %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
 
         {#- Process GRPCRoutes similarly #}
-        {%- for route in resources.grpcroutes.List() %}
-          {%- for hostname in (route.spec.hostnames | default([""])) %}
-            {%- set rule_counter = namespace(idx=0) %}
-            {%- for rule in route.spec.rules | default([]) %}
-              {%- set matches_list = rule.matches | default([]) %}
-              {%- if matches_list | length == 0 %}
-                {%- set matches_list = [{"method": {}}] %}
-              {%- endif %}
+        {%- for _, route := range resources.grpcroutes.List() %}
+          {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
+          {%- if len(hostnames) == 0 %}
+            {%- hostnames = []any{""} %}
+          {%- end %}
+          {%- for _, hostname := range hostnames %}
+            {%- var ruleIdx = 0 %}
+            {%- for _, rule := range route | dig("spec", "rules") | toSlice() %}
+              {%- var matchesList = rule | dig("matches") | toSlice() %}
+              {%- if len(matchesList) == 0 %}
+                {%- matchesList = []any{map[string]any{"method": map[string]any{}}} %}
+              {%- end %}
 
-              {%- for match in matches_list %}
-                {%- set route_info = {
+              {%- for _, match := range matchesList %}
+                {%- var filtersList = rule | dig("filters") | toSlice() | coalesce([]any{}) %}
+                {%- var grpcPath = map[string]any{"type": "Exact", "value": "/"} %}
+                {%- var pathKey = hostname + "|" + (grpcPath["type"]) + "|" + (grpcPath["value"]) %}
+                {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
                   "rule": rule,
-                  "rule_idx": rule_counter.idx,
+                  "ruleIdx": ruleIdx,
                   "match": match,
-                  "path": {"type": "Exact", "value": "/"},
-                  "filters": rule.filters | default([]),
+                  "path": grpcPath,
+                  "filters": filtersList,
                   "is_grpc": true,
-                  "resource_type": "grpcroute"
+                  "resource_type": "grpcroute",
+                  "pathKey": pathKey,
                 } %}
-                {%- set ns_routes.all_routes = ns_routes.all_routes.append(route_info) %}
-              {%- endfor %}
+                {%- allRoutes = append(allRoutes, routeInfo) %}
+              {%- end %}
               {#- Increment rule counter after processing all matches for this rule #}
-              {%- set rule_counter.idx = rule_counter.idx + 1 %}
-            {%- endfor %}
-          {%- endfor %}
-        {%- endfor %}
+              {%- ruleIdx = ruleIdx + 1 %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
 
         {#- Group by path key to detect conflicts #}
-        {#- Manual grouping since group_by result may not iterate properly in namespace #}
-        {#- MUST use namespace for mutable state - plain dicts don't persist across iterations! #}
-        {%- set ns_groups = namespace(data={}) %}
-        {%- for route_info in ns_routes.all_routes %}
-          {%- set path_key = route_info.hostname ~ '|' ~ route_info.path.type ~ '|' ~ route_info.path.value %}
-          {%- if path_key not in ns_groups.data %}
-            {%- set ns_groups.data = ns_groups.data.update({path_key: []}) %}
-          {%- endif %}
-          {#- Get list, append with reassignment, update dict with modified list #}
-          {%- set current_list = ns_groups.data[path_key] %}
-          {%- set current_list = current_list.append(route_info) %}
-          {%- set ns_groups.data = ns_groups.data.update({path_key: current_list}) %}
-        {%- endfor %}
+        {%- var pathGroups = group_by(allRoutes, "pathKey") %}
+
         {#- Check for conflicts and mark routes needing VAR qualifier #}
-        {%- for path_key in ns_groups.data.keys() | list | sort %}
-          {%- set routes = ns_groups.data[path_key] %}
-          {#- DEBUG CONFLICT: path_key={{ path_key }} routes_count={{ routes | length }} -#}
+        {%- for _, pathKey := range keys(pathGroups) %}
+          {%- var routes []any = pathGroups[pathKey] %}
           {#- Check if routes in this group have different matchers #}
-          {%- set ns_conflict = namespace(has_conflicts=false) %}
-          {%- if routes | length > 1 %}
-            {#- Build comparison key from match conditions using namespace for mutable state #}
-            {%- set ns_cond_builder = namespace(first_conditions="", route_conditions="") %}
-            {%- set first_match = routes[0].match %}
-            {%- if first_match.method %}
-              {%- set ns_cond_builder.first_conditions = ns_cond_builder.first_conditions ~ "method:" ~ first_match.method %}
-            {%- endif %}
-            {%- set first_headers = first_match.headers | default([]) %}
-            {%- if first_headers | length > 0 %}
-              {%- for idx in range(first_headers | length) %}
-                {%- set header = first_headers[idx] %}
-                {%- set ns_cond_builder.first_conditions = ns_cond_builder.first_conditions ~ ";header:" ~ header.name ~ "=" ~ header.value %}
-              {%- endfor %}
-            {%- endif %}
-            {%- set first_params = first_match.queryParams | default([]) %}
-            {%- if first_params | length > 0 %}
-              {%- for idx in range(first_params | length) %}
-                {%- set param = first_params[idx] %}
-                {%- set ns_cond_builder.first_conditions = ns_cond_builder.first_conditions ~ ";param:" ~ param.name ~ "=" ~ param.value %}
-              {%- endfor %}
-            {%- endif %}
-            {%- set first_conditions = ns_cond_builder.first_conditions %}
+          {%- var hasConflicts = false %}
+          {%- if len(routes) > 1 %}
+            {#- Build comparison key from match conditions #}
+            {%- var firstConditions = "" %}
+            {%- var firstRoute = routes[0] %}
+            {%- var firstMatch = firstRoute["match"] %}
+            {%- var firstMethod = firstMatch["method"] %}
+            {%- if firstMethod != nil %}
+              {%- firstConditions = firstConditions + "method:" + (firstMethod) %}
+            {%- end %}
+            {%- for idx, header := range firstMatch["headers"] | toSlice() %}
+              {%- firstConditions = firstConditions + ";header:" + (header["name"]) + "=" + (header["value"]) %}
+            {%- end %}
+            {%- for idx, param := range firstMatch["queryParams"] | toSlice() %}
+              {%- firstConditions = firstConditions + ";param:" + (param["name"]) + "=" + (param["value"]) %}
+            {%- end %}
 
             {#- Check if any other route has different conditions #}
-            {%- for i in range(1, routes | length) %}
-              {%- set route = routes[i] %}
-              {%- set ns_cond_builder.route_conditions = "" %}
-              {%- set route_match = route.match %}
-              {%- if route_match.method %}
-                {%- set ns_cond_builder.route_conditions = ns_cond_builder.route_conditions ~ "method:" ~ route_match.method %}
-              {%- endif %}
-              {%- set route_headers = route_match.headers | default([]) %}
-              {%- if route_headers | length > 0 %}
-                {%- for idx in range(route_headers | length) %}
-                  {%- set header = route_headers[idx] %}
-                  {%- set ns_cond_builder.route_conditions = ns_cond_builder.route_conditions ~ ";header:" ~ header.name ~ "=" ~ header.value %}
-                {%- endfor %}
-              {%- endif %}
-              {%- set route_params = route_match.queryParams | default([]) %}
-              {%- if route_params | length > 0 %}
-                {%- for idx in range(route_params | length) %}
-                  {%- set param = route_params[idx] %}
-                  {%- set ns_cond_builder.route_conditions = ns_cond_builder.route_conditions ~ ";param:" ~ param.name ~ "=" ~ param.value %}
-                {%- endfor %}
-              {%- endif %}
+            {%- for i := 1; i < len(routes); i++ %}
+              {%- var routeConditions = "" %}
+              {%- var r = routes[i] %}
+              {%- var routeMatch = r["match"] %}
+              {%- var routeMethod = routeMatch["method"] %}
+              {%- if routeMethod != nil %}
+                {%- routeConditions = routeConditions + "method:" + (routeMethod) %}
+              {%- end %}
+              {%- for idx, header := range routeMatch["headers"] | toSlice() %}
+                {%- routeConditions = routeConditions + ";header:" + (header["name"]) + "=" + (header["value"]) %}
+              {%- end %}
+              {%- for idx, param := range routeMatch["queryParams"] | toSlice() %}
+                {%- routeConditions = routeConditions + ";param:" + (param["name"]) + "=" + (param["value"]) %}
+              {%- end %}
 
-              {%- if first_conditions != ns_cond_builder.route_conditions %}
-                {%- set ns_conflict.has_conflicts = true %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
+              {%- if firstConditions != routeConditions %}
+                {%- hasConflicts = true %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
 
-          {#- Rebuild routes list with updated dicts (namespace copy semantics) #}
-          {%- set ns_updated = namespace(routes=[]) %}
-          {%- for route in routes %}
-            {%- set updated_route = route.update({
-              "has_conflicts": ns_conflict.has_conflicts,
-              "path_key": path_key,
-              "route_id": route.route.metadata.namespace ~ "_" ~ route.route.metadata.name ~ "_" ~ route.rule_idx
+          {#- Rebuild routes list with updated dicts #}
+          {%- var updatedRoutes = []any{} %}
+          {%- for _, route := range routes %}
+            {%- var routeObj = route["route"] %}
+            {%- var routeNs = routeObj | dig("metadata", "namespace") | fallback("") %}
+            {%- var routeName = routeObj | dig("metadata", "name") | fallback("") %}
+            {%- var ruleIdxVal = route["ruleIdx"] %}
+            {%- var routeId = routeNs + "_" + routeName + "_" + (ruleIdxVal) %}
+            {%- var updatedRoute = merge(route, map[string]any{
+              "hasConflicts": hasConflicts,
+              "pathKey": pathKey,
+              "routeId": routeId,
             }) %}
-            {%- set ns_updated.routes = ns_updated.routes.append(updated_route) %}
-          {%- endfor %}
+            {%- updatedRoutes = append(updatedRoutes, updatedRoute) %}
+          {%- end %}
 
-          {#- Build conflict_group string #}
-          {#- For conflicts: joined route_ids (e.g., "ns_route1_0__ns_route2_0") #}
-          {#- For single route: just the route_id (e.g., "ns_route1_0") #}
-          {%- set ns_ids = namespace(route_ids=[]) %}
-          {%- for route in ns_updated.routes %}
-            {%- set ns_ids.route_ids = ns_ids.route_ids.append(route.route_id) %}
-          {%- endfor %}
-          {%- set conflict_group = (ns_ids.route_ids | sort) | join("__") %}
-          {#- Add conflict_group to each route #}
-          {%- set ns_final = namespace(routes=[]) %}
-          {%- for route in ns_updated.routes %}
-            {%- set route_with_group = route.update({"conflict_group": conflict_group}) %}
-            {%- set ns_final.routes = ns_final.routes.append(route_with_group) %}
-          {%- endfor %}
-          {%- set ns_updated.routes = ns_final.routes %}
+          {#- Build conflictGroup string #}
+          {%- var routeIds = map_extract(updatedRoutes, "routeId") %}
+          {%- var conflictGroup = join(sort_strings(routeIds), "__") %}
 
-          {#- Update path_groups with modified routes #}
-          {%- set ns_groups.data = ns_groups.data.update({path_key: ns_updated.routes}) %}
-        {%- endfor %}
-        {%- set path_groups = ns_groups.data %}
+          {#- Add conflictGroup to each route #}
+          {%- var finalRoutes = []any{} %}
+          {%- for _, route := range updatedRoutes %}
+            {%- var routeWithGroup = merge(route, map[string]any{"conflictGroup": conflictGroup}) %}
+            {%- finalRoutes = append(finalRoutes, routeWithGroup) %}
+          {%- end %}
 
-        {#- Rebuild all_routes from updated path_groups #}
-        {#- IMPORTANT: Sort path_keys for deterministic iteration order #}
-        {%- set ns_all = namespace(routes=[]) %}
-        {%- for path_key in path_groups.keys() | list | sort %}
-          {%- for route in path_groups[path_key] %}
-            {%- set ns_all.routes = ns_all.routes.append(route) %}
-          {%- endfor %}
-        {%- endfor %}
+          {#- Update pathGroups with modified routes #}
+          {%- pathGroups[pathKey] = finalRoutes %}
+        {%- end %}
 
-        {#- Collect ALL routes for advanced matcher generation #}
-        {#- Every route needs a matcher to set req.gw_rule_id, even routes without #}
-        {#- method/header/query conditions (they get default matcher with just guard conditions) #}
-        {%- set ns_advanced = namespace(routes=[]) %}
-        {%- for route in ns_all.routes %}
-          {%- set ns_advanced.routes = ns_advanced.routes.append(route) %}
-        {%- endfor %}
+        {#- Rebuild allRoutes from updated pathGroups #}
+        {%- var finalAllRoutes = []any{} %}
+        {%- for _, pathKey := range keys(pathGroups) %}
+          {%- var pathRoutes []any = pathGroups[pathKey] %}
+          {%- for _, route := range pathRoutes %}
+            {%- finalAllRoutes = append(finalAllRoutes, route) %}
+          {%- end %}
+        {%- end %}
 
-        {%- set sorted_routes = ns_advanced.routes | sort_by([
+        {%- var sortedRoutes = finalAllRoutes | sort_by([]string{
           "$.path.type",
           "$.path.value | length:desc",
           "$.match.method:exists:desc",
@@ -455,97 +484,100 @@ templateSnippets:
           "$.match.queryParams | length:desc",
           "$.route.metadata.creationTimestamp",
           "$.route.metadata.namespace ~ '/' ~ $.route.metadata.name",
-          "$.rule_idx"
-        ]) %}
+          "$.ruleIdx",
+        }) %}
 
         {#- Pre-compute filter existence flags (optimization: avoids repeated iteration) #}
-        {%- set ns_filters = namespace(
-          has_request_header=false,
-          has_response_header=false,
-          has_redirect=false,
-          has_urlrewrite=false
-        ) %}
-        {%- for route in ns_all.routes %}
-          {%- for filter in route.filters %}
-            {%- if filter.type == "RequestHeaderModifier" %}
-              {%- set ns_filters.has_request_header = true %}
-            {%- elif filter.type == "ResponseHeaderModifier" %}
-              {%- set ns_filters.has_response_header = true %}
-            {%- elif filter.type == "RequestRedirect" %}
-              {%- set ns_filters.has_redirect = true %}
-            {%- elif filter.type == "URLRewrite" %}
-              {%- set ns_filters.has_urlrewrite = true %}
-            {%- endif %}
-          {%- endfor %}
-        {%- endfor %}
+        {%- var hasRequestHeader = false %}
+        {%- var hasResponseHeader = false %}
+        {%- var hasRedirect = false %}
+        {%- var hasUrlrewrite = false %}
+        {%- for _, route := range finalAllRoutes %}
+          {%- var filters []any = route["filters"] %}
+          {%- for _, filter := range filters %}
+            {%- var filterType = filter["type"] %}
+            {%- if filterType == "RequestHeaderModifier" %}
+              {%- hasRequestHeader = true %}
+            {%- else if filterType == "ResponseHeaderModifier" %}
+              {%- hasResponseHeader = true %}
+            {%- else if filterType == "RequestRedirect" %}
+              {%- hasRedirect = true %}
+            {%- else if filterType == "URLRewrite" %}
+              {%- hasUrlrewrite = true %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
 
-        {#- Populate result namespace with analysis data #}
-        {%- set result.path_groups = path_groups %}
-        {%- set result.sorted_routes = sorted_routes %}
-        {%- set result.all_routes = ns_all.routes %}
+        {#- Populate result map with analysis data #}
+        {%- result["pathGroups"] = pathGroups %}
+        {%- result["sortedRoutes"] = sortedRoutes %}
+        {%- result["allRoutes"] = finalAllRoutes %}
         {#- Filter existence flags for optimized filter template rendering #}
-        {%- set result.has_request_header_filter = ns_filters.has_request_header %}
-        {%- set result.has_response_header_filter = ns_filters.has_response_header %}
-        {%- set result.has_redirect_filter = ns_filters.has_redirect %}
-        {%- set result.has_urlrewrite_filter = ns_filters.has_urlrewrite %}
-      {%- endmacro %}
+        {%- result["hasRequestHeader_filter"] = hasRequestHeader %}
+        {%- result["hasResponseHeader_filter"] = hasResponseHeader %}
+        {%- result["hasRedirect_filter"] = hasRedirect %}
+        {%- result["hasUrlrewrite_filter"] = hasUrlrewrite %}
+      {%- end macro %}
 
   util-backend-name-gateway:
-    template: >-
-      {{- "" -}}gtw_{{ route.metadata.namespace }}_{{ route.metadata.name }}_{{ backend.name }}_{{ backend.port }}
+    template: |
+      {#- Macro to generate gateway backend name from route and backend info #}
+      {%- macro BackendNameGateway(route any, backend any) string -%}
+      gtw_{{ route | dig("metadata", "namespace") | fallback("") }}_{{ route | dig("metadata", "name") | fallback("") }}_{{ backend | dig("name") | fallback("") }}_{{ backend | dig("port") | fallback("") }}
+      {%- end macro -%}
 
   util-generate-backends-gateway:
     template: |
       {#- Macro to generate backends for Gateway API routes (HTTPRoute/GRPCRoute) #}
-      {#- Deduplicates backends across all routes using shared namespace.seen tracking #}
+      {#- Deduplicates backends across all routes using first_seen for deduplication tracking #}
       {#- Parameters: #}
       {#-   routes: list of routes to process (from resources.httproutes or resources.grpcroutes) #}
-      {#-   proto_flag: protocol flag for default-server ("" for HTTP, "h2" for gRPC) #}
-      {#-   ns: namespace object with seen="" for deduplication tracking (shared across calls) #}
-      {%- macro generate_gateway_backends(routes, proto_flag, ns) -%}
-      {%- for route in routes -%}
-      {%- for rule in (route.spec.rules | default([])) -%}
-      {%- if rule.backendRefs %}
-      {%- for backendRef in rule.backendRefs -%}
-      {%- set backend = {"name": backendRef.name, "port": backendRef.port} -%}
-      {%- set backend_key = route.metadata.namespace ~ "_" ~ route.metadata.name ~ "_" ~ backend.name ~ "_" ~ backend.port -%}
-      {%- if ("|" ~ backend_key ~ "|") not in ns.seen -%}
-      {%- set ns.seen = ns.seen ~ "|" ~ backend_key ~ "|" %}
-      # Backend for: {{ "HTTPRoute" if proto_flag == "" else "GRPCRoute" }} {{ route.metadata.namespace }}/{{ route.metadata.name }} → Service {{ backend.name }}:{{ backend.port }}
-      backend {%+ include "util-backend-name-gateway" +%}
+      {#-   protoFlag: protocol flag for default-server ("" for HTTP, "h2" for gRPC) #}
+      {#-   dedupCategory: category name for first_seen deduplication #}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- macro GenerateGatewayBackends(routes []any, protoFlag string, dedupCategory string) -%}
+      {%- for _, route := range routes -%}
+      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") -%}
+      {%- var routeName = route | dig("metadata", "name") | fallback("") -%}
+      {%- for _, rule := range route | dig("spec", "rules") | toSlice() -%}
+      {%- var backendRefs = rule | dig("backendRefs") -%}
+      {%- if backendRefs != nil %}
+      {%- for _, backendRef := range backendRefs | toSlice() -%}
+      {%- var backendName = backendRef | dig("name") | fallback("") -%}
+      {%- var backendPort = backendRef | dig("port") | fallback(80) -%}
+      {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
+      {%- var backendKey = routeNs + "_" + routeName + "_" + backendName + "_" + (backendPort) -%}
+      {%- if first_seen(dedupCategory, backendKey) -%}
+      {%- var routeTypeLabel = "GRPCRoute" -%}
+      {%- if protoFlag == "" -%}{%- routeTypeLabel = "HTTPRoute" -%}{%- end -%}
+      # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
+      backend {{ BackendNameGateway(route, backend) }}
         balance roundrobin
-        default-server check{{ " proto " ~ proto_flag if proto_flag else "" }}
-        {%- filter indent(2, first=True) %}
-        {% include "backend-directives" %}
-        {% set service_name = backend.name %}
-        {% set port = backend.port %}
-        {% include "util-backend-servers" %}
-        {%- endfilter -%}
-      {%- endif -%}
-      {%- endfor -%}
-      {%- endif -%}
-      {%- endfor -%}
-      {%- endfor -%}
-      {%- endmacro -%}
+        default-server check{%- if protoFlag != "" %} proto {{ protoFlag }}{%- end %}
+        {{ BackendServers(backendName, 10, backendPort, nil) | indent(2, true) -}}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
 
-  backends-gateway:
+  backends-500-gateway:
     template: |
       {#- Generate backend definitions from HTTPRoute and GRPCRoute resources #}
       {#- Implements backends-* extension point from base library #}
       {#- Deduplicates backends: one backend per unique (namespace, route, service, port) combination #}
       {#- Import backend generation macro #}
-      {%- from "util-generate-backends-gateway" import generate_gateway_backends %}
-      {#- Use namespace with string tracking for seen backends (shared across both route types) #}
-      {%- set ns = namespace(seen="") %}
+      {% import "util-generate-backends-gateway" for GenerateGatewayBackends -%}
       # gateway/backends-gateway
 
       {#- HTTPRoute backends (HTTP protocol) #}
-      {{ generate_gateway_backends(resources.httproutes.List(), "", ns) -}}
+      {{ GenerateGatewayBackends(resources.httproutes.List(), "", "gatewayBackends_http") -}}
       {#- GRPCRoute backends (HTTP/2 protocol) #}
-      {{- generate_gateway_backends(resources.grpcroutes.List(), "h2", ns) -}}
+      {{- GenerateGatewayBackends(resources.grpcroutes.List(), "h2", "gatewayBackends_grpc") -}}
 
-  backends-gateway-ssl-passthrough:
-    priority: 501
+  backends-501-gateway-ssl-passthrough:
     template: |
       {#-
         Gateway API SSL Passthrough Backends
@@ -560,74 +592,96 @@ templateSnippets:
             mode tcp
             server SRV_1 <pod-ip>:<pod-port> check
       -#}
-      {#- Get cached SSL passthrough analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-ssl-passthrough" %}
+      {#- Get cached SSL passthrough analysis (runs once, shared across all renders) #}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {{ render "util-gateway-ssl-passthrough" }}
 
-      {%- set ns = namespace(processed="") %}
-      {%- for backend_info in shared.gateway_ssl_passthrough.backends %}
-        {%- set route_key = backend_info.namespace ~ "/" ~ backend_info.route %}
-        {%- if ("|" ~ route_key ~ "|") not in ns.processed %}
-          {%- set ns.processed = ns.processed ~ "|" ~ route_key ~ "|" %}
+      {%- var sslPassthroughData map[string]any = shared["gateway_ssl_passthrough"] %}
+      {%- var sslBackends []any = sslPassthroughData["backends"] %}
+      {%- for _, backendInfo := range sslBackends %}
+        {%- var biNamespace = backendInfo["namespace"] %}
+        {%- var biRoute = backendInfo["route"] %}
+        {%- var biName = backendInfo["name"] %}
+        {%- var biRouteType = backendInfo["route_type"] %}
+        {%- var routeKey = biNamespace + "/" + biRoute %}
+        {%- if first_seen("gateway_ssl_passthrough_backends", routeKey) %}
           {#- Get the actual HTTPRoute resource to extract service details #}
-          {%- if backend_info.route_type == "httproute" %}
-            {%- set route = resources.httproutes.GetSingle(backend_info.namespace, backend_info.route) %}
-            {%- set ns_backend = namespace(generated=false) %}
-            {%- for rule in (route.spec.rules | default([])) %}
-              {%- if not ns_backend.generated %}
-                {%- for backendRef in (rule.backendRefs | default([])) %}
-                  {%- if not ns_backend.generated %}
-                    {%- set service_name = backendRef.name %}
-                    {%- set port = backendRef.port | default(80) %}
+          {%- if biRouteType == "httproute" %}
+            {%- var route = resources.httproutes.GetSingle(biNamespace, biRoute) %}
+            {%- var generated = false %}
+            {%- for _, rule := range route | dig("spec", "rules") | toSlice() %}
+              {%- if !generated %}
+                {%- for _, backendRef := range rule | dig("backendRefs") | toSlice() %}
+                  {%- if !generated %}
+                    {%- var refName = backendRef | dig("name") | fallback("") %}
+                    {%- var refPort = backendRef | dig("port") | fallback(80) %}
       # gateway/backends-gateway-ssl-passthrough
 
-      backend {{ backend_info.name }}
+      backend {{ biName }}
           mode tcp
           balance roundrobin
-                    {%- filter indent(8, first=False) -%}
-                    {%- include "util-backend-servers" -%}
-                    {%- endfilter %}
-                    {%- set ns_backend.generated = true %}
-                  {%- endif %}
-                {%- endfor %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor %}
+          {{ BackendServers(refName, 10, refPort, nil) | indent(4, false) }}
+                    {%- generated = true %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
 
   util-path-map-entry-gateway:
     template: |
-      {#- Generate HTTPRoute path matching map entries with qualifiers #}
-      {#- Single backend: BACKEND:<backend_name> #}
-      {#- Multiple backends: MULTIBACKEND:<total_weight>:<route_key> #}
-      {#- Conflicting paths: GW_ROUTE_ID:<route_type>:<route_ids> #}
-      {#- Usage: {% include "util-path-map-entry-gateway" with context %} where path_type = "Exact" or "PathPrefix" #}
-      # gateway/util-path-map-entry-gateway
+      {#- Macro to generate HTTPRoute path matching map entries with qualifiers #}
+      {#- Single backend: BACKEND:<backendName> #}
+      {#- Multiple backends: MULTIBACKEND:<totalWeight>:<routeKey> #}
+      {#- Conflicting paths: GW_ROUTE_ID:<route_type>:<routeIds> #}
+      {#- Parameters: pathType ("Exact" or "PathPrefix"), suffix (e.g., "" or "/") #}
+      {%- macro GeneratePathMapEntries(pathType string, suffix string) %}
+      # gateway/util-path-map-entry-gateway ({{ pathType }})
 
-      {#- Get cached route analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-analysis" %}
+      {#- Get cached route analysis (runs once, shared across all renders) #}
+      {{ render "util-gateway-analysis" }}
 
-      {#- Iterate over all routes in precedence order (sorted_routes contains all routes) #}
-      {%- set ns_seen = namespace(paths="") %}
-      {%- for route_info in shared.gateway_analysis.sorted_routes %}
-        {%- set path_key = route_info.hostname ~ '|' ~ route_info.path.type ~ '|' ~ route_info.path.value %}
-        {%- if ("|" ~ path_key ~ "|") not in ns_seen.paths %}
-          {%- set ns_seen.paths = ns_seen.paths ~ "|" ~ path_key ~ "|" %}
-          {%- set routes = shared.gateway_analysis.path_groups[path_key] %}
-          {%- set first_route = routes[0] %}
-        {#- Only process routes matching the current path_type #}
-        {%- if first_route.path and first_route.path.type == path_type %}
+      {#- Iterate over all routes in precedence order (sortedRoutes contains all routes) #}
+      {%- var gatewayAnalysis map[string]any = shared["gatewayAnalysis"] %}
+      {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
+      {%- var pathGroups map[string]any = gatewayAnalysis["pathGroups"] %}
+      {%- for _, routeInfo := range sortedRoutes %}
+        {%- var riHostname = routeInfo["hostname"] %}
+        {%- var riPath map[string]any = routeInfo["path"] %}
+        {%- var riPath_type = riPath["type"] %}
+        {%- var riPathValue = riPath["value"] %}
+        {%- var pathKey = riHostname + "|" + riPath_type + "|" + riPathValue %}
+        {%- if first_seen("gateway_pathMap_" + pathType + suffix, pathKey) %}
+          {%- var routes []any = pathGroups[pathKey] %}
+          {%- var firstRoute map[string]any = routes[0] %}
+          {%- var frPath map[string]any = firstRoute["path"] %}
+          {%- var frPath_type = frPath["type"] %}
+        {#- Only process routes matching the current pathType #}
+        {%- if frPath != nil && frPath_type == pathType %}
           {#- Always use GW_ROUTE_ID qualifier for all Gateway API routes #}
           {#- NOTE: Do NOT append suffix to GW_ROUTE_ID qualifier - it would break advanced matcher string matching #}
-          {%- set ns_ids = namespace(route_ids=[]) %}
-          {%- for route_info in routes %}
-            {%- set ns_ids.route_ids = ns_ids.route_ids.append(route_info.route_id) %}
-          {%- endfor %}
-          {%- set route_ids_str = ns_ids.route_ids | join("__") -%}
-      {{ "\n" }}{{ first_route.hostname }}{{ first_route.path.value }} GW_ROUTE_ID:{{ first_route.resource_type | replace("httproute", "http") | replace("grpcroute", "grpc") }}:{{ route_ids_str }}
-        {%- endif %}
-        {%- endif %}
-      {%- endfor %}
+          {%- var routeIds = []any{} %}
+          {%- for _, r := range routes %}
+            {%- var rid string = r["routeId"] %}
+            {%- routeIds = append(routeIds, rid) %}
+          {%- end %}
+          {%- var routeIds_str = join(routeIds, "__") -%}
+          {%- var frHostname = firstRoute["hostname"] %}
+          {%- var frPath_val = frPath["value"] %}
+          {%- var frResourceType = firstRoute["resource_type"] %}
+          {%- var routeTypeShort = frResourceType | replace("httproute", "http") | replace("grpcroute", "grpc") %}
+          {#- Avoid double slashes: only append suffix if path doesn't already end with / #}
+          {%- var pathSuffix = suffix %}
+          {%- if suffix == "/" && hasSuffix(frPath_val, "/") %}
+            {%- pathSuffix = "" %}
+          {%- end %}
+      {{ "\n" }}{{ frHostname }}{{ frPath_val }}{{ pathSuffix }} GW_ROUTE_ID:{{ routeTypeShort }}:{{ routeIds_str }}
+        {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end macro %}
 
   util-generate-host-map-gateway:
     template: |
@@ -635,496 +689,581 @@ templateSnippets:
       {#- Parameters: #}
       {#-   routes: list of routes to process (from resources.httproutes or resources.grpcroutes) #}
       {#-   route_type: route type name for comments ("HTTPRoute" or "GRPCRoute") #}
-      {%- macro generate_host_map(routes, route_type) -%}
-      {%- for route in routes %}
-      {%- set hostnames = route.spec.hostnames | default([]) %}
-      {%- if hostnames | length > 0 %}
-      # {{ route_type }}: {{ route.metadata.namespace }}/{{ route.metadata.name }} ({{ hostnames | length }} hosts)
-      {% for hostname in hostnames %}
+      {%- macro GenerateHostMap(routes []any, route_type string) -%}
+      {%- for _, route := range routes %}
+      {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
+      {%- if len(hostnames) > 0 %}
+      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
+      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
+      # {{ route_type }}: {{ routeNs }}/{{ routeName }} ({{ len(hostnames) }} hosts)
+      {% for _, hostname := range hostnames %}
       {{ hostname }} {{ hostname }}
-      {% endfor %}
-      {%- endif %}
-      {%- endfor %}
-      {%- endmacro -%}
+      {% end %}
+      {%- end %}
+      {%- end %}
+      {%- end macro -%}
 
-  map-host-gateway:
+  map-host-500-gateway:
     template: |
       {#- Generate host map entries for Gateway API routes #}
-      {%- from "util-generate-host-map-gateway" import generate_host_map %}
+      {%- import "util-generate-host-map-gateway" for GenerateHostMap %}
       # gateway/map-host-gateway
-      {{- generate_host_map(resources.httproutes.List(), "HTTPRoute") -}}
-      {{- generate_host_map(resources.grpcroutes.List(), "GRPCRoute") -}}
+      {{- GenerateHostMap(resources.httproutes.List(), "HTTPRoute") -}}
+      {{- GenerateHostMap(resources.grpcroutes.List(), "GRPCRoute") -}}
 
-  map-path-exact-gateway:
+  map-path-exact-500-gateway:
     template: |
       {#- Generate exact path map entries for HTTPRoute #}
+      {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
       # gateway/map-path-exact-gateway
-      {% set path_type = "Exact" %}
-      {%- set suffix = "" %}
-      {% include "util-path-map-entry-gateway" %}
+      {{ GeneratePathMapEntries("Exact", "") }}
 
-  map-path-prefix-exact-gateway:
+  map-path-prefix-exact-500-gateway:
     template: |
       {#- Generate prefix-exact path map entries for HTTPRoute #}
+      {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
       # gateway/map-path-prefix-exact-gateway
-      {% set path_type = "PathPrefix" %}
-      {%- set suffix = "" %}
-      {% include "util-path-map-entry-gateway" %}
+      {{ GeneratePathMapEntries("PathPrefix", "") }}
 
-  map-path-prefix-gateway:
+  map-path-prefix-500-gateway:
     template: |
       {#- Generate prefix path map entries with trailing slash for HTTPRoute #}
+      {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
       # gateway/map-path-prefix-gateway
-      {% set path_type = "PathPrefix" %}
-      {%- set suffix = "/" %}
-      {% include "util-path-map-entry-gateway" %}
+      {{ GeneratePathMapEntries("PathPrefix", "/") }}
 
-  map-path-regex-gateway:
+  map-path-regex-500-gateway:
     template: |
       {#- Generate regex path map entries for HTTPRoute with RegularExpression type #}
+      {#- Single-pass optimization: collect entries first, then output comment and entries -#}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       # gateway/map-path-regex-gateway
-      {%- for route in resources.httproutes.List() %}
-      {#- Count regex path entries for this route -#}
-      {%- set ns_outer = namespace(entry_count=0) %}
-      {%- for hostname in (route.spec.hostnames | default([""])) %}
-        {%- for rule in (route.spec.rules | default([])) %}
-          {%- if rule.backendRefs %}
-            {%- for match in (rule.matches | default([{}])) %}
-              {%- if match.path and match.path.type == "RegularExpression" %}
-                {%- set ns_outer.entry_count = ns_outer.entry_count + 1 %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endfor %}
-      {%- if ns_outer.entry_count > 0 %}
-      # HTTPRoute: {{ route.metadata.namespace }}/{{ route.metadata.name }} ({{ ns_outer.entry_count }} regex paths)
-      {%- endif %}
-      {%- for hostname in (route.spec.hostnames | default([""])) %}
-      {%- for rule in (route.spec.rules | default([])) %}
-      {%- if rule.backendRefs %}
-      {%- set first_backend = rule.backendRefs[0] %}
-      {%- set backend = {"name": first_backend.name, "port": first_backend.port} %}
-      {%- for match in (rule.matches | default([{}])) %}
-      {%- if match.path and match.path.type == "RegularExpression" %}
-      {{ hostname }}{{ match.path.value | default("/") }} {% include "util-backend-name-gateway" %}
-      {% endif %}
-      {%- endfor %}
-      {%- endif %}
-      {%- endfor %}
-      {%- endfor %}
-      {%- endfor %}
+      {%- for _, route := range resources.httproutes.List() %}
+      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
+      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
+      {%- var hostnames = route | dig("spec", "hostnames") | toSlice() | coalesce([]any{""}) %}
+      {%- var rules = route | dig("spec", "rules") | toSlice() | coalesce([]any{}) %}
+      {#- Single pass: collect regex path entries -#}
+      {%- var regexEntries = []any{} %}
+      {%- for _, hostname := range hostnames %}
+      {%- for _, rule := range rules %}
+      {%- var backendRefs = rule | dig("backendRefs") %}
+      {%- if backendRefs != nil %}
+      {%- var backendRefs_slice = backendRefs | toSlice() %}
+      {%- var firstBackend = backendRefs_slice[0] %}
+      {%- var backend = map[string]any{"name": firstBackend | dig("name") | fallback(""), "port": firstBackend | dig("port") | fallback(80)} %}
+      {%- var matches []any = rule | dig("matches") | coalesce([]any{map[string]any{}}) %}
+      {%- for _, match := range matches %}
+      {%- var matchPath = match | dig("path") %}
+      {%- var matchPath_type = match | dig("path", "type") | fallback("") %}
+      {%- var matchPathValue = match | dig("path", "value") | fallback("/") %}
+      {%- if matchPath != nil && matchPath_type == "RegularExpression" %}
+      {%- regexEntries = append(regexEntries, map[string]any{
+        "hostname": hostname,
+        "pathValue": matchPathValue,
+        "backend": backend,
+      }) %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {#- Output comment and entries if any regex paths found -#}
+      {%- if len(regexEntries) > 0 %}
+      # HTTPRoute: {{ routeNs }}/{{ routeName }} ({{ len(regexEntries) }} regex paths)
+      {% for _, entry := range regexEntries -%}
+      {{ entry["hostname"] }}{{ entry["pathValue"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {% end -%}
+      {%- end %}
+      {%- end %}
 
-  map-weighted-backend-gateway:
+  map-weighted-backend-500-gateway:
     template: |
       {#- Generate expanded weighted backend entries for HTTPRoute #}
-      {#- Format: <random_number>:<route_key> <backend_name> #}
+      {#- Format: <random_number>:<routeKey> <backendName> #}
       {#- Each weight N generates N consecutive entries pointing to same backend #}
       {#- This allows O(1) weighted selection via single map lookup #}
+      {#- Single-pass optimization: collect entries first, then output comment and entries -#}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       # gateway/map-weighted-backend-gateway
 
-      {%- for route in resources.httproutes.List() %}
-      {#- Count weighted rules for this route -#}
-      {%- set weighted_rules = [] %}
-      {%- for rule in (route.spec.rules | default([])) %}
-        {%- if rule.backendRefs and (rule.backendRefs | length) > 1 %}
-          {%- set _ = weighted_rules.append(rule) %}
-        {%- endif %}
-      {%- endfor %}
-      {%- if weighted_rules | length > 0 %}
-      # HTTPRoute: {{ route.metadata.namespace }}/{{ route.metadata.name }} ({{ weighted_rules | length }} weighted rules)
-      {% endif %}
-      {%- set rule_counter = namespace(idx=0) %}
-      {% for rule in (route.spec.rules | default([])) %}
-        {%- if rule.backendRefs and (rule.backendRefs | length) > 1 %}
+      {%- for _, route := range resources.httproutes.List() %}
+      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
+      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
+      {%- var rules = route | dig("spec", "rules") | toSlice() | coalesce([]any{}) %}
+      {#- Single pass: collect weighted entries -#}
+      {%- var weightedEntries = []any{} %}
+      {%- var ruleIdx = 0 %}
+      {%- for _, rule := range rules %}
+        {%- var backendRefs = rule | dig("backendRefs") %}
+        {%- if backendRefs != nil %}
+          {%- var refsSlice = backendRefs | toSlice() %}
+          {%- if len(refsSlice) > 1 %}
+            {%- var routeKey = routeNs + "_" + routeName + "_" + ruleIdx %}
+            {%- var cumulative = 0 %}
+            {%- for _, backendRef := range refsSlice %}
+              {%- var backend = map[string]any{"name": backendRef | dig("name") | fallback(""), "port": backendRef | dig("port") | fallback(80)} %}
+              {%- var weight = backendRef | dig("weight") | fallback(1) %}
+              {#- Generate <weight> consecutive entries for this backend -#}
+              {%- for i := cumulative; i < cumulative + weight; i++ %}
+                {%- weightedEntries = append(weightedEntries, map[string]any{
+                  "index": i,
+                  "routeKey": routeKey,
+                  "backend": backend,
+                }) %}
+              {%- end %}
+              {%- cumulative = cumulative + weight %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- ruleIdx = ruleIdx + 1 %}
+      {%- end %}
+      {#- Output comment and entries if any weighted rules found -#}
+      {%- if len(weightedEntries) > 0 %}
+      # HTTPRoute: {{ routeNs }}/{{ routeName }} (weighted rules)
+      {% for _, entry := range weightedEntries -%}
+      {{ entry["index"] }}:{{ entry["routeKey"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {% end -%}
+      {%- end %}
+      {%- end %}
 
-          {%- set route_key = route.metadata.namespace ~ "_" ~ route.metadata.name ~ "_" ~ rule_counter.idx %}
-          {%- set ns = namespace(cumulative=0) %}
-
-          {%- for backendRef in rule.backendRefs %}
-            {%- set backend = {"name": backendRef.name, "port": backendRef.port} %}
-            {%- set weight = backendRef.weight | default(1) %}
-
-            {#- Generate <weight> consecutive entries for this backend -#}
-            {%- for i in range(ns.cumulative, ns.cumulative + weight) -%}
-      {{ i }}:{{ route_key }} {{ "" }}{% include "util-backend-name-gateway" %}{{ "\n" -}}
-            {%- endfor %}
-
-            {%- set ns.cumulative = ns.cumulative + weight %}
-          {%- endfor %}
-
-        {%- endif %}
-        {#- Increment rule counter after each rule #}
-        {%- set rule_counter.idx = rule_counter.idx + 1 %}
-      {%- endfor %}
-      {%- endfor %}
-
-  # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early via priority)
-  frontend-matchers-advanced-gateway-route-id-setup:
-    priority: 10
+  # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
+  # Named with 010- prefix so alphabetical sort matches intended execution order
+  frontend-matchers-advanced-010-route-id-setup:
     template: |
       {#- Process GW_ROUTE_ID qualifier to extract route type and route ID #}
-      {#- Format: GW_ROUTE_ID:<route_type>:<route_ids> #}
+      {#- Format: GW_ROUTE_ID:<route_type>:<routeIds> #}
       {#- Example: GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
-      {#- This runs early (priority 10) to set variables used by later matchers #}
-      # gateway/frontend-matchers-advanced-gateway-route-id-setup
+      {#- This runs first (010 prefix) to set variables used by later matchers #}
+      # gateway/frontend-matchers-advanced-010-route-id-setup
       http-request set-var(req.gw_route_type) var(txn.path_match),field(2,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
-      http-request set-var(req.gw_route_id) var(txn.path_match),field(3,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
+      http-request set-var(req.gw_routeId) var(txn.path_match),field(3,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
 
   # Advanced matcher generator - creates http-request statements for method/header/query matching
-  frontend-matchers-advanced-gateway:
+  # Named with 500- prefix so alphabetical sort matches intended execution order (runs after 010-)
+  frontend-matchers-advanced-500-gateway:
     template: |
-      {#- Generate http-request statements for routes with advanced matchers #}
-      {#- This is injected into base template via the advanced-matcher-* extension point #}
-      # gateway/advanced-matcher-gateway
-
-      {%- from "util-regex-sanitize" import sanitize_regex %}
-
-      {#- Get cached route analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-analysis" %}
-
-      {%- if shared.gateway_analysis.sorted_routes | length > 0 %}
+      {{- "" }}
+      {# Generate http-request statements for routes with advanced matchers
+         This is injected into base template via the advanced-matcher-* extension point #}
+      # gateway/frontend-matchers-advanced-500-gateway
+      {{ render "util-gateway-analysis" -}}
+      {%- var gatewayAnalysis map[string]any = shared["gatewayAnalysis"] %}
+      {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
+      {%- if len(sortedRoutes) > 0 %}
       # Advanced route matching (method/header/query)
-      {%- for route_info in shared.gateway_analysis.sorted_routes %}
+      {%- for _, routeInfo := range sortedRoutes %}
+        {%- var riMatch map[string]any = routeInfo["match"] %}
+        {%- var riRoute map[string]any = routeInfo["route"] %}
+        {%- var riRouteMeta = riRoute | dig("metadata") %}
+        {%- var riResourceType = routeInfo["resource_type"] %}
+        {%- var riIsGrpc bool = routeInfo["is_grpc"] %}
+        {%- var riRouteId = routeInfo["routeId"] %}
+        {%- var riConflictGroup = routeInfo["conflictGroup"] %}
+        {%- var riRuleIdx = routeInfo["ruleIdx"] %}
         {#- Early exit: skip if another matcher already won #}
-        {%- set ns_cond = namespace(conditions=['!{ var(req.gw_rule_id) -m found }']) %}
+        {%- var conditions = []any{"!{ var(req.gw_rule_id) -m found }"} %}
 
         {#- Only run matcher if this route was matched by the map #}
-        {%- set ns_cond.conditions = ns_cond.conditions.append('{ var(req.gw_route_id) -m str "' ~ route_info.conflict_group ~ '" }') %}
+        {%- conditions = append(conditions, "{ var(req.gw_routeId) -m str \"" + riConflictGroup + "\" }") %}
 
         {#- Method matcher (HTTPRoute only) #}
-        {%- if route_info.match.method and route_info.resource_type == "httproute" %}
-          {%- set ns_cond.conditions = ns_cond.conditions.append('{ method ' ~ route_info.match.method ~ ' }') %}
-        {%- endif %}
+        {%- var riMethod = riMatch["method"] %}
+        {%- if riMethod != nil && riResourceType == "httproute" %}
+          {%- conditions = append(conditions, "{ method " + (riMethod) + " }") %}
+        {%- end %}
 
         {#- Header matchers #}
-        {%- for header in (route_info.match.headers | default([])) %}
-          {%- if header.type == "Exact" %}
-            {%- set ns_cond.conditions = ns_cond.conditions.append('{ req.hdr(' ~ header.name ~ ') "' ~ header.value ~ '" }') %}
-          {%- elif header.type == "RegularExpression" %}
-            {%- set ns_cond.conditions = ns_cond.conditions.append('{ req.hdr(' ~ header.name ~ ') -m reg "' ~ sanitize_regex(header.value) ~ '" }') %}
-          {%- endif %}
-        {%- endfor %}
+        {%- var riHeaders = riMatch["headers"] %}
+        {%- for _, header := range riHeaders | toSlice() %}
+          {%- var headerType = header["type"] %}
+          {%- var headerName = header["name"] %}
+          {%- var headerValue = header["value"] %}
+          {%- if headerType == "Exact" %}
+            {%- conditions = append(conditions, "{ req.hdr(" + headerName + ") \"" + headerValue + "\" }") %}
+          {%- else if headerType == "RegularExpression" %}
+            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
+            {%- var escapedHeaderValue = replace(headerValue, "$", "\\$") %}
+            {%- conditions = append(conditions, "{ req.hdr(" + headerName + ") -m reg \"" + escapedHeaderValue + "\" }") %}
+          {%- end %}
+        {%- end %}
 
         {#- Query parameter matchers (HTTPRoute only) #}
-        {%- for param in (route_info.match.queryParams | default([])) %}
-          {%- if param.type == "Exact" %}
-            {%- set ns_cond.conditions = ns_cond.conditions.append('{ urlp(' ~ param.name ~ ') "' ~ param.value ~ '" }') %}
-          {%- elif param.type == "RegularExpression" %}
-            {%- set ns_cond.conditions = ns_cond.conditions.append('{ urlp(' ~ param.name ~ ') -m reg "' ~ sanitize_regex(param.value) ~ '" }') %}
-          {%- endif %}
-        {%- endfor %}
+        {%- var riParams = riMatch["queryParams"] %}
+        {%- for _, param := range riParams | toSlice() %}
+          {%- var paramType = param["type"] %}
+          {%- var paramName = param["name"] %}
+          {%- var paramValue = param["value"] %}
+          {%- if paramType == "Exact" %}
+            {%- conditions = append(conditions, "{ urlp(" + paramName + ") \"" + paramValue + "\" }") %}
+          {%- else if paramType == "RegularExpression" %}
+            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
+            {%- var escapedParamValue = replace(paramValue, "$", "\\$") %}
+            {%- conditions = append(conditions, "{ urlp(" + paramName + ") -m reg \"" + escapedParamValue + "\" }") %}
+          {%- end %}
+        {%- end %}
 
         {#- GRPCRoute method matcher #}
-        {%- if route_info.is_grpc and route_info.match.method %}
-          {#- Build gRPC method path #}
-          {%- set grpc_path = "" %}
-          {%- if route_info.match.method.service %}
-            {%- set grpc_path = "/" ~ route_info.match.method.service %}
-            {%- if route_info.match.method.method %}
-              {%- set grpc_path = grpc_path ~ "/" ~ route_info.match.method.method %}
-            {%- endif %}
+        {%- var grpcMethod = riMatch["method"] %}
+        {%- if riIsGrpc && grpcMethod != nil %}
+          {%- var grpcMethod_map map[string]any = grpcMethod %}
+          {%- var grpcService = grpcMethod_map["service"] %}
+          {%- if grpcService != nil %}
+            {%- var grpcPath = "/" + (grpcService) %}
+            {%- var grpcMethod_name = grpcMethod_map["method"] %}
+            {%- if grpcMethod_name != nil %}
+              {%- grpcPath = grpcPath + "/" + (grpcMethod_name) %}
+            {%- end %}
             {#- Match against :path header which contains gRPC method #}
-            {%- if route_info.match.method.type == "Exact" %}
-              {%- set ns_cond.conditions = ns_cond.conditions.append('{ req.hdr(:path) "' ~ grpc_path ~ '" }') %}
-            {%- elif route_info.match.method.type == "RegularExpression" %}
-              {%- set ns_cond.conditions = ns_cond.conditions.append('{ req.hdr(:path) -m reg "' ~ sanitize_regex(grpc_path) ~ '" }') %}
-            {%- endif %}
-          {%- endif %}
-        {%- endif %}
-        {%- set conditions = ns_cond.conditions %}
+            {%- var grpcType = grpcMethod_map["type"] %}
+            {%- if grpcType == "Exact" %}
+              {%- conditions = append(conditions, "{ req.hdr(:path) \"" + grpcPath + "\" }") %}
+            {%- else if grpcType == "RegularExpression" %}
+              {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
+              {%- var escapedGrpcPath = replace(grpcPath, "$", "\\$") %}
+              {%- conditions = append(conditions, "{ req.hdr(:path) -m reg \"" + escapedGrpcPath + "\" }") %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
 
         {#- Set req.gw_rule_id to mark this rule as winner #}
-        {%- if conditions %}
+        {%- if len(conditions) > 0 %}
           {#- Build matcher type description for provenance comment #}
-          {%- set ns_types = namespace(desc=[]) %}
-          {%- if route_info.match.method and route_info.resource_type == "httproute" %}
-            {%- set ns_types.desc = ns_types.desc.append("method " ~ route_info.match.method) %}
-          {%- endif %}
-          {%- if route_info.match.headers %}
-            {%- set ns_types.desc = ns_types.desc.append(route_info.match.headers | length ~ " headers") %}
-          {%- endif %}
-          {%- if route_info.match.queryParams %}
-            {%- set ns_types.desc = ns_types.desc.append(route_info.match.queryParams | length ~ " query params") %}
-          {%- endif %}
-          {%- if route_info.is_grpc and route_info.match.method %}
-            {%- set ns_types.desc = ns_types.desc.append("gRPC method") %}
-          {%- endif %}
-          {%- set matcher_desc = (ns_types.desc | join(", ")) | default("path-only") %}
-      # Rule: {{ route_info.resource_type | title }} {{ route_info.route.metadata.namespace }}/{{ route_info.route.metadata.name }} rule[{{ route_info.rule_idx }}] - {{ matcher_desc }}
-      http-request set-var(req.gw_rule_id) str({{ route_info.route_id }}) if {{ conditions | join(" ") }}
+          {%- var descParts = []any{} %}
+          {%- if riMethod != nil && riResourceType == "httproute" %}
+            {%- descParts = append(descParts, "method " + (riMethod)) %}
+          {%- end %}
+          {%- if riHeaders != nil %}
+            {%- descParts = append(descParts, len(toSlice(riHeaders)) + " headers") %}
+          {%- end %}
+          {%- if riParams != nil %}
+            {%- descParts = append(descParts, len(toSlice(riParams)) + " query params") %}
+          {%- end %}
+          {%- if riIsGrpc && grpcMethod != nil %}
+            {%- descParts = append(descParts, "gRPC method") %}
+          {%- end %}
+          {%- var matcherDesc = "path-only" %}
+          {%- if len(descParts) > 0 %}{%- matcherDesc = join(descParts, ", ") %}{%- end %}
+          {%- var riNs = riRouteMeta | dig("namespace") | fallback("") %}
+          {%- var riName = riRouteMeta | dig("name") | fallback("") %}
+      # Rule: {{ riResourceType | title() }} {{ riNs }}/{{ riName }} rule[{{ riRuleIdx }}] - {{ matcherDesc }}
+      http-request set-var(req.gw_rule_id) str({{ riRouteId }}) if {{ join(conditions, " ") }}
           {#- Debug headers if enabled #}
-          {%- if debug | default(false) %}
+          {%- if debug | fallback(false) %}
             {#- Build detailed match reason #}
-            {%- set ns_match = namespace(types=[]) %}
-            {%- if route_info.match.method and route_info.resource_type == "httproute" %}
-              {%- set ns_match.types = ns_match.types.append("method") %}
-            {%- endif %}
-            {%- if route_info.match.headers %}
-              {%- set ns_match.types = ns_match.types.append("header") %}
-            {%- endif %}
-            {%- if route_info.match.queryParams %}
-              {%- set ns_match.types = ns_match.types.append("query") %}
-            {%- endif %}
-            {%- if route_info.is_grpc and route_info.match.method %}
-              {%- set ns_match.types = ns_match.types.append("grpc-method") %}
-            {%- endif %}
-            {%- set match_types_str = (ns_match.types | join("+")) | default("advanced") %}
-      http-request set-var(txn.matched_route) str({{ route_info.route.metadata.namespace }}/{{ route_info.route.metadata.name }}/rule{{ route_info.rule_idx }}) if {{ conditions | join(" ") }}
-      http-request set-var(txn.match_reason) str({{ match_types_str }}) if {{ conditions | join(" ") }}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor %}
-      {%- endif %}
+            {%- var matchTypes = []any{} %}
+            {%- if riMethod != nil && riResourceType == "httproute" %}
+              {%- matchTypes = append(matchTypes, "method") %}
+            {%- end %}
+            {%- if riHeaders != nil %}
+              {%- matchTypes = append(matchTypes, "header") %}
+            {%- end %}
+            {%- if riParams != nil %}
+              {%- matchTypes = append(matchTypes, "query") %}
+            {%- end %}
+            {%- if riIsGrpc && grpcMethod != nil %}
+              {%- matchTypes = append(matchTypes, "grpc-method") %}
+            {%- end %}
+            {%- var matchTypes_str = "advanced" %}
+            {%- if len(matchTypes) > 0 %}{%- matchTypes_str = join(matchTypes, "+") %}{%- end %}
+      http-request set-var(txn.matched_route) str({{ riNs }}/{{ riName }}/rule{{ riRuleIdx }}) if {{ join(conditions, " ") }}
+      http-request set-var(txn.match_reason) str({{ matchTypes_str }}) if {{ join(conditions, " ") }}
+          {% end %}
+        {% end %}
+      {% end %}
+      {% end %}
 
   # Path match setting - sets txn.path_match based on winning rule ID
-  frontend-matchers-advanced-gateway-path-match:
-    priority: 900
+  # Named with 900- prefix so alphabetical sort matches intended execution order (runs last)
+  frontend-matchers-advanced-900-path-match:
     template: |
-      {#- Set txn.path_match for backend selection based on winning rule #}
-      {#- Runs after frontend-matchers-advanced-gateway sets req.gw_rule_id (priority ensures late ordering) #}
-      # gateway/frontend-matchers-advanced-gateway-path-match
+      {{- "" }}
+      {# Set txn.path_match for backend selection based on winning rule
+         Runs after frontend-matchers-advanced-500-gateway sets req.gw_rule_id (900 prefix ensures late ordering) #}
+      # gateway/frontend-matchers-advanced-900-path-match
+      {{ render "util-gateway-analysis" -}}
 
-      {#- Get cached route analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-analysis" %}
-
-      {%- if shared.gateway_analysis.all_routes | length > 0 %}
+      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- if len(gatewayAllRoutes) > 0 %}
       # Set txn.path_match for backend selection based on req.gw_rule_id
-      {%- for route_info in shared.gateway_analysis.all_routes %}
-        {%- if route_info.rule.backendRefs %}
-          {%- if (route_info.rule.backendRefs | length) == 1 %}
+      {% for _, routeInfo := range gatewayAllRoutes -%}
+        {%- var backendRefs []any = routeInfo | dig("rule", "backendRefs") | fallback([]any{}) %}
+        {%- if len(backendRefs) > 0 %}
+          {%- var qualifier = "" %}
+          {%- if len(backendRefs) == 1 %}
             {#- Single backend: BACKEND qualifier #}
-            {%- set backend_ref = route_info.rule.backendRefs[0] %}
-            {%- set backend_name = "gtw_" ~ route_info.route.metadata.namespace ~ "_" ~ route_info.route.metadata.name ~ "_" ~ backend_ref.name ~ "_" ~ backend_ref.port %}
-            {%- set qualifier = "BACKEND:" ~ backend_name %}
+            {%- var backendRef map[string]any = backendRefs[0] %}
+            {%- var backendName = "gtw_" + (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (backendRef["name"]) + "_" + (backendRef["port"]) %}
+            {%- qualifier = "BACKEND:" + backendName %}
           {%- else %}
             {#- Multiple backends: MULTIBACKEND qualifier #}
-            {%- set ns = namespace(total_weight=0) %}
-            {%- for ref in route_info.rule.backendRefs %}
-              {%- set ns.total_weight = ns.total_weight + (ref.weight | default(1)) %}
-            {%- endfor %}
-            {%- set route_key = route_info.route.metadata.namespace ~ "_" ~ route_info.route.metadata.name ~ "_" ~ route_info.rule_idx %}
-            {%- set qualifier = "MULTIBACKEND:" ~ ns.total_weight ~ ":" ~ route_key %}
-          {%- endif %}
-      http-request set-var(txn.path_match) str({{ qualifier }}) if { var(req.gw_rule_id) -m str "{{ route_info.route_id }}" }
-        {%- endif -%}
-      {%- endfor -%}
-      {%- endif -%}
+            {%- var totalWeight = 0 %}
+            {%- for _, ref := range backendRefs %}
+              {%- var refMap map[string]any = ref %}
+              {%- var weight = refMap | dig("weight") | fallback(1) %}
+              {%- totalWeight = totalWeight + (weight) %}
+            {%- end %}
+            {%- var routeKey = (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (routeInfo | dig("ruleIdx")) %}
+            {%- qualifier = "MULTIBACKEND:" + totalWeight + ":" + routeKey %}
+          {%- end %}
+      http-request set-var(txn.path_match) str({{ qualifier }}) if { var(req.gw_rule_id) -m str "{{ routeInfo | dig("routeId") }}" }
+        {% end %}
+      {% end %}
+      {% end %}
   # Filter: RequestHeaderModifier - modifies request headers before backend selection
-  frontend-filters-gateway-request-header:
+  frontend-filters-500-gateway-request-header:
     template: |
       {#- Generate http-request header modification statements #}
       {#- This is injected into base template via the frontend-filters-* extension point #}
       {#- Runs AFTER routing decisions, BEFORE backend selection #}
-      {%- from "util-regex-sanitize" import sanitize_regex -%}
+      {#- sanitize_regex is a built-in Scriggo function, no import needed #}
       {#- Get cached route analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-analysis" -%}
+      {{- render "util-gateway-analysis" -}}
 
       {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
-      {%- if shared.gateway_analysis.has_request_header_filter %}
+      {%- if shared.gatewayAnalysis.hasRequestHeader_filter %}
       # gateway/frontend-filters-gateway-request-header
       # RequestHeaderModifier filters
-      {%- for route_info in shared.gateway_analysis.all_routes %}
-        {%- for filter in route_info.filters %}
-          {%- if filter.type == "RequestHeaderModifier" %}
+      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- for _, routeInfo := range gatewayAllRoutes %}
+        {%- var riFilters []any = routeInfo | dig("filters") | fallback([]any{}) %}
+        {%- for _, filter := range riFilters %}
+          {%- if (filter["type"]) == "RequestHeaderModifier" %}
             {#- Simple route ID check - all condition evaluation done by advanced matchers #}
-            {%- set conditions = ['{ var(req.gw_rule_id) -m str "' ~ route_info.route_id ~ '" }'] %}
+            {%- var condition = "{ var(req.gw_rule_id) -m str \"" + (routeInfo | dig("routeId")) + "\" }" %}
             {#- Generate header modification statements #}
-            {%- if filter.requestHeaderModifier %}
+            {%- var reqHeaderMod = filter | dig("requestHeaderModifier") %}
+            {%- if reqHeaderMod != nil %}
               {#- Set headers (replace if exists) #}
-              {%- for header in (filter.requestHeaderModifier.set | default([])) %}
-      http-request set-header {{ header.name }} "{{ header.value }}" if {{ conditions | join(" ") }}
-              {%- endfor %}
+              {%- var setHeaders []any = reqHeaderMod | dig("set") | fallback([]any{}) %}
+              {%- for _, header := range setHeaders %}
+                      http-request set-header {{ header["name"] }} "{{ header["value"] }}" if {{ condition }}
+              {%- end %}
 
               {#- Add headers (append if exists) #}
-              {%- for header in (filter.requestHeaderModifier.add | default([])) %}
-      http-request add-header {{ header.name }} "{{ header.value }}" if {{ conditions | join(" ") }}
-              {%- endfor %}
+              {%- var addHeaders []any = reqHeaderMod | dig("add") | fallback([]any{}) %}
+              {%- for _, header := range addHeaders %}
+                      http-request add-header {{ header["name"] }} "{{ header["value"] }}" if {{ condition }}
+              {%- end %}
 
               {#- Remove headers #}
-              {%- for header_name in (filter.requestHeaderModifier.remove | default([])) %}
-      http-request del-header {{ header_name }} if {{ conditions | join(" ") }}
-              {%- endfor %}
+              {%- var removeHeaders []any = reqHeaderMod | dig("remove") | fallback([]any{}) %}
+              {%- for _, headerName := range removeHeaders %}
+      http-request del-header {{ headerName }} if {{ condition }}
+              {%- end %}
 
               {#- Debug: track filter application #}
-              {%- if debug | default(false) %}
-      http-request set-var(txn.filters_applied) str(RequestHeaderModifier) if {{ conditions | join(" ") }} !{ var(txn.filters_applied) -m found }
-              {%- endif %}
-            {%- endif %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endfor -%}
-      {%- endif -%}
+              {%- if debug | fallback(false) %}
+      http-request set-var(txn.filters_applied) str(RequestHeaderModifier) if {{ condition }} !{ var(txn.filters_applied) -m found }
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
   # Filter: ResponseHeaderModifier - modifies response headers before sending to client
-  frontend-filters-gateway-response-header:
+  frontend-filters-500-gateway-response-header:
     template: |
       {#- Generate http-response header modification statements #}
       {#- This is injected into base template via the frontend-filters-* extension point #}
       {#- Runs AFTER routing decisions, BEFORE backend selection #}
-      {%- from "util-regex-sanitize" import sanitize_regex -%}
+      {#- sanitize_regex is a built-in Scriggo function, no import needed #}
       {#- Get cached route analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-analysis" -%}
+      {{- render "util-gateway-analysis" -}}
 
       {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
-      {%- if shared.gateway_analysis.has_response_header_filter %}
+      {%- if shared.gatewayAnalysis.hasResponseHeader_filter %}
       # ResponseHeaderModifier filters
-      {%- for route_info in shared.gateway_analysis.all_routes %}
-        {%- for filter in route_info.filters %}
-          {%- if filter.type == "ResponseHeaderModifier" %}
+      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- for _, routeInfo := range gatewayAllRoutes %}
+        {%- var riFilters []any = routeInfo | dig("filters") | fallback([]any{}) %}
+        {%- for _, filter := range riFilters %}
+          {%- if (filter["type"]) == "ResponseHeaderModifier" %}
             {#- Simple route ID check - all condition evaluation done by advanced matchers #}
-            {%- set conditions = ['{ var(req.gw_rule_id) -m str "' ~ route_info.route_id ~ '" }'] %}
+            {%- var condition = "{ var(req.gw_rule_id) -m str \"" + (routeInfo | dig("routeId")) + "\" }" %}
 
             {#- Generate response header modification statements #}
-            {%- if filter.responseHeaderModifier %}
+            {%- var respHeaderMod = filter | dig("responseHeaderModifier") %}
+            {%- if respHeaderMod != nil %}
               {#- Debug: track filter application (must be http-request for txn variables) #}
-              {%- if debug | default(false) %}
-      http-request set-var(txn.filters_applied) str(ResponseHeaderModifier) if {{ conditions | join(" ") }} !{ var(txn.filters_applied) -m found }
-              {%- endif %}
+              {%- if debug | fallback(false) %}
+      http-request set-var(txn.filters_applied) str(ResponseHeaderModifier) if {{ condition }} !{ var(txn.filters_applied) -m found }
+              {%- end %}
 
               {#- Set headers (replace if exists) #}
-              {%- for header in (filter.responseHeaderModifier.set | default([])) %}
-      http-response set-header {{ header.name }} "{{ header.value }}" if {{ conditions | join(" ") }}
-              {%- endfor %}
+              {%- var setHeaders []any = respHeaderMod | dig("set") | fallback([]any{}) %}
+              {%- for _, header := range setHeaders %}
+                      http-response set-header {{ header["name"] }} "{{ header["value"] }}" if {{ condition }}
+              {%- end %}
 
               {#- Add headers (append if exists) #}
-              {%- for header in (filter.responseHeaderModifier.add | default([])) %}
-      http-response add-header {{ header.name }} "{{ header.value }}" if {{ conditions | join(" ") }}
-              {%- endfor %}
+              {%- var addHeaders []any = respHeaderMod | dig("add") | fallback([]any{}) %}
+              {%- for _, header := range addHeaders %}
+                      http-response add-header {{ header["name"] }} "{{ header["value"] }}" if {{ condition }}
+              {%- end %}
 
               {#- Remove headers #}
-              {%- for header_name in (filter.responseHeaderModifier.remove | default([])) %}
-      http-response del-header {{ header_name }} if {{ conditions | join(" ") }}
-              {%- endfor %}
-            {%- endif %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endfor -%}
-      {%- endif -%}
+              {%- var removeHeaders []any = respHeaderMod | dig("remove") | fallback([]any{}) %}
+              {%- for _, headerName := range removeHeaders %}
+      http-response del-header {{ headerName }} if {{ condition }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
   # Filter: RequestRedirect - redirects requests to different locations
-  frontend-filters-gateway-redirect:
+  frontend-filters-500-gateway-redirect:
     template: |
       {#- Generate http-request redirect statements #}
       {#- This is injected into base template via the frontend-filters-* extension point #}
       {#- Runs AFTER routing decisions, BEFORE backend selection #}
-      {%- from "util-regex-sanitize" import sanitize_regex -%}
+      {#- sanitize_regex is a built-in Scriggo function, no import needed #}
       {#- Get cached route analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-analysis" -%}
+      {{- render "util-gateway-analysis" -}}
 
       {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
-      {%- if shared.gateway_analysis.has_redirect_filter %}
+      {%- if shared.gatewayAnalysis.hasRedirect_filter %}
       # gateway/frontend-filters-gateway-redirect
       # RequestRedirect filters
-      {%- for route_info in shared.gateway_analysis.all_routes %}
-        {%- for filter in route_info.filters %}
-          {%- if filter.type == "RequestRedirect" and route_info.resource_type == "httproute" %}
+      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- for _, routeInfo := range gatewayAllRoutes %}
+        {%- var riFilters []any = routeInfo | dig("filters") | fallback([]any{}) %}
+        {%- for _, filter := range riFilters %}
+          {%- var filterType = filter["type"] %}
+          {%- var resType = routeInfo | dig("resource_type") %}
+          {%- if filterType == "RequestRedirect" && resType == "httproute" %}
             {#- Simple route ID check - all condition evaluation done by advanced matchers #}
-            {%- set conditions = ['{ var(req.gw_rule_id) -m str "' ~ route_info.route_id ~ '" }'] %}
+            {%- var condition = "{ var(req.gw_rule_id) -m str \"" + (routeInfo | dig("routeId")) + "\" }" %}
             {#- Build redirect directive #}
-            {%- if filter.requestRedirect %}
-              {%- set redirect = filter.requestRedirect %}
-              {%- set status_code = redirect.statusCode | default(302) %}
+            {%- var requestRedirect = filter | dig("requestRedirect") %}
+            {%- if requestRedirect != nil %}
+              {%- var redirect map[string]any = requestRedirect %}
+              {%- var statusCode = redirect | dig("statusCode") | fallback(302) %}
               {#- Build redirect location components #}
-              {%- set ns_redir = namespace(parts=[]) %}
+              {%- var redirParts = []any{} %}
               {#- Scheme #}
-              {%- if redirect.scheme %}
-                {%- set ns_redir.parts = ns_redir.parts.append("scheme " ~ redirect.scheme) %}
-              {%- endif %}
+              {%- var redirScheme = redirect | dig("scheme") | fallback("") %}
+              {%- if redirScheme != "" %}
+                {%- redirParts = append(redirParts, "scheme " + redirScheme) %}
+              {%- end %}
 
               {#- Path modification #}
-              {%- if redirect.path %}
-                {%- if redirect.path.type == "ReplaceFullPath" %}
+              {%- var redirPath = redirect | dig("path") %}
+              {%- if redirPath != nil %}
+                {%- var pathMap map[string]any = redirPath %}
+                {%- var pathType = pathMap | dig("type") %}
+                {%- if pathType == "ReplaceFullPath" %}
                   {#- Full path replacement: use location with scheme://host:port/newpath #}
-                  {%- set scheme = redirect.scheme | default("http") %}
-                  {%- set hostname = redirect.hostname | default("%[req.hdr(Host)]") %}
-                  {%- set port = redirect.port | default("") %}
-                  {%- if port %}
-                    {%- set location = scheme ~ "://" ~ hostname ~ ":" ~ port ~ redirect.path.replaceFullPath %}
+                  {%- var scheme = redirect | dig("scheme") | fallback("http") %}
+                  {%- var hostname = redirect | dig("hostname") | fallback("%[req.hdr(Host)]") %}
+                  {%- var port = redirect | dig("port") | fallback("") %}
+                  {%- var replaceFullPath = pathMap | dig("replaceFullPath") %}
+                  {%- var location = "" %}
+                  {%- if port != "" %}
+                    {%- location = scheme + "://" + hostname + ":" + port + replaceFullPath %}
                   {%- else %}
-                    {%- set location = scheme ~ "://" ~ hostname ~ redirect.path.replaceFullPath %}
-                  {%- endif %}
-                  {%- set ns_redir.parts = ns_redir.parts.append('location "' ~ location ~ '"') %}
-                {%- elif redirect.path.type == "ReplacePrefixMatch" %}
+                    {%- location = scheme + "://" + hostname + replaceFullPath %}
+                  {%- end %}
+                  {%- redirParts = append(redirParts, "location \"" + location + "\"") %}
+                {%- else if pathType == "ReplacePrefixMatch" %}
                   {#- Prefix replacement: use prefix #}
-                  {%- set ns_redir.parts = ns_redir.parts.append('prefix "' ~ redirect.path.replacePrefixMatch ~ '"') %}
-                {%- endif %}
-              {%- elif redirect.hostname or redirect.port %}
-                {#- Hostname/port change without path modification: construct full location #}
-                {%- set scheme = redirect.scheme | default("http") %}
-                {%- set hostname = redirect.hostname | default("%[req.hdr(Host)]") %}
-                {%- set port = redirect.port | default("") %}
-                {%- if port %}
-                  {%- set location = scheme ~ "://" ~ hostname ~ ":" ~ port ~ "%[path]" %}
-                {%- else %}
-                  {%- set location = scheme ~ "://" ~ hostname ~ "%[path]" %}
-                {%- endif %}
-                {%- set ns_redir.parts = ns_redir.parts.append('location "' ~ location ~ '"') %}
-              {%- endif %}
+                  {%- var replacePrefixMatch = pathMap | dig("replacePrefixMatch") %}
+                  {%- redirParts = append(redirParts, "prefix \"" + replacePrefixMatch + "\"") %}
+                {%- end %}
+              {%- else %}
+                {%- var redirHostname = redirect | dig("hostname") | fallback("") %}
+                {%- var redirPort = redirect | dig("port") | fallback("") %}
+                {%- if redirHostname != "" || redirPort != "" %}
+                  {#- Hostname/port change without path modification: construct full location #}
+                  {%- var scheme = redirect | dig("scheme") | fallback("http") %}
+                  {%- var hostname = redirect | dig("hostname") | fallback("%[req.hdr(Host)]") %}
+                  {%- var port = redirect | dig("port") | fallback("") %}
+                  {%- var location = "" %}
+                  {%- if port != "" %}
+                    {%- location = scheme + "://" + hostname + ":" + port + "%[path]" %}
+                  {%- else %}
+                    {%- location = scheme + "://" + hostname + "%[path]" %}
+                  {%- end %}
+                  {%- redirParts = append(redirParts, "location \"" + location + "\"") %}
+                {%- end %}
+              {%- end %}
 
               {#- Status code #}
-              {%- set ns_redir.parts = ns_redir.parts.append("code " ~ status_code) %}
+              {%- redirParts = append(redirParts, "code " + statusCode) %}
 
               {#- Debug: track filter application #}
-              {%- if debug | default(false) %}
-      http-request set-var(txn.filters_applied) str(RequestRedirect) if {{ conditions | join(" ") }} !{ var(txn.filters_applied) -m found }
-              {%- endif %}
+              {%- if debug | fallback(false) %}
+      http-request set-var(txn.filters_applied) str(RequestRedirect) if {{ condition }} !{ var(txn.filters_applied) -m found }
+              {%- end %}
 
               {#- Generate redirect directive #}
-      http-request redirect {{ ns_redir.parts | join(" ") }} if {{ conditions | join(" ") }}
-            {%- endif %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endfor -%}
-      {%- endif -%}
+      http-request redirect {{ redirParts | join(" ") }} if {{ condition }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
   # Filter: URLRewrite - rewrites request URLs before sending to backend
-  frontend-filters-gateway-urlrewrite:
+  frontend-filters-500-gateway-urlrewrite:
     template: |
       {#- Generate http-request URL rewrite statements #}
       {#- This is injected into base template via the frontend-filters-* extension point #}
       {#- Runs AFTER routing decisions, BEFORE backend selection #}
-      {%- from "util-regex-sanitize" import sanitize_regex -%}
+      {#- sanitize_regex is a built-in Scriggo function, no import needed #}
       {#- Get cached route analysis (runs once, shared across all includes) #}
-      {%- include "util-gateway-analysis" -%}
+      {{- render "util-gateway-analysis" -}}
 
       {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
-      {%- if shared.gateway_analysis.has_urlrewrite_filter %}
+      {%- if shared.gatewayAnalysis.hasUrlrewrite_filter %}
       # gateway/frontend-filters-gateway-urlrewrite
       # URLRewrite filters
-      {%- for route_info in shared.gateway_analysis.all_routes %}
-        {%- for filter in route_info.filters %}
-          {%- if filter.type == "URLRewrite" and route_info.resource_type == "httproute" %}
+      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- for _, routeInfo := range gatewayAllRoutes %}
+        {%- var riFilters []any = routeInfo | dig("filters") | fallback([]any{}) %}
+        {%- for _, filter := range riFilters %}
+          {%- var filterType = filter["type"] %}
+          {%- var resType = routeInfo | dig("resource_type") %}
+          {%- if filterType == "URLRewrite" && resType == "httproute" %}
             {#- Simple route ID check - all condition evaluation done by advanced matchers #}
-            {%- set conditions = ['{ var(req.gw_rule_id) -m str "' ~ route_info.route_id ~ '" }'] %}
+            {%- var condition = "{ var(req.gw_rule_id) -m str \"" + (routeInfo | dig("routeId")) + "\" }" %}
 
             {#- Apply URL rewrite directives #}
-            {%- if filter.urlRewrite %}
-              {%- set rewrite = filter.urlRewrite %}
+            {%- var urlRewrite = filter | dig("urlRewrite") %}
+            {%- if urlRewrite != nil %}
+              {%- var rewrite map[string]any = urlRewrite %}
               {#- Debug: track filter application #}
-              {%- if debug | default(false) %}
-      http-request set-var(txn.filters_applied) str(URLRewrite) if {{ conditions | join(" ") }} !{ var(txn.filters_applied) -m found }
-              {%- endif %}
+              {%- if debug | fallback(false) %}
+      http-request set-var(txn.filters_applied) str(URLRewrite) if {{ condition }} !{ var(txn.filters_applied) -m found }
+              {%- end %}
               {#- Hostname rewrite #}
-              {%- if rewrite.hostname %}
-      http-request set-header Host "{{ rewrite.hostname }}" if {{ conditions | join(" ") }}
-              {%- endif %}
+              {%- var rwHostname = rewrite | dig("hostname") | fallback("") %}
+              {%- if rwHostname != "" %}
+      http-request set-header Host "{{ rwHostname }}" if {{ condition }}
+              {%- end %}
               {#- Path rewrite #}
-              {%- if rewrite.path %}
-                {%- if rewrite.path.type == "ReplaceFullPath" %}
-      http-request set-path "{{ rewrite.path.replaceFullPath }}" if {{ conditions | join(" ") }}
-                {%- elif rewrite.path.type == "ReplacePrefixMatch" %}
+              {%- var rwPath = rewrite | dig("path") %}
+              {%- if rwPath != nil %}
+                {%- var pathMap map[string]any = rwPath %}
+                {%- var pathType = pathMap | dig("type") %}
+                {%- if pathType == "ReplaceFullPath" %}
+                  {%- var replaceFullPath = pathMap | dig("replaceFullPath") %}
+      http-request set-path "{{ replaceFullPath }}" if {{ condition }}
+                {%- else if pathType == "ReplacePrefixMatch" %}
                   {#- For prefix replacement, use replace-path to substitute the matched prefix #}
                   {#- Match the route's path prefix and replace with new prefix #}
-                  {%- set original_prefix = route_info.path.value %}
-                  {%- set new_prefix = rewrite.path.replacePrefixMatch %}
+                  {%- var originalPrefix = routeInfo | dig("path", "value") %}
+                  {%- var newPrefix = pathMap | dig("replacePrefixMatch") %}
                   {#- Escape regex special chars in original prefix for matching #}
-                  {%- set regex_prefix = original_prefix | replace(".", "\\.") | replace("/", "\\/") %}
-      http-request replace-path "^{{ regex_prefix }}(.*)" "{{ new_prefix }}\\1" if {{ conditions | join(" ") }}
-                {%- endif %}
-              {%- endif %}
-            {%- endif %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endfor -%}
-      {%- endif -%}
+                  {%- var regexPrefix = originalPrefix | replace(".", "\\.") | replace("/", "\\/") %}
+      http-request replace-path "^{{ regexPrefix }}(.*)" "{{ newPrefix }}\\1" if {{ condition }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
 
 validationTests:
   test-httproute-duplicate-backend-different-ports:
@@ -1780,12 +1919,12 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_method-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_method-route_0__default_method-route_1\" \\} \\{ method GET \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_method-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_method-route_0__default_method-route_1\" \\} \\{ method GET \\}"
         description: Must generate req.gw_rule_id for GET method
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_method-route_1\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_method-route_0__default_method-route_1\" \\} \\{ method POST \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_method-route_1\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_method-route_0__default_method-route_1\" \\} \\{ method POST \\}"
         description: Must generate req.gw_rule_id for POST method
 
   test-httproute-multi-hostname-map-newlines:
@@ -1970,7 +2109,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_header-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_header-route_0\" \\} \\{ req\\.hdr\\(X-Version\\) \"v1\" \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_header-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_header-route_0\" \\} \\{ req\\.hdr\\(X-Version\\) \"v1\" \\}"
         description: Must generate header exact match condition
 
   test-httproute-header-regex:
@@ -2024,7 +2163,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_regex-header-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_regex-header-route_0\" \\} \\{ req\\.hdr\\(User-Agent\\) -m reg \"\\^Mozilla\\.\\*\" \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_regex-header-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_regex-header-route_0\" \\} \\{ req\\.hdr\\(User-Agent\\) -m reg \"\\^Mozilla\\.\\*\" \\}"
         description: Must generate header regex match condition
 
   test-httproute-query-params:
@@ -2081,7 +2220,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_query-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_query-route_0\" \\} \\{ urlp\\(version\\) \"v2\" \\} \\{ urlp\\(filter\\) -m reg \"\\^active\\.\\*\" \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_query-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_query-route_0\" \\} \\{ urlp\\(version\\) \"v2\" \\} \\{ urlp\\(filter\\) -m reg \"\\^active\\.\\*\" \\}"
         description: Must generate query parameter match conditions
 
   test-httproute-regex-dollar-escaping:
@@ -2131,12 +2270,12 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid (dollar signs must be escaped)
+        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_regex-dollar-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_regex-dollar-route_0\" \\} \\{ urlp\\(token\\) -m reg \"\\^secret\\[0-9\\]\\+\\\\\\$\" \\}"
-        description: Must generate query parameter regex with properly escaped dollar sign
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_regex-dollar-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_regex-dollar-route_0\" \\} \\{ urlp\\(token\\) -m reg \"\\^secret\\[0-9\\]\\+\\\\\\$\" \\}"
+        description: Must generate query parameter regex with escaped dollar sign
 
   test-httproute-precedence:
     description: Complex precedence ordering with multiple conflicting routes
@@ -2462,7 +2601,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_canary-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_canary-route_0\" \\} \\{ method GET \\} \\{ req\\.hdr\\(X-Canary\\) \"true\" \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_canary-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_canary-route_0\" \\} \\{ method GET \\} \\{ req\\.hdr\\(X-Canary\\) \"true\" \\}"
         description: Must generate req.gw_rule_id with conditions
 
       - type: contains
@@ -2559,7 +2698,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_multi-rule_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_multi-rule_0__default_multi-rule_1\" \\} \\{ req\\.hdr\\(Authorization\\) \"Bearer\" \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_multi-rule_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_multi-rule_0__default_multi-rule_1\" \\} \\{ req\\.hdr\\(Authorization\\) \"Bearer\" \\}"
         description: Must set req.gw_rule_id for rule index 0 with header matcher
 
       - type: contains
@@ -2669,7 +2808,7 @@ validationTests:
 
       - type: contains
         target: map:path-regex.map
-        pattern: "api\\.example\\.com\\^/api/v\\[0-9\\]\\+/users\\$gtw_default_regex-route_versioned-service_80"
+        pattern: "api\\.example\\.com\\^/api/v\\[0-9\\]\\+/users\\$ gtw_default_regex-route_versioned-service_80"
         description: Regex path must be in path-regex.map
 
       - type: not_contains
@@ -2783,7 +2922,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_grpc-regex-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_grpc-regex-route_0\" \\} \\{ req\\.hdr\\(:path\\) -m reg \"/com\\.example\\.\\*/Get\\.\\*\" \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_grpc-regex-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-regex-route_0\" \\} \\{ req\\.hdr\\(:path\\) -m reg \"/com\\.example\\.\\*/Get\\.\\*\" \\}"
         description: Must generate regex method match for GRPCRoute
 
   test-httproute-all-matchers:
@@ -2842,7 +2981,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_combined-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_combined-route_0\" \\} \\{ method POST \\} \\{ req\\.hdr\\(Content-Type\\) \"application/json\" \\} \\{ urlp\\(version\\) \"v2\" \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_combined-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_combined-route_0\" \\} \\{ method POST \\} \\{ req\\.hdr\\(Content-Type\\) \"application/json\" \\} \\{ urlp\\(version\\) \"v2\" \\}"
         description: Must combine all matchers with AND logic
 
   test-httproute-cross-route-conflicts:
@@ -3189,7 +3328,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_grpc-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_route_id\\) -m str \"default_grpc-route_0\" \\} \\{ req\\.hdr\\(:path\\) \"/com\\.example\\.Service/GetData\" \\}"
+        pattern: "http-request set-var\\(req\\.gw_rule_id\\) str\\(default_grpc-route_0\\) if !\\{ var\\(req\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-route_0\" \\} \\{ req\\.hdr\\(:path\\) \"/com\\.example\\.Service/GetData\" \\}"
         description: GRPCRoute method must route to gRPC service
 
   test-httproute-request-header-modifier:

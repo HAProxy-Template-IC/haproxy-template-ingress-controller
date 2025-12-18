@@ -298,11 +298,6 @@ type TemplateSnippet struct {
 
 	// Template is the template content.
 	Template string `yaml:"template"`
-
-	// Priority determines the rendering order when multiple snippets are included.
-	// Lower values are rendered first. Snippets with the same priority are sorted alphabetically by name.
-	// Default: 500
-	Priority int `yaml:"priority"`
 }
 
 // MapFile is an HAProxy map file template.
@@ -382,6 +377,10 @@ type PostProcessorConfig struct {
 
 // TemplatingSettings configures template rendering behavior and custom variables.
 type TemplatingSettings struct {
+	// Engine specifies which template engine to use for rendering.
+	// Valid values: "scriggo" (default and only supported engine)
+	Engine string `yaml:"engine" json:"engine"`
+
 	// ExtraContext provides custom variables that are passed to all templates.
 	//
 	// This allows users to add arbitrary data to the template context without

@@ -26,6 +26,7 @@ import (
 
 	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
 	"haproxy-template-ic/pkg/controller/conversion"
+	"haproxy-template-ic/pkg/controller/helpers"
 	"haproxy-template-ic/pkg/controller/testrunner"
 	"haproxy-template-ic/pkg/dataplane"
 	"haproxy-template-ic/pkg/templating"
@@ -86,7 +87,7 @@ func init() {
 	validateCmd.Flags().StringVar(&validateHAProxyBinary, "haproxy-binary", "haproxy", "Path to HAProxy binary for validation")
 	validateCmd.Flags().BoolVar(&validateVerbose, "verbose", false, "Show rendered content preview for failed assertions")
 	validateCmd.Flags().BoolVar(&validateDumpRendered, "dump-rendered", false, "Dump all rendered content (haproxy.cfg, maps, files)")
-	validateCmd.Flags().BoolVar(&validateTraceTemplates, "trace-templates", false, "Show template execution trace")
+	validateCmd.Flags().BoolVar(&validateTraceTemplates, "trace-templates", false, "Show template execution trace (top-level only; use with --profile-includes for full call tree)")
 	validateCmd.Flags().BoolVar(&validateDebugFilters, "debug-filters", false, "Show filter operation debugging (sort comparisons, etc.)")
 	validateCmd.Flags().BoolVar(&validateProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
 	validateCmd.Flags().IntVar(&validateWorkers, "workers", 0, "Number of parallel test workers (0=auto-detect CPUs, 1=sequential)")
@@ -132,7 +133,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 // ValidationSetup contains all components needed for validation test execution.
 type ValidationSetup struct {
 	ConfigSpec      *v1alpha1.HAProxyTemplateConfigSpec
-	Engine          *templating.TemplateEngine
+	Engine          templating.Engine
 	ValidationPaths *dataplane.ValidationPaths
 	Capabilities    dataplane.Capabilities
 	Cleanup         func()
@@ -170,6 +171,11 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 		engine.EnableTracing()
 	}
 
+	// Enable filter debugging if requested
+	if validateDebugFilters {
+		engine.EnableFilterDebug()
+	}
+
 	return &ValidationSetup{
 		ConfigSpec:      configSpec,
 		Engine:          engine,
@@ -183,7 +189,7 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 func runValidationTests(
 	ctx context.Context,
 	configSpec *v1alpha1.HAProxyTemplateConfigSpec,
-	engine *templating.TemplateEngine,
+	engine templating.Engine,
 	validationPaths *dataplane.ValidationPaths,
 	capabilities dataplane.Capabilities,
 	logger *slog.Logger,
@@ -222,7 +228,7 @@ func runValidationTests(
 }
 
 // outputResults formats and prints test results, and optionally dumps rendered content and trace.
-func outputResults(results *testrunner.TestResults, engine *templating.TemplateEngine) error {
+func outputResults(results *testrunner.TestResults, engine templating.Engine) error {
 	// Format output
 	output, err := testrunner.FormatResults(results, testrunner.OutputOptions{
 		Format:  testrunner.OutputFormat(validateOutputFormat),
@@ -303,7 +309,7 @@ func dumpRenderedContent(results *testrunner.TestResults) {
 }
 
 // outputTemplateTrace prints template execution trace if available.
-func outputTemplateTrace(engine *templating.TemplateEngine) {
+func outputTemplateTrace(engine templating.Engine) {
 	trace := engine.GetTraceOutput()
 	if trace != "" {
 		fmt.Println("\n" + strings.Repeat("=", 80))
@@ -444,53 +450,24 @@ func loadConfigFromFile(filePath string) (*v1alpha1.HAProxyTemplateConfigSpec, e
 }
 
 // createTemplateEngine creates and compiles the template engine from config spec with custom filters.
-func createTemplateEngine(configSpec *v1alpha1.HAProxyTemplateConfigSpec, logger *slog.Logger) (*templating.TemplateEngine, error) {
-	// Extract all template sources
-	templates := make(map[string]string)
-
-	// Main HAProxy config template
-	templates["haproxy.cfg"] = configSpec.HAProxyConfig.Template
-
-	// Template snippets
-	for name, snippet := range configSpec.TemplateSnippets {
-		templates[name] = snippet.Template
+func createTemplateEngine(configSpec *v1alpha1.HAProxyTemplateConfigSpec, logger *slog.Logger) (templating.Engine, error) {
+	// Convert CRD spec to internal config
+	cfg, err := conversion.ConvertSpec(configSpec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert config spec: %w", err)
 	}
 
-	// Map files
-	for name, mapFile := range configSpec.Maps {
-		templates[name] = mapFile.Template
-	}
+	// Log template compilation
+	templates := helpers.ExtractTemplatesFromConfig(cfg)
+	logger.Info("Compiling templates", "template_count", len(templates.AllTemplates), "engine", cfg.TemplatingSettings.Engine)
 
-	// General files
-	for name, file := range configSpec.Files {
-		templates[name] = file.Template
+	// Create engine using helper (handles template extraction, filters, engine type parsing)
+	// Note: The fail() function is auto-registered by the Scriggo engine
+	// Pass profiling option from CLI flag so the same engine can be reused for all tests.
+	options := helpers.EngineOptions{
+		EnableProfiling: validateProfileIncludes,
 	}
-
-	// SSL certificates
-	for name, cert := range configSpec.SSLCertificates {
-		templates[name] = cert.Template
-	}
-
-	// Register custom filters
-	// Note: pathResolver is now passed via rendering context by TestRunner
-	filters := map[string]templating.FilterFunc{
-		"glob_match": templating.GlobMatch,
-		"b64decode":  templating.B64Decode,
-	}
-
-	// Register custom global functions
-	functions := map[string]templating.GlobalFunc{
-		"fail": func(args ...interface{}) (interface{}, error) {
-			if len(args) == 0 {
-				return nil, fmt.Errorf("template evaluation failed")
-			}
-			return nil, fmt.Errorf("%v", args[0])
-		},
-	}
-
-	// Compile all templates with custom filters and functions
-	logger.Info("Compiling templates", "template_count", len(templates))
-	engine, err := templating.New(templating.EngineTypeGonja, templates, filters, functions, nil)
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile templates: %w", err)
 	}

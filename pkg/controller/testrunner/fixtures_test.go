@@ -353,7 +353,7 @@ func TestMergeFixtures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mergeFixtures(tt.globalFixtures, tt.testFixtures)
+			result := MergeFixtures(tt.globalFixtures, tt.testFixtures)
 
 			// Check all expected types are present
 			for _, wantType := range tt.wantTypes {
@@ -492,7 +492,7 @@ func TestMergeHTTPFixtures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mergeHTTPFixtures(tt.globalFixtures, tt.testFixtures)
+			result := MergeHTTPFixtures(tt.globalFixtures, tt.testFixtures)
 
 			assert.Len(t, result, tt.wantCount)
 
@@ -581,7 +581,7 @@ func TestFixtureHTTPStoreWrapper_Fetch(t *testing.T) {
 		{URL: "http://example.com/whitespace.txt", Content: "   "},
 	}
 
-	store := createHTTPStoreFromFixtures(fixtures, logger)
+	store := CreateHTTPStoreFromFixtures(fixtures, logger)
 	wrapper := NewFixtureHTTPStoreWrapper(store, logger)
 
 	t.Run("fetch existing URL", func(t *testing.T) {
@@ -634,7 +634,7 @@ func TestCreateHTTPStoreFromFixtures(t *testing.T) {
 		{URL: "http://example.com/2.txt", Content: "content2"},
 	}
 
-	store := createHTTPStoreFromFixtures(fixtures, logger)
+	store := CreateHTTPStoreFromFixtures(fixtures, logger)
 
 	// Verify all fixtures are loaded
 	for _, fixture := range fixtures {
@@ -679,7 +679,7 @@ func TestCreateStoresFromFixtures_HAProxyPods(t *testing.T) {
 		},
 	}
 
-	stores, err := runner.createStoresFromFixtures(fixtures)
+	stores, err := runner.CreateStoresFromFixtures(fixtures)
 	require.NoError(t, err)
 
 	// Verify haproxy-pods store exists
@@ -714,7 +714,7 @@ func TestCreateStoresFromFixtures_InvalidResource(t *testing.T) {
 		},
 	}
 
-	_, err := runner.createStoresFromFixtures(fixtures)
+	_, err := runner.CreateStoresFromFixtures(fixtures)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not a map")
 }
@@ -740,7 +740,7 @@ func TestCreateStoresFromFixtures_UnknownResourceType(t *testing.T) {
 		},
 	}
 
-	_, err := runner.createStoresFromFixtures(fixtures)
+	_, err := runner.CreateStoresFromFixtures(fixtures)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in watched resources")
 }
@@ -769,7 +769,7 @@ func TestCreateStoresFromFixtures_EmptyStoresCreated(t *testing.T) {
 	// Empty fixtures should still create empty stores for all watched resources
 	fixtures := map[string][]interface{}{}
 
-	stores, err := runner.createStoresFromFixtures(fixtures)
+	stores, err := runner.CreateStoresFromFixtures(fixtures)
 	require.NoError(t, err)
 
 	// All watched resources should have stores
@@ -816,7 +816,7 @@ func TestCreateStoresFromFixtures_TypeMetaInference(t *testing.T) {
 		},
 	}
 
-	stores, err := runner.createStoresFromFixtures(fixtures)
+	stores, err := runner.CreateStoresFromFixtures(fixtures)
 	require.NoError(t, err)
 
 	// Verify service was added
@@ -829,10 +829,10 @@ func TestCreateStoresFromFixtures_TypeMetaInference(t *testing.T) {
 }
 
 // =============================================================================
-// sortSnippetsByPriority Tests
+// sortSnippetNames Tests
 // =============================================================================
 
-func TestSortSnippetsByPriority(t *testing.T) {
+func TestSortSnippetNames(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	tests := []struct {
@@ -848,47 +848,31 @@ func TestSortSnippetsByPriority(t *testing.T) {
 		{
 			name: "single snippet",
 			snippets: map[string]config.TemplateSnippet{
-				"only-snippet": {Priority: 100},
+				"only-snippet": {},
 			},
 			want: []string{"only-snippet"},
 		},
 		{
-			name: "sorted by priority ascending",
+			name: "alphabetical sorting",
 			snippets: map[string]config.TemplateSnippet{
-				"high": {Priority: 900},
-				"low":  {Priority: 100},
-				"mid":  {Priority: 500},
-			},
-			want: []string{"low", "mid", "high"},
-		},
-		{
-			name: "default priority for unset (0 becomes 500)",
-			snippets: map[string]config.TemplateSnippet{
-				"explicit-500": {Priority: 500},
-				"default":      {Priority: 0}, // Should become 500
-				"low":          {Priority: 100},
-			},
-			want: []string{"low", "default", "explicit-500"},
-		},
-		{
-			name: "alphabetical for same priority",
-			snippets: map[string]config.TemplateSnippet{
-				"zebra": {Priority: 100},
-				"alpha": {Priority: 100},
-				"mike":  {Priority: 100},
+				"zebra": {},
+				"alpha": {},
+				"mike":  {},
 			},
 			want: []string{"alpha", "mike", "zebra"},
 		},
 		{
-			name: "combined priority and alphabetical sorting",
+			name: "ordering encoded in names with numbers",
 			snippets: map[string]config.TemplateSnippet{
-				"b-low":    {Priority: 100},
-				"a-low":    {Priority: 100},
-				"c-high":   {Priority: 900},
-				"b-high":   {Priority: 900},
-				"a-medium": {Priority: 500},
+				"features-500-ssl":            {},
+				"features-050-initialization": {},
+				"features-150-crtlist":        {},
 			},
-			want: []string{"a-low", "b-low", "a-medium", "b-high", "c-high"},
+			want: []string{
+				"features-050-initialization",
+				"features-150-crtlist",
+				"features-500-ssl",
+			},
 		},
 	}
 
@@ -901,7 +885,7 @@ func TestSortSnippetsByPriority(t *testing.T) {
 				logger: logger,
 			}
 
-			result := runner.sortSnippetsByPriority()
+			result := runner.sortSnippetNames()
 			assert.Equal(t, tt.want, result)
 		})
 	}
@@ -1296,92 +1280,89 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 	t.Run("renders map files", func(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg":  "# placeholder",
-			"backends.map": "host1 {{ backend_name }}",
+			"backends.map": "host1 my-backend",
 		}
-		engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
 			config: &config.Config{
 				Maps: map[string]config.MapFile{
-					"backends.map": {Template: "host1 {{ backend_name }}"},
+					"backends.map": {Template: "host1 my-backend"},
 				},
 			},
 			logger: logger,
 		}
 
-		renderCtx := map[string]interface{}{
-			"backend_name": "my-backend",
-		}
+		renderCtx := map[string]interface{}{}
 
 		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.MapFiles, 1)
 		assert.Equal(t, "backends.map", auxFiles.MapFiles[0].Path)
-		assert.Equal(t, "host1 my-backend", auxFiles.MapFiles[0].Content)
+		// Scriggo adds trailing newline
+		assert.Equal(t, "host1 my-backend\n", auxFiles.MapFiles[0].Content)
 	})
 
 	t.Run("renders general files", func(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg":   "# placeholder",
-			"blocklist.txt": "{{ ip_address }}",
+			"blocklist.txt": "192.168.1.100",
 		}
-		engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
 			config: &config.Config{
 				Files: map[string]config.GeneralFile{
-					"blocklist.txt": {Template: "{{ ip_address }}"},
+					"blocklist.txt": {Template: "192.168.1.100"},
 				},
 			},
 			logger: logger,
 		}
 
-		renderCtx := map[string]interface{}{
-			"ip_address": "192.168.1.100",
-		}
+		renderCtx := map[string]interface{}{}
 
 		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.GeneralFiles, 1)
 		assert.Equal(t, "blocklist.txt", auxFiles.GeneralFiles[0].Filename)
-		assert.Equal(t, "192.168.1.100", auxFiles.GeneralFiles[0].Content)
+		// Scriggo adds trailing newline
+		assert.Equal(t, "192.168.1.100\n", auxFiles.GeneralFiles[0].Content)
 	})
 
 	t.Run("renders SSL certificates", func(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg": "# placeholder",
-			"server.pem":  "-----BEGIN CERTIFICATE-----\n{{ cert_data }}\n-----END CERTIFICATE-----",
+			"server.pem":  "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----",
 		}
-		engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
 			config: &config.Config{
 				SSLCertificates: map[string]config.SSLCertificate{
-					"server.pem": {Template: "-----BEGIN CERTIFICATE-----\n{{ cert_data }}\n-----END CERTIFICATE-----"},
+					"server.pem": {Template: "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----"},
 				},
 			},
 			logger: logger,
 		}
 
-		renderCtx := map[string]interface{}{
-			"cert_data": "MIIB...",
-		}
+		renderCtx := map[string]interface{}{}
 
 		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.SSLCertificates, 1)
 		assert.Equal(t, "server.pem", auxFiles.SSLCertificates[0].Path)
-		assert.Contains(t, auxFiles.SSLCertificates[0].Content, "MIIB...")
+		// Scriggo adds trailing newline
+		assert.Equal(t, "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n", auxFiles.SSLCertificates[0].Content)
 	})
 
 	t.Run("returns empty when no auxiliary files", func(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg": "# placeholder",
 		}
-		engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1399,15 +1380,15 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 	t.Run("error on map file render failure", func(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg":  "# placeholder",
-			"backends.map": "{{ undefined_filter|nonexistent_filter }}",
+			"backends.map": `{{ fail("intentional error") }}`,
 		}
-		engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
 			config: &config.Config{
 				Maps: map[string]config.MapFile{
-					"backends.map": {Template: "{{ undefined_filter|nonexistent_filter }}"},
+					"backends.map": {Template: `{{ fail("intentional error") }}`},
 				},
 			},
 			logger: logger,
@@ -1421,15 +1402,15 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 	t.Run("error on general file render failure", func(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg":   "# placeholder",
-			"blocklist.txt": "{{ var|bad_filter }}",
+			"blocklist.txt": `{{ fail("intentional error") }}`,
 		}
-		engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
 			config: &config.Config{
 				Files: map[string]config.GeneralFile{
-					"blocklist.txt": {Template: "{{ var|bad_filter }}"},
+					"blocklist.txt": {Template: `{{ fail("intentional error") }}`},
 				},
 			},
 			logger: logger,
@@ -1443,15 +1424,15 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 	t.Run("error on SSL certificate render failure", func(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg": "# placeholder",
-			"server.pem":  "{{ var|invalid_filter }}",
+			"server.pem":  `{{ fail("intentional error") }}`,
 		}
-		engine, err := templating.New(templating.EngineTypeGonja, templates, nil, nil, nil)
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
 			config: &config.Config{
 				SSLCertificates: map[string]config.SSLCertificate{
-					"server.pem": {Template: "{{ var|invalid_filter }}"},
+					"server.pem": {Template: `{{ fail("intentional error") }}`},
 				},
 			},
 			logger: logger,

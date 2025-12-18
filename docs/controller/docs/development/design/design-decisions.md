@@ -85,25 +85,18 @@ This fix resolves issues where valid HAProxy configurations were rejected during
 
 ##### Template Engine Selection
 
-**Decision**: Use a Jinja2-like template engine for Go with rich feature set.
+**Decision**: Use Scriggo, a Go-native template engine with dynamic include support.
 
-**Candidates Evaluated**:
-
-1. **gonja v2**: Pure Go Jinja2 implementation, actively maintained (v2.4.1, January 2025)
-2. **pongo2**: Django/Jinja2 syntax, comprehensive but last release 2022
-3. **text/template**: Go stdlib, limited features, verbose syntax
-4. **jet**: Fast, but different syntax paradigm
-
-**Selected**: gonja v2 (github.com/nikolalohinski/gonja/v2)
+**Selected**: Scriggo (github.com/open2b/scriggo)
 
 **Rationale**:
 
-- **Active Maintenance**: Latest release v2.4.1 (January 2025), ongoing development
-- **Jinja2 Compatibility**: Aims for maximum compatibility with Python's Jinja2 engine
-- **Familiarity**: Jinja2 syntax is well-known in operations community
-- **Features**: Full feature set including filters, macros, template inheritance, control flow
-- **Extensibility**: Easy to add custom filters (b64decode, etc.) and context methods (pathResolver, etc.)
-- **Pure Go**: No external dependencies, requires Go 1.21+
+- **Dynamic Includes**: Supports runtime-resolved include paths via custom file system implementation
+- **Active Maintenance**: Actively maintained with regular releases
+- **Go-Native**: Pure Go implementation with Go-like template syntax
+- **Features**: Full feature set including control flow, macros, and template inheritance
+- **Extensibility**: Custom file systems enable dynamic template loading and include resolution
+- **Pure Go**: No external dependencies
 
 ##### Kubernetes Client Architecture
 
@@ -1125,7 +1118,7 @@ package templating
 // Accepts only primitive types - no dependency on config package.
 func ValidateTemplates(templates map[string]string) []error {
     var errors []error
-    engine, err := NewTemplateEngine(EngineTypeGonja)
+    engine, err := NewTemplateEngine()
     if err != nil {
         return []error{err}
     }

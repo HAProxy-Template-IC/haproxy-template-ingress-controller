@@ -30,6 +30,33 @@ Merge Order (lowest to highest priority):
 {{- end }}
 ```
 
+### Library Knowledge Hierarchy
+
+Libraries form a dependency hierarchy - each library may only reference snippets and variables from libraries it "knows about":
+
+```
+Level 0: base.yaml
+         │
+         ├── Knows: nothing (completely resource-agnostic)
+         │
+Level 1: ssl.yaml, path-regex-last.yaml
+         │
+         ├── Know: base
+         ├── Don't know: each other
+         │
+Level 2: ingress.yaml, gateway.yaml
+         │
+         ├── Know: base, ssl, path-regex-last
+         ├── Don't know: each other
+         │
+Level 3: haproxy-ingress.yaml, haproxytech.yaml
+         │
+         ├── Know: all libraries above
+         └── Don't know: each other
+```
+
+This hierarchy prevents circular dependencies and ensures predictable behavior during library merging. Violating the hierarchy (e.g., base.yaml referencing ingress-specific snippets) will cause runtime errors when that library is disabled.
+
 ### Library Structure
 
 Each library file (`libraries/*.yaml`) contains:
@@ -125,6 +152,107 @@ Resource-specific libraries (ingress.yaml, gateway.yaml, haproxytech.yaml) are r
 
 **Why This Matters**: This separation allows Gateway API and Ingress resources to coexist without base.yaml needing to know which resource type it's processing. Resource-specific logic stays in resource-specific libraries.
 
+### Extension Point Reference
+
+The base template uses `render_glob` to discover and render snippets from all libraries. Snippets are rendered in alphabetical order, so numeric prefixes control execution order.
+
+| Pattern | Purpose | Contributing Libraries |
+|---------|---------|----------------------|
+| `features-*` | Feature registration (SSL, TLS certs) | gateway, haproxytech, ingress, ssl |
+| `backends-*` | Backend definitions | gateway, ingress, ssl |
+| `frontends-*` | Additional frontends (HTTPS, TCP) | ssl |
+| `map-host-*` | Host map entries | gateway, ingress |
+| `map-path-exact-*` | Exact path map entries | gateway, ingress |
+| `map-path-prefix-*` | Prefix path map entries | gateway, ingress |
+| `map-path-prefix-exact-*` | Prefix-exact map entries | gateway, ingress |
+| `map-path-regex-*` | Regex path map entries | gateway, ingress, haproxy-ingress |
+| `map-weighted-backend-*` | Weighted routing map | gateway |
+| `frontend-matchers-advanced-*` | Advanced route matching (method, headers) | gateway |
+| `frontend-filters-*` | Request/response filters | gateway, haproxytech |
+| `backend-directives-*` | Backend configuration directives | haproxytech |
+| `global-top-*` | Global sections (userlist, resolvers) | haproxytech |
+
+**Extension Point Variable Passing:**
+
+Extension points pass variables to child snippets via `inherit_context`. Understanding which variables are available is crucial for writing correct snippets.
+
+| Extension Point | Available Variables | Passed From |
+|-----------------|---------------------|-------------|
+| `backend-directives-*` | `ingress`, `serverOpts`, `serviceName`, `port` | backends-500-ingress |
+| `frontend-filters-*` | `ingress`, `rule`, `path` | ingress.yaml frontend loop |
+| `features-*` | `globalFeatures` (as `gf`) | base.yaml features section |
+
+**Example - backend-directives extension:**
+
+```scriggo
+{#- In backends-500-ingress (ingress.yaml) #}
+{%- var serverOpts = map[string]any{"flags": []any{}} %}
+{{- render_glob "backend-directives-*" inherit_context }}
+{{ BackendServers(tostring(serviceName), 0, toint(port), serverOpts) }}
+
+{#- In backend-directives-900-haproxytech (haproxytech.yaml) #}
+{#- These variables are available via inherit_context: #}
+{%- if ingress != nil %}
+  {#- ingress: the current Ingress resource #}
+  {#- serverOpts: map for accumulating server options #}
+  {%- var snippet = ingress | dig("metadata", "annotations", "haproxy.org/backend-config-snippet") %}
+{%- end %}
+```
+
+### Snippet Priority Numbering
+
+Snippets use numeric prefixes (e.g., `backends-500-ingress`) to control execution order within `render_glob` patterns. Lower numbers execute first.
+
+**Reserved ranges:**
+
+| Range | Purpose | Examples |
+|-------|---------|----------|
+| 000-099 | Infrastructure/initialization | `features-050-ssl-initialization` |
+| 100-199 | Feature registration, basic config | `features-100-gateway-tls`, `frontend-filters-100-haproxytech-basic-headers` |
+| 200-299 | Access control, security | `frontend-filters-200-haproxytech-access-control` |
+| 300-399 | CORS, header manipulation | `frontend-filters-300-haproxytech-cors` |
+| 400-499 | Redirects, rewrites | `frontend-filters-400-haproxytech-ssl-redirect` |
+| 500-599 | Core functionality | `backends-500-ingress`, `map-host-500-gateway` |
+| 600-699 | Compatibility layers | `map-path-regex-600-haproxy-ingress` |
+| 900-999 | Finalization, cleanup | `frontend-matchers-advanced-900-path-match` |
+
+### Snippet Implementation Patterns
+
+**Use macros (import pattern)** when:
+
+- Snippet produces output that needs parameters
+- Called multiple times with different inputs
+- Output is inline within another template
+
+```scriggo
+{# Definition in util-backend-name-ingress #}
+{% macro BackendNameIngress(ingress any, path any) string %}
+  ...
+{% end %}
+
+{# Usage #}
+{% import "util-backend-name-ingress" for BackendNameIngress %}
+{{ BackendNameIngress(ingress, path) }}
+```
+
+**Use shared variables (render pattern)** when:
+
+- Expensive computation should run once per render
+- Result needed by multiple unrelated snippets
+- Caching across template boundaries required
+
+```scriggo
+{# Definition in util-gateway-analysis #}
+{%- if !has_cached("gateway_analysis") %}
+  {%- shared["gateway_analysis"] = expensive_computation() %}
+  {%- set_cached("gateway_analysis", true) %}
+{%- end %}
+
+{# Usage from any snippet #}
+{{ render "util-gateway-analysis" }}
+{%- var ga map[string]any = shared["gateway_analysis"] %}
+```
+
 ## HAProxy File Path Requirements
 
 **CRITICAL**: HAProxy **requires absolute paths** to locate auxiliary files (maps, error pages, SSL certificates).
@@ -192,7 +320,7 @@ Both use **absolute paths** because HAProxy requires them.
 
 Templates use `pathResolver.GetPath()` to generate absolute paths:
 
-```gonja
+```scriggo
 {#- Template example -#}
 errorfile 400 {{ pathResolver.GetPath("400.http", "file") }}
 
@@ -413,7 +541,7 @@ templateSnippets:
 
 **Required Documentation Sections:**
 
-```gonja
+```scriggo
 {#-
   <Template Name>
 
@@ -462,6 +590,52 @@ Without inline documentation, developers must:
 
 Proper documentation prevents bugs and makes templates self-documenting.
 
+### Cross-Library Shared State (globalFeatures / gf)
+
+Libraries communicate across boundaries using the `globalFeatures` map (commonly aliased as `gf`). This enables features like SSL to be configured in one library (ingress.yaml, gateway.yaml) and consumed by another (ssl.yaml).
+
+**Pattern:**
+
+```scriggo
+{#- ssl.yaml: Initialize shared state during feature registration -#}
+{%- if gf["sslPassthroughBackends"] == nil %}
+  {%- gf["sslPassthroughBackends"] = []any{} %}
+{%- end %}
+{%- if gf["tlsCertificates"] == nil %}
+  {%- gf["tlsCertificates"] = []any{} %}
+{%- end %}
+
+{#- ingress.yaml or gateway.yaml: Append data to shared state -#}
+{%- var sslBackends []any = gf["sslPassthroughBackends"].([]any) %}
+{%- gf["sslPassthroughBackends"] = append(sslBackends, backend) %}
+
+{#- ssl.yaml: Consume shared state to generate output -#}
+{%- var backends = gf["sslPassthroughBackends"] | fallback([]any{}) %}
+{%- for _, backend := range backends.([]any) %}
+  use_backend {{ backend["name"] }} if { req.ssl_sni -i {{ backend["sni"] }} }
+{%- end %}
+```
+
+**Available Shared State Keys:**
+
+| Key | Type | Purpose | Initialized By | Written By |
+|-----|------|---------|----------------|------------|
+| `sslPassthroughBackends` | `[]any` | SSL passthrough backend definitions | ssl.yaml | gateway.yaml, haproxytech.yaml |
+| `tlsCertificates` | `[]any` | TLS certificate references for crt-list | ssl.yaml | gateway.yaml, ingress.yaml |
+
+!!! warning "Map Key Consistency is Critical"
+    All libraries **MUST** use the exact same map key names. The codebase uses **camelCase** for shared state keys. Using different key names (e.g., `tls_certificates` vs `tlsCertificates`) will cause silent failures where data written by one library is invisible to another.
+
+**The `gf` Alias:**
+
+`gf` is a shorthand alias for `globalFeatures`. Both refer to the same shared map. Use `gf` for brevity in templates:
+
+```scriggo
+{#- These are equivalent: #}
+{%- var certs = globalFeatures["tlsCertificates"] %}
+{%- var certs = gf["tlsCertificates"] %}
+```
+
 ### Backend Deduplication
 
 When multiple paths route to the same service+port, deduplicate backends:
@@ -470,26 +644,24 @@ When multiple paths route to the same service+port, deduplicate backends:
 templateSnippets:
   resource_ingress_backends:
     template: |
-      {#- Using string-based deduplication due to Gonja PyString compatibility issues #}
-      {%- set ns = namespace(seen="") %}
-      {%- for ingress in resources.ingresses.List() %}
-      {%- for path in ingress.spec.paths %}
-      {%- set backend_key = path.service.name ~ "_" ~ path.service.port %}
-      {%- if ("|" ~ backend_key ~ "|") not in ns.seen %}
-      {%- set ns.seen = ns.seen ~ "|" ~ backend_key ~ "|" %}
+      {#- Backend deduplication #}
+      {% var seen = map[string]bool{} %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, path := range ingress.spec.paths %}
+      {% var backend_key = path.service.name + "_" + path.service.port %}
+      {%- if !seen[backend_key] %}
+      {% seen[backend_key] = true %}
 
       backend {{ backend_key }}
         # Only generated once per unique service+port
-      {%- endif %}
-      {%- endfor %}
-      {%- endfor %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
 ```
-
-**Note**: This uses the string-based deduplication pattern with delimiters. Backend keys generated from template expressions hit Gonja PyString compatibility issues with list membership checks. See [String-Based vs List-Based Deduplication](#string-based-vs-list-based-deduplication) for details.
 
 ### Optimizing Expensive Computations with Utility Snippets
 
-Libraries provide **utility snippets** that cache expensive computations using `compute_once`. These snippets encapsulate all the caching complexity, making it easy to use cached data from any template.
+Libraries provide **utility snippets** that cache expensive computations. These snippets encapsulate all the caching complexity, making it easy to use cached data from any template.
 
 **Problem**: Expensive computations run multiple times per render
 
@@ -507,16 +679,16 @@ Without caching, analyzing routes or scanning resources runs every time a snippe
 
 **Solution**: Use utility snippets for cached access
 
-Utility snippets handle all caching internally. Just include them and use the result:
+Utility snippets handle all caching internally. Just render them and use the result:
 
-```jinja2
+```go
 {# Any snippet that needs route analysis #}
-{%- include "util-gateway-analysis" %}
+{{ render "util-gateway-analysis" }}
 
 {# The gateway_analysis variable is now available with cached data #}
-{%- for route in gateway_analysis.sorted_routes %}
+{%- for _, route := range gateway_analysis.sorted_routes %}
   ... process route ...
-{%- endfor %}
+{%- end %}
 ```
 
 **Available Utility Snippets:**
@@ -529,37 +701,38 @@ Utility snippets handle all caching internally. Just include them and use the re
 
 **Example Usage:**
 
-```jinja2
+```go
 {# Gateway route analysis - used by 7+ snippets #}
-{%- include "util-gateway-analysis" %}
-{%- for route in gateway_analysis.sorted_routes %}
+{{ render "util-gateway-analysis" }}
+{%- for _, route := range gateway_analysis.sorted_routes %}
 backend {{ route.metadata.namespace }}_{{ route.metadata.name }}
     {# ... backend config ... #}
-{%- endfor %}
+{%- end %}
 
 {# SSL passthrough backends - used by 2 snippets #}
-{%- include "util-gateway-ssl-passthrough" %}
-{%- for backend in gateway_ssl_passthrough.backends %}
+{{ render "util-gateway-ssl-passthrough" }}
+{%- for _, backend := range gateway_ssl_passthrough.backends %}
     use_backend {{ backend.name }} if { req.ssl_sni -i {{ backend.sni }} }
-{%- endfor %}
+{%- end %}
 ```
 
 **How It Works (Internal Architecture):**
 
-The `compute_once` tag caches by **string variable name**. When the same variable name is used across different template contexts, the cached data is copied to the current variable on cache hit:
+The caching functions (`has_cached`, `get_cached`, `set_cached`) store values by key. When the same key is used across different template contexts, the cached data is retrieved:
 
-1. First include: Creates namespace, runs expensive computation, caches result
-2. Subsequent includes: Retrieves cached result and copies to local variable
+1. First render: Checks if cached, runs expensive computation, stores result
+2. Subsequent renders: Retrieves cached result
 3. Works across different template contexts (haproxyConfig, map files, etc.)
 
-```jinja2
+```go
 {# Inside util-gateway-analysis (simplified) #}
-{%- set gateway_analysis = namespace(sorted_routes=[], path_groups={}) %}
-{%- compute_once gateway_analysis %}
-  {# Expensive route analysis runs ONCE (first include only) #}
-  {%- from "util-analyze-routes" import analyze_routes %}
-  {{- analyze_routes(gateway_analysis, resources) -}}
-{%- endcompute_once %}
+{% if !has_cached("gateway_analysis") %}
+  {# Expensive route analysis runs ONCE (first render only) #}
+  {% import "util-analyze-routes" for analyze_routes %}
+  {% var result = analyze_routes(resources) %}
+  {% set_cached("gateway_analysis", result) %}
+{% end %}
+{% var gateway_analysis = get_cached("gateway_analysis") %}
 {# gateway_analysis now contains cached data from first computation #}
 ```
 
@@ -577,32 +750,34 @@ templateSnippets:
 
         Description of what this computes and why it's expensive.
 
-        After including this snippet, the following variable is available:
-          my_computation - namespace containing:
+        After rendering this snippet, the following variable is available:
+          my_computation - map containing:
             .results - list of computed results
             .lookup  - dict for fast lookups
 
         Usage:
-          {%- include "util-my-expensive-computation" %}
-          {%- for item in my_computation.results %}
+          {{ render "util-my-expensive-computation" }}
+          {%- for _, item := range my_computation.results %}
             ... use item ...
-          {%- endfor %}
+          {%- end %}
       -#}
-      {%- set my_computation = namespace(results=[], lookup={}) %}
-      {%- compute_once my_computation %}
+      {% if !has_cached("my_computation") %}
         {# Your expensive computation here - runs only ONCE per render #}
-        {%- for resource in resources.my_resources.List() %}
-          {%- set my_computation.results = my_computation.results.append(resource) %}
-        {%- endfor %}
-      {%- endcompute_once %}
+        {% var results = []any{} %}
+        {%- for _, resource := range resources.my_resources.List() %}
+          {% results = append(results, resource) %}
+        {%- end %}
+        {% set_cached("my_computation", map[string]any{"results": results}) %}
+      {% end %}
+      {% var my_computation = get_cached("my_computation") %}
 ```
 
 **Key Requirements:**
 
-1. Use a descriptive variable name (caching uses string name as key)
-2. Initialize with `namespace()` before `compute_once`
-3. Wrap computation in `compute_once` tag
-4. Include comprehensive documentation in the snippet
+1. Use a descriptive cache key (string name)
+2. Check with `has_cached()` before computing
+3. Store with `set_cached()` after computing
+4. Retrieve with `get_cached()` for use
 
 **Performance Impact**: Reduces expensive computations from N to 1 per render (up to 70-90% reduction for heavy operations).
 
@@ -621,571 +796,838 @@ templateSnippets:
 - Computations specific to one snippet
 - Fast operations (under 10ms)
 
-## Gonja/Jinja2 Templating Pitfalls
+## Scriggo Templating Guide
 
-These are common mistakes when writing Gonja templates. Understanding these will prevent bugs and make your templates more reliable.
+**Scriggo is the template engine.** It uses Go's type system natively.
 
-### List Manipulation - Use `append()` Not `+`
+**Official Documentation:** <https://scriggo.com/templates>
 
-**Problem**: List concatenation with `+` operator doesn't work reliably with Gonja.
+### Template Syntax Overview
 
-```gonja
-{# WRONG - doesn't work properly #}
-{%- set ns = namespace(items=[]) %}
-{%- for item in collection %}
-  {%- set ns.items = ns.items + [item] %}  {# Creates new list, doesn't update namespace #}
-{%- endfor %}
+Scriggo uses three primary delimiter types:
 
-{# CORRECT - use append method #}
-{%- set ns = namespace(items=[]) %}
-{%- for item in collection %}
-  {%- set _ = ns.items.append(item) %}  {# Modifies list in place #}
-{%- endfor %}
+| Syntax | Purpose | Example |
+|--------|---------|---------|
+| `{{ expr }}` | Output expression (show) | `{{ product.Name }}` |
+| `{% stmt %}` | Statements/declarations | `{% if stock > 10 %}` |
+| `{%% ... %%}` | Multi-line statement blocks | Complex logic |
+| `{# comment #}` | Comments (nestable) | `{# TODO #}` |
+
+**Show statement:** The `{{ }}` syntax is shorthand for `{% show expr %}`. You can show multiple expressions: `{% show 5 + 2, " = ", 7 %}`.
+
+### Multi-line Statement Blocks (Preferred)
+
+**Always prefer multi-line statement blocks (`{%% ... %%}`) over multiple single-line statements** when you have consecutive logic statements. This improves readability and reduces visual clutter.
+
+**Single-line syntax** (`{% ... %}`): Use for single statements or when embedded in output:
+
+```scriggo
+{%- var name = "value" %}
+{%- if condition %}output{% end %}
 ```
 
-**Why**: Gonja's list type has an `append()` method that modifies the list in place. The `+` operator creates a new list but doesn't update the namespace variable.
+**Multi-line syntax** (`{%% ... %%}`): Use for blocks of consecutive statements. Inside multi-line blocks, use Go-style syntax with curly braces:
 
-**Documentation**: <https://github.com/NikolaLohinski/gonja/blob/master/docs/methods.md#the-list-type>
+```scriggo
+{%%
+  var name = route.metadata.name
+  var namespace = route.metadata.namespace
+  var backendKey = namespace + "_" + name
 
-**CRITICAL - Namespace Attributes Return Copies:**
-
-When you access a namespace attribute in a loop, Gonja gives you a **COPY**, not a reference. This means modifications to the copy are lost:
-
-```gonja
-{# WRONG - modifications lost each iteration! #}
-{%- set ns = namespace(items=[]) %}
-{%- for item in collection %}
-  {%- set _ = ns.items.append(item) %}  {# Modifies COPY, lost next iteration #}
-{%- endfor %}
-{{ ns.items | length }}  {# Still 0! #}
-
-{# CORRECT - reassign the returned value #}
-{%- set ns = namespace(items=[]) %}
-{%- for item in collection %}
-  {%- set ns.items = ns.items.append(item) %}  {# Returns modified copy, reassign to namespace #}
-{%- endfor %}
-{{ ns.items | length }}  {# Correct! #}
-
-{# ALSO CORRECT - for dicts #}
-{%- set ns = namespace(config={}) %}
-{%- for item in items %}
-  {%- set ns.config = ns.config.update({item.key: item.value}) %}
-{%- endfor %}
+  if !first_seen("backends", backendKey) {
+    continue
+  }
+%%}
 ```
 
-**Why This Matters**: Our custom `append()` and `update()` methods return the modified collection specifically to enable this reassignment pattern. Without the reassignment, changes are lost because you're modifying a copy that gets discarded at the end of each iteration.
+**When to use multi-line blocks:**
 
-**When to Use Each Pattern:**
+- ✅ Multiple variable declarations in sequence
+- ✅ Complex conditional logic with multiple statements
+- ✅ Loop setup with pre-computed variables
+- ✅ Any block with 3+ consecutive statement lines
 
-- **Regular variables**: Use `{%- set _ = list.append(item) %}` (in-place modification works)
-- **Namespace attributes**: Use `{%- set ns.list = ns.list.append(item) %}` (must reassign returned value)
-- **Lists nested in dicts in namespaces**: Use get-append-update pattern (see below)
+**When to use single-line:**
 
-**Lists Nested in Dicts (Advanced Pattern):**
+- ✅ Single statement followed by output
+- ✅ Simple `if`/`for` wrapping output content
+- ✅ Statements interspersed with template output
 
-When you have a dict in a namespace, and that dict contains lists as values, you need a three-step pattern:
+**Example refactoring:**
 
-```gonja
-{# WRONG - modifications lost! #}
-{%- set ns = namespace(groups={}) %}
-{%- set ns.groups = ns.groups.update({"key": []}) %}
-{%- set _ = ns.groups["key"].append(item) %}  {# ns.groups["key"] returns COPY! #}
+```scriggo
+{#- AVOID: Many single-line statements #}
+{%- var name = route.metadata.name %}
+{%- var namespace = route.metadata.namespace %}
+{%- var annotations = route.metadata.annotations %}
+{%- var backendKey = namespace + "_" + name %}
+{%- if !first_seen("backends", backendKey) %}
+  {%- continue %}
+{%- end %}
 
-{# CORRECT - get, append with reassignment, update #}
-{%- set ns = namespace(groups={}) %}
-{%- set ns.groups = ns.groups.update({"key": []}) %}
-{%- set current_list = ns.groups["key"] %}            {# Get copy of list #}
-{%- set current_list = current_list.append(item) %}   {# Append returns modified copy #}
-{%- set ns.groups = ns.groups.update({"key": current_list}) %}  {# Update dict with new list #}
+{#- PREFER: Multi-line block #}
+{%%
+  var name = route.metadata.name
+  var namespace = route.metadata.namespace
+  var annotations = route.metadata.annotations
+  var backendKey = namespace + "_" + name
+
+  if !first_seen("backends", backendKey) {
+    continue
+  }
+%%}
 ```
 
-**Why**: `ns.groups["key"]` returns a COPY of the list. Appending to this copy doesn't modify the dict. You must extract the list, modify it, then update the dict with the modified list.
+### Variables and Types
 
-### Mutable State with `namespace()`
+**Variable declaration:** Variables require the `var` keyword or short assignment syntax:
 
-**Problem**: Variables in Jinja2/Gonja are block-scoped and immutable across blocks.
+```scriggo
+{%- var name = "value" %}
+{%- var count = 0 %}
+{%- var items = []any{} %}
+{%- var config = map[string]any{} %}
 
-```gonja
-{# WRONG - counter doesn't persist across loop iterations #}
-{%- set count = 0 %}
-{%- for item in items %}
-  {%- set count = count + 1 %}  {# This creates a NEW variable scoped to this block #}
-{%- endfor %}
-{{ count }}  {# Still 0! #}
-
-{# CORRECT - use namespace for mutable state #}
-{%- set ns = namespace(count=0) %}
-{%- for item in items %}
-  {%- set ns.count = ns.count + 1 %}  {# Modifies the namespace attribute #}
-{%- endfor %}
-{{ ns.count }}  {# Correct value! #}
+{#- Short declaration syntax #}
+{%- welcome := "hello" %}
 ```
 
-**CRITICAL - Dictionaries Also Need Namespace**:
+Type can be explicit or inferred from the assigned value. Uninitialized variables receive default values (empty string, 0, false, nil).
 
-```gonja
-{# WRONG - dict doesn't persist across iterations! #}
-{%- set groups = {} %}
-{%- for item in items %}
-  {%- set groups = groups.update({item.key: item.value}) %}  {# Creates NEW dict each time #}
-{%- endfor %}
-{{ groups }}  {# Empty dict! #}
+**Assignment (reassignment):** Once declared, variables can be reassigned with `=`. The type cannot change.
 
-{# CORRECT - wrap dict in namespace #}
-{%- set ns = namespace(groups={}) %}
-{%- for item in items %}
-  {%- set ns.groups = ns.groups.update({item.key: item.value}) %}
-{%- endfor %}
-{{ ns.groups }}  {# Contains all items! #}
+```scriggo
+{%- name = "new value" %}
+{%- count = count + 1 %}
 
-{# ALSO CORRECT - for complex dict building #}
-{%- set ns_groups = namespace(data={}) %}
-{%- for item in items %}
-  {%- if item.key not in ns_groups.data %}
-    {%- set ns_groups.data = ns_groups.data.update({item.key: []}) %}
-  {%- endif %}
-  {%- set _ = ns_groups.data[item.key].append(item.value) %}
-{%- endfor %}
-{%- set final_groups = ns_groups.data %}  {# Extract final dict #}
+{#- Compound operators supported #}
+{%- count++ %}
+{%- count += 5 %}
+
+{#- Multiple assignment #}
+{%- a, b = b, a %}
 ```
 
-**When to Use**:
+**Variable scope:**
 
-- Counters and accumulators
-- Deduplication tracking (seen lists/strings)
-- Building dictionaries/maps dynamically
-- Any state that needs to persist across loop iterations or conditional blocks
+- **File-level (outside blocks)**: Visible throughout the file and in extended/imported files
+- **Within blocks** (macros, conditionals, loops): Visible from declaration to block end
+- **Render statements**: Variables don't cross file boundaries unless passed via macro arguments
 
-**Common Namespace Patterns**:
+**Basic types:**
 
-```gonja
-{%- set ns = namespace(
-    count=0,
-    seen=[],
-    items=[],
-    groups={},
-    found=false
-) %}
+| Type | Description | Default |
+|------|-------------|---------|
+| `bool` | Boolean values (`true`/`false`) | `false` |
+| `string` | Text in double quotes or backticks | `""` |
+| `int` | Integer numeric values | `0` |
+| `float64` | Floating-point numbers | `0.0` |
+
+**Format types** (string-based with context-aware escaping):
+
+- `html` - HTML code that won't be escaped in HTML contexts
+- `css`, `js`, `json`, `markdown` - Similar context-aware types
+
+**Collection types:**
+
+```scriggo
+{#- Slices (ordered sequences) #}
+{%- var items = []any{} %}
+{%- var names = []string{"alice", "bob"} %}
+{%- var numbers = []int{1, 2, 3} %}
+
+{#- Maps (key-value associations) #}
+{%- var config = map[string]any{} %}
+{%- var labels = map[string]string{"app": "web"} %}
 ```
 
-### String-Based vs List-Based Deduplication
+**Slice operations:**
 
-Two approaches for tracking seen items to prevent duplicates:
+- Indexing: `s[0]`
+- Length: `len(s)`
+- Slicing: `s[1:3]` (end index excluded)
+- Appending: `append(s, value)`
 
-**List-Based Approach** (works with custom append() override):
+**Map operations:**
 
-```gonja
-{%- set ns = namespace(seen=[]) %}
+- Bracket notation: `map["key"]`
+- Dot notation: `map.key`
+- Iteration: `for key, value := range map`
+
+### Control Flow
+
+**If statement:**
+
+```scriggo
+{%- if condition %}
+  content
+{%- else if other_condition %}
+  other content
+{%- else %}
+  fallback
+{%- end %}
+```
+
+**Truthiness rules:** A condition is false for: `false`, `0`, `0.0`, `""`, `nil`, and empty collections (slices/maps). All other values are truthy.
+
+**For loops:**
+
+```scriggo
+{#- For-in loop (most common) - note the "in" keyword #}
 {%- for item in items %}
-  {%- if item not in ns.seen %}
-    {%- set ns.seen = ns.seen.append(item) %}
-    {# Generate item #}
-  {%- endif %}
-{%- endfor %}
-```
+  {{ item }}
+{%- end %}
 
-**String-Based Approach** (alternative without custom methods):
+{#- For-range with index and value #}
+{%- for i, item := range items %}
+  {{ i }}: {{ item }}
+{%- end %}
 
-```gonja
-{%- set ns = namespace(seen="") %}
+{#- For with else (runs if collection is empty) #}
 {%- for item in items %}
-  {%- if ("|" ~ item ~ "|") not in ns.seen %}
-    {%- set ns.seen = ns.seen ~ "|" ~ item ~ "|" %}
-    {# Generate item #}
-  {%- endif %}
-{%- endfor %}
+  {{ item }}
+{%- else %}
+  No items found
+{%- end %}
+
+{#- C-style for loop with condition #}
+{%- for i := 0; i < 10; i++ %}
+  {{ i }}
+{%- end %}
+
+{#- For with just condition (while-style) #}
+{%- for condition %}
+  content
+{%- end %}
 ```
 
-**Root Cause - Go Interface Equality**:
+**Loop control:**
 
-Gonja's `Contains()` method uses Go's `==` operator on `interface{}` values:
+- `{% break %}` - Exit the loop immediately
+- `{% continue %}` - Skip to the next iteration
+
+**Switch statement:**
+
+```scriggo
+{%- switch value %}
+{%- case "option1" %}
+  First option
+{%- case "option2", "option3" %}
+  Second or third option
+{%- default %}
+  Default case
+{%- end %}
+
+{#- Switch without expression (uses boolean cases) #}
+{%- switch %}
+{%- case stock > 100 %}
+  High stock
+{%- case stock > 10 %}
+  Medium stock
+{%- default %}
+  Low stock
+{%- end %}
+```
+
+Only the first matching case executes (no fallthrough).
+
+### Operators
+
+**Comparison:** `==`, `!=`, `<`, `<=`, `>`, `>=`
+
+**Arithmetic:** `+`, `-`, `*`, `/`, `%` (remainder for integers only)
+
+**Logical operators:**
+
+| Operator | Go-style | Template-style | Notes |
+|----------|----------|----------------|-------|
+| AND | `&&` | `and` | Returns `true`/`false`, accepts any type |
+| OR | `\|\|` | `or` | Returns `true`/`false`, accepts any type |
+| NOT | `!` | `not` | Returns `true`/`false`, accepts any type |
+
+The template-style operators (`and`, `or`, `not`) differ from Go's boolean operators by accepting any type and evaluating truthiness. Unlike Jinja2 where `and`/`or` return one of the operands, Scriggo always returns boolean.
+
+**String concatenation:** `+` (not `~` like Jinja2)
+
+```scriggo
+{%- var fullname = firstname + " " + lastname %}
+```
+
+**Contains operator:** `contains`, `not contains`
+
+Template-specific operators for checking slice membership, map keys, and substring presence:
+
+```scriggo
+{%- if colors contains "red" %}
+{%- if product.Name contains "bundle" %}
+{%- if name not contains "test" %}
+```
+
+**Default operator:**
+
+```scriggo
+{{ value default "fallback" }}
+```
+
+!!! warning "Default Operator Limitation"
+    The `default` operator only works with simple identifiers, not field access.
+    Use `fallback()` function for field access: `{{ obj.field | fallback("default") }}`
+
+### Functions and Filters
+
+Scriggo supports both function call syntax and pipe syntax:
+
+```scriggo
+{#- Function syntax #}
+{{ toLower(name) }}
+{{ join(items, ", ") }}
+
+{#- Pipe syntax (Jinja2-style) #}
+{{ name | toLower() }}
+{{ items | join(", ") }}
+```
+
+!!! warning "Pipe Operator Requires Parentheses"
+    In Scriggo, the pipe operator requires a function call on the right side:
+    - `{{ value | toLower() }}` ✓
+    - `{{ value | toLower }}` ✗ (error: pipe operator requires function call)
+
+**Style preferences:**
+
+- **Prefer pipe syntax over nested function calls** for readability:
+
+  ```scriggo
+  {#- Good - reads left to right #}
+  {{ value | dig("metadata", "name") | fallback("") | tostring() }}
+
+  {#- Avoid - harder to read #}
+  {{ tostring(fallback(dig(value, "metadata", "name"), "")) }}
+  ```
+
+- **Prefer dot notation over bracket notation** for map access when keys are valid identifiers:
+
+  ```scriggo
+  {#- Good - cleaner syntax #}
+  {{ route.metadata.namespace }}
+  {{ config.server.port }}
+
+  {#- Use brackets only when necessary #}
+  {{ labels["kubernetes.io/name"] }}  {# Key contains special chars #}
+  {{ data[variableKey] }}              {# Dynamic key access #}
+  ```
+
+**Available functions:**
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `tostring(v)` | Convert to string | `tostring(123)` → `"123"` |
+| `toint(v)` | Convert to int | `toint("42")` → `42` |
+| `tofloat(v)` | Convert to float64 | `tofloat("3.14")` → `3.14` |
+| `len(v)` | Length of slice/map/string | `len(items)` |
+| `toLower(s)` | Lowercase string | `toLower("ABC")` → `"abc"` |
+| `toUpper(s)` | Uppercase string | `toUpper("abc")` → `"ABC"` |
+| `trim(s)` / `strip(s)` | Trim whitespace | `trim("  x  ")` → `"x"` |
+| `replace(s, old, new)` | Replace all occurrences | `replace("a-b", "-", "_")` |
+| `split(s, sep)` | Split string | `split("a,b,c", ",")` → `[]string` |
+| `join(slice, sep)` | Join slice | `join([]string{"a","b"}, ",")` → `"a,b"` |
+| `hasPrefix(s, p)` | Check prefix | `hasPrefix("hello", "he")` → `true` |
+| `hasSuffix(s, p)` | Check suffix | `hasSuffix("hello", "lo")` → `true` |
+| `b64decode(s)` | Decode base64 | `b64decode("SGVsbG8=")` → `"Hello"` |
+| `keys(m)` | Sorted map keys | `keys(config)` → `[]string` |
+| `merge(m1, m2)` | Merge maps | `merge(base, overrides)` |
+| `dig(obj, keys...)` | Navigate nested maps | `dig(obj, "meta", "name")` |
+| `fallback(v, default)` | Return default if nil | `fallback(obj.field, "")` |
+| `append(slice, item)` | Append to slice | `append(items, newItem)` |
+| `toSlice(v)` | Convert to []any | `toSlice(maybeNil)` |
+| `sort_by(slice, criteria)` | Sort by JSONPath | See sorting section |
+| `glob_match(names, pattern)` | Filter by glob | `glob_match(templates, "backend-*")` |
+| `first_seen(prefix, keys...)` | Deduplication helper | See deduplication section |
+| `regex_search(s, pattern)` | Regex match | `regex_search(name, "^test")` |
+| `sanitize_regex(s)` | Escape regex chars | `sanitize_regex("a.b")` → `"a\\.b"` |
+| `indent(s, spaces, first)` | Indent lines | `indent(text, 4, true)` |
+
+**Scriggo built-in functions** (see <https://scriggo.com/templates/builtins>):
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `len(v)` | Length of string/slice/map | `len("hello")` → `5` |
+| `runeCount(s)` | Character count (vs bytes) | `runeCount("日本")` → `2` |
+| `abs(n)` | Absolute value | `abs(-5)` → `5` |
+| `max(a, b)` | Maximum of two ints | `max(3, 7)` → `7` |
+| `min(a, b)` | Minimum of two ints | `min(3, 7)` → `3` |
+| `pow(x, y)` | Power (float64) | `pow(2.0, 3.0)` → `8.0` |
+| `sort(slice)` | Sort slice | `sort([]int{3, 1, 2})` |
+| `reverse(slice)` | Reverse slice | `reverse(items)` |
+| `capitalize(s)` | Capitalize first letter | `capitalize("hello")` → `"Hello"` |
+| `capitalizeAll(s)` | Capitalize all words | `capitalizeAll("hello world")` |
+| `index(s, substr)` | Find substring index | `index("hello", "ll")` → `2` |
+| `abbreviate(s, n)` | Truncate with ellipsis | `abbreviate("hello world", 8)` |
+| `toKebab(s)` | CamelCase to kebab-case | `toKebab("borderTop")` → `"border-top"` |
+| `sprintf(fmt, args...)` | Format string | `sprintf("%d items", count)` |
+| `base64(s)` | Encode to base64 | `base64("hello")` |
+| `hex(s)` | Encode to hex | `hex("AB")` → `"4142"` |
+| `md5(s)` | MD5 hash | `md5("test")` |
+| `sha1(s)` | SHA1 hash | `sha1("test")` |
+| `sha256(s)` | SHA256 hash | `sha256("test")` |
+| `queryEscape(s)` | URL encode | `queryEscape("a b")` → `"a+b"` |
+| `htmlEscape(s)` | Escape HTML | `htmlEscape("<b>")` → `"&lt;b&gt;"` |
+| `marshalJSON(v)` | Convert to JSON | `marshalJSON(obj)` |
+| `unmarshalJSON(s)` | Parse JSON | `unmarshalJSON(jsonStr)` |
+| `regexp(pattern)` | Compile regex | See regex section |
+| `now()` | Current time | `now()` |
+| `date(y, m, d, ...)` | Create time | `date(2024, 1, 15)` |
+
+### Macros
+
+Macros are reusable template functions. They must have **uppercase** first letter to be importable/exportable across files.
+
+**Definition:**
+
+```scriggo
+{%- macro BackendName(namespace string, name string) %}
+backend_{{ namespace }}_{{ name }}
+{%- end %}
+```
+
+**Calling macros:**
+
+```scriggo
+{{ BackendName("default", "myservice") }}
+```
+
+**Macro parameters with types:**
+
+```scriggo
+{%- macro ProcessRoute(route map[string]any, index int) %}
+  {#- route is typed as map[string]any #}
+  {%- var name = route["name"].(string) %}
+{%- end %}
+```
+
+Type annotations can be omitted if consecutive parameters share the same type:
+
+```scriggo
+{%- macro Image(url string, width, height int) %}
+```
+
+**Macro scope:** Macros can access global variables and other macros/variables declared earlier in the same file. Variables declared within a macro body remain local to that macro.
+
+**Distraction-free macros:** In files with an `extends` declaration, parameter-less macros can use simplified syntax:
+
+```scriggo
+{% Main %}
+  Content here...
+```
+
+This is equivalent to `{% macro Main() %}...{% end %}` and extends to the end of the file.
+
+!!! note "Macro Parameter Types"
+    Macro parameters can use any type declared in the template globals.
+    For custom types like `ResourceStore`, you need to expose them via `reflect.TypeOf()`.
+    See "Exposing Custom Types" section below.
+
+### Extends and Import
+
+**Extends declaration:** Allows a template to inherit layout from another file. Must appear at the beginning of the file before other declarations.
+
+```scriggo
+{% extends "/layouts/base.html" %}
+
+{#- The layout file calls macros like {{ Title() }} and {{ Body() }} #}
+{#- Child files define those macros to fill in the layout: #}
+
+{% macro Title() %}My Page Title{% end %}
+
+{% macro Body() %}
+  <p>Page content here</p>
+{% end %}
+```
+
+**Import declaration:** Retrieves declarations from other files.
+
+```scriggo
+{#- Import specific macros #}
+{% import "util-backend-helpers" for BackendName %}
+{% import "util-helpers" for Helper1, Helper2 %}
+
+{#- Import all exported declarations #}
+{% import "util-helpers" %}
+
+{#- Import with prefix (namespace) #}
+{% import utils "util-helpers" %}
+{{ utils.BackendName("default", "svc") }}
+```
+
+**Export rules:**
+
+- Only declarations with **uppercase first letter** are exported
+- Imported files can only contain declarations (no standalone content outside macros)
+
+### The using Statement
+
+The `using` statement evaluates a block of content and makes it available through the special `itea` identifier:
+
+```scriggo
+{%- var content = itea; using %}
+  <p>This content is assigned to the variable</p>
+{%- end using %}
+
+{{ content }}  {#- Outputs the evaluated content #}
+```
+
+**Type specification:** You can declare itea's type:
+
+```scriggo
+{% show itea; using markdown %}
+# Markdown Heading
+Some **bold** text.
+{% end %}
+```
+
+Supported types: `string`, `html`, `markdown`, `css`, `js`, `json`
+
+**Passing content to functions:**
+
+```scriggo
+{% sendEmail(from, to, itea); using %}
+Hello {{ name }},
+Your order has been shipped.
+{% end %}
+```
+
+**Lazy evaluation with using macro:** Defer body execution until actually needed:
+
+```scriggo
+{% show Dialog("Warning", itea); using macro %}
+  <p>This is only evaluated if Dialog actually uses its content parameter</p>
+{% end %}
+```
+
+**Macro with parameters:**
+
+```scriggo
+{% show UserList(users, itea); using macro(user User) %}
+  <li>{{ user.Name }} - {{ user.Email }}</li>
+{% end %}
+```
+
+### Type Assertions
+
+When working with `interface{}` (any) values, you need type assertions to access fields or use type-specific operations:
+
+```scriggo
+{#- Type assertions #}
+{%- var name = value.(string) %}
+{%- var items = value.([]any) %}
+{%- var config = value.(map[string]any) %}
+
+{#- Safe type assertion with check #}
+{%- var name, ok = value.(string) %}
+{%- if ok %}
+  {{ name }}
+{%- end %}
+```
+
+**Common type assertion patterns:**
+
+```scriggo
+{#- Accessing nested map values #}
+{%- var data = obj["data"].(map[string]any) %}
+{%- var name = data["name"].(string) %}
+
+{#- Iterating over interface slice #}
+{%- for _, item := range items.([]any) %}
+  {%- var m = item.(map[string]any) %}
+  {{ m["name"] }}
+{%- end %}
+```
+
+### Template Inclusion (render Operator)
+
+The `render` operator includes and processes template files, returning a string representation.
+
+**Basic syntax:**
+
+```scriggo
+{{ render "template-name" }}
+```
+
+**Path types:**
+
+- Absolute paths: `{{ render "/templates/header.html" }}`
+- Relative paths: `{{ render "../shared/footer.html" }}`
+
+**Scope isolation:** By default, rendered templates cannot access variables from the calling template. This is intentional for encapsulation.
+
+**Render as expression:** The render operator returns a string, so it can be used in assignments:
+
+```scriggo
+{%- var header = render "header.html" %}
+```
+
+**Default expression (error handling):** When a file might not exist, use the `default` clause:
+
+```scriggo
+{%- promo := render "promotions.html" default "No promotions" %}
+{{ render "specials.html" default render "no-specials.html" }}
+```
+
+The default expression is only evaluated if the primary file cannot be found.
+
+### Passing Variables with inherit_context (Fork Feature)
+
+**This is a fork-specific feature not in upstream Scriggo.**
+
+The `inherit_context` modifier allows rendered templates to access local variables from the calling scope:
+
+```scriggo
+{%- var name = "World" %}
+{%- var count = 42 %}
+{{ render "greeting.html" inherit_context }}
+
+{#- In greeting.html, name and count are accessible: #}
+{#- Hello {{ name }}, count is {{ count }} #}
+```
+
+**When to use inherit_context:**
+
+- Passing context to included templates without restructuring as macros
+- Quick prototyping before converting to proper macro parameters
+- Sharing computed values across multiple snippet includes
+
+**When NOT to use:**
+
+- For reusable templates (use macros with explicit parameters instead)
+- When you need clear documentation of dependencies
+- For templates that might be used in different contexts
+
+### render_glob (Fork Feature)
+
+**This is a fork-specific feature not in upstream Scriggo.**
+
+The `render_glob` operator renders all templates matching a glob pattern:
+
+```scriggo
+{{ render_glob "backend-*" }}
+{{ render_glob "features-gateway-*" }}
+{{ render_glob "widgets/*.html" }}
+```
+
+**Glob patterns supported:**
+
+- `*` matches any sequence of characters (not including path separator)
+- `?` matches any single character
+- `[abc]` matches any character in the set
+
+**With inherit_context:**
+
+```scriggo
+{%- var config = loadConfig() %}
+{{ render_glob "plugins/*.html" inherit_context }}
+```
+
+**Default for no matches:**
+
+```scriggo
+{{ render_glob "optional-*.html" default "" }}
+```
+
+**How it works:**
+
+1. At compile time, Scriggo expands the glob pattern against the template filesystem
+2. Matching templates are rendered in sorted order (alphabetical)
+3. If no templates match, returns empty string (or default if specified)
+
+**Example - rendering all backend snippets:**
+
+```scriggo
+{#- In base.yaml haproxyConfig template #}
+{{ render_glob "backend-*" inherit_context }}
+
+{#- This expands to render all matching snippets: #}
+{#- backend-ingress, backend-gateway, backend-passthrough, etc. #}
+```
+
+### Exposing Custom Types to Templates
+
+To use custom Go types in macro signatures, you must expose them via `reflect.TypeOf()` in the globals declarations. This is done in `pkg/templating/filters_scriggo.go`.
+
+**Example - exposing a custom type:**
 
 ```go
-// From exec/value.go Contains() implementation
-for i := 0; i < resolved.Len(); i++ {
-    item := resolved.Index(i)
-    if other.Interface() == item.Interface() {  // Object identity comparison!
-        return true
-    }
+// In filters_scriggo.go
+import "reflect"
+
+func registerScriggoRuntimeVars(decl native.Declarations) {
+    // Variables (nil pointers for runtime injection)
+    decl["resources"] = (*map[string]ResourceStore)(nil)
+
+    // Types (for use in macro signatures)
+    decl["ResourceStore"] = reflect.TypeOf(ResourceStore{})
+    decl["MapStringAny"] = reflect.TypeOf(map[string]any{})
 }
 ```
 
-This compares **object identity**, not **string values**. Each template expression with `~` creates a NEW `*Value` object wrapping the string. Even though the string values are identical, the `*Value` objects are different, so `==` returns false.
+**Using the type in templates:**
 
-**Why List-Based Works for Direct Fields**:
-
-- `secret.metadata.name` returns an EXISTING `*Value` object from the resource store
-- When we check `if name not in seen` and later encounter the SAME resource, we're comparing the SAME `*Value` object reference
-- Object identity comparison succeeds because it's literally the same object
-
-**Why List-Based Fails for Computed Keys**:
-
-- `namespace ~ "_" ~ name` creates a NEW `*Value` object each time it's evaluated
-- When we check `if key not in seen`, we're comparing DIFFERENT `*Value` object instances
-- Object identity comparison fails even though string values are identical
-
-**Why String-Based Works**:
-
-- String membership uses `strings.Contains()` for substring matching
-- Delimiter pattern `"|key|"` ensures exact matches
-- Works with any string value regardless of `*Value` object identity
-
-**Attempted Solutions That Failed**:
-
-1. **Using `| string` filter**: Still creates `*Value` objects, doesn't help
-2. **Using `"" ~` prefix**: Same issue, creates new `*Value` objects
-3. **Using Go maps**: Would work BUT Gonja doesn't support `ns.map[key] = value` syntax
-   - Error: `Can't write field "key_name"`
-   - Gonja only allows setting namespace attributes like `ns.field = value`
-   - Cannot set individual map keys within a namespace
-
-### Custom Gonja Overrides for Mutable State Patterns
-
-To enable idiomatic mutable state patterns in templates, we override three Gonja built-ins in `pkg/templating/engine.go`:
-
-**1. Custom "in" Test**
-
-Gonja's built-in `in` test uses Go's `interface{} ==` (object identity) instead of value comparison. Each template expression with `~` creates a NEW `*Value` object, so even identical strings fail equality checks.
-
-Our `testInFixed()` compares string values using `.String()` method:
-
-```go
-// For lists: iterate and compare string values
-inStr := in.String()
-for i := 0; i < resolved.Len(); i++ {
-    item := exec.ToValue(resolved.Index(i))
-    if inStr == item.String() {  // Value comparison, not identity
-        return true, nil
-    }
-}
+```scriggo
+{%- macro ProcessData(data MapStringAny) %}
+  {#- data is now properly typed #}
+  {%- var name = data["name"].(string) %}
+{%- end %}
 ```
 
-**2. Custom list.append() Method**
+**Available global types for template use:**
 
-Gonja's built-in `append()` returns `nil` instead of the modified list, breaking the pattern `{%- set ns.seen = ns.seen.append(key) %}`.
+| Declaration | Type | Purpose |
+|-------------|------|---------|
+| `resources` | `*map[string]ResourceStore` | Kubernetes resource stores |
+| `pathResolver` | `*PathResolver` | File path resolution |
+| `fileRegistry` | `*FileRegistrar` | Dynamic file registration |
+| `shared` | `*map[string]interface{}` | Cross-template cache |
+| `templateSnippets` | `*[]string` | Available snippet names |
+| `globalFeatures` / `gf` | `map[string]any` | Cross-library shared state (see "Cross-Library Shared State" section) |
 
-Our custom `append()` returns `selfValue.Interface()` after modification:
+### Caching with has_cached/get_cached/set_cached
 
-```go
-"append": func(_ []interface{}, selfValue *exec.Value, arguments *exec.VarArgs) (interface{}, error) {
-    // ... extract argument x ...
+For expensive computations that should run only once per render:
 
-    // Modify list in-place (same as builtin)
-    *selfValue = *exec.ToValue(reflect.Append(selfValue.Val, reflect.ValueOf(exec.ToValue(x))))
-
-    // RETURN the modified list instead of nil
-    return selfValue.Interface(), nil
-},
+```scriggo
+{%- if !has_cached("analysis_key") %}
+  {#- Expensive computation runs only once #}
+  {%- var result = expensive_computation() %}
+  {%- set_cached("analysis_key", result) %}
+{%- end %}
+{%- var cached_result = get_cached("analysis_key") %}
 ```
 
-**3. Custom dict.update() Method**
+### Deduplication with first_seen
 
-Python's `dict.update()` returns `None`, and Gonja doesn't include an `update()` method at all. This prevents the pattern `{%- set ns.config = ns.config.update({"key": "val"}) %}`.
+The `first_seen` function atomically checks if a key has been seen before:
 
-Our custom `update()` returns the modified dict:
-
-```go
-"update": func(self map[string]interface{}, selfValue *exec.Value, arguments *exec.VarArgs) (interface{}, error) {
-    var other map[string]interface{}
-    if err := arguments.Take(
-        exec.PositionalArgument("other", nil, exec.DictArgument(&other)),
-    ); err != nil {
-        return nil, exec.ErrInvalidCall(err)
-    }
-
-    // Update dict in-place
-    for k, v := range other {
-        self[k] = v
-    }
-
-    // RETURN the modified dict instead of nil
-    return self, nil
-},
+```scriggo
+{%- for _, item := range items %}
+  {%- if first_seen("backends", item.namespace, item.name) %}
+    {#- Only runs for first occurrence of this namespace+name combination #}
+    backend {{ item.namespace }}_{{ item.name }}
+  {%- end %}
+{%- end %}
 ```
 
-**Trade-offs:**
+### Sorting with sort_by
 
-✅ Enables clean, idiomatic template syntax for both lists and dicts
-✅ Aligns with Jinja2 behavior expectations
-✅ Fixes "in" operator, append(), and adds update()
-❌ Must maintain copies of list methods (`reverse`, `copy`) and dict methods (`keys`, `items`)
-❌ Need to sync with Gonja if new methods are added
+Sort slices using JSONPath criteria:
 
-**Why This Approach:**
-
-Gonja/Jinja2 is THE ONLY mainstream template engine supporting mutable state in loops via `namespace()`. Every alternative (Pongo2, Stick, text/template, Handlebars, Mustache) either doesn't support this or requires moving logic to Go code, breaking our library architecture.
-
-The maintenance cost of keeping 5 methods in sync is acceptable for enabling self-contained template libraries with inline state manipulation.
-
-**When to Use Each**:
-
-- **List-based**: Now works for ALL cases (direct fields and computed expressions)
-  - Example: `secret.metadata.name`, `namespace ~ "_" ~ name ~ "_" ~ port`
-  - Preferred for clean, idiomatic syntax
-
-- **String-based**: Alternative if avoiding custom method overrides
-  - Example: `("|" ~ key ~ "|") not in ns.seen`
-  - Verbose but requires no Gonja modifications
-
-**Recommended Patterns**:
-
-Use namespace with custom methods for mutable state:
-
-**List deduplication:**
-
-```gonja
-{%- set ns = namespace(seen=[]) %}
-{%- for ingress in resources.ingresses.List() %}
-  {%- set key = ingress.metadata.namespace ~ "_" ~ ingress.metadata.name %}
-  {%- if key not in ns.seen %}
-    {%- set ns.seen = ns.seen.append(key) %}
-    {# Generate backend #}
-  {%- endif %}
-{%- endfor %}
+```scriggo
+{%- var sorted = items | sort_by([]string{
+  "$.priority:desc",           {#- Descending by priority #}
+  "$.path.value | length:desc", {#- Descending by path length #}
+  "$.name",                    {#- Ascending by name #}
+}) %}
 ```
 
-**Dict accumulation:**
+**Sort modifiers:**
 
-```gonja
-{%- set ns = namespace(config={}) %}
-{%- for rule in ingress.spec.rules %}
-  {%- set ns.config = ns.config.update({
-      rule.host: {
-        "paths": rule.http.paths | length,
-        "tls": rule.host in tls_hosts
-      }
-    }) %}
-{%- endfor %}
-{# ns.config now contains all host configurations #}
-```
-
-**Why `{% set %}` is Required:**
-
-Note that you MUST use `{% set ns.field = ns.field.method() %}` syntax. Using `{{ ns.field.method() }}` does NOT work:
-
-- `{{ }}` evaluates and outputs the return value but doesn't perform assignment
-- `{% set %}` evaluates and assigns the result to the namespace attribute
-- Variables set inside loops are local to each iteration (Jinja2 scoping rules)
-- Only namespace attributes persist across loop iterations
-
-### JSONPath Escaping for Label Keys
-
-**Problem**: Label keys with dots (e.g., `kubernetes.io/service-name`) break JSONPath parsing.
-
-```yaml
-# WRONG
-indexBy: ["metadata.labels.kubernetes.io/service-name"]
-# Error: JSONPath thinks "io" is a field of "kubernetes"
-
-# CORRECT - escape dots with double backslash
-indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
-```
-
-**Why**: JSONPath uses `.` as field separator. Literal dots in field names must be escaped with `\\.` (double backslash because YAML also escapes).
+- `:desc` - Descending order (default is ascending)
+- `:exists` - Sort by field existence (exists first)
+- `| length` - Sort by length of value
 
 ### Whitespace Control
 
-**Problem**: Unintended whitespace in generated HAProxy config.
+Control whitespace around template tags:
 
-```gonja
-{# WRONG - generates extra blank lines #}
+- `{%-` Strip whitespace before tag
+- `-%}` Strip whitespace after tag
+
+```scriggo
+{%- for _, item := range items -%}
+{{ item }}
+{%- end -%}
+```
+
+### Scriggo vs Jinja2 Syntax Comparison
+
+See also: <https://scriggo.com/templates/switch-from-jinja-to-scriggo>
+
+**Key differences:**
+
+| Feature | Jinja2 | Scriggo |
+|---------|--------------|---------|
+| Type system | Dynamic | Static (compile-time type checking) |
+| Variable declaration | `{% set x = 1 %}` | `{% var x = 1 %}` or `{% x := 1 %}` |
+| Variable reassignment | `{% set x = 2 %}` | `{% x = 2 %}` |
+| End tags | `{% endif %}`, `{% endfor %}` | `{% end %}` or `{% end if %}`, `{% end for %}` |
+| String concat | `x ~ y` | `x + y` |
+| Default value | `x \| default(y)` | `x default y` or `fallback(x, y)` |
+| Length | `x \| length` | `len(x)` |
+| Import macro | `{% from "x" import y %}` | `{% import "x" for y %}` |
+| Include | `{% include "x" %}` | `{{ render "x" }}` |
+| Mutable state | `namespace(a=1)` | `map[string]any{"a": 1}` |
+
+**Data structure syntax:**
+
+| Type | Jinja2 | Scriggo |
+|------|--------------|---------|
+| List/Array | `[1, 2, 3]` | `[]int{1, 2, 3}` (typed) |
+| Dictionary/Map | `{'key': 'value'}` | `map[string]string{"key": "value"}` |
+| Tuple | `(1, 5, 2020)` | Use slice or map |
+
+**Operator differences:**
+
+| Operation | Jinja2 | Scriggo |
+|-----------|--------------|---------|
+| Logical AND/OR | Returns operand | Returns boolean |
+| Contains check | `1 in [1, 2, 3]` | `[]int{1, 2, 3} contains 1` (reversed) |
+| Conditional expr | `x if cond else y` | Use if statement |
+
+**Loop syntax:**
+
+```scriggo
+{#- Jinja2 #}
 {% for item in items %}
-backend {{ item.name }}
-  server srv1 {{ item.ip }}:{{ item.port }}
+  {{ item }}
 {% endfor %}
 
-{# CORRECT - strip whitespace with - #}
-{%- for item in items %}
-backend {{ item.name }}
-  server srv1 {{ item.ip }}:{{ item.port }}
-{%- endfor %}
+{#- Scriggo (for-in) #}
+{% for item in items %}
+  {{ item }}
+{% end %}
 
-{# CORRECT - preserve specific whitespace with + #}
-backend {%+ include "backend-name" +%}  {# Preserves space before name #}
+{#- Scriggo (for-range with index) #}
+{% for i, item := range items %}
+  {{ i }}: {{ item }}
+{% end %}
 ```
 
-**Whitespace Control Characters**:
+**Filter to function migration:**
 
-- `{%-`: Strip whitespace before tag
-- `-%}`: Strip whitespace after tag
-- `{%+`: Preserve whitespace before tag
-- `+%}`: Preserve whitespace after tag
+| Jinja2 Filter | Scriggo Function |
+|---------------|------------------|
+| `{{ value\|abs }}` | `{{ abs(value) }}` |
+| `{{ value\|length }}` | `{{ len(value) }}` |
+| `{{ foo\|attr("bar") }}` | `{{ foo.bar }}` |
+| `{{ items\|join(",") }}` | `{{ join(items, ",") }}` |
+| `{{ s\|upper }}` | `{{ toUpper(s) }}` |
+| `{{ s\|lower }}` | `{{ toLower(s) }}` |
+| `{{ s\|capitalize }}` | `{{ capitalize(s) }}` |
 
-**Example Issue**: Backend name generation
+**HTML escaping:**
 
-```gonja
-{# WRONG - creates "backend  name" (two spaces) #}
-template: >-
-  {{- " " -}}{{ name }}
-# Used in: backend {%+ include "template" +%}
-# Result: "backend " + " name" = "backend  name"
+- Jinja2: Auto-escapes by default, use `{{ value\|safe }}` to disable
+- Scriggo: Auto-escapes in HTML context, cast to `html` type: `{{ html("<b>Bold</b>") }}`
 
-{# CORRECT #}
-template: >-
-  {{- "" -}}{{ name }}
-# Result: "backend " + "name" = "backend name"
-```
+**Block assignments (Jinja2 call blocks):**
 
-### Variable Scope in Loops and Conditionals
+```scriggo
+{#- Jinja2 #}
+{% set content %}
+  HTML content here
+{% endset %}
 
-**Problem**: Variables defined inside blocks don't persist outside.
-
-```gonja
-{# WRONG - backend_name not available outside if block #}
-{%- for ingress in ingresses %}
-  {%- if ingress.metadata.annotations.auth %}
-    {%- set backend_name = "auth_" ~ ingress.metadata.name %}
-  {%- endif %}
-  backend {{ backend_name }}  {# ERROR: backend_name undefined! #}
-{%- endfor %}
-
-{# CORRECT - define before conditional #}
-{%- for ingress in ingresses %}
-  {%- set backend_name = "default_" ~ ingress.metadata.name %}
-  {%- if ingress.metadata.annotations.auth %}
-    {%- set backend_name = "auth_" ~ ingress.metadata.name %}
-  {%- endif %}
-  backend {{ backend_name }}  {# Works! #}
-{%- endfor %}
-
-{# ALSO CORRECT - use namespace for complex cases #}
-{%- for ingress in ingresses %}
-  {%- set ns = namespace(backend_name="") %}
-  {%- if ingress.metadata.annotations.auth %}
-    {%- set ns.backend_name = "auth_" ~ ingress.metadata.name %}
-  {%- else %}
-    {%- set ns.backend_name = "default_" ~ ingress.metadata.name %}
-  {%- endif %}
-  backend {{ ns.backend_name }}
-{%- endfor %}
-```
-
-### Filter vs Function Confusion
-
-**Filters** (pipe syntax):
-
-```gonja
-{{ value | b64decode }}
-{{ string | upper }}
-{{ list | length }}
-```
-
-**Functions** (call syntax):
-
-```gonja
-{{ fail("error message") }}
-{{ range(1, 10) }}
-```
-
-**Macros** (must import first):
-
-```gonja
-{%- from "macros" import my_macro -%}
-{{ my_macro(value) }}
-```
-
-**Common Mistake**:
-
-```gonja
-{# WRONG - can't call filters as functions #}
-{{ b64decode(value) }}
-
-{# CORRECT #}
-{{ value | b64decode }}
-```
-
-### Base64 Decoding Secret Data
-
-**Important**: Kubernetes Secret `data` fields are already base64-encoded.
-
-```gonja
-{# Secret in Kubernetes #}
-apiVersion: v1
-kind: Secret
-data:
-  password: JGFwcjEk...  # This is base64-encoded
-
-{# CORRECT - decode to get actual value #}
-{%- set password = secret.data.password | b64decode %}
-user admin password {{ password }}
-
-{# WRONG - using encoded value directly #}
-user admin password {{ secret.data.password }}  # Will be gibberish!
-```
-
-**Format Gotchas**:
-
-- HAProxy auth secrets: Value should be hash only (e.g., `$2y$05$...`)
-- NOT htpasswd format: Don't include `username:` prefix
-- Generate correctly: `htpasswd -nbB user pass | cut -d: -f2 | base64 -w0`
-
-### Set Assignment to Discard Return Values
-
-**Problem**: Some methods return `None` but template expects no output.
-
-```gonja
-{# WRONG - append() returns None which gets rendered #}
-{%- set ns = namespace(items=[]) %}
-{{ ns.items.append("item") }}  {# Renders "None" in output! #}
-
-{# CORRECT - assign to _ to discard return value #}
-{%- set _ = ns.items.append("item") %}  {# No output #}
-```
-
-**When Needed**:
-
-- `list.append(item)` → returns `None`
-- `dict.update(other)` → returns `None`
-- Any method that modifies in-place
-
-### Include Path Resolution
-
-**Problem**: Template not found errors with includes.
-
-```gonja
-{# WRONG - looking for file path #}
-{% include "libraries/snippet.yaml" %}
-
-{# CORRECT - snippet name from templateSnippets #}
-{% include "snippet-name" %}
-```
-
-**How Includes Work**:
-
-1. `{% include "name" %}` looks for `templateSnippets.name`
-2. Not file paths - all snippets merged into one namespace
-3. Use `include_matching("pattern-*")` macro for glob patterns
-
-### Debugging Template Rendering
-
-**Useful Techniques**:
-
-```gonja
-{# 1. Print variable type and value #}
-{#- DEBUG: {{ variable }} (type: {{ variable | type }}) -#}
-
-{# 2. Conditional debugging #}
-{%- if debug | default(false) %}
-  {#- DEBUG: Processing {{ item.name }} -#}
-{%- endif %}
-
-{# 3. Comment-based markers #}
-{#- === START: processing ingresses === -#}
-{%- for ingress in ingresses %}
-  ...
-{%- endfor %}
-{#- === END: processing ingresses === -#}
-
-{# 4. Generate debug comments in output #}
-# DEBUG: Generated by template {{ template_name }}
-# DEBUG: Resource count: {{ resources | length }}
-```
-
-**Using Controller Logs**:
-
-```bash
-# Run with debug to see template rendering
-./bin/controller validate -f config.yaml 2>&1 | grep "component=test-runner"
+{#- Scriggo #}
+{% var content = itea; using %}
+  HTML content here
+{% end using %}
 ```
 
 ## Common Pitfalls
@@ -1203,7 +1645,7 @@ haproxyConfig:
 
 **Why Bad**: The library merge uses `mustMergeOverwrite`, so your library's `haproxyConfig` will completely replace base.yaml's template, breaking other libraries.
 
-**Solution**: Only define `templateSnippets`, let base.yaml call them via `{% include %}`.
+**Solution**: Only define `templateSnippets`, let base.yaml call them via `{{ render "snippet-name" }}`.
 
 ### Testing Individual Library Files
 
@@ -1237,7 +1679,7 @@ helm template charts/haproxy-template-ic \
 templateSnippets:
   my-snippet:
     template: |
-      {%- for svc in resources.services.List() %}
+      {%- for _, svc := range resources.services.List() %}
       # ERROR: services not in watchedResources!
 ```
 
@@ -1250,6 +1692,85 @@ watchedResources:
     resources: services
     indexBy: ["metadata.namespace", "metadata.name"]
 ```
+
+### Inconsistent Shared State Map Keys
+
+**Problem**: Using different key names for the same shared state across libraries.
+
+```scriggo
+{#- ssl.yaml initializes with snake_case #}
+{%- gf["tls_certificates"] = []any{} %}
+
+{#- ingress.yaml writes with camelCase - WRONG KEY! #}
+{%- gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), cert) %}
+
+{#- ssl.yaml reads snake_case - gets empty array! #}
+{%- var certs = gf["tls_certificates"] %}  {# Empty because ingress wrote to different key #}
+```
+
+**Why Bad**: Go maps are case-sensitive. `tls_certificates` and `tlsCertificates` are completely different keys. Data written to one key is invisible when reading the other. This causes subtle bugs where features silently fail.
+
+**Solution**: Use consistent **camelCase** for all shared state keys:
+
+```scriggo
+{#- All libraries use the same key name #}
+{%- gf["tlsCertificates"] = []any{} %}           {# ssl.yaml initializes #}
+{%- gf["tlsCertificates"] = append(..., cert) %}  {# ingress.yaml writes #}
+{%- var certs = gf["tlsCertificates"] %}          {# ssl.yaml reads #}
+```
+
+**Canonical Key Names:**
+
+| Correct (camelCase) | Wrong (various) |
+|---------------------|-----------------|
+| `tlsCertificates` | `tls_certificates`, `TLSCertificates` |
+| `sslPassthroughBackends` | `ssl_passthroughBackends`, `sslPassthrough_backends`, `ssl_passthrough_backends` |
+
+### Annotation Ownership
+
+**Problem**: Processing annotations in the wrong library.
+
+```yaml
+# ingress.yaml - WRONG!
+templateSnippets:
+  backends-500-ingress:
+    template: |
+      {#- This annotation belongs in haproxytech.yaml! #}
+      {%- var snippet = ingress | dig("metadata", "annotations", "haproxy.org/backend-config-snippet") %}
+```
+
+**Why Bad**: The `haproxy.org/*` annotations are HAProxy-specific compatibility features. Placing them in ingress.yaml:
+
+- Violates separation of concerns
+- Makes annotation documentation harder to find
+- Prevents gateway.yaml from using the same annotations
+
+**Solution**: Process annotations in the library that owns them:
+
+| Annotation Prefix | Owner Library |
+|-------------------|---------------|
+| `haproxy.org/*` | haproxytech.yaml |
+| `haproxy-ingress.github.io/*` | haproxy-ingress.yaml |
+| (none - standard fields) | ingress.yaml, gateway.yaml |
+
+**Pattern for Annotation Libraries:**
+
+```yaml
+# haproxytech.yaml - processes haproxy.org/* annotations
+templateSnippets:
+  backend-directives-900-haproxytech-advanced:
+    template: |
+      {%- if ingress != nil %}
+        {#- All haproxy.org/* annotations handled here #}
+        {%- var snippet = ingress | dig("metadata", "annotations", "haproxy.org/backend-config-snippet") | fallback("") %}
+        {%- if snippet != "" %}
+      # haproxytech/backend-config-snippet
+      {{ snippet }}
+        {%- end %}
+      {%- end %}
+```
+
+The annotation library receives the `ingress` variable via `inherit_context` from the calling snippet (backends-500-ingress).
 
 ### JSONPath Escaping in Labels
 

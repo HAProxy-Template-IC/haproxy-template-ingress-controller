@@ -197,12 +197,13 @@ defaults
 		},
 	}
 
-	engine, err := New(EngineTypeGonja, templates, nil, nil, postProcessorConfigs)
+	engine, err := New(EngineTypeScriggo, templates, nil, nil, postProcessorConfigs)
 	require.NoError(t, err)
 
 	output, err := engine.Render("haproxy.cfg", nil)
 	require.NoError(t, err)
 
+	// Scriggo adds trailing newline, so include it in expected output
 	expected := `global
   daemon
   maxconn 2000
@@ -210,7 +211,8 @@ defaults
 defaults
   mode http
   timeout connect 5s
-  option httplog`
+  option httplog
+`
 
 	assert.Equal(t, expected, output)
 }
@@ -241,13 +243,14 @@ func TestTemplateEngine_MultiplePostProcessors(t *testing.T) {
 		},
 	}
 
-	engine, err := New(EngineTypeGonja, templates, nil, nil, postProcessorConfigs)
+	engine, err := New(EngineTypeScriggo, templates, nil, nil, postProcessorConfigs)
 	require.NoError(t, err)
 
 	output, err := engine.Render("test", nil)
 	require.NoError(t, err)
 
-	expected := "  row1\n  row2\n  row3"
+	// Scriggo adds trailing newline
+	expected := "  row1\n  row2\n  row3\n"
 	assert.Equal(t, expected, output)
 }
 
@@ -270,9 +273,10 @@ func TestTemplateEngine_PostProcessorError(t *testing.T) {
 	}
 
 	// Engine creation should fail due to invalid regex
-	_, err := New(EngineTypeGonja, templates, nil, nil, postProcessorConfigs)
+	_, err := New(EngineTypeScriggo, templates, nil, nil, postProcessorConfigs)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create post-processor")
+	// Error message from regex package
+	assert.Contains(t, err.Error(), "invalid regex pattern")
 }
 
 func TestTemplateEngine_NoPostProcessors(t *testing.T) {
@@ -280,12 +284,12 @@ func TestTemplateEngine_NoPostProcessors(t *testing.T) {
 		"test": "  content with spaces",
 	}
 
-	engine, err := New(EngineTypeGonja, templates, nil, nil, nil)
+	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
 	require.NoError(t, err)
 
 	output, err := engine.Render("test", nil)
 	require.NoError(t, err)
 
-	// Without post-processors, spaces should be preserved
-	assert.Equal(t, "  content with spaces", output)
+	// Without post-processors, spaces should be preserved (Scriggo adds trailing newline)
+	assert.Equal(t, "  content with spaces\n", output)
 }

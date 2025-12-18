@@ -306,6 +306,16 @@ type DataplaneConfig struct {
 
 // TemplatingSettings configures template rendering behavior.
 type TemplatingSettings struct {
+	// Engine specifies which template engine to use for rendering.
+	//
+	// Available engines:
+	//   - "scriggo" (default): Go template syntax, high performance rendering
+	//
+	// Default: scriggo
+	// +kubebuilder:validation:Enum=scriggo
+	// +optional
+	Engine string `json:"engine,omitempty"`
+
 	// ExtraContext provides custom variables that are passed to all templates.
 	//
 	// This allows users to add arbitrary data to the template context without
@@ -394,21 +404,12 @@ type WatchedResource struct {
 
 // TemplateSnippet defines a reusable template fragment.
 type TemplateSnippet struct {
-	// Template is the Gonja template content.
+	// Template is the template content.
 	//
 	// Can be included in other templates using {% include "snippet_name" %}.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Template string `json:"template"`
-
-	// Priority determines the rendering order when multiple snippets are included.
-	//
-	// Lower values are rendered first. Snippets with the same priority are sorted alphabetically by name.
-	// Default: 500
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=1000
-	// +optional
-	Priority *int `json:"priority,omitempty"`
 }
 
 // PostProcessorConfig defines a post-processor to apply to rendered template output.
@@ -438,7 +439,7 @@ type PostProcessorConfig struct {
 //   - The internal config type: pkg/core/config/types.go (MapFile)
 //   - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - maps section)
 type MapFile struct {
-	// Template is the Gonja template for generating the map file content.
+	// Template is the template for generating the map file content.
 	//
 	// The rendered output should be in HAProxy map file format (key-value pairs).
 	// +kubebuilder:validation:Required
@@ -463,7 +464,7 @@ type MapFile struct {
 //   - The internal config type: pkg/core/config/types.go (GeneralFile)
 //   - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - files section)
 type GeneralFile struct {
-	// Template is the Gonja template for generating the file content.
+	// Template is the template for generating the file content.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Template string `json:"template"`
@@ -481,7 +482,7 @@ type GeneralFile struct {
 //   - The internal config type: pkg/core/config/types.go (SSLCertificate)
 //   - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - sslCertificates section)
 type SSLCertificate struct {
-	// Template is the Gonja template for generating the certificate content.
+	// Template is the template for generating the certificate content.
 	//
 	// The rendered output should be in PEM format (certificate + private key).
 	// +kubebuilder:validation:Required
@@ -501,7 +502,7 @@ type SSLCertificate struct {
 //   - The internal config type: pkg/core/config/types.go (HAProxyConfig)
 //   - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - haproxyConfig section)
 type HAProxyConfig struct {
-	// Template is the Gonja template for generating haproxy.cfg.
+	// Template is the template for generating haproxy.cfg.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Template string `json:"template"`

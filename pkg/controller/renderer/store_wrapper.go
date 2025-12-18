@@ -19,27 +19,30 @@ import (
 	"log/slog"
 
 	"haproxy-template-ic/pkg/k8s/types"
+	"haproxy-template-ic/pkg/templating"
 )
+
+// Verify StoreWrapper implements templating.ResourceStore at compile time.
+// This enables Scriggo templates to call methods directly on resource stores:
+//
+//	{% for _, ing := range resources.ingresses.List() %}
+var _ templating.ResourceStore = (*StoreWrapper)(nil)
 
 // toString converts various types to string for template compatibility.
 //
-// This helper handles type conversions needed when Gonja template engine
-// passes arguments to Go methods. Specifically:
+// This helper handles type conversions:
 // - string: returned as-is
-// - pystring.PyString: converted via String() method (implements fmt.Stringer)
 // - fmt.Stringer: any type with String() method
 // - other types: formatted using fmt.Sprintf
 //
-// This allows template methods to accept interface{} arguments and work
-// transparently with both regular Go strings and Gonja's PyString type
-// (returned by .split() and other string methods).
+// This allows template methods to accept interface{} arguments.
 func toString(v interface{}) string {
 	switch val := v.(type) {
 	case string:
 		// Fast path for regular strings
 		return val
 	case fmt.Stringer:
-		// Handles pystring.PyString and other Stringer types
+		// Handles types with String() method
 		return val.String()
 	default:
 		// Fallback: format as string
@@ -51,8 +54,7 @@ func toString(v interface{}) string {
 // that don't return errors (errors are logged instead).
 //
 // This allows templates to call methods like List() and Get() directly
-// without having to handle Go's multi-return values, which Gonja templates
-// may not support cleanly.
+// without having to handle Go's multi-return values.
 //
 // The wrapper implements lazy-cached unwrapping:
 //   - List() results are unwrapped once on first call and cached for the reconciliation
@@ -134,12 +136,11 @@ func (w *StoreWrapper) List() []interface{} {
 //
 // This will return ALL EndpointSlices for that service (typically multiple).
 //
-// Accepts interface{} arguments for template compatibility - automatically converts
-// Gonja PyString types to Go strings.
+// Accepts interface{} arguments for template compatibility.
 //
 // If an error occurs, it's logged and an empty slice is returned.
 func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
-	// Convert interface{} arguments to strings (handles PyString from Gonja)
+	// Convert interface{} arguments to strings
 	stringKeys := make([]string, len(keys))
 	for i, key := range keys {
 		stringKeys[i] = toString(key)
@@ -177,12 +178,11 @@ func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
 //	  {{ ingress.metadata.name }}
 //	{% endif %}
 //
-//	{# Cross-namespace reference - PyString from split() handled transparently #}
+//	{# Cross-namespace reference #}
 //	{% set ref = "namespace/name".split("/") %}
 //	{% set secret = resources.secrets.GetSingle(ref[0], ref[1]) %}
 //
-// Accepts interface{} arguments for template compatibility - automatically converts
-// Gonja PyString types (from .split()) to Go strings.
+// Accepts interface{} arguments for template compatibility.
 //
 // Returns:
 //   - nil if no resources match (this is NOT an error - allows templates to check existence)
@@ -191,7 +191,7 @@ func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
 //
 // If an error occurs during the store operation, it's logged and nil is returned.
 func (w *StoreWrapper) GetSingle(keys ...interface{}) interface{} {
-	// Convert interface{} arguments to strings (handles PyString from Gonja)
+	// Convert interface{} arguments to strings
 	stringKeys := make([]string, len(keys))
 	for i, key := range keys {
 		stringKeys[i] = toString(key)

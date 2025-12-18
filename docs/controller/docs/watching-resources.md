@@ -185,11 +185,11 @@ Creates composite keys like:
 
 **How lookups work:**
 
-```jinja2
+```go
 {# In templates, .Fetch() parameters match indexBy order #}
-{% for ingress in resources.ingresses.Fetch("default", "my-ingress") %}
+{% for _, ingress := range resources.ingresses.Fetch("default", "my-ingress") %}
   {# Returns the specific ingress #}
-{% endfor %}
+{% end %}
 ```
 
 ### Common Indexing Patterns
@@ -213,16 +213,16 @@ watchedResources:
 
 **Template usage:**
 
-```jinja2
+```go
 {# Fetch specific ingress #}
-{% for ingress in resources.ingresses.Fetch("default", "my-app") %}
+{% for _, ingress := range resources.ingresses.Fetch("default", "my-app") %}
   {# Process specific ingress #}
-{% endfor %}
+{% end %}
 
 {# Fetch all in namespace #}
-{% for ingress in resources.ingresses.Fetch("default") %}
+{% for _, ingress := range resources.ingresses.Fetch("default") %}
   {# Process all ingresses in 'default' namespace #}
-{% endfor %}
+{% end %}
 ```
 
 See [CRD Reference](./crd-reference.md#watchedresources) for `indexBy` syntax.
@@ -243,19 +243,19 @@ watchedResources:
 
 **Template usage:**
 
-```jinja2
+```go
 {# In ingress loop, extract service name #}
-{% set service_name = path.backend.service.name %}
+{% var service_name = path.backend.service.name %}
 
 {# Fetch all endpoint slices for this service #}
-{% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+{% for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
   {# Generate server entries from endpoints #}
-  {% for endpoint in (endpoint_slice.endpoints | default([])) %}
-    {% for address in (endpoint.addresses | default([])) %}
+  {% for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
+    {% for _, address := range fallback(endpoint.addresses, []any{}) %}
       server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
-    {% endfor %}
-  {% endfor %}
-{% endfor %}
+    {% end %}
+  {% end %}
+{% end %}
 ```
 
 This is the **most important cross-resource lookup pattern** in HAProxy configurations.
@@ -277,11 +277,11 @@ watchedResources:
 
 **Template usage:**
 
-```jinja2
+```go
 {# Fetch all TLS secrets in namespace #}
-{% for secret in resources.secrets.Fetch("default", "kubernetes.io/tls") %}
+{% for _, secret := range resources.secrets.Fetch("default", "kubernetes.io/tls") %}
   {# Generate SSL certificate files #}
-{% endfor %}
+{% end %}
 ```
 
 #### Pattern 4: Single Key Index
@@ -299,11 +299,11 @@ watchedResources:
 
 **Template usage:**
 
-```jinja2
+```go
 {# Fetch by name only (namespace is implicit) #}
-{% for cm in resources.configmaps.Fetch("error-pages") %}
+{% for _, cm := range resources.configmaps.Fetch("error-pages") %}
   {# Use configmap data #}
-{% endfor %}
+{% end %}
 ```
 
 ### Choosing Index Strategy
@@ -357,7 +357,7 @@ watchedResources:
   secrets: {...}
 ```
 
-```jinja2
+```go
 {# Template access #}
 {{ resources.ingresses }}  {# Store for ingresses #}
 {{ resources.services }}   {# Store for services #}
@@ -380,19 +380,19 @@ The `.List()` method returns all resources in the store.
 
 **Example - Generate routing map for all ingresses:**
 
-```jinja2
+```go
 {# maps/host.map template #}
-{% for ingress in resources.ingresses.List() %}
-  {% for rule in (ingress.spec.rules | default([])) %}
+{% for _, ingress := range resources.ingresses.List() %}
+  {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
     {{ rule.host }} backend_{{ ingress.metadata.name }}
-  {% endfor %}
-{% endfor %}
+  {% end %}
+{% end %}
 ```
 
 **Example - Count resources:**
 
-```jinja2
-{# Total ingresses: {{ resources.ingresses.List() | length }} #}
+```go
+{# Total ingresses: {{ len(resources.ingresses.List()) }} #}
 ```
 
 **Performance note**: With memory store, `.List()` returns in-memory objects (fast). With cached store, `.List()` still returns references, but template rendering will trigger fetches for each resource (slower).
@@ -417,30 +417,30 @@ The `.Fetch()` method returns resources matching index keys.
 indexBy: ["metadata.namespace", "metadata.name"]
 ```
 
-```jinja2
+```go
 {# Template #}
-{% for ingress in resources.ingresses.Fetch("default", "my-app") %}
+{% for _, ingress := range resources.ingresses.Fetch("default", "my-app") %}
   {# Usually returns 0 or 1 items #}
-{% endfor %}
+{% end %}
 ```
 
 **Example - Fetch all in namespace:**
 
-```jinja2
+```go
 {# Partial key match - returns all in namespace #}
-{% for ingress in resources.ingresses.Fetch("default") %}
+{% for _, ingress := range resources.ingresses.Fetch("default") %}
   {# All ingresses in 'default' namespace #}
-{% endfor %}
+{% end %}
 ```
 
 **Example - Cross-resource lookup:**
 
-```jinja2
+```go
 {# Get endpoints for a service #}
-{% set service_name = path.backend.service.name %}
-{% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
+{% var service_name = path.backend.service.name %}
+{% for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
   {# All endpoint slices for this service #}
-{% endfor %}
+{% end %}
 ```
 
 **Performance note**: With cached store, `.Fetch()` uses the cache effectively. Only fetches from API on cache miss.
@@ -461,22 +461,22 @@ indexBy: ["metadata.namespace", "metadata.name"]
 
 ### GetSingle() Helper
 
-For convenience, stores also provide `.GetSingle()` which returns a single resource or `null`:
+For convenience, stores also provide `.GetSingle()` which returns a single resource or `nil`:
 
-```jinja2
+```go
 {# Instead of looping #}
-{% set secret = resources.secrets.GetSingle("default", "my-secret") %}
-{% if secret %}
-  {{ secret.data.password | b64decode }}
-{% endif %}
+{% var secret = resources.secrets.GetSingle("default", "my-secret") %}
+{% if secret != nil %}
+  {{ b64decode(secret.data.password) }}
+{% end %}
 ```
 
 This is equivalent to:
 
-```jinja2
-{% for secret in resources.secrets.Fetch("default", "my-secret") %}
-  {{ secret.data.password | b64decode }}
-{% endfor %}
+```go
+{% for _, secret := range resources.secrets.Fetch("default", "my-secret") %}
+  {{ b64decode(secret.data.password) }}
+{% end %}
 ```
 
 See [Templating Guide](./templating.md#using-list-method) for more template patterns.
@@ -676,27 +676,27 @@ watchedResources:
 
 **Template usage:**
 
-```jinja2
+```go
 {# Generate backends with dynamic servers #}
-{% for ingress in resources.ingresses.List() %}
-  {% for rule in (ingress.spec.rules | default([])) %}
-    {% for path in (rule.http.paths | default([])) %}
-      {% set service_name = path.backend.service.name %}
-      {% set port = path.backend.service.port.number %}
+{% for _, ingress := range resources.ingresses.List() %}
+  {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+    {% for _, path := range fallback(rule.http.paths, []any{}) %}
+      {% var service_name = path.backend.service.name %}
+      {% var port = path.backend.service.port.number %}
 
       backend ing_{{ ingress.metadata.name }}_{{ service_name }}
         balance roundrobin
         {# Cross-resource lookup: service → endpoints #}
-        {% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
-          {% for endpoint in (endpoint_slice.endpoints | default([])) %}
-            {% for address in (endpoint.addresses | default([])) %}
+        {% for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
+          {% for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
+            {% for _, address := range fallback(endpoint.addresses, []any{}) %}
               server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
-            {% endfor %}
-          {% endfor %}
-        {% endfor %}
-    {% endfor %}
-  {% endfor %}
-{% endfor %}
+            {% end %}
+          {% end %}
+        {% end %}
+    {% end %}
+  {% end %}
+{% end %}
 ```
 
 ### Example 2: Authentication with Cached Secrets
@@ -721,36 +721,38 @@ watchedResources:
 
 **Template usage:**
 
-```jinja2
+```go
 {# Generate userlist sections for basic auth #}
-{% set ns = namespace(processed=[]) %}
-{% for ingress in resources.ingresses.List() %}
-  {% set auth_type = ingress.metadata.annotations["haproxy.org/auth-type"] | default("") %}
+{% var processed = []string{} %}
+{% for _, ingress := range resources.ingresses.List() %}
+  {% var auth_type = fallback(ingress.metadata.annotations["haproxy.org/auth-type"], "") %}
   {% if auth_type == "basic-auth" %}
-    {% set auth_secret = ingress.metadata.annotations["haproxy.org/auth-secret"] | default("") %}
-    {% if auth_secret and auth_secret not in ns.processed %}
-      {% set ns.processed = ns.processed + [auth_secret] %}
+    {% var auth_secret = fallback(ingress.metadata.annotations["haproxy.org/auth-secret"], "") %}
+    {% if auth_secret != "" && !contains(processed, auth_secret) %}
+      {% processed = append(processed, auth_secret) %}
 
       {# Parse namespace/name from annotation #}
-      {% if "/" in auth_secret %}
-        {% set secret_ns = auth_secret.split("/")[0] %}
-        {% set secret_name = auth_secret.split("/")[1] %}
+      {% var secret_ns, secret_name = "", "" %}
+      {% if contains(auth_secret, "/") %}
+        {% var parts = split(auth_secret, "/") %}
+        {% secret_ns = parts[0] %}
+        {% secret_name = parts[1] %}
       {% else %}
-        {% set secret_ns = ingress.metadata.namespace %}
-        {% set secret_name = auth_secret %}
-      {% endif %}
+        {% secret_ns = ingress.metadata.namespace %}
+        {% secret_name = auth_secret %}
+      {% end %}
 
       {# Fetch specific secret (cached or API call) #}
-      {% set secret = resources.secrets.GetSingle(secret_ns, secret_name) %}
-      {% if secret %}
+      {% var secret = resources.secrets.GetSingle(secret_ns, secret_name) %}
+      {% if secret != nil %}
         userlist auth_{{ secret_ns }}_{{ secret_name }}
-        {% for username in secret.data | default({}) %}
-          user {{ username }} password {{ secret.data[username] | b64decode }}
-        {% endfor %}
-      {% endif %}
-    {% endif %}
-  {% endif %}
-{% endfor %}
+        {% for username, _ := range fallback(secret.data, map[string]any{}) %}
+          user {{ username }} password {{ b64decode(secret.data[username]) }}
+        {% end %}
+      {% end %}
+    {% end %}
+  {% end %}
+{% end %}
 ```
 
 **Why cached store here**: Secrets are large and accessed selectively (only those referenced in annotations). Cached store minimizes memory usage.
@@ -779,24 +781,24 @@ watchedResources:
 
 **Template usage:**
 
-```jinja2
+```go
 {# Generate SSL certificates from ingress TLS configuration #}
-{% for ingress in resources.ingresses.List() %}
-  {% if ingress.spec.tls %}
-    {% for tls in ingress.spec.tls %}
-      {% set secret_name = tls.secretName %}
-      {% set namespace = ingress.metadata.namespace %}
+{% for _, ingress := range resources.ingresses.List() %}
+  {% if ingress.spec.tls != nil %}
+    {% for _, tls := range ingress.spec.tls %}
+      {% var secret_name = tls.secretName %}
+      {% var namespace = ingress.metadata.namespace %}
 
       {# Fetch TLS secret only if ingress has TLS #}
-      {% set secret = resources.secrets.GetSingle(namespace, secret_name) %}
-      {% if secret %}
+      {% var secret = resources.secrets.GetSingle(namespace, secret_name) %}
+      {% if secret != nil %}
         {# SSL certificate content for {{ namespace }}/{{ secret_name }} #}
-        {{ secret.data["tls.crt"] | b64decode }}
-        {{ secret.data["tls.key"] | b64decode }}
-      {% endif %}
-    {% endfor %}
-  {% endif %}
-{% endfor %}
+        {{ b64decode(secret.data["tls.crt"]) }}
+        {{ b64decode(secret.data["tls.key"]) }}
+      {% end %}
+    {% end %}
+  {% end %}
+{% end %}
 ```
 
 **Why cached store here**: Certificate secrets are 5-20 KB each. Only ingresses with TLS need certificate data. Cached store avoids loading all certificates into memory.
@@ -828,11 +830,11 @@ watchedResources:
 
 **Template usage:**
 
-```jinja2
+```go
 {# Fetch by name only (namespace is implicit) #}
-{% for ingress in resources.ingresses.Fetch("api-gateway") %}
+{% for _, ingress := range resources.ingresses.Fetch("api-gateway") %}
   {# ... #}
-{% endfor %}
+{% end %}
 ```
 
 See [CRD Reference](./crd-reference.md#watchedresources) for namespace restrictions.

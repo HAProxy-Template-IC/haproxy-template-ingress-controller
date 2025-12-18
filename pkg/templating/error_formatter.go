@@ -20,7 +20,7 @@ type parsedError struct {
 	Hints    []string
 }
 
-// Common error patterns in gonja template errors.
+// Common error patterns in template errors.
 var (
 	// Pattern: "at line X: ... at Line=Y Col=Z".
 	lineColPattern = regexp.MustCompile(`Line=(\d+)\s+Col=(\d+)`)
@@ -43,7 +43,7 @@ var (
 
 // FormatRenderError formats a template rendering error into a human-readable multi-line string.
 //
-// This function parses gonja error messages to extract:
+// This function parses template error messages to extract:
 //   - Line and column numbers
 //   - The actual problem (e.g., "unknown method", "undefined variable")
 //   - Contextual information
@@ -114,7 +114,7 @@ func FormatRenderError(err error, templateName, templateContent string) string {
 	return builder.String()
 }
 
-// parseTemplateError parses a gonja error string to extract structured information.
+// parseTemplateError parses a template error string to extract structured information.
 func parseTemplateError(errorStr string) parsedError {
 	parsed := parsedError{}
 
@@ -239,7 +239,7 @@ func generateHints(errorStr string) []string {
 	if len(hints) == 0 {
 		hints = append(hints,
 			"Check your template syntax and the data passed to the template.",
-			"See Jinja2 template documentation for syntax help.")
+			"See Scriggo template documentation for syntax help.")
 	}
 
 	return hints

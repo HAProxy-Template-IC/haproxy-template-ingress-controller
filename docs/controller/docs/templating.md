@@ -2,7 +2,7 @@
 
 ## Overview
 
-The HAProxy Template Ingress Controller uses Gonja v2, a Jinja2-like template engine for Go, to generate HAProxy configurations from Kubernetes resources. You define templates that access watched Kubernetes resources, and the controller renders these templates whenever resources change, validates the output, and deploys it to HAProxy instances.
+The HAProxy Template Ingress Controller uses [Scriggo](https://scriggo.com/), a Go template engine, to generate HAProxy configurations from Kubernetes resources. You define templates that access watched Kubernetes resources, and the controller renders these templates whenever resources change, validates the output, and deploys it to HAProxy instances.
 
 Templates are rendered automatically when any watched resource changes, during initial synchronization, or periodically for drift detection.
 
@@ -30,10 +30,10 @@ haproxyConfig:
         bind *:80
         use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
 
-    {% for ingress in resources.ingresses.List() %}
+    {% for _, ingress := range resources.ingresses.List() %}
     backend {{ ingress.metadata.name }}
         balance roundrobin
-    {% endfor %}
+    {% end %}
 ```
 
 !!! important
@@ -47,11 +47,13 @@ Map files generate HAProxy lookup tables stored in `/etc/haproxy/maps/`:
 maps:
   host.map:
     template: |
-      {%- for ingress in resources.ingresses.List() %}
-      {%- for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+      {%- if rule.http != nil %}
       {{ rule.host }} {{ rule.host }}
-      {%- endfor %}
-      {%- endfor %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
 ```
 
 ### General Files
@@ -78,11 +80,11 @@ SSL/TLS certificate files from Kubernetes Secrets stored in `/etc/haproxy/ssl/`:
 sslCertificates:
   example-com.pem:
     template: |
-      {%- set secret = resources.secrets.GetSingle("default", "example-com-tls") %}
-      {%- if secret %}
-      {{ secret.data["tls.crt"] | b64decode }}
-      {{ secret.data["tls.key"] | b64decode }}
-      {%- endif %}
+      {%- var secret = resources.secrets.GetSingle("default", "example-com-tls") %}
+      {%- if secret != nil %}
+      {{ b64decode(secret.data["tls.crt"]) }}
+      {{ b64decode(secret.data["tls.key"]) }}
+      {%- end %}
 ```
 
 !!! note
@@ -90,7 +92,7 @@ sslCertificates:
 
 ### Template Snippets
 
-Reusable template fragments included via `{% include "snippet-name" %}`:
+Reusable template fragments included via `{% render "snippet-name" %}`:
 
 ```yaml
 templateSnippets:
@@ -100,53 +102,53 @@ templateSnippets:
 
   backend-servers:
     template: |
-      {%- for endpoint_slice in resources.endpoints.Fetch(service_name) %}
-      {%- for endpoint in (endpoint_slice.endpoints | default([])) %}
-      {%- for address in (endpoint.addresses | default([])) %}
+      {%- for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
+      {%- for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
+      {%- for _, address := range fallback(endpoint.addresses, []any{}) %}
       server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
-      {%- endfor %}
-      {%- endfor %}
-      {%- endfor %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
 ```
 
 ## Template Syntax
 
-Templates use Gonja v2 with Jinja2-like syntax. For complete syntax reference, see the [Gonja documentation](https://github.com/nikolalohinski/gonja).
+Templates use Scriggo's template syntax. For complete syntax reference, see the [Scriggo documentation](https://scriggo.com/templates).
 
 ### Control Structures
 
-```jinja2
+```go
 {# Loops #}
-{% for ingress in resources.ingresses.List() %}
+{% for _, ingress := range resources.ingresses.List() %}
   backend {{ ingress.metadata.name }}
-{% endfor %}
+{% end %}
 
 {# Conditionals #}
-{% if ingress.spec.tls %}
-  bind *:443 ssl crt {{ pathResolver.GetPath(ingress.metadata.name ~ ".pem", "cert") }}
-{% endif %}
+{% if ingress.spec.tls != nil %}
+  bind *:443 ssl crt {{ pathResolver.GetPath(ingress.metadata.name + ".pem", "cert") }}
+{% end %}
 
 {# Variables #}
-{% set service_name = path.backend.service.name %}
-{% set port = path.backend.service.port.number | default(80) %}
+{% var service_name = path.backend.service.name %}
+{% var port = fallback(path.backend.service.port.number, 80) %}
 
 {# Comments #}
 {# This is a comment #}
 ```
 
-### Common Filters
+### Common Functions
 
-```jinja2
-{{ path.backend.service.port.number | default(80) }}  {# Default values #}
-{{ rule.host | lower }}                                {# String manipulation #}
-{{ ingress.spec.rules | length }}                      {# Collection length #}
+```go
+{{ fallback(path.backend.service.port.number, 80) }}  {# Default values #}
+{{ toLower(rule.host) }}                               {# String manipulation #}
+{{ len(ingress.spec.rules) }}                          {# Collection length #}
 ```
 
 ### Path Resolution
 
 The `pathResolver.GetPath()` method resolves filenames to absolute paths:
 
-```jinja2
+```go
 {# Map files #}
 use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
 {# Output: /etc/haproxy/maps/host.map #}
@@ -180,12 +182,12 @@ bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 
 **Example - Route precedence sorting**:
 
-```jinja2
-{% set sorted = routes | sort_by([
+```go
+{% var sorted = sort_by(routes, []string{
     "$.match.method:exists:desc",
     "$.match.headers | length:desc",
-    "$.match.path.value | length:desc"
-]) %}
+    "$.match.path.value | length:desc",
+}) %}
 ```
 
 ## Available Template Data
@@ -194,15 +196,15 @@ bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 
 Templates access watched resources through the `resources` variable. Each store provides `List()`, `Fetch()`, and `GetSingle()` methods.
 
-```jinja2
+```go
 {# List all resources #}
-{% for ingress in resources.ingresses.List() %}
+{% for _, ingress := range resources.ingresses.List() %}
 
 {# Fetch by index keys (parameters match indexBy configuration) #}
-{% for ingress in resources.ingresses.Fetch("default", "my-ingress") %}
+{% for _, ingress := range resources.ingresses.Fetch("default", "my-ingress") %}
 
-{# Get single resource or null #}
-{% set secret = resources.secrets.GetSingle("default", "my-secret") %}
+{# Get single resource or nil #}
+{% var secret = resources.secrets.GetSingle("default", "my-secret") %}
 ```
 
 ### Index Configuration
@@ -243,10 +245,10 @@ spec:
 
 Access in templates:
 
-```jinja2
+```go
 {% if debug %}
   http-response set-header X-Debug %[be_name]
-{% endif %}
+{% end %}
 
 global
   maxconn {{ limits.maxConn }}
@@ -295,28 +297,28 @@ Configure secrets store with `store: on-demand` to fetch secrets on-demand rathe
 
 Pre-allocate server slots to enable runtime API updates without reloads:
 
-```jinja2
-{%- set initial_slots = 10 %}
-{%- set ns = namespace(active_endpoints=[]) %}
+```go
+{%- var initial_slots = 10 %}
+{%- var active_endpoints = []map[string]any{} %}
 
 {# Collect endpoints #}
-{%- for endpoint_slice in resources.endpoints.Fetch(service_name) %}
-  {%- for endpoint in (endpoint_slice.endpoints | default([])) %}
-    {%- for address in (endpoint.addresses | default([])) %}
-      {%- set ns.active_endpoints = ns.active_endpoints + [{'address': address, 'port': port}] %}
-    {%- endfor %}
-  {%- endfor %}
-{%- endfor %}
+{%- for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
+  {%- for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
+    {%- for _, address := range fallback(endpoint.addresses, []any{}) %}
+      {%- active_endpoints = append(active_endpoints, map[string]any{"address": address, "port": port}) %}
+    {%- end %}
+  {%- end %}
+{%- end %}
 
 {# Fixed slots - active endpoints fill first, rest are disabled #}
-{%- for i in range(1, initial_slots + 1) %}
-  {%- if loop.index0 < ns.active_endpoints|length %}
-    {%- set ep = ns.active_endpoints[loop.index0] %}
-server SRV_{{ i }} {{ ep.address }}:{{ ep.port }} check
+{%- for i := 1; i <= initial_slots; i++ %}
+  {%- if i-1 < len(active_endpoints) %}
+    {%- var ep = active_endpoints[i-1] %}
+server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }} check
   {%- else %}
 server SRV_{{ i }} 127.0.0.1:1 disabled
-  {%- endif %}
-{%- endfor %}
+  {%- end %}
+{%- end %}
 ```
 
 **Benefit**: Endpoint changes update server addresses via runtime API without dropping connections.
@@ -325,24 +327,24 @@ server SRV_{{ i }} 127.0.0.1:1 disabled
 
 Use fields from one resource to query another:
 
-```jinja2
-{% for ingress in resources.ingresses.List() %}
-{% for rule in (ingress.spec.rules | default([])) %}
-{% for path in (rule.http.paths | default([])) %}
-  {% set service_name = path.backend.service.name %}
-  {% set port = path.backend.service.port.number | default(80) %}
+```go
+{% for _, ingress := range resources.ingresses.List() %}
+{% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+{% for _, path := range fallback(rule.http.paths, []any{}) %}
+  {% var service_name = path.backend.service.name %}
+  {% var port = fallback(path.backend.service.port.number, 80) %}
 
 backend ing_{{ ingress.metadata.name }}_{{ service_name }}
-    {%- for endpoint_slice in resources.endpoints.Fetch(service_name) %}
-    {%- for endpoint in (endpoint_slice.endpoints | default([])) %}
-    {%- for address in (endpoint.addresses | default([])) %}
+    {%- for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
+    {%- for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
+    {%- for _, address := range fallback(endpoint.addresses, []any{}) %}
     server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
-    {%- endfor %}
-    {%- endfor %}
-    {%- endfor %}
-{% endfor %}
-{% endfor %}
-{% endfor %}
+    {%- end %}
+    {%- end %}
+    {%- end %}
+{% end %}
+{% end %}
+{% end %}
 ```
 
 **Required indexing**:
@@ -357,53 +359,54 @@ watchedResources:
 
 ### Safe Iteration
 
-Use `default` filter to handle missing fields:
+Use `fallback` function to handle missing fields:
 
-```jinja2
-{% for endpoint in (endpoint_slice.endpoints | default([])) %}
-  {% for address in (endpoint.addresses | default([])) %}
+```go
+{% for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
+  {% for _, address := range fallback(endpoint.addresses, []any{}) %}
     server srv {{ address }}:80
-  {% endfor %}
-{% endfor %}
+  {% end %}
+{% end %}
 ```
 
-### Filtering with selectattr
+### Filtering with Conditionals
 
 Filter resources by attribute presence:
 
-```jinja2
-{% for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
+```go
+{% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+  {% if rule.http != nil %}
   {# rule.http is guaranteed to exist #}
-{% endfor %}
+  {% end %}
+{% end %}
 ```
 
-### Mutable Variables with namespace()
+### Mutable Variables
 
-Accumulate values across loop iterations:
+Accumulate values across loop iterations using Go-style variable assignment:
 
-```jinja2
-{% set ns = namespace(active_endpoints=[]) %}
+```go
+{% var active_endpoints = []map[string]any{} %}
 
-{% for endpoint_slice in resources.endpoints.Fetch(service_name) %}
-  {% for endpoint in (endpoint_slice.endpoints | default([])) %}
-    {% set ns.active_endpoints = ns.active_endpoints + [{'address': endpoint.addresses[0]}] %}
-  {% endfor %}
-{% endfor %}
+{% for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
+  {% for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
+    {% active_endpoints = append(active_endpoints, map[string]any{"address": endpoint.addresses[0]}) %}
+  {% end %}
+{% end %}
 
-{% for ep in ns.active_endpoints %}
-  server srv{{ loop.index }} {{ ep.address }}:80
-{% endfor %}
+{% for i, ep := range active_endpoints %}
+  server srv{{ i + 1 }} {{ ep["address"] }}:80
+{% end %}
 ```
 
 ### Whitespace Control
 
-```jinja2
-{%- for item in items %}   {# Strip before #}
-{% for item in items -%}   {# Strip after #}
+```go
+{%- for _, item := range items %}   {# Strip before #}
+{% for _, item := range items -%}   {# Strip after #}
 
-{%- filter indent(4, first=True) %}
-{% include "server-list" %}
-{%- endfilter %}
+{# Use show for indented output #}
+    {% show render("server-list") %}
 ```
 
 ## Complete Example
@@ -424,31 +427,31 @@ watchedResources:
 maps:
   host.map:
     template: |
-      {%- for ingress in resources.ingresses.List() %}
-      {%- for rule in (ingress.spec.rules | default([])) %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, rule := range fallback(ingress.spec.rules, []any{}) %}
       {{ rule.host }} ing_{{ ingress.metadata.name }}
-      {%- endfor %}
-      {%- endfor %}
+      {%- end %}
+      {%- end %}
 
 templateSnippets:
   backend-servers:
     template: |
-      {%- set initial_slots = 10 %}
-      {%- set ns = namespace(active_endpoints=[]) %}
-      {%- for es in resources.endpoints.Fetch(service_name) %}
-        {%- for ep in (es.endpoints | default([])) %}
-          {%- for addr in (ep.addresses | default([])) %}
-            {%- set ns.active_endpoints = ns.active_endpoints + [{'addr': addr}] %}
-          {%- endfor %}
-        {%- endfor %}
-      {%- endfor %}
-      {%- for i in range(1, initial_slots + 1) %}
-        {%- if loop.index0 < ns.active_endpoints|length %}
-      server SRV_{{ i }} {{ ns.active_endpoints[loop.index0].addr }}:{{ port }} check
+      {%- var initial_slots = 10 %}
+      {%- var active_endpoints = []map[string]any{} %}
+      {%- for _, es := range resources.endpoints.Fetch(service_name) %}
+        {%- for _, ep := range fallback(es.endpoints, []any{}) %}
+          {%- for _, addr := range fallback(ep.addresses, []any{}) %}
+            {%- active_endpoints = append(active_endpoints, map[string]any{"addr": addr}) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- for i := 1; i <= initial_slots; i++ %}
+        {%- if i-1 < len(active_endpoints) %}
+      server SRV_{{ i }} {{ active_endpoints[i-1]["addr"] }}:{{ port }} check
         {%- else %}
       server SRV_{{ i }} 127.0.0.1:1 disabled
-        {%- endif %}
-      {%- endfor %}
+        {%- end %}
+      {%- end %}
 
 haproxyConfig:
   template: |
@@ -466,24 +469,22 @@ haproxyConfig:
         bind *:80
         use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
 
-    {% for ingress in resources.ingresses.List() %}
-    {% for rule in (ingress.spec.rules | default([])) %}
-    {% for path in (rule.http.paths | default([])) %}
-    {%- set service_name = path.backend.service.name %}
-    {%- set port = path.backend.service.port.number | default(80) %}
+    {% for _, ingress := range resources.ingresses.List() %}
+    {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+    {% for _, path := range fallback(rule.http.paths, []any{}) %}
+    {%- var service_name = path.backend.service.name %}
+    {%- var port = fallback(path.backend.service.port.number, 80) %}
 
     backend ing_{{ ingress.metadata.name }}
         balance roundrobin
-        {%- filter indent(4, first=True) %}
-        {% include "backend-servers" %}
-        {%- endfilter %}
-    {% endfor %}
-    {% endfor %}
-    {% endfor %}
+        {% show render("backend-servers") %}
+    {% end %}
+    {% end %}
+    {% end %}
 ```
 
 ## See Also
 
 - [Template Engine Reference](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/templating/README.md)
-- [Gonja Documentation](https://github.com/nikolalohinski/gonja)
+- [Scriggo Documentation](https://scriggo.com/templates)
 - [HAProxy Configuration Manual](https://docs.haproxy.org/2.9/configuration.html)

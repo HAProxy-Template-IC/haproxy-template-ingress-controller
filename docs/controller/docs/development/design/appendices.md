@@ -36,10 +36,10 @@
      - Common machinery for Kubernetes API interactions
 
 4. **Template Engines**
-   - gonja v2: <https://github.com/nikolalohinski/gonja>
-     - Pure Go Jinja2 template engine, actively maintained
-     - Latest release: v2.4.1 (January 2025)
-     - Recommended for Jinja2-compatible templating
+   - Scriggo: <https://scriggo.com/>
+     - Go-native template engine with dynamic include support
+     - Actively maintained with regular releases
+     - Recommended for Go template syntax with advanced features
 
 5. **Observability**
    - Prometheus client_golang: <https://github.com/prometheus/client_golang>

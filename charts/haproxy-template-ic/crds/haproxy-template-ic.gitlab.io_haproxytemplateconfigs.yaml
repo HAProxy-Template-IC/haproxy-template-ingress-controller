@@ -250,8 +250,8 @@ spec:
                         type: object
                       type: array
                     template:
-                      description: Template is the Gonja template for generating the
-                        file content.
+                      description: Template is the template for generating the file
+                        content.
                       minLength: 1
                       type: string
                   required:
@@ -302,7 +302,7 @@ spec:
                       type: object
                     type: array
                   template:
-                    description: Template is the Gonja template for generating haproxy.cfg.
+                    description: Template is the template for generating haproxy.cfg.
                     minLength: 1
                     type: string
                 required:
@@ -370,7 +370,7 @@ spec:
                       type: array
                     template:
                       description: |-
-                        Template is the Gonja template for generating the map file content.
+                        Template is the template for generating the map file content.
 
                         The rendered output should be in HAProxy map file format (key-value pairs).
                       minLength: 1
@@ -445,7 +445,7 @@ spec:
                       type: array
                     template:
                       description: |-
-                        Template is the Gonja template for generating the certificate content.
+                        Template is the template for generating the certificate content.
 
                         The rendered output should be in PEM format (certificate + private key).
                       minLength: 1
@@ -462,18 +462,9 @@ spec:
                 additionalProperties:
                   description: TemplateSnippet defines a reusable template fragment.
                   properties:
-                    priority:
-                      description: |-
-                        Priority determines the rendering order when multiple snippets are included.
-
-                        Lower values are rendered first. Snippets with the same priority are sorted alphabetically by name.
-                        Default: 500
-                      maximum: 1000
-                      minimum: 0
-                      type: integer
                     template:
                       description: |-
-                        Template is the Gonja template content.
+                        Template is the template content.
 
                         Can be included in other templates using {% include "snippet_name" %}.
                       minLength: 1
@@ -490,6 +481,17 @@ spec:
                 description: TemplatingSettings configures template rendering behavior
                   and custom variables.
                 properties:
+                  engine:
+                    description: |-
+                      Engine specifies which template engine to use for rendering.
+
+                      Available engines:
+                        - "scriggo" (default): Go template syntax, high performance rendering
+
+                      Default: scriggo
+                    enum:
+                    - scriggo
+                    type: string
                   extraContext:
                     description: |-
                       ExtraContext provides custom variables that are passed to all templates.

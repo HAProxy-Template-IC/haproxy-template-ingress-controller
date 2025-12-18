@@ -78,7 +78,7 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	// Validate main HAProxy config template
 	// Note: Empty template validation is handled by basic validator (required field check)
 	// Template validator validates syntax of all templates, including empty ones (which are valid)
-	if err := templating.ValidateTemplate(cfg.HAProxyConfig.Template, templating.EngineTypeGonja); err != nil {
+	if err := templating.ValidateTemplate(cfg.HAProxyConfig.Template, templating.EngineTypeScriggo); err != nil {
 		errors = append(errors, fmt.Sprintf("haproxy_config.template: %v", err))
 	}
 
@@ -91,7 +91,7 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	sort.Strings(snippetNames)
 	for _, name := range snippetNames {
 		snippet := cfg.TemplateSnippets[name]
-		if err := templating.ValidateTemplate(snippet.Template, templating.EngineTypeGonja); err != nil {
+		if err := templating.ValidateTemplate(snippet.Template, templating.EngineTypeScriggo); err != nil {
 			errors = append(errors, fmt.Sprintf("template_snippets.%s: %v", name, err))
 		}
 	}
@@ -105,7 +105,7 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	sort.Strings(mapNames)
 	for _, name := range mapNames {
 		mapFile := cfg.Maps[name]
-		if err := templating.ValidateTemplate(mapFile.Template, templating.EngineTypeGonja); err != nil {
+		if err := templating.ValidateTemplate(mapFile.Template, templating.EngineTypeScriggo); err != nil {
 			errors = append(errors, fmt.Sprintf("maps.%s.template: %v", name, err))
 		}
 	}
@@ -119,7 +119,7 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	sort.Strings(fileNames)
 	for _, name := range fileNames {
 		file := cfg.Files[name]
-		if err := templating.ValidateTemplate(file.Template, templating.EngineTypeGonja); err != nil {
+		if err := templating.ValidateTemplate(file.Template, templating.EngineTypeScriggo); err != nil {
 			errors = append(errors, fmt.Sprintf("files.%s.template: %v", name, err))
 		}
 	}

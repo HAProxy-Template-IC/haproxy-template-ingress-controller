@@ -399,7 +399,7 @@ func simplifySchemaError(errStr string) string {
 // SimplifyRenderingError extracts meaningful error messages from template rendering failures.
 //
 // Handles template-level validation errors from the fail() function which are buried
-// in gonja's execution stack trace.
+// in the template engine's execution stack trace.
 //
 // Input format:
 //

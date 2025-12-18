@@ -240,9 +240,9 @@ func TestB64Decode(t *testing.T) {
 			want:  "$5$rounds=5000$salt$hashedpassword",
 		},
 		{
-			name:    "non-string input",
+			name:    "non-string input (converted to string, then decoded)",
 			input:   123,
-			wantErr: true,
+			wantErr: true, // "123" is not valid base64
 		},
 		{
 			name:    "invalid base64",
@@ -250,9 +250,9 @@ func TestB64Decode(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "nil input",
-			input:   nil,
-			wantErr: true,
+			name:  "nil input (converts to empty string)",
+			input: nil,
+			want:  "", // nil → "" → b64decode("") → ""
 		},
 	}
 
@@ -267,6 +267,125 @@ func TestB64Decode(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestStrip tests the shared Strip function that removes leading/trailing whitespace.
+func TestStrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "leading and trailing spaces",
+			input: "  hello world  ",
+			want:  "hello world",
+		},
+		{
+			name:  "tabs and newlines",
+			input: "\t\nhello\n\t",
+			want:  "hello",
+		},
+		{
+			name:  "no whitespace",
+			input: "already-trimmed",
+			want:  "already-trimmed",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "only whitespace",
+			input: "   \t\n   ",
+			want:  "",
+		},
+		{
+			name:  "internal whitespace preserved",
+			input: "  hello   world  ",
+			want:  "hello   world",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Strip(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestDebug tests the shared Debug function that formats values as JSON comments.
+func TestDebug(t *testing.T) {
+	tests := []struct {
+		name         string
+		value        interface{}
+		label        string
+		wantContains []string
+	}{
+		{
+			name: "simple object without label",
+			value: map[string]interface{}{
+				"key": "value",
+			},
+			label: "",
+			wantContains: []string{
+				"# DEBUG:",
+				`#   "key": "value"`,
+			},
+		},
+		{
+			name: "simple object with label",
+			value: map[string]interface{}{
+				"name": "test",
+			},
+			label: "my-label",
+			wantContains: []string{
+				"# DEBUG my-label:",
+				`#   "name": "test"`,
+			},
+		},
+		{
+			name:  "array value",
+			value: []string{"a", "b", "c"},
+			label: "",
+			wantContains: []string{
+				"# DEBUG:",
+				`#   "a"`,
+				`#   "b"`,
+				`#   "c"`,
+			},
+		},
+		{
+			name:  "nested structure",
+			value: map[string]interface{}{"outer": map[string]interface{}{"inner": "value"}},
+			label: "nested",
+			wantContains: []string{
+				"# DEBUG nested:",
+				`#   "outer"`,
+				`#     "inner": "value"`,
+			},
+		},
+		{
+			name:  "nil value",
+			value: nil,
+			label: "",
+			wantContains: []string{
+				"# DEBUG:",
+				"# null",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Debug(tt.value, tt.label)
+			for _, want := range tt.wantContains {
+				assert.Contains(t, got, want)
+			}
 		})
 	}
 }

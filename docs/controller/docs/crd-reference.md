@@ -180,7 +180,7 @@ templateSnippets:
     ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
 ```
 
-Include in templates: `{% include "backend-name" %}`
+Include in templates: `{% render "backend-name" %}`
 
 ### maps
 
@@ -190,9 +190,9 @@ HAProxy map file templates.
 maps:
   host.map:
     template: |
-      {% for ingress in resources.ingresses.List() %}
+      {% for _, ingress := range resources.ingresses.List() %}
       {{ rule.host }} {{ ingress.metadata.name }}_backend
-      {% endfor %}
+      {% end %}
 ```
 
 Reference in config: `{{ pathResolver.GetPath("host.map", "map") }}`
@@ -220,9 +220,9 @@ SSL certificate templates.
 sslCertificates:
   example-com:
     template: |
-      {% set secret = resources.secrets.GetSingle("default", "tls-cert") %}
-      {{ secret.data['tls.crt'] | b64decode }}
-      {{ secret.data['tls.key'] | b64decode }}
+      {% var secret = resources.secrets.GetSingle("default", "tls-cert") %}
+      {{ b64decode(secret.data["tls.crt"]) }}
+      {{ b64decode(secret.data["tls.key"]) }}
 ```
 
 Reference in config: `bind :443 ssl crt {{ pathResolver.GetPath("example-com", "cert") }}`
@@ -276,17 +276,17 @@ templatingSettings:
 
 Custom variables are merged at the top level of the template context. Access them directly:
 
-```jinja2
+```go
 {% if debug.enabled %}
   # Debug-specific configuration
   http-response set-header X-HAProxy-Backend %[be_name]
-{% endif %}
+{% end %}
 
 {% if environment == "production" %}
   timeout client {{ customTimeout }}s
 {% else %}
   timeout client 300s
-{% endif %}
+{% end %}
 ```
 
 The `extraContext` field accepts any valid JSON value (strings, numbers, booleans, objects, arrays). This allows you to configure template behavior for different environments, enable feature flags, or inject custom metadata without modifying controller code.

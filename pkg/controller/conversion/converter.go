@@ -109,16 +109,9 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	// Convert template snippets
 	templateSnippets := make(map[string]config.TemplateSnippet)
 	for name, crdSnippet := range spec.TemplateSnippets {
-		// Default priority is 500 if not specified
-		priority := 500
-		if crdSnippet.Priority != nil {
-			priority = *crdSnippet.Priority
-		}
-
 		templateSnippets[name] = config.TemplateSnippet{
 			Name:     name, // Name comes from map key
 			Template: crdSnippet.Template,
-			Priority: priority,
 		}
 	}
 
@@ -156,7 +149,9 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 
 	// Convert templating settings
-	templatingSettings := config.TemplatingSettings{}
+	templatingSettings := config.TemplatingSettings{
+		Engine: spec.TemplatingSettings.Engine, // Empty string defaults to "scriggo" at runtime
+	}
 	if len(spec.TemplatingSettings.ExtraContext.Raw) > 0 {
 		// Unmarshal runtime.RawExtension JSON to map[string]interface{}
 		var extraContext map[string]interface{}

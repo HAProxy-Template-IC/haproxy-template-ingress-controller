@@ -4,7 +4,7 @@
 
 ### Problem Statement
 
-The HAProxy Template Ingress Controller uses a template-driven approach where users define HAProxy configurations using Gonja templates. While this provides flexibility, it introduces a confidence gap: unlike traditional ingress controllers where annotations are part of the code (and therefore tested), here the templates are part of the configuration and remain untested until deployment.
+The HAProxy Template Ingress Controller uses a template-driven approach where users define HAProxy configurations using Scriggo templates. While this provides flexibility, it introduces a confidence gap: unlike traditional ingress controllers where annotations are part of the code (and therefore tested), here the templates are part of the configuration and remain untested until deployment.
 
 This creates risk:
 
@@ -123,11 +123,11 @@ spec:
   maps:
     domain_to_backend:
       template: |
-        {% for ingress in ingresses %}
-        {% for rule in ingress.spec.rules %}
+        {% for _, ingress := range ingresses %}
+        {% for _, rule := range ingress.spec.rules %}
         {{ rule.host }} {{ rule.host }}_backend
-        {% endfor %}
-        {% endfor %}
+        {% end %}
+        {% end %}
 
   # General files
   files:
@@ -143,8 +143,8 @@ spec:
   sslCertificates:
     wildcard_example_com:
       template: |
-        {{ secrets["tls-wildcard"].data["tls.crt"] | b64decode }}
-        {{ secrets["tls-wildcard"].data["tls.key"] | b64decode }}
+        {{ b64decode(secrets["tls-wildcard"].data["tls.crt"]) }}
+        {{ b64decode(secrets["tls-wildcard"].data["tls.key"]) }}
 
   # Main HAProxy configuration
   haproxyConfig:

@@ -335,15 +335,15 @@ dataplane:
 
 When using secrets in templates, follow these practices:
 
-```jinja2
+```go
 {#- Load secret data - automatically base64 decoded -#}
-{%- for secret in resources.secrets.List() %}
+{%- for _, secret := range resources.secrets.List() %}
 {%- if secret.metadata.name == "auth-users" %}
   {#- Use secret.data fields - they're decoded automatically -#}
   userlist authenticated_users
     user admin password {{ secret.data.password_hash }}
-{%- endif %}
-{%- endfor %}
+{%- end %}
+{%- end %}
 ```
 
 **Best practices:**

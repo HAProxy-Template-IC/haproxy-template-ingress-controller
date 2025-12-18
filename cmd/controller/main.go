@@ -67,6 +67,7 @@ func init() {
 	// Add subcommands
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(benchmarkCmd)
 }
 
 func main() {

@@ -84,6 +84,7 @@ controller validate -f config.yaml --verbose --dump-rendered --trace-templates
   - Timing information in milliseconds
   - Useful for identifying slow templates
   - Default: false
+  - Note: Shows top-level renders only. Use with `--profile-includes` for full call tree
 
 **Enhanced Error Messages:**
 
