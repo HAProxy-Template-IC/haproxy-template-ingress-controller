@@ -171,7 +171,8 @@ func TestDebouncer_DebounceBatching(t *testing.T) {
 		callCount.Add(1)
 	}
 
-	debouncer := NewDebouncer(100*time.Millisecond, callback, store, false)
+	// Use longer debounce interval to handle race detector overhead (2-10x slower)
+	debouncer := NewDebouncer(200*time.Millisecond, callback, store, false)
 	debouncer.SetSyncMode(false)
 
 	// Record many changes in quick succession
@@ -180,8 +181,8 @@ func TestDebouncer_DebounceBatching(t *testing.T) {
 		time.Sleep(10 * time.Millisecond) // Less than debounce interval
 	}
 
-	// Wait for final debounce
-	time.Sleep(150 * time.Millisecond)
+	// Wait for final debounce (longer to account for race detector overhead)
+	time.Sleep(300 * time.Millisecond)
 
 	// Should batch into single callback
 	assert.Equal(t, int32(1), callCount.Load())

@@ -156,7 +156,7 @@ func TestRunner_Feature(t *testing.T) {
     }
 
     // 2. Create template engine
-    engine, err := templating.New(templating.EngineTypeGonja, templates)
+    engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
     // 3. Create test runner
     runner := New(config, engine, validationPaths, Options{})
@@ -620,10 +620,10 @@ for resourceTypeName, store := range stores {
 
 **Template Usage**:
 
-```gonja
-{% for svc in resources.services.List() %}
+```go
+{% for _, svc := range resources.services.List() %}
   {{ svc.metadata.name }}
-{% endfor %}
+{% end %}
 ```
 
 ### Context Structure
@@ -711,12 +711,12 @@ store.Add(&resource, keys)
 
 **Problem**: Using lowercase `list()` instead of `List()`.
 
-```gonja
+```go
 {# Bad #}
-{% for svc in resources.services.list() %}
+{% for _, svc := range resources.services.list() %}
 
 {# Good #}
-{% for svc in resources.services.List() %}
+{% for _, svc := range resources.services.List() %}
 ```
 
 **Why**: StoreWrapper methods are capitalized (Go convention).

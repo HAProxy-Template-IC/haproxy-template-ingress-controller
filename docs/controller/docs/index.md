@@ -1,6 +1,6 @@
 # HAProxy Template IC
 
-A template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Gonja](https://github.com/NikolaLohinski/gonja) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
+A template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
 ```mermaid
 flowchart LR
@@ -16,7 +16,7 @@ flowchart LR
 HAProxy Template IC is an event-driven Kubernetes controller that:
 
 - **Watches any Kubernetes resource** - Ingresses, Services, Secrets, Gateway API resources, or any custom resource type you configure
-- **Renders Gonja templates** - A fast, Go-native template engine with Jinja2-compatible syntax
+- **Renders Scriggo templates** - A fast, Go-native template engine
 - **Validates before deployment** - Deploy with confidence knowing configurations are validated before they reach your load balancers
 - **Deploys configurations** to HAProxy pods via the Dataplane API
 
@@ -76,7 +76,7 @@ flowchart TB
 Key components:
 
 - **Watcher** - Subscribes to Kubernetes API for configured resource types
-- **Template Engine** - Renders Gonja templates with resource data as context
+- **Template Engine** - Renders Scriggo templates with resource data as context
 - **Validator** - Validates generated HAProxy configuration before deployment
 - **Dataplane Syncer** - Applies configuration changes to HAProxy pods via the Dataplane API
 
@@ -136,12 +136,12 @@ controller:
     templateSnippets:
       frontend-filters-request-id:
         template: |
-          {%- for ingress in resources.ingresses.List() %}
-          {%- set header = ingress.metadata.annotations["example.com/request-id-header"] | default("") %}
-          {%- if header %}
+          {%- for _, ingress := range resources.ingresses.List() %}
+          {%- var header = fallback(ingress.metadata.annotations["example.com/request-id-header"], "") %}
+          {%- if header != "" %}
           http-request set-header {{ header }} %[uuid()]
-          {%- endif %}
-          {%- endfor %}
+          {%- end %}
+          {%- end %}
 ```
 
 The snippet name `frontend-filters-request-id` follows a naming convention: snippets starting with `frontend-filters-` are automatically included in the HTTP frontend section where request/response modification happens. See the [Base Library Extension Points](/helm-chart/latest/libraries/base/#extension-points) for all available hooks.
@@ -188,7 +188,7 @@ kubectl describe haproxycfg
 ## Further Reading
 
 - [Getting Started](getting-started.md) - Deploy HAProxy pods, install the controller, and verify your setup
-- [Templating](templating.md) - Learn the Gonja template syntax and available context variables
+- [Templating](templating.md) - Learn the Scriggo template syntax and available context variables
 - [Watching Resources](watching-resources.md) - Configure which Kubernetes resources the controller watches
 - [Validation Tests](validation-tests.md) - Test your templates in CI/CD pipelines
 - [Supported Configuration](supported-configuration.md) - Reference for all configuration options

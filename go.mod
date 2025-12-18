@@ -9,10 +9,9 @@ require (
 	github.com/golangci/golangci-lint/v2 v2.7.2
 	github.com/google/uuid v1.6.0
 	github.com/haproxytech/client-native/v6 v6.2.6
-	github.com/nikolalohinski/gonja/v2 v2.5.1
 	github.com/oapi-codegen/oapi-codegen/v2 v2.5.1
 	github.com/oapi-codegen/runtime v1.1.2
-	github.com/pkg/errors v0.9.1
+	github.com/open2b/scriggo v0.60.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
@@ -28,6 +27,12 @@ require (
 	sigs.k8s.io/kind v0.31.0
 	sigs.k8s.io/yaml v1.6.0
 )
+
+// Use GitLab fork of Scriggo with Jinja2-compliant {% include %} statement support,
+// dynamic include capability, Jinja2-style whitespace control markers ({%- -%}),
+// fixes for variadic method calls, pipe operator with fallback filter, performance optimizations,
+// and parallel template rendering with go render and go render_glob
+replace github.com/open2b/scriggo => gitlab.com/haproxy-template-ic/scriggo v0.0.0-20251217150814-0e2127853dd5
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
@@ -90,7 +95,6 @@ require (
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dnephin/pflag v1.0.7 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect
 	github.com/evanphx/json-patch/v5 v5.9.0 // indirect
@@ -216,6 +220,7 @@ require (
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/polyfloyd/go-errorlint v1.8.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
@@ -284,15 +289,15 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20251023183803-a4bb9ffd2546 // indirect
-	golang.org/x/mod v0.30.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/mod v0.31.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/telemetry v0.0.0-20251111182119-bc8e575c7b54 // indirect
-	golang.org/x/term v0.37.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/telemetry v0.0.0-20251203150158-8fff8a5912fc // indirect
+	golang.org/x/term v0.38.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/time v0.10.0 // indirect
-	golang.org/x/tools v0.39.0 // indirect
+	golang.org/x/tools v0.40.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect

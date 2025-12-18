@@ -21,182 +21,333 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
 
 templateSnippets:
-  # Register Ingress TLS certificates with SSL infrastructure
-  # This snippet runs early (priority 100) to register TLS secrets before SSL config generation
-  features-ingress-tls:
-    priority: 100
+  features-100-ingress-tls:
     template: |
-      {#- Register TLS certificates from Ingress spec.tls with SSL infrastructure #}
-      {#- Each TLS entry contains hosts (SNI patterns) and a secretName #}
-      {#- Dynamically generates certificate files using file_registry.Register() #}
-      {#- Deduplication: Only register each secret once even if multiple Ingresses use it #}
-      {%- set ns = namespace(registered_secrets=[]) %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- if ingress.spec and ingress.spec.tls %}
-          {%- for tls in ingress.spec.tls %}
-            {%- if tls.secretName %}
-              {#- Unique key for this secret (namespace + name) #}
-              {%- set secret_key = ingress.metadata.namespace ~ "/" ~ tls.secretName %}
-              {%- if secret_key not in ns.registered_secrets %}
-                {%- set ns.registered_secrets = ns.registered_secrets.append(secret_key) %}
+      {#-
+        Ingress TLS Certificate Registration
 
-                {#- Fetch Secret and extract cert+key #}
-                {%- set secret = resources.secrets.GetSingle(ingress.metadata.namespace, tls.secretName) %}
-                {%- if secret and secret.data and secret.data["tls.crt"] and secret.data["tls.key"] %}
-                  {#- Combine cert and key into single PEM (HAProxy format) #}
-                  {%- set combined_pem = secret.data["tls.crt"] | b64decode ~ "\n" ~ secret.data["tls.key"] | b64decode %}
+        Purpose: Registers TLS certificates from Ingress spec.tls with SSL infrastructure.
 
-                  {#- Register certificate file dynamically using file_registry #}
-                  {%- set cert_filename = ingress.metadata.namespace ~ "_" ~ tls.secretName ~ ".pem" %}
-                  {%- set _ = file_registry.Register("cert", cert_filename, combined_pem) %}
+        Extension Point: features-* (priority 100)
 
-                  {#- Register with SSL infrastructure for crt-list generation #}
-                  {%- set tls_cert = {
-                    "secret_namespace": ingress.metadata.namespace,
-                    "secret_name": tls.secretName,
-                    "sni_patterns": tls.hosts | default([])
-                  } %}
-                  {%- set global_features.tls_certificates = global_features.tls_certificates.append(tls_cert) %}
-                {%- endif %}
-              {%- endif %}
-            {%- endif %}
-          {%- endfor %}
-        {%- endif %}
-      {%- endfor %}
+        Dependencies:
+          - ssl.yaml features-050-ssl-initialization (initializes tlsCertificates array)
+          - secrets watchedResource
+
+        Behavior:
+          - Scans all Ingress resources for spec.tls entries
+          - Fetches referenced TLS Secrets
+          - Registers certificate files via fileRegistry.Register()
+          - Appends to shared.globalFeatures.tlsCertificates for crt-list generation
+          - Deduplicates: each secret registered only once
+      -#}
+      {#- Register TLS certificates from Ingress spec.tls with SSL infrastructure -#}
+      {#- Each TLS entry contains hosts (SNI patterns) and a secretName -#}
+      {#- Dynamically generates certificate files using file_registry.Register() -#}
+      {#- Deduplication: Only register each secret once even if multiple Ingresses use it -#}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%%
+          var tlsList = ingress | dig("spec", "tls")
+          if tlsList == nil {
+            continue
+          }
+        %%}
+        {%- for _, tls := range tlsList %}
+          {%%
+            var secretName = tls | dig("secretName")
+            if secretName == nil {
+              continue
+            }
+            // Unique key for this secret (namespace + name)
+            var namespace = ingress | dig("metadata", "namespace") | fallback("")
+            if !first_seen("ingress_tls", namespace, secretName) {
+              continue
+            }
+
+            // Fetch Secret and extract cert+key
+            var secret = resources.secrets.GetSingle(namespace, secretName)
+            var secretData = secret | dig("data")
+            var tlsCrt = secretData | dig("tls.crt")
+            var tlsKey = secretData | dig("tls.key")
+            if secretData == nil || tlsCrt == nil || tlsKey == nil {
+              continue
+            }
+
+            // Combine cert and key into single PEM (HAProxy format)
+            var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
+
+            // Register certificate file dynamically using file_registry
+            var certFilename = tostring(namespace) + "_" + tostring(secretName) + ".pem"
+            var _, certRegErr = fileRegistry.Register("cert", certFilename, combinedPem)
+            if certRegErr != nil {
+              fail("failed to register certificate " + certFilename + ": " + tostring(certRegErr))
+            }
+
+            // Register with SSL infrastructure for crt-list generation
+            var tlsCert = map[string]any{
+              "secret_namespace": namespace,
+              "secret_name": secretName,
+              "sni_patterns": tls | dig("hosts") | fallback([]any{}),
+            }
+            shared["globalFeatures"].(map[string]any)["tlsCertificates"] = append(shared["globalFeatures"].(map[string]any)["tlsCertificates"].([]any), tlsCert)
+          %%}
+        {%- end %}
+      {%- end %}
 
   util-backend-name-ingress:
-    template: >-
-      {{- "" -}}ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ path.backend.service.port.name | default(path.backend.service.port.number) }}
+    template: |
+      {#-
+        Ingress Backend Name Generator
+
+        Purpose: Generates consistent backend names for Ingress resources.
+
+        Provides:
+          - BackendNameIngress(ingress, path) macro
+
+        Naming Pattern:
+          ing_<namespace>_<ingress-name>_<service-name>_<port>
+
+        Usage:
+          {% import "util-backend-name-ingress" for BackendNameIngress %}
+          {{ BackendNameIngress(ingress, path) }}
+      -#}
+
+      {% macro BackendNameIngress(ingress any, path any) string %}{%%
+        var namespace = tostring(ingress | dig("metadata", "namespace") | fallback(""))
+        var name = tostring(ingress | dig("metadata", "name") | fallback(""))
+        var serviceName = tostring(path | dig("backend", "service", "name") | fallback(""))
+        var portIdentifier = (path | dig("backend", "service", "port", "name")) | fallback(path | dig("backend", "service", "port", "number") | fallback(""))
+        show "ing_" + namespace + "_" + name + "_" + serviceName + "_" + tostring(portIdentifier)
+      %%}{% end %}
 
   util-path-map-entry-ingress:
     template: |
-      {#- Generate map entries for paths matching specified pathTypes #}
-      {#- Usage: {% include "util-path-map-entry-ingress" with context %} where path_types = ["Exact"] or ["Prefix", "ImplementationSpecific"] #}
-      {%- for ingress in resources.ingresses.List() %}
-      {#- Count matching paths for this ingress -#}
-      {%- set ns_paths = namespace(all_paths=[]) %}
-      {%- for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
-      {%- for path in (rule.http.paths | default([]) | selectattr("path", "defined")) %}
-      {%- for check_type in path_types %}
-      {%- if path.pathType == check_type %}
-      {%- set ns_paths.all_paths = ns_paths.all_paths.append(path) %}
-      {%- endif %}
-      {%- endfor %}
-      {% endfor %}
-      {% endfor %}
-      {%- if ns_paths.all_paths | length > 0 %}
-      # Ingress: {{ ingress.metadata.namespace }}/{{ ingress.metadata.name }} ({{ ns_paths.all_paths | length }} paths)
-      {%- for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
-      {%- for path in (rule.http.paths | default([]) | selectattr("path", "defined")) %}
-      {%- for check_type in path_types %}
-      {%- if path.pathType == check_type %}
-      #   - {{ rule.host }}{{ path.path }} → {{ path.backend.service.name }}:{{ path.backend.service.port.number | default(path.backend.service.port.name) }}
-      {%- endif %}
-      {%- endfor %}
-      {% endfor %}
-      {% endfor %}
-      {% for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
-      {%- for path in (rule.http.paths | default([]) | selectattr("path", "defined")) %}
-      {%- for check_type in path_types %}
-      {%- if path.pathType == check_type %}
-      {{ "\n" }}{{ rule.host }}{{ path.path }} BACKEND:{% include "util-backend-name-ingress" -%}{{ suffix }}
-      {%- endif %}
-      {%- endfor %}
-      {% endfor %}
-      {% endfor %}
-      {%- endif %}
-      {%- endfor %}
+      {#-
+        Ingress Path Map Entry Generator
 
-  backends-ingress:
+        Purpose: Generates map file entries for Ingress paths matching specified pathTypes.
+
+        Provides:
+          - PathMapEntryIngress(pathTypes, suffix) macro
+
+        Parameters:
+          - pathTypes ([]string): List of pathTypes to include (e.g., ["Exact"], ["Prefix"])
+          - suffix (string): Suffix to append to paths (e.g., "/" for prefix maps)
+
+        Output Format:
+          <host><path><suffix> BACKEND:<backend-name>
+
+        Usage:
+          {% import "util-path-map-entry-ingress" for PathMapEntryIngress %}
+          {{ PathMapEntryIngress([]string{"Exact"}, "") }}
+          {{ PathMapEntryIngress([]string{"Prefix"}, "/") }}
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+
+      {% macro PathMapEntryIngress(pathTypes []string, suffix string) string %}
+        {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+        {#- Count matching paths for this ingress -#}
+        {%- var allPaths = []any{} %}
+        {%- for _, rule := range rules %}
+        {%- var http = rule | dig("http") %}
+        {%- if http != nil %}
+        {%- var paths = http | dig("paths") | fallback([]any{}) %}
+        {%- for _, path := range paths %}
+        {%- var pathValue = path | dig("path") %}
+        {%- if pathValue != nil %}
+        {%- var pathType = path | dig("pathType") | fallback("") %}
+        {%- for _, checkType := range pathTypes %}
+        {%- if pathType == checkType %}
+        {%- allPaths = append(allPaths, path) %}
+        {%- end %}
+        {%- end %}
+        {%- end %}
+        {%- end %}
+        {%- end %}
+        {%- end %}
+        {%- if len(allPaths) > 0 %}
+      # Ingress: {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} ({{ len(allPaths) }} paths)
+        {% for _, rule := range rules -%}
+        {%- var http = rule | dig("http") -%}
+        {%- if http != nil -%}
+        {%- var paths = http | dig("paths") | fallback([]any{}) -%}
+        {%- for _, path := range paths -%}
+        {%- var pathValue = path | dig("path") -%}
+        {%- if pathValue != nil -%}
+        {%- var pathType = path | dig("pathType") | fallback("") -%}
+        {%- for _, checkType := range pathTypes -%}
+        {%- if pathType == checkType %}
+      #   - {{ rule | dig("host") | fallback("") }}{{ pathValue }} → {{ path | dig("backend", "service", "name") | fallback("") }}:{{ (path | dig("backend", "service", "port", "number")) | fallback(path | dig("backend", "service", "port", "name") | fallback("")) }}
+        {% end -%}
+        {%- end -%}
+        {%- end -%}
+        {%- end -%}
+        {%- end -%}
+        {%- end %}
+        {% for _, rule := range rules -%}
+        {%- var http = rule | dig("http") -%}
+        {%- if http != nil -%}
+        {%- var paths = http | dig("paths") | fallback([]any{}) -%}
+        {%- for _, path := range paths -%}
+        {%- var pathValue = path | dig("path") -%}
+        {%- if pathValue != nil -%}
+        {%- var pathType = path | dig("pathType") | fallback("") -%}
+        {%- for _, checkType := range pathTypes -%}
+        {%- if pathType == checkType %}
+        {#- Avoid double slashes: only append suffix if path doesn't already end with / -#}
+        {%- var pathStr = pathValue | tostring() -%}
+        {%- var actualSuffix = suffix -%}
+        {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}
+          {%- actualSuffix = "" -%}
+        {%- end %}
+      {{ rule | dig("host") | fallback("") }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+        {% end -%}
+        {%- end -%}
+        {%- end -%}
+        {%- end -%}
+        {%- end -%}
+        {%- end -%}
+        {%- end -%}
+        {%- end %}
+      {% end %}
+
+  backends-500-ingress:
     template: |
-      {#- Generate all backend definitions from ingress resources #}
-      {#- Implements backends-* extension point from base library #}
-      {#- Deduplicate backends: multiple paths to same service+port share one backend #}
-      {%- set ns = namespace(seen=[]) %}
-      {%- for ingress in resources.ingresses.List() -%}
-      {%- if loop.first %}
+      {#-
+        Ingress Backend Definitions
+
+        Purpose: Generates HAProxy backend sections for all Ingress resources.
+
+        Extension Point: backends-* (priority 500)
+
+        Dependencies:
+          - util-backend-name-ingress
+          - util-backend-servers (from base.yaml)
+          - backend-directives-* (extension point for haproxytech annotations)
+
+        Behavior:
+          - Iterates all Ingress resources
+          - Generates one backend per unique service+port combination
+          - Deduplicates: multiple paths to same service+port share one backend
+          - Injects backend-directives-* snippets for annotations (load balancing, timeouts, etc.)
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- if isFirst %}
       # ingress/backends-ingress
 
-      {% endif -%}
-      {%- if ingress.spec and ingress.spec.rules %}
-      {%- for rule in ingress.spec.rules -%}
-      {%- if rule.http and rule.http.paths %}
-      {%- for path in rule.http.paths -%}
-      {%- if path.backend and path.backend.service %}
-      {%- set service_name = path.backend.service.name -%}
-      {%- set port = path.backend.service.port.number | default(80) -%}
-      {#- Compute backend key for deduplication (matches util-backend-name-ingress) #}
-      {%- set backend_key = ingress.metadata.namespace ~ "_" ~ ingress.metadata.name ~ "_" ~ path.backend.service.name ~ "_" ~ (path.backend.service.port.name | default(path.backend.service.port.number)) -%}
-      {%- if backend_key not in ns.seen -%}
-      {%- set ns.seen = ns.seen.append(backend_key) %}
-      # Backend for: Ingress {{ ingress.metadata.namespace }}/{{ ingress.metadata.name }} → Service {{ service_name }}:{{ port }}
-      backend {%+ include "util-backend-name-ingress" +%}
+      {%- isFirst = false %}
+      {%- end -%}
+      {%- var rules = ingress | dig("spec", "rules") %}
+      {%- if rules != nil %}
+      {%- for _, rule := range rules -%}
+      {%- var httpPaths = rule | dig("http", "paths") %}
+      {%- if httpPaths != nil %}
+      {%- for _, path := range httpPaths -%}
+      {%- var service = path | dig("backend", "service") %}
+      {%- if service != nil %}
+      {%- var serviceName = service | dig("name") | fallback("") -%}
+      {%- var port = service | dig("port", "number") | fallback(80) -%}
+      {#- Deduplication: first_seen checks if this backend was already generated -#}
+      {%- var portIdentifier = (service | dig("port", "name")) | fallback(service | dig("port", "number") | fallback("")) -%}
+      {%- if first_seen("ingress_backend", ingress | dig("metadata", "namespace"), ingress | dig("metadata", "name"), serviceName, portIdentifier) -%}
+      # Backend for: Ingress {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} → Service {{ serviceName }}:{{ port }}
+      backend {{ BackendNameIngress(ingress, path) }}
         balance roundrobin
-        option httpchk GET {{ path.path | default('/') }}
+        option httpchk GET {{ path | dig("path") | fallback("/") }}
         default-server check
-        {%- filter indent(2, first=True) %}
-        {#- Initialize server options namespace before backend-directives can append to it #}
-        {%- set ns_server_opts = namespace(flags=[]) %}
-        {% include "backend-directives" -%}
-        {#- Backend config snippet injection (Ingress-only) #}
-        {%- set backend_snippet = ingress.metadata.annotations["haproxy.org/backend-config-snippet"] | default("") %}
-        {%- if backend_snippet %}
-        # haproxytech/backend-config-snippet
-        {{ backend_snippet | indent(2, first=False) }}
-        {%- endif -%}
-        {% include "util-backend-servers" %}
-        {%- endfilter -%}
-      {%- endif -%}
-      {%- endif -%}
-      {%- endfor -%}
-      {%- endif -%}
-      {%- endfor -%}
-      {%- endif -%}
-      {%- endfor -%}
-  map-host-ingress:
+        {#- Initialize server options map before backend-directives can append to it -#}
+        {%- var serverOpts = map[string]any{"flags": []any{}} %}
+        {{- render_glob "backend-directives-*" inherit_context }}
+        {{ BackendServers(tostring(serviceName), 0, toint(port), serverOpts) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+  map-host-500-ingress:
     template: |
-      {#- Generate host map entries for Ingress resources #}
-      {#- Implements map-host-* extension point from base library #}
-      {%- for ingress in resources.ingresses.List() -%}
-      {%- if loop.first %}
+      {#-
+        Ingress Host Map Entries
+
+        Purpose: Generates host.map entries for Ingress host-based routing.
+
+        Extension Point: map-host-* (priority 500)
+
+        Output Format:
+          <hostname> <hostname>
+
+        Note: Wildcards (*.example.com) are converted to suffix form (.example.com).
+      -#}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- if isFirst %}
       # ingress/map-host-ingress
-      {%- endif %}
-      {%- set rules_with_http = ingress.spec.rules | default([]) | selectattr("http", "defined") | list %}
-      {%- if rules_with_http | length > 0 %}
-      # Ingress: {{ ingress.metadata.namespace }}/{{ ingress.metadata.name }} ({{ rules_with_http | length }} hosts)
-      {% for rule in rules_with_http %}
-      {%- set host_without_asterisk = rule.host | replace('*', '', 1) %}
-      {{ host_without_asterisk }} {{ host_without_asterisk }}
-      {% endfor %}
-      {%- endif %}
-      {%- endfor %}
+      {%- isFirst = false %}
+      {%- end %}
+      {#- Filter rules that have http defined using selectattr -#}
+      {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+      {%- var rulesWithHttp = selectattr(rules, "http") %}
+      {%- if len(rulesWithHttp) > 0 %}
+      # Ingress: {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} ({{ len(rulesWithHttp) }} hosts)
+      {% for _, rule := range rulesWithHttp %}
+      {%- var hostWithoutAsterisk = tostring(rule | dig("host") | fallback("")) | replace("*", "") %}
+      {{ hostWithoutAsterisk }} {{ hostWithoutAsterisk }}
+      {% end %}
+      {%- end %}
+      {%- end %}
 
-  map-path-exact-ingress:
+  map-path-exact-500-ingress:
     template: |
-      {#- Generate exact path map entries for Ingress resources #}
-      {#- Implements map-path-exact-* extension point from base library #}
+      {#-
+        Ingress Exact Path Map Entries
+
+        Purpose: Generates path-exact.map entries for Ingress exact path matching.
+
+        Extension Point: map-path-exact-* (priority 500)
+
+        Matches: Ingress paths with pathType: Exact
+      -#}
+      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
       # ingress/map-path-exact-ingress
-      {% set path_types = ["Exact"] %}
-      {%- set suffix = "" %}
-      {% include "util-path-map-entry-ingress" %}
+      {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 
-  map-path-prefix-exact-ingress:
+  map-path-prefix-exact-500-ingress:
     template: |
-      {#- Generate prefix-exact path map entries for Ingress resources #}
-      {#- Implements map-path-prefix-exact-* extension point from base library #}
+      {#-
+        Ingress Prefix-Exact Path Map Entries
+
+        Purpose: Generates path-prefix-exact.map entries for exact prefix boundary matching.
+
+        Extension Point: map-path-prefix-exact-* (priority 500)
+
+        Matches: Ingress paths with pathType: Prefix or ImplementationSpecific
+        Note: No trailing slash - matches exact path for prefix boundary check.
+      -#}
+      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
       # ingress/map-path-prefix-exact-ingress
-      {% set path_types = ["Prefix", "ImplementationSpecific"] %}
-      {%- set suffix = "" %}
-      {% include "util-path-map-entry-ingress" %}
+      {{ PathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "") }}
 
-  map-path-prefix-ingress:
+  map-path-prefix-500-ingress:
     template: |
-      {#- Generate prefix path map entries with trailing slash for Ingress resources #}
-      {#- Implements map-path-prefix-* extension point from base library #}
+      {#-
+        Ingress Prefix Path Map Entries
+
+        Purpose: Generates path-prefix.map entries for prefix path matching.
+
+        Extension Point: map-path-prefix-* (priority 500)
+
+        Matches: Ingress paths with pathType: Prefix or ImplementationSpecific
+        Note: Adds trailing slash for HAProxy map_beg matching.
+      -#}
+      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
       # ingress/map-path-prefix-ingress
-      {% set path_types = ["Prefix", "ImplementationSpecific"] %}
-      {%- set suffix = "/" %}
-      {% include "util-path-map-entry-ingress" %}
+      {{ PathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "/") }}
 
 validationTests:
   test-ingress-duplicate-backend-different-ports:
@@ -293,17 +444,17 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "example.com/api BACKEND:ing_default_multi-port_api-svc_80/"
+        pattern: "example.com/api/ BACKEND:ing_default_multi-port_api-svc_80"
         description: Path prefix map must use BACKEND qualifier for /api
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "example.com/admin BACKEND:ing_default_multi-port_api-svc_81/"
+        pattern: "example.com/admin/ BACKEND:ing_default_multi-port_api-svc_81"
         description: Path prefix map must use BACKEND qualifier for /admin
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "example.com/app BACKEND:ing_default_multi-port_api-svc_80/"
+        pattern: "example.com/app/ BACKEND:ing_default_multi-port_api-svc_80"
         description: Path prefix map must use BACKEND qualifier for /app
 
       - type: contains
@@ -344,7 +495,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^example\\.com/api BACKEND:"
+        pattern: "(?m)^example\\.com/api/ BACKEND:"
         description: Path prefix map entries must start at beginning of line
 
       - type: contains

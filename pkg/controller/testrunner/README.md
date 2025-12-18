@@ -27,7 +27,7 @@ import (
 templates := map[string]string{
     "haproxy.cfg": config.HAProxyConfig.Template,
 }
-engine, err := templating.New(templating.EngineTypeGonja, templates)
+engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 if err != nil {
     return err
 }
@@ -440,11 +440,11 @@ validationTests:
 
 ### Template Usage
 
-```gonja
-{%- for svc in resources.services.List() %}
+```go
+{%- for _, svc := range resources.services.List() %}
 backend {{ svc.metadata.namespace }}-{{ svc.metadata.name }}
   server {{ svc.metadata.name }} {{ svc.spec.clusterIP }}:80
-{%- endfor %}
+{%- end %}
 ```
 
 ## Error Messages

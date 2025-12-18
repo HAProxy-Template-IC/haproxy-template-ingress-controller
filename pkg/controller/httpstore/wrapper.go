@@ -21,8 +21,6 @@ import (
 	"time"
 
 	"haproxy-template-ic/pkg/httpstore"
-
-	"github.com/nikolalohinski/gonja/v2/exec"
 )
 
 // HTTPStoreWrapper wraps HTTPStore for template access.
@@ -288,7 +286,7 @@ func parseAuthConfig(m map[string]interface{}) (*httpstore.AuthConfig, error) {
 	return auth, nil
 }
 
-// toString converts an interface to string, handling Gonja's PyString type.
+// toString converts an interface to string.
 func toString(v interface{}) (string, error) {
 	switch val := v.(type) {
 	case string:
@@ -315,13 +313,6 @@ func toMap(v interface{}) (map[string]interface{}, bool) {
 			case fmt.Stringer:
 				result[key.String()] = v
 			}
-		}
-		return result, true
-	case *exec.Dict:
-		// Convert Gonja's Dict type to map[string]interface{}
-		result := make(map[string]interface{})
-		for _, pair := range val.Pairs {
-			result[pair.Key.String()] = pair.Value.Interface()
 		}
 		return result, true
 	default:

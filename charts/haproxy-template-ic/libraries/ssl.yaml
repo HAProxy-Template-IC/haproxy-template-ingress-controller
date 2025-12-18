@@ -20,127 +20,202 @@ templateSnippets:
     template: >-
       {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1
 
-  # Feature initialization - must run early to initialize SSL infrastructure
-  # Resource libraries (gateway.yaml, haproxytech.yaml, ingress.yaml) register SSL features here
-  features-ssl-initialization:
-    priority: 50
+  features-050-ssl-initialization:
     template: |
-      {#- SSL infrastructure initialization #}
-      {#- Initialize data structures for resource libraries to register SSL features #}
-      {#- This runs early (priority 50) so other features-* snippets can append to it #}
-      {#- Only initialize if not already defined (idempotent) #}
+      {#-
+        SSL Infrastructure Initialization
 
-      {#- SSL passthrough backends array #}
-      {%- if global_features.ssl_passthrough_backends is not defined %}
-        {%- set global_features.ssl_passthrough_backends = [] %}
-      {%- endif %}
+        Purpose: Initializes data structures for SSL feature registration.
 
-      {#- TLS certificates array - each entry: {secret_namespace, secret_name, sni_patterns[]} #}
-      {#- Resource libraries register TLS secrets here with their SNI patterns #}
-      {%- if global_features.tls_certificates is not defined %}
-        {%- set global_features.tls_certificates = [] %}
-      {%- endif %}
+        Extension Point: features-* (priority 050 - runs first)
 
-  # Generate CRT-list file from registered TLS certificates
-  # Runs after TLS certificates are registered (priority 100) by resource libraries
-  features-ssl-crtlist:
-    priority: 150
+        Provides (in shared.globalFeatures):
+          - sslPassthroughBackends: Array for SSL passthrough backend registrations
+          - tlsCertificates: Array for TLS certificate registrations
+
+        Dependencies: None (this initializes the infrastructure)
+
+        Used By:
+          - features-100-gateway-ssl-passthrough
+          - features-100-gateway-tls
+          - features-100-ingress-tls
+          - features-100-haproxytech-ssl-passthrough
+      -#}
+
+      {# SSL passthrough backends array - each entry: {name, sni} #}
+      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- if gf["sslPassthroughBackends"] == nil -%}
+        {%- gf["sslPassthroughBackends"] = []any{} -%}
+      {%- end -%}
+
+      {# TLS certificates array - each entry: {secret_namespace, secret_name, sni_patterns[]} #}
+      {# Resource libraries register TLS secrets here with their SNI patterns #}
+      {%- if gf["tlsCertificates"] == nil -%}
+        {%- gf["tlsCertificates"] = []any{} -%}
+      {%- end -%}
+
+  features-150-ssl-crtlist:
     template: |
-      {#- Generate crt-list file dynamically from registered TLS certificates #}
-      {#- This file is used by HAProxy's ssl crt-list directive for certificate selection #}
-      {#- Format: <cert-path> [ssl-options] [sni-filter ...] #}
-      {#- See: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/#5.1-crt-list #}
+      {#-
+        SSL CRT-List Generation
 
-      {%- set ns = namespace(crtlist_lines=[]) %}
+        Purpose: Generates HAProxy crt-list file from registered TLS certificates.
 
-      {#- Generate entries for each registered TLS certificate #}
-      {%- for tls_cert in global_features.tls_certificates | default([]) %}
-        {%- set cert_filename = tls_cert.secret_namespace ~ "_" ~ tls_cert.secret_name ~ ".pem" %}
-        {#- Paths in crt-list are relative to crt-base, so just use filename #}
-        {%- set ssl_options = "[ocsp-update on]" %}
-        {%- set sni_list = tls_cert.sni_patterns | join(" ") %}
-        {%- set line = cert_filename ~ " " ~ ssl_options ~ " " ~ sni_list %}
-        {%- set ns.crtlist_lines = ns.crtlist_lines.append(line) %}
-      {%- endfor %}
+        Extension Point: features-* (priority 150 - runs after certificate registration)
 
-      {#- Default certificate (no SNI filter = matches everything not matched above) #}
-      {#- Paths in crt-list are relative to crt-base, so just use filename #}
-      {%- set default_line = "default.pem [ocsp-update on]" %}
-      {%- set ns.crtlist_lines = ns.crtlist_lines.append(default_line) %}
+        Dependencies:
+          - features-050-ssl-initialization
+          - features-100-*-tls snippets (register certificates)
 
-      {#- Register the crt-list file with file_registry #}
-      {#- Add trailing newline to satisfy HAProxy's parser #}
-      {%- set crtlist_content = ns.crtlist_lines | join("\n") ~ "\n" %}
-      {%- set _ = file_registry.Register("crt-list", "certificate-list.txt", crtlist_content) %}
+        Output:
+          - certificate-list.txt crt-list file via fileRegistry.Register()
+
+        Format: <cert-path> [ssl-options] [sni-filter ...]
+        See: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/#5.1-crt-list
+      -#}
+
+      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- var crtlistLines = []any{} -%}
+
+      {# Generate entries for each registered TLS certificate #}
+      {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) -%}
+      {%- for _, tlsCert := range tlsCerts -%}
+        {%- var tc map[string]any = tlsCert -%}
+        {%- var certFilename = tc["secret_namespace"] + "_" + tc["secret_name"] + ".pem" -%}
+        {# Paths in crt-list are relative to crt-base, so just use filename #}
+        {%- var sslOptions = "[ocsp-update on]" -%}
+        {%- var sniList = tc["sni_patterns"] | toStringSlice() | join(" ") -%}
+        {%- var line = certFilename + " " + sslOptions + " " + sniList -%}
+        {%- crtlistLines = append(crtlistLines, line) -%}
+      {%- end -%}
+
+      {# Default certificate (no SNI filter = matches everything not matched above) #}
+      {# Paths in crt-list are relative to crt-base, so just use filename #}
+      {%- var defaultLine = "default.pem [ocsp-update on]" -%}
+      {%- crtlistLines = append(crtlistLines, defaultLine) -%}
+
+      {# Register the crt-list file with file_registry #}
+      {# Add trailing newline to satisfy HAProxy's parser #}
+      {%- var crtlistContent = (crtlistLines | toStringSlice() | join("\n")) + "\n" -%}
+      {%- var _, crtListErr = fileRegistry.Register("crt-list", "certificate-list.txt", crtlistContent) -%}
+      {%- if crtListErr != nil -%}{{ fail("failed to register crt-list: " + tostring(crtListErr)) }}{%- end -%}
 
   # Global OCSP configuration - enables automatic OCSP stapling for all SSL certificates
   global-ssl-ocsp-config:
     template: |
-      {#- Global OCSP Update Configuration #}
-      {#- Enables automatic fetching and caching of OCSP responses for certificate validation #}
-      {#- See: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/#3.1-ocsp-update.mode #}
+      {# Global OCSP Update Configuration #}
+      {# Enables automatic fetching and caching of OCSP responses for certificate validation #}
+      {# See: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/#3.1-ocsp-update.mode #}
       # ssl/global-ssl-ocsp-config
       ocsp-update.mode on
       ocsp-update.mindelay 300
       ocsp-update.maxdelay 3600
 
-  # SSL passthrough TCP frontend (conditional - only when backends registered)
-  frontends-ssl-tcp:
+  frontends-500-ssl-tcp:
     template: |
-      {#- SSL Passthrough Infrastructure - Conditional Architecture #}
-      {#- Only generated when SSL passthrough backends are registered by resource libraries #}
-      {#- Architecture: TCP frontend + unix socket HTTPS frontend + loopback backend #}
-      {%- if global_features.ssl_passthrough_backends | length > 0 %}
-      {#- TCP frontend extracts SNI and routes to passthrough backends or loopback #}
+      {#-
+        SSL Passthrough TCP Frontend
+
+        Purpose: TCP frontend for SNI-based SSL passthrough routing.
+
+        Extension Point: frontends-* (priority 500)
+
+        Conditional: Only generated when sslPassthroughBackends is non-empty.
+
+        Architecture:
+          - Extracts SNI from TLS ClientHello
+          - Routes to passthrough backends based on SNI match
+          - Falls back to ssl-loopback backend for SSL termination
+
+        Dependencies:
+          - features-050-ssl-initialization
+          - features-100-*-ssl-passthrough snippets
+      -#}
+      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
+      {%- if len(passthroughBackends) > 0 -%}
+      {# TCP frontend extracts SNI and routes to passthrough backends or loopback #}
       # ssl/frontends-ssl-tcp
 
       frontend ssl-tcp
           mode tcp
-          bind *:{{ httpsPort | default(8443) | int }}
+          bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}
 
           # Extract SNI for routing decisions (wait up to 5s for client hello)
           tcp-request inspect-delay 5s
           tcp-request content accept if { req_ssl_hello_type 1 }
 
           # Route to passthrough backends based on SNI
-          {%- for backend in global_features.ssl_passthrough_backends %}
-          use_backend {{ backend.name }} if { req_ssl_sni -m str {{ backend.sni }} }
-          {%- endfor %}
+          {% for _, backend := range passthroughBackends -%}
+          {%- var b map[string]any = backend %}
+          use_backend {{ b["name"] }} if { req_ssl_sni -m str {{ b["sni"] }} }
+          {%- end %}
 
           # Default: route to loopback backend for SSL termination
           default_backend ssl-loopback
 
-      {%- endif %}
+      {% end -%}
 
-  # SSL loopback backend (bridges TCP frontend to HTTPS frontend)
-  backends-ssl-loopback:
+  backends-500-ssl-loopback:
     template: |
-      {%- if global_features.ssl_passthrough_backends | length > 0 %}
+      {#-
+        SSL Loopback Backend
+
+        Purpose: Bridges TCP frontend to HTTPS frontend via Unix socket.
+
+        Extension Point: backends-* (priority 500)
+
+        Conditional: Only generated when sslPassthroughBackends is non-empty.
+
+        Architecture:
+          - TCP mode backend
+          - Forwards to unix@/etc/haproxy/ssl-frontend.sock with PROXY protocol
+          - Enables HTTPS frontend to receive connections from TCP frontend
+      -#}
+      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
+      {%- if len(passthroughBackends) > 0 -%}
       # ssl/backends-ssl-loopback
 
       backend ssl-loopback
           mode tcp
           server loopback unix@/etc/haproxy/ssl-frontend.sock send-proxy-v2
 
-      {%- endif %}
+      {%- end -%}
 
-  # HTTPS frontend with SSL termination
-  frontends-https:
+  frontends-500-https:
     template: |
+      {#-
+        HTTPS Frontend with SSL Termination
+
+        Purpose: HTTPS frontend that terminates SSL and routes to backends.
+
+        Extension Point: frontends-* (priority 500)
+
+        Binding Modes:
+          - With SSL passthrough: Binds to Unix socket (receives from ssl-loopback)
+          - Without SSL passthrough: Binds directly to HTTPS port
+
+        Dependencies:
+          - util-ssl-bind-options (SSL bind configuration)
+          - frontend-routing-logic (from base.yaml)
+          - features-150-ssl-crtlist (certificate list)
+      -#}
+      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
       # ssl/frontends-https
 
       frontend https
           mode http
-          {%- if global_features.ssl_passthrough_backends | length > 0 %}
-          bind unix@/etc/haproxy/ssl-frontend.sock mode 660{% include "util-ssl-bind-options" %} accept-proxy
-          {%- else %}
-          bind *:{{ httpsPort | default(8443) | int }}{% include "util-ssl-bind-options" %}
-          {%- endif %}
+      {% if len(passthroughBackends) > 0 -%}
+          bind unix@/etc/haproxy/ssl-frontend.sock mode 660{{ render "util-ssl-bind-options" }} accept-proxy
+      {% else -%}
+          bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}{{ render "util-ssl-bind-options" }}
+      {% end %}
 
-          {#- Reuse frontend routing logic from base.yaml #}
-          {%- filter indent(8, first=False) %}
-          {% include "frontend-routing-logic" -%}
-          {%- endfilter %}
+          {# Reuse frontend routing logic from base.yaml #}
+          {# Note: indent filter removed - content should already be properly indented #}
+          {{ render "frontend-routing-logic" }}
 
           # Use backend from txn.backend_name (set by qualifier logic)
           use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
@@ -167,20 +242,22 @@ sslCertificates:
   # Default SSL certificate (fallback for SNI mismatch)
   default.pem:
     template: |
-      {#- Default SSL certificate for HTTPS frontend #}
-      {#- Loads certificate from TLS Secret (configurable via values.yaml) #}
-      {#- Secret name and namespace come from templatingSettings.extraContext #}
-      {%- set cert_namespace = default_ssl_cert_namespace | default("haproxy-template-ic") %}
-      {%- set cert_name = default_ssl_cert_name | default("default-ssl-cert") %}
-      {%- set secret = resources.secrets.GetSingle(cert_namespace, cert_name) %}
-      {%- if not secret %}
-      {{- fail("TLS Secret not found: " ~ cert_namespace ~ "/" ~ cert_name ~ ". Ensure the Secret exists and is watched.") -}}
-      {%- endif %}
-      {%- if not secret.data or not secret.data["tls.crt"] or not secret.data["tls.key"] %}
-      {{- fail("Invalid TLS Secret " ~ cert_namespace ~ "/" ~ cert_name ~ ": missing tls.crt or tls.key fields. Ensure the Secret is of type kubernetes.io/tls.") -}}
-      {%- endif %}
-      {{- secret.data["tls.crt"] | b64decode -}}
-      {{- secret.data["tls.key"] | b64decode -}}
+      {# Default SSL certificate for HTTPS frontend #}
+      {# Loads certificate from TLS Secret (configurable via values.yaml) #}
+      {# Secret name and namespace come from templatingSettings.extraContext #}
+      {%- var certNamespace = default_ssl_certNamespace default "haproxy-template-ic" -%}
+      {%- var certName = default_ssl_certName default "default-ssl-cert" -%}
+      {%- var secret = resources.secrets.GetSingle(certNamespace, certName) -%}
+      {%- if secret == nil -%}
+      {{ fail("TLS Secret not found: " + certNamespace + "/" + certName + ". Ensure the Secret exists and is watched.") }}
+      {%- end -%}
+      {%- var secretMap map[string]any = secret -%}
+      {%- var secretData map[string]any = secretMap["data"] -%}
+      {%- if secretData == nil || secretData["tls.crt"] == nil || secretData["tls.key"] == nil -%}
+      {{ fail("Invalid TLS Secret " + certNamespace + "/" + certName + ": missing tls.crt or tls.key fields. Ensure the Secret is of type kubernetes.io/tls.") }}
+      {%- end -%}
+      {{- b64decode(secretData["tls.crt"]) -}}
+      {{- b64decode(secretData["tls.key"]) -}}
 
 # Validation tests for SSL functionality
 validationTests:

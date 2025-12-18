@@ -10,30 +10,57 @@
 # require additional implementation.
 
 templateSnippets:
-  map-entry-path-regex-ingress-haproxy-ingress:
+  map-path-regex-600-haproxy-ingress:
     template: |
-      {#- Generate regex map entries for Ingress with haproxy-ingress.github.io/path-type annotation #}
-      {#- Only processes Ingress resources with pathType: ImplementationSpecific AND path-type: "regex" annotation #}
-      {%- for ingress in resources.ingresses.List() %}
-      {%- set path_type_annotation = ingress.metadata.annotations.get("haproxy-ingress.github.io/path-type", "") %}
-      {%- if path_type_annotation == "regex" -%}
-      {%- if loop.first %}
-      # haproxy-ingress/map-entry-path-regex-ingress-haproxy-ingress
-      {%- endif %}
+      {#-
+        HAProxy Ingress Regex Path Map Entries
+
+        Purpose: Generates path-regex.map entries for Ingress resources with
+                 haproxy-ingress.github.io/path-type: "regex" annotation.
+
+        Extension Point: map-path-regex-* (priority 600 - compatibility layer)
+
+        Matches: Ingress paths with:
+          - pathType: ImplementationSpecific
+          - Annotation: haproxy-ingress.github.io/path-type: "regex"
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
+      -#}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
+      {%- if pathTypeAnnotation == "regex" -%}
+      {%- if isFirst %}
+      # haproxy-ingress/map-path-regex-haproxy-ingress
+      {%- isFirst = false %}
+      {%- end %}
       {#- Count regex paths for this ingress -#}
-      {%- set all_paths = [] %}
-      {%- for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
-        {%- for path in (rule.http.paths | default([]) | selectattr("pathType", "equalto", "ImplementationSpecific")) %}
-          {%- set _ = all_paths.append(path) %}
-        {%- endfor %}
-      {%- endfor %}
-      {%- if all_paths | length > 0 %}
-      # Ingress: {{ ingress.metadata.namespace }}/{{ ingress.metadata.name }} ({{ all_paths | length }} regex paths)
-        {%- for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
-          {%- for path in (rule.http.paths | default([]) | selectattr("pathType", "equalto", "ImplementationSpecific")) %}
-      {{ rule.host }}{{ path.path }} {% include "resource_ingress_backend-name" -%}
-          {%- endfor %}
-        {%- endfor %}
-      {%- endif %}
-      {%- endif %}
-      {%- endfor %}
+      {%- var allPaths = []any{} %}
+      {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+      {%- for _, rule := range rules %}
+      {%- var http = rule | dig("http") %}
+      {%- if http != nil %}
+        {%- var paths = http | dig("paths") | fallback([]any{}) %}
+        {%- for _, path := range paths %}
+        {%- if path | dig("pathType") == "ImplementationSpecific" %}
+          {%- allPaths = append(allPaths, path) %}
+        {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- if len(allPaths) > 0 %}
+      # Ingress: {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} ({{ len(allPaths) }} regex paths)
+        {%- for _, rule := range rules %}
+        {%- var http = rule | dig("http") %}
+        {%- if http != nil %}
+          {%- var paths = http | dig("paths") | fallback([]any{}) %}
+          {%- for _, path := range paths %}
+          {%- if path | dig("pathType") == "ImplementationSpecific" %}
+      {{ rule | dig("host") | fallback("") }}{{ path | dig("path") | fallback("") }} {{ render "util-backend-name-ingress" -}}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}

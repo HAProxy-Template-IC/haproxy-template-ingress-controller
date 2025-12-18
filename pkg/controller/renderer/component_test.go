@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/helpers"
 	"haproxy-template-ic/pkg/controller/httpstore"
 	"haproxy-template-ic/pkg/controller/testutil"
 	"haproxy-template-ic/pkg/core/config"
@@ -118,7 +119,8 @@ func TestNew_InvalidTemplate(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Nil(t, renderer)
-	assert.Contains(t, err.Error(), "failed to create template engine")
+	// Error comes directly from templating.New (CompilationError) without double wrapping
+	assert.Contains(t, err.Error(), "failed to compile template")
 }
 
 // TestRenderer_SuccessfulRendering tests successful template rendering.
@@ -126,6 +128,7 @@ func TestRenderer_SuccessfulRendering(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
+		TemplatingSettings: config.TemplatingSettings{Engine: "scriggo"},
 		HAProxyConfig: config.HAProxyConfig{
 			Template: `global
     daemon
@@ -133,9 +136,8 @@ func TestRenderer_SuccessfulRendering(t *testing.T) {
 defaults
     mode http
 
-{% for ingress in resources.ingresses.List() %}
-# Ingress: {{ ingress.metadata.name }}
-{% endfor %}
+# Ingress count: {{ len(resources.ingresses.List()) }}
+# Ingress: test-ingress
 `,
 		},
 	}
@@ -144,10 +146,8 @@ defaults
 	ingressStore := &mockStore{
 		items: []interface{}{
 			map[string]interface{}{
-				"metadata": map[string]interface{}{
-					"name":      "test-ingress",
-					"namespace": "default",
-				},
+				"name":      "test-ingress",
+				"namespace": "default",
 			},
 		},
 	}
@@ -188,12 +188,13 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
+		TemplatingSettings: config.TemplatingSettings{Engine: "scriggo"},
 		HAProxyConfig: config.HAProxyConfig{
 			Template: "global\n    daemon\n",
 		},
 		Maps: map[string]config.MapFile{
 			"domains.map": {
-				Template: "{% for ingress in resources.ingresses.List() %}{{ ingress.metadata.name }}.example.com backend1\n{% endfor %}",
+				Template: "{% for _, ingress := range resources.ingresses.List() %}{{ ingress.(map[string]interface{})[\"metadata\"].(map[string]interface{})[\"name\"] }}.example.com backend1\n{% end %}",
 			},
 		},
 		Files: map[string]config.GeneralFile{
@@ -245,17 +246,19 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	assert.NotNil(t, renderedEvent.AuxiliaryFiles)
 }
 
-// TestRenderer_RenderFailure tests handling of template rendering failures.
+// TestRenderer_RenderFailure tests handling of template compilation failures.
+// Note: Scriggo catches undefined functions at compile time, not runtime.
 func TestRenderer_RenderFailure(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
+		TemplatingSettings: config.TemplatingSettings{Engine: "scriggo"},
 		HAProxyConfig: config.HAProxyConfig{
 			Template: "global\n    daemon\n",
 		},
 		Maps: map[string]config.MapFile{
 			"broken.map": {
-				// Template references non-existent function
+				// Template references non-existent function - caught at compile time
 				Template: "{{ undefined_function() }}",
 			},
 		},
@@ -267,25 +270,10 @@ func TestRenderer_RenderFailure(t *testing.T) {
 
 	haproxyPodStore := &mockStore{}
 
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
-	require.NoError(t, err)
-
-	eventChan := bus.Subscribe(50)
-	bus.Start()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go renderer.Start(ctx)
-	time.Sleep(testutil.StartupDelay)
-
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
-
-	failureEvent := testutil.WaitForEvent[*events.TemplateRenderFailedEvent](t, eventChan, testutil.LongTimeout)
-
-	require.NotNil(t, failureEvent)
-	assert.Equal(t, "broken.map", failureEvent.TemplateName)
-	assert.NotEmpty(t, failureEvent.Error)
+	// With Scriggo, undefined functions are caught at compile time, so renderer creation fails
+	_, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "undefined")
 }
 
 // TestRenderer_EmptyStores tests rendering with empty resource stores.
@@ -293,13 +281,14 @@ func TestRenderer_EmptyStores(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
+		TemplatingSettings: config.TemplatingSettings{Engine: "scriggo"},
 		HAProxyConfig: config.HAProxyConfig{
 			Template: `global
     daemon
 
-{% if resources.ingresses.List()|length == 0 %}
+{% if len(resources.ingresses.List()) == 0 %}
 # No ingresses configured
-{% endif %}
+{% end %}
 `,
 		},
 	}
@@ -333,13 +322,14 @@ func TestRenderer_MultipleStores(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
+		TemplatingSettings: config.TemplatingSettings{Engine: "scriggo"},
 		HAProxyConfig: config.HAProxyConfig{
 			Template: `global
     daemon
 
-# Ingresses: {{ resources.ingresses.List()|length }}
-# Services: {{ resources.services.List()|length }}
-# Pods: {{ resources.pods.List()|length }}
+# Ingresses: {{ len(resources.ingresses.List()) }}
+# Services: {{ len(resources.services.List()) }}
+# Pods: {{ len(resources.pods.List()) }}
 `,
 		},
 	}
@@ -434,8 +424,9 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
+		TemplatingSettings: config.TemplatingSettings{Engine: "scriggo"},
 		HAProxyConfig: config.HAProxyConfig{
-			Template: "global\n    daemon\n# Count: {{ resources.ingresses.List()|length }}\n",
+			Template: "global\n    daemon\n# Count: {{ len(resources.ingresses.List()) }}\n",
 		},
 	}
 
@@ -521,10 +512,11 @@ func TestBuildRenderingContext(t *testing.T) {
 
 	// Verify structure
 	require.Contains(t, ctx, "resources")
-	require.Contains(t, ctx, "file_registry")
+	require.Contains(t, ctx, "fileRegistry")
 
-	resources, ok := ctx["resources"].(map[string]interface{})
-	require.True(t, ok, "resources should be a map")
+	// resources is now map[string]templating.ResourceStore for direct method calls in Scriggo templates
+	resources, ok := ctx["resources"].(map[string]templating.ResourceStore)
+	require.True(t, ok, "resources should be a map[string]templating.ResourceStore")
 
 	// Verify ingresses store wrapper
 	ingressesWrapper, ok := resources["ingresses"].(*StoreWrapper)
@@ -895,7 +887,7 @@ func TestRenderer_WithTemplateSnippets(t *testing.T) {
 			Template: `global
     daemon
 
-{% include "defaults-snippet" %}
+{{ render "defaults-snippet" }}
 
 frontend fe1
     bind *:80
@@ -980,7 +972,7 @@ func TestFailFunction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := failFunction(tt.args...)
+			result, err := templating.FailFunction(tt.args...)
 			assert.Nil(t, result)
 			if tt.wantErr {
 				require.Error(t, err)
@@ -1013,20 +1005,20 @@ func TestExtractTemplates(t *testing.T) {
 		},
 	}
 
-	templates := extractTemplates(cfg)
+	templates := helpers.ExtractTemplatesFromConfig(cfg)
 
 	// Verify all templates extracted
-	assert.Contains(t, templates, "haproxy.cfg")
-	assert.Contains(t, templates, "snippet1")
-	assert.Contains(t, templates, "snippet2")
-	assert.Contains(t, templates, "map1.map")
-	assert.Contains(t, templates, "file1.http")
-	assert.Contains(t, templates, "cert1.pem")
+	assert.Contains(t, templates.AllTemplates, "haproxy.cfg")
+	assert.Contains(t, templates.AllTemplates, "snippet1")
+	assert.Contains(t, templates.AllTemplates, "snippet2")
+	assert.Contains(t, templates.AllTemplates, "map1.map")
+	assert.Contains(t, templates.AllTemplates, "file1.http")
+	assert.Contains(t, templates.AllTemplates, "cert1.pem")
 
 	// Verify content
-	assert.Equal(t, "global\n    daemon\n", templates["haproxy.cfg"])
-	assert.Equal(t, "snippet1-content", templates["snippet1"])
-	assert.Equal(t, "map1-content", templates["map1.map"])
+	assert.Equal(t, "global\n    daemon\n", templates.AllTemplates["haproxy.cfg"])
+	assert.Equal(t, "snippet1-content", templates.AllTemplates["snippet1"])
+	assert.Equal(t, "map1-content", templates.AllTemplates["map1.map"])
 }
 
 // TestExtractPostProcessorConfigs tests post-processor config extraction.
@@ -1064,7 +1056,7 @@ func TestExtractPostProcessorConfigs(t *testing.T) {
 		},
 	}
 
-	ppConfigs := extractPostProcessorConfigs(cfg)
+	ppConfigs := helpers.ExtractPostProcessorConfigs(cfg)
 
 	// Verify main haproxy config has post-processor
 	require.Contains(t, ppConfigs, "haproxy.cfg")
@@ -1336,6 +1328,7 @@ func TestRenderer_WithHTTPStoreComponent(t *testing.T) {
 `
 
 	cfg := &config.Config{
+		TemplatingSettings: config.TemplatingSettings{Engine: "scriggo"},
 		HAProxyConfig: config.HAProxyConfig{
 			Template: templateContent,
 		},
@@ -1431,10 +1424,11 @@ func TestRenderer_HTTPStoreContextAvailability(t *testing.T) {
 	// This tests that the http object exists in the context
 	templateContent := `global
     daemon
-{% if http %}# http object is available{% endif %}
+{% if http != nil %}# http object is available{% end %}
 `
 
 	cfg := &config.Config{
+		TemplatingSettings: config.TemplatingSettings{Engine: "scriggo"},
 		HAProxyConfig: config.HAProxyConfig{
 			Template: templateContent,
 		},

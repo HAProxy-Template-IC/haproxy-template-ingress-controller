@@ -24,14 +24,14 @@ controller:
     maps:
       header-blocklist.map:
         template: |
-          {%- set blocklist_url = "http://blocklist-server.echo.svc:80/blocklist.txt" -%}
-          {%- set blocklist_content = http.Fetch(blocklist_url, {"critical": true, "delay": "60s"}) -%}
-          {%- for line in blocklist_content.split("\n") -%}
-          {%- set value = line | trim -%}
+          {%- var blocklist_url = "http://blocklist-server.echo.svc:80/blocklist.txt" -%}
+          {%- var blocklist_content, _ = http.Fetch(blocklist_url, map[string]any{"critical": true, "delay": "60s"}) -%}
+          {%- for _, line := range (blocklist_content | tostring() | split("\n")) -%}
+          {%- var value = trimSpace(line) -%}
           {%- if value != "" -%}
-          {{ value }} 1{{ "\n" }}
-          {%- endif -%}
-          {%- endfor %}
+          {{ value }} 1
+          {% end -%}
+          {%- end %}
 
     templateSnippets:
       # Hook into frontend routing to check header against blocklist

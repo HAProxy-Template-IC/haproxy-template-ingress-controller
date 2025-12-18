@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,7 +63,7 @@ type Component struct {
 	eventChan       <-chan busevents.Event // Subscribed in constructor per CLAUDE.md guidelines
 	storeManager    *resourcestore.Manager
 	config          *config.Config
-	engine          *templating.TemplateEngine
+	engine          templating.Engine
 	validationPaths *dataplane.ValidationPaths
 	testRunner      *testrunner.Runner
 	logger          *slog.Logger
@@ -86,7 +87,7 @@ func New(
 	eventBus *busevents.EventBus,
 	storeManager *resourcestore.Manager,
 	cfg *config.Config,
-	engine *templating.TemplateEngine,
+	engine templating.Engine,
 	validationPaths *dataplane.ValidationPaths,
 	capabilities dataplane.Capabilities,
 	logger *slog.Logger,
@@ -320,8 +321,8 @@ func (c *Component) buildRenderingContext(stores map[string]types.Store) map[str
 		}
 	}
 
-	// Build template snippets list
-	snippetNames := c.sortSnippetsByPriority()
+	// Build template snippets list (sorted alphabetically)
+	snippetNames := c.sortSnippetNames()
 
 	// Create PathResolver from ValidationPaths
 	// ValidationPaths already has CRTListDir set correctly based on capabilities
@@ -334,47 +335,25 @@ func (c *Component) buildRenderingContext(stores map[string]types.Store) map[str
 
 	// Build final context
 	return map[string]interface{}{
-		"resources":         resources,
-		"template_snippets": snippetNames,
-		"pathResolver":      pathResolver,
-		"config":            c.config,
-		"shared":            make(map[string]interface{}), // Shared namespace for cross-template data
+		"resources":        resources,
+		"templateSnippets": snippetNames,
+		"pathResolver":     pathResolver,
+		"config":           c.config,
+		"shared":           make(map[string]interface{}), // Shared namespace for cross-template data
 	}
 }
 
-// sortSnippetsByPriority sorts template snippet names by priority, then alphabetically.
-func (c *Component) sortSnippetsByPriority() []string {
-	// Extract snippet names in sorted order (by priority, then name)
-	type snippetWithPriority struct {
-		name     string
-		priority int
+// sortSnippetNames sorts template snippet names alphabetically.
+//
+// Note: Snippet ordering is now controlled by encoding priority in the snippet name
+// (e.g., "features-050-ssl" for priority 50). This is required because render_glob
+// sorts templates alphabetically.
+func (c *Component) sortSnippetNames() []string {
+	names := make([]string, 0, len(c.config.TemplateSnippets))
+	for name := range c.config.TemplateSnippets {
+		names = append(names, name)
 	}
-
-	list := make([]snippetWithPriority, 0, len(c.config.TemplateSnippets))
-	for name, snippet := range c.config.TemplateSnippets {
-		priority := snippet.Priority
-		if priority == 0 {
-			priority = 500 // Default priority
-		}
-		list = append(list, snippetWithPriority{name, priority})
-	}
-
-	// Sort by priority (ascending), then by name (alphabetically)
-	// Using simple bubble sort to avoid importing sort package again
-	for i := 0; i < len(list)-1; i++ {
-		for j := 0; j < len(list)-i-1; j++ {
-			if list[j].priority > list[j+1].priority ||
-				(list[j].priority == list[j+1].priority && list[j].name > list[j+1].name) {
-				list[j], list[j+1] = list[j+1], list[j]
-			}
-		}
-	}
-
-	names := make([]string, len(list))
-	for i, item := range list {
-		names[i] = item.name
-	}
-
+	sort.Strings(names)
 	return names
 }
 

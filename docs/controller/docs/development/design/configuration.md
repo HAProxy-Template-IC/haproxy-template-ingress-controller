@@ -71,140 +71,150 @@ template_snippets:
   backend-name:
     name: backend-name
     template: |
-      ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ path.backend.service.port.name | default(path.backend.service.port.number) }}
+      ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ fallback(path.backend.service.port.name, path.backend.service.port.number) }}
 
   path-map-entry:
     name: path-map-entry
     template: |
       {{ "" }}
-      {% for ingress in resources.ingresses.List() %}
-      {% for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
-      {% for path in (rule.http.paths | default([]) | selectattr("path", "defined") | selectattr("pathType", "in", path_types)) %}
-      {{ rule.host }}{{ path.path }} {% include "backend-name" %}{{ suffix }}
-      {% endfor %}
-      {% endfor %}
-      {% endfor %}
+      {% for _, ingress := range resources.ingresses.List() %}
+      {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+      {% if rule.http != nil %}
+      {% for _, path := range fallback(rule.http.paths, []any{}) %}
+      {% if path.path != nil && contains(path_types, path.pathType) %}
+      {{ rule.host }}{{ path.path }} {% render "backend-name" %}{{ suffix }}
+      {% end %}
+      {% end %}
+      {% end %}
+      {% end %}
+      {% end %}
 
   validate-ingress:
     name: validate-ingress
     template: |
       {#- Validation snippet for ingress resources #}
-      {%- if not ingress.spec %}
-        {% do register_error('ingresses', ingress.metadata.uid, 'Ingress missing spec') %}
-      {%- endif %}
-      {%- if ingress.spec.rules %}
-        {%- for rule in ingress.spec.rules %}
-          {%- if not rule.host %}
-            {% do register_error('ingresses', ingress.metadata.uid, 'Ingress rule missing host') %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endif %}
+      {%- if ingress.spec == nil %}
+        {% register_error("ingresses", ingress.metadata.uid, "Ingress missing spec") %}
+      {%- end %}
+      {%- if ingress.spec.rules != nil %}
+        {%- for _, rule := range ingress.spec.rules %}
+          {%- if rule.host == "" %}
+            {% register_error("ingresses", ingress.metadata.uid, "Ingress rule missing host") %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
 
   backend-servers:
     name: backend-servers
     template: |
       {#- Pre-allocated server pool with auto-expansion #}
-      {%- set initial_slots = 10 %}  {#- Single place to adjust initial slots #}
+      {%- var initial_slots = 10 %}  {#- Single place to adjust initial slots #}
 
       {#- Collect active endpoints #}
-      {%- set active_endpoints = [] %}
-      {%- for endpoint_slice in resources.get('endpoints', {}).get_indexed(service_name) %}
-        {%- for endpoint in endpoint_slice.get('endpoints') | default([], true) %}
-          {%- for address in endpoint.addresses %}
-            {%- set _ = active_endpoints.append({'name': endpoint.targetRef.name, 'address': address, 'port': port}) %}
-          {%- endfor %}
-        {%- endfor %}
-      {%- endfor %}
+      {%- var active_endpoints = []map[string]any{} %}
+      {%- for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
+        {%- for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
+          {%- for _, address := range endpoint.addresses %}
+            {%- active_endpoints = append(active_endpoints, map[string]any{"name": endpoint.targetRef.name, "address": address, "port": port}) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
 
       {#- Calculate required slots using mathematical approach #}
-      {%- set active_count = active_endpoints|length %}
+      {%- var active_count = len(active_endpoints) %}
       # active count = {{ active_count }}
-      {%- if initial_slots > 0 and active_count > 0 %}
-        {%- set ratio = active_count / initial_slots %}
-        {%- set power_of_two = [0, ratio | log(2) | round(0, 'ceil')] | max %}
-      {%- else %}
-        {%- set power_of_two = 0 %}
-      {%- endif %}
-      {%- set max_servers = initial_slots * (2 ** power_of_two) | int %}
+      {%- var max_servers = initial_slots %}
+      {%- if initial_slots > 0 && active_count > 0 && active_count > initial_slots %}
+        {%- max_servers = initial_slots * 2 %}
+        {%- for max_servers < active_count %}
+          {%- max_servers = max_servers * 2 %}
+        {%- end %}
+      {%- end %}
       # max servers = {{ max_servers }}
 
       {#- Generate all server slots with fixed names #}
-      {%- for i in range(1, max_servers + 1) %}
-        {%- if loop.index0 < active_endpoints|length %}
+      {%- for i := 1; i <= max_servers; i++ %}
+        {%- if i-1 < len(active_endpoints) %}
           {#- Active server with real endpoint #}
-          {%- set endpoint = active_endpoints[loop.index0] %}
-        server SRV_{{ i }} {{ endpoint.address }}:{{ endpoint.port }}
+          {%- var endpoint = active_endpoints[i-1] %}
+        server SRV_{{ i }} {{ endpoint["address"] }}:{{ endpoint["port"] }}
         {%- else %}
           {#- Disabled placeholder server #}
         server SRV_{{ i }} 127.0.0.1:1 disabled
-        {%- endif %}
-      {%- endfor %}
+        {%- end %}
+      {%- end %}
 
   ingress-backends:
     name: ingress-backends
     template: |
       {#- Generate all backend definitions from ingress resources #}
-      {#- Usage: {% include "ingress-backends" %} #}
-      {%- for _, ingress in resources.get('ingresses', {}).items() %}
-      {% include "validate-ingress" %}
-      {%- if ingress.spec and ingress.spec.rules %}
-      {%- for rule in ingress.spec.rules %}
-      {%- if rule.http and rule.http.paths %}
-      {%- for path in rule.http.paths %}
-      {%- if path.backend and path.backend.service %}
-      {%- set service_name = path.backend.service.name %}
-      {%- set port = path.backend.service.port.number | default(80) %}
-      backend {% include "backend-name" %}
+      {#- Usage: {% render "ingress-backends" %} #}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {% render "validate-ingress" %}
+      {%- if ingress.spec != nil && ingress.spec.rules != nil %}
+      {%- for _, rule := range ingress.spec.rules %}
+      {%- if rule.http != nil && rule.http.paths != nil %}
+      {%- for _, path := range rule.http.paths %}
+      {%- if path.backend != nil && path.backend.service != nil %}
+      {%- var service_name = path.backend.service.name %}
+      {%- var port = fallback(path.backend.service.port.number, 80) %}
+      backend {% render "backend-name" %}
         balance roundrobin
-        option httpchk GET {{ path.path | default('/') }}
+        option httpchk GET {{ fallback(path.path, "/") }}
         default-server check
-        {% include "backend-servers" %}
-      {%- endif %}
-      {%- endfor %}
-      {%- endif %}
-      {%- endfor %}
-      {%- endif %}
-      {%- endfor %}
+        {% render "backend-servers" %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
 
 maps:
   host.map:
     template: |
-      {%- for _, ingress in resources.get('ingresses', {}).items() %}
-      {%- for rule in (ingress.spec.get('rules', []) | selectattr("http", "defined")) %}
-      {%- set host_without_asterisk = rule.host | replace('*', '', 1) %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+      {%- if rule.http != nil %}
+      {%- var host_without_asterisk = replace(rule.host, "*", "") %}
       {{ host_without_asterisk }} {{ host_without_asterisk }}
-      {%- endfor %}
-      {%- endfor %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
 
   path-exact.map:
     template: |
       # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
       # It should be used with the equality string matcher. Example:
       #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(/etc/haproxy/maps/path-exact.map)
-      {%- set path_types = ["Exact"] %}
-      {%- set suffix = "" %}
-      {% include "path-map-entry" %}
+      {%- var path_types = []string{"Exact"} %}
+      {%- var suffix = "" %}
+      {% render "path-map-entry" %}
 
   path-prefix-exact.map:
     template: |
       # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
 
-      {%- for ingress in resources.ingresses.List() -%}
-      {% for rule in (ingress.spec.rules | default([]) | selectattr("http", "defined")) %}
-      {% for path in (rule.http.paths | default([]) | selectattr("path", "defined") | selectattr("pathType", "in", ["Prefix", "ImplementationSpecific"])) %}
-      {{ rule.host }}{{ path.path }} ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ path.backend.service.port.name | default(path.backend.service.port.number) }}
-      {% endfor %}
-      {% endfor %}
-      {% endfor %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+      {% if rule.http != nil %}
+      {% for _, path := range fallback(rule.http.paths, []any{}) %}
+      {% if path.path != nil && (path.pathType == "Prefix" || path.pathType == "ImplementationSpecific") %}
+      {{ rule.host }}{{ path.path }} ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ fallback(path.backend.service.port.name, path.backend.service.port.number) }}
+      {% end %}
+      {% end %}
+      {% end %}
+      {% end %}
+      {% end %}
 
   path-prefix.map:
     template: |
       # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
       # It should be used with the prefix string matcher. Example:
       #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg(/etc/haproxy/maps/path-prefix.map)
-      {%- set path_types = ["Prefix", "ImplementationSpecific"] %}
-      {%- set suffix = "/" %}
-      {% include "path-map-entry" %}
+      {%- var path_types = []string{"Prefix", "ImplementationSpecific"} %}
+      {%- var suffix = "/" %}
+      {% render "path-map-entry" %}
 
 files:
   400.http:
@@ -340,7 +350,7 @@ haproxy_config:
       # Default backend
       default_backend default_backend
 
-    {% include "ingress-backends" %}
+    {% render "ingress-backends" %}
 
     backend default_backend
         http-request return status 404

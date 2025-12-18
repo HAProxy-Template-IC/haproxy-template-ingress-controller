@@ -26,7 +26,4 @@ This project includes the following third-party dependencies:
 - HAProxy client-native (Apache-2.0)
   https://github.com/haproxytech/client-native
 
-- Gonja templating engine (MIT)
-  https://github.com/nikolalohinski/gonja
-
 See go.mod for a complete list of dependencies and their licenses.

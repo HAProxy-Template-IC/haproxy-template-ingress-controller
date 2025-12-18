@@ -5,6 +5,10 @@ Development context for the template engine library.
 **API Documentation**: See `pkg/templating/README.md`
 **Architecture**: See `/docs/development/design.md` (Template Engine section)
 
+## Engine
+
+The project uses Scriggo as its template engine. Scriggo provides Go template syntax with high performance.
+
 ## When to Work Here
 
 Modify this package when:
@@ -12,7 +16,6 @@ Modify this package when:
 - Adding custom template filters
 - Improving template compilation performance
 - Fixing template rendering bugs
-- Adding new template engine backends
 - Enhancing error reporting
 
 **DO NOT** modify this package for:
@@ -26,17 +29,22 @@ Modify this package when:
 
 This is a **pure library** with zero dependencies on other pkg/ packages. It could be extracted and used in any Go project needing templating.
 
-Dependencies: Only Gonja v2 and standard library.
+Dependencies: Scriggo fork (from `gitlab.com/haproxy-template-ic/scriggo`) and standard library.
 
 ## Package Structure
 
 ```
 pkg/templating/
-├── engine.go       # TemplateEngine implementation
-├── types.go        # Type definitions (EngineType)
-├── errors.go       # Custom error types
-├── engine_test.go  # Unit tests
-└── README.md       # User documentation
+├── engine_scriggo.go      # Scriggo template engine implementation
+├── engine_interface.go    # Engine interface definition
+├── config.go              # NewEngineFromConfig helper
+├── filter_names.go        # Filter name constants
+├── filters_scriggo.go     # Scriggo-specific filter implementations
+├── types.go               # Type definitions (EngineType)
+├── errors.go              # Custom error types
+├── engine_scriggo_test.go # Scriggo engine unit tests
+├── filters_scriggo_test.go # Scriggo filter tests
+└── README.md              # User documentation
 ```
 
 ## Core Design
@@ -46,8 +54,8 @@ pkg/templating/
 Templates are compiled once at initialization for optimal runtime performance:
 
 ```go
-// Compilation happens once
-engine, err := templating.New(templating.EngineTypeGonja, templates)
+// Compilation happens once (Scriggo is default)
+engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 if err != nil {
     // Compilation errors caught early
     log.Fatal(err)
@@ -96,11 +104,94 @@ type UnsupportedEngineError struct {
 }
 ```
 
+## Scriggo Runtime Variables
+
+Scriggo requires special handling for runtime variables (passed via `template.Run(vars)`).
+
+### The Nil Pointer Pattern
+
+**Problem:** If a variable is declared in globals with an initial value AND passed at runtime, Scriggo panics with "variable already initialized".
+
+**Solution:** Declare runtime variables with **nil pointers** so Scriggo knows the TYPE at compile time, but the VALUE is provided at runtime:
+
+```go
+// In filters_scriggo.go buildScriggoGlobals()
+decl["pathResolver"] = (*PathResolver)(nil)           // Not &PathResolver{}
+decl["resources"] = (*map[string]interface{})(nil)    // Not &map[string]{}
+decl["templateSnippets"] = (*[]string)(nil)           // Not &[]string{}
+```
+
+**Why this works:**
+
+- Compile time: Scriggo sees the TYPE from the nil pointer declaration
+- Runtime: `template.Run(vars)` provides the actual VALUE
+- No conflict because the compile-time declaration has no value
+
+### Common Runtime Variables
+
+| Variable | Type | Purpose |
+|----------|------|---------|
+| `pathResolver` | `*PathResolver` | File path resolution |
+| `resources` | `*map[string]interface{}` | Kubernetes resources |
+| `controller` | `*map[string]interface{}` | Controller state |
+| `templateSnippets` | `*[]string` | Available snippet names |
+| `fileRegistry` | `*FileRegistrar` | Dynamic file registration |
+| `shared` | `*map[string]interface{}` | Cross-template cache |
+| `http` | `*HTTPFetcher` | HTTP store for fetching remote content |
+
+### Adding New Runtime Variables
+
+1. Declare with nil pointer in `buildScriggoGlobals()`:
+
+   ```go
+   decl["myVar"] = (*MyType)(nil)
+   ```
+
+2. Pass value at render time via context:
+
+   ```go
+   context["myVar"] = actualValue
+   ```
+
+### Calling Methods on Runtime Variables
+
+**Methods work on runtime variables.** When a type is declared with a nil pointer, Scriggo knows the type's methods at compile time. At runtime, when the actual value is provided, those methods can be called:
+
+```go
+// In filters_scriggo.go - declare type (nil pointer)
+decl["pathResolver"] = (*PathResolver)(nil)
+
+// In templates - call methods directly
+{{ pathResolver.GetPath("host.map", "map") }}
+```
+
+This works because:
+
+1. Scriggo sees `*PathResolver` type at compile time
+2. Scriggo validates that `GetPath` method exists on `*PathResolver`
+3. At runtime, the actual `*PathResolver` value is provided via context
+4. Method call executes on the runtime value
+
+**No wrapper functions needed.** You can call methods directly on runtime variables. Wrapper functions are only needed when:
+
+- You need access to `native.Env` for Scriggo-specific context
+- The method signature doesn't fit Scriggo's calling conventions
+- You want to provide a simpler API
+
+**Example - direct method call vs wrapper:**
+
+```go
+// Direct method call - preferred, simpler
+{{ pathResolver.GetPath("host.map", "map") }}
+
+// Both produce identical results - use the direct method call
+```
+
 ## Testing Approach
 
-### Test Template Logic, Not Gonja
+### Test Template Logic, Not Engine Syntax
 
-Focus on testing the library API and error handling, not Gonja syntax:
+Focus on testing the library API and error handling:
 
 ```go
 func TestTemplateEngine_Render(t *testing.T) {
@@ -119,13 +210,13 @@ func TestTemplateEngine_Render(t *testing.T) {
         },
         {
             name:     "missing variable with default",
-            template: "Hello {{ name | default('Guest') }}",
+            template: "Hello {{ name default \"Guest\" }}",
             context:  map[string]interface{}{},
             want:     "Hello Guest",
         },
         {
             name:     "complex context",
-            template: "{% for item in items %}{{ item }}{% endfor %}",
+            template: "{% for _, item := range items %}{{ item }}{% end %}",
             context:  map[string]interface{}{"items": []string{"a", "b"}},
             want:     "ab",
         },
@@ -133,8 +224,8 @@ func TestTemplateEngine_Render(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            engine, err := templating.New(templating.EngineTypeGonja,
-                map[string]string{"test": tt.template})
+            engine, err := templating.New(templating.EngineTypeScriggo,
+                map[string]string{"test": tt.template}, nil, nil, nil)
 
             if tt.wantErr {
                 require.Error(t, err)
@@ -157,10 +248,10 @@ func TestTemplateEngine_Render(t *testing.T) {
 func TestTemplateEngine_CompilationError(t *testing.T) {
     // Invalid template syntax
     templates := map[string]string{
-        "invalid": "{% if true %}\n{% endif extra text %}",
+        "invalid": "{% if true %}\n{% end extra text %}",
     }
 
-    _, err := templating.New(templating.EngineTypeGonja, templates)
+    _, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
     require.Error(t, err)
 
@@ -171,9 +262,9 @@ func TestTemplateEngine_CompilationError(t *testing.T) {
 }
 
 func TestTemplateEngine_TemplateNotFound(t *testing.T) {
-    engine, _ := templating.New(templating.EngineTypeGonja, map[string]string{
+    engine, _ := templating.New(templating.EngineTypeScriggo, map[string]string{
         "exists": "content",
-    })
+    }, nil, nil, nil)
 
     _, err := engine.Render("missing", nil)
 
@@ -195,7 +286,7 @@ func TestTemplateEngine_TemplateNotFound(t *testing.T) {
 ```go
 // Bad - compiles templates every time (milliseconds)
 for _, context := range contexts {
-    engine, _ := templating.New(templating.EngineTypeGonja, templates)
+    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
     output, _ := engine.Render("template", context)
 }
 ```
@@ -204,7 +295,7 @@ for _, context := range contexts {
 
 ```go
 // Good - compile once, render many times (microseconds)
-engine, err := templating.New(templating.EngineTypeGonja, templates)
+engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 if err != nil {
     log.Fatal(err)
 }
@@ -220,7 +311,7 @@ for _, context := range contexts {
 
 ```go
 // Bad - ignoring compilation errors
-engine, _ := templating.New(templating.EngineTypeGonja, templates)
+engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
 // Later in production...
 output, err := engine.Render("template", context)
@@ -231,7 +322,7 @@ output, err := engine.Render("template", context)
 
 ```go
 // Good - fail fast on invalid templates
-engine, err := templating.New(templating.EngineTypeGonja, templates)
+engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 if err != nil {
     var compErr *templating.CompilationError
     if errors.As(err, &compErr) {
@@ -311,7 +402,7 @@ The template engine provides execution tracing for observability and performance
 ### Enabling Tracing
 
 ```go
-engine, _ := templating.New(templating.EngineTypeGonja, templates)
+engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
 // Enable tracing
 engine.EnableTracing()
@@ -490,14 +581,13 @@ trace := engine.GetTraceOutput()
 // Example trace output:
 // Rendering: test
 //   Filter: sort_by([]interface {}, 3 items) [priority:desc]
-//   Filter: group_by([]interface {}, 3 items) [priority]
-//   Filter: extract([]interface {}, 3 items) [name]
+//   Filter: glob_match([]interface {}, 5 items) [backend-*]
 // Completed: test (0.012ms)
 ```
 
 **Captured information:**
 
-- Filter name (sort_by, group_by, extract, transform)
+- Filter name (sort_by, glob_match, debug)
 - Input type ([]interface {}, map[string]interface {})
 - Item count for slice operations
 - Filter parameters in brackets
@@ -506,7 +596,7 @@ trace := engine.GetTraceOutput()
 
 - Understanding which filters are called and in what order
 - Verifying filter parameters are evaluated correctly
-- Debugging unexpected sorting or grouping results
+- Debugging unexpected sorting results
 - Performance analysis of filter operations
 
 ### Limitations
@@ -532,11 +622,11 @@ trace := engine.GetTraceOutput()
 ```go
 func TestTemplateEngine_Tracing(t *testing.T) {
     templates := map[string]string{
-        "main": "{% include 'sub' %}",
+        "main": "{{ render \"sub\" }}",
         "sub":  "content",
     }
 
-    engine, _ := templating.New(templating.EngineTypeGonja, templates, nil, nil)
+    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
     engine.EnableTracing()
 
     _, err := engine.Render("main", nil)
@@ -561,10 +651,10 @@ func TestTemplateEngine_Tracing(t *testing.T) {
 func TestTracing_ConcurrentRenders(t *testing.T) {
     templates := map[string]string{
         "template1": `Result: {{ value }}`,
-        "template2": `Output: {{ value | upper }}`,
+        "template2": `Output: {{ toUpper(value) }}`,
     }
 
-    engine, _ := templating.New(templating.EngineTypeGonja, templates, nil, nil)
+    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
     engine.EnableTracing()
 
     // Run concurrent renders
@@ -608,7 +698,7 @@ The template engine provides detailed debug logging for filter operations, parti
 ### Enabling Filter Debug
 
 ```go
-engine, _ := templating.New(templating.EngineTypeGonja, templates, nil, nil)
+engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
 // Enable filter debug logging
 engine.EnableFilterDebug()
@@ -712,7 +802,7 @@ Filter debug logging is lightweight:
 
 ## Debug Filters
 
-The template engine provides filters specifically designed for debugging templates by inspecting variable contents and evaluating expressions.
+The template engine provides the `debug` filter for debugging templates by inspecting variable contents.
 
 ### debug Filter
 
@@ -766,58 +856,13 @@ Dumps variable structure as JSON-formatted HAProxy comments:
 - Optional label for identifying debug output
 - Works with any data type (objects, arrays, strings, numbers)
 
-### eval Filter
-
-Evaluates JSONPath expressions and shows the result with type information:
-
-```jinja2
-{%- set item = {
-    "name": "test-route",
-    "match": {
-        "method": "GET",
-        "headers": ["X-Auth", "X-Version"]
-    }
-} %}
-
-{{ item | eval("$.name") }}
-{# Output: test-route (string) #}
-
-{{ item | eval("$.match.headers | length") }}
-{# Output: 2 (int) #}
-
-{{ item | eval("$.match.method:exists") }}
-{# Output: true (bool) #}
-
-{{ item | eval("$.optional:exists") }}
-{# Output: false (bool) #}
-```
-
-**Use cases:**
-
-- Testing sort_by criteria before using them
-- Understanding why items are sorted in unexpected order
-- Verifying JSONPath expressions extract the right data
-- Debugging :exists checks and modifiers
-
-**Expression syntax:**
-
-- Uses same JSONPath syntax as sort_by/extract filters
-- Supports all modifiers: `:desc`, `:exists`, `| length`
-- Shows both value and Go type
-- Returns error string if evaluation fails
-
-### Combining Debug Filters
+### Example Usage
 
 ```jinja2
 {%- set items = [...] %}
 
 {# Before sorting #}
 {{ items | debug("unsorted") }}
-
-{# Test sort criteria #}
-{%- for item in items %}
-  {{ item | eval("$.priority:desc") }}
-{%- endfor %}
 
 {# After sorting #}
 {%- set sorted = items | sort_by(["$.priority:desc"]) %}
@@ -826,40 +871,30 @@ Evaluates JSONPath expressions and shows the result with type information:
 
 ### Implementation Notes
 
-**debug filter:**
-
 - Uses `json.MarshalIndent()` for formatting
 - Adds `#` prefix to every line
 - Falls back to `fmt.Sprintf("%v")` if JSON marshaling fails
 - Returns string (can be used in {{ }} expressions)
 
-**eval filter:**
-
-- Reuses same `evaluateExpression()` function as sort_by
-- Formats output as `value (type)`
-- Type information helps understand comparison behavior
-- Returns formatted string, not the evaluated value itself
-
 ### Performance Impact
 
-Both filters are intended for debugging only:
+The debug filter is intended for debugging only:
 
-- **debug**: JSON marshaling overhead (skip in production templates)
-- **eval**: Minimal overhead (same as one sort comparison)
+- JSON marshaling overhead (skip in production templates)
 - No impact on other filters or rendering when not used
 - Safe to leave in templates during development (just comment out)
 
 **Recommendation**: Use during template development and testing. Remove or comment out before production deployment.
 
-### Testing Debug Filters
+### Testing Debug Filter
 
 ```go
 func TestDebugFilter(t *testing.T) {
     templates := map[string]string{
-        "test": `{{ item | debug("test-item") }}`,
+        "test": `{{ debug(item, "test-item") }}`,
     }
 
-    engine, _ := templating.New(templating.EngineTypeGonja, templates, nil, nil)
+    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
     output, _ := engine.Render("test", map[string]interface{}{
         "item": map[string]interface{}{"key": "value"},
     })
@@ -869,242 +904,19 @@ func TestDebugFilter(t *testing.T) {
 }
 ```
 
-## Custom Tags
+## Caching Expensive Computations
 
-### compute_once Tag
-
-The `compute_once` custom tag optimizes template rendering by executing expensive computations only once per render, even when the template section is included multiple times.
-
-#### Implementation
-
-The tag is implemented as a Gonja control structure in `engine.go`:
+Use the `has_cached`, `get_cached`, `set_cached` functions to cache expensive computations:
 
 ```go
-type ComputeOnceControlStructure struct {
-    location *tokens.Token
-    varName  string          // Variable name to check
-    wrapper  *nodes.Wrapper  // Template body to execute
-}
-
-func (cs *ComputeOnceControlStructure) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock) error {
-    markerName := "_computed_" + cs.varName
-
-    if r.Environment.Context.Has(markerName) {
-        return nil  // Already computed, skip
-    }
-
-    // Execute body and mark as done
-    err := r.ExecuteWrapper(cs.wrapper)
-    if err != nil {
-        return err
-    }
-
-    r.Environment.Context.Set(markerName, true)
-    return nil
-}
+{% if !has_cached("analysis") %}
+    {% var result = analyzeRoutes(resources) %}
+    {% set_cached("analysis", result) %}
+{% end %}
+{% var analysis = get_cached("analysis") %}
 ```
 
-**Key design decisions:**
-
-1. **Marker-based tracking**: Uses hidden `_computed_<varname>` marker in context instead of checking variable state
-2. **Variable must pre-exist**: User creates namespace before compute_once block
-3. **Simple syntax**: Just `{% compute_once varname %}`, no "as" keyword
-4. **Context persistence**: Marker stored in context, cleared automatically between renders
-
-#### Usage Pattern
-
-```go
-// Template setup
-templates := map[string]string{
-    "main": `
-{%- set analysis = namespace(data=[]) %}
-{%- include "expensive" %}
-{%- include "expensive" %}`,
-    "expensive": `
-{%- compute_once analysis %}
-  {%- for item in items %}
-    {%- set analysis.data = analysis.data.append(item) %}
-  {%- endfor %}
-{%- endcompute_once %}`,
-}
-
-// The expensive loop runs only ONCE, not twice
-```
-
-#### Why This Design
-
-**Alternative considered**: Convention-based variable name inside body (e.g., expect body to set "result")
-
-**Problem**: Gonja's `{% set %}` inside `ExecuteWrapper()` creates local variables that don't persist to parent context.
-
-**Solution**: Require variable creation before compute_once, use marker to track execution state.
-
-**Benefits:**
-
-- Works with Gonja's scoping rules (not against them)
-- Clear ownership (user creates variable, compute_once guards execution)
-- Reliable detection (marker-based, not heuristic)
-- Simple error messages (can check if variable exists)
-
-#### Testing
-
-```go
-func TestComputeOnce_ExecutesOnlyOnce(t *testing.T) {
-    templates := map[string]string{
-        "main": `
-{%- set counter = namespace(value=0) %}
-{%- include "increment" -%}
-{%- include "increment" -%}
-{%- include "increment" -%}
-Result: {{ counter.value }}`,
-        "increment": `
-{%- compute_once counter %}
-  {%- set counter.value = counter.value + 1 %}
-{%- endcompute_once -%}`,
-    }
-
-    engine, _ := templating.New(templating.EngineTypeGonja, templates)
-    output, _ := engine.Render("main", nil)
-
-    // Without compute_once: counter.value would be 3
-    // With compute_once: counter.value is 1
-    assert.Contains(t, output, "Result: 1")
-}
-```
-
-#### Real-World Use Case
-
-Gateway API route analysis optimization (gateway.yaml:323-328, 499-504):
-
-```jinja2
-{#- Compute route analysis once per render (cached across all includes) #}
-{%- set analysis = namespace(path_groups={}, sorted_routes=[], all_routes=[]) %}
-{%- compute_once analysis %}
-  {%- from "analyze_routes" import analyze_routes %}
-  {{- analyze_routes(analysis, resources) -}}
-{%- endcompute_once %}
-```
-
-**Impact:** Reduces analyze_routes calls from 4 to 1 per render (75% reduction).
-
-#### Extension Pattern
-
-To add new custom tags, follow this pattern:
-
-1. **Define control structure type:**
-
-```go
-type MyCustomTag struct {
-    location *tokens.Token
-    // ... tag-specific fields
-    wrapper  *nodes.Wrapper
-}
-```
-
-2. **Implement Execute method:**
-
-```go
-func (t *MyCustomTag) Execute(r *exec.Renderer, tag *nodes.ControlStructureBlock) error {
-    // Tag logic here
-    return r.ExecuteWrapper(t.wrapper)
-}
-```
-
-3. **Implement parser:**
-
-```go
-func myCustomTagParser(p *parser.Parser, args *parser.Parser) (nodes.ControlStructure, error) {
-    // Parse tag syntax
-    wrapper, _, err := p.WrapUntil("endmycustomtag")
-    if err != nil {
-        return nil, err
-    }
-    return &MyCustomTag{wrapper: wrapper}, nil
-}
-```
-
-4. **Register in environment creation:**
-
-```go
-customControlStructures := map[string]parser.ControlStructureParser{
-    "compute_once": computeOnceParser,
-    "mycustomtag": myCustomTagParser,  // Add new tag
-}
-```
-
-## Adding Custom Filters
-
-Future feature - not yet implemented. This section describes the planned approach.
-
-### Design
-
-Custom filters extend Gonja's built-in filters:
-
-```go
-// Register custom filter
-engine.RegisterFilter("b64decode", func(in interface{}) (interface{}, error) {
-    str, ok := in.(string)
-    if !ok {
-        return nil, fmt.Errorf("b64decode: expected string, got %T", in)
-    }
-
-    decoded, err := base64.StdEncoding.DecodeString(str)
-    if err != nil {
-        return nil, fmt.Errorf("b64decode: %w", err)
-    }
-
-    return string(decoded), nil
-})
-
-// Use in template
-template := "Secret: {{ encoded_secret | b64decode }}"
-```
-
-### Common Filters to Add
-
-**Base64 operations:**
-
-```go
-func b64encode(in interface{}) (interface{}, error)
-func b64decode(in interface{}) (interface{}, error)
-```
-
-**JSONPath extraction:**
-
-```go
-func get_path(obj interface{}, path string) (interface{}, error)
-// Usage: {{ resource | get_path("metadata.namespace") }}
-```
-
-**Safe defaults:**
-
-```go
-func default_empty(in interface{}) (interface{}, error)
-// Returns empty string if nil/null, unlike Gonja's default filter
-```
-
-### Implementation Approach
-
-```go
-// engine.go
-type FilterFunc func(in interface{}, args ...interface{}) (interface{}, error)
-
-func (e *TemplateEngine) RegisterFilter(name string, fn FilterFunc) error {
-    if e.filters == nil {
-        e.filters = make(map[string]FilterFunc)
-    }
-
-    // Check for name collision
-    if _, exists := e.filters[name]; exists {
-        return fmt.Errorf("filter %s already registered", name)
-    }
-
-    e.filters[name] = fn
-
-    // Register with Gonja environment
-    return e.registerGonjaFilter(name, fn)
-}
-```
+**Impact:** Reduces expensive computation calls from N to 1 per render.
 
 ## Performance Optimization
 
@@ -1114,17 +926,17 @@ func (e *TemplateEngine) RegisterFilter(name string, fn FilterFunc) error {
 func BenchmarkTemplateEngine_Render(b *testing.B) {
     templates := map[string]string{
         "simple": "Hello {{ name }}!",
-        "loop": `{% for i in items %}{{ i }}{% endfor %}`,
+        "loop": `{% for _, i := range items %}{{ i }}{% end %}`,
         "complex": `
-            {% for user in users %}
+            {% for _, user := range users %}
                 Name: {{ user.name }}
-                Email: {{ user.email | lower }}
-                {% if user.admin %}Admin{% endif %}
-            {% endfor %}
+                Email: {{ toLower(user.email) }}
+                {% if user.admin %}Admin{% end %}
+            {% end %}
         `,
     }
 
-    engine, _ := templating.New(templating.EngineTypeGonja, templates)
+    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
     contexts := map[string]map[string]interface{}{
         "simple": {"name": "World"},
@@ -1190,92 +1002,16 @@ templates := map[string]string{
 // Good - break into logical pieces
 templates := map[string]string{
     "haproxy.cfg": `
-        {% include "global" %}
-        {% include "defaults" %}
-        {% include "frontends" %}
-        {% include "backends" %}
+        {{ render "global" }}
+        {{ render "defaults" }}
+        {{ render "frontends" }}
+        {{ render "backends" }}
     `,
     "global": "global\n    daemon",
     "defaults": "defaults\n    mode http",
     "frontends": "...",
     "backends": "...",
 }
-```
-
-## Gonja Integration Notes
-
-### Gonja v2 vs v1
-
-This package uses Gonja v2 (`github.com/nikolalohinski/gonja/v2`):
-
-- More active maintenance
-- Better error messages
-- Compatible with Jinja2 template syntax
-- Requires Go 1.21+
-
-### Gonja Limitations
-
-**Not supported:**
-
-- Template inheritance (`{% extends %}`) - requires file system
-- Automatic escaping - must be done manually
-- Async filters - all filters are synchronous
-- Sandboxing - all functions have full access
-
-**Workarounds:**
-
-- Template inheritance: Flatten templates at load time
-- Escaping: Add custom filters or escape in context preparation
-- Async: Prepare all data before rendering
-- Sandboxing: Not needed for our use case (trusted templates)
-
-### Gonja Quirks
-
-**CRITICAL: Escape sequences in string literals not supported:**
-
-```jinja2
-{{ "\n" }}  {# Does NOT produce a newline! #}
-{{ "Line 1\nLine 2" }}  {# Output: Line 1\nLine 2 (literal backslash-n) #}
-```
-
-Gonja does not interpret escape sequences (`\n`, `\t`, etc.) in string literals. The backslash-n is output as literal characters or ignored entirely. This is a fundamental limitation of Gonja.
-
-**Workaround**: Use actual newlines in templates or pass newlines through context variables.
-
-**Whitespace handling:**
-
-```jinja2
-{% if true %}
-    text
-{% endif %}
-```
-
-Produces leading whitespace. Use:
-
-```jinja2
-{%- if true -%}
-    text
-{%- endif -%}
-```
-
-**Map access:**
-
-```jinja2
-{{ user.name }}          {# Dict-style access #}
-{{ user["name"] }}       {# Map-style access #}
-```
-
-Both work, dict-style is preferred.
-
-**Loop variable:**
-
-```jinja2
-{% for item in items %}
-    {{ loop.index }}    {# 1-indexed #}
-    {{ loop.index0 }}   {# 0-indexed #}
-    {{ loop.first }}    {# boolean #}
-    {{ loop.last }}     {# boolean #}
-{% endfor %}
 ```
 
 ## Troubleshooting
@@ -1301,7 +1037,7 @@ if !engine.HasTemplate(templateName) {
 
 **Diagnosis:**
 
-1. Check for silent errors in template (use `{% if var is defined %}`)
+1. Check for silent errors in template (use `{% if var != nil %}`)
 2. Verify context contains expected data
 3. Check for whitespace stripping (`{%-` and `-%}`)
 
@@ -1361,40 +1097,243 @@ if duration > 100*time.Millisecond {
 
 ## Extension Considerations
 
-### Adding New Engine Type
+### Scriggo Fork
 
-Currently only Gonja is supported. To add another engine:
+This project uses a forked version of Scriggo. The fork adds:
+
+1. **Native `{% include %}` statement**: Syntax for static includes:
+
+   ```go
+   {% include "partial.txt" %}  {# Compile-time include #}
+   ```
+
+2. **Bug fixes and compatibility improvements** for use with this template engine.
+
+The fork is available on GitLab and configured via a replace directive in go.mod:
 
 ```go
-// types.go
-const (
-    EngineTypeGonja EngineType = iota
-    EngineTypeCustom  // New engine
-)
-
-// engine.go
-func New(engineType EngineType, templates map[string]string) (*TemplateEngine, error) {
-    switch engineType {
-    case EngineTypeGonja:
-        return newGonjaEngine(templates)
-    case EngineTypeCustom:
-        return newCustomEngine(templates)
-    default:
-        return nil, &UnsupportedEngineError{EngineType: engineType}
-    }
-}
+replace github.com/open2b/scriggo => gitlab.com/haproxy-template-ic/scriggo v0.0.0-20251212162249-9274cec0fd7b
 ```
 
-**Considerations:**
+### Include: Static vs Dynamic
 
-- Must support pre-compilation
-- Must be thread-safe
-- Should have similar performance characteristics
-- Error types must map to existing error types
+The Scriggo engine provides two ways to include templates:
+
+| Pattern | Syntax | Evaluation | Use Case |
+|---------|--------|------------|----------|
+| Static render | `{{ render "literal/path" }}` | Runtime | Fixed template paths |
+| Dynamic render | `{{ render(variable) }}` | Runtime | Computed template names |
+| Glob render | `{{ render_glob "pattern-*" }}` | Runtime | Pattern-matched templates |
+
+**Static renders** (`render` function with string literal):
+
+- Path is a string literal
+- Template is resolved at runtime
+
+```go
+{{ render "header" }}      {# Valid - literal path #}
+{{ render "partials/footer" }} {# Valid - literal path #}
+```
+
+**Dynamic renders** (`render` function with variable):
+
+- Path can be a variable or expression
+- Template is resolved at runtime
+- Required for computed template names
+
+```go
+{% for _, name := range glob_match(templateSnippets, "backend-*") %}
+  {{ render(name) }}  {# Dynamic - name is a variable #}
+{% end %}
+```
+
+**Glob renders** (`render_glob` function):
+
+- Pattern-based template inclusion
+- Matches and renders all templates matching the glob pattern
+
+```go
+{{ render_glob "backend-*" }}  {# Renders all backend-* templates #}
+```
+
+### Scriggo Template Syntax
+
+Scriggo uses Go template syntax:
+
+- Loops: `{% for x := range items %}...{% end %}`
+- Conditionals: `{% if cond %}...{% end %}`
+- Variables: `{{ .name }}` with leading dot
+- **Imports**: `{% import "template" for FuncName %}`
+
+**Pipe operator**: Our Scriggo fork supports pipe syntax for filters. The pipe operator passes the left-hand expression as the first argument to the function on the right:
+
+   ```go
+   {{ user.name | uppercase() }}        {# Same as: uppercase(user.name) #}
+   {{ items | join(", ") }}             {# Same as: join(items, ", ") #}
+   {{ value | fallback("N/A") }}        {# Same as: fallback(value, "N/A") #}
+   {{ price | format("%.2f") | prefix("$") }}  {# Chaining supported #}
+   ```
+
+   Note: The fallback function is named `fallback` (not `default`) because `default` is a reserved Go keyword.
+
+Both function-call and pipe syntax work:
+
+- Pipe syntax: `{{ value | strip() }}`
+- Function syntax: `{{ strip(value) }}`
+
+### Filter and Function Name Constants
+
+Filter and function names are defined as constants in `filter_names.go`:
+
+```go
+// Filters
+const (
+    FilterSortBy    = "sort_by"
+    FilterGlobMatch = "glob_match"
+    FilterStrip     = "strip"
+    FilterTrim      = "trim"
+    FilterB64Decode = "b64decode"
+    FilterDebug     = "debug"
+)
+
+// Functions
+const (
+    FuncFail      = "fail"
+    FuncMerge     = "merge"
+    FuncKeys      = "keys"
+    FuncHasCached = "has_cached"
+    FuncGetCached = "get_cached"
+    FuncSetCached = "set_cached"
+)
+```
+
+### Scriggo Functions
+
+Scriggo provides functions designed to support idiomatic Go patterns:
+
+#### Dict Operations
+
+**`merge(dict, updates)`** - Merges two maps, returning a new map:
+
+```go
+{% var config = map[string]interface{}{"a": 1, "b": 2} %}
+{% config = merge(config, map[string]interface{}{"b": 3, "c": 4}) %}
+{# Result: {"a": 1, "b": 3, "c": 4} #}
+```
+
+**`keys(dict)`** - Returns sorted keys from a map:
+
+```go
+{% var config = map[string]interface{}{"c": 3, "a": 1, "b": 2} %}
+{% for _, key := range keys(config) %}
+{{ key }}: {{ config[key] }}
+{% end %}
+{# Output: a: 1, b: 2, c: 3 (sorted) #}
+```
+
+#### Cache Functions
+
+These functions enable the compute_once pattern for expensive operations:
+
+**`has_cached(key)`** - Check if a value is cached:
+
+```go
+{% if !has_cached("gateway_analysis") %}
+    {# expensive computation only runs once #}
+    {% var result = analyzeRoutes(resources) %}
+    {% set_cached("gateway_analysis", result) %}
+{% end %}
+```
+
+**`get_cached(key)`** - Retrieve a cached value:
+
+```go
+{% var analysis = get_cached("gateway_analysis") %}
+{% if analysis != nil %}
+    {# use cached result #}
+{% end %}
+```
+
+**`set_cached(key, value)`** - Store a value in the cache:
+
+```go
+{% set_cached("computed_routes", routes) %}
+```
+
+**Cache Characteristics:**
+
+- Cache is per-render (isolated between `Render()` calls)
+- Supports any value type (maps, slices, structs)
+- Zero overhead when not used
+- Thread-safe for concurrent template sections
+
+### Type Assertions
+
+In Scriggo templates, type assertions are needed when working with `interface{}` (any) values in contexts that require concrete types.
+
+**When type assertions ARE required:**
+
+1. **Ranging over `coalesce()` results** - `coalesce()` returns `interface{}`:
+
+   ```go
+   {%- for _, item := range coalesce(map["key"], []any{}).([]any) -%}
+   ```
+
+2. **Accessing fields on map values** - map indexing returns `interface{}`:
+
+   ```go
+   {%- var data = secret.(map[string]any)["data"].(map[string]any) -%}
+   ```
+
+3. **String operations on interface values**:
+
+   ```go
+   {%- var name = item["name"].(string) + "_suffix" -%}
+   ```
+
+**When type assertions are NOT required:**
+
+1. **Using typed ResourceStore methods** - methods like `Fetch()` return concrete types:
+
+   ```go
+   {%- for _, ep := range resources.endpoints.Fetch(svcName) -%}
+   ```
+
+   `Fetch()` returns `[]interface{}`, a concrete slice type.
+
+2. **Simple variable access** - variables already have their type:
+
+   ```go
+   {{ httpsPort default 8443 }}
+   ```
+
+3. **Template output** - `{{ }}` handles any type:
+
+   ```go
+   {{ item["name"] }}  {# No assertion needed for output #}
+   ```
+
+**Rule of thumb:**
+
+- Check function return types in `filters_scriggo.go`
+- If a function returns `interface{}`, assertion is needed for operations
+- If a function returns a concrete type like `[]interface{}`, no assertion needed
+
+### Engine Interface Requirements
+
+Engines must:
+
+- Implement the `Engine` interface in `engine_interface.go`
+- Support pre-compilation (compile at init, not at render time)
+- Be thread-safe for concurrent rendering
+- Use filter name constants from `filter_names.go`
+- Error types must use existing error types (`CompilationError`, `RenderError`, etc.)
 
 ## Resources
 
 - API documentation: `pkg/templating/README.md`
-- Gonja documentation: <https://github.com/nikolalohinski/gonja>
+- Scriggo documentation: <https://scriggo.com/templates>
+- Scriggo fork: `gitlab.com/haproxy-template-ic/scriggo` (fork with `{% include %}` statement)
+- Scriggo upstream documentation: <https://scriggo.com/templates>
 - Jinja2 template documentation: <https://jinja.palletsprojects.com/>
 - HAProxy template examples: `/examples/templates/`

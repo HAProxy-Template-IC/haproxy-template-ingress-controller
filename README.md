@@ -10,7 +10,7 @@
 [![Build Status](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/pipeline.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/pipelines)
 [![Coverage](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/coverage.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/graphs/main/charts)
 
-A template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Gonja](https://github.com/NikolaLohinski/gonja) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
+A template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
 > **Documentation**: <https://haproxy-template-ic.github.io/>
 
@@ -144,4 +144,4 @@ This project builds on open source software:
 
 - [Kubernetes client-go](https://github.com/kubernetes/client-go) - Kubernetes API client library
 - [HAProxy client-native](https://github.com/haproxytech/client-native) - HAProxy Dataplane API client
-- [Gonja](https://github.com/nikolalohinski/gonja) - Jinja2-like templating engine for Go
+- [Scriggo](https://scriggo.com/) - Go-native templating engine

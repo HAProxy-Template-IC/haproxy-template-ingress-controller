@@ -16,8 +16,11 @@ package templating
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // PathResolver resolves auxiliary file names to absolute paths based on file type.
@@ -105,6 +108,40 @@ func (pr *PathResolver) GetPath(args ...interface{}) (interface{}, error) {
 	return absolutePath, nil
 }
 
+// convertToString converts any value to its string representation.
+// This is used by shared filter implementations for lenient type conversion.
+//
+// Conversion rules:
+//   - nil → ""
+//   - string → unchanged
+//   - int → decimal representation
+//   - int64 → decimal representation
+//   - float64 → decimal representation
+//   - bool → "true" or "false"
+//   - other → fmt.Sprintf("%v", value)
+func convertToString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	case int:
+		return strconv.Itoa(val)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 // GlobMatch filters a list of strings by glob pattern.
 //
 // Usage in templates:
@@ -169,7 +206,8 @@ func GlobMatch(in interface{}, args ...interface{}) (interface{}, error) {
 	return result, nil
 }
 
-// B64Decode decodes a base64-encoded string.
+// B64Decode decodes a base64-encoded value.
+// The input is converted to string using lenient type conversion.
 //
 // Usage in templates:
 //
@@ -177,19 +215,16 @@ func GlobMatch(in interface{}, args ...interface{}) (interface{}, error) {
 //	{{ secret.data.password | b64decode }}
 //
 // Parameters:
-//   - in: Base64-encoded string to decode
+//   - in: Base64-encoded value to decode (converted to string)
 //
 // Returns:
 //   - Decoded string
-//   - Error if input is not a string or decoding fails
+//   - Error if decoding fails
 //
 // Note: Kubernetes secrets automatically base64-encode all data values,
 // so this filter is needed to access the plain-text content.
 func B64Decode(in interface{}, args ...interface{}) (interface{}, error) {
-	str, ok := in.(string)
-	if !ok {
-		return nil, fmt.Errorf("b64decode: input must be a string, got %T", in)
-	}
+	str := convertToString(in)
 
 	decoded, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
@@ -197,4 +232,52 @@ func B64Decode(in interface{}, args ...interface{}) (interface{}, error) {
 	}
 
 	return string(decoded), nil
+}
+
+// Strip removes leading and trailing whitespace from a string.
+//
+// This is the shared core implementation used by the Scriggo engine.
+//
+// Usage in templates:
+//
+//	{{ "  hello world  " | strip }}  → "hello world"
+//
+// Parameters:
+//   - s: String to strip whitespace from
+//
+// Returns:
+//   - String with leading and trailing whitespace removed
+func Strip(s string) string {
+	return strings.TrimSpace(s)
+}
+
+// Debug formats a value as JSON-formatted HAProxy comments.
+//
+// This is the shared core implementation used by the Scriggo engine.
+// Useful for debugging template data during development.
+//
+// Usage in templates:
+//
+//	{{ routes | debug }}           → "# DEBUG:\n# [...]"
+//	{{ routes | debug("label") }}  → "# DEBUG label:\n# [...]"
+//
+// Parameters:
+//   - value: Any value to debug (will be JSON serialized)
+//   - label: Optional label to identify the debug output
+//
+// Returns:
+//   - Formatted string with JSON data as HAProxy comments
+func Debug(value interface{}, label string) string {
+	// Marshal to JSON with indentation
+	data, err := json.MarshalIndent(value, "# ", "  ")
+	if err != nil {
+		// Fallback to simple string representation
+		data = []byte(fmt.Sprintf("%v", value))
+	}
+
+	// Format as HAProxy comments
+	if label != "" {
+		return fmt.Sprintf("# DEBUG %s:\n# %s\n", label, string(data))
+	}
+	return fmt.Sprintf("# DEBUG:\n# %s\n", string(data))
 }

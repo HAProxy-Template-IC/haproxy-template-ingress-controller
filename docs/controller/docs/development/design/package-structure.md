@@ -90,7 +90,7 @@ haproxy-template-ic/
 │   │   └── statecache.go    # Event-driven state tracking for debug endpoints
 │   └── templating/          # Template engine library
 │       ├── engine.go        # TemplateEngine with pre-compilation and rendering
-│       ├── types.go         # Engine type definitions (EngineTypeGonja)
+│       ├── types.go         # Engine type definitions
 │       ├── errors.go        # Custom error types
 │       ├── loader.go        # Template loading utilities
 │       ├── loader_test.go   # Loader tests
@@ -264,7 +264,7 @@ Both watchers use the event-driven architecture: changes publish events to Event
 
 - `pkg/templating`: Low-level template engine library providing template compilation and rendering
   - Pre-compiles templates at initialization for optimal runtime performance
-  - Wraps Gonja v2 for Jinja2-compatible template syntax
+  - Uses Scriggo for Go-native template syntax with dynamic include support
   - Provides TemplateEngine with Render(templateName, context) API
   - Custom error types for compilation, rendering, and template-not-found scenarios
   - Custom filters (b64decode) and context methods (pathResolver) are integrated in controller rendering components

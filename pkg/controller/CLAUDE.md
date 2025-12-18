@@ -506,7 +506,7 @@ func (c *Controller) Run(ctx context.Context) error {
 ```go
 func TestRendererComponent(t *testing.T) {
     bus := events.NewEventBus(100)
-    engine, _ := templating.New(templating.EngineTypeGonja, testTemplates)
+    engine, _ := templating.New(templating.EngineTypeScriggo, testTemplates, nil, nil, nil)
     renderer := NewRendererComponent(bus, engine)
 
     // Subscribe to output events

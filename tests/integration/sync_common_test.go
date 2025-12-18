@@ -224,6 +224,26 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	require.NoError(t, err, "pushing initial config should succeed")
 	t.Logf("Pushed initial config: %s", tc.initialConfigFile)
 
+	// Step 2.5: Wait for initial config to be applied
+	// The HAProxy reload triggered by PushRawConfiguration may take time to complete,
+	// especially in resource-constrained CI environments (DinD). We must wait until
+	// the config is actually applied before proceeding to sync, otherwise the sync
+	// will see the old default config and generate incorrect operations.
+	//
+	// We detect that the config is applied by checking that the default "frontend status"
+	// section (from HAProxy's default config) is no longer present - our test configs
+	// don't include this frontend.
+	err = WaitForCondition(ctx, FastWaitConfig(), func(ctx context.Context) (bool, error) {
+		currentConfig, err := client.GetRawConfiguration(ctx)
+		if err != nil {
+			return false, nil // Retry on error
+		}
+		// The default HAProxy config contains "frontend status" which our test configs don't have
+		return !strings.Contains(currentConfig, "frontend status"), nil
+	})
+	require.NoError(t, err, "initial config should be applied within timeout")
+	t.Logf("Initial config applied successfully")
+
 	// Step 3: Sync to desired configuration using high-level API
 	// This replaces the manual parse/compare/apply steps
 	desiredConfigContent := LoadTestConfig(t, tc.desiredConfigFile)

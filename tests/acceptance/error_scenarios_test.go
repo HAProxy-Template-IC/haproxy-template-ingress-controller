@@ -1360,15 +1360,19 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			// This is the "partial failure" case where 0/0 endpoints receive config
 			t.Log("Testing deployment with no HAProxy endpoints (0/0 partial case)...")
 			for i := 1; i <= 3; i++ {
-				err = UpdateHAProxyTemplateConfigTemplate(ctx, client, namespace, ControllerCRDName, VersionedTemplate(200+i))
+				version := 200 + i
+				err = UpdateHAProxyTemplateConfigTemplate(ctx, client, namespace, ControllerCRDName, VersionedTemplate(version))
 				require.NoError(t, err)
-				t.Logf("Config update %d applied", i)
-				time.Sleep(1 * time.Second) // Intentional delay between rapid updates
-			}
+				t.Logf("Config update %d applied, waiting for controller to process...", i)
 
-			// Wait for processing by checking for final config version
-			err = debugClient.WaitForRenderedConfigContains(ctx, "# version 203", 30*time.Second)
-			require.NoError(t, err, "Final config update should be processed")
+				// Wait for each version to be processed before applying the next update.
+				// This is critical in CI (DinD) environments where watch event propagation
+				// and controller processing can be slower than locally.
+				expectedVersion := fmt.Sprintf("# version %d", version)
+				err = debugClient.WaitForRenderedConfigContains(ctx, expectedVersion, 60*time.Second)
+				require.NoError(t, err, "Config update %d (version %d) should be processed", i, version)
+				t.Logf("Config version %d confirmed in rendered config", version)
+			}
 
 			// Verify controller is still operational
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 30*time.Second)

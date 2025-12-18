@@ -352,8 +352,8 @@ func TestTemplateEngine_Render(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            engine, err := templating.New(templating.EngineTypeGonja,
-                map[string]string{"test": tt.template})
+            engine, err := templating.New(templating.EngineTypeScriggo,
+                map[string]string{"test": tt.template}, nil, nil, nil)
             require.NoError(t, err)
 
             got, err := engine.Render("test", tt.context)
@@ -390,7 +390,7 @@ Test event adapters with mock EventBus:
 ```go
 func TestRendererComponent(t *testing.T) {
     bus := events.NewEventBus(100)
-    engine, _ := templating.New(templating.EngineTypeGonja, templates)
+    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
     renderer := NewRendererComponent(bus, engine)
 
     // Subscribe to output events

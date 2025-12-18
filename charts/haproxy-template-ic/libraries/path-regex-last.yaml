@@ -16,9 +16,24 @@
 templateSnippets:
   frontend-routing-logic:
     template: |
-      {#- Frontend routing logic with qualifier system and performance-first ordering #}
-      {#- Supports BACKEND and MULTIBACKEND qualifiers #}
-      {#- Overrides base library: Exact > Prefix > Regex (regex moved to last) #}
+      {#-
+        Frontend Routing Logic (Performance-First Ordering)
+
+        Purpose: Alternative path matching order optimized for performance.
+
+        Overrides: base.yaml frontend-routing-logic
+
+        Path Matching Order:
+          1. Exact match (path-exact.map) - fastest
+          2. Prefix-exact match (path-prefix-exact.map)
+          3. Prefix match (path-prefix.map)
+          4. Regex match (path-regex.map) - slowest, evaluated last
+
+        Why: Regex matching is expensive. This ordering evaluates faster
+        matchers first, only falling back to regex when necessary.
+
+        Enable: Set controller.templateLibraries.pathRegexLast.enabled=true
+      -#}
       # path-regex-last/frontend-routing-logic
 
       # Set variables for path-based routing

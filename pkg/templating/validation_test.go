@@ -7,25 +7,26 @@ import (
 )
 
 func TestValidateTemplate_Success(t *testing.T) {
+	// Test Scriggo-compatible templates
 	tests := []struct {
 		name     string
 		template string
 	}{
 		{
 			name:     "simple template",
-			template: "Hello {{ name }}!",
+			template: "Hello World!",
 		},
 		{
 			name:     "template with loop",
-			template: "{% for item in items %}{{ item }}{% endfor %}",
+			template: "{% for _, i := range seq(3) %}{{ i }}{% end %}",
 		},
 		{
 			name:     "template with conditional",
-			template: "{% if enabled %}Active{% else %}Inactive{% endif %}",
+			template: "{% if true %}Active{% else %}Inactive{% end %}",
 		},
 		{
-			name:     "template with filter",
-			template: "{{ value|upper }}",
+			name:     "template with builtin function",
+			template: "{{ toUpper(\"hello\") }}",
 		},
 		{
 			name:     "empty template",
@@ -37,13 +38,13 @@ func TestValidateTemplate_Success(t *testing.T) {
 		},
 		{
 			name:     "HAProxy config template",
-			template: "frontend {{ frontend_name }}\n  bind {{ bind_address }}:{{ port }}\n",
+			template: "frontend test\n  bind 0.0.0.0:80\n",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateTemplate(tt.template, EngineTypeGonja)
+			err := ValidateTemplate(tt.template, EngineTypeScriggo)
 			if err != nil {
 				t.Errorf("ValidateTemplate() error = %v, want nil", err)
 			}
@@ -81,7 +82,7 @@ func TestValidateTemplate_InvalidSyntax(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateTemplate(tt.template, EngineTypeGonja)
+			err := ValidateTemplate(tt.template, EngineTypeScriggo)
 			if err == nil {
 				t.Errorf("ValidateTemplate() expected error, got nil")
 				return
@@ -94,7 +95,7 @@ func TestValidateTemplate_InvalidSyntax(t *testing.T) {
 }
 
 func TestValidateTemplate_UnsupportedEngine(t *testing.T) {
-	// Create an invalid engine type (anything other than EngineTypeGonja)
+	// Create an invalid engine type (anything other than EngineTypeScriggo)
 	invalidEngine := EngineType(999)
 
 	err := ValidateTemplate("{{ test }}", invalidEngine)
@@ -109,10 +110,10 @@ func TestValidateTemplate_UnsupportedEngine(t *testing.T) {
 	}
 }
 
-func TestValidateTemplate_GonjaEngine(t *testing.T) {
-	// Test that EngineTypeGonja works correctly
-	err := ValidateTemplate("{{ variable }}", EngineTypeGonja)
+func TestValidateTemplate_ScriggoEngine(t *testing.T) {
+	// Test that EngineTypeScriggo works correctly with static content
+	err := ValidateTemplate("Hello World", EngineTypeScriggo)
 	if err != nil {
-		t.Errorf("ValidateTemplate() with EngineTypeGonja error = %v, want nil", err)
+		t.Errorf("ValidateTemplate() with EngineTypeScriggo error = %v, want nil", err)
 	}
 }

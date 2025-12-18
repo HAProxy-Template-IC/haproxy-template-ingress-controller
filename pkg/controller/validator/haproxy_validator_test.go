@@ -124,7 +124,7 @@ backend servers
 
 	// Wait for validation completed event
 	// Use longer timeout for race detector (which makes execution 2-10x slower)
-	timeout := time.After(10 * time.Second)
+	timeout := time.After(30 * time.Second)
 	var validationCompleted *events.ValidationCompletedEvent
 	sawRendered := false
 
@@ -210,7 +210,7 @@ backend servers
 
 	// Wait for validation failed event
 	// Use longer timeout for race detector (which makes execution 2-10x slower)
-	timeout := time.After(10 * time.Second)
+	timeout := time.After(30 * time.Second)
 	var validationFailed *events.ValidationFailedEvent
 
 	for {

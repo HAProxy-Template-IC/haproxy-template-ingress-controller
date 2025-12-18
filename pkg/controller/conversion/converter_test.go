@@ -162,7 +162,6 @@ func TestConvertSpec(t *testing.T) {
 					"common_defaults": {
 						Name:     "common_defaults",
 						Template: "timeout connect 5s",
-						Priority: 500,
 					},
 				},
 				Maps: map[string]config.MapFile{
@@ -329,11 +328,6 @@ func TestParseLabelSelector(t *testing.T) {
 // boolPtr returns a pointer to a bool value (helper for tests).
 func boolPtr(b bool) *bool {
 	return &b
-}
-
-// intPtr returns a pointer to an int value (helper for tests).
-func intPtr(i int) *int {
-	return &i
 }
 
 func TestParseCRD(t *testing.T) {
@@ -578,42 +572,6 @@ func TestConvertSpec_WithPostProcessors(t *testing.T) {
 	require.Contains(t, cfg.SSLCertificates, "default")
 	require.Len(t, cfg.SSLCertificates["default"].PostProcessing, 1)
 	assert.Equal(t, "pem_format", cfg.SSLCertificates["default"].PostProcessing[0].Type)
-}
-
-func TestConvertSpec_WithTemplateSnippetPriority(t *testing.T) {
-	spec := v1alpha1.HAProxyTemplateConfigSpec{
-		CredentialsSecretRef: v1alpha1.SecretReference{
-			Name: "haproxy-creds",
-		},
-		PodSelector: v1alpha1.PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		HAProxyConfig: v1alpha1.HAProxyConfig{
-			Template: "global\n  daemon",
-		},
-		TemplateSnippets: map[string]v1alpha1.TemplateSnippet{
-			"high_priority": {
-				Template: "option httplog",
-				Priority: intPtr(100),
-			},
-			"default_priority": {
-				Template: "timeout connect 5s",
-				// No priority - should default to 500
-			},
-			"low_priority": {
-				Template: "option tcplog",
-				Priority: intPtr(900),
-			},
-		},
-	}
-
-	cfg, err := ConvertSpec(&spec)
-	require.NoError(t, err)
-
-	// Check priorities
-	assert.Equal(t, 100, cfg.TemplateSnippets["high_priority"].Priority)
-	assert.Equal(t, 500, cfg.TemplateSnippets["default_priority"].Priority)
-	assert.Equal(t, 900, cfg.TemplateSnippets["low_priority"].Priority)
 }
 
 func TestConvertSpec_ExtraContextError(t *testing.T) {

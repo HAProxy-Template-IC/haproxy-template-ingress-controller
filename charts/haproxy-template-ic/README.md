@@ -7,7 +7,7 @@ This Helm chart deploys the HAProxy Template Ingress Controller, which manages H
 The HAProxy Template Ingress Controller:
 
 - Watches Kubernetes Ingress and/or Gateway API resources
-- Renders Jinja2 templates to generate [HAProxy](https://www.haproxy.org/) configurations
+- Renders Scriggo templates to generate [HAProxy](https://www.haproxy.org/) configurations
 - Deploys configurations to HAProxy pods via [Dataplane API](https://github.com/haproxytech/dataplaneapi)
 - Supports cross-namespace HAProxy pod management
 - Template library system for modular feature support
@@ -78,7 +78,7 @@ The controller configuration is defined in `controller.config` and includes:
 
 - **podSelector**: Labels to identify HAProxy pods to manage
 - **watchedResources**: Kubernetes resources to watch (Ingress, Service, EndpointSlice, Secret)
-- **templateSnippets**: Reusable Jinja2 template fragments
+- **templateSnippets**: Reusable template fragments
 - **maps**: HAProxy map file templates
 - **files**: Auxiliary files (error pages, etc.)
 - **haproxyConfig**: Main HAProxy configuration template

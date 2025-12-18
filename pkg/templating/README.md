@@ -2,14 +2,15 @@
 
 ## Overview
 
-This package provides a Go template engine with Jinja2-like syntax through Gonja v2. Templates are pre-compiled at initialization for fast rendering and early error detection.
+This package provides template rendering using Scriggo, a Go-native template engine.
 
 **Key features:**
 
 - Pre-compilation at startup (fail-fast, microsecond rendering)
-- Jinja2/Django template syntax
+- Go template syntax
 - Thread-safe concurrent rendering
 - Custom filters for HAProxy use cases
+- Dynamic include support
 
 ## Quick Start
 
@@ -27,7 +28,8 @@ func main() {
         "config":   "server {{ host }}:{{ port }}",
     }
 
-    engine, err := templating.New(templating.EngineTypeGonja, templates)
+    // EngineTypeScriggo is the default and recommended engine
+    engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
     if err != nil {
         log.Fatalf("failed to create engine: %v", err)
     }
@@ -105,7 +107,7 @@ filters := map[string]templating.FilterFunc{
     },
 }
 
-engine, err := templating.NewWithFilters(templating.EngineTypeGonja, templates, filters)
+engine, err := templating.NewWithFilters(templating.EngineTypeScriggo, templates, filters)
 ```
 
 ### Built-in Custom Filters
@@ -127,6 +129,31 @@ engine, err := templating.NewWithFilters(templating.EngineTypeGonja, templates, 
 - `:exists` - Sort by field presence
 - `| length` - Sort by collection/string length
 
+### Built-in Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `fail(msg)` | Stop rendering with error | `{% fail("Missing required field") %}` |
+| `merge(dict, updates)` | Merge two maps | `{% config = merge(config, updates) %}` |
+| `keys(dict)` | Get sorted map keys | `{% for _, k := range keys(config) %}` |
+| `has_cached(key)` | Check if value is cached | `{% if !has_cached("analysis") %}` |
+| `get_cached(key)` | Retrieve cached value | `{% var data = get_cached("analysis") %}` |
+| `set_cached(key, val)` | Store value in cache | `{% set_cached("analysis", result) %}` |
+
+**Cache Functions:**
+
+The cache functions enable expensive computations to run only once per render:
+
+```go
+{% if !has_cached("gateway_analysis") %}
+    {% var result = analyzeRoutes(resources) %}
+    {% set_cached("gateway_analysis", result) %}
+{% end %}
+{% var analysis = get_cached("gateway_analysis") %}
+```
+
+Cache is per-render (isolated between `Render()` calls) and supports any value type.
+
 **pathResolver.GetPath()** - Context method for file path resolution:
 
 ```jinja2
@@ -135,57 +162,53 @@ engine, err := templating.NewWithFilters(templating.EngineTypeGonja, templates, 
 {{ pathResolver.GetPath("error.http", "file") }}  {# /etc/haproxy/general/error.http #}
 ```
 
-## Template Syntax
+## Template Syntax (Scriggo)
 
-Templates use Gonja v2 with Jinja2-like syntax. See [Gonja Documentation](https://github.com/nikolalohinski/gonja) for complete reference.
+Scriggo uses Go template syntax. See [Scriggo Documentation](https://scriggo.com/templates) for complete reference.
 
 **Variables:**
 
-```jinja2
-{{ variable_name }}
+```go
+{{ name }}
 {{ user.name }}
 {{ items[0] }}
 ```
 
-**Filters:**
+**Functions (Scriggo uses function calls, not pipe syntax):**
 
-```jinja2
-{{ text | upper }}
-{{ value | default("N/A") }}
-{{ items | join(", ") }}
+```go
+{{ strip(value) }}
+{{ coalesce(value, "default") }}
+{{ join(items, ", ") }}
 ```
 
 **Control Structures:**
 
-```jinja2
-{% if condition %}...{% endif %}
-{% for item in items %}...{% endfor %}
+```go
+{% if condition %}...{% end %}
+{% for _, item := range items %}...{% end %}
 ```
 
-**Loop Variables:** `loop.index`, `loop.index0`, `loop.first`, `loop.last`, `loop.length`
+**Variable Declaration:**
+
+```go
+{% var count = 0 %}
+{% count = count + 1 %}
+```
 
 **Whitespace Control:** Use `{%-` and `-%}` to strip whitespace.
 
-## Custom Tags
+## Caching Expensive Computations
 
-### compute_once
+Use `has_cached`, `get_cached`, `set_cached` for compute-once patterns:
 
-Executes expensive computations only once per render, even across multiple includes:
-
-```jinja2
-{%- set analysis = namespace(data=[]) %}
-{%- compute_once analysis %}
-  {# Expensive computation - only runs once #}
-  {%- for item in large_dataset %}
-    {%- set analysis.data = analysis.data.append(process(item)) %}
-  {%- endfor %}
-{%- endcompute_once %}
+```go
+{% if !has_cached("analysis") %}
+    {% var result = analyzeRoutes(resources) %}
+    {% set_cached("analysis", result) %}
+{% end %}
+{% var analysis = get_cached("analysis") %}
 ```
-
-**Requirements:**
-
-- Variable must be created before the `compute_once` block
-- Use `namespace()` for mutable state
 
 **Performance:** Reduces redundant computations by 75%+ in multi-include scenarios.
 
@@ -215,14 +238,14 @@ engine.DisableFilterDebug()
 
 ```go
 // Good - compile once, reuse
-engine, err := templating.New(templating.EngineTypeGonja, templates)
+engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 for _, ctx := range contexts {
     output, _ := engine.Render("template", ctx)
 }
 
 // Bad - recompiles every time
 for _, ctx := range contexts {
-    engine, _ := templating.New(templating.EngineTypeGonja, templates)
+    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
     output, _ := engine.Render("template", ctx)
 }
 ```
@@ -230,7 +253,7 @@ for _, ctx := range contexts {
 **2. Check compilation errors early:**
 
 ```go
-engine, err := templating.New(templating.EngineTypeGonja, templates)
+engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 if err != nil {
     var compErr *templating.CompilationError
     if errors.As(err, &compErr) {
@@ -239,17 +262,17 @@ if err != nil {
 }
 ```
 
-**3. Use default filter for optional values:**
+**3. Use coalesce for optional values (Scriggo):**
 
-```jinja2
-timeout connect {{ timeout_connect | default("5s") }}
+```go
+timeout connect {{ coalesce(timeout_connect, "5s") }}
 ```
 
 **4. Break large templates into pieces:**
 
 ```go
 templates := map[string]string{
-    "haproxy.cfg": `{% include "global" %}{% include "backends" %}`,
+    "haproxy.cfg": `{% render "global" %}{% render "backends" %}`,
     "global":      "global\n    daemon",
     "backends":    "...",
 }
@@ -272,5 +295,5 @@ templates := map[string]string{
 
 ## Related Documentation
 
-- [Gonja Documentation](https://github.com/nikolalohinski/gonja)
+- [Scriggo Documentation](https://scriggo.com/templates) - Template engine documentation
 - [Templating Guide](../../docs/controller/docs/templating.md) - User documentation

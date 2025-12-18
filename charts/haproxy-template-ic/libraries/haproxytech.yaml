@@ -13,14 +13,16 @@ watchedResources:
 
 templateSnippets:
   util-auth-userlist-name:
-    template: >-
-      {%- macro get_userlist_name(auth_secret, namespace) -%}
-      {%- if "/" in auth_secret -%}
-      auth_{{ auth_secret.split("/")[0] }}_{{ auth_secret.split("/")[1] }}
-      {%- else -%}
-      auth_{{ namespace }}_{{ auth_secret }}
-      {%- endif -%}
-      {%- endmacro -%}
+    template: |
+      {#- Macro for generating userlist names from auth secret references -#}
+      {% macro GetUserlistName(authSecret string, namespace string) string %}{%%
+        if authSecret contains "/" {
+          var parts = split(authSecret, "/")
+          show "auth_" + parts[0] + "_" + parts[1]
+        } else {
+          show "auth_" + namespace + "_" + authSecret
+        }
+      %%}{% end %}
 
   # Utility snippet: HAProxyTech SSL Passthrough Cache
   # Provides cached analysis of Ingress resources with haproxy.org/ssl-passthrough annotation
@@ -33,47 +35,51 @@ templateSnippets:
         The analysis runs only ONCE per render, even when included from multiple locations.
 
         After including this snippet, the following variable is available:
-          shared.haproxytech_ssl_passthrough - namespace containing:
+          shared.haproxytech_sslPassthrough - map containing:
             .backends - list of SSL passthrough backend definitions
                         Each entry has: name, sni, namespace, ingress
 
         Usage:
-          {%- include "util-haproxytech-ssl-passthrough" %}
-          {%- for backend in shared.haproxytech_ssl_passthrough.backends %}
+          {{ render "util-haproxytech-ssl-passthrough" }}
+          {%- for _, backend := range shared["haproxytech_sslPassthrough"].(map[string]any)["backends"].([]any) %}
             ... configure backend ...
-          {%- endfor %}
+          {%- end %}
 
         Note: Uses 'shared' namespace to cache data across template renders
         (haproxy.cfg, map files, etc.) within the same reconciliation.
       -#}
-      {%- compute_once shared.haproxytech_ssl_passthrough %}
-        {%- set shared.haproxytech_ssl_passthrough = namespace(backends=[]) %}
-        {%- set ns = namespace(seen="") %}
-        {%- for ingress in resources.ingresses.List() %}
-          {%- set ssl_passthrough = ingress.metadata.annotations["haproxy.org/ssl-passthrough"] | default("") %}
-          {%- if ssl_passthrough == "true" %}
-            {%- for rule in (ingress.spec.rules | default([])) %}
-              {%- if rule.host is defined %}
-                {%- set host_key = rule.host %}
-                {#- Deduplicate by hostname to prevent duplicate use_backend rules #}
-                {%- if ("|" ~ host_key ~ "|") not in ns.seen %}
-                  {%- set ns.seen = ns.seen ~ "|" ~ host_key ~ "|" %}
-                  {%- set backend_name = "ssl-passthrough-" ~ ingress.metadata.namespace ~ "-" ~ ingress.metadata.name %}
-                  {%- set shared.haproxytech_ssl_passthrough.backends = shared.haproxytech_ssl_passthrough.backends.append({
-                      'name': backend_name,
-                      'sni': host_key,
-                      'namespace': ingress.metadata.namespace,
-                      'ingress': ingress.metadata.name
-                  }) %}
-                {%- endif %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endfor %}
-      {%- endcompute_once %}
+      {%- if !has_cached("haproxytech_sslPassthrough") %}
+        {#- Initialize the cache structure -#}
+        {%- shared["haproxytech_sslPassthrough"] = map[string]any{"backends": []any{}} %}
+        {%- for _, ingress := range resources.ingresses.List() %}
+          {%- var sslPassthrough = ingress | dig("metadata", "annotations", "haproxy.org/ssl-passthrough") | fallback("") %}
+          {%- if sslPassthrough == "true" %}
+            {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- for _, rule := range rules %}
+              {%- var host = rule | dig("host") %}
+              {%- if host != nil %}
+                {#- Deduplicate by hostname to prevent duplicate use_backend rules -#}
+                {%- if first_seen("haproxytech_sslPassthrough_host", host) %}
+                  {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+                  {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+                  {%- var backendName = "ssl-passthrough-" + ns + "-" + name %}
+                  {%- var backendInfo = map[string]any{
+                    "name": backendName,
+                    "sni": host,
+                    "namespace": ns,
+                    "ingress": name,
+                  } %}
+                  {%- shared["haproxytech_sslPassthrough"].(map[string]any)["backends"] = append(shared["haproxytech_sslPassthrough"].(map[string]any)["backends"].([]any), backendInfo) %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- set_cached("haproxytech_sslPassthrough", true) %}
+      {%- end %}
 
-  frontend-filters-haproxytech-ssl-redirect:
-    priority: 400
+  frontend-filters-400-haproxytech-ssl-redirect:
+
     template: |
       {#-
         HAProxy SSL Redirect (Ingress Only)
@@ -94,34 +100,34 @@ templateSnippets:
 
         Note: Redirect only applies to hosts defined in the ingress with this annotation
       -#}
-      {%- set ns = namespace(processed_ingresses="") %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- set ingress_key = ingress.metadata.namespace ~ "/" ~ ingress.metadata.name %}
-        {%- if ("|" ~ ingress_key ~ "|") not in ns.processed_ingresses %}
-          {%- set ns.processed_ingresses = ns.processed_ingresses ~ "|" ~ ingress_key ~ "|" %}
-          {%- set ssl_redirect = ingress.metadata.annotations["haproxy.org/ssl-redirect"] | default("") %}
-          {%- if ssl_redirect == "true" %}
-            {%- set ssl_redirect_code = ingress.metadata.annotations["haproxy.org/ssl-redirect-code"] | default("302") %}
-            {%- set ssl_redirect_port = ingress.metadata.annotations["haproxy.org/ssl-redirect-port"] | default("443") %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var ingressKey = ns + "/" + name %}
+        {%- if first_seen("haproxytech_sslRedirect", ingressKey) %}
+          {%- var sslRedirect = ingress | dig("metadata", "annotations", "haproxy.org/ssl-redirect") | fallback("") %}
+          {%- if sslRedirect == "true" %}
+            {%- var sslRedirect_code = ingress | dig("metadata", "annotations", "haproxy.org/ssl-redirect-code") | fallback("302") %}
+            {%- var sslRedirect_port = ingress | dig("metadata", "annotations", "haproxy.org/ssl-redirect-port") | fallback("443") %}
             {#- Extract all hosts from ingress rules -#}
-            {%- set ns_hosts = namespace(hosts=[]) %}
-            {%- if ingress.spec.rules %}
-              {%- for rule in ingress.spec.rules %}
-                {%- if rule.host %}
-                  {%- set ns_hosts.hosts = ns_hosts.hosts.append(rule.host) %}
-                {%- endif %}
-              {%- endfor %}
-            {%- endif %}
+            {%- var hosts = []any{} %}
+            {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- for _, rule := range rules %}
+              {%- var host = rule | dig("host") %}
+              {%- if host != nil %}
+                {%- hosts = append(hosts, host) %}
+              {%- end %}
+            {%- end %}
             {#- Generate host-scoped redirect rule -#}
-            {%- if ns_hosts.hosts | length > 0 %}
-      # haproxytech/frontend-filters-haproxytech-ssl-redirect (for {{ ingress_key }})
-      http-request redirect scheme https code {{ ssl_redirect_code }} if !{ ssl_fc } {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-            {%- endif %}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor -%}
-  frontend-filters-haproxytech-redirects:
-    priority: 450
+            {%- if len(hosts) > 0 %}
+      # haproxytech/frontend-filters-haproxytech-ssl-redirect (for {{ ingressKey }})
+      http-request redirect scheme https code {{ sslRedirect_code }} if !{ ssl_fc } {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+  frontend-filters-450-haproxytech-redirects:
+
     template: |
       {#-
         HAProxy Request Redirect (Ingress Only)
@@ -142,37 +148,42 @@ templateSnippets:
           - Redirect only applies to hosts defined in the ingress with this annotation
           - Protocol prefix in redirect URL sets SSL flag
       -#}
-      {%- set ns = namespace(processed_ingresses="") %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- set ingress_key = ingress.metadata.namespace ~ "/" ~ ingress.metadata.name %}
-        {%- if ("|" ~ ingress_key ~ "|") not in ns.processed_ingresses %}
-          {%- set ns.processed_ingresses = ns.processed_ingresses ~ "|" ~ ingress_key ~ "|" %}
-          {%- set redirect_target = ingress.metadata.annotations["haproxy.org/request-redirect"] | default("") %}
-          {%- if redirect_target %}
-            {%- set redirect_code = ingress.metadata.annotations["haproxy.org/request-redirect-code"] | default("302") %}
-            {%- set valid_codes = ["301", "302", "303", "307", "308"] %}
-            {%- if redirect_code not in valid_codes %}
-              {{- fail("Invalid value '" ~ redirect_code ~ "' for annotation 'haproxy.org/request-redirect-code' on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "'. Valid values: " ~ valid_codes | join(", ")) -}}
-            {%- endif %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var ingressKey = ns + "/" + name %}
+        {%- if first_seen("haproxytech_redirects", ingressKey) %}
+          {%- var redirectTarget = ingress | dig("metadata", "annotations", "haproxy.org/request-redirect") | fallback("") %}
+          {%- if redirectTarget != "" %}
+            {%- var redirectCode = ingress | dig("metadata", "annotations", "haproxy.org/request-redirect-code") | fallback("302") %}
+            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
+            {%- var codeValid = false %}
+            {%- for _, valid := range validCodes %}
+              {%- if tostring(redirectCode) == valid %}
+                {%- codeValid = true %}
+              {%- end %}
+            {%- end %}
+            {%- if !codeValid %}
+              {{- fail("Invalid value '" + tostring(redirectCode) + "' for annotation 'haproxy.org/request-redirect-code' on Ingress '" + ingressKey + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {%- end %}
             {#- Extract all hosts from ingress rules -#}
-            {%- set ns_hosts = namespace(hosts=[]) %}
-            {%- if ingress.spec.rules %}
-              {%- for rule in ingress.spec.rules %}
-                {%- if rule.host %}
-                  {%- set ns_hosts.hosts = ns_hosts.hosts.append(rule.host) %}
-                {%- endif %}
-              {%- endfor %}
-            {%- endif %}
+            {%- var hosts = []any{} %}
+            {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- for _, rule := range rules %}
+              {%- var host = rule | dig("host") %}
+              {%- if host != nil %}
+                {%- hosts = append(hosts, host) %}
+              {%- end %}
+            {%- end %}
             {#- Generate host-scoped redirect rule -#}
-            {%- if ns_hosts.hosts | length > 0 %}
-      # haproxytech/frontend-filters-haproxytech-redirects (for {{ ingress_key }})
-      http-request redirect location {{ redirect_target }} code {{ redirect_code }} if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-            {%- endif %}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor -%}
-  frontend-filters-haproxytech-cors:
-    priority: 300
+            {%- if len(hosts) > 0 %}
+      # haproxytech/frontend-filters-haproxytech-redirects (for {{ ingressKey }})
+      http-request redirect location {{ redirectTarget }} code {{ redirectCode }} if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+  frontend-filters-300-haproxytech-cors:
     template: |
       {#-
         HAProxy CORS Configuration (Ingress Only)
@@ -197,50 +208,55 @@ templateSnippets:
         Note: When cors-allow-credentials is true, cors-allow-origin cannot be "*"
         Note: CORS headers are scoped to hosts defined in the ingress to prevent cross-ingress leakage
       -#}
-      {%- set ns = namespace(processed_ingresses="") %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- set ingress_key = ingress.metadata.namespace ~ "/" ~ ingress.metadata.name %}
-        {%- if ("|" ~ ingress_key ~ "|") not in ns.processed_ingresses %}
-          {%- set ns.processed_ingresses = ns.processed_ingresses ~ "|" ~ ingress_key ~ "|" %}
-          {%- set cors_enable = ingress.metadata.annotations["haproxy.org/cors-enable"] | default("") %}
-          {%- if cors_enable == "true" %}
-            {%- set cors_origin = ingress.metadata.annotations["haproxy.org/cors-allow-origin"] | default("*") %}
-            {%- set cors_methods = ingress.metadata.annotations["haproxy.org/cors-allow-methods"] | default("GET, POST") %}
-            {%- set cors_headers = ingress.metadata.annotations["haproxy.org/cors-allow-headers"] | default("") %}
-            {%- set cors_credentials = ingress.metadata.annotations["haproxy.org/cors-allow-credentials"] | default("false") %}
-            {%- set cors_max_age = ingress.metadata.annotations["haproxy.org/cors-max-age"] | default("0") %}
-            {%- if cors_credentials == "true" and cors_origin == "*" %}
-              {{- fail("CORS configuration error on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}
-            {%- endif %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var ingressKey = ns + "/" + name %}
+        {%- if first_seen("haproxytech_cors", ingressKey) %}
+          {%- var corsEnable = ingress | dig("metadata", "annotations", "haproxy.org/cors-enable") | fallback("") %}
+          {%- if corsEnable == "true" %}
+            {%- var corsOrigin = ingress | dig("metadata", "annotations", "haproxy.org/cors-allow-origin") | fallback("*") %}
+            {%- var corsMethods = ingress | dig("metadata", "annotations", "haproxy.org/cors-allow-methods") | fallback("GET, POST") %}
+            {%- var corsHeaders = ingress | dig("metadata", "annotations", "haproxy.org/cors-allow-headers") | fallback("") %}
+            {%- var corsCredentials = ingress | dig("metadata", "annotations", "haproxy.org/cors-allow-credentials") | fallback("false") %}
+            {%- var corsMaxAge = ingress | dig("metadata", "annotations", "haproxy.org/cors-max-age") | fallback("0") %}
+            {%- if corsCredentials == "true" && corsOrigin == "*" %}
+              {{- fail("CORS configuration error on Ingress '" + ingressKey + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}
+            {%- end %}
             {#- Extract all hosts from ingress rules -#}
-            {%- set ns_hosts = namespace(hosts=[]) %}
-            {%- if ingress.spec.rules %}
-              {%- for rule in ingress.spec.rules %}
-                {%- if rule.host %}
-                  {%- set ns_hosts.hosts = ns_hosts.hosts.append(rule.host) %}
-                {%- endif %}
-              {%- endfor %}
-            {%- endif %}
-            {%- if ns_hosts.hosts | length > 0 %}
-      # haproxytech/frontend-filters-haproxytech-cors (for {{ ingress_key }})
-      http-request capture req.hdr(Origin) len 128 if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-      http-response set-header Access-Control-Allow-Origin "{{ cors_origin }}" if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-      http-response set-header Access-Control-Allow-Methods "{{ cors_methods }}" if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-              {%- if cors_headers %}
-      http-response set-header Access-Control-Allow-Headers "{{ cors_headers }}" if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-              {%- endif %}
-              {%- if cors_credentials == "true" %}
-      http-response set-header Access-Control-Allow-Credentials "true" if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-              {%- endif %}
-              {%- if cors_max_age != "0" %}
-      http-response set-header Access-Control-Max-Age "{{ cors_max_age }}" if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-              {%- endif %}
-            {%- endif %}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor -%}
-  frontend-filters-haproxytech-access-control:
-    priority: 200
+            {%- var hosts = []any{} %}
+            {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- for _, rule := range rules %}
+              {%- var host = rule | dig("host") %}
+              {%- if host != nil %}
+                {%- hosts = append(hosts, host) %}
+              {%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxytech/frontend-filters-haproxytech-cors (for {{ ingressKey }})
+      http-request capture req.hdr(Origin) len 128 if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+
+      http-response set-header Access-Control-Allow-Origin "{{ corsOrigin }}" if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+
+      http-response set-header Access-Control-Allow-Methods "{{ corsMethods }}" if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+
+              {% if corsHeaders != "" -%}
+      http-response set-header Access-Control-Allow-Headers "{{ corsHeaders }}" if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+
+              {% end -%}
+              {% if corsCredentials == "true" -%}
+      http-response set-header Access-Control-Allow-Credentials "true" if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+
+              {% end -%}
+              {% if corsMaxAge != "0" -%}
+      http-response set-header Access-Control-Max-Age "{{ corsMaxAge }}" if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+
+              {% end -%}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+  frontend-filters-200-haproxytech-access-control:
     template: |
       {#-
         HAProxy Access Control - IP Allowlist/Denylist (Ingress Only)
@@ -262,38 +278,37 @@ templateSnippets:
 
         Note: Both allowlist and denylist can be used together. Deny rules only apply to hosts defined in the ingress with this annotation.
       -#}
-      {%- set ns = namespace(processed_ingresses="") %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- set ingress_key = ingress.metadata.namespace ~ "/" ~ ingress.metadata.name %}
-        {%- if ("|" ~ ingress_key ~ "|") not in ns.processed_ingresses %}
-          {%- set ns.processed_ingresses = ns.processed_ingresses ~ "|" ~ ingress_key ~ "|" %}
-          {%- set allowlist = ingress.metadata.annotations["haproxy.org/allowlist"] | default("") %}
-          {%- set denylist = ingress.metadata.annotations["haproxy.org/denylist"] | default("") %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var ingressKey = ns + "/" + name %}
+        {%- if first_seen("haproxytech_access_control", ingressKey) %}
+          {%- var allowlist = ingress | dig("metadata", "annotations", "haproxy.org/allowlist") | fallback("") %}
+          {%- var denylist = ingress | dig("metadata", "annotations", "haproxy.org/denylist") | fallback("") %}
           {#- Extract all hosts from ingress rules -#}
-          {%- set ns_hosts = namespace(hosts=[]) %}
-          {%- if ingress.spec.rules %}
-            {%- for rule in ingress.spec.rules %}
-              {%- if rule.host %}
-                {%- set ns_hosts.hosts = ns_hosts.hosts.append(rule.host) %}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-          {%- if allowlist and ns_hosts.hosts | length > 0 %}
-      # haproxytech/frontend-filters-haproxytech-access-control (allowlist for {{ ingress_key }})
-            {%- set acl_name = "haproxytech_allowlist_" ~ ingress.metadata.namespace ~ "_" ~ ingress.metadata.name %}
-      acl {{ acl_name }} src{% for ip in allowlist.split(",") %}{% set ip = ip | strip %}{% if ip %} {{ ip }}{% endif %}{% endfor %}
-      http-request deny if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %} !{{ acl_name }}
-          {%- endif %}
-          {%- if denylist and ns_hosts.hosts | length > 0 %}
-      # haproxytech/frontend-filters-haproxytech-access-control (denylist for {{ ingress_key }})
-            {%- set acl_name = "haproxytech_denylist_" ~ ingress.metadata.namespace ~ "_" ~ ingress.metadata.name %}
-      acl {{ acl_name }} src{% for ip in denylist.split(",") %}{% set ip = ip | strip %}{% if ip %} {{ ip }}{% endif %}{% endfor %}
-      http-request deny if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %} {{ acl_name }}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor -%}
-  frontend-filters-haproxytech-logging:
-    priority: 500
+          {%- var hosts = []any{} %}
+          {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+          {%- for _, rule := range rules %}
+            {%- var host = rule | dig("host") %}
+            {%- if host != nil %}
+              {%- hosts = append(hosts, host) %}
+            {%- end %}
+          {%- end %}
+          {%- if allowlist != "" && len(hosts) > 0 %}
+      # haproxytech/frontend-filters-haproxytech-access-control (allowlist for {{ ingressKey }})
+            {%- var aclName = "haproxytech_allowlist_" + ns + "_" + name %}
+      acl {{ aclName }} src{% for _, ip := range split(tostring(allowlist), ",") %}{% var ipTrimmed = trimSpace(ip) %}{% if ipTrimmed != "" %} {{ ipTrimmed }}{% end %}{% end %}
+      http-request deny if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %} !{{ aclName }}
+          {%- end %}
+          {%- if denylist != "" && len(hosts) > 0 %}
+      # haproxytech/frontend-filters-haproxytech-access-control (denylist for {{ ingressKey }})
+            {%- var aclName = "haproxytech_denylist_" + ns + "_" + name %}
+      acl {{ aclName }} src{% for _, ip := range split(tostring(denylist), ",") %}{% var ipTrimmed = trimSpace(ip) %}{% if ipTrimmed != "" %} {{ ipTrimmed }}{% end %}{% end %}
+      http-request deny if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %} {{ aclName }}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+  frontend-filters-500-haproxytech-logging:
     template: |
       {#-
         HAProxy Request Capture & Source IP Detection (Ingress Only)
@@ -315,42 +330,41 @@ templateSnippets:
         Note: src-ip-header useful when behind proxies/CDNs
         Note: src-ip-header is scoped to hosts defined in the ingress to prevent affecting ACLs for other ingresses
       -#}
-      {%- set ns = namespace(processed_ingresses="") %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- set ingress_key = ingress.metadata.namespace ~ "/" ~ ingress.metadata.name %}
-        {%- if ("|" ~ ingress_key ~ "|") not in ns.processed_ingresses %}
-          {%- set ns.processed_ingresses = ns.processed_ingresses ~ "|" ~ ingress_key ~ "|" %}
-          {%- set src_ip_header = ingress.metadata.annotations["haproxy.org/src-ip-header"] | default("") %}
-          {%- set request_capture = ingress.metadata.annotations["haproxy.org/request-capture"] | default("") %}
-          {%- set capture_len = ingress.metadata.annotations["haproxy.org/request-capture-len"] | default("128") %}
-          {%- if src_ip_header %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var ingressKey = ns + "/" + name %}
+        {%- if first_seen("haproxytech_logging", ingressKey) %}
+          {%- var srcIpHeader = ingress | dig("metadata", "annotations", "haproxy.org/src-ip-header") | fallback("") %}
+          {%- var requestCapture = ingress | dig("metadata", "annotations", "haproxy.org/request-capture") | fallback("") %}
+          {%- var captureLen = ingress | dig("metadata", "annotations", "haproxy.org/request-capture-len") | fallback("128") %}
+          {%- if srcIpHeader != "" %}
             {#- Extract all hosts from ingress rules -#}
-            {%- set ns_hosts = namespace(hosts=[]) %}
-            {%- if ingress.spec.rules %}
-              {%- for rule in ingress.spec.rules %}
-                {%- if rule.host %}
-                  {%- set ns_hosts.hosts = ns_hosts.hosts.append(rule.host) %}
-                {%- endif %}
-              {%- endfor %}
-            {%- endif %}
-            {%- if ns_hosts.hosts | length > 0 %}
-      # haproxytech/frontend-filters-haproxytech-logging (src-ip-header for {{ ingress_key }})
-      http-request set-src hdr({{ src_ip_header }}) if {%+ for host in ns_hosts.hosts %}{ var(txn.host) -m str {{ host }} }{% if not loop.last %} or {% endif %}{% endfor %}
-            {%- endif %}
-          {%- endif %}
-          {%- if request_capture %}
-      # haproxytech/frontend-filters-haproxytech-logging (request-capture for {{ ingress_key }})
-            {%- for line in request_capture.split("\n") %}
-              {%- set line = line | strip %}
-              {%- if line %}
-      capture request header {{ line }} len {{ capture_len }}
-              {%- endif %}
-            {%- endfor %}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor -%}
-  frontend-filters-haproxytech-basic-headers:
-    priority: 100
+            {%- var hosts = []any{} %}
+            {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- for _, rule := range rules %}
+              {%- var host = rule | dig("host") %}
+              {%- if host != nil %}
+                {%- hosts = append(hosts, host) %}
+              {%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxytech/frontend-filters-haproxytech-logging (src-ip-header for {{ ingressKey }})
+      http-request set-src hdr({{ srcIpHeader }}) if {% for i, host := range hosts %}{ var(txn.host) -m str {{ host }} }{% if i < len(hosts) - 1 %} or {% end %}{% end %}
+            {%- end %}
+          {%- end %}
+          {%- if requestCapture != "" %}
+      # haproxytech/frontend-filters-haproxytech-logging (request-capture for {{ ingressKey }})
+            {%- for _, line := range split(tostring(requestCapture), "\n") %}
+              {%- var lineTrimmed = trimSpace(line) %}
+              {%- if lineTrimmed != "" %}
+      capture request header {{ lineTrimmed }} len {{ captureLen }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+  frontend-filters-100-haproxytech-basic-headers:
     template: |
       {#-
         HAProxy Basic Header Manipulation (Ingress Only)
@@ -368,28 +382,28 @@ templateSnippets:
         Note: set-host modifies Host header after backend selection
       -#}
       {#- Check if any ingress has forwarded-for enabled (frontend-level directive, output once) -#}
-      {%- set ns = namespace(forwardfor_enabled=false, processed_ingresses="") %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- set ingress_key = ingress.metadata.namespace ~ "/" ~ ingress.metadata.name %}
-        {%- if ("|" ~ ingress_key ~ "|") not in ns.processed_ingresses %}
-          {%- set ns.processed_ingresses = ns.processed_ingresses ~ "|" ~ ingress_key ~ "|" %}
-          {%- set forwarded_for = ingress.metadata.annotations["haproxy.org/forwarded-for"] | default("") %}
-          {%- if forwarded_for %}
-            {%- if forwarded_for not in ["true", "false"] %}
-              {{- fail("Invalid value '" ~ forwarded_for ~ "' for annotation 'haproxy.org/forwarded-for' on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "'. Valid values: 'true', 'false'") -}}
-            {%- endif %}
-            {%- if forwarded_for == "true" %}
-              {%- set ns.forwardfor_enabled = true %}
-            {%- endif %}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor %}
-      {%- if ns.forwardfor_enabled %}
+      {%- var forwardforEnabled = false %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var ingressKey = ns + "/" + name %}
+        {%- if first_seen("haproxytech_basic_headers", ingressKey) %}
+          {%- var forwardedFor = ingress | dig("metadata", "annotations", "haproxy.org/forwarded-for") | fallback("") | tostring() %}
+          {%- if forwardedFor != "" %}
+            {%- if forwardedFor != "true" && forwardedFor != "false" %}
+              {{- fail("Invalid value '" + forwardedFor + "' for annotation 'haproxy.org/forwarded-for' on Ingress '" + ingressKey + "'. Valid values: 'true', 'false'") -}}
+            {%- end %}
+            {%- if forwardedFor == "true" %}
+              {%- forwardforEnabled = true %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- if forwardforEnabled %}
       # haproxytech/frontend-filters-haproxytech-basic-headers (forwarded-for)
       option forwardfor
-      {%- endif -%}
-  frontend-filters-haproxytech-timeouts:
-    priority: 150
+      {%- end -%}
+  frontend-filters-150-haproxytech-timeouts:
     template: |
       {#-
         HAProxy Frontend Timeout Configuration (Ingress Only)
@@ -414,28 +428,27 @@ templateSnippets:
         Note: These timeouts MUST be in frontend context per HAProxy specification
         Note: Backend timeouts (server, connect, queue, tunnel, check) are in backend-directives-haproxytech-timeouts
       -#}
-      {%- set ns = namespace(processed_ingresses="") %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- set ingress_key = ingress.metadata.namespace ~ "/" ~ ingress.metadata.name %}
-        {%- if ("|" ~ ingress_key ~ "|") not in ns.processed_ingresses %}
-          {%- set ns.processed_ingresses = ns.processed_ingresses ~ "|" ~ ingress_key ~ "|" %}
-          {%- set timeout_client = ingress.metadata.annotations["haproxy.org/timeout-client"] | default("") %}
-          {%- set timeout_http_request = ingress.metadata.annotations["haproxy.org/timeout-http-request"] | default("") %}
-          {%- set timeout_http_keep_alive = ingress.metadata.annotations["haproxy.org/timeout-http-keep-alive"] | default("") %}
-          {%- if timeout_client %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var ingressKey = ns + "/" + name %}
+        {%- if first_seen("haproxytech_timeouts", ingressKey) %}
+          {%- var timeoutClient = ingress | dig("metadata", "annotations", "haproxy.org/timeout-client") | fallback("") %}
+          {%- var timeoutHttpRequest = ingress | dig("metadata", "annotations", "haproxy.org/timeout-http-request") | fallback("") %}
+          {%- var timeoutHttpKeepAlive = ingress | dig("metadata", "annotations", "haproxy.org/timeout-http-keep-alive") | fallback("") %}
+          {%- if timeoutClient != "" %}
       # haproxytech/frontend-filters-haproxytech-timeouts
-      timeout client {{ timeout_client }}
-          {%- endif %}
-          {%- if timeout_http_request %}
-      timeout http-request {{ timeout_http_request }}
-          {%- endif %}
-          {%- if timeout_http_keep_alive %}
-      timeout http-keep-alive {{ timeout_http_keep_alive }}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor -%}
-  global-top-haproxytech-ingress-auth:
-    priority: 500
+      timeout client {{ timeoutClient }}
+          {% end %}
+          {%- if timeoutHttpRequest != "" %}
+      timeout http-request {{ timeoutHttpRequest }}
+          {% end %}
+          {%- if timeoutHttpKeepAlive != "" %}
+      timeout http-keep-alive {{ timeoutHttpKeepAlive }}
+          {% end %}
+        {%- end %}
+      {%- end -%}
+  global-top-500-haproxytech-ingress-auth:
     template: |
       {#-
         HAProxy Basic Authentication Support (Ingress Only)
@@ -476,50 +489,51 @@ templateSnippets:
         Deduplication:
           Multiple ingresses referencing the same secret share one userlist.
       -#}
-      {%- set ns = namespace(processed_userlists=[]) %}
-      {%- for ingress in resources.ingresses.List() %}
-        {%- set auth_type = ingress.metadata.annotations["haproxy.org/auth-type"] | default("") %}
-        {%- if auth_type and auth_type != "basic-auth" %}
-          {{- fail("Invalid value '" ~ auth_type ~ "' for annotation 'haproxy.org/auth-type' on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "'. Valid values: 'basic-auth'") -}}
-        {%- endif %}
-        {%- if auth_type == "basic-auth" %}
-          {%- set auth_secret = ingress.metadata.annotations["haproxy.org/auth-secret"] | default("") %}
-          {%- if auth_secret %}
-            {#- Generate userlist name using macro #}
-            {%- include "util-auth-userlist-name" -%}
-            {%- set userlist_name = get_userlist_name(auth_secret, ingress.metadata.namespace) | trim -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ingressNs = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var authType = ingress | dig("metadata", "annotations", "haproxy.org/auth-type") | fallback("") | tostring() %}
+        {%- if authType != "" && authType != "basic-auth" %}
+          {{- fail("Invalid value '" + authType + "' for annotation 'haproxy.org/auth-type' on Ingress '" + ingressNs + "/" + ingressName + "'. Valid values: 'basic-auth'") -}}
+        {%- end %}
+        {%- if authType == "basic-auth" %}
+          {%- var authSecret = ingress | dig("metadata", "annotations", "haproxy.org/auth-secret") | fallback("") | tostring() %}
+          {%- if authSecret != "" %}
+            {#- Generate userlist name based on secret reference -#}
+            {%- var userlistName = "" %}
+            {%- var secretNamespace = "" %}
+            {%- var secretName = "" %}
+            {%- if strings_contains(authSecret, "/") %}
+              {%- var parts = split(authSecret, "/") %}
+              {%- secretNamespace = parts[0] %}
+              {%- secretName = parts[1] %}
+              {%- userlistName = "auth_" + secretNamespace + "_" + secretName %}
+            {%- else %}
+              {%- secretNamespace = ingressNs %}
+              {%- secretName = authSecret %}
+              {%- userlistName = "auth_" + ingressNs + "_" + authSecret %}
+            {%- end %}
 
-            {#- Only process each userlist once #}
-            {%- if userlist_name not in ns.processed_userlists %}
-              {%- set _ = ns.processed_userlists.append(userlist_name) %}
-
-              {#- Parse secret reference for fetching #}
-              {%- if "/" in auth_secret %}
-                {%- set secret_namespace = auth_secret.split("/")[0] %}
-                {%- set secret_name = auth_secret.split("/")[1] %}
-              {%- else %}
-                {%- set secret_namespace = ingress.metadata.namespace %}
-                {%- set secret_name = auth_secret %}
-              {%- endif %}
-
-              {#- Fetch secret from store #}
-              {%- set secret = resources.secrets.GetSingle(secret_namespace, secret_name) %}
-              {%- if secret %}
+            {#- Only process each userlist once -#}
+            {%- if first_seen("haproxytech_userlist", userlistName) %}
+              {#- Fetch secret from store -#}
+              {%- var secret = resources.secrets.GetSingle(secretNamespace, secretName) %}
+              {%- if secret != nil %}
       # haproxytech/global-top-haproxytech-ingress-auth
-      userlist {{ userlist_name }}
-                {%- for username in secret.data | default({}) %}
-        user {{ username }} password {{ secret.data[username] | b64decode }}
-                {%- endfor -%}
+      userlist {{ userlistName }}
+                {% var secretData = secret | dig("data") | fallback(map[string]any{}) -%}
+                {%- for username, hash := range secretData %}
+        user {{ username }} password {{ hash | b64decode() }}
+                {% end -%}
               {%- else %}
-                {{- fail("Secret '" ~ secret_namespace ~ "/" ~ secret_name ~ "' referenced by annotation 'haproxy.org/auth-secret' does not exist. Please create the secret or update the annotation.") -}}
-              {%- endif %}
-            {%- endif %}
-          {%- endif %}
-        {%- endif %}
-      {%- endfor -%}
+                {{- fail("Secret '" + secretNamespace + "/" + secretName + "' referenced by annotation 'haproxy.org/auth-secret' does not exist. Please create the secret or update the annotation.") -}}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-load-balance:
-    priority: 150
+  backend-directives-150-haproxytech-load-balance:
     template: |
       {#-
         HAProxy Load Balancing Algorithm (Ingress Only)
@@ -543,20 +557,27 @@ templateSnippets:
 
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
       -#}
-      {%- if ingress is defined %}
-      {%- set load_balance = ingress.metadata.annotations["haproxy.org/load-balance"] | default("") %}
-      {%- if load_balance %}
-        {%- set valid_algorithms = ["roundrobin", "leastconn", "source", "uri", "hdr", "random", "rdp-cookie"] %}
-        {%- if load_balance not in valid_algorithms %}
-          {{- fail("Invalid value '" ~ load_balance ~ "' for annotation 'haproxy.org/load-balance' on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "'. Valid values: " ~ valid_algorithms | join(", ")) -}}
-        {%- endif %}
+      {%- if ingress != nil %}
+      {%- var loadBalance = ingress | dig("metadata", "annotations", "haproxy.org/load-balance") | fallback("") | tostring() %}
+      {%- if loadBalance != "" %}
+        {%- var validAlgorithms = []string{"roundrobin", "leastconn", "source", "uri", "hdr", "random", "rdp-cookie"} %}
+        {%- var isValid = false %}
+        {%- for _, alg := range validAlgorithms %}
+          {%- if loadBalance == alg %}
+            {%- isValid = true %}
+          {%- end %}
+        {%- end %}
+        {%- if !isValid %}
+          {%- var ingressNs = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+          {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+          {{- fail("Invalid value '" + loadBalance + "' for annotation 'haproxy.org/load-balance' on Ingress '" + ingressNs + "/" + ingressName + "'. Valid values: " + (validAlgorithms | join(", "))) -}}
+        {%- end %}
       # haproxytech/backend-directives-haproxytech-load-balance
-      balance {{ load_balance }}
-      {%- endif %}
-      {%- endif -%}
+      balance {{ loadBalance }}
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-rate-limiting:
-    priority: 250
+  backend-directives-250-haproxytech-rate-limiting:
     template: |
       {#-
         HAProxy Rate Limiting (Ingress Only)
@@ -583,21 +604,21 @@ templateSnippets:
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
         Note: Creates per-backend stick-table for rate limiting
       -#}
-      {%- if ingress is defined %}
-      {%- set rate_requests = ingress.metadata.annotations["haproxy.org/rate-limit-requests"] | default("") %}
-      {%- if rate_requests %}
-        {%- set rate_period = ingress.metadata.annotations["haproxy.org/rate-limit-period"] | default("1s") %}
-        {%- set rate_size = ingress.metadata.annotations["haproxy.org/rate-limit-size"] | default("100k") %}
-        {%- set rate_status = ingress.metadata.annotations["haproxy.org/rate-limit-status-code"] | default("403") %}
+      {%- if ingress != nil %}
+      {%- var rateRequests = ingress | dig("metadata", "annotations", "haproxy.org/rate-limit-requests") | fallback("") | tostring() %}
+      {%- if rateRequests != "" %}
+        {%- var ratePeriod = ingress | dig("metadata", "annotations", "haproxy.org/rate-limit-period") | fallback("1s") %}
+        {%- var rateSize = ingress | dig("metadata", "annotations", "haproxy.org/rate-limit-size") | fallback("100k") %}
+        {%- var rateStatus = ingress | dig("metadata", "annotations", "haproxy.org/rate-limit-status-code") | fallback("403") %}
       # haproxytech/backend-directives-haproxytech-rate-limiting
-      stick-table type ip size {{ rate_size }} expire {{ rate_period }} store http_req_rate({{ rate_period }})
+      stick-table type ip size {{ rateSize }} expire {{ ratePeriod }} store http_req_rate({{ ratePeriod }})
       http-request track-sc0 src
-      http-request deny deny_status {{ rate_status }} if { sc_http_req_rate(0) gt {{ rate_requests }} }
-      {%- endif %}
-      {%- endif -%}
+      http-request deny deny_status {{ rateStatus }} if { sc_http_req_rate(0) gt {{ rateRequests }} }
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-session-persistence:
-    priority: 400
+  backend-directives-400-haproxytech-session-persistence:
+
     template: |
       {#-
         HAProxy Session Persistence - Sticky Sessions (Ingress Only)
@@ -618,17 +639,16 @@ templateSnippets:
         Note: Uses dynamic cookies for multi-instance controller deployments
         Note: Mutually exclusive with cookie-persistence-no-dynamic
       -#}
-      {%- if ingress is defined %}
-      {%- set cookie_name = ingress.metadata.annotations["haproxy.org/cookie-persistence"] | default("") %}
-      {%- if cookie_name %}
+      {%- if ingress != nil %}
+      {%- var cookieName = ingress | dig("metadata", "annotations", "haproxy.org/cookie-persistence") | fallback("") | tostring() %}
+      {%- if cookieName != "" %}
       # haproxytech/backend-directives-haproxytech-session-persistence
-      cookie {{ cookie_name }} insert indirect nocache dynamic
+      cookie {{ cookieName }} insert indirect nocache dynamic
       # Note: dynamic-cookie-key would be set by base template for multi-instance support
-      {%- endif %}
-      {%- endif -%}
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-session-persistence-no-dynamic:
-    priority: 401
+  backend-directives-401-haproxytech-session-persistence-no-dynamic:
     template: |
       {#-
         HAProxy Session Persistence - Static Cookies (Ingress Only)
@@ -649,20 +669,21 @@ templateSnippets:
         Note: Mutually exclusive with cookie-persistence
         Note: Static cookies will differ across controller instances, breaking session affinity in multi-instance deployments
       -#}
-      {%- if ingress is defined %}
-      {%- set cookie_dynamic = ingress.metadata.annotations["haproxy.org/cookie-persistence"] | default("") %}
-      {%- set cookie_static = ingress.metadata.annotations["haproxy.org/cookie-persistence-no-dynamic"] | default("") %}
-      {%- if cookie_dynamic and cookie_static %}
-        {{- fail("Cannot use both 'haproxy.org/cookie-persistence' and 'haproxy.org/cookie-persistence-no-dynamic' on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "'. Use only one cookie persistence method.") -}}
-      {%- endif %}
-      {%- if cookie_static %}
+      {%- if ingress != nil %}
+      {%- var cookieDynamic = ingress | dig("metadata", "annotations", "haproxy.org/cookie-persistence") | fallback("") | tostring() %}
+      {%- var cookieStatic = ingress | dig("metadata", "annotations", "haproxy.org/cookie-persistence-no-dynamic") | fallback("") | tostring() %}
+      {%- if cookieDynamic != "" && cookieStatic != "" %}
+        {%- var ingressNs = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {{- fail("Cannot use both 'haproxy.org/cookie-persistence' and 'haproxy.org/cookie-persistence-no-dynamic' on Ingress '" + ingressNs + "/" + ingressName + "'. Use only one cookie persistence method.") -}}
+      {%- end %}
+      {%- if cookieStatic != "" %}
       # haproxytech/backend-directives-haproxytech-session-persistence-no-dynamic
-      cookie {{ cookie_static }} insert indirect nocache
-      {%- endif %}
-      {%- endif -%}
+      cookie {{ cookieStatic }} insert indirect nocache
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-advanced:
-    priority: 900
+  backend-directives-900-haproxytech-advanced:
     template: |
       {#-
         HAProxy Advanced Backend Configuration (Ingress Only)
@@ -703,114 +724,135 @@ templateSnippets:
 
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
       -#}
-      {%- if ingress is defined %}
-      {#- Append to server option flags namespace #}
-      {#- This namespace is only initialized for Ingress backends (ingress.yaml:86), not Gateway API #}
+      {%- if ingress != nil %}
+      {#- Append to server option flags (serverOpts passed via inherit_context) -#}
+      {#- This variable is only initialized for Ingress backends (ingress.yaml), not Gateway API -#}
+      {%- var ingressNs = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
 
-      {#- send-proxy-protocol #}
-      {%- set send_proxy = ingress.metadata.annotations["haproxy.org/send-proxy-protocol"] | default("") %}
-      {%- if send_proxy %}
-        {%- if send_proxy in ["proxy", "proxy-v1"] %}
-          {%- set ns_server_opts.flags = ns_server_opts.flags.append("send-proxy") %}
-        {%- elif send_proxy == "proxy-v2" %}
-          {%- set ns_server_opts.flags = ns_server_opts.flags.append("send-proxy-v2") %}
-        {%- elif send_proxy == "proxy-v2-ssl" %}
-          {%- set ns_server_opts.flags = ns_server_opts.flags.append("send-proxy-v2-ssl") %}
-        {%- elif send_proxy == "proxy-v2-ssl-cn" %}
-          {%- set ns_server_opts.flags = ns_server_opts.flags.append("send-proxy-v2-ssl-cn") %}
-        {%- endif %}
-      {%- endif %}
+      {#- send-proxy-protocol -#}
+      {%- var sendProxy = ingress | dig("metadata", "annotations", "haproxy.org/send-proxy-protocol") | fallback("") | tostring() %}
+      {%- if sendProxy != "" %}
+        {%- if sendProxy == "proxy" || sendProxy == "proxy-v1" %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy") %}
+        {%- else if sendProxy == "proxy-v2" %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2") %}
+        {%- else if sendProxy == "proxy-v2-ssl" %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2-ssl") %}
+        {%- else if sendProxy == "proxy-v2-ssl-cn" %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2-ssl-cn") %}
+        {%- end %}
+      {%- end %}
 
-      {#- server-ssl #}
-      {%- set server_ssl = ingress.metadata.annotations["haproxy.org/server-ssl"] | default("") %}
-      {%- if server_ssl == "true" %}
-        {%- set ns_server_opts.flags = ns_server_opts.flags.append("ssl verify none") %}
-      {%- endif %}
+      {#- server-ssl -#}
+      {%- var serverSsl = ingress | dig("metadata", "annotations", "haproxy.org/server-ssl") | fallback("") | tostring() %}
+      {%- if serverSsl == "true" %}
+        {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+      {%- end %}
 
-      {#- server-proto #}
-      {%- set server_proto = ingress.metadata.annotations["haproxy.org/server-proto"] | default("") %}
-      {%- if server_proto %}
-        {%- set ns_server_opts.flags = ns_server_opts.flags.append("proto " ~ server_proto) %}
-      {%- endif %}
+      {#- server-proto -#}
+      {%- var serverProto = ingress | dig("metadata", "annotations", "haproxy.org/server-proto") | fallback("") | tostring() %}
+      {%- if serverProto != "" %}
+        {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto " + serverProto) %}
+      {%- end %}
 
-      {#- server-ca: CA certificate for backend verification #}
-      {%- set server_ca = ingress.metadata.annotations["haproxy.org/server-ca"] | default("") %}
-      {%- if server_ca %}
-        {#- Parse secret namespace/name (format: "namespace/secret-name") #}
-        {%- if "/" in server_ca %}
-          {%- set ca_parts = server_ca.split("/") %}
-          {%- set ca_namespace = ca_parts[0] %}
-          {%- set ca_name = ca_parts[1] %}
+      {#- server-ca: CA certificate for backend verification -#}
+      {%- var serverCa = ingress | dig("metadata", "annotations", "haproxy.org/server-ca") | fallback("") | tostring() %}
+      {%- if serverCa != "" %}
+        {#- Parse secret namespace/name (format: "namespace/secret-name") -#}
+        {%- var caNamespace = "" %}
+        {%- var caName = "" %}
+        {%- if strings_contains(serverCa, "/") %}
+          {%- var caParts = split(serverCa, "/") %}
+          {%- caNamespace = caParts[0] %}
+          {%- caName = caParts[1] %}
         {%- else %}
-          {#- Same namespace as ingress if not specified #}
-          {%- set ca_namespace = ingress.metadata.namespace %}
-          {%- set ca_name = server_ca %}
-        {%- endif %}
+          {#- Same namespace as ingress if not specified -#}
+          {%- caNamespace = ingressNs %}
+          {%- caName = serverCa %}
+        {%- end %}
 
-        {#- Fetch secret from resource store #}
-        {%- set ca_secret = resources.secrets.GetSingle(ca_namespace, ca_name) %}
-        {%- if ca_secret %}
-          {#- Extract CA certificate content (base64 decode) #}
-          {%- set ca_content = ca_secret.data["ca.crt"] | b64decode %}
-          {%- if ca_content %}
-            {#- Register CA file with file registry and get path #}
-            {%- set ca_filename = ca_namespace ~ "-" ~ ca_name ~ "-ca.pem" %}
-            {%- set ca_path = file_registry.Register("file", ca_filename, ca_content) %}
-            {#- Add server option with CA file #}
-            {%- set ns_server_opts.flags = ns_server_opts.flags.append("ssl verify required ca-file " ~ ca_path) %}
+        {#- Fetch secret from resource store -#}
+        {%- var caSecret = resources.secrets.GetSingle(caNamespace, caName) %}
+        {%- if caSecret != nil %}
+          {#- Extract CA certificate content (base64 decode) -#}
+          {%- var caContent = caSecret | dig("data", "ca.crt") | fallback("") | b64decode() %}
+          {%- if caContent != "" %}
+            {#- Register CA file with file registry and get path -#}
+            {%- var caFilename = caNamespace + "-" + caName + "-ca.pem" %}
+            {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+            {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
+            {#- Add server option with CA file -#}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify required ca-file " + caPath) %}
           {%- else %}
-            # Warning: Secret {{ ca_namespace }}/{{ ca_name }} missing 'ca.crt' key
-          {%- endif %}
+            # Warning: Secret {{ caNamespace }}/{{ caName }} missing 'ca.crt' key
+          {%- end %}
         {%- else %}
-          # Warning: Secret {{ ca_namespace }}/{{ ca_name }} referenced by haproxy.org/server-ca not found
-        {%- endif %}
-      {%- endif %}
+          # Warning: Secret {{ caNamespace }}/{{ caName }} referenced by haproxy.org/server-ca not found
+        {%- end %}
+      {%- end %}
 
-      {#- server-crt: Client certificate for mTLS #}
-      {%- set server_crt = ingress.metadata.annotations["haproxy.org/server-crt"] | default("") %}
-      {%- if server_crt %}
-        {#- Parse secret namespace/name (format: "namespace/secret-name") #}
-        {%- if "/" in server_crt %}
-          {%- set crt_parts = server_crt.split("/") %}
-          {%- set crt_namespace = crt_parts[0] %}
-          {%- set crt_name = crt_parts[1] %}
+      {#- server-crt: Client certificate for mTLS -#}
+      {%- var serverCrt = ingress | dig("metadata", "annotations", "haproxy.org/server-crt") | fallback("") | tostring() %}
+      {%- if serverCrt != "" %}
+        {#- Parse secret namespace/name (format: "namespace/secret-name") -#}
+        {%- var crtNamespace = "" %}
+        {%- var crtName = "" %}
+        {%- if strings_contains(serverCrt, "/") %}
+          {%- var crtParts = split(serverCrt, "/") %}
+          {%- crtNamespace = crtParts[0] %}
+          {%- crtName = crtParts[1] %}
         {%- else %}
-          {#- Same namespace as ingress if not specified #}
-          {%- set crt_namespace = ingress.metadata.namespace %}
-          {%- set crt_name = server_crt %}
-        {%- endif %}
+          {#- Same namespace as ingress if not specified -#}
+          {%- crtNamespace = ingressNs %}
+          {%- crtName = serverCrt %}
+        {%- end %}
 
-        {#- Fetch secret from resource store #}
-        {%- set crt_secret = resources.secrets.GetSingle(crt_namespace, crt_name) %}
-        {%- if crt_secret %}
-          {#- Extract client certificate and key, combine them (HAProxy needs combined PEM) #}
-          {%- set tls_crt = crt_secret.data["tls.crt"] | b64decode %}
-          {%- set tls_key = crt_secret.data["tls.key"] | b64decode %}
-          {%- if tls_crt and tls_key %}
-            {#- Combine certificate and key into single PEM file #}
-            {%- set combined_pem = tls_crt ~ "\n" ~ tls_key %}
-            {#- Register client cert file with file registry and get path #}
-            {%- set crt_filename = crt_namespace ~ "-" ~ crt_name ~ "-client.pem" %}
-            {%- set crt_path = file_registry.Register("cert", crt_filename, combined_pem) %}
-            {#- Add server option with client cert #}
-            {%- set ns_server_opts.flags = ns_server_opts.flags.append("crt " ~ crt_path) %}
+        {#- Fetch secret from resource store -#}
+        {%- var crtSecret = resources.secrets.GetSingle(crtNamespace, crtName) %}
+        {%- if crtSecret != nil %}
+          {#- Extract client certificate and key, combine them (HAProxy needs combined PEM) -#}
+          {%- var tlsCrt = crtSecret | dig("data", "tls.crt") | fallback("") | b64decode() %}
+          {%- var tlsKey = crtSecret | dig("data", "tls.key") | fallback("") | b64decode() %}
+          {%- if tlsCrt != "" && tlsKey != "" %}
+            {#- Combine certificate and key into single PEM file -#}
+            {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
+            {#- Register client cert file with file registry and get path -#}
+            {%- var crtFilename = crtNamespace + "-" + crtName + "-client.pem" %}
+            {%- var crtPath, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+            {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
+            {#- Add server option with client cert -#}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtPath) %}
           {%- else %}
-            # Warning: Secret {{ crt_namespace }}/{{ crt_name }} missing 'tls.crt' or 'tls.key' keys
-          {%- endif %}
+            # Warning: Secret {{ crtNamespace }}/{{ crtName }} missing 'tls.crt' or 'tls.key' keys
+          {%- end %}
         {%- else %}
-          # Warning: Secret {{ crt_namespace }}/{{ crt_name }} referenced by haproxy.org/server-crt not found
-        {%- endif %}
-      {%- endif %}
+          # Warning: Secret {{ crtNamespace }}/{{ crtName }} referenced by haproxy.org/server-crt not found
+        {%- end %}
+      {%- end %}
 
-      {#- scale-server-slots #}
-      {%- set server_slots = ingress.metadata.annotations["haproxy.org/scale-server-slots"] | default("") %}
-      {%- if server_slots %}
-      {%- set max_server_slots = server_slots | int %}
-      {%- endif %}
-      {%- endif -%}
+      {#- scale-server-slots -#}
+      {%- var serverSlots = ingress | dig("metadata", "annotations", "haproxy.org/scale-server-slots") | fallback("") | tostring() %}
+      {%- if serverSlots != "" %}
+        {#- Validate annotation value -#}
+        {%- var serverSlotsInt = toint(serverSlots) %}
+        {%- if serverSlotsInt <= 0 %}
+          {%- var ingressNs = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+          {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+          {{- fail("Invalid value '" + serverSlots + "' for annotation 'haproxy.org/scale-server-slots' on Ingress '" + ingressNs + "/" + ingressName + "'. Must be a positive integer.") -}}
+        {%- end %}
+        {#- Set variable in namespace for base.yaml to use -#}
+        {%- serverOpts["serverSlotsValue"] = serverSlotsInt %}
+      {%- end %}
 
-  backend-directives-haproxytech-path-rewrite:
-    priority: 350
+      {#- backend-config-snippet: Raw HAProxy backend directives -#}
+      {%- var backendSnippet = ingress | dig("metadata", "annotations", "haproxy.org/backend-config-snippet") | fallback("") %}
+      {%- if backendSnippet != "" %}
+      # haproxytech/backend-config-snippet
+      {{ backendSnippet }}
+      {%- end %}
+      {%- end -%}
+
+  backend-directives-350-haproxytech-path-rewrite:
     template: |
       {#-
         HAProxy Path Rewrite (Ingress Only)
@@ -834,26 +876,25 @@ templateSnippets:
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
         Note: Similar to Gateway API URLRewrite filter
       -#}
-      {%- if ingress is defined %}
-      {%- set path_rewrite = ingress.metadata.annotations["haproxy.org/path-rewrite"] | default("") %}
-      {%- if path_rewrite %}
-        {%- if " " in path_rewrite %}
+      {%- if ingress != nil %}
+      {%- var pathRewrite = ingress | dig("metadata", "annotations", "haproxy.org/path-rewrite") | fallback("") | tostring() %}
+      {%- if pathRewrite != "" %}
+        {%- if strings_contains(pathRewrite, " ") %}
           {#- Two parameters: regex and replacement -#}
-          {%- set parts = path_rewrite.split(" ") %}
-          {%- set regex = parts[0] %}
-          {%- set replacement = parts[1:] | join(" ") %}
+          {%- var parts = split(pathRewrite, " ") %}
+          {%- var regex = parts[0] %}
+          {%- var replacement = parts[1:] | join(" ") %}
       # haproxytech/backend-directives-haproxytech-path-rewrite
-      http-request replace-path {{regex}} {{replacement}}
+      http-request replace-path {{ regex }} {{ replacement }}
         {%- else %}
           {#- Single parameter: match all paths -#}
       # haproxytech/backend-directives-haproxytech-path-rewrite
-      http-request replace-path (.*) {{path_rewrite}}
-        {%- endif %}
-      {%- endif %}
-      {%- endif -%}
+      http-request replace-path (.*) {{ pathRewrite }}
+        {%- end %}
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-header-manipulation:
-    priority: 300
+  backend-directives-300-haproxytech-header-manipulation:
     template: |
       {#-
         HAProxy Request/Response Header Manipulation (Ingress Only)
@@ -880,37 +921,36 @@ templateSnippets:
 
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
       -#}
-      {%- if ingress is defined %}
-      {%- set request_headers = ingress.metadata.annotations["haproxy.org/request-set-header"] | default("") %}
-      {%- set response_headers = ingress.metadata.annotations["haproxy.org/response-set-header"] | default("") %}
-      {%- if request_headers %}
+      {%- if ingress != nil %}
+      {%- var requestHeaders = ingress | dig("metadata", "annotations", "haproxy.org/request-set-header") | fallback("") | tostring() %}
+      {%- var responseHeaders = ingress | dig("metadata", "annotations", "haproxy.org/response-set-header") | fallback("") | tostring() %}
+      {%- if requestHeaders != "" %}
       # haproxytech/backend-directives-haproxytech-header-manipulation (request)
-        {%- for line in request_headers.split("\n") %}
-          {%- set line = line | strip %}
-          {%- if line and " " in line %}
-            {%- set all_parts = line.split(" ") %}
-            {%- set header_name = all_parts[0] %}
-            {%- set header_value = all_parts[1:] | join(" ") %}
-      http-request set-header {{header_name}} "{{header_value}}"
-          {%- endif %}
-        {%- endfor %}
-      {%- endif %}
-      {%- if response_headers %}
+        {%- for _, line := range split(requestHeaders, "\n") %}
+          {%- var lineTrimmed = trimSpace(line) %}
+          {%- if lineTrimmed != "" && strings_contains(lineTrimmed, " ") %}
+            {%- var allParts = split(lineTrimmed, " ") %}
+            {%- var headerName = allParts[0] %}
+            {%- var headerValue = allParts[1:] | join(" ") %}
+      http-request set-header {{ headerName }} "{{ headerValue }}"
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- if responseHeaders != "" %}
       # haproxytech/backend-directives-haproxytech-header-manipulation (response)
-        {%- for line in response_headers.split("\n") %}
-          {%- set line = line | strip %}
-          {%- if line and " " in line %}
-            {%- set all_parts = line.split(" ") %}
-            {%- set header_name = all_parts[0] %}
-            {%- set header_value = all_parts[1:] | join(" ") %}
-      http-response set-header {{header_name}} "{{header_value}}"
-          {%- endif %}
-        {%- endfor %}
-      {%- endif %}
-      {%- endif -%}
+        {%- for _, line := range split(responseHeaders, "\n") %}
+          {%- var lineTrimmed = trimSpace(line) %}
+          {%- if lineTrimmed != "" && strings_contains(lineTrimmed, " ") %}
+            {%- var allParts = split(lineTrimmed, " ") %}
+            {%- var headerName = allParts[0] %}
+            {%- var headerValue = allParts[1:] | join(" ") %}
+      http-response set-header {{ headerName }} "{{ headerValue }}"
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-set-host:
-    priority: 250
+  backend-directives-250-haproxytech-set-host:
     template: |
       {#-
         HAProxy Set Host Header (Ingress Only)
@@ -926,16 +966,15 @@ templateSnippets:
         Note: This happens AFTER backend selection, unlike request-set-header which happens before
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
       -#}
-      {%- if ingress is defined %}
-      {%- set set_host = ingress.metadata.annotations["haproxy.org/set-host"] | default("") %}
-      {%- if set_host %}
+      {%- if ingress != nil %}
+      {%- var setHost = ingress | dig("metadata", "annotations", "haproxy.org/set-host") | fallback("") | tostring() %}
+      {%- if setHost != "" %}
       # haproxytech/backend-directives-haproxytech-set-host
-      http-request set-header Host "{{ set_host }}"
-      {%- endif %}
-      {%- endif -%}
+      http-request set-header Host "{{ setHost }}"
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-advanced-health-checks:
-    priority: 210
+  backend-directives-210-haproxytech-advanced-health-checks:
     template: |
       {#-
         HAProxy Advanced Health Check Configuration (Ingress Only)
@@ -958,24 +997,23 @@ templateSnippets:
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
         Note: These affect backend-level config and server-level directives
       -#}
-      {%- if ingress is defined %}
-      {%- set check_http = ingress.metadata.annotations["haproxy.org/check-http"] | default("") %}
-      {%- set check_interval = ingress.metadata.annotations["haproxy.org/check-interval"] | default("") %}
-      {%- if check_http %}
+      {%- if ingress != nil %}
+      {%- var checkHttp = ingress | dig("metadata", "annotations", "haproxy.org/check-http") | fallback("") | tostring() %}
+      {%- var checkInterval = ingress | dig("metadata", "annotations", "haproxy.org/check-interval") | fallback("") | tostring() %}
+      {%- if checkHttp != "" %}
       # haproxytech/backend-directives-haproxytech-advanced-health-checks
-        {%- if " " in check_http %}
-      option httpchk {{ check_http }}
+        {%- if strings_contains(checkHttp, " ") %}
+      option httpchk {{ checkHttp }}
         {%- else %}
-      option httpchk GET {{ check_http }}
-        {%- endif %}
-      {%- endif %}
-      {%- if check_interval %}
-      # Note: check-interval annotation value: {{ check_interval }}
-      {%- endif %}
-      {%- endif -%}
+      option httpchk GET {{ checkHttp }}
+        {%- end %}
+      {%- end %}
+      {%- if checkInterval != "" %}
+      # Note: check-interval annotation value: {{ checkInterval }}
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-health-checks:
-    priority: 200
+  backend-directives-200-haproxytech-health-checks:
     template: |
       {#-
         HAProxy Health Check Configuration (Ingress Only)
@@ -992,19 +1030,20 @@ templateSnippets:
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
         Note: These annotations affect server-level directives which are handled by the base template
       -#}
-      {%- if ingress is defined %}
-      {%- set check_enabled = ingress.metadata.annotations["haproxy.org/check"] | default("") %}
-      {%- if check_enabled %}
-        {%- if check_enabled not in ["true", "false"] %}
-          {{- fail("Invalid value '" ~ check_enabled ~ "' for annotation 'haproxy.org/check' on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "'. Valid values: 'true', 'false'") -}}
-        {%- endif %}
+      {%- if ingress != nil %}
+      {%- var checkEnabled = ingress | dig("metadata", "annotations", "haproxy.org/check") | fallback("") | tostring() %}
+      {%- if checkEnabled != "" %}
+        {%- if checkEnabled != "true" && checkEnabled != "false" %}
+          {%- var ingressNs = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+          {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+          {{- fail("Invalid value '" + checkEnabled + "' for annotation 'haproxy.org/check' on Ingress '" + ingressNs + "/" + ingressName + "'. Valid values: 'true', 'false'") -}}
+        {%- end %}
       # haproxytech/backend-directives-haproxytech-health-checks
-      # Note: check annotation value: {{ check_enabled }}
-      {%- endif %}
-      {%- endif -%}
+      # Note: check annotation value: {{ checkEnabled }}
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-pod-maxconn:
-    priority: 100
+  backend-directives-100-haproxytech-pod-maxconn:
     template: |
       {#-
         HAProxy Pod MaxConn Configuration (Ingress Only)
@@ -1029,39 +1068,44 @@ templateSnippets:
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
         Note: This annotation affects server-level directives which are handled by the base template
       -#}
-      {%- if ingress is defined %}
-      {%- set pod_maxconn = ingress.metadata.annotations["haproxy.org/pod-maxconn"] | default("") %}
-      {%- if pod_maxconn %}
+      {%- if ingress != nil %}
+      {%- var podMaxconn = ingress | dig("metadata", "annotations", "haproxy.org/pod-maxconn") | fallback("") | tostring() %}
+      {%- if podMaxconn != "" %}
         {#- Validate annotation value -#}
-        {%- if not pod_maxconn.isdigit() or (pod_maxconn | int) <= 0 %}
-          {{- fail("Invalid value '" ~ pod_maxconn ~ "' for annotation 'haproxy.org/pod-maxconn' on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "'. Must be a positive integer.") -}}
-        {%- endif %}
+        {%- var podMaxconnInt = toint(podMaxconn) %}
+        {%- if podMaxconnInt <= 0 %}
+          {%- var ingressNs = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+          {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+          {{- fail("Invalid value '" + podMaxconn + "' for annotation 'haproxy.org/pod-maxconn' on Ingress '" + ingressNs + "/" + ingressName + "'. Must be a positive integer.") -}}
+        {%- end %}
 
         {#- Count HAProxy controller pods -#}
-        {%- set haproxy_pod_count = 0 %}
-        {%- if controller is defined and controller.haproxy_pods is defined %}
-          {%- set haproxy_pod_count = controller.haproxy_pods.List() | length %}
-        {%- endif %}
+        {%- var haproxyPodCount = 0 %}
+        {%- if controller != nil %}
+          {%- var haproxyPods = controller.haproxy_pods %}
+          {%- if haproxyPods != nil %}
+            {%- haproxyPodCount = len(haproxyPods.List()) %}
+          {%- end %}
+        {%- end %}
 
         {#- Calculate per-pod maxconn (divide total by pod count, with ceiling rounding) -#}
-        {%- if haproxy_pod_count > 0 %}
-          {%- set per_pod_maxconn = ((pod_maxconn | int) / haproxy_pod_count) | round(0, 'ceil') | int %}
+        {%- if haproxyPodCount > 0 %}
+          {%- var perPodMaxconn = ((podMaxconnInt | float64()) / (haproxyPodCount | float64())) | ceil() %}
       # haproxytech/backend-directives-haproxytech-pod-maxconn
-      # pod-maxconn: {{ pod_maxconn }} total / {{ haproxy_pod_count }} HAProxy pods = {{ per_pod_maxconn }} per pod
-          {#- Set variable in namespace for base.yaml to use (namespace persists across includes) -#}
-          {%- set ns_server_opts.pod_maxconn_value = per_pod_maxconn %}
+      # pod-maxconn: {{ podMaxconn }} total / {{ haproxyPodCount }} HAProxy pods = {{ perPodMaxconn }} per pod
+          {#- Set variable in namespace for base.yaml to use -#}
+          {% serverOpts["podMaxconnValue"] = perPodMaxconn -%}
         {%- else %}
           {#- No pods discovered yet, use full value as fallback -#}
       # haproxytech/backend-directives-haproxytech-pod-maxconn
-      # pod-maxconn: {{ pod_maxconn }} (no HAProxy pods discovered yet, using full value)
-          {#- Set variable in namespace for base.yaml to use (namespace persists across includes) -#}
-          {%- set ns_server_opts.pod_maxconn_value = pod_maxconn | int %}
-        {%- endif %}
-      {%- endif %}
-      {%- endif -%}
+      # pod-maxconn: {{ podMaxconn }} (no HAProxy pods discovered yet, using full value)
+          {#- Set variable in namespace for base.yaml to use -#}
+          {% serverOpts["podMaxconnValue"] = podMaxconnInt -%}
+        {%- end %}
+      {%- end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-timeouts:
-    priority: 100
+  backend-directives-100-haproxytech-timeouts:
     template: |
       {#-
         HAProxy Backend Timeout Configuration (Ingress Only)
@@ -1092,32 +1136,31 @@ templateSnippets:
         Note: Frontend timeouts (client, http-request, http-keep-alive) are in frontend-filters-haproxytech-timeouts
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
       -#}
-      {%- if ingress is defined %}
-      {%- set timeout_server = ingress.metadata.annotations["haproxy.org/timeout-server"] | default("") %}
-      {%- set timeout_connect = ingress.metadata.annotations["haproxy.org/timeout-connect"] | default("") %}
-      {%- set timeout_queue = ingress.metadata.annotations["haproxy.org/timeout-queue"] | default("") %}
-      {%- set timeout_tunnel = ingress.metadata.annotations["haproxy.org/timeout-tunnel"] | default("") %}
-      {%- set timeout_check = ingress.metadata.annotations["haproxy.org/timeout-check"] | default("") %}
-      {%- if timeout_server %}
+      {%- if ingress != nil %}
+      {%- var timeoutServer = ingress | dig("metadata", "annotations", "haproxy.org/timeout-server") | fallback("") | tostring() %}
+      {%- var timeoutConnect = ingress | dig("metadata", "annotations", "haproxy.org/timeout-connect") | fallback("") | tostring() %}
+      {%- var timeoutQueue = ingress | dig("metadata", "annotations", "haproxy.org/timeout-queue") | fallback("") | tostring() %}
+      {%- var timeoutTunnel = ingress | dig("metadata", "annotations", "haproxy.org/timeout-tunnel") | fallback("") | tostring() %}
+      {%- var timeoutCheck = ingress | dig("metadata", "annotations", "haproxy.org/timeout-check") | fallback("") | tostring() %}
+      {%- if timeoutServer != "" %}
       # haproxytech/backend-directives-haproxytech-timeouts
-      timeout server {{ timeout_server }}
-      {%- endif %}
-      {%- if timeout_connect %}
-      timeout connect {{ timeout_connect }}
-      {%- endif %}
-      {%- if timeout_queue %}
-      timeout queue {{ timeout_queue }}
-      {%- endif %}
-      {%- if timeout_tunnel %}
-      timeout tunnel {{ timeout_tunnel }}
-      {%- endif %}
-      {%- if timeout_check %}
-      timeout check {{ timeout_check }}
-      {%- endif %}
-      {%- endif -%}
+      timeout server {{ timeoutServer }}
+      {% end %}
+      {%- if timeoutConnect != "" %}
+      timeout connect {{ timeoutConnect }}
+      {% end %}
+      {%- if timeoutQueue != "" %}
+      timeout queue {{ timeoutQueue }}
+      {% end %}
+      {%- if timeoutTunnel != "" %}
+      timeout tunnel {{ timeoutTunnel }}
+      {% end %}
+      {%- if timeoutCheck != "" %}
+      timeout check {{ timeoutCheck }}
+      {% end %}
+      {%- end -%}
 
-  backend-directives-haproxytech-ingress-auth:
-    priority: 500
+  backend-directives-500-haproxytech-ingress-auth:
     template: |
       {#-
         HAProxy Basic Authentication - Backend Directive (Ingress Only)
@@ -1135,40 +1178,46 @@ templateSnippets:
         Note: Requires corresponding userlist created by global-top-haproxytech-ingress-auth
         Note: This snippet requires 'ingress' variable in context (only set by Ingress backend generation)
       -#}
-      {%- if ingress is defined %}
-      {%- set auth_type = ingress.metadata.annotations["haproxy.org/auth-type"] | default("") %}
-      {%- if auth_type and auth_type != "basic-auth" %}
-        {{- fail("Invalid value '" ~ auth_type ~ "' for annotation 'haproxy.org/auth-type' on Ingress '" ~ ingress.metadata.namespace ~ "/" ~ ingress.metadata.name ~ "'. Valid values: 'basic-auth'") -}}
-      {%- endif %}
-      {%- if auth_type == "basic-auth" %}
-        {%- set auth_secret = ingress.metadata.annotations["haproxy.org/auth-secret"] | default("") %}
-        {#- Note: HAProxy Data Plane API's OpenAPI schema requires realm without spaces (regex: ^[^\s]+$) #}
-        {%- set auth_realm = ingress.metadata.annotations["haproxy.org/auth-realm"] | default("RestrictedArea") %}
-        {%- if auth_secret %}
-          {#- Generate userlist name using macro #}
-          {%- include "util-auth-userlist-name" -%}
-          {%- set userlist_name = get_userlist_name(auth_secret, ingress.metadata.namespace) | trim -%}
+      {%- if ingress != nil %}
+      {%- var ingressNs = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+      {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+      {%- var authType = ingress | dig("metadata", "annotations", "haproxy.org/auth-type") | fallback("") | tostring() %}
+      {%- if authType != "" && authType != "basic-auth" %}
+        {{- fail("Invalid value '" + authType + "' for annotation 'haproxy.org/auth-type' on Ingress '" + ingressNs + "/" + ingressName + "'. Valid values: 'basic-auth'") -}}
+      {%- end %}
+      {%- if authType == "basic-auth" %}
+        {%- var authSecret = ingress | dig("metadata", "annotations", "haproxy.org/auth-secret") | fallback("") | tostring() %}
+        {#- Note: HAProxy Data Plane API's OpenAPI schema requires realm without spaces (regex: ^[^\s]+$) -#}
+        {%- var authRealm = ingress | dig("metadata", "annotations", "haproxy.org/auth-realm") | fallback("RestrictedArea") | tostring() %}
+        {%- if authSecret != "" %}
+          {#- Generate userlist name based on secret reference -#}
+          {%- var userlistName = "" %}
+          {%- if strings_contains(authSecret, "/") %}
+            {%- var parts = split(authSecret, "/") %}
+            {%- userlistName = "auth_" + parts[0] + "_" + parts[1] %}
+          {%- else %}
+            {%- userlistName = "auth_" + ingressNs + "_" + authSecret %}
+          {%- end %}
       # haproxytech/backend-directives-haproxytech-ingress-auth
-      http-request auth realm "{{ auth_realm }}" unless { http_auth({{ userlist_name }}) }
-        {%- endif -%}
-      {%- endif -%}
-      {%- endif -%}
+      http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+        {%- end -%}
+      {%- end -%}
+      {%- end -%}
 
-  features-haproxytech-ssl-passthrough:
-    priority: 100
+  features-100-haproxytech-ssl-passthrough:
     template: |
       {#-
         HAProxy SSL Passthrough Feature Registration (Ingress Only)
 
         Purpose:
           Scans Ingress resources to detect SSL passthrough needs and registers
-          backends with the global feature registry. Uses compute_once to ensure
+          backends with the global feature registry. Uses caching to ensure
           expensive resource scanning happens only once per render.
 
         Flow:
           1. Scan all Ingress resources for haproxy.org/ssl-passthrough="true"
           2. Build list of passthrough backends with SNI information
-          3. Register backends with global_features.ssl_passthrough_backends
+          3. Register backends with globalFeatures.sslPassthroughBackends
           4. Cached analysis is reused by backends-haproxytech-ssl-passthrough
 
         Annotations:
@@ -1182,16 +1231,21 @@ templateSnippets:
             'ingress': '<name>'
           }
       -#}
-      {%- include "util-haproxytech-ssl-passthrough" %}
+      {{ render "util-haproxytech-ssl-passthrough" }}
 
-      {#- Register backends with global feature registry (only if SSL library is loaded) #}
-      {%- if global_features.ssl_passthrough_backends is defined %}
-        {%- set global_features.ssl_passthrough_backends =
-            global_features.ssl_passthrough_backends + shared.haproxytech_ssl_passthrough.backends %}
-      {%- endif %}
+      {#- Register backends with global feature registry (only if SSL library is loaded) -#}
+      {%- if shared.globalFeatures != nil %}
+        {%- var globalFeatures = shared.globalFeatures.(map[string]any) %}
+        {%- var sslBackends = globalFeatures | dig("sslPassthroughBackends") %}
+        {%- if sslBackends != nil %}
+          {%- var haproxytechBackends = shared.haproxytech_sslPassthrough.(map[string]any).backends.([]any) %}
+          {%- for _, backend := range haproxytechBackends %}
+            {%- globalFeatures["sslPassthroughBackends"] = append(globalFeatures["sslPassthroughBackends"].([]any), backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
 
-  backends-haproxytech-ssl-passthrough:
-    priority: 501
+  backends-501-haproxytech-ssl-passthrough:
     template: |
       {#-
           HAProxy SSL Passthrough Backends (Ingress Only)
@@ -1199,7 +1253,7 @@ templateSnippets:
           Purpose:
             TCP backends for SSL passthrough - forward encrypted traffic directly to pods.
             No SSL termination occurs in HAProxy.
-            Reuses cached analysis from features-haproxytech-ssl-passthrough via compute_once.
+            Reuses cached analysis from features-haproxytech-ssl-passthrough via caching.
 
           Annotations:
             - haproxy.org/ssl-passthrough: "true" (enables passthrough for this ingress)
@@ -1211,38 +1265,45 @@ templateSnippets:
 
           Note: Uses util-haproxytech-ssl-passthrough for cached analysis (runs only once per render)
       -#}
-      {%- include "util-haproxytech-ssl-passthrough" %}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {{ render "util-haproxytech-ssl-passthrough" }}
 
-      {%- set ns = namespace(processed="") %}
-      {%- for backend_info in shared.haproxytech_ssl_passthrough.backends %}
-        {%- set ingress_key = backend_info.namespace ~ "/" ~ backend_info.ingress %}
-        {%- if ("|" ~ ingress_key ~ "|") not in ns.processed %}
-          {%- set ns.processed = ns.processed ~ "|" ~ ingress_key ~ "|" %}
-          {#- Get the actual ingress resource to extract service details #}
-          {%- set ingress = resources.ingresses.GetSingle(backend_info.namespace, backend_info.ingress) %}
-          {%- set ns_backend = namespace(generated=false) %}
-          {%- for rule in (ingress.spec.rules | default([])) %}
-            {%- if not ns_backend.generated and rule.http is defined %}
-              {%- for path in (rule.http.paths | default([])) %}
-                {%- if not ns_backend.generated %}
-                  {%- set service_name = path.backend.service.name %}
-                  {%- set service_port = path.backend.service.port.number | default(path.backend.service.port.name) %}
-                  {%- set port = service_port %}
+      {%- var sslPassthroughData = shared["haproxytech_sslPassthrough"].(map[string]any) %}
+      {%- var backends = sslPassthroughData["backends"].([]any) %}
+      {%- for _, backendInfo := range backends %}
+        {%- var beInfo = backendInfo.(map[string]any) %}
+        {%- var beNs = beInfo["namespace"] | tostring() %}
+        {%- var beIngress = beInfo["ingress"] | tostring() %}
+        {%- var beName = beInfo["name"] | tostring() %}
+        {%- var ingressKey = beNs + "/" + beIngress %}
+        {%- if first_seen("sslPassthrough_backend", ingressKey) %}
+          {#- Get the actual ingress resource to extract service details -#}
+          {%- var ingress = resources.ingresses.GetSingle(beNs, beIngress) %}
+          {%- var backendGenerated = false %}
+          {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+          {%- for _, rule := range rules %}
+            {%- if !backendGenerated %}
+              {%- var http = rule | dig("http") %}
+              {%- if http != nil %}
+                {%- var paths = http | dig("paths") | fallback([]any{}) %}
+                {%- for _, path := range paths %}
+                  {%- if !backendGenerated %}
+                    {%- var serviceName = path | dig("backend", "service", "name") | fallback("") | tostring() %}
+                    {%- var servicePort = path | dig("backend", "service", "port", "number") | fallback(path | dig("backend", "service", "port", "name")) | toint() %}
       # haproxytech/backends-haproxytech-ssl-passthrough
 
-      backend {{ backend_info.name }}
+      backend {{ beName }}
           mode tcp
           balance roundrobin
-                  {%- filter indent(8, first=False) -%}
-                  {%- include "util-backend-servers" -%}
-                  {%- endfilter %}
-                  {%- set ns_backend.generated = true %}
-                {%- endif %}
-              {%- endfor %}
-            {%- endif %}
-          {%- endfor %}
-        {%- endif %}
-      {%- endfor %}
+          {{ BackendServers(serviceName, 10, servicePort, nil) | indent(4) }}
+                    {%- backendGenerated = true %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
 
 validationTests:
   test-auth-basic-cross-namespace:

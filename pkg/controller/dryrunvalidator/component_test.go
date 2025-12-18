@@ -127,10 +127,10 @@ func TestMapGVKToResourceType(t *testing.T) {
 }
 
 // =============================================================================
-// sortSnippetsByPriority Tests
+// sortSnippetNames Tests
 // =============================================================================
 
-func TestSortSnippetsByPriority(t *testing.T) {
+func TestSortSnippetNames(t *testing.T) {
 	tests := []struct {
 		name     string
 		snippets map[string]config.TemplateSnippet
@@ -144,46 +144,31 @@ func TestSortSnippetsByPriority(t *testing.T) {
 		{
 			name: "single snippet",
 			snippets: map[string]config.TemplateSnippet{
-				"snippet-a": {Priority: 100},
+				"snippet-a": {},
 			},
 			expected: []string{"snippet-a"},
 		},
 		{
-			name: "sorted by priority ascending",
+			name: "alphabetical sorting",
 			snippets: map[string]config.TemplateSnippet{
-				"snippet-c": {Priority: 300},
-				"snippet-a": {Priority: 100},
-				"snippet-b": {Priority: 200},
+				"zebra":   {},
+				"alpha":   {},
+				"charlie": {},
 			},
-			expected: []string{"snippet-a", "snippet-b", "snippet-c"},
+			expected: []string{"alpha", "charlie", "zebra"},
 		},
 		{
-			name: "same priority sorted alphabetically",
+			name: "ordering encoded in names with numbers",
 			snippets: map[string]config.TemplateSnippet{
-				"charlie": {Priority: 100},
-				"alpha":   {Priority: 100},
-				"bravo":   {Priority: 100},
+				"features-500-ssl":            {},
+				"features-050-initialization": {},
+				"features-150-crtlist":        {},
 			},
-			expected: []string{"alpha", "bravo", "charlie"},
-		},
-		{
-			name: "default priority (0 becomes 500)",
-			snippets: map[string]config.TemplateSnippet{
-				"explicit-high": {Priority: 600},
-				"default-prio":  {Priority: 0}, // Default becomes 500
-				"explicit-low":  {Priority: 100},
+			expected: []string{
+				"features-050-initialization",
+				"features-150-crtlist",
+				"features-500-ssl",
 			},
-			expected: []string{"explicit-low", "default-prio", "explicit-high"},
-		},
-		{
-			name: "mixed priorities and names",
-			snippets: map[string]config.TemplateSnippet{
-				"z-low":    {Priority: 100},
-				"a-medium": {Priority: 500},
-				"m-low":    {Priority: 100},
-				"b-high":   {Priority: 900},
-			},
-			expected: []string{"m-low", "z-low", "a-medium", "b-high"},
 		},
 	}
 
@@ -195,7 +180,7 @@ func TestSortSnippetsByPriority(t *testing.T) {
 				},
 			}
 
-			result := c.sortSnippetsByPriority()
+			result := c.sortSnippetNames()
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -378,7 +363,7 @@ func TestNew(t *testing.T) {
 
 	// Create minimal engine for test
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{"test.cfg": "test content"},
 		nil, // customFilters
 		nil, // customFunctions
@@ -415,7 +400,7 @@ func TestStart_ContextCancellation(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": "# empty config"},
 		nil, nil, nil,
 	)
@@ -458,7 +443,7 @@ func TestHandleEvent_IgnoresNonValidationEvents(t *testing.T) {
 	validationPaths := &dataplane.ValidationPaths{}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": "# empty"},
 		nil, nil, nil,
 	)
@@ -482,7 +467,7 @@ func TestPublishResponse_Allowed(t *testing.T) {
 	validationPaths := &dataplane.ValidationPaths{}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": "# empty"},
 		nil, nil, nil,
 	)
@@ -511,7 +496,7 @@ func TestPublishResponse_Denied(t *testing.T) {
 	validationPaths := &dataplane.ValidationPaths{}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": "# empty"},
 		nil, nil, nil,
 	)
@@ -540,8 +525,8 @@ func TestPublishResponse_Denied(t *testing.T) {
 func TestBuildRenderingContext(t *testing.T) {
 	cfg := &config.Config{
 		TemplateSnippets: map[string]config.TemplateSnippet{
-			"snippet-a": {Priority: 100},
-			"snippet-b": {Priority: 200},
+			"snippet-a": {},
+			"snippet-b": {},
 		},
 	}
 
@@ -570,12 +555,12 @@ func TestBuildRenderingContext(t *testing.T) {
 
 	// Verify context structure
 	assert.NotNil(t, ctx["resources"])
-	assert.NotNil(t, ctx["template_snippets"])
+	assert.NotNil(t, ctx["templateSnippets"])
 	assert.NotNil(t, ctx["pathResolver"])
 	assert.Equal(t, cfg, ctx["config"])
 
-	// Verify template_snippets are sorted
-	snippets, ok := ctx["template_snippets"].([]string)
+	// Verify templateSnippets are sorted
+	snippets, ok := ctx["templateSnippets"].([]string)
 	require.True(t, ok)
 	assert.Equal(t, []string{"snippet-a", "snippet-b"}, snippets)
 
@@ -601,7 +586,7 @@ func TestRenderAuxiliaryFiles_MapFiles(t *testing.T) {
 
 	// Create engine with map template
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"hosts.map": "example.com backend1\ntest.com backend2",
 		},
@@ -634,7 +619,7 @@ func TestRenderAuxiliaryFiles_GeneralFiles(t *testing.T) {
 
 	// Create engine with general file template
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"custom.txt": "custom content here",
 		},
@@ -655,7 +640,8 @@ func TestRenderAuxiliaryFiles_GeneralFiles(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, auxFiles.GeneralFiles, 1)
 	assert.Equal(t, "custom.txt", auxFiles.GeneralFiles[0].Filename)
-	assert.Equal(t, "custom content here", auxFiles.GeneralFiles[0].Content)
+	// Scriggo adds trailing newline
+	assert.Equal(t, "custom content here\n", auxFiles.GeneralFiles[0].Content)
 }
 
 func TestRenderAuxiliaryFiles_SSLCertificates(t *testing.T) {
@@ -667,7 +653,7 @@ func TestRenderAuxiliaryFiles_SSLCertificates(t *testing.T) {
 
 	// Create engine with SSL cert template
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"server.pem": "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
 		},
@@ -700,7 +686,7 @@ func TestRenderAuxiliaryFiles_RenderError(t *testing.T) {
 
 	// Create engine WITHOUT the map template
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"haproxy.cfg": "# empty",
 		},
@@ -730,7 +716,7 @@ func TestRenderAuxiliaryFiles_Empty(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{},
 		nil, nil, nil,
 	)
@@ -785,7 +771,7 @@ func TestHandleValidationRequest_InvalidGVK(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": "# empty config"},
 		nil, nil, nil,
 	)
@@ -833,7 +819,7 @@ func TestHandleValidationRequest_StoreNotRegistered(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": "# empty config"},
 		nil, nil, nil,
 	)
@@ -885,11 +871,11 @@ func TestHandleValidationRequest_RenderingError(t *testing.T) {
 	}
 
 	// Create engine with template that will fail rendering
-	// Use a template that references an undefined variable to trigger rendering error
+	// Use fail() function to trigger rendering error
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
-			"haproxy.cfg": "{{ undefined_variable.that.does.not.exist }}",
+			"haproxy.cfg": `{{ fail("intentional rendering error") }}`,
 		},
 		nil, nil, nil,
 	)
@@ -946,7 +932,7 @@ func TestHandleValidationRequest_Success(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"haproxy.cfg": testutil.ValidHAProxyConfigTemplate,
 		},
@@ -1004,7 +990,7 @@ func TestHandleValidationRequest_UpdateOperation(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"haproxy.cfg": testutil.ValidHAProxyConfigTemplate,
 		},
@@ -1094,7 +1080,7 @@ func TestHandleValidationRequest_DifferentResourceTypes(t *testing.T) {
 			}
 
 			engine, err := templating.New(
-				templating.EngineTypeGonja,
+				templating.EngineTypeScriggo,
 				map[string]string{
 					"haproxy.cfg": testutil.ValidHAProxyConfigTemplate,
 				},
@@ -1179,7 +1165,7 @@ func TestRunValidationTests_AllTestsPass(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"haproxy.cfg": testutil.ValidHAProxyConfigTemplate,
 		},
@@ -1261,7 +1247,7 @@ func TestRunValidationTests_TestsFail(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"haproxy.cfg": testutil.ValidHAProxyConfigTemplate,
 		},
@@ -1342,7 +1328,7 @@ func TestRunValidationTests_PublishesEvents(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeGonja,
+		templating.EngineTypeScriggo,
 		map[string]string{
 			"haproxy.cfg": testutil.ValidHAProxyConfigTemplate,
 		},

@@ -79,7 +79,7 @@ controller:
     # Supports: "regex" path type for Ingress resources with pathType: ImplementationSpecific
     # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
     haproxyIngress:
-      enabled: true
+      enabled: false
     # Path Regex Last library: Performance-first path matching order
     # Overrides default ordering to: Exact > Prefix > Regex (regex moved to last)
     # Default (de facto standard): Exact > Regex > Prefix
@@ -206,6 +206,7 @@ controller:
     # Template rendering settings
     # extraContext provides custom variables available to all templates
     templatingSettings:
+      engine: scriggo  # Template engine: "scriggo" (Go templates)
       extraContext:
         # Enable debug headers in HAProxy responses
         # When enabled, HAProxy adds headers like X-HAProxy-Backend, X-Gateway-Matched-Route

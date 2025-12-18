@@ -139,28 +139,39 @@ haproxy_config:
 
     frontend test-frontend
       bind :8080
-      {%- for ingress in resources.ingresses.List() %}
-      {%- for rule in ingress.spec.rules %}
-      {%- for path in rule.http.paths %}
-      {%- if path.backend.service %}
-      use_backend ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }} if { path_beg {{ path.path }} }
-      {%- endif %}
-      {%- endfor %}
-      {%- endfor %}
-      {%- endfor %}
+      {% for _, ingress := range resources.ingresses.List() -%}
+      {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+      {%- for _, rule := range rules %}
+      {%- var paths = rule | dig("http", "paths") | fallback([]any{}) %}
+      {%- for _, path := range paths %}
+      {%- var service = path | dig("backend", "service") %}
+      {%- if service != nil %}
+      {%- var ns = ingress | dig("metadata", "namespace") | fallback("") %}
+      {%- var name = ingress | dig("metadata", "name") | fallback("") %}
+      {%- var pathVal = path | dig("path") | fallback("/") %}
+      use_backend ing_{{ ns }}_{{ name }} if { path_beg {{ pathVal }} }
+      {% end %}
+      {% end %}
+      {% end %}
+      {% end %}
       default_backend test-backend
 
-    {%- for ingress in resources.ingresses.List() %}
-    {%- for rule in ingress.spec.rules %}
-    {%- for path in rule.http.paths %}
-    {%- if path.backend.service %}
+    {%- for _, ingress := range resources.ingresses.List() %}
+    {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+    {%- for _, rule := range rules %}
+    {%- var paths = rule | dig("http", "paths") | fallback([]any{}) %}
+    {%- for _, path := range paths %}
+    {%- var service = path | dig("backend", "service") %}
+    {%- if service != nil %}
+    {%- var ns = ingress | dig("metadata", "namespace") | fallback("") %}
+    {%- var name = ingress | dig("metadata", "name") | fallback("") %}
 
-    backend ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
+    backend ing_{{ ns }}_{{ name }}
       server test-server 127.0.0.1:8080
-    {%- endif %}
-    {%- endfor %}
-    {%- endfor %}
-    {%- endfor %}
+    {% end %}
+    {% end %}
+    {% end %}
+    {% end %}
 
     backend test-backend
       # Placeholder backend - no servers configured
@@ -199,29 +210,36 @@ haproxy_config:
 
     frontend test-frontend
       bind :8080
-      {%- for ingress in resources.ingresses.List() %}
-      {%- for rule in ingress.spec.rules %}
-      {%- for path in rule.http.paths %}
-      {%- if path.backend.service %}
-      use_backend {% include "backend-name" %} if { path_beg {{ path.path }} }
-      {%- endif %}
-      {%- endfor %}
-      {%- endfor %}
-      {%- endfor %}
+      {% for _, ingress := range resources.ingresses.List() -%}
+      {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+      {%- for _, rule := range rules %}
+      {%- var paths = rule | dig("http", "paths") | fallback([]any{}) %}
+      {%- for _, path := range paths %}
+      {%- var service = path | dig("backend", "service") %}
+      {%- if service != nil %}
+      {%- var pathVal = path | dig("path") | fallback("/") %}
+      use_backend {% include "backend-name" %} if { path_beg {{ pathVal }} }
+      {% end %}
+      {% end %}
+      {% end %}
+      {% end %}
       default_backend test-backend
 
-    {%- for ingress in resources.ingresses.List() %}
-    {%- for rule in ingress.spec.rules %}
-    {%- for path in rule.http.paths %}
-    {%- if path.backend.service %}
+    {%- for _, ingress := range resources.ingresses.List() %}
+    {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+    {%- for _, rule := range rules %}
+    {%- var paths = rule | dig("http", "paths") | fallback([]any{}) %}
+    {%- for _, path := range paths %}
+    {%- var service = path | dig("backend", "service") %}
+    {%- if service != nil %}
 
     backend {% include "backend-name" %}
       {%- include "backend-annotation-haproxytech-auth" %}
       server test-server 127.0.0.1:8080
-    {%- endif %}
-    {%- endfor %}
-    {%- endfor %}
-    {%- endfor %}
+    {% end %}
+    {% end %}
+    {% end %}
+    {% end %}
 
     backend test-backend
       # Placeholder backend - no servers configured
@@ -252,18 +270,24 @@ template_snippets:
   backend-name:
     name: backend-name
     template: >-
-      {{- " " -}}ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ path.backend.service.port.name | default(path.backend.service.port.number) }}
+      {%- var ns = ingress | dig("metadata", "namespace") | fallback("") -%}
+      {%- var ingressName = ingress | dig("metadata", "name") | fallback("") -%}
+      {%- var svcName = path | dig("backend", "service", "name") | fallback("") -%}
+      {%- var portName = path | dig("backend", "service", "port", "name") -%}
+      {%- var portNum = path | dig("backend", "service", "port", "number") -%}
+      {%- var portId = portName | fallback(portNum) | fallback("") -%}
+      {{- " " -}}ing_{{ ns }}_{{ ingressName }}_{{ svcName }}_{{ portId }}
 
   backend-annotation-haproxytech-auth:
     name: backend-annotation-haproxytech-auth
     priority: 500
     template: |
       {#- Generate http-request auth directives for backends requiring authentication #}
-      {%- set auth_type = ingress.metadata.annotations["haproxy.org/auth-type"] | default("") %}
+      {%- var auth_type = ingress | dig("metadata", "annotations", "haproxy.org/auth-type") | fallback("") %}
       {%- if auth_type == "basic-auth" %}
-        {%- set auth_realm = ingress.metadata.annotations["haproxy.org/auth-realm"] | default("Protected") %}
+        {%- var auth_realm = ingress | dig("metadata", "annotations", "haproxy.org/auth-realm") | fallback("Protected") %}
       http-request auth realm "{{ auth_realm }}"
-      {%- endif %}
+      {% end %}
 `
 
 // NewConfigMap creates a ConfigMap with the given configuration.
@@ -376,28 +400,39 @@ defaults
 
 frontend test-frontend
   bind :8080
-  {%- for ingress in resources.ingresses.List() %}
-  {%- for rule in ingress.spec.rules %}
-  {%- for path in rule.http.paths %}
-  {%- if path.backend.service %}
-  use_backend ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }} if { path_beg {{ path.path }} }
-  {%- endif %}
-  {%- endfor %}
-  {%- endfor %}
-  {%- endfor %}
+  {% for _, ingress := range resources.ingresses.List() -%}
+  {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+  {%- for _, rule := range rules %}
+  {%- var paths = rule | dig("http", "paths") | fallback([]any{}) %}
+  {%- for _, path := range paths %}
+  {%- var service = path | dig("backend", "service") %}
+  {%- if service != nil %}
+  {%- var ns = ingress | dig("metadata", "namespace") | fallback("") %}
+  {%- var name = ingress | dig("metadata", "name") | fallback("") %}
+  {%- var pathVal = path | dig("path") | fallback("/") %}
+  use_backend ing_{{ ns }}_{{ name }} if { path_beg {{ pathVal }} }
+  {% end %}
+  {% end %}
+  {% end %}
+  {% end %}
   default_backend test-backend
 
-{%- for ingress in resources.ingresses.List() %}
-{%- for rule in ingress.spec.rules %}
-{%- for path in rule.http.paths %}
-{%- if path.backend.service %}
+{%- for _, ingress := range resources.ingresses.List() %}
+{%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+{%- for _, rule := range rules %}
+{%- var paths = rule | dig("http", "paths") | fallback([]any{}) %}
+{%- for _, path := range paths %}
+{%- var service = path | dig("backend", "service") %}
+{%- if service != nil %}
+{%- var ns = ingress | dig("metadata", "namespace") | fallback("") %}
+{%- var name = ingress | dig("metadata", "name") | fallback("") %}
 
-backend ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
+backend ing_{{ ns }}_{{ name }}
   server test-server 127.0.0.1:8080
-{%- endif %}
-{%- endfor %}
-{%- endfor %}
-{%- endfor %}
+{% end %}
+{% end %}
+{% end %}
+{% end %}
 
 backend test-backend
   # Placeholder backend - no servers configured
@@ -1139,7 +1174,8 @@ func NewHTTPStoreHAProxyTemplateConfig(namespace, name, secretName string, leade
 		WithTemplate(HTTPStoreTemplate).
 		WithFiles(map[string]haproxyv1alpha1.GeneralFile{
 			"blocked-ips.acl": {
-				Template: fmt.Sprintf(`{%%- set blocklist = http.Fetch("%s", {"critical": true, "delay": "5s"}) -%%}
+				Template: fmt.Sprintf(`{%%- var blocklist, fetchErr = http.Fetch("%s", map[string]any{"critical": true, "delay": "5s"}) -%%}
+{%%- if fetchErr != nil -%%}{{ fail("failed to fetch blocklist: " + tostring(fetchErr)) }}{%%- end -%%}
 {{ blocklist }}`, blocklistURL),
 			},
 		}).

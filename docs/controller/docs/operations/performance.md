@@ -110,54 +110,61 @@ histogram_quantile(0.95, rate(haproxy_ic_reconciliation_duration_seconds_bucket[
 
 **Use early filtering:**
 
-```jinja2
+```go
 {#- GOOD: Filter early, process less data -#}
-{%- set matching_ingresses = resources.ingresses.List() | selectattr("spec.ingressClassName", "equalto", "haproxy") | list %}
-{%- for ingress in matching_ingresses %}
+{%- var matching_ingresses = []any{} %}
+{%- for _, ingress := range resources.ingresses.List() %}
+  {%- if ingress.spec.ingressClassName == "haproxy" %}
+    {%- matching_ingresses = append(matching_ingresses, ingress) %}
+  {%- end %}
+{%- end %}
+{%- for _, ingress := range matching_ingresses %}
   ...
-{%- endfor %}
+{%- end %}
 
-{#- AVOID: Processing all ingresses then filtering -#}
-{%- for ingress in resources.ingresses.List() %}
+{#- ALTERNATIVE: Process with inline filtering -#}
+{%- for _, ingress := range resources.ingresses.List() %}
   {%- if ingress.spec.ingressClassName == "haproxy" %}
     ...
-  {%- endif %}
-{%- endfor %}
+  {%- end %}
+{%- end %}
 ```
 
-**Use compute_once for expensive operations:**
+**Use caching for expensive operations:**
 
-```jinja2
-{%- set analysis = namespace(sorted_routes=[]) %}
-{%- compute_once analysis %}
+```go
+{%- if !has_cached("sorted_routes") %}
   {#- Expensive computation only runs once per render -#}
-  {%- for route in resources.httproutes.List() %}
-    {%- set _ = analysis.sorted_routes.append(route) %}
-  {%- endfor %}
-{%- endcompute_once %}
+  {%- var sorted_routes = []any{} %}
+  {%- for _, route := range resources.httproutes.List() %}
+    {%- sorted_routes = append(sorted_routes, route) %}
+  {%- end %}
+  {%- set_cached("sorted_routes", sorted_routes) %}
+{%- end %}
+{%- var analysis_routes = get_cached("sorted_routes") %}
 ```
 
 **Avoid nested loops when possible:**
 
-```jinja2
+```go
 {#- AVOID: O(n*m) complexity -#}
-{%- for ingress in ingresses %}
-  {%- for service in services %}
+{%- for _, ingress := range ingresses %}
+  {%- for _, service := range services %}
     {%- if ingress.spec.backend.service.name == service.metadata.name %}
       ...
-    {%- endif %}
-  {%- endfor %}
-{%- endfor %}
+    {%- end %}
+  {%- end %}
+{%- end %}
 
 {#- BETTER: Use indexing or filtering -#}
-{%- set service_map = {} %}
-{%- for service in services %}
-  {%- set _ = service_map.update({service.metadata.name: service}) %}
-{%- endfor %}
-{%- for ingress in ingresses %}
-  {%- set service = service_map.get(ingress.spec.backend.service.name) %}
+{%- var service_map = map[string]any{} %}
+{%- for _, service := range services %}
+  {%- service_map[service.metadata.name] = service %}
+{%- end %}
+{%- for _, ingress := range ingresses %}
+  {%- var service = service_map[ingress.spec.backend.service.name] %}
   ...
-{%- endfor %}
+{%- end %}
 ```
 
 ### Template Debugging
@@ -178,11 +185,11 @@ cat /tmp/template-trace.log
 
 Key HAProxy parameters for performance:
 
-```jinja2
+```go
 global
-    maxconn {{ controller.config.haproxy.maxconn | default(2000) }}
-    nbthread {{ controller.config.haproxy.nbthread | default(4) }}
-    tune.bufsize {{ controller.config.haproxy.bufsize | default(16384) }}
+    maxconn {{ fallback(controller.config.haproxy.maxconn, 2000) }}
+    nbthread {{ fallback(controller.config.haproxy.nbthread, 4) }}
+    tune.bufsize {{ fallback(controller.config.haproxy.bufsize, 16384) }}
     tune.ssl.default-dh-param 2048
 
 defaults
@@ -229,7 +236,7 @@ global
 
 Increase buffers for large headers or payloads:
 
-```jinja2
+```go
 global
     tune.bufsize 32768        # 32KB for large headers
     tune.http.maxhdr 128      # Allow more headers

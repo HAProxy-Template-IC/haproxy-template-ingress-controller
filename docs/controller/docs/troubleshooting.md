@@ -188,7 +188,7 @@ curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 - Use namespace restrictions in `watchedResources`
 - Add label selectors to filter resources
 - Use cached store for large resources
-- Optimize templates: cache values with `{% set %}`, reduce nested loops
+- Optimize templates: cache values with `{% var %}`, reduce nested loops
 
 ### High Memory Usage
 

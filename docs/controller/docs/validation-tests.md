@@ -229,7 +229,7 @@ controller validate -f config.yaml --dump-rendered
 
 ### --trace-templates
 
-Shows template execution order and timing:
+Shows top-level template execution order and timing:
 
 ```bash
 controller validate -f config.yaml --trace-templates
@@ -241,6 +241,14 @@ Completed: haproxy.cfg (0.007ms)
 Rendering: path-prefix.map
 Completed: path-prefix.map (3.347ms)
 ```
+
+!!! note
+    This shows only top-level template renders. To see the full call tree including
+    `render_glob`, `render`, and macro invocations, combine with `--profile-includes`:
+
+    ```bash
+    controller validate -f config.yaml --trace-templates --profile-includes
+    ```
 
 ### Combining Flags
 
@@ -359,24 +367,24 @@ spec:
 
       frontend http
         bind :80
-        {% for ingress in resources.ingresses.List() %}
-        {% for rule in ingress.spec.rules %}
-        acl host_{{ rule.host | replace(".", "_") }} hdr(host) -i {{ rule.host }}
-        use_backend {{ rule.host | replace(".", "_") }}_backend if host_{{ rule.host | replace(".", "_") }}
-        {% endfor %}
-        {% endfor %}
+        {% for _, ingress := range resources.ingresses.List() %}
+        {% for _, rule := range ingress.spec.rules %}
+        acl host_{{ replace(rule.host, ".", "_") }} hdr(host) -i {{ rule.host }}
+        use_backend {{ replace(rule.host, ".", "_") }}_backend if host_{{ replace(rule.host, ".", "_") }}
+        {% end %}
+        {% end %}
 
-      {% for ingress in resources.ingresses.List() %}
-      {% for rule in ingress.spec.rules %}
-      backend {{ rule.host | replace(".", "_") }}_backend
+      {% for _, ingress := range resources.ingresses.List() %}
+      {% for _, rule := range ingress.spec.rules %}
+      backend {{ replace(rule.host, ".", "_") }}_backend
         balance roundrobin
-        {% set svc_name = rule.http.paths[0].backend.service.name %}
-        {% set svc = resources.services.GetSingle(ingress.metadata.namespace, svc_name) %}
-        {% if svc %}
+        {% var svc_name = rule.http.paths[0].backend.service.name %}
+        {% var svc = resources.services.GetSingle(ingress.metadata.namespace, svc_name) %}
+        {% if svc != nil %}
         server svc1 {{ svc.spec.clusterIP }}:{{ svc.spec.ports[0].port }} check
-        {% endif %}
-      {% endfor %}
-      {% endfor %}
+        {% end %}
+      {% end %}
+      {% end %}
 
   validationTests:
     test-single-ingress:

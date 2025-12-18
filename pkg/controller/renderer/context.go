@@ -38,9 +38,9 @@ import (
 //	  "controller": {
 //	    "haproxy_pods": StoreWrapper,  // HAProxy controller pods for pod-maxconn calculations
 //	  },
-//	  "template_snippets": ["snippet1", "snippet2", ...]  // Sorted by priority
+//	  "templateSnippets": ["snippet1", "snippet2", ...]  // Sorted by priority
 //	  "config": Config,  // Controller configuration (e.g., config.debug.headers.enabled)
-//	  "file_registry": FileRegistry,  // For dynamic auxiliary file registration
+//	  "fileRegistry": FileRegistry,  // For dynamic auxiliary file registration
 //	  "pathResolver": PathResolver,  // For resolving file paths (e.g., {{ pathResolver.GetPath("cert.pem", "cert") }})
 //	  "capabilities": {  // HAProxy/DataPlane API capabilities
 //	    "supports_waf": true,           // WAF (Enterprise only)
@@ -93,8 +93,10 @@ import (
 //	  filter spoe engine modsecurity
 //	{%- endif %}
 func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *templating.PathResolver, isValidation bool) (map[string]interface{}, *FileRegistry) {
-	// Create resources map with wrapped stores
-	resources := make(map[string]interface{})
+	// Create resources map with typed ResourceStore values.
+	// Using templating.ResourceStore allows Scriggo templates to call methods
+	// directly on resources, e.g., resources.ingresses.List()
+	resources := make(map[string]templating.ResourceStore)
 
 	// Wrap each store to provide template-friendly methods
 	for resourceTypeName, store := range c.stores {
@@ -107,8 +109,9 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 		}
 	}
 
-	// Create controller namespace with HAProxy pods store
-	controller := make(map[string]interface{})
+	// Create controller namespace with typed ResourceStore values.
+	// This enables direct method calls like controller.haproxy_pods.List()
+	controller := make(map[string]templating.ResourceStore)
 	if c.haproxyPodStore != nil {
 		c.logger.Debug("wrapping HAProxy pods store for rendering context")
 		controller["haproxy_pods"] = &StoreWrapper{
@@ -120,8 +123,8 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 		c.logger.Warn("HAProxy pods store is nil, controller.haproxy_pods will not be available")
 	}
 
-	// Sort template snippets by priority for template access
-	snippetNames := sortSnippetsByPriority(c.config.TemplateSnippets)
+	// Sort template snippet names alphabetically for template access
+	snippetNames := sortSnippetNames(c.config.TemplateSnippets)
 
 	// Create file registry for dynamic auxiliary file registration
 	fileRegistry := NewFileRegistry(pathResolver)
@@ -133,14 +136,14 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 
 	// Build final context
 	templateContext := map[string]interface{}{
-		"resources":         resources,
-		"controller":        controller,
-		"template_snippets": snippetNames,
-		"file_registry":     fileRegistry,
-		"pathResolver":      pathResolver,
-		"dataplane":         c.config.Dataplane,           // Add dataplane config for absolute path access
-		"capabilities":      c.capabilitiesToMap(),        // Add HAProxy/DataPlane API capabilities
-		"shared":            make(map[string]interface{}), // Shared namespace for cross-template data
+		"resources":        resources,
+		"controller":       controller,
+		"templateSnippets": snippetNames,
+		"fileRegistry":     fileRegistry,
+		"pathResolver":     pathResolver,
+		"dataplane":        c.config.Dataplane,           // Add dataplane config for absolute path access
+		"capabilities":     c.capabilitiesToMap(),        // Add HAProxy/DataPlane API capabilities
+		"shared":           make(map[string]interface{}), // Shared namespace for cross-template data
 	}
 
 	// Add HTTP store wrapper if available
@@ -169,41 +172,18 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 	return templateContext, fileRegistry
 }
 
-// sortSnippetsByPriority sorts template snippet names by priority, then alphabetically.
-// Returns a slice of snippet names in the sorted order.
+// sortSnippetNames sorts template snippet names alphabetically.
+// Returns a slice of snippet names in sorted order.
 //
-// Snippets without an explicit priority default to 500.
-// Lower priority values are sorted first.
-func sortSnippetsByPriority(snippets map[string]config.TemplateSnippet) []string {
-	type snippetWithPriority struct {
-		name     string
-		priority int
+// Note: Snippet ordering is now controlled by encoding priority in the snippet name
+// (e.g., "features-050-ssl" for priority 50). This is required because render_glob
+// sorts templates alphabetically.
+func sortSnippetNames(snippets map[string]config.TemplateSnippet) []string {
+	names := make([]string, 0, len(snippets))
+	for name := range snippets {
+		names = append(names, name)
 	}
-
-	// Build list with priorities
-	list := make([]snippetWithPriority, 0, len(snippets))
-	for name, snippet := range snippets {
-		priority := snippet.Priority
-		if priority == 0 {
-			priority = 500 // Default priority
-		}
-		list = append(list, snippetWithPriority{name, priority})
-	}
-
-	// Sort by priority (ascending), then by name (alphabetically)
-	sort.Slice(list, func(i, j int) bool {
-		if list[i].priority != list[j].priority {
-			return list[i].priority < list[j].priority
-		}
-		return list[i].name < list[j].name
-	})
-
-	// Extract sorted names
-	names := make([]string, len(list))
-	for i, item := range list {
-		names[i] = item.name
-	}
-
+	sort.Strings(names)
 	return names
 }
 
@@ -215,9 +195,14 @@ func sortSnippetsByPriority(snippets map[string]config.TemplateSnippet) []string
 // If extraContext is nil or empty, the context is left unchanged.
 func MergeExtraContextInto(renderCtx map[string]interface{}, cfg *config.Config) {
 	if cfg.TemplatingSettings.ExtraContext != nil {
+		// Merge at top level
 		for key, value := range cfg.TemplatingSettings.ExtraContext {
 			renderCtx[key] = value
 		}
+		// Also populate the extraContext map for Scriggo templates
+		// Scriggo requires compile-time variable declarations, so templates
+		// access extraContext values via: map_get(extraContext, "key", default)
+		renderCtx["extraContext"] = cfg.TemplatingSettings.ExtraContext
 	}
 }
 

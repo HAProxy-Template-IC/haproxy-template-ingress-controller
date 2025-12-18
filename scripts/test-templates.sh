@@ -21,6 +21,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Print warning message
+warn() {
+    echo -e "${YELLOW}Warning: $1${NC}" >&2
+}
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -38,7 +43,7 @@ OPTIONS:
   --workers N           Number of parallel test workers (0=auto-detect CPUs, 1=sequential, default: 0)
   --dump-rendered       Dump all rendered content
   --verbose             Show rendered content preview for failed assertions
-  --trace-templates     Show template execution trace
+  --trace-templates     Show template execution trace (top-level; use with --profile-includes for full call tree)
   --profile-includes    Show include timing statistics (top 20 slowest)
   --output FORMAT       Output format: summary, json, yaml (default: summary)
   --help                Show this help message
@@ -91,6 +96,13 @@ if [[ ! -x "$CONTROLLER_BIN" ]]; then
     exit 1
 fi
 
+# Check if controller binary is outdated
+if find cmd/controller pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null | grep -q .; then
+    warn "Controller binary may be outdated (source files modified since build)"
+    warn "Run 'make build' to rebuild the controller binary"
+    echo >&2  # Add blank line for readability
+fi
+
 # Check if helm is installed
 if ! command -v helm &> /dev/null; then
     echo -e "${RED}Error: helm command not found${NC}" >&2
@@ -119,6 +131,7 @@ trap 'rm -f "$TEMP_CONFIG"' EXIT
 echo -e "${YELLOW}Rendering Helm chart...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+    --set controller.templateLibraries.gateway.enabled=true \
     | yq 'select(.kind == "HAProxyTemplateConfig")' \
     > "$TEMP_CONFIG"; then
     echo -e "${RED}Error: Failed to render Helm chart${NC}" >&2

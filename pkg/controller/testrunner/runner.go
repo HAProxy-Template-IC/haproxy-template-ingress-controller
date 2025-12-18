@@ -55,7 +55,7 @@ import (
 type Runner struct {
 	// engineTemplate is a pre-compiled template engine WITHOUT path filters.
 	// Workers will create their own engines with worker-specific paths.
-	engineTemplate  *templating.TemplateEngine
+	engineTemplate  templating.Engine
 	validationPaths *dataplane.ValidationPaths // Base paths (used to create worker-specific paths)
 	config          *config.Config
 	logger          *slog.Logger
@@ -193,7 +193,7 @@ type AssertionResult struct {
 //   - A new Runner instance ready to execute tests
 func New(
 	cfg *config.Config,
-	engine *templating.TemplateEngine,
+	engine templating.Engine,
 	validationPaths *dataplane.ValidationPaths,
 	options Options,
 ) *Runner {
@@ -221,78 +221,6 @@ func New(
 		profileIncludes: options.ProfileIncludes,
 		capabilities:    options.Capabilities,
 	}
-}
-
-// createWorkerEngine creates a template engine with test-specific path resolver.
-//
-// Each test needs its own engine because the `pathResolver.GetPath()` method must resolve
-// to test-specific directories. This ensures HAProxy can find auxiliary files
-// in the correct test subdirectories.
-//
-// createWorkerEngine creates a template engine with per-test PathResolver for isolated validation.
-// Each engine instance clones gonja's builtin filters to avoid global state conflicts during
-// concurrent test execution. This allows true parallel execution across multiple workers.
-func (r *Runner) createWorkerEngine() (*templating.TemplateEngine, error) {
-	// Extract all template sources (same as in validate.go)
-	templates := make(map[string]string)
-
-	// Main HAProxy config template
-	templates["haproxy.cfg"] = r.config.HAProxyConfig.Template
-
-	// Template snippets
-	for name, snippet := range r.config.TemplateSnippets {
-		templates[name] = snippet.Template
-	}
-
-	// Map files
-	for name, mapFile := range r.config.Maps {
-		templates[name] = mapFile.Template
-	}
-
-	// General files
-	for name, file := range r.config.Files {
-		templates[name] = file.Template
-	}
-
-	// SSL certificates
-	for name, cert := range r.config.SSLCertificates {
-		templates[name] = cert.Template
-	}
-
-	// Register custom filters
-	// Note: pathResolver is created in buildRenderingContext() and passed via rendering context
-	filters := map[string]templating.FilterFunc{
-		"glob_match": templating.GlobMatch,
-		"b64decode":  templating.B64Decode,
-	}
-
-	// Register custom global functions
-	functions := map[string]templating.GlobalFunc{
-		"fail": func(args ...interface{}) (interface{}, error) {
-			if len(args) == 0 {
-				return nil, fmt.Errorf("template evaluation failed")
-			}
-			return nil, fmt.Errorf("%v", args[0])
-		},
-	}
-
-	// Compile all templates with worker-specific filters
-	engine, err := templating.New(templating.EngineTypeGonja, templates, filters, functions, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compile templates for worker: %w", err)
-	}
-
-	// Enable filter debug if requested
-	if r.debugFilters {
-		engine.EnableFilterDebug()
-	}
-
-	// Enable template tracing if original engine had it enabled
-	if r.traceTemplates {
-		engine.EnableTracing()
-	}
-
-	return engine, nil
 }
 
 // createTestPaths creates per-test temp directories for isolated HAProxy validation.
@@ -486,33 +414,10 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 				"config_file", testPaths.ConfigFile,
 				"duration_ms", dirCreateDuration.Milliseconds())
 
-			// Create unique template engine for this specific test
-			engineCreateStart := time.Now()
-			testEngine, err := r.createWorkerEngine()
-			engineCreateDuration := time.Since(engineCreateStart)
-
-			if err != nil {
-				r.logger.Error("Failed to create test engine",
-					"worker_id", workerID,
-					"test_num", testNum,
-					"test", entry.name,
-					"error", err,
-					"duration_ms", engineCreateDuration.Milliseconds())
-				results <- TestResult{
-					TestName:    entry.name,
-					Description: entry.test.Description,
-					Passed:      false,
-					RenderError: fmt.Sprintf("failed to create template engine: %v", err),
-				}
-				testNum++
-				continue
-			}
-
-			r.logger.Log(context.Background(), logging.LevelTrace, "Created template engine",
-				"worker_id", workerID,
-				"test_num", testNum,
-				"test", entry.name,
-				"duration_ms", engineCreateDuration.Milliseconds())
+			// Reuse pre-compiled template engine
+			// The engine is thread-safe for concurrent renders and has no per-test mutable state.
+			// Filter state is per-render (stored in context), not per-engine.
+			testEngine := r.engineTemplate
 
 			// Run test with isolated paths and engine
 			result := r.runSingleTest(ctx, entry.name, entry.test, testEngine, testPaths)
@@ -547,7 +452,7 @@ func (r *Runner) filterTests(tests map[string]config.ValidationTest, name string
 }
 
 // runSingleTest executes a single validation test using worker-specific engine and validation paths.
-func (r *Runner) runSingleTest(ctx context.Context, testName string, test config.ValidationTest, engine *templating.TemplateEngine, validationPaths *dataplane.ValidationPaths) TestResult {
+func (r *Runner) runSingleTest(ctx context.Context, testName string, test config.ValidationTest, engine templating.Engine, validationPaths *dataplane.ValidationPaths) TestResult {
 	startTime := time.Now()
 
 	result := TestResult{
@@ -570,8 +475,8 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 			"global_http_fixtures", len(globalTest.HTTPFixtures),
 			"test_http_fixtures", len(test.HTTPFixtures))
 
-		fixtures = mergeFixtures(globalTest.Fixtures, test.Fixtures)
-		httpFixtures = mergeHTTPFixtures(globalTest.HTTPFixtures, test.HTTPFixtures)
+		fixtures = MergeFixtures(globalTest.Fixtures, test.Fixtures)
+		httpFixtures = MergeHTTPFixtures(globalTest.HTTPFixtures, test.HTTPFixtures)
 
 		r.logger.Log(context.Background(), logging.LevelTrace, "Fixture merge completed",
 			"test", testName,
@@ -580,7 +485,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 	}
 
 	// 2. Create resource stores from merged fixtures
-	stores, err := r.createStoresFromFixtures(fixtures)
+	stores, err := r.CreateStoresFromFixtures(fixtures)
 	if err != nil {
 		result.Passed = false
 		result.RenderError = fmt.Sprintf("failed to create fixture stores: %v", err)
@@ -590,7 +495,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 
 	// 3. Create HTTP store from HTTP fixtures
 	// Always create the wrapper so that http.Fetch() fails gracefully when a fixture is missing
-	store := createHTTPStoreFromFixtures(httpFixtures, r.logger)
+	store := CreateHTTPStoreFromFixtures(httpFixtures, r.logger)
 	httpStore := NewFixtureHTTPStoreWrapper(store, r.logger)
 	r.logger.Log(context.Background(), logging.LevelTrace, "Created HTTP fixture store",
 		"test", testName,
@@ -701,7 +606,7 @@ func hasRenderingErrorAssertions(assertions []config.ValidationAssertion) bool {
 //
 // This follows the same pattern as DryRunValidator.renderWithOverlayStores.
 // When profileIncludes is enabled, it returns timing statistics for included templates.
-func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
+func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
 	// Build rendering context with fixture stores
 	renderCtx := r.buildRenderingContext(stores, validationPaths, httpStore)
 
@@ -726,7 +631,7 @@ func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[
 	}
 
 	// Extract dynamic files registered during template rendering
-	fileRegistry := renderCtx["file_registry"].(*renderer.FileRegistry)
+	fileRegistry := renderCtx["fileRegistry"].(*renderer.FileRegistry)
 	dynamicFiles := fileRegistry.GetFiles()
 
 	// Merge static (pre-declared) and dynamic (registered) files
@@ -750,7 +655,8 @@ func (r *Runner) renderWithStores(engine *templating.TemplateEngine, stores map[
 // The context includes resources (fixture stores), template snippets, file_registry, pathResolver, and controller configuration.
 func (r *Runner) buildRenderingContext(stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) map[string]interface{} {
 	// Create resources map with wrapped stores (excluding haproxy-pods)
-	resources := make(map[string]interface{})
+	// Using typed map for Scriggo template engine compatibility
+	resources := make(map[string]templating.ResourceStore)
 
 	for resourceTypeName, store := range stores {
 		// Skip haproxy-pods - it goes in controller namespace, not resources
@@ -766,7 +672,8 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 	}
 
 	// Create controller namespace with haproxy_pods store
-	controller := make(map[string]interface{})
+	// Using typed map for Scriggo template engine compatibility
+	controller := make(map[string]templating.ResourceStore)
 	if haproxyPodStore, exists := stores["haproxy-pods"]; exists {
 		r.logger.Log(context.Background(), logging.LevelTrace, "wrapping haproxy-pods store for rendering context")
 		controller["haproxy_pods"] = &renderer.StoreWrapper{
@@ -776,8 +683,8 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 		}
 	}
 
-	// Build template snippets list
-	snippetNames := r.sortSnippetsByPriority()
+	// Build template snippets list (sorted alphabetically)
+	snippetNames := r.sortSnippetNames()
 
 	// Create PathResolver from ValidationPaths
 	// ValidationPaths already has CRTListDir set correctly based on capabilities
@@ -791,13 +698,13 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 
 	// Build final context
 	renderCtx := map[string]interface{}{
-		"resources":         resources,
-		"controller":        controller,
-		"template_snippets": snippetNames,
-		"file_registry":     fileRegistry,
-		"pathResolver":      pathResolver,
-		"dataplane":         r.config.Dataplane,           // Add dataplane config for absolute path access
-		"shared":            make(map[string]interface{}), // Shared namespace for cross-template data
+		"resources":        resources,
+		"controller":       controller,
+		"templateSnippets": snippetNames,
+		"fileRegistry":     fileRegistry,
+		"pathResolver":     pathResolver,
+		"dataplane":        r.config.Dataplane,           // Add dataplane config for absolute path access
+		"shared":           make(map[string]interface{}), // Shared namespace for cross-template data
 	}
 
 	// Add HTTP store wrapper for http.Fetch() calls in templates
@@ -809,45 +716,22 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 	return renderCtx
 }
 
-// sortSnippetsByPriority sorts template snippets by their priority field (ascending),
-// with alphabetical ordering as a tiebreaker for snippets with the same priority.
-// Snippets without an explicit priority (priority == 0) default to 500.
-func (r *Runner) sortSnippetsByPriority() []string {
-	// Create slice of snippet names with their priorities
-	type snippetWithPriority struct {
-		name     string
-		priority int
+// sortSnippetNames sorts template snippet names alphabetically.
+//
+// Note: Snippet ordering is now controlled by encoding priority in the snippet name
+// (e.g., "features-050-ssl" for priority 50). This is required because render_glob
+// sorts templates alphabetically.
+func (r *Runner) sortSnippetNames() []string {
+	names := make([]string, 0, len(r.config.TemplateSnippets))
+	for name := range r.config.TemplateSnippets {
+		names = append(names, name)
 	}
-
-	snippets := make([]snippetWithPriority, 0, len(r.config.TemplateSnippets))
-	for name, snippet := range r.config.TemplateSnippets {
-		// Default priority is 500 if not specified (priority == 0)
-		priority := snippet.Priority
-		if priority == 0 {
-			priority = 500
-		}
-		snippets = append(snippets, snippetWithPriority{name, priority})
-	}
-
-	// Sort by priority (ascending), then alphabetically for same priority
-	sort.Slice(snippets, func(i, j int) bool {
-		if snippets[i].priority != snippets[j].priority {
-			return snippets[i].priority < snippets[j].priority
-		}
-		return snippets[i].name < snippets[j].name
-	})
-
-	// Extract sorted names
-	names := make([]string, len(snippets))
-	for i, s := range snippets {
-		names[i] = s.name
-	}
-
+	sort.Strings(names)
 	return names
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.
-func (r *Runner) renderAuxiliaryFiles(engine *templating.TemplateEngine, renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
 	// Render map files using worker-specific engine

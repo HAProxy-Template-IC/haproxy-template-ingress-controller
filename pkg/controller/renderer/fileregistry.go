@@ -62,28 +62,28 @@ func NewFileRegistry(pathResolver *templating.PathResolver) *FileRegistry {
 // Conflict Detection:
 //   - If the same filename is registered multiple times with different content, returns error
 //   - If the same filename is registered with identical content, no error (idempotent)
-func (r *FileRegistry) Register(args ...interface{}) (interface{}, error) {
+func (r *FileRegistry) Register(args ...interface{}) (string, error) {
 	// Validate argument count
 	if len(args) != 3 {
-		return nil, fmt.Errorf("file_registry.Register requires 3 arguments (type, filename, content), got %d", len(args))
+		return "", fmt.Errorf("file_registry.Register requires 3 arguments (type, filename, content), got %d", len(args))
 	}
 
 	// Extract and validate file type
 	fileType, ok := args[0].(string)
 	if !ok {
-		return nil, fmt.Errorf("file_registry.Register: type must be a string, got %T", args[0])
+		return "", fmt.Errorf("file_registry.Register: type must be a string, got %T", args[0])
 	}
 
 	// Extract and validate filename
 	filename, ok := args[1].(string)
 	if !ok {
-		return nil, fmt.Errorf("file_registry.Register: filename must be a string, got %T", args[1])
+		return "", fmt.Errorf("file_registry.Register: filename must be a string, got %T", args[1])
 	}
 
 	// Extract and validate content
 	content, ok := args[2].(string)
 	if !ok {
-		return nil, fmt.Errorf("file_registry.Register: content must be a string, got %T", args[2])
+		return "", fmt.Errorf("file_registry.Register: content must be a string, got %T", args[2])
 	}
 
 	// Validate file type
@@ -91,18 +91,18 @@ func (r *FileRegistry) Register(args ...interface{}) (interface{}, error) {
 	case "cert", "map", "file", "crt-list":
 		// Valid types
 	default:
-		return nil, fmt.Errorf("file_registry.Register: invalid file type %q, must be \"cert\", \"map\", \"file\", or \"crt-list\"", fileType)
+		return "", fmt.Errorf("file_registry.Register: invalid file type %q, must be \"cert\", \"map\", \"file\", or \"crt-list\"", fileType)
 	}
 
 	// Compute predicted path using path resolver (same logic as pathResolver.GetPath() method)
 	pathInterface, err := r.pathResolver.GetPath(filename, fileType)
 	if err != nil {
-		return nil, fmt.Errorf("file_registry.Register: failed to compute path: %w", err)
+		return "", fmt.Errorf("file_registry.Register: failed to compute path: %w", err)
 	}
 
 	path, ok := pathInterface.(string)
 	if !ok {
-		return nil, fmt.Errorf("file_registry.Register: path resolver returned unexpected type %T", pathInterface)
+		return "", fmt.Errorf("file_registry.Register: path resolver returned unexpected type %T", pathInterface)
 	}
 
 	// Thread-safe registration
@@ -115,7 +115,7 @@ func (r *FileRegistry) Register(args ...interface{}) (interface{}, error) {
 	// Check for conflicts
 	if existing, exists := r.registered[key]; exists {
 		if existing.Content != content {
-			return nil, fmt.Errorf(
+			return "", fmt.Errorf(
 				"file_registry.Register: content conflict for %s %q - already registered with different content (existing size: %d, new size: %d)",
 				fileType, filename, len(existing.Content), len(content),
 			)

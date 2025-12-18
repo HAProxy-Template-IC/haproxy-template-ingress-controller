@@ -32,6 +32,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/helpers"
 	"haproxy-template-ic/pkg/controller/httpstore"
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/dataplane"
@@ -90,7 +91,7 @@ type singleRenderResult struct {
 type Component struct {
 	eventBus           *busevents.EventBus
 	eventChan          <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	engine             *templating.TemplateEngine
+	engine             templating.Engine
 	config             *config.Config
 	stores             map[string]types.Store
 	haproxyPodStore    types.Store          // HAProxy controller pods store for pod-maxconn calculations
@@ -165,26 +166,10 @@ func New(
 			"resource_type", resourceTypeName)
 	}
 
-	// Extract all templates from config
-	templates := extractTemplates(cfg)
-
-	// Extract post-processor configurations from config
-	postProcessorConfigs := extractPostProcessorConfigs(cfg)
-
-	// Register custom filters
-	// Note: pathResolver is now passed via rendering context, not as a filter
-	filters := map[string]templating.FilterFunc{
-		"glob_match": templating.GlobMatch,
-		"b64decode":  templating.B64Decode,
-	}
-
-	// Register custom global functions
-	functions := map[string]templating.GlobalFunc{
-		"fail": failFunction,
-	}
-
-	// Pre-compile all templates with custom filters, functions, and post-processors
-	engine, err := templating.New(templating.EngineTypeGonja, templates, filters, functions, postProcessorConfigs)
+	// Create template engine using helper (handles template extraction, filters, engine type parsing)
+	// Note: The fail() function is auto-registered by the Scriggo engine.
+	// Post-processor configs are automatically extracted from cfg when nil is passed.
+	engine, err := helpers.NewEngineFromConfig(cfg, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create template engine: %w", err)
 	}
@@ -715,82 +700,6 @@ func (c *Component) publishRenderFailure(templateName string, err error) {
 	))
 }
 
-// extractTemplates converts config templates to map for engine initialization.
-func extractTemplates(cfg *config.Config) map[string]string {
-	templates := make(map[string]string)
-
-	// Main HAProxy config
-	templates["haproxy.cfg"] = cfg.HAProxyConfig.Template
-
-	// Template snippets
-	for name, snippet := range cfg.TemplateSnippets {
-		templates[name] = snippet.Template
-	}
-
-	// Map files
-	for name, mapDef := range cfg.Maps {
-		templates[name] = mapDef.Template
-	}
-
-	// General files
-	for name, fileDef := range cfg.Files {
-		templates[name] = fileDef.Template
-	}
-
-	// SSL certificates
-	for name, certDef := range cfg.SSLCertificates {
-		templates[name] = certDef.Template
-	}
-
-	return templates
-}
-
-// extractPostProcessorConfigs extracts post-processor configurations from all templates in the config.
-// Returns a map of template names to their post-processor configurations.
-func extractPostProcessorConfigs(cfg *config.Config) map[string][]templating.PostProcessorConfig {
-	configs := make(map[string][]templating.PostProcessorConfig)
-
-	// Main HAProxy config
-	if len(cfg.HAProxyConfig.PostProcessing) > 0 {
-		configs["haproxy.cfg"] = convertPostProcessorConfigs(cfg.HAProxyConfig.PostProcessing)
-	}
-
-	// Map files
-	for name, mapDef := range cfg.Maps {
-		if len(mapDef.PostProcessing) > 0 {
-			configs[name] = convertPostProcessorConfigs(mapDef.PostProcessing)
-		}
-	}
-
-	// General files
-	for name, fileDef := range cfg.Files {
-		if len(fileDef.PostProcessing) > 0 {
-			configs[name] = convertPostProcessorConfigs(fileDef.PostProcessing)
-		}
-	}
-
-	// SSL certificates
-	for name, certDef := range cfg.SSLCertificates {
-		if len(certDef.PostProcessing) > 0 {
-			configs[name] = convertPostProcessorConfigs(certDef.PostProcessing)
-		}
-	}
-
-	return configs
-}
-
-// convertPostProcessorConfigs converts config.PostProcessorConfig to templating.PostProcessorConfig.
-func convertPostProcessorConfigs(postProcessors []config.PostProcessorConfig) []templating.PostProcessorConfig {
-	ppConfigs := make([]templating.PostProcessorConfig, len(postProcessors))
-	for i, pp := range postProcessors {
-		ppConfigs[i] = templating.PostProcessorConfig{
-			Type:   templating.PostProcessorType(pp.Type),
-			Params: pp.Params,
-		}
-	}
-	return ppConfigs
-}
-
 // mergeAuxiliaryFiles merges static (pre-declared) and dynamic (registered during rendering) auxiliary files.
 //
 // The function combines both sets of files into a single AuxiliaryFiles structure.
@@ -825,30 +734,4 @@ func MergeAuxiliaryFiles(static, dynamic *dataplane.AuxiliaryFiles) *dataplane.A
 	merged.CRTListFiles = append(merged.CRTListFiles, dynamic.CRTListFiles...)
 
 	return merged
-}
-
-// failFunction is a global function that causes template rendering to fail with a custom error message.
-// This is useful for template-level validation where we want to provide clear error messages
-// when required resources are missing or invalid.
-//
-// Usage in templates:
-//
-//	{% if secret is none %}
-//	  {{ fail("Secret 'namespace/name' referenced by annotation 'haproxy.org/auth-secret' does not exist") }}
-//	{% endif %}
-func failFunction(args ...interface{}) (interface{}, error) {
-	// Validate arguments
-	if len(args) != 1 {
-		return nil, fmt.Errorf("fail() requires exactly one string argument, got %d arguments", len(args))
-	}
-
-	message, ok := args[0].(string)
-	if !ok {
-		return nil, fmt.Errorf("fail() argument must be a string, got %T", args[0])
-	}
-
-	// Return error with the custom message
-	// This will cause template rendering to fail and propagate the error
-	// through the validation webhook to the user
-	return nil, fmt.Errorf("%s", message)
 }

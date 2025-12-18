@@ -59,6 +59,32 @@ func FormatResults(results *TestResults, options OutputOptions) (string, error) 
 	}
 }
 
+// formatMultilineError formats error messages with proper indentation for multi-line content.
+// For single-line errors, returns the error as-is.
+// For multi-line errors, indents all lines after the first to align with the error prefix.
+// Empty lines are preserved without indentation to avoid trailing whitespace.
+func formatMultilineError(errorMsg, indent string) string {
+	if !strings.Contains(errorMsg, "\n") {
+		// Single line - return as-is
+		return errorMsg
+	}
+
+	// Multi-line - indent all non-empty lines after the first
+	lines := strings.Split(errorMsg, "\n")
+	result := lines[0] + "\n"
+	for i := 1; i < len(lines); i++ {
+		if lines[i] != "" {
+			// Non-empty line - add indent
+			result += indent + lines[i]
+		}
+		// Add newline if not the last line
+		if i < len(lines)-1 {
+			result += "\n"
+		}
+	}
+	return result
+}
+
 // formatSummary formats results as a human-readable summary.
 //
 //nolint:revive // Complexity acceptable for formatting with multiple output conditions
@@ -88,7 +114,7 @@ func formatSummary(results *TestResults, verbose bool) string {
 		// Render error if present
 		if test.RenderError != "" {
 			out.WriteString("  ✗ Template rendering failed\n")
-			out.WriteString(fmt.Sprintf("    Error: %s\n", test.RenderError))
+			out.WriteString(fmt.Sprintf("    Error: %s\n", formatMultilineError(test.RenderError, "           ")))
 		}
 
 		// Print assertions
@@ -106,7 +132,7 @@ func formatSummary(results *TestResults, verbose bool) string {
 					out.WriteString(fmt.Sprintf("  ✗ %s\n", assertion.Type))
 				}
 				if assertion.Error != "" {
-					out.WriteString(fmt.Sprintf("    Error: %s\n", assertion.Error))
+					out.WriteString(fmt.Sprintf("    Error: %s\n", formatMultilineError(assertion.Error, "           ")))
 				}
 
 				// Verbose mode: show target metadata for failed assertions

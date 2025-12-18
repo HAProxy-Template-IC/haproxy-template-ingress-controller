@@ -1833,7 +1833,7 @@ haproxy.org/auth-realm: "API Access"
 
 ### Implementation Differences from HAProxy Tech
 
-1. **Template-based approach** - This implementation uses Jinja2-like templates (Gonja) rather than Go code, allowing users to customize behavior through template overrides.
+1. **Template-based approach** - This implementation uses Scriggo templates rather than Go code, allowing users to customize behavior through template overrides.
 
 2. **Resource-agnostic architecture** - The controller doesn't have built-in annotation handling. All annotation support is provided through pluggable template libraries.
 

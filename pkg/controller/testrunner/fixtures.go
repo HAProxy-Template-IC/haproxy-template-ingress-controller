@@ -27,7 +27,7 @@ import (
 	"haproxy-template-ic/pkg/k8s/types"
 )
 
-// mergeFixtures deep merges global fixtures with test fixtures by resource identity.
+// MergeFixtures deep merges global fixtures with test fixtures by resource identity.
 //
 // Resource identity is defined by: apiVersion + kind + namespace + name
 //
@@ -42,7 +42,7 @@ import (
 //
 // Returns:
 //   - Merged fixtures map (resource type → list of resources)
-func mergeFixtures(globalFixtures, testFixtures map[string][]interface{}) map[string][]interface{} {
+func MergeFixtures(globalFixtures, testFixtures map[string][]interface{}) map[string][]interface{} {
 	// Build identity map for test fixtures to detect overrides
 	testIdentities := buildFixtureIdentityMap(testFixtures)
 
@@ -147,7 +147,7 @@ func buildResourceIdentity(resourceType string, resource *unstructured.Unstructu
 	)
 }
 
-// createStoresFromFixtures creates resource stores from test fixtures.
+// CreateStoresFromFixtures creates resource stores from test fixtures.
 //
 // This converts the test fixtures (map of resource type → list of resources)
 // into resource stores that can be used for template rendering.
@@ -167,7 +167,7 @@ func buildResourceIdentity(resourceType string, resource *unstructured.Unstructu
 //   - error if fixture processing fails
 //
 //nolint:revive // Complexity acceptable for fixture processing with indexing and type inference
-func (r *Runner) createStoresFromFixtures(fixtures map[string][]interface{}) (map[string]types.Store, error) {
+func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (map[string]types.Store, error) {
 	stores := make(map[string]types.Store)
 
 	// PHASE 1: Create empty stores for ALL watched resources
