@@ -44,7 +44,7 @@ func validConfig() *Config {
 // =============================================================================
 
 func TestNew_Success(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 
 	elector, err := New(validConfig(), clientset, callbacks, nil)
@@ -56,7 +56,7 @@ func TestNew_Success(t *testing.T) {
 }
 
 func TestNew_NilConfig(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 
 	elector, err := New(nil, clientset, callbacks, nil)
@@ -67,7 +67,7 @@ func TestNew_NilConfig(t *testing.T) {
 }
 
 func TestNew_DisabledConfig(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 	config := validConfig()
 	config.Enabled = false
@@ -80,7 +80,7 @@ func TestNew_DisabledConfig(t *testing.T) {
 }
 
 func TestNew_EmptyIdentity(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 	config := validConfig()
 	config.Identity = ""
@@ -93,7 +93,7 @@ func TestNew_EmptyIdentity(t *testing.T) {
 }
 
 func TestNew_EmptyLeaseName(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 	config := validConfig()
 	config.LeaseName = ""
@@ -106,7 +106,7 @@ func TestNew_EmptyLeaseName(t *testing.T) {
 }
 
 func TestNew_EmptyLeaseNamespace(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 	config := validConfig()
 	config.LeaseNamespace = ""
@@ -129,7 +129,7 @@ func TestNew_NilClientset(t *testing.T) {
 }
 
 func TestNew_NilLogger(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 
 	// Nil logger should be accepted (uses default)
@@ -140,7 +140,7 @@ func TestNew_NilLogger(t *testing.T) {
 }
 
 func TestNew_WithCustomLogger(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 	logger := slog.Default()
 
@@ -155,7 +155,7 @@ func TestNew_WithCustomLogger(t *testing.T) {
 // =============================================================================
 
 func TestElector_IsLeader_InitialState(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 
 	elector, err := New(validConfig(), clientset, callbacks, nil)
@@ -165,7 +165,7 @@ func TestElector_IsLeader_InitialState(t *testing.T) {
 }
 
 func TestElector_GetLeader_InitialState(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 
 	elector, err := New(validConfig(), clientset, callbacks, nil)
@@ -183,7 +183,7 @@ func TestElector_Run_BecomesLeader(t *testing.T) {
 		t.Skip("skipping leader election test in short mode")
 	}
 
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	var startedLeading atomic.Bool
 	var newLeaderIdentity atomic.Value
@@ -248,7 +248,7 @@ func TestElector_Run_ContextCancellation(t *testing.T) {
 		t.Skip("skipping leader election test in short mode")
 	}
 
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 
 	config := &Config{
@@ -292,7 +292,7 @@ func TestElector_Run_OnStoppedLeadingCalled(t *testing.T) {
 		t.Skip("skipping leader election test in short mode")
 	}
 
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	var stoppedLeading atomic.Bool
 
@@ -365,7 +365,7 @@ func TestElector_Callbacks_NilCallbacksHandledGracefully(t *testing.T) {
 		t.Skip("skipping leader election test in short mode")
 	}
 
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	// All nil callbacks
 	callbacks := Callbacks{
@@ -409,7 +409,7 @@ func TestElector_Callbacks_NilCallbacksHandledGracefully(t *testing.T) {
 // =============================================================================
 
 func TestElector_ConcurrentAccess(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
 
 	elector, err := New(validConfig(), clientset, callbacks, nil)
@@ -438,7 +438,7 @@ func TestElector_ConcurrentAccess(t *testing.T) {
 // =============================================================================
 
 func TestNew_AllConfigFieldsUsed(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	config := &Config{
 		Enabled:         true,

@@ -32,7 +32,7 @@ import (
 )
 
 func TestNewSecretWatcher(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -48,7 +48,7 @@ func TestNewSecretWatcher(t *testing.T) {
 }
 
 func TestSecretWatcher_StartAndStop(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -74,7 +74,7 @@ func TestSecretWatcher_StartAndStop(t *testing.T) {
 }
 
 func TestSecretWatcher_OnAdd_MatchingSecret(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -105,7 +105,7 @@ func TestSecretWatcher_OnAdd_MatchingSecret(t *testing.T) {
 }
 
 func TestSecretWatcher_OnAdd_DifferentSecret(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -127,7 +127,7 @@ func TestSecretWatcher_OnAdd_DifferentSecret(t *testing.T) {
 }
 
 func TestSecretWatcher_OnAdd_InvalidType(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -141,7 +141,7 @@ func TestSecretWatcher_OnAdd_InvalidType(t *testing.T) {
 }
 
 func TestSecretWatcher_OnUpdate_MatchingSecret(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -178,7 +178,7 @@ func TestSecretWatcher_OnUpdate_MatchingSecret(t *testing.T) {
 }
 
 func TestSecretWatcher_OnUpdate_SameResourceVersion(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -208,7 +208,7 @@ func TestSecretWatcher_OnUpdate_SameResourceVersion(t *testing.T) {
 }
 
 func TestSecretWatcher_OnUpdate_DifferentSecret(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -238,7 +238,7 @@ func TestSecretWatcher_OnUpdate_DifferentSecret(t *testing.T) {
 }
 
 func TestSecretWatcher_OnUpdate_InvalidTypes(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -253,7 +253,7 @@ func TestSecretWatcher_OnUpdate_InvalidTypes(t *testing.T) {
 }
 
 func TestSecretWatcher_OnDelete_MatchingSecret(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -275,7 +275,7 @@ func TestSecretWatcher_OnDelete_MatchingSecret(t *testing.T) {
 }
 
 func TestSecretWatcher_OnDelete_DifferentSecret(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -297,7 +297,7 @@ func TestSecretWatcher_OnDelete_DifferentSecret(t *testing.T) {
 }
 
 func TestSecretWatcher_OnDelete_Tombstone(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -324,7 +324,7 @@ func TestSecretWatcher_OnDelete_Tombstone(t *testing.T) {
 }
 
 func TestSecretWatcher_OnDelete_InvalidType(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -338,7 +338,7 @@ func TestSecretWatcher_OnDelete_InvalidType(t *testing.T) {
 }
 
 func TestSecretWatcher_OnDelete_TombstoneWithInvalidObject(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -357,7 +357,7 @@ func TestSecretWatcher_OnDelete_TombstoneWithInvalidObject(t *testing.T) {
 }
 
 func TestSecretWatcher_ToUnstructured(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
@@ -388,7 +388,7 @@ func TestSecretWatcher_ToUnstructured(t *testing.T) {
 }
 
 func TestSecretWatcher_StartWithContextCancel(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")

@@ -32,7 +32,7 @@ import (
 )
 
 func TestNewFromClientset(t *testing.T) {
-	fakeClientset := fake.NewSimpleClientset()
+	fakeClientset := fake.NewClientset()
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
 
@@ -45,7 +45,7 @@ func TestNewFromClientset(t *testing.T) {
 }
 
 func TestClient_Getters(t *testing.T) {
-	fakeClientset := fake.NewSimpleClientset()
+	fakeClientset := fake.NewClientset()
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
 
@@ -77,7 +77,7 @@ func TestClient_GetResource_Success(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme, configMap)
-	fakeClientset := fake.NewSimpleClientset()
+	fakeClientset := fake.NewClientset()
 
 	client := NewFromClientset(fakeClientset, fakeDynamic, "default")
 
@@ -97,7 +97,7 @@ func TestClient_GetResource_Success(t *testing.T) {
 func TestClient_GetResource_NoNamespace(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
-	fakeClientset := fake.NewSimpleClientset()
+	fakeClientset := fake.NewClientset()
 
 	client := NewFromClientset(fakeClientset, fakeDynamic, "") // Empty namespace
 
@@ -122,7 +122,7 @@ func TestClient_GetResource_NotFound(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme) // No resources
-	fakeClientset := fake.NewSimpleClientset()
+	fakeClientset := fake.NewClientset()
 
 	client := NewFromClientset(fakeClientset, fakeDynamic, "default")
 
@@ -285,7 +285,7 @@ func TestNew_InClusterNotAvailable(t *testing.T) {
 // =============================================================================
 
 func TestNewFromClientset_WithNamespace(t *testing.T) {
-	fakeClientset := fake.NewSimpleClientset()
+	fakeClientset := fake.NewClientset()
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
 
@@ -295,7 +295,7 @@ func TestNewFromClientset_WithNamespace(t *testing.T) {
 }
 
 func TestNewFromClientset_EmptyNamespace(t *testing.T) {
-	fakeClientset := fake.NewSimpleClientset()
+	fakeClientset := fake.NewClientset()
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
 
@@ -324,7 +324,7 @@ func TestClient_GetResource_WithContext(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme, configMap)
-	fakeClientset := fake.NewSimpleClientset()
+	fakeClientset := fake.NewClientset()
 
 	client := NewFromClientset(fakeClientset, fakeDynamic, "default")
 
