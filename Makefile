@@ -3,7 +3,8 @@
         test-coverage test-integration-coverage test-coverage-combined \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         tidy verify generate clean fmt vet install-tools dev \
-        release-controller release-chart goreleaser-snapshot
+        release-controller release-chart goreleaser-snapshot \
+        pgo-profile pgo-merge
 
 .DEFAULT_GOAL := help
 
@@ -154,12 +155,14 @@ test-coverage-combined: ## Run unit and integration tests with combined coverage
 
 ## Build targets
 
-build: ## Build the controller binary
+build: ## Build the controller binary (with PGO if profile exists)
 	@echo "Building controller..."
 	@echo "  Version: $(VERSION)"
 	@echo "  Git commit: $(GIT_COMMIT)"
+	@if [ -f cmd/controller/default.pgo ]; then echo "  PGO: enabled (using cmd/controller/default.pgo)"; else echo "  PGO: disabled (no profile found)"; fi
 	@mkdir -p bin
 	$(GO) build \
+		-pgo=auto \
 		-ldflags="-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		-o bin/controller \
 		./cmd/controller
@@ -375,3 +378,24 @@ release-chart: ## Create a chart release (usage: make release-chart CHART_VERSIO
 
 goreleaser-snapshot: ## Test GoReleaser locally (no push)
 	goreleaser release --snapshot --clean
+
+## PGO (Profile-Guided Optimization) targets
+
+pgo-profile: ## Collect CPU profile from dev environment for PGO
+	@echo "Collecting 30-second CPU profile from dev environment..."
+	@echo ""
+	@echo "Prerequisites:"
+	@echo "  1. Dev environment running: ./scripts/start-dev-env.sh"
+	@echo "  2. Port-forward active: kubectl -n haproxy-template-ic port-forward deploy/haproxy-template-ic-controller 8080:8080"
+	@echo ""
+	@echo "Starting profile collection (30 seconds)..."
+	curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
+	@echo ""
+	@echo "Profile saved to cmd/controller/default.pgo"
+	@echo "Rebuild with: make build"
+
+pgo-merge: ## Merge multiple PGO profiles into one
+	@if [ -z "$(PROFILES)" ]; then echo "Usage: make pgo-merge PROFILES='profile1.pgo profile2.pgo'"; exit 1; fi
+	@echo "Merging PGO profiles: $(PROFILES)"
+	$(GO) tool pprof -proto $(PROFILES) > cmd/controller/default.pgo
+	@echo "Merged profile saved to cmd/controller/default.pgo"

@@ -384,6 +384,54 @@ go tool pprof -http=:8080 heap.pprof
 curl http://localhost:6060/debug/pprof/goroutine?debug=1
 ```
 
+### Profile-Guided Optimization (PGO)
+
+The controller is built with Go's Profile-Guided Optimization (PGO) for improved performance. PGO typically provides 2-7% CPU improvement by optimizing frequently-called functions.
+
+**How it works:**
+
+A baseline CPU profile (`cmd/controller/default.pgo`) is committed to the repository. Go automatically uses this profile during builds to optimize hot paths.
+
+**Updating the profile:**
+
+To collect a fresh profile from the development environment:
+
+1. Start the dev environment:
+
+    ```bash
+    ./scripts/start-dev-env.sh
+    ```
+
+2. Port-forward to the controller's debug port:
+
+    ```bash
+    kubectl -n haproxy-template-ic port-forward deploy/haproxy-template-ic-controller 8080:8080
+    ```
+
+3. Generate workload (trigger reconciliation by modifying resources)
+
+4. Collect a 30-second CPU profile:
+
+    ```bash
+    make pgo-profile
+    # Or manually:
+    curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
+    ```
+
+5. Rebuild with the new profile:
+
+    ```bash
+    make build
+    ```
+
+**Production profiles:**
+
+For optimal results, collect profiles from production during representative workloads. Merge multiple profiles for broader coverage:
+
+```bash
+make pgo-merge PROFILES='profile1.pgo profile2.pgo'
+```
+
 ### Common Performance Issues
 
 **High memory usage:**

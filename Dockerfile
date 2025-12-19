@@ -43,6 +43,7 @@ ARG GIT_TAG
 # - GOOS/GOARCH: cross-compilation for target platform
 # - -trimpath: remove file system paths from binary
 # - -buildvcs=false: reproducible builds (no VCS info embedded)
+# - -pgo=auto: enable profile-guided optimization if default.pgo exists
 # - -ldflags: linker flags for optimization and version info
 #   - -s: strip debug information
 #   - -w: strip DWARF debug information
@@ -53,6 +54,7 @@ RUN CGO_ENABLED=0 \
     go build \
     -trimpath \
     -buildvcs=false \
+    -pgo=auto \
     -ldflags="-s -w -X main.version=${GIT_TAG} -X main.commit=${GIT_COMMIT}" \
     -o /build/controller \
     ./cmd/controller
