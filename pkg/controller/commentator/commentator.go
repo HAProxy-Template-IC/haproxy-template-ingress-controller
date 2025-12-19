@@ -23,7 +23,7 @@ const (
 
 // - Decouples logging from business logic.
 type EventCommentator struct {
-	bus        *busevents.EventBus
+	eventBus   *busevents.EventBus
 	logger     *slog.Logger
 	ringBuffer *RingBuffer
 	stopCh     chan struct{}
@@ -32,15 +32,15 @@ type EventCommentator struct {
 // NewEventCommentator creates a new Event Commentator.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to
+//   - eventBus: The EventBus to subscribe to
 //   - logger: The structured logger to use
 //   - bufferSize: Ring buffer capacity (recommended: 1000)
 //
 // Returns:
 //   - *EventCommentator ready to start
-func NewEventCommentator(bus *busevents.EventBus, logger *slog.Logger, bufferSize int) *EventCommentator {
+func NewEventCommentator(eventBus *busevents.EventBus, logger *slog.Logger, bufferSize int) *EventCommentator {
 	return &EventCommentator{
-		bus:        bus,
+		eventBus:   eventBus,
 		logger:     logger,
 		ringBuffer: NewRingBuffer(bufferSize),
 		stopCh:     make(chan struct{}),
@@ -63,7 +63,7 @@ func (ec *EventCommentator) Name() string {
 //	go commentator.Start(ctx)
 func (ec *EventCommentator) Start(ctx context.Context) {
 	// Subscribe to all events with generous buffer
-	eventCh := ec.bus.Subscribe(200)
+	eventCh := ec.eventBus.Subscribe(200)
 
 	ec.logger.Info("Event commentator started", "buffer_capacity", ec.ringBuffer.Capacity())
 

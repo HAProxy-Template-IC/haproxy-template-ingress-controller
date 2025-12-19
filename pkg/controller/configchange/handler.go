@@ -40,7 +40,7 @@ const (
 // validation and controller reinitialization. It uses the scatter-gather pattern from the
 // event bus for coordinating validation across multiple validators.
 type ConfigChangeHandler struct {
-	bus            *busevents.EventBus
+	eventBus       *busevents.EventBus
 	logger         *slog.Logger
 	configChangeCh chan<- *coreconfig.Config
 	validators     []string
@@ -68,7 +68,7 @@ type ConfigChangeHandler struct {
 // NewConfigChangeHandler creates a new ConfigChangeHandler.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to and publish on
+//   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //   - configChangeCh: Channel to signal controller reinitialization with validated config
 //   - validators: List of expected validator names (e.g., ["basic", "template", "jsonpath"])
@@ -78,7 +78,7 @@ type ConfigChangeHandler struct {
 // Returns:
 //   - *ConfigChangeHandler ready to start
 func NewConfigChangeHandler(
-	bus *busevents.EventBus,
+	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 	configChangeCh chan<- *coreconfig.Config,
 	validators []string,
@@ -89,7 +89,7 @@ func NewConfigChangeHandler(
 	}
 
 	return &ConfigChangeHandler{
-		bus:              bus,
+		eventBus:         eventBus,
 		logger:           logger,
 		configChangeCh:   configChangeCh,
 		validators:       validators,
@@ -127,7 +127,7 @@ func (h *ConfigChangeHandler) SetInitialConfigVersion(version string) {
 //
 //	go handler.Start(ctx)
 func (h *ConfigChangeHandler) Start(ctx context.Context) {
-	eventCh := h.bus.Subscribe(50)
+	eventCh := h.eventBus.Subscribe(50)
 
 	h.logger.Info("ConfigChangeHandler started", "validators", h.validators)
 
@@ -187,7 +187,7 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 		h.hasValidatedConfig = true
 		h.mu.Unlock()
 
-		h.bus.Publish(validatedEvent)
+		h.eventBus.Publish(validatedEvent)
 		return
 	}
 
@@ -204,7 +204,7 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	// The 10s timeout provides adequate headroom even for very large configs
 	// or systems under high CPU pressure. If validation consistently approaches
 	// this timeout, consider investigating performance bottlenecks.
-	result, err := h.bus.Request(ctx, req, busevents.RequestOptions{
+	result, err := h.eventBus.Request(ctx, req, busevents.RequestOptions{
 		Timeout:            10 * time.Second,
 		ExpectedResponders: h.validators,
 	})
@@ -214,7 +214,7 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 			"error", err,
 			"version", event.Version)
 		// Publish invalid event
-		h.bus.Publish(events.NewConfigInvalidEvent(event.Version, map[string][]string{
+		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, map[string][]string{
 			"coordinator": {err.Error()},
 		}))
 		return
@@ -261,13 +261,13 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 		h.mu.Unlock()
 
 		// Publish validated event
-		h.bus.Publish(validatedEvent)
+		h.eventBus.Publish(validatedEvent)
 	} else {
 		h.logger.Warn("Config validation failed",
 			"version", event.Version,
 			"error_count", len(validationErrors))
 		// Publish invalid event
-		h.bus.Publish(events.NewConfigInvalidEvent(event.Version, validationErrors))
+		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, validationErrors))
 	}
 }
 
@@ -410,5 +410,5 @@ func (h *ConfigChangeHandler) handleBecameLeader(_ *events.BecameLeaderEvent) {
 		"secret_version", validatedEvent.SecretVersion)
 
 	// Re-publish the last validated event to ensure new leader-only components receive it
-	h.bus.Publish(validatedEvent)
+	h.eventBus.Publish(validatedEvent)
 }

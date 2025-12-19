@@ -279,13 +279,13 @@ import (
 registry := prometheus.NewRegistry()
 
 // Create controller metrics
-domainMetrics := metrics.New(registry)
+domainMetrics := metrics.NewMetrics(registry)
 
 // Create event bus
 bus := events.NewEventBus(100)
 
 // Create metrics component (event adapter)
-metricsComponent := metrics.NewComponent(domainMetrics, bus)
+metricsComponent := metrics.New(domainMetrics, bus)
 
 // Subscribe before starting event bus (prevents race)
 metricsComponent.Start()

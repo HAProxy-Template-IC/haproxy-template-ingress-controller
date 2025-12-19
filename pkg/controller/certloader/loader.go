@@ -39,24 +39,24 @@ import (
 // Kubernetes. It simply reacts to CertResourceChangedEvent and produces
 // CertParsedEvent.
 type CertLoaderComponent struct {
-	bus    *busevents.EventBus
-	logger *slog.Logger
-	stopCh chan struct{}
+	eventBus *busevents.EventBus
+	logger   *slog.Logger
+	stopCh   chan struct{}
 }
 
 // NewCertLoaderComponent creates a new CertLoader component.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to and publish on
+//   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //
 // Returns:
 //   - *CertLoaderComponent ready to start
-func NewCertLoaderComponent(bus *busevents.EventBus, logger *slog.Logger) *CertLoaderComponent {
+func NewCertLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CertLoaderComponent {
 	return &CertLoaderComponent{
-		bus:    bus,
-		logger: logger,
-		stopCh: make(chan struct{}),
+		eventBus: eventBus,
+		logger:   logger,
+		stopCh:   make(chan struct{}),
 	}
 }
 
@@ -69,7 +69,7 @@ func NewCertLoaderComponent(bus *busevents.EventBus, logger *slog.Logger) *CertL
 //
 //	go component.Start(ctx)
 func (c *CertLoaderComponent) Start(ctx context.Context) {
-	eventCh := c.bus.Subscribe(50)
+	eventCh := c.eventBus.Subscribe(50)
 
 	c.logger.Info("CertLoader component started")
 
@@ -160,7 +160,7 @@ func (c *CertLoaderComponent) processCertChange(event *events.CertResourceChange
 
 	// Publish CertParsedEvent
 	parsedEvent := events.NewCertParsedEvent(tlsCertPEM, tlsKeyPEM, version)
-	c.bus.Publish(parsedEvent)
+	c.eventBus.Publish(parsedEvent)
 }
 
 // decodeBase64SecretValue decodes a base64-encoded Secret value.

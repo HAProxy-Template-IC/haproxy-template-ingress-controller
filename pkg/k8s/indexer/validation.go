@@ -20,7 +20,7 @@ package indexer
 //
 //	err := indexer.ValidateJSONPath("metadata.namespace")
 //	if err != nil {
-//	    log.Printf("Invalid JSONPath: %v", err)
+//	    slog.Error("Invalid JSONPath", "error", err)
 //	}
 func ValidateJSONPath(expr string) error {
 	// Try to create a JSONPath evaluator - this validates the syntax

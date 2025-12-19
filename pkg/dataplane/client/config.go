@@ -26,7 +26,8 @@ import (
 //
 //	version, err := client.GetVersion(context.Background())
 //	if err != nil {
-//	    log.Fatal(err)
+//	    slog.Error("failed to get version", "error", err)
+//	    os.Exit(1)
 //	}
 //	fmt.Printf("Current version: %d\n", version)
 func (c *DataplaneClient) GetVersion(ctx context.Context) (int64, error) {
@@ -87,7 +88,8 @@ func (c *DataplaneClient) GetVersion(ctx context.Context) (int64, error) {
 //
 //	config, err := client.GetRawConfiguration(context.Background())
 //	if err != nil {
-//	    log.Fatal(err)
+//	    slog.Error("failed to get config", "error", err)
+//	    os.Exit(1)
 //	}
 //	fmt.Printf("Current config:\n%s\n", config)
 func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, error) {
@@ -148,10 +150,11 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 //
 //	reloadID, err := client.PushRawConfiguration(context.Background(), newConfig)
 //	if err != nil {
-//	    log.Fatal(err)
+//	    slog.Error("failed to push config", "error", err)
+//	    os.Exit(1)
 //	}
 //	if reloadID != "" {
-//	    log.Printf("HAProxy reloaded with ID: %s", reloadID)
+//	    slog.Info("HAProxy reloaded", "reload_id", reloadID)
 //	}
 func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config string) (string, error) {
 	skipVersion := true

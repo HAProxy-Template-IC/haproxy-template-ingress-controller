@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
+func TestNewMetrics(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	assert.NotNil(t, metrics)
 	assert.NotNil(t, metrics.ReconciliationDuration)
@@ -43,7 +43,7 @@ func TestNew(t *testing.T) {
 
 func TestMetrics_RecordReconciliation(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Record successful reconciliation
 	metrics.RecordReconciliation(1.5, true)
@@ -69,7 +69,7 @@ func TestMetrics_RecordReconciliation(t *testing.T) {
 
 func TestMetrics_RecordDeployment(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Record successful deployment
 	metrics.RecordDeployment(2.5, true)
@@ -87,7 +87,7 @@ func TestMetrics_RecordDeployment(t *testing.T) {
 
 func TestMetrics_RecordValidation(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Record successful validation
 	metrics.RecordValidation(true)
@@ -104,7 +104,7 @@ func TestMetrics_RecordValidation(t *testing.T) {
 
 func TestMetrics_SetResourceCount(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Set counts for different resource types
 	metrics.SetResourceCount("ingresses", 10)
@@ -128,7 +128,7 @@ func TestMetrics_SetResourceCount(t *testing.T) {
 
 func TestMetrics_SetEventSubscribers(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	metrics.SetEventSubscribers(5)
 	assert.Equal(t, 5.0, testutil.ToFloat64(metrics.EventSubscribers))
@@ -139,7 +139,7 @@ func TestMetrics_SetEventSubscribers(t *testing.T) {
 
 func TestMetrics_RecordEvent(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	metrics.RecordEvent()
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.EventsPublished))
@@ -155,12 +155,12 @@ func TestMetrics_InstanceBased(t *testing.T) {
 
 	// Instance 1
 	registry1 := prometheus.NewRegistry()
-	metrics1 := New(registry1)
+	metrics1 := NewMetrics(registry1)
 	metrics1.RecordReconciliation(1.0, true)
 
 	// Instance 2
 	registry2 := prometheus.NewRegistry()
-	metrics2 := New(registry2)
+	metrics2 := NewMetrics(registry2)
 	metrics2.RecordReconciliation(2.0, true)
 
 	// Verify instances are independent
@@ -180,7 +180,7 @@ func TestMetrics_InstanceBased(t *testing.T) {
 
 func TestMetrics_MultipleOperations(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Simulate a reconciliation cycle
 	metrics.RecordReconciliation(1.5, true)
@@ -204,7 +204,7 @@ func TestMetrics_MultipleOperations(t *testing.T) {
 
 func TestMetrics_AllMetricsRegistered(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// GaugeVec metrics don't appear in registry until used with a label value
 	// Initialize them to ensure they're registered
@@ -249,7 +249,7 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 
 func TestMetrics_RecordWebhookRequest(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Record successful webhook request
 	metrics.RecordWebhookRequest("v1.ConfigMap", "allowed", 0.5)
@@ -276,7 +276,7 @@ func TestMetrics_RecordWebhookRequest(t *testing.T) {
 
 func TestMetrics_RecordWebhookValidation(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Record allowed validation
 	metrics.RecordWebhookValidation("v1.ConfigMap", "allowed")
@@ -303,7 +303,7 @@ func TestMetrics_RecordWebhookValidation(t *testing.T) {
 
 func TestMetrics_SetWebhookCertExpiry(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Set certificate expiry
 	expiryTime := int64(1735689600) // Some future timestamp
@@ -320,7 +320,7 @@ func TestMetrics_SetWebhookCertExpiry(t *testing.T) {
 
 func TestMetrics_RecordWebhookCertRotation(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	metrics.RecordWebhookCertRotation()
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.WebhookCertRotations))
@@ -336,7 +336,7 @@ func TestMetrics_RecordWebhookCertRotation(t *testing.T) {
 
 func TestMetrics_SetIsLeader(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Not leader initially
 	metrics.SetIsLeader(false)
@@ -353,7 +353,7 @@ func TestMetrics_SetIsLeader(t *testing.T) {
 
 func TestMetrics_RecordLeadershipTransition(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Record transitions
 	metrics.RecordLeadershipTransition()
@@ -368,7 +368,7 @@ func TestMetrics_RecordLeadershipTransition(t *testing.T) {
 
 func TestMetrics_AddTimeAsLeader(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Add time as leader
 	metrics.AddTimeAsLeader(100.5)
@@ -385,7 +385,7 @@ func TestMetrics_AddTimeAsLeader(t *testing.T) {
 
 func TestMetrics_RecordValidationTests(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 
 	// Record test results
 	metrics.RecordValidationTests(10, 8, 2, 1.5)

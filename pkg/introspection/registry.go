@@ -84,7 +84,7 @@ func (r *Registry) Publish(path string, v Var) {
 //
 //	value, err := registry.Get("config")
 //	if err != nil {
-//	    log.Printf("Failed to get config: %v", err)
+//	    slog.Error("Failed to get config", "error", err)
 //	}
 func (r *Registry) Get(path string) (interface{}, error) {
 	r.mu.RLock()

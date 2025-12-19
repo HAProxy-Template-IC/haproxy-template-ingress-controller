@@ -29,21 +29,21 @@ import (
 	"haproxy-template-ic/pkg/k8s/types"
 )
 
-func TestNewComponent(t *testing.T) {
+func TestNew(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 	assert.NotNil(t, component)
 }
 
 func TestComponent_ReconciliationEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -81,10 +81,10 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 
 func TestComponent_DeploymentEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -129,10 +129,10 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 
 func TestComponent_ValidationEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -162,10 +162,10 @@ func TestComponent_ValidationEvents(t *testing.T) {
 
 func TestComponent_ResourceEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -232,10 +232,10 @@ func TestComponent_ResourceEvents(t *testing.T) {
 
 func TestComponent_AllEventTypes(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -272,10 +272,10 @@ func TestComponent_AllEventTypes(t *testing.T) {
 
 func TestComponent_GracefulShutdown(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -310,10 +310,10 @@ func TestComponent_GracefulShutdown(t *testing.T) {
 
 func TestComponent_HighEventVolume(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -344,10 +344,10 @@ func TestComponent_HighEventVolume(t *testing.T) {
 
 func TestComponent_Metrics(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	// Test that Metrics() returns the same instance
 	got := component.Metrics()
@@ -356,10 +356,10 @@ func TestComponent_Metrics(t *testing.T) {
 
 func TestComponent_ValidationTestsEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -383,10 +383,10 @@ func TestComponent_ValidationTestsEvents(t *testing.T) {
 
 func TestComponent_LeaderElectionEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -429,10 +429,10 @@ func TestComponent_LeaderElectionEvents(t *testing.T) {
 
 func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -459,10 +459,10 @@ func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
 
 func TestComponent_InitialSyncSkipped(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := New(registry)
+	metrics := NewMetrics(registry)
 	eventBus := pkgevents.NewEventBus(100)
 
-	component := NewComponent(metrics, eventBus)
+	component := New(metrics, eventBus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

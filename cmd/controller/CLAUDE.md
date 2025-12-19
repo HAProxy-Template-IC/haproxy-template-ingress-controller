@@ -548,8 +548,9 @@ func (c *Controller) Run(ctx context.Context) error {
 
     // New Stage 5: Metrics
     log.Info("Stage 5: Metrics initialization")
-    metricsCollector := metrics.New(c.eventBus)
-    go metricsCollector.Run(ctx)
+    domainMetrics := metrics.NewMetrics(registry)
+    metricsCollector := metrics.New(domainMetrics, c.eventBus)
+    go metricsCollector.Start(ctx)
 
     // Wait for metrics ready (optional)
     if err := metricsCollector.WaitForReady(ctx); err != nil {

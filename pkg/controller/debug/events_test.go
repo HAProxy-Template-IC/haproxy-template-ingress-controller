@@ -84,7 +84,7 @@ func TestNewEventBuffer(t *testing.T) {
 
 	require.NotNil(t, buffer)
 	assert.NotNil(t, buffer.buffer)
-	assert.Equal(t, bus, buffer.bus)
+	assert.Equal(t, bus, buffer.eventBus)
 }
 
 func TestEventBuffer_StartAndCapture(t *testing.T) {

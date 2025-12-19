@@ -25,24 +25,24 @@ import (
 // ConfigValidationResponse events with validation results.
 type JSONPathValidator struct {
 	*BaseValidator
-	bus    *busevents.EventBus
-	logger *slog.Logger
+	eventBus *busevents.EventBus
+	logger   *slog.Logger
 }
 
 // NewJSONPathValidator creates a new JSONPath validator component.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to and publish on
+//   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //
 // Returns:
 //   - *JSONPathValidator ready to start
-func NewJSONPathValidator(bus *busevents.EventBus, logger *slog.Logger) *JSONPathValidator {
+func NewJSONPathValidator(eventBus *busevents.EventBus, logger *slog.Logger) *JSONPathValidator {
 	v := &JSONPathValidator{
-		bus:    bus,
-		logger: logger,
+		eventBus: eventBus,
+		logger:   logger,
 	}
-	v.BaseValidator = NewBaseValidator(bus, logger, ValidatorNameJSONPath, "JSONPath expression validator", v)
+	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameJSONPath, "JSONPath expression validator", v)
 	return v
 }
 
@@ -66,7 +66,7 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 			false,
 			[]string{fmt.Sprintf("invalid config type: %T", req.Config)},
 		)
-		v.bus.Publish(response)
+		v.eventBus.Publish(response)
 		return
 	}
 
@@ -107,7 +107,7 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 		errors,
 	)
 
-	v.bus.Publish(response)
+	v.eventBus.Publish(response)
 
 	// Calculate metrics
 	duration := time.Since(start)

@@ -26,24 +26,24 @@ import (
 // Kubernetes. It simply reacts to ConfigResourceChangedEvent and produces
 // ConfigParsedEvent.
 type ConfigLoaderComponent struct {
-	bus    *busevents.EventBus
-	logger *slog.Logger
-	stopCh chan struct{}
+	eventBus *busevents.EventBus
+	logger   *slog.Logger
+	stopCh   chan struct{}
 }
 
 // NewConfigLoaderComponent creates a new ConfigLoader component.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to and publish on
+//   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //
 // Returns:
 //   - *ConfigLoaderComponent ready to start
-func NewConfigLoaderComponent(bus *busevents.EventBus, logger *slog.Logger) *ConfigLoaderComponent {
+func NewConfigLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *ConfigLoaderComponent {
 	return &ConfigLoaderComponent{
-		bus:    bus,
-		logger: logger,
-		stopCh: make(chan struct{}),
+		eventBus: eventBus,
+		logger:   logger,
+		stopCh:   make(chan struct{}),
 	}
 }
 
@@ -56,7 +56,7 @@ func NewConfigLoaderComponent(bus *busevents.EventBus, logger *slog.Logger) *Con
 //
 //	go component.Start(ctx)
 func (c *ConfigLoaderComponent) Start(ctx context.Context) {
-	eventCh := c.bus.Subscribe(50)
+	eventCh := c.eventBus.Subscribe(50)
 
 	c.logger.Info("ConfigLoader component started")
 
@@ -134,7 +134,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	// Note: SecretVersion will be empty here - it gets populated later when
 	// the ValidationCoordinator correlates with credentials
 	parsedEvent := events.NewConfigParsedEvent(cfg, templateConfig, version, "")
-	c.bus.Publish(parsedEvent)
+	c.eventBus.Publish(parsedEvent)
 }
 
 // processCRD converts a HAProxyTemplateConfig CRD to config.Config and returns both.

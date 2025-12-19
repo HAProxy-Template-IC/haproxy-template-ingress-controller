@@ -52,7 +52,7 @@ const (
 //   - DeploymentStartedEvent/CompletedEvent → updates deployment state
 //   - InstanceDeploymentFailedEvent → tracks failed endpoints
 type StateCache struct {
-	bus             *busevents.EventBus
+	eventBus        *busevents.EventBus
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent
 	logger          *slog.Logger
 	eventChan       <-chan busevents.Event
@@ -110,16 +110,16 @@ var _ debug.StateProvider = (*StateCache)(nil)
 //
 // Usage:
 //
-//	stateCache := NewStateCache(bus, resourceWatcher, logger)
+//	stateCache := NewStateCache(eventBus, resourceWatcher, logger)
 //	go stateCache.Start(ctx)  // Process events in background
-//	bus.Start()               // Release buffered events
-func NewStateCache(bus *busevents.EventBus, resourceWatcher *resourcewatcher.ResourceWatcherComponent, logger *slog.Logger) *StateCache {
+//	eventBus.Start()          // Release buffered events
+func NewStateCache(eventBus *busevents.EventBus, resourceWatcher *resourcewatcher.ResourceWatcherComponent, logger *slog.Logger) *StateCache {
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := bus.Subscribe(100)
+	eventChan := eventBus.Subscribe(100)
 
 	return &StateCache{
-		bus:             bus,
+		eventBus:        eventBus,
 		resourceWatcher: resourceWatcher,
 		logger:          logger,
 		eventChan:       eventChan,

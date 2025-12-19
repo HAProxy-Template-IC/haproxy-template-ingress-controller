@@ -27,24 +27,24 @@ import (
 // ConfigValidationResponse events with validation results.
 type TemplateValidator struct {
 	*BaseValidator
-	bus    *busevents.EventBus
-	logger *slog.Logger
+	eventBus *busevents.EventBus
+	logger   *slog.Logger
 }
 
 // NewTemplateValidator creates a new template validator component.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to and publish on
+//   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //
 // Returns:
 //   - *TemplateValidator ready to start
-func NewTemplateValidator(bus *busevents.EventBus, logger *slog.Logger) *TemplateValidator {
+func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger) *TemplateValidator {
 	v := &TemplateValidator{
-		bus:    bus,
-		logger: logger,
+		eventBus: eventBus,
+		logger:   logger,
 	}
-	v.BaseValidator = NewBaseValidator(bus, logger, ValidatorNameTemplate, "Template syntax validator", v)
+	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameTemplate, "Template syntax validator", v)
 	return v
 }
 
@@ -68,7 +68,7 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 			false,
 			[]string{fmt.Sprintf("invalid config type: %T", req.Config)},
 		)
-		v.bus.Publish(response)
+		v.eventBus.Publish(response)
 		return
 	}
 
@@ -133,7 +133,7 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 		errors,
 	)
 
-	v.bus.Publish(response)
+	v.eventBus.Publish(response)
 
 	// Calculate metrics
 	duration := time.Since(start)

@@ -36,7 +36,8 @@
 //	// Create client once, reuse for multiple operations
 //	client, err := dataplane.NewClient(context.Background(), endpoint)
 //	if err != nil {
-//	    log.Fatalf("failed to create client: %v", err)
+//	    slog.Error("failed to create client", "error", err)
+//	    os.Exit(1)
 //	}
 //	defer client.Close()
 //
@@ -55,7 +56,8 @@
 //
 //	result, err := client.Sync(ctx, desiredConfig, nil, nil)
 //	if err != nil {
-//	    log.Fatalf("sync failed: %v", err)
+//	    slog.Error("sync failed", "error", err)
+//	    os.Exit(1)
 //	}
 //
 //	fmt.Printf("Applied %d operations\n", len(result.AppliedOperations))
@@ -100,7 +102,8 @@
 //
 //	diff, err := client.DryRun(ctx, desiredConfig)
 //	if err != nil {
-//	    log.Fatalf("dry run failed: %v", err)
+//	    slog.Error("dry run failed", "error", err)
+//	    os.Exit(1)
 //	}
 //
 //	fmt.Printf("Would apply %d operations:\n", len(diff.PlannedOperations))
@@ -120,7 +123,8 @@
 //
 //	diff, err := client.Diff(ctx, desiredConfig)
 //	if err != nil {
-//	    log.Fatalf("diff failed: %v", err)
+//	    slog.Error("diff failed", "error", err)
+//	    os.Exit(1)
 //	}
 //
 //	fmt.Printf("Backends added: %v\n", diff.Details.BackendsAdded)

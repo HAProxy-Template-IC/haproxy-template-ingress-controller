@@ -28,7 +28,7 @@ import (
 type CRDWatcher struct {
 	client          versioned.Interface
 	informerFactory informers.SharedInformerFactory
-	bus             *busevents.EventBus
+	eventBus        *busevents.EventBus
 	logger          *slog.Logger
 	namespace       string
 	name            string
@@ -39,7 +39,7 @@ type CRDWatcher struct {
 //
 // Parameters:
 //   - client: Kubernetes client for HAProxyTemplateConfig CRD
-//   - bus: EventBus to publish ConfigResourceChangedEvent
+//   - eventBus: EventBus to publish ConfigResourceChangedEvent
 //   - logger: Structured logger for diagnostics
 //   - namespace: Namespace containing the HAProxyTemplateConfig resource
 //   - name: Name of the HAProxyTemplateConfig resource to watch
@@ -48,7 +48,7 @@ type CRDWatcher struct {
 //   - *CRDWatcher ready to start
 func NewCRDWatcher(
 	client versioned.Interface,
-	bus *busevents.EventBus,
+	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 	namespace string,
 	name string,
@@ -63,7 +63,7 @@ func NewCRDWatcher(
 	return &CRDWatcher{
 		client:          client,
 		informerFactory: informerFactory,
-		bus:             bus,
+		eventBus:        eventBus,
 		logger:          logger,
 		namespace:       namespace,
 		name:            name,
@@ -156,7 +156,7 @@ func (w *CRDWatcher) onAdd(obj interface{}) {
 	}
 
 	// Publish event
-	w.bus.Publish(events.NewConfigResourceChangedEvent(unstructuredConfig))
+	w.eventBus.Publish(events.NewConfigResourceChangedEvent(unstructuredConfig))
 }
 
 // onUpdate handles CRD update events.
@@ -198,7 +198,7 @@ func (w *CRDWatcher) onUpdate(oldObj, newObj interface{}) {
 	}
 
 	// Publish event
-	w.bus.Publish(events.NewConfigResourceChangedEvent(unstructuredConfig))
+	w.eventBus.Publish(events.NewConfigResourceChangedEvent(unstructuredConfig))
 }
 
 // onDelete handles CRD delete events.

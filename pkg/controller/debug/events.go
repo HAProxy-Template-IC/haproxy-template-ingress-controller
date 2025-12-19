@@ -42,7 +42,7 @@ type Event struct {
 // and stores simplified event representations.
 type EventBuffer struct {
 	buffer    *ringbuffer.RingBuffer[Event]
-	bus       *busevents.EventBus
+	eventBus  *busevents.EventBus
 	eventChan <-chan busevents.Event // Subscribed in constructor per CLAUDE.md guidelines
 }
 
@@ -56,16 +56,16 @@ type EventBuffer struct {
 //
 // Example:
 //
-//	eventBuffer := debug.NewEventBuffer(1000, bus)
+//	eventBuffer := debug.NewEventBuffer(1000, eventBus)
 //	go eventBuffer.Start(ctx)
-func NewEventBuffer(size int, bus *busevents.EventBus) *EventBuffer {
+func NewEventBuffer(size int, eventBus *busevents.EventBus) *EventBuffer {
 	// Subscribe in constructor per CLAUDE.md guidelines to ensure subscription
 	// happens before EventBus.Start() is called
-	eventChan := bus.Subscribe(1000)
+	eventChan := eventBus.Subscribe(1000)
 
 	return &EventBuffer{
 		buffer:    ringbuffer.New[Event](size),
-		bus:       bus,
+		eventBus:  eventBus,
 		eventChan: eventChan,
 	}
 }

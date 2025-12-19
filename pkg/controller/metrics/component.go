@@ -48,20 +48,20 @@ type Component struct {
 	eventChan <-chan pkgevents.Event
 }
 
-// NewComponent creates a new metrics component that listens to events.
+// New creates a new metrics component that listens to events.
 //
 // Parameters:
-//   - metrics: The Metrics instance to update (created with metrics.New)
+//   - metrics: The Metrics instance to update (created with metrics.NewMetrics)
 //   - eventBus: The EventBus to subscribe to for events
 //
 // Usage:
 //
 //	registry := prometheus.NewRegistry()
-//	metrics := metrics.New(registry)
-//	component := NewComponent(metrics, eventBus)
+//	metrics := metrics.NewMetrics(registry)
+//	component := metrics.New(metrics, eventBus)
 //	go component.Start(ctx)  // Subscribe and process events in background
 //	eventBus.Start()         // Release buffered events
-func NewComponent(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
+func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 	return &Component{
 		metrics:        metrics,
 		eventBus:       eventBus,
