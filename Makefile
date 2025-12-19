@@ -1,4 +1,4 @@
-.PHONY: help version lint lint-fix audit check-all \
+.PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
         test test-integration test-acceptance test-acceptance-parallel build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
@@ -79,6 +79,58 @@ endif
 lint-fix: ## Run golangci-lint with auto-fix
 	@echo "Running golangci-lint with auto-fix..."
 	$(GOLANGCI_LINT) run --fix ./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... ./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... ./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
+
+## Chart linting
+
+# renovate: datasource=docker depName=quay.io/helmpack/chart-testing versioning=docker
+CT_VERSION := v3.12.0
+# renovate: datasource=docker depName=helmunittest/helm-unittest versioning=docker
+HELM_UNITTEST_VERSION := 3.17.0-0.7.2
+# renovate: datasource=docker depName=ghcr.io/yannh/kubeconform versioning=docker
+KUBECONFORM_VERSION := v0.6.7-alpine
+# renovate: datasource=docker depName=kindest/node
+KUBE_VERSION := 1.35.0
+
+lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docker
+	@echo "Running chart-testing lint..."
+	docker run --rm -v $(PWD):/data -w /data quay.io/helmpack/chart-testing:$(CT_VERSION) \
+		ct lint --config charts/haproxy-template-ic/.ct/ct.yaml --all
+	@echo ""
+	@echo "Running helm-unittest..."
+	docker run --rm -v $(PWD)/charts/haproxy-template-ic:/apps \
+		helmunittest/helm-unittest:$(HELM_UNITTEST_VERSION) .
+	@echo ""
+	@echo "Running kubeconform..."
+	helm template charts/haproxy-template-ic \
+		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+		| docker run --rm -i ghcr.io/yannh/kubeconform:$(KUBECONFORM_VERSION) \
+			-kubernetes-version $(KUBE_VERSION) \
+			-schema-location default \
+			-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+			-skip haproxy-template-ic.gitlab.io/v1alpha1/HAProxyTemplateConfig,haproxy-template-ic.gitlab.io/v1alpha1/HAProxyConfig,haproxy-template-ic.gitlab.io/v1alpha1/HAProxyMapFile \
+			-summary
+	@echo ""
+	@echo "All chart linting passed!"
+
+# CI target (runs all chart linting - tools must be installed)
+lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kubeconform)
+	@echo "Running chart-testing lint..."
+	ct lint --config charts/haproxy-template-ic/.ct/ct.yaml --all
+	@echo ""
+	@echo "Running helm-unittest..."
+	helm unittest charts/haproxy-template-ic --output-type JUnit --output-file chart-test-results.xml
+	@echo ""
+	@echo "Running kubeconform..."
+	helm template charts/haproxy-template-ic \
+		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+		| kubeconform \
+			-kubernetes-version $(KUBE_VERSION) \
+			-schema-location default \
+			-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+			-skip haproxy-template-ic.gitlab.io/v1alpha1/HAProxyTemplateConfig,haproxy-template-ic.gitlab.io/v1alpha1/HAProxyConfig,haproxy-template-ic.gitlab.io/v1alpha1/HAProxyMapFile \
+			-summary
+	@echo ""
+	@echo "All chart linting passed!"
 
 ## Security & vulnerability scanning
 
