@@ -175,8 +175,9 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/health", requireGET(s.handleHealth))
 	mux.HandleFunc("/healthz", requireGET(s.handleHealth))
 
-	// pprof endpoints are registered via import side-effect
-	// Available at: /debug/pprof/*
+	// Forward pprof requests to DefaultServeMux where net/http/pprof registers its handlers.
+	// The pprof import side-effect registers on http.DefaultServeMux, so we forward to it.
+	mux.Handle("/debug/pprof/", http.DefaultServeMux)
 
 	// Catch-all for 404
 	mux.HandleFunc("/", s.handleNotFound)
