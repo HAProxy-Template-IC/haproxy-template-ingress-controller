@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/open2b/scriggo/builtin"
@@ -77,7 +78,8 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 	decl["capabilities"] = (*map[string]interface{})(nil)
 	decl["shared"] = (*map[string]interface{})(nil)
 	decl["extraContext"] = (*map[string]interface{})(nil)
-	decl["http"] = (*HTTPFetcher)(nil) // HTTP store for fetching remote content
+	decl["http"] = (*HTTPFetcher)(nil)                      // HTTP store for fetching remote content
+	decl["runtimeEnvironment"] = (*RuntimeEnvironment)(nil) // Runtime environment info (GOMAXPROCS, etc.)
 }
 
 // registerScriggoCustomFunctions registers all custom functions for Scriggo templates.
@@ -144,6 +146,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	// Slice manipulation functions
 	decl[FuncToSlice] = scriggoToSlice
 	decl[FuncAppendAny] = scriggoAppendAny
+	decl[FuncShardSlice] = scriggoShardSlice
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.
@@ -510,6 +513,7 @@ var RenderCacheContextKey = renderCacheKey{}
 
 // scriggoHasCached checks if a key exists in the per-render cache.
 // This enables the compute_once pattern for expensive operations.
+// Thread-safe for concurrent access during parallel template rendering.
 //
 // Usage in Scriggo templates:
 //
@@ -522,12 +526,13 @@ func scriggoHasCached(env native.Env, key string) bool {
 	if cache == nil {
 		return false
 	}
-	_, exists := cache[key]
+	_, exists := cache.Load(key)
 	return exists
 }
 
 // scriggoGetCached retrieves a value from the per-render cache.
 // Returns nil if the key doesn't exist.
+// Thread-safe for concurrent access during parallel template rendering.
 //
 // Usage in Scriggo templates:
 //
@@ -537,11 +542,13 @@ func scriggoGetCached(env native.Env, key string) interface{} {
 	if cache == nil {
 		return nil
 	}
-	return cache[key]
+	value, _ := cache.Load(key)
+	return value
 }
 
 // scriggoSetCached stores a value in the per-render cache.
 // The value persists for the duration of the current render operation.
+// Thread-safe for concurrent access during parallel template rendering.
 //
 // Usage in Scriggo templates:
 //
@@ -555,16 +562,17 @@ func scriggoSetCached(env native.Env, key string, value interface{}) {
 			"key", key)
 		return
 	}
-	cache[key] = value
+	cache.Store(key, value)
 }
 
 // getRenderCache retrieves the per-render cache from the context.
-func getRenderCache(env native.Env) map[string]interface{} {
+// Returns a sync.Map for thread-safe concurrent access during parallel template rendering.
+func getRenderCache(env native.Env) *sync.Map {
 	ctx := env.Context()
 	if ctx == nil {
 		return nil
 	}
-	cache, ok := ctx.Value(RenderCacheContextKey).(map[string]interface{})
+	cache, ok := ctx.Value(RenderCacheContextKey).(*sync.Map)
 	if !ok {
 		return nil
 	}
@@ -583,7 +591,7 @@ var RenderContextContextKey = renderContextKey{}
 
 // scriggoFirstSeen checks if a composite key is being seen for the first time.
 // Returns true on first occurrence, false on subsequent calls with the same key.
-// This atomically combines has_cached + set_cached into a single operation.
+// Uses atomic LoadOrStore for thread-safe check-and-set during parallel template rendering.
 //
 // Usage in Scriggo templates:
 //
@@ -597,24 +605,55 @@ func scriggoFirstSeen(env native.Env, parts ...interface{}) bool {
 		return true // No key parts = treat as always first
 	}
 
-	// Build composite key from all parts
-	keyParts := make([]string, len(parts))
-	for i, part := range parts {
-		keyParts[i] = scriggoToString(part)
-	}
-	key := strings.Join(keyParts, "_")
-
 	cache := getRenderCache(env)
 	if cache == nil {
 		return true // No cache = treat as first time
 	}
 
-	if _, exists := cache[key]; exists {
-		return false // Already seen
+	// Build composite key using strings.Builder to avoid intermediate allocations.
+	// Estimate capacity: ~20 chars per part + separators
+	var b strings.Builder
+	b.Grow(len(parts) * 24)
+
+	for i, part := range parts {
+		if i > 0 {
+			b.WriteByte('_')
+		}
+		writeToBuilder(&b, part)
 	}
 
-	cache[key] = true
-	return true
+	// LoadOrStore atomically loads or stores a value.
+	// Returns (actual value, loaded) where loaded is true if value was already present.
+	// This is thread-safe and prevents race conditions in parallel template execution.
+	// Use empty struct{} as value to minimize memory (0 bytes vs 1 byte for bool)
+	_, loaded := cache.LoadOrStore(b.String(), struct{}{})
+	return !loaded // First seen if NOT already loaded
+}
+
+// writeToBuilder writes a value to a strings.Builder, inlining common type conversions.
+// This avoids allocations from fmt.Sprintf for common types.
+func writeToBuilder(b *strings.Builder, v interface{}) {
+	switch val := v.(type) {
+	case string:
+		b.WriteString(val)
+	case int:
+		b.WriteString(strconv.Itoa(val))
+	case int64:
+		b.WriteString(strconv.FormatInt(val, 10))
+	case float64:
+		b.WriteString(strconv.FormatFloat(val, 'f', -1, 64))
+	case bool:
+		if val {
+			b.WriteString("true")
+		} else {
+			b.WriteString("false")
+		}
+	default:
+		if val == nil {
+			return
+		}
+		fmt.Fprintf(b, "%v", v)
+	}
 }
 
 // scriggoSelectAttr filters items by attribute existence or value.
@@ -760,6 +799,21 @@ func isEmpty(value interface{}) bool {
 		}
 		return false
 	}
+}
+
+// isNilValue checks if a value is nil, including typed nil values like (*T)(nil).
+// In Go, a typed nil pointer stored in an interface{} is not equal to nil.
+// This function uses reflection to check for nil pointers, maps, slices, etc.
+func isNilValue(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+		return rv.IsNil()
+	}
+	return false
 }
 
 // toSlice converts an interface{} to []interface{}.
@@ -1195,6 +1249,57 @@ func scriggoDig(obj interface{}, keys ...string) interface{} {
 		return obj
 	}
 
+	// Fast path: direct map[string]interface{} (99% of cases in K8s templates)
+	// Avoids reflection overhead from isNilValue() on every iteration
+	if m, ok := obj.(map[string]interface{}); ok {
+		return digMapFast(m, keys)
+	}
+
+	// Slow path with reflection for typed nil pointers and other types
+	return digReflect(obj, keys)
+}
+
+// digMapFast is the optimized path for map[string]interface{} traversal.
+// Handles nested maps without reflection overhead.
+func digMapFast(m map[string]interface{}, keys []string) interface{} {
+	for i, key := range keys {
+		val, ok := m[key]
+		if !ok || val == nil {
+			return nil
+		}
+
+		// If this is the last key, return the value directly
+		if i == len(keys)-1 {
+			return val
+		}
+
+		// Try to continue traversal with nested map
+		next, ok := val.(map[string]interface{})
+		if !ok {
+			// Check for map[string]string on last key
+			if strMap, ok := val.(map[string]string); ok {
+				// Only one key left, look it up
+				if i == len(keys)-2 {
+					if strVal, found := strMap[keys[i+1]]; found {
+						return strVal
+					}
+				}
+			}
+			return nil
+		}
+		m = next
+	}
+	return m
+}
+
+// digReflect handles typed nil pointers and other edge cases with reflection.
+// This is the slow path, used for non-standard map types.
+func digReflect(obj interface{}, keys []string) interface{} {
+	// Handle typed nil values (e.g., *map[string]interface{} with nil pointer)
+	if isNilValue(obj) {
+		return nil
+	}
+
 	current := obj
 	for _, key := range keys {
 		if current == nil {
@@ -1364,4 +1469,57 @@ func scriggoAppendAny(slice, item interface{}) []interface{} {
 	// Can't append - return new slice with just the item
 	// This handles edge cases like receiving a non-slice type
 	return []interface{}{item}
+}
+
+// scriggoShardSlice divides a slice into N shards and returns the portion for a given shard index.
+// This is used for parallel template rendering where work is split across goroutines.
+//
+// The function divides items evenly across shards, distributing remainder items
+// to the first shards (shards 0..remainder-1 get one extra item).
+//
+// Example: 10 items with 3 shards:
+//   - Shard 0: items[0:4]  (4 items - gets extra because remainder=1)
+//   - Shard 1: items[4:7]  (3 items)
+//   - Shard 2: items[7:10] (3 items)
+//
+// Usage in Scriggo templates:
+//
+//	{%- var shard = shard_slice(allItems, shardIdx, totalShards) %}
+//	{%- for _, item := range shard %}
+//	  ... process item in parallel shard ...
+//	{%- end %}
+func scriggoShardSlice(items interface{}, shardIndex, totalShards int) []interface{} {
+	// Convert items to slice
+	itemsSlice, ok := toSlice(items)
+	if !ok || len(itemsSlice) == 0 {
+		return []interface{}{}
+	}
+
+	// If sharding is disabled or invalid, return full slice
+	if totalShards <= 1 || shardIndex >= totalShards || shardIndex < 0 {
+		return itemsSlice
+	}
+
+	totalItems := len(itemsSlice)
+	baseSize := totalItems / totalShards
+	remainder := totalItems % totalShards
+
+	// Calculate start index: sum of previous shard sizes
+	// Shards 0..remainder-1 get baseSize+1 items each
+	// Shards remainder..totalShards-1 get baseSize items each
+	start := shardIndex*baseSize + min(shardIndex, remainder)
+	end := start + baseSize
+	if shardIndex < remainder {
+		end++
+	}
+
+	// Ensure bounds are valid
+	if start >= totalItems {
+		return []interface{}{}
+	}
+	if end > totalItems {
+		end = totalItems
+	}
+
+	return itemsSlice[start:end]
 }

@@ -27,6 +27,7 @@ import (
 	"haproxy-template-ic/pkg/controller/events"
 	"haproxy-template-ic/pkg/controller/helpers"
 	"haproxy-template-ic/pkg/controller/httpstore"
+	"haproxy-template-ic/pkg/controller/rendercontext"
 	"haproxy-template-ic/pkg/controller/testutil"
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/dataplane"
@@ -519,7 +520,7 @@ func TestBuildRenderingContext(t *testing.T) {
 	require.True(t, ok, "resources should be a map[string]templating.ResourceStore")
 
 	// Verify ingresses store wrapper
-	ingressesWrapper, ok := resources["ingresses"].(*StoreWrapper)
+	ingressesWrapper, ok := resources["ingresses"].(*rendercontext.StoreWrapper)
 	require.True(t, ok, "ingresses should be a StoreWrapper")
 	assert.Equal(t, "ingresses", ingressesWrapper.ResourceType)
 
@@ -528,7 +529,7 @@ func TestBuildRenderingContext(t *testing.T) {
 	assert.Len(t, ingresses, 2)
 
 	// Verify services store wrapper
-	servicesWrapper, ok := resources["services"].(*StoreWrapper)
+	servicesWrapper, ok := resources["services"].(*rendercontext.StoreWrapper)
 	require.True(t, ok, "services should be a StoreWrapper")
 	assert.Equal(t, "services", servicesWrapper.ResourceType)
 

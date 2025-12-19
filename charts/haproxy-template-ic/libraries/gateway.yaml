@@ -563,19 +563,35 @@ templateSnippets:
       {%- end -%}
       {%- end macro -%}
 
+  util-sharded-gateway-backends:
+    template: |
+      {#-
+        Sharded Gateway Backend Generator
+
+        Wraps GenerateGatewayBackends with automatic parallel sharding.
+        Sharding is auto-calculated: clamp(resourceCount / 300, 1, 2 * GOMAXPROCS)
+        Deduplication via first_seen() is thread-safe (uses sync.Map).
+      -#}
+      {%- import "util-generate-backends-gateway" for GenerateGatewayBackends -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {%- macro ShardedGatewayBackends(routes []any, protoFlag string, dedupCategory string) -%}
+      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+      {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateGatewayBackends(routes, protoFlag, dedupCategory) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateGatewayBackends(shard_slice(routes, i, n), protoFlag, dedupCategory) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
+
   backends-500-gateway:
     template: |
-      {#- Generate backend definitions from HTTPRoute and GRPCRoute resources #}
-      {#- Implements backends-* extension point from base library #}
-      {#- Deduplicates backends: one backend per unique (namespace, route, service, port) combination #}
-      {#- Import backend generation macro #}
-      {% import "util-generate-backends-gateway" for GenerateGatewayBackends -%}
+      {#- Generate backend definitions from HTTPRoute and GRPCRoute resources -#}
+      {%- import "util-sharded-gateway-backends" for ShardedGatewayBackends -%}
       # gateway/backends-gateway
-
-      {#- HTTPRoute backends (HTTP protocol) #}
-      {{ GenerateGatewayBackends(resources.httproutes.List(), "", "gatewayBackends_http") -}}
-      {#- GRPCRoute backends (HTTP/2 protocol) #}
-      {{- GenerateGatewayBackends(resources.grpcroutes.List(), "h2", "gatewayBackends_grpc") -}}
+      {{ ShardedGatewayBackends(resources.httproutes.List(), "", "gatewayBackends_http") }}
+      {{- ShardedGatewayBackends(resources.grpcroutes.List(), "h2", "gatewayBackends_grpc") -}}
 
   backends-501-gateway-ssl-passthrough:
     template: |
@@ -630,23 +646,15 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
-  util-path-map-entry-gateway:
+  util-path-map-entry-gateway-shard:
     template: |
-      {#- Macro to generate HTTPRoute path matching map entries with qualifiers #}
-      {#- Single backend: BACKEND:<backendName> #}
-      {#- Multiple backends: MULTIBACKEND:<totalWeight>:<routeKey> #}
-      {#- Conflicting paths: GW_ROUTE_ID:<route_type>:<routeIds> #}
-      {#- Parameters: pathType ("Exact" or "PathPrefix"), suffix (e.g., "" or "/") #}
-      {%- macro GeneratePathMapEntries(pathType string, suffix string) %}
-      # gateway/util-path-map-entry-gateway ({{ pathType }})
+      {#-
+        Gateway Path Map Entry Shard Processor
 
-      {#- Get cached route analysis (runs once, shared across all renders) #}
-      {{ render "util-gateway-analysis" }}
-
-      {#- Iterate over all routes in precedence order (sortedRoutes contains all routes) #}
-      {%- var gatewayAnalysis map[string]any = shared["gatewayAnalysis"] %}
-      {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
-      {%- var pathGroups map[string]any = gatewayAnalysis["pathGroups"] %}
+        Purpose: Generates map file entries for a slice of sorted routes.
+        This is the inner macro used by sharding.
+      -#}
+      {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups map[string]any, pathType string, suffix string) string %}
       {%- for _, routeInfo := range sortedRoutes %}
         {%- var riHostname = routeInfo["hostname"] %}
         {%- var riPath map[string]any = routeInfo["path"] %}
@@ -658,10 +666,7 @@ templateSnippets:
           {%- var firstRoute map[string]any = routes[0] %}
           {%- var frPath map[string]any = firstRoute["path"] %}
           {%- var frPath_type = frPath["type"] %}
-        {#- Only process routes matching the current pathType #}
         {%- if frPath != nil && frPath_type == pathType %}
-          {#- Always use GW_ROUTE_ID qualifier for all Gateway API routes #}
-          {#- NOTE: Do NOT append suffix to GW_ROUTE_ID qualifier - it would break advanced matcher string matching #}
           {%- var routeIds = []any{} %}
           {%- for _, r := range routes %}
             {%- var rid string = r["routeId"] %}
@@ -672,7 +677,6 @@ templateSnippets:
           {%- var frPath_val = frPath["value"] %}
           {%- var frResourceType = firstRoute["resource_type"] %}
           {%- var routeTypeShort = frResourceType | replace("httproute", "http") | replace("grpcroute", "grpc") %}
-          {#- Avoid double slashes: only append suffix if path doesn't already end with / #}
           {%- var pathSuffix = suffix %}
           {%- if suffix == "/" && hasSuffix(frPath_val, "/") %}
             {%- pathSuffix = "" %}
@@ -681,14 +685,37 @@ templateSnippets:
         {%- end %}
         {%- end %}
       {%- end %}
+      {% end %}
+
+  util-path-map-entry-gateway:
+    template: |
+      {#- Sharded Gateway Path Map Entry Generator #}
+      {%- import "util-path-map-entry-gateway-shard" for PathMapEntryGatewayShard -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+
+      {%- macro GeneratePathMapEntries(pathType string, suffix string) %}
+      # gateway/util-path-map-entry-gateway ({{ pathType }})
+
+      {#- Get cached route analysis (runs once, shared across all renders) #}
+      {{ render "util-gateway-analysis" }}
+
+      {%- var gatewayAnalysis map[string]any = shared["gatewayAnalysis"] %}
+      {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
+      {%- var pathGroups map[string]any = gatewayAnalysis["pathGroups"] %}
+
+      {%- var n = toint(CalculateShardCount(len(sortedRoutes), 100)) -%}
+      {%- if n <= 1 || len(sortedRoutes) < 100 -%}
+      {{ PathMapEntryGatewayShard(sortedRoutes, pathGroups, pathType, suffix) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go PathMapEntryGatewayShard(shard_slice(sortedRoutes, i, n), pathGroups, pathType, suffix) }}
+      {%- end -%}
+      {%- end -%}
       {%- end macro %}
 
   util-generate-host-map-gateway:
     template: |
       {#- Macro to generate host map entries for Gateway API routes #}
-      {#- Parameters: #}
-      {#-   routes: list of routes to process (from resources.httproutes or resources.grpcroutes) #}
-      {#-   route_type: route type name for comments ("HTTPRoute" or "GRPCRoute") #}
       {%- macro GenerateHostMap(routes []any, route_type string) -%}
       {%- for _, route := range routes %}
       {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
@@ -703,13 +730,29 @@ templateSnippets:
       {%- end %}
       {%- end macro -%}
 
+  util-sharded-host-map-gateway:
+    template: |
+      {#- Sharded host map generator for Gateway API routes -#}
+      {%- import "util-generate-host-map-gateway" for GenerateHostMap -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {%- macro ShardedHostMap(routes []any, route_type string) -%}
+      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+      {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateHostMap(routes, route_type) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateHostMap(shard_slice(routes, i, n), route_type) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
+
   map-host-500-gateway:
     template: |
       {#- Generate host map entries for Gateway API routes #}
-      {%- import "util-generate-host-map-gateway" for GenerateHostMap %}
+      {%- import "util-sharded-host-map-gateway" for ShardedHostMap %}
       # gateway/map-host-gateway
-      {{- GenerateHostMap(resources.httproutes.List(), "HTTPRoute") -}}
-      {{- GenerateHostMap(resources.grpcroutes.List(), "GRPCRoute") -}}
+      {{- ShardedHostMap(resources.httproutes.List(), "HTTPRoute") -}}
+      {{- ShardedHostMap(resources.grpcroutes.List(), "GRPCRoute") -}}
 
   map-path-exact-500-gateway:
     template: |
@@ -732,18 +775,16 @@ templateSnippets:
       # gateway/map-path-prefix-gateway
       {{ GeneratePathMapEntries("PathPrefix", "/") }}
 
-  map-path-regex-500-gateway:
+  util-generate-path-regex-map-gateway:
     template: |
-      {#- Generate regex path map entries for HTTPRoute with RegularExpression type #}
-      {#- Single-pass optimization: collect entries first, then output comment and entries -#}
+      {#- Macro to generate regex path map entries for HTTPRoute -#}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
-      # gateway/map-path-regex-gateway
-      {%- for _, route := range resources.httproutes.List() %}
+      {%- macro GeneratePathRegexMap(routes []any) -%}
+      {%- for _, route := range routes %}
       {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
       {%- var routeName = route | dig("metadata", "name") | fallback("") %}
       {%- var hostnames = route | dig("spec", "hostnames") | toSlice() | coalesce([]any{""}) %}
       {%- var rules = route | dig("spec", "rules") | toSlice() | coalesce([]any{}) %}
-      {#- Single pass: collect regex path entries -#}
       {%- var regexEntries = []any{} %}
       {%- for _, hostname := range hostnames %}
       {%- for _, rule := range rules %}
@@ -754,10 +795,9 @@ templateSnippets:
       {%- var backend = map[string]any{"name": firstBackend | dig("name") | fallback(""), "port": firstBackend | dig("port") | fallback(80)} %}
       {%- var matches []any = rule | dig("matches") | coalesce([]any{map[string]any{}}) %}
       {%- for _, match := range matches %}
-      {%- var matchPath = match | dig("path") %}
       {%- var matchPath_type = match | dig("path", "type") | fallback("") %}
       {%- var matchPathValue = match | dig("path", "value") | fallback("/") %}
-      {%- if matchPath != nil && matchPath_type == "RegularExpression" %}
+      {%- if matchPath_type == "RegularExpression" %}
       {%- regexEntries = append(regexEntries, map[string]any{
         "hostname": hostname,
         "pathValue": matchPathValue,
@@ -768,7 +808,6 @@ templateSnippets:
       {%- end %}
       {%- end %}
       {%- end %}
-      {#- Output comment and entries if any regex paths found -#}
       {%- if len(regexEntries) > 0 %}
       # HTTPRoute: {{ routeNs }}/{{ routeName }} ({{ len(regexEntries) }} regex paths)
       {% for _, entry := range regexEntries -%}
@@ -776,22 +815,40 @@ templateSnippets:
       {% end -%}
       {%- end %}
       {%- end %}
+      {%- end macro -%}
 
-  map-weighted-backend-500-gateway:
+  util-sharded-path-regex-map-gateway:
     template: |
-      {#- Generate expanded weighted backend entries for HTTPRoute #}
-      {#- Format: <random_number>:<routeKey> <backendName> #}
-      {#- Each weight N generates N consecutive entries pointing to same backend #}
-      {#- This allows O(1) weighted selection via single map lookup #}
-      {#- Single-pass optimization: collect entries first, then output comment and entries -#}
-      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
-      # gateway/map-weighted-backend-gateway
+      {#- Sharded regex path map generator for HTTPRoute -#}
+      {%- import "util-generate-path-regex-map-gateway" for GeneratePathRegexMap -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {%- macro ShardedPathRegexMap(routes []any) -%}
+      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+      {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GeneratePathRegexMap(routes) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go GeneratePathRegexMap(shard_slice(routes, i, n)) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
 
-      {%- for _, route := range resources.httproutes.List() %}
+  map-path-regex-500-gateway:
+    template: |
+      {#- Generate regex path map entries for HTTPRoute with RegularExpression type -#}
+      {%- import "util-sharded-path-regex-map-gateway" for ShardedPathRegexMap %}
+      # gateway/map-path-regex-gateway
+      {{ ShardedPathRegexMap(resources.httproutes.List()) }}
+
+  util-generate-weighted-backend-map-gateway:
+    template: |
+      {#- Macro to generate weighted backend map entries for HTTPRoute -#}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- macro GenerateWeightedBackendMap(routes []any) -%}
+      {%- for _, route := range routes %}
       {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
       {%- var routeName = route | dig("metadata", "name") | fallback("") %}
       {%- var rules = route | dig("spec", "rules") | toSlice() | coalesce([]any{}) %}
-      {#- Single pass: collect weighted entries -#}
       {%- var weightedEntries = []any{} %}
       {%- var ruleIdx = 0 %}
       {%- for _, rule := range rules %}
@@ -804,7 +861,6 @@ templateSnippets:
             {%- for _, backendRef := range refsSlice %}
               {%- var backend = map[string]any{"name": backendRef | dig("name") | fallback(""), "port": backendRef | dig("port") | fallback(80)} %}
               {%- var weight = backendRef | dig("weight") | fallback(1) %}
-              {#- Generate <weight> consecutive entries for this backend -#}
               {%- for i := cumulative; i < cumulative + weight; i++ %}
                 {%- weightedEntries = append(weightedEntries, map[string]any{
                   "index": i,
@@ -818,7 +874,6 @@ templateSnippets:
         {%- end %}
         {%- ruleIdx = ruleIdx + 1 %}
       {%- end %}
-      {#- Output comment and entries if any weighted rules found -#}
       {%- if len(weightedEntries) > 0 %}
       # HTTPRoute: {{ routeNs }}/{{ routeName }} (weighted rules)
       {% for _, entry := range weightedEntries -%}
@@ -826,6 +881,30 @@ templateSnippets:
       {% end -%}
       {%- end %}
       {%- end %}
+      {%- end macro -%}
+
+  util-sharded-weighted-backend-map-gateway:
+    template: |
+      {#- Sharded weighted backend map generator for HTTPRoute -#}
+      {%- import "util-generate-weighted-backend-map-gateway" for GenerateWeightedBackendMap -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {%- macro ShardedWeightedBackendMap(routes []any) -%}
+      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+      {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateWeightedBackendMap(routes) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateWeightedBackendMap(shard_slice(routes, i, n)) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
+
+  map-weighted-backend-500-gateway:
+    template: |
+      {#- Generate weighted backend map entries for HTTPRoute -#}
+      {%- import "util-sharded-weighted-backend-map-gateway" for ShardedWeightedBackendMap %}
+      # gateway/map-weighted-backend-gateway
+      {{ ShardedWeightedBackendMap(resources.httproutes.List()) }}
 
   # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
   # Named with 010- prefix so alphabetical sort matches intended execution order

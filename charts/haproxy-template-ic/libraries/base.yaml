@@ -19,13 +19,56 @@ templateSnippets:
 
         Provides:
           - SanitizeRegex(pattern): Escapes regex patterns for HAProxy double-quoted context
+          - CalculateShardCount(resourceCount, itemsPerShard): Calculates optimal shard count
 
         Usage:
-          {% import "util-macros" for SanitizeRegex %}
+          {% import "util-macros" for SanitizeRegex, CalculateShardCount %}
           {{ SanitizeRegex("^/api/v[0-9]+$") }}
+          {%- var shards = CalculateShardCount(len(resources.ingresses.List()), 300) %}
       -#}
       {% macro SanitizeRegex(pattern string) string %}
         {%% show replace(pattern, "$", "\\$") %%}
+      {% end %}
+
+      {#-
+        CalculateShardCount - Calculates optimal shard count for parallel template rendering.
+
+        Formula: clamp(resourceCount / itemsPerShard, 1, 2 * GOMAXPROCS)
+
+        Parameters:
+          - resourceCount: Number of resources to process
+          - itemsPerShard: Target items per shard (recommended: 300)
+
+        Returns: Optimal shard count as string (use toint() to convert)
+
+        Override: Set extraContext.shardCountOverride to force a specific value.
+      -#}
+      {% macro CalculateShardCount(resourceCount int, itemsPerShard int) string %}
+        {%%
+          // Check for override first
+          var override = extraContext | dig("shardCountOverride")
+          if override != nil {
+            show tostring(toint(override))
+            return
+          }
+
+          // Calculate max shards as 2x GOMAXPROCS
+          var maxShards = runtimeEnvironment.GOMAXPROCS * 2
+          if maxShards < 1 {
+            maxShards = 1
+          }
+
+          // Calculate shard count based on resource count
+          var shardCount = resourceCount / itemsPerShard
+          if shardCount < 1 {
+            shardCount = 1
+          }
+          if shardCount > maxShards {
+            shardCount = maxShards
+          }
+
+          show tostring(shardCount)
+        %%}
       {% end %}
 
   frontend-routing-logic:
