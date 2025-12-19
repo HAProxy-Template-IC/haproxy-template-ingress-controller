@@ -198,6 +198,7 @@ func (e *ScriggoEngine) compileTemplates(allTemplates map[string]string, entryPo
 		opts := &scriggo.BuildOptions{
 			Globals:         e.globals,
 			EnableProfiling: e.profilingEnabled,
+			AllowGoStmt:     true, // Enable parallel template rendering (go MacroName(), go render)
 		}
 
 		compiled, err := scriggo.BuildTemplate(fsys, name, opts)
@@ -233,7 +234,8 @@ func (e *ScriggoEngine) Render(templateName string, templateContext map[string]i
 
 	// Create per-render cache and pass via context
 	// This enables cache functions (has_cached, get_cached, set_cached) to work
-	renderCache := make(map[string]interface{})
+	// Uses sync.Map for thread-safe concurrent access during parallel template rendering
+	renderCache := &sync.Map{}
 	ctx := context.WithValue(context.Background(), RenderCacheContextKey, renderCache)
 
 	// Add render context (globals) for resource accessor functions

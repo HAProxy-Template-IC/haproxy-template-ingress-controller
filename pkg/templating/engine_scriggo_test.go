@@ -803,3 +803,316 @@ Output: {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 	assert.Contains(t, output, "Name: test-ingress")
 	assert.Contains(t, output, "Backend: backend-test-ingress")
 }
+
+// TestMacroWithRenderGlobInheritContext reproduces a bug where render_glob with
+// inherit_context inside a user-defined macro causes a nil pointer dereference
+// at the macro CALL site.
+//
+// The issue occurs when:
+// 1. A template has imports at the top
+// 2. A template has a macro that iterates over items
+// 3. Inside the loop, local variables are declared
+// 4. Inside the loop, render_glob with inherit_context is called
+// 5. The macro is called
+//
+// Expected: The template should render successfully
+// Actual: Runtime error: invalid memory address or nil pointer dereference.
+func TestMacroWithRenderGlobInheritContext(t *testing.T) {
+	templates := map[string]string{
+		// Main entry point uses render_glob (no inherit_context)
+		"main": `# Main Template
+{{- render_glob "backends-*" }}
+# End`,
+
+		// Template with imports + macro + render_glob inherit_context
+		// This matches the structure in ingress.yaml
+		"backends-500-test": `{%- import "util-helper" for HelperMacro -%}
+{#- Macro wrapping the backend generation -#}
+{% macro BackendsTestMacro(items []any) string %}
+  {%- for _, item := range items -%}
+{{ HelperMacro(item) }}
+  {%- var opts = map[string]any{"flags": []any{}} %}
+  {{- render_glob "backend-directives-*" inherit_context }}
+  {%- end -%}
+{% end %}
+{{ BackendsTestMacro(resources.ingresses.List()) }}
+`,
+		// Utility macro that gets imported
+		"util-helper": `{% macro HelperMacro(item any) string %}helper:{{ item | dig("name") | fallback("") }}{% end %}`,
+
+		// Extension snippets that access inherited variables
+		// Using simple nil checks to avoid type issues
+		"backend-directives-100": `{%- if item != nil %}  # item exists{% end %}`,
+		"backend-directives-200": `{%- if opts != nil %}  # opts exists{% end %}`,
+	}
+
+	// The controller compiles only entry points (haproxy.cfg, maps), not snippets
+	// Snippets like backends-* are discovered via render_glob
+	entryPoints := []string{"main"}
+	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	require.NoError(t, err, "Failed to compile templates with macro + render_glob inherit_context")
+
+	// Create mock store with test data
+	ingressStore := &mockResourceStore{
+		listResult: []interface{}{
+			map[string]interface{}{"name": "test-1"},
+			map[string]interface{}{"name": "test-2"},
+		},
+	}
+
+	// Create typed resources map
+	resources := map[string]ResourceStore{
+		"ingresses": ingressStore,
+	}
+
+	context := map[string]interface{}{
+		"resources":        resources,
+		"templateSnippets": []string{"backend-directives-100", "backend-directives-200"},
+	}
+
+	output, err := engine.Render("main", context)
+	require.NoError(t, err, "render_glob with inherit_context inside macro should not cause nil pointer dereference")
+	assert.Contains(t, output, "# item exists")
+	assert.Contains(t, output, "# opts exists")
+	assert.Contains(t, output, "helper:test-1")
+}
+
+// TestMacroWithRenderGlobInheritContext_ManyTemplates tests with 13 templates
+// (matching the real backend-directives-* count) and exact variable names.
+func TestMacroWithRenderGlobInheritContext_ManyTemplates(t *testing.T) {
+	// Build 13 backend-directives templates (matching real count)
+	templates := map[string]string{
+		// Main entry point uses render_glob (no inherit_context)
+		"haproxy.cfg": `# HAProxy Config
+{{- render_glob "backends-*" }}
+# End`,
+
+		// Template with imports + macro + render_glob inherit_context
+		// Using exact variable names from real templates: ingress, serverOpts
+		"backends-500-ingress": `{%- import "util-backend-name-ingress" for BackendNameIngress -%}
+{%- import "util-backend-servers" for BackendServers -%}
+
+{#- Macro wrapping the backend generation -#}
+{% macro BackendsIngressShard(ingresses []any, isFirstShard bool) string %}
+  {%- var isFirst = isFirstShard %}
+  {%- for _, ingress := range ingresses -%}
+  {%- if isFirst %}
+# backends-ingress
+
+  {%- isFirst = false %}
+  {%- end -%}
+  {%- var rules = ingress | dig("spec", "rules") %}
+  {%- if rules != nil %}
+  {%- for _, rule := range rules -%}
+  {%- var httpPaths = rule | dig("http", "paths") %}
+  {%- if httpPaths != nil %}
+  {%- for _, path := range httpPaths -%}
+  {%- var service = path | dig("backend", "service") %}
+  {%- if service != nil %}
+  {%- var serviceName = service | dig("name") | fallback("") -%}
+  {%- var port = service | dig("port", "number") | fallback(80) -%}
+{%- if first_seen("ingress_backend", ingress | dig("metadata", "namespace"), ingress | dig("metadata", "name"), serviceName) -%}
+# Backend for: Ingress {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }}
+backend {{ BackendNameIngress(ingress, path) }}
+  balance roundrobin
+  {%- var serverOpts = map[string]any{"flags": []any{}} %}
+  {{- render_glob "backend-directives-*" inherit_context }}
+{{ BackendServers(tostring(serviceName), port, serverOpts) }}
+  {%- end -%}
+  {%- end -%}
+  {%- end -%}
+  {%- end -%}
+  {%- end -%}
+  {%- end -%}
+  {%- end -%}
+{% end %}
+{{ BackendsIngressShard(resources.ingresses.List(), true) }}
+`,
+		// Utility macros
+		"util-backend-name-ingress": `{% macro BackendNameIngress(ingress any, path any) string %}ing_{{ ingress | dig("metadata", "namespace") }}_{{ ingress | dig("metadata", "name") }}{% end %}`,
+		"util-backend-servers": `{% macro BackendServers(serviceName string, port any, serverOpts map[string]any) string %}  # svc={{ serviceName }} port={{ port }}
+  server SRV {{ serviceName }}:{{ port }}{% end %}`,
+
+		// 13 backend-directives templates (matching real count)
+		// Some of these MODIFY serverOpts (like the real templates do)
+		"backend-directives-100-a": `{%- if ingress != nil %}  # directive-100-a
+{%- if serverOpts != nil %}{% serverOpts["modified100a"] = true -%}{%- end %}{%- end %}`,
+		"backend-directives-100-b": `{%- if serverOpts != nil %}  # directive-100-b{% end %}`,
+		"backend-directives-150":   `{%- if ingress != nil %}  # directive-150{% end %}`,
+		"backend-directives-200":   `{%- if ingress != nil %}  # directive-200{% end %}`,
+		"backend-directives-210":   `{%- if ingress != nil %}  # directive-210{% end %}`,
+		"backend-directives-250-a": `{%- if ingress != nil %}  # directive-250-a{% end %}`,
+		"backend-directives-250-b": `{%- if serverOpts != nil %}  # directive-250-b{% end %}`,
+		"backend-directives-300":   `{%- if ingress != nil %}  # directive-300{% end %}`,
+		"backend-directives-350":   `{%- if ingress != nil %}  # directive-350{% end %}`,
+		"backend-directives-400":   `{%- if ingress != nil %}  # directive-400{% end %}`,
+		"backend-directives-401":   `{%- if ingress != nil %}  # directive-401{% end %}`,
+		"backend-directives-500":   `{%- if ingress != nil %}  # directive-500{% end %}`,
+		"backend-directives-900":   `{%- if ingress != nil %}  # directive-900{% end %}`,
+	}
+
+	// Compile only haproxy.cfg as entry point (like the real controller)
+	entryPoints := []string{"haproxy.cfg"}
+	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	require.NoError(t, err, "Failed to compile templates")
+
+	// Create mock store with test data matching real structure
+	ingressStore := &mockResourceStore{
+		listResult: []interface{}{
+			map[string]interface{}{
+				"metadata": map[string]interface{}{"namespace": "default", "name": "ing1"},
+				"spec": map[string]interface{}{
+					"rules": []interface{}{
+						map[string]interface{}{
+							"http": map[string]interface{}{
+								"paths": []interface{}{
+									map[string]interface{}{
+										"backend": map[string]interface{}{
+											"service": map[string]interface{}{"name": "svc1", "port": map[string]interface{}{"number": 80}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	resources := map[string]ResourceStore{
+		"ingresses": ingressStore,
+	}
+
+	// Generate templateSnippets list for glob_match
+	var snippetNames []string
+	for name := range templates {
+		if name != "haproxy.cfg" {
+			snippetNames = append(snippetNames, name)
+		}
+	}
+
+	context := map[string]interface{}{
+		"resources":        resources,
+		"templateSnippets": snippetNames,
+	}
+
+	output, err := engine.Render("haproxy.cfg", context)
+	require.NoError(t, err, "render_glob with inherit_context inside macro should not cause nil pointer dereference")
+	assert.Contains(t, output, "# backends-ingress")
+	assert.Contains(t, output, "backend ing_default_ing1")
+}
+
+// TestMacroWithRenderGlobInheritContext_FullContext tests with the full rendering context
+// that the controller testrunner uses, to see if missing context variables cause the bug.
+func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
+	// Build templates with the minimal test case
+	templates := map[string]string{
+		"haproxy.cfg": `# HAProxy Config
+{{- render_glob "backends-*" }}
+# End`,
+		"backends-500-ingress": `{#- MINIMAL TEST: Macro with render_glob inherit_context -#}
+{% macro TestMacro(ingresses []any) string %}
+  {%- for _, ingress := range ingresses -%}
+  {%- var serverOpts = map[string]any{"flags": []any{}} %}
+  {{- render_glob "backend-directives-*" inherit_context }}
+  {%- end -%}
+{% end %}
+{{ TestMacro(resources.ingresses.List()) }}`,
+		// 13 backend-directives templates (matching real count)
+		"backend-directives-100-a": `{%- if ingress != nil %}  # directive-100-a{% end %}`,
+		"backend-directives-100-b": `{%- if serverOpts != nil %}  # directive-100-b{% end %}`,
+		"backend-directives-150":   `{%- if ingress != nil %}  # directive-150{% end %}`,
+		"backend-directives-200":   `{%- if ingress != nil %}  # directive-200{% end %}`,
+		"backend-directives-210":   `{%- if ingress != nil %}  # directive-210{% end %}`,
+		"backend-directives-250-a": `{%- if ingress != nil %}  # directive-250-a{% end %}`,
+		"backend-directives-250-b": `{%- if serverOpts != nil %}  # directive-250-b{% end %}`,
+		"backend-directives-300":   `{%- if ingress != nil %}  # directive-300{% end %}`,
+		"backend-directives-350":   `{%- if ingress != nil %}  # directive-350{% end %}`,
+		"backend-directives-400":   `{%- if ingress != nil %}  # directive-400{% end %}`,
+		"backend-directives-401":   `{%- if ingress != nil %}  # directive-401{% end %}`,
+		"backend-directives-500":   `{%- if ingress != nil %}  # directive-500{% end %}`,
+		"backend-directives-900":   `{%- if ingress != nil %}  # directive-900{% end %}`,
+		// Add map files as entry points like the controller does
+		"host.map": `# host map
+{{- render_glob "map-host-*" }}`,
+		"path-prefix.map":            `# path prefix map`,
+		"path-exact.map":             `# path exact map`,
+		"path-prefix-exact.map":      `# path prefix exact map`,
+		"path-regex.map":             `# path regex map`,
+		"weighted-multi-backend.map": `# weighted map`,
+	}
+
+	// Compile with multiple entry points (matching controller behavior)
+	entryPoints := []string{
+		"haproxy.cfg",
+		"host.map",
+		"path-prefix.map",
+		"path-exact.map",
+		"path-prefix-exact.map",
+		"path-regex.map",
+		"weighted-multi-backend.map",
+	}
+	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	require.NoError(t, err, "Failed to compile templates")
+
+	// Create mock stores with test data
+	ingressStore := &mockResourceStore{
+		listResult: []interface{}{
+			map[string]interface{}{
+				"metadata": map[string]interface{}{"namespace": "default", "name": "ing1"},
+				"spec": map[string]interface{}{
+					"rules": []interface{}{
+						map[string]interface{}{
+							"http": map[string]interface{}{
+								"paths": []interface{}{
+									map[string]interface{}{
+										"backend": map[string]interface{}{
+											"service": map[string]interface{}{"name": "svc1", "port": map[string]interface{}{"number": 80}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	resources := map[string]ResourceStore{
+		"ingresses": ingressStore,
+	}
+
+	// Generate templateSnippets list
+	var snippetNames []string
+	for name := range templates {
+		if name != "haproxy.cfg" {
+			snippetNames = append(snippetNames, name)
+		}
+	}
+
+	// Create a PathResolver (like testrunner does)
+	pathResolver := &PathResolver{
+		MapsDir:    "/tmp/maps",
+		SSLDir:     "/tmp/ssl",
+		CRTListDir: "/tmp/certs",
+		GeneralDir: "/tmp/general",
+	}
+
+	// Full context matching testrunner's buildRenderingContext
+	context := map[string]interface{}{
+		"resources":        resources,
+		"templateSnippets": snippetNames,
+		"pathResolver":     pathResolver,
+		"shared":           make(map[string]interface{}),
+		"globalFeatures":   make(map[string]interface{}),
+		"dataplane":        map[string]interface{}{},
+		"controller":       map[string]ResourceStore{},
+		// Note: fileRegistry and http are also used but require more complex setup
+	}
+
+	output, err := engine.Render("haproxy.cfg", context)
+	require.NoError(t, err, "render_glob with inherit_context inside macro should not cause nil pointer dereference with full context")
+	assert.Contains(t, output, "directive-100-a")
+}

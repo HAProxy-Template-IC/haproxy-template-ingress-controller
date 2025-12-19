@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"haproxy-template-ic/pkg/controller/rendercontext"
 	"haproxy-template-ic/pkg/core/config"
 )
 
@@ -83,7 +84,7 @@ func TestSortSnippetNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sortSnippetNames(tt.snippets)
+			got := rendercontext.SortSnippetNames(tt.snippets)
 			assert.Equal(t, tt.want, got)
 		})
 	}

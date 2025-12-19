@@ -29,12 +29,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
 	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/renderer"
+	"haproxy-template-ic/pkg/controller/rendercontext"
 	"haproxy-template-ic/pkg/controller/resourcestore"
 	"haproxy-template-ic/pkg/controller/testrunner"
 	"haproxy-template-ic/pkg/core/config"
@@ -307,54 +306,29 @@ func (c *Component) renderWithOverlayStores(overlayStores map[string]types.Store
 
 // buildRenderingContext builds the template rendering context using overlay stores.
 //
-// This mirrors renderer.Component.buildRenderingContext and TestRunner.buildRenderingContext.
-// The context includes resources (overlay stores), template snippets, pathResolver, and controller configuration.
-func (c *Component) buildRenderingContext(stores map[string]types.Store) map[string]interface{} {
-	// Create resources map with wrapped stores
-	resources := make(map[string]interface{})
-
-	for resourceTypeName, store := range stores {
-		resources[resourceTypeName] = &renderer.StoreWrapper{
-			Store:        store,
-			ResourceType: resourceTypeName,
-			Logger:       c.logger,
-		}
-	}
-
-	// Build template snippets list (sorted alphabetically)
-	snippetNames := c.sortSnippetNames()
-
-	// Create PathResolver from ValidationPaths
-	// ValidationPaths already has CRTListDir set correctly based on capabilities
-	pathResolver := &templating.PathResolver{
-		MapsDir:    c.validationPaths.MapsDir,
-		SSLDir:     c.validationPaths.SSLCertsDir,
-		CRTListDir: c.validationPaths.CRTListDir,
-		GeneralDir: c.validationPaths.GeneralStorageDir,
-	}
-
-	// Build final context
-	return map[string]interface{}{
-		"resources":        resources,
-		"templateSnippets": snippetNames,
-		"pathResolver":     pathResolver,
-		"config":           c.config,
-		"shared":           make(map[string]interface{}), // Shared namespace for cross-template data
-	}
-}
-
-// sortSnippetNames sorts template snippet names alphabetically.
+// This method delegates to the centralized rendercontext.Builder to ensure consistent
+// context creation across all usages (renderer, testrunner, benchmark, dryrunvalidator).
 //
-// Note: Snippet ordering is now controlled by encoding priority in the snippet name
-// (e.g., "features-050-ssl" for priority 50). This is required because render_glob
-// sorts templates alphabetically.
-func (c *Component) sortSnippetNames() []string {
-	names := make([]string, 0, len(c.config.TemplateSnippets))
-	for name := range c.config.TemplateSnippets {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+// The overlay stores contain the simulated resource state including any proposed changes.
+func (c *Component) buildRenderingContext(stores map[string]types.Store) map[string]interface{} {
+	// Create PathResolver from ValidationPaths
+	pathResolver := rendercontext.PathResolverFromValidationPaths(c.validationPaths)
+
+	// Separate haproxy-pods from resource stores (goes in controller namespace)
+	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(stores)
+
+	// Build context using centralized builder
+	// Note: DryRunValidator doesn't have an HTTP fetcher (no network access during validation)
+	builder := rendercontext.NewBuilder(
+		c.config,
+		pathResolver,
+		c.logger,
+		rendercontext.WithStores(resourceStores),
+		rendercontext.WithHAProxyPodStore(haproxyPodStore),
+	)
+
+	renderCtx, _ := builder.Build()
+	return renderCtx
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates).

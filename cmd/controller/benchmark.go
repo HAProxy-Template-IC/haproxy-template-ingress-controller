@@ -26,7 +26,7 @@ import (
 
 	"haproxy-template-ic/pkg/controller/conversion"
 	"haproxy-template-ic/pkg/controller/helpers"
-	"haproxy-template-ic/pkg/controller/renderer"
+	"haproxy-template-ic/pkg/controller/rendercontext"
 	"haproxy-template-ic/pkg/controller/testrunner"
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/dataplane"
@@ -371,6 +371,9 @@ func createHTTPStoreForBenchmark(httpFixtures []config.HTTPResourceFixture, logg
 }
 
 // buildBenchmarkContext builds the template rendering context.
+//
+// This method delegates to the centralized rendercontext.Builder to ensure consistent
+// context creation across all usages (renderer, testrunner, benchmark, dryrunvalidator).
 func buildBenchmarkContext(
 	cfg *config.Config,
 	stores map[string]types.Store,
@@ -378,60 +381,23 @@ func buildBenchmarkContext(
 	httpStore *testrunner.FixtureHTTPStoreWrapper,
 	logger *slog.Logger,
 ) map[string]interface{} {
-	// Create resources map with wrapped stores
-	resources := make(map[string]templating.ResourceStore)
-	for resourceTypeName, store := range stores {
-		if resourceTypeName == "haproxy-pods" {
-			continue
-		}
-		resources[resourceTypeName] = &renderer.StoreWrapper{
-			Store:        store,
-			ResourceType: resourceTypeName,
-			Logger:       logger,
-		}
-	}
+	// Create PathResolver from ValidationPaths
+	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
-	// Create controller namespace
-	controller := make(map[string]templating.ResourceStore)
-	if haproxyPodStore, exists := stores["haproxy-pods"]; exists {
-		controller["haproxy_pods"] = &renderer.StoreWrapper{
-			Store:        haproxyPodStore,
-			ResourceType: "haproxy-pods",
-			Logger:       logger,
-		}
-	}
+	// Separate haproxy-pods from resource stores (goes in controller namespace)
+	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(stores)
 
-	// Build snippet names
-	snippetNames := make([]string, 0, len(cfg.TemplateSnippets))
-	for name := range cfg.TemplateSnippets {
-		snippetNames = append(snippetNames, name)
-	}
-	sort.Strings(snippetNames)
+	// Build context using centralized builder
+	builder := rendercontext.NewBuilder(
+		cfg,
+		pathResolver,
+		logger,
+		rendercontext.WithStores(resourceStores),
+		rendercontext.WithHAProxyPodStore(haproxyPodStore),
+		rendercontext.WithHTTPFetcher(httpStore),
+	)
 
-	// Create PathResolver
-	pathResolver := &templating.PathResolver{
-		MapsDir:    validationPaths.MapsDir,
-		SSLDir:     validationPaths.SSLCertsDir,
-		CRTListDir: validationPaths.CRTListDir,
-		GeneralDir: validationPaths.GeneralStorageDir,
-	}
-	fileRegistry := renderer.NewFileRegistry(pathResolver)
-
-	// Build context
-	renderCtx := map[string]interface{}{
-		"resources":        resources,
-		"controller":       controller,
-		"templateSnippets": snippetNames,
-		"fileRegistry":     fileRegistry,
-		"pathResolver":     pathResolver,
-		"dataplane":        cfg.Dataplane,
-		"shared":           make(map[string]interface{}),
-		"http":             httpStore,
-	}
-
-	// Merge extra context
-	renderer.MergeExtraContextInto(renderCtx, cfg)
-
+	renderCtx, _ := builder.Build()
 	return renderCtx
 }
 

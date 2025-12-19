@@ -605,12 +605,12 @@ if resource.GetKind() == "" {
 
 ### StoreWrapper Usage
 
-Fixtures are wrapped with `renderer.StoreWrapper` for template access:
+Fixtures are wrapped with `rendercontext.StoreWrapper` for template access:
 
 ```go
 resources := make(map[string]interface{})
 for resourceTypeName, store := range stores {
-    resources[resourceTypeName] = &renderer.StoreWrapper{
+    resources[resourceTypeName] = &rendercontext.StoreWrapper{
         Store:        store,
         ResourceType: resourceTypeName,
         Logger:       r.logger,
@@ -630,7 +630,7 @@ for resourceTypeName, store := range stores {
 
 ```go
 context := map[string]interface{}{
-    "resources": map[string]*renderer.StoreWrapper{
+    "resources": map[string]*rendercontext.StoreWrapper{
         "services": ...,
         "ingresses": ...,
     },

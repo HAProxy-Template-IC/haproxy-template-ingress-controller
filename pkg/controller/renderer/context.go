@@ -16,243 +16,47 @@ package renderer
 
 import (
 	"context"
-	"fmt"
-	"sort"
 
 	"haproxy-template-ic/pkg/controller/httpstore"
-	"haproxy-template-ic/pkg/core/config"
+	"haproxy-template-ic/pkg/controller/rendercontext"
 	"haproxy-template-ic/pkg/templating"
 )
 
 // buildRenderingContext wraps stores for template access and builds the template context.
 //
-// The context structure is:
+// This method delegates to the centralized rendercontext.Builder to ensure consistent
+// context creation across all usages (renderer, testrunner, benchmark, dryrunvalidator).
 //
-//	{
-//	  "resources": {
-//	    "ingresses": StoreWrapper,  // Provides List(), Fetch(), and GetSingle() methods
-//	    "services": StoreWrapper,
-//	    "secrets": StoreWrapper,
-//	    // ... other watched resources
-//	  },
-//	  "controller": {
-//	    "haproxy_pods": StoreWrapper,  // HAProxy controller pods for pod-maxconn calculations
-//	  },
-//	  "templateSnippets": ["snippet1", "snippet2", ...]  // Sorted by priority
-//	  "config": Config,  // Controller configuration (e.g., config.debug.headers.enabled)
-//	  "fileRegistry": FileRegistry,  // For dynamic auxiliary file registration
-//	  "pathResolver": PathResolver,  // For resolving file paths (e.g., {{ pathResolver.GetPath("cert.pem", "cert") }})
-//	  "capabilities": {  // HAProxy/DataPlane API capabilities
-//	    "supports_waf": true,           // WAF (Enterprise only)
-//	    "supports_keepalived": true,    // Keepalived/VRRP (Enterprise only)
-//	    "supports_crt_list": true,      // CRT-list storage (v3.2+)
-//	    // ... other capability flags
-//	  },
-//	}
-//
-// Templates can access resources:
-//
-//	{% for ingress in resources.ingresses.List() %}
-//	  {{ ingress.metadata.name }}
-//	{% endfor %}
-//
-// Templates can access controller metadata:
-//
-//	{%- set pod_count = controller.haproxy_pods.List() | length %}
-//	{%- if pod_count > 0 %}
-//	  {# Distribute load across {{ pod_count }} HAProxy replicas #}
-//	{%- endif %}
-//
-// Iterate over matching template snippets:
-//
-//	{%- set matching = template_snippets | glob_match("backend-annotation-*") %}
-//	{%- for snippet_name in matching %}
-//	  {% include snippet_name %}
-//	{%- endfor %}
-//
-// And access controller configuration:
-//
-//	{%- if config.debug.headers.enabled | default(false) %}
-//	  http-response set-header X-Debug-Info %[var(txn.backend_name)]
-//	{%- endif %}
-//
-// And dynamically register auxiliary files:
-//
-//	{%- set ca_content = secret.data["ca.crt"] | b64decode %}
-//	{%- set ca_path = file_registry.Register("cert", "ca.pem", ca_content) %}
-//	server backend:443 ssl ca-file {{ ca_path }} verify required
-//
-// And resolve static file paths:
-//
-//	use_backend {{ backend_name }} if { req.hdr(host) -f {{ pathResolver.GetPath("host.map", "map") }} }
-//
-// And conditionally generate Enterprise-specific configuration:
-//
-//	{%- if capabilities.supports_waf %}
-//	  # Enterprise WAF configuration
-//	  filter spoe engine modsecurity
-//	{%- endif %}
-func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *templating.PathResolver, isValidation bool) (map[string]interface{}, *FileRegistry) {
-	// Create resources map with typed ResourceStore values.
-	// Using templating.ResourceStore allows Scriggo templates to call methods
-	// directly on resources, e.g., resources.ingresses.List()
-	resources := make(map[string]templating.ResourceStore)
-
-	// Wrap each store to provide template-friendly methods
-	for resourceTypeName, store := range c.stores {
-		c.logger.Debug("wrapping store for rendering context",
-			"resource_type", resourceTypeName)
-		resources[resourceTypeName] = &StoreWrapper{
-			Store:        store,
-			ResourceType: resourceTypeName,
-			Logger:       c.logger,
-		}
-	}
-
-	// Create controller namespace with typed ResourceStore values.
-	// This enables direct method calls like controller.haproxy_pods.List()
-	controller := make(map[string]templating.ResourceStore)
-	if c.haproxyPodStore != nil {
-		c.logger.Debug("wrapping HAProxy pods store for rendering context")
-		controller["haproxy_pods"] = &StoreWrapper{
-			Store:        c.haproxyPodStore,
-			ResourceType: "haproxy-pods",
-			Logger:       c.logger,
-		}
-	} else {
-		c.logger.Warn("HAProxy pods store is nil, controller.haproxy_pods will not be available")
-	}
-
-	// Sort template snippet names alphabetically for template access
-	snippetNames := sortSnippetNames(c.config.TemplateSnippets)
-
-	// Create file registry for dynamic auxiliary file registration
-	fileRegistry := NewFileRegistry(pathResolver)
-
-	c.logger.Debug("rendering context built",
-		"resource_count", len(resources),
-		"controller_fields", len(controller),
-		"snippet_count", len(snippetNames))
-
-	// Build final context
-	templateContext := map[string]interface{}{
-		"resources":        resources,
-		"controller":       controller,
-		"templateSnippets": snippetNames,
-		"fileRegistry":     fileRegistry,
-		"pathResolver":     pathResolver,
-		"dataplane":        c.config.Dataplane,           // Add dataplane config for absolute path access
-		"capabilities":     c.capabilitiesToMap(),        // Add HAProxy/DataPlane API capabilities
-		"shared":           make(map[string]interface{}), // Shared namespace for cross-template data
-	}
-
-	// Add HTTP store wrapper if available
+// See rendercontext.Builder for the full context structure documentation.
+func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *templating.PathResolver, isValidation bool) (map[string]interface{}, *rendercontext.FileRegistry) {
+	// Create HTTP fetcher if available
+	var httpFetcher templating.HTTPFetcher
 	if c.httpStoreComponent != nil {
-		httpWrapper := httpstore.NewHTTPStoreWrapper(
+		httpFetcher = httpstore.NewHTTPStoreWrapper(
 			c.httpStoreComponent,
 			c.logger,
 			isValidation,
 			ctx,
 		)
-		c.logger.Debug("http object added to template context",
-			"http_wrapper_type", fmt.Sprintf("%T", httpWrapper))
-		templateContext["http"] = httpWrapper
 	} else {
 		c.logger.Warn("httpStoreComponent is nil, http.Fetch() will not be available in templates")
 	}
 
-	// Merge extraContext variables into top-level context
-	MergeExtraContextInto(templateContext, c.config)
-
-	if c.config.TemplatingSettings.ExtraContext != nil {
-		c.logger.Debug("added extra context variables to template context",
-			"variable_count", len(c.config.TemplatingSettings.ExtraContext))
+	// Warn if HAProxy pod store is missing
+	if c.haproxyPodStore == nil {
+		c.logger.Warn("HAProxy pods store is nil, controller.haproxy_pods will not be available")
 	}
 
-	return templateContext, fileRegistry
-}
+	// Build context using centralized builder
+	builder := rendercontext.NewBuilder(
+		c.config,
+		pathResolver,
+		c.logger,
+		rendercontext.WithStores(c.stores),
+		rendercontext.WithHAProxyPodStore(c.haproxyPodStore),
+		rendercontext.WithHTTPFetcher(httpFetcher),
+		rendercontext.WithCapabilities(&c.capabilities),
+	)
 
-// sortSnippetNames sorts template snippet names alphabetically.
-// Returns a slice of snippet names in sorted order.
-//
-// Note: Snippet ordering is now controlled by encoding priority in the snippet name
-// (e.g., "features-050-ssl" for priority 50). This is required because render_glob
-// sorts templates alphabetically.
-func sortSnippetNames(snippets map[string]config.TemplateSnippet) []string {
-	names := make([]string, 0, len(snippets))
-	for name := range snippets {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// MergeExtraContextInto merges the extraContext variables from the config into the provided template context.
-//
-// This allows templates to access custom variables directly (e.g., {{ debug.enabled }})
-// instead of wrapping them in a "config" object.
-//
-// If extraContext is nil or empty, the context is left unchanged.
-func MergeExtraContextInto(renderCtx map[string]interface{}, cfg *config.Config) {
-	if cfg.TemplatingSettings.ExtraContext != nil {
-		// Merge at top level
-		for key, value := range cfg.TemplatingSettings.ExtraContext {
-			renderCtx[key] = value
-		}
-		// Also populate the extraContext map for Scriggo templates
-		// Scriggo requires compile-time variable declarations, so templates
-		// access extraContext values via: map_get(extraContext, "key", default)
-		renderCtx["extraContext"] = cfg.TemplatingSettings.ExtraContext
-	}
-}
-
-// capabilitiesToMap converts the Capabilities struct to a template-friendly map.
-//
-// The map uses snake_case keys matching the Capabilities struct field names
-// (e.g., "supports_waf" for SupportsWAF) for consistency with template conventions.
-//
-// This enables conditional template generation based on HAProxy/DataPlane API features:
-//
-//	{%- if capabilities.supports_waf %}
-//	  # Enterprise WAF configuration
-//	  filter spoe engine modsecurity
-//	{%- endif %}
-//
-//	{%- if capabilities.supports_crt_list %}
-//	  # Use CRT-list for SSL certificates (v3.2+)
-//	{%- endif %}
-func (c *Component) capabilitiesToMap() map[string]interface{} {
-	caps := c.capabilities
-	return map[string]interface{}{
-		// Storage capabilities
-		"supports_crt_list":        caps.SupportsCrtList,
-		"supports_map_storage":     caps.SupportsMapStorage,
-		"supports_general_storage": caps.SupportsGeneralStorage,
-
-		// Configuration capabilities
-		"supports_http2": caps.SupportsHTTP2,
-		"supports_quic":  caps.SupportsQUIC,
-
-		// Runtime capabilities
-		"supports_runtime_maps":    caps.SupportsRuntimeMaps,
-		"supports_runtime_servers": caps.SupportsRuntimeServers,
-
-		// Enterprise-only capabilities
-		"supports_waf":                     caps.SupportsWAF,
-		"supports_waf_global":              caps.SupportsWAFGlobal,
-		"supports_waf_profiles":            caps.SupportsWAFProfiles,
-		"supports_udp_lb_acls":             caps.SupportsUDPLBACLs,
-		"supports_udp_lb_server_switching": caps.SupportsUDPLBServerSwitchingRules,
-		"supports_keepalived":              caps.SupportsKeepalived,
-		"supports_udp_load_balancing":      caps.SupportsUDPLoadBalancing,
-		"supports_bot_management":          caps.SupportsBotManagement,
-		"supports_git_integration":         caps.SupportsGitIntegration,
-		"supports_dynamic_update":          caps.SupportsDynamicUpdate,
-		"supports_aloha":                   caps.SupportsALOHA,
-		"supports_advanced_logging":        caps.SupportsAdvancedLogging,
-		"supports_ping":                    caps.SupportsPing,
-
-		// Edition detection (convenience flags)
-		"is_enterprise": caps.SupportsWAF, // Any enterprise capability indicates Enterprise edition
-	}
+	return builder.Build()
 }

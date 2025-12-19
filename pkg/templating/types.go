@@ -53,7 +53,7 @@ func ParseEngineType(s string) (EngineType, error) {
 }
 
 // FileRegistrar is an interface for dynamic file registration during template rendering.
-// This interface is implemented by renderer.FileRegistry, allowing templates to
+// This interface is implemented by rendercontext.FileRegistry, allowing templates to
 // register auxiliary files (certificates, maps, etc.) without creating import cycles.
 //
 // The Register method signature matches the variadic calling convention used in templates:
@@ -82,7 +82,7 @@ type FileRegistrar interface {
 // Scriggo supports dot notation for map access, so `resources.ingresses` is equivalent
 // to `resources["ingresses"]`.
 //
-// Implementations are provided by pkg/controller/renderer.StoreWrapper.
+// Implementations are provided by pkg/controller/rendercontext.StoreWrapper.
 type ResourceStore interface {
 	// List returns all resources from the store.
 	List() []interface{}
@@ -108,4 +108,18 @@ type HTTPFetcher interface {
 	//   - args[1]: options (map, optional) - {"delay": "60s", "timeout": "30s", "retries": 3, "critical": true}
 	//   - args[2]: auth (map, optional) - {"type": "bearer"|"basic", "token": "...", ...}
 	Fetch(args ...interface{}) (interface{}, error)
+}
+
+// RuntimeEnvironment holds runtime information available to templates.
+// This enables templates to adapt behavior based on the execution environment.
+//
+// Templates access this via the runtimeEnvironment variable:
+//
+//	{%- var maxShards = runtimeEnvironment.GOMAXPROCS * 2 %}
+//
+// Fields use exported names for direct template access.
+type RuntimeEnvironment struct {
+	// GOMAXPROCS is the maximum number of OS threads for parallel execution.
+	// Used by sharding logic to calculate optimal shard count.
+	GOMAXPROCS int
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"haproxy-template-ic/pkg/controller/rendercontext"
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/dataplane"
 	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
@@ -833,8 +834,6 @@ func TestCreateStoresFromFixtures_TypeMetaInference(t *testing.T) {
 // =============================================================================
 
 func TestSortSnippetNames(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
 	tests := []struct {
 		name     string
 		snippets map[string]config.TemplateSnippet
@@ -878,14 +877,7 @@ func TestSortSnippetNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runner := &Runner{
-				config: &config.Config{
-					TemplateSnippets: tt.snippets,
-				},
-				logger: logger,
-			}
-
-			result := runner.sortSnippetNames()
+			result := rendercontext.SortSnippetNames(tt.snippets)
 			assert.Equal(t, tt.want, result)
 		})
 	}

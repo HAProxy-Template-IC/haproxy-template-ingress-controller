@@ -177,4 +177,9 @@ const (
 	// Automatically converts all values to strings.
 	// Syntax: join_key("_", val1, val2, ...) returns string.
 	FuncJoinKey = "join_key"
+
+	// FuncShardSlice divides a slice into N shards and returns the portion for a given shard index.
+	// Used for parallel template rendering where work is split across goroutines.
+	// Syntax: shard_slice(items, shardIndex, totalShards) returns []any.
+	FuncShardSlice = "shard_slice"
 )

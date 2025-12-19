@@ -35,11 +35,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/renderer"
+	"haproxy-template-ic/pkg/controller/rendercontext"
+
 	"haproxy-template-ic/pkg/core/config"
 	"haproxy-template-ic/pkg/core/logging"
 	"haproxy-template-ic/pkg/dataplane"
@@ -631,11 +631,11 @@ func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]ty
 	}
 
 	// Extract dynamic files registered during template rendering
-	fileRegistry := renderCtx["fileRegistry"].(*renderer.FileRegistry)
+	fileRegistry := renderCtx["fileRegistry"].(*rendercontext.FileRegistry)
 	dynamicFiles := fileRegistry.GetFiles()
 
 	// Merge static (pre-declared) and dynamic (registered) files
-	auxiliaryFiles := renderer.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
+	auxiliaryFiles := rendercontext.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
 
 	// Debug logging
 	staticCount := len(staticFiles.MapFiles) + len(staticFiles.GeneralFiles) + len(staticFiles.SSLCertificates) + len(staticFiles.CRTListFiles)
@@ -651,83 +651,34 @@ func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]ty
 
 // buildRenderingContext builds the template rendering context using fixture stores.
 //
-// This mirrors DryRunValidator.buildRenderingContext and Renderer.buildRenderingContext.
-// The context includes resources (fixture stores), template snippets, file_registry, pathResolver, and controller configuration.
-func (r *Runner) buildRenderingContext(stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) map[string]interface{} {
-	// Create resources map with wrapped stores (excluding haproxy-pods)
-	// Using typed map for Scriggo template engine compatibility
-	resources := make(map[string]templating.ResourceStore)
-
-	for resourceTypeName, store := range stores {
-		// Skip haproxy-pods - it goes in controller namespace, not resources
-		if resourceTypeName == "haproxy-pods" {
-			continue
-		}
-
-		resources[resourceTypeName] = &renderer.StoreWrapper{
-			Store:        store,
-			ResourceType: resourceTypeName,
-			Logger:       r.logger,
-		}
-	}
-
-	// Create controller namespace with haproxy_pods store
-	// Using typed map for Scriggo template engine compatibility
-	controller := make(map[string]templating.ResourceStore)
-	if haproxyPodStore, exists := stores["haproxy-pods"]; exists {
-		r.logger.Log(context.Background(), logging.LevelTrace, "wrapping haproxy-pods store for rendering context")
-		controller["haproxy_pods"] = &renderer.StoreWrapper{
-			Store:        haproxyPodStore,
-			ResourceType: "haproxy-pods",
-			Logger:       r.logger,
-		}
-	}
-
-	// Build template snippets list (sorted alphabetically)
-	snippetNames := r.sortSnippetNames()
-
-	// Create PathResolver from ValidationPaths
-	// ValidationPaths already has CRTListDir set correctly based on capabilities
-	pathResolver := &templating.PathResolver{
-		MapsDir:    validationPaths.MapsDir,
-		SSLDir:     validationPaths.SSLCertsDir,
-		CRTListDir: validationPaths.CRTListDir,
-		GeneralDir: validationPaths.GeneralStorageDir,
-	}
-	fileRegistry := renderer.NewFileRegistry(pathResolver)
-
-	// Build final context
-	renderCtx := map[string]interface{}{
-		"resources":        resources,
-		"controller":       controller,
-		"templateSnippets": snippetNames,
-		"fileRegistry":     fileRegistry,
-		"pathResolver":     pathResolver,
-		"dataplane":        r.config.Dataplane,           // Add dataplane config for absolute path access
-		"shared":           make(map[string]interface{}), // Shared namespace for cross-template data
-	}
-
-	// Add HTTP store wrapper for http.Fetch() calls in templates
-	renderCtx["http"] = httpStore
-
-	// Merge extraContext variables into top-level context
-	renderer.MergeExtraContextInto(renderCtx, r.config)
-
-	return renderCtx
-}
-
-// sortSnippetNames sorts template snippet names alphabetically.
+// This method delegates to the centralized rendercontext.Builder to ensure consistent
+// context creation across all usages (renderer, testrunner, benchmark, dryrunvalidator).
 //
-// Note: Snippet ordering is now controlled by encoding priority in the snippet name
-// (e.g., "features-050-ssl" for priority 50). This is required because render_glob
-// sorts templates alphabetically.
-func (r *Runner) sortSnippetNames() []string {
-	names := make([]string, 0, len(r.config.TemplateSnippets))
-	for name := range r.config.TemplateSnippets {
-		names = append(names, name)
+// Special handling for TestRunner:
+//   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
+//   - Separates haproxy-pods store from resource stores
+func (r *Runner) buildRenderingContext(stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) map[string]interface{} {
+	// Create PathResolver from ValidationPaths
+	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
+
+	// Separate haproxy-pods from resource stores (goes in controller namespace)
+	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(stores)
+	if haproxyPodStore != nil {
+		r.logger.Log(context.Background(), logging.LevelTrace, "wrapping haproxy-pods store for rendering context")
 	}
-	sort.Strings(names)
-	return names
+
+	// Build context using centralized builder
+	builder := rendercontext.NewBuilder(
+		r.config,
+		pathResolver,
+		r.logger,
+		rendercontext.WithStores(resourceStores),
+		rendercontext.WithHAProxyPodStore(haproxyPodStore),
+		rendercontext.WithHTTPFetcher(httpStore),
+	)
+
+	renderCtx, _ := builder.Build()
+	return renderCtx
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.

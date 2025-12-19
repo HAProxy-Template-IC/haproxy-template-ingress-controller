@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"haproxy-template-ic/pkg/controller/events"
+	"haproxy-template-ic/pkg/controller/rendercontext"
 	"haproxy-template-ic/pkg/controller/resourcestore"
 	"haproxy-template-ic/pkg/controller/testrunner"
 	"haproxy-template-ic/pkg/controller/testutil"
@@ -174,13 +175,7 @@ func TestSortSnippetNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &Component{
-				config: &config.Config{
-					TemplateSnippets: tt.snippets,
-				},
-			}
-
-			result := c.sortSnippetNames()
+			result := rendercontext.SortSnippetNames(tt.snippets)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -557,7 +552,6 @@ func TestBuildRenderingContext(t *testing.T) {
 	assert.NotNil(t, ctx["resources"])
 	assert.NotNil(t, ctx["templateSnippets"])
 	assert.NotNil(t, ctx["pathResolver"])
-	assert.Equal(t, cfg, ctx["config"])
 
 	// Verify templateSnippets are sorted
 	snippets, ok := ctx["templateSnippets"].([]string)
