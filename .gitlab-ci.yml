@@ -32,7 +32,7 @@ variables:
   COVERAGE_PACKAGES: "./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/..."
   # Chart testing tool versions
   # renovate: datasource=github-releases depName=helm/chart-testing
-  CT_VERSION: "3.12.0"
+  CT_VERSION: "3.14.0"
   # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
   HELM_UNITTEST_VERSION: "0.8.2"
   # renovate: datasource=github-releases depName=yannh/kubeconform

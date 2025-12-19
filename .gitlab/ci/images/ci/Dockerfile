@@ -13,7 +13,7 @@ ARG DOCKER_VERSION=29
 # renovate: datasource=github-releases depName=kubernetes-sigs/kind
 ARG KIND_VERSION=0.31.0
 # renovate: datasource=github-releases depName=helm/chart-testing
-ARG CT_VERSION=3.12.0
+ARG CT_VERSION=3.14.0
 # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
 ARG HELM_UNITTEST_VERSION=0.8.2
 # renovate: datasource=github-releases depName=yannh/kubeconform
