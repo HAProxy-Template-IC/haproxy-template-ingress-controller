@@ -32,7 +32,7 @@ type ValidationHandler interface {
 // Validators embed this struct and provide a ValidationHandler implementation
 // for their specific validation logic.
 type BaseValidator struct {
-	bus         *busevents.EventBus
+	eventBus    *busevents.EventBus
 	logger      *slog.Logger
 	stopCh      chan struct{}
 	stopOnce    sync.Once
@@ -44,7 +44,7 @@ type BaseValidator struct {
 // NewBaseValidator creates a new base validator with the given configuration.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to and publish on
+//   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //   - name: Validator name (for error messages and responses)
 //   - description: Human-readable component description (for logging)
@@ -53,14 +53,14 @@ type BaseValidator struct {
 // Returns:
 //   - *BaseValidator ready to start
 func NewBaseValidator(
-	bus *busevents.EventBus,
+	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 	name string,
 	description string,
 	handler ValidationHandler,
 ) *BaseValidator {
 	return &BaseValidator{
-		bus:         bus,
+		eventBus:    eventBus,
 		logger:      logger,
 		stopCh:      make(chan struct{}),
 		name:        name,
@@ -84,7 +84,7 @@ func NewBaseValidator(
 //
 //	go validator.Start(ctx)
 func (v *BaseValidator) Start(ctx context.Context) {
-	eventCh := v.bus.Subscribe(10)
+	eventCh := v.eventBus.Subscribe(10)
 
 	v.logger.Info(fmt.Sprintf("%s component started", v.description))
 
@@ -119,7 +119,7 @@ func (v *BaseValidator) handleEvent(event busevents.Event) {
 					false,
 					[]string{fmt.Sprintf("validator panicked: %v", r)},
 				)
-				v.bus.Publish(response)
+				v.eventBus.Publish(response)
 			}
 		}
 	}()

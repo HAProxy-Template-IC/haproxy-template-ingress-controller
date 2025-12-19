@@ -78,10 +78,10 @@ type Metrics struct {
 // Example:
 //
 //	registry := prometheus.NewRegistry()  // Create per iteration
-//	metrics := metrics.New(registry)      // Metrics tied to iteration
+//	metrics := metrics.NewMetrics(registry)  // Metrics tied to iteration
 //	// ... use metrics ...
 //	// When iteration ends, both registry and metrics are GC'd
-func New(registry prometheus.Registerer) *Metrics {
+func NewMetrics(registry prometheus.Registerer) *Metrics {
 	return &Metrics{
 		// Reconciliation metrics
 		ReconciliationDuration: pkgmetrics.NewHistogramWithBuckets(

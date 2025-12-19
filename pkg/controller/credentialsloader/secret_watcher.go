@@ -28,7 +28,7 @@ import (
 type SecretWatcher struct {
 	client          kubernetes.Interface
 	informerFactory informers.SharedInformerFactory
-	bus             *busevents.EventBus
+	eventBus        *busevents.EventBus
 	logger          *slog.Logger
 	namespace       string
 	name            string
@@ -39,7 +39,7 @@ type SecretWatcher struct {
 //
 // Parameters:
 //   - client: Kubernetes client
-//   - bus: EventBus to publish SecretResourceChangedEvent
+//   - eventBus: EventBus to publish SecretResourceChangedEvent
 //   - logger: Structured logger for diagnostics
 //   - namespace: Namespace containing the Secret
 //   - name: Name of the Secret to watch
@@ -48,7 +48,7 @@ type SecretWatcher struct {
 //   - *SecretWatcher ready to start
 func NewSecretWatcher(
 	client kubernetes.Interface,
-	bus *busevents.EventBus,
+	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 	namespace string,
 	name string,
@@ -63,7 +63,7 @@ func NewSecretWatcher(
 	return &SecretWatcher{
 		client:          client,
 		informerFactory: informerFactory,
-		bus:             bus,
+		eventBus:        eventBus,
 		logger:          logger,
 		namespace:       namespace,
 		name:            name,
@@ -156,7 +156,7 @@ func (w *SecretWatcher) onAdd(obj interface{}) {
 	}
 
 	// Publish event
-	w.bus.Publish(events.NewSecretResourceChangedEvent(unstructuredSecret))
+	w.eventBus.Publish(events.NewSecretResourceChangedEvent(unstructuredSecret))
 }
 
 // onUpdate handles Secret update events.
@@ -198,7 +198,7 @@ func (w *SecretWatcher) onUpdate(oldObj, newObj interface{}) {
 	}
 
 	// Publish event
-	w.bus.Publish(events.NewSecretResourceChangedEvent(unstructuredSecret))
+	w.eventBus.Publish(events.NewSecretResourceChangedEvent(unstructuredSecret))
 }
 
 // onDelete handles Secret delete events.

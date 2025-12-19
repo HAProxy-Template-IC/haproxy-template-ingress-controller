@@ -401,9 +401,10 @@ func (w *SingleWatcher) Stop() error {
 //
 //	err := watcher.WaitForSync(ctx)
 //	if err != nil {
-//	    log.Fatal(err)
+//	    slog.Error("watcher sync failed", "error", err)
+//	    os.Exit(1)
 //	}
-//	log.Println("Watcher synced, resource is available")
+//	slog.Info("Watcher synced, resource is available")
 func (w *SingleWatcher) WaitForSync(ctx context.Context) error {
 	// Wait for sync channel to close or context to be cancelled
 	select {

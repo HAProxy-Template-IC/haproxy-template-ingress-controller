@@ -37,7 +37,7 @@ func TestNewCRDWatcher(t *testing.T) {
 
 	require.NotNil(t, watcher)
 	assert.Equal(t, client, watcher.client)
-	assert.Equal(t, bus, watcher.bus)
+	assert.Equal(t, bus, watcher.eventBus)
 	assert.Equal(t, logger, watcher.logger)
 	assert.Equal(t, "test-ns", watcher.namespace)
 	assert.Equal(t, "test-config", watcher.name)

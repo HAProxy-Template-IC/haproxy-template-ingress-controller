@@ -38,7 +38,7 @@ func TestNewCredentialsLoaderComponent(t *testing.T) {
 	component := NewCredentialsLoaderComponent(bus, logger)
 
 	require.NotNil(t, component)
-	assert.Equal(t, bus, component.bus)
+	assert.Equal(t, bus, component.eventBus)
 	assert.Equal(t, logger, component.logger)
 	assert.NotNil(t, component.stopCh)
 }

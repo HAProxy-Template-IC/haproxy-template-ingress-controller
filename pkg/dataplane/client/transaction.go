@@ -61,7 +61,8 @@ type TransactionResponse struct {
 //	version, _ := client.GetVersion(context.Background())
 //	tx, err := client.CreateTransaction(context.Background(), version)
 //	if err != nil {
-//	    log.Fatal(err)
+//	    slog.Error("failed to create transaction", "error", err)
+//	    os.Exit(1)
 //	}
 //	defer tx.Abort(context.Background()) // Ensure cleanup on error
 //

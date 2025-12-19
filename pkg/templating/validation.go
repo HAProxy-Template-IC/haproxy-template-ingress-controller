@@ -18,7 +18,7 @@ package templating
 //
 //	err := templating.ValidateTemplate(templateStr, templating.EngineTypeScriggo)
 //	if err != nil {
-//	    log.Printf("Invalid template: %v", err)
+//	    slog.Error("Invalid template", "error", err)
 //	}
 func ValidateTemplate(templateStr string, engineType EngineType) error {
 	// Validate engine type

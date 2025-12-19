@@ -40,7 +40,7 @@ func TestNewConfigChangeHandler(t *testing.T) {
 	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	require.NotNil(t, handler)
-	assert.Equal(t, bus, handler.bus)
+	assert.Equal(t, bus, handler.eventBus)
 	assert.Equal(t, logger, handler.logger)
 	// Can't directly compare bidirectional channel to send-only channel, just verify it's set
 	assert.NotNil(t, handler.configChangeCh)

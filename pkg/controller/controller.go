@@ -391,8 +391,8 @@ func setupComponents(
 	registry := prometheus.NewRegistry()
 
 	// Create metrics collector
-	domainMetrics := metrics.New(registry)
-	metricsComponent := metrics.NewComponent(domainMetrics, bus)
+	domainMetrics := metrics.NewMetrics(registry)
+	metricsComponent := metrics.New(domainMetrics, bus)
 
 	// Create ResourceStoreManager for webhook validation
 	storeManager := resourcestore.NewManager()

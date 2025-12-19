@@ -187,7 +187,8 @@ func compareNamedSections[T any](
 //	comparator := comparator.New()
 //	diff, err := comparator.Compare(currentConfig, desiredConfig)
 //	if err != nil {
-//	    log.Fatal(err)
+//	    slog.Error("comparison failed", "error", err)
+//	    os.Exit(1)
 //	}
 //
 //	fmt.Printf("Changes: %s\n", diff.Summary.String())

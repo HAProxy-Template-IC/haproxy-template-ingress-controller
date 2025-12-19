@@ -40,7 +40,7 @@ func (h *panicHandler) HandleRequest(_ *events.ConfigValidationRequest) {
 
 // successHandler is a mock validation handler that succeeds.
 type successHandler struct {
-	bus        *busevents.EventBus
+	eventBus   *busevents.EventBus
 	name       string
 	handleChan chan struct{}
 }
@@ -52,7 +52,7 @@ func (h *successHandler) HandleRequest(req *events.ConfigValidationRequest) {
 		true,
 		nil,
 	)
-	h.bus.Publish(response)
+	h.eventBus.Publish(response)
 	if h.handleChan != nil {
 		close(h.handleChan)
 	}
@@ -63,8 +63,8 @@ func TestBaseValidator_Stop(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	handler := &successHandler{
-		bus:  bus,
-		name: "test",
+		eventBus: bus,
+		name:     "test",
 	}
 	validator := NewBaseValidator(bus, logger, "test", "Test validator", handler)
 
@@ -100,8 +100,8 @@ func TestBaseValidator_StopIdempotent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	handler := &successHandler{
-		bus:  bus,
-		name: "test",
+		eventBus: bus,
+		name:     "test",
 	}
 	validator := NewBaseValidator(bus, logger, "test", "Test validator", handler)
 
@@ -155,8 +155,8 @@ func TestBaseValidator_ContextCancellation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	handler := &successHandler{
-		bus:  bus,
-		name: "test",
+		eventBus: bus,
+		name:     "test",
 	}
 	validator := NewBaseValidator(bus, logger, "test", "Test validator", handler)
 
@@ -447,7 +447,7 @@ func TestBaseValidator_IgnoresOtherEvents(t *testing.T) {
 
 	handleChan := make(chan struct{})
 	handler := &successHandler{
-		bus:        bus,
+		eventBus:   bus,
 		name:       "test",
 		handleChan: handleChan,
 	}

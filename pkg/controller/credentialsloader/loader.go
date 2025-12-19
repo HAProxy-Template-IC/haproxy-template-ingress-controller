@@ -25,24 +25,24 @@ import (
 // Kubernetes. It simply reacts to SecretResourceChangedEvent and produces
 // CredentialsUpdatedEvent or CredentialsInvalidEvent.
 type CredentialsLoaderComponent struct {
-	bus    *busevents.EventBus
-	logger *slog.Logger
-	stopCh chan struct{}
+	eventBus *busevents.EventBus
+	logger   *slog.Logger
+	stopCh   chan struct{}
 }
 
 // NewCredentialsLoaderComponent creates a new CredentialsLoader component.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to and publish on
+//   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //
 // Returns:
 //   - *CredentialsLoaderComponent ready to start
-func NewCredentialsLoaderComponent(bus *busevents.EventBus, logger *slog.Logger) *CredentialsLoaderComponent {
+func NewCredentialsLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CredentialsLoaderComponent {
 	return &CredentialsLoaderComponent{
-		bus:    bus,
-		logger: logger,
-		stopCh: make(chan struct{}),
+		eventBus: eventBus,
+		logger:   logger,
+		stopCh:   make(chan struct{}),
 	}
 }
 
@@ -55,7 +55,7 @@ func NewCredentialsLoaderComponent(bus *busevents.EventBus, logger *slog.Logger)
 //
 //	go component.Start(ctx)
 func (c *CredentialsLoaderComponent) Start(ctx context.Context) {
-	eventCh := c.bus.Subscribe(50)
+	eventCh := c.eventBus.Subscribe(50)
 
 	c.logger.Info("CredentialsLoader component started")
 
@@ -104,12 +104,12 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 		c.logger.Error("Failed to extract Secret data field",
 			"error", err,
 			"version", version)
-		c.bus.Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("failed to extract Secret data: %v", err)))
+		c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("failed to extract Secret data: %v", err)))
 		return
 	}
 	if !found {
 		c.logger.Error("Secret has no data field", "version", version)
-		c.bus.Publish(events.NewCredentialsInvalidEvent(version, "Secret has no data field"))
+		c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, "Secret has no data field"))
 		return
 	}
 
@@ -124,7 +124,7 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 				"key", key,
 				"type", fmt.Sprintf("%T", value),
 				"version", version)
-			c.bus.Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("Secret data key '%s' has invalid type", key)))
+			c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("Secret data key '%s' has invalid type", key)))
 			return
 		}
 	}
@@ -135,12 +135,12 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 		c.logger.Error("Failed to load credentials from Secret",
 			"error", err,
 			"version", version)
-		c.bus.Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
+		c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
 		return
 	}
 
 	c.logger.Info("Credentials loaded successfully", "version", version)
 
 	// Publish CredentialsUpdatedEvent
-	c.bus.Publish(events.NewCredentialsUpdatedEvent(creds, version))
+	c.eventBus.Publish(events.NewCredentialsUpdatedEvent(creds, version))
 }

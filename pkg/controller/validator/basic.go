@@ -27,24 +27,24 @@ import (
 // ConfigValidationResponse events with validation results.
 type BasicValidator struct {
 	*BaseValidator
-	bus    *busevents.EventBus
-	logger *slog.Logger
+	eventBus *busevents.EventBus
+	logger   *slog.Logger
 }
 
 // NewBasicValidator creates a new basic validator component.
 //
 // Parameters:
-//   - bus: The EventBus to subscribe to and publish on
+//   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //
 // Returns:
 //   - *BasicValidator ready to start
-func NewBasicValidator(bus *busevents.EventBus, logger *slog.Logger) *BasicValidator {
+func NewBasicValidator(eventBus *busevents.EventBus, logger *slog.Logger) *BasicValidator {
 	v := &BasicValidator{
-		bus:    bus,
-		logger: logger,
+		eventBus: eventBus,
+		logger:   logger,
 	}
-	v.BaseValidator = NewBaseValidator(bus, logger, ValidatorNameBasic, "Basic structure validator", v)
+	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameBasic, "Basic structure validator", v)
 	return v
 }
 
@@ -68,7 +68,7 @@ func (v *BasicValidator) HandleRequest(req *events.ConfigValidationRequest) {
 			false,
 			[]string{fmt.Sprintf("invalid config type: %T", req.Config)},
 		)
-		v.bus.Publish(response)
+		v.eventBus.Publish(response)
 		return
 	}
 
@@ -87,7 +87,7 @@ func (v *BasicValidator) HandleRequest(req *events.ConfigValidationRequest) {
 		errors,
 	)
 
-	v.bus.Publish(response)
+	v.eventBus.Publish(response)
 
 	duration := time.Since(start)
 	if valid {

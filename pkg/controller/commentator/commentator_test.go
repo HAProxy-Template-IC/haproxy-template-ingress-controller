@@ -35,7 +35,7 @@ func TestNewEventCommentator(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 500)
 
 	require.NotNil(t, ec)
-	assert.NotNil(t, ec.bus)
+	assert.NotNil(t, ec.eventBus)
 	assert.NotNil(t, ec.logger)
 	assert.NotNil(t, ec.ringBuffer)
 	assert.Equal(t, 500, ec.ringBuffer.Capacity())

@@ -68,7 +68,7 @@ type Watcher struct {
 //	    StoreType: types.StoreTypeMemory,
 //	    DebounceInterval: 500 * time.Millisecond,
 //	    OnChange: func(store types.Store, stats types.ChangeStats) {
-//	        log.Printf("Resources changed: %+v", stats)
+//	        slog.Info("Resources changed", "stats", stats)
 //	    },
 //	})
 //
@@ -394,9 +394,10 @@ func (w *Watcher) Store() types.Store {
 //
 //	count, err := watcher.WaitForSync(ctx)
 //	if err != nil {
-//	    log.Fatal(err)
+//	    slog.Error("watcher sync failed", "error", err)
+//	    os.Exit(1)
 //	}
-//	log.Printf("Watcher synced: %d resources", count)
+//	slog.Info("Watcher synced", "resource_count", count)
 func (w *Watcher) WaitForSync(ctx context.Context) (int, error) {
 	// Wait for informer sync
 	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
