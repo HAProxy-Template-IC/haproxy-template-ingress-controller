@@ -12,6 +12,16 @@ ARG HAPROXY_VERSION=3.2
 ARG DOCKER_VERSION=29
 # renovate: datasource=github-releases depName=kubernetes-sigs/kind
 ARG KIND_VERSION=0.31.0
+# renovate: datasource=github-releases depName=helm/chart-testing
+ARG CT_VERSION=3.12.0
+# renovate: datasource=github-releases depName=helm-unittest/helm-unittest
+ARG HELM_UNITTEST_VERSION=0.7.2
+# renovate: datasource=github-releases depName=yannh/kubeconform
+ARG KUBECONFORM_VERSION=0.6.7
+# renovate: datasource=pypi depName=yamllint
+ARG YAMLLINT_VERSION=1.35.1
+# markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
+ARG MARKDOWNLINT_VERSION=0.14.0
 
 # Install HAProxy from haproxy.debian.net and Docker CLI from Docker's apt repository
 RUN apt-get update \
@@ -33,10 +43,10 @@ RUN apt-get update \
        jq python3-pip nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yamllint and markdownlint-cli2 for config file linting
+# Install yamllint, yamale (for ct), and markdownlint-cli2 for config file linting
 # Pin markdownlint-cli2@0.14.0 - newer versions pull string-width 7.x which requires Node.js 20+
-RUN pip3 install --break-system-packages yamllint \
-    && npm install -g markdownlint-cli2@0.14.0
+RUN pip3 install --break-system-packages yamllint==${YAMLLINT_VERSION} yamale \
+    && npm install -g markdownlint-cli2@${MARKDOWNLINT_VERSION}
 
 # Install kind
 RUN curl -fsSL -o /usr/local/bin/kind \
@@ -60,5 +70,20 @@ RUN curl -fsSL -o /usr/local/bin/yq \
 # Install gocover-cobertura for coverage report conversion
 RUN go install github.com/boumenot/gocover-cobertura@latest
 
+# Install chart-testing (ct) with configuration files
+RUN mkdir -p /etc/ct \
+    && curl -fsSL "https://github.com/helm/chart-testing/releases/download/v${CT_VERSION}/chart-testing_${CT_VERSION}_linux_amd64.tar.gz" \
+    | tar xzf - -C /tmp \
+    && mv /tmp/ct /usr/local/bin/ct \
+    && mv /tmp/etc/* /etc/ct/ \
+    && rm -rf /tmp/etc
+
+# Install helm-unittest plugin
+RUN helm plugin install https://github.com/helm-unittest/helm-unittest.git --version v${HELM_UNITTEST_VERSION}
+
+# Install kubeconform
+RUN curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+    | tar xzf - -C /usr/local/bin kubeconform
+
 # Verify installations
-RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1
+RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help | head -1 && kubeconform -v

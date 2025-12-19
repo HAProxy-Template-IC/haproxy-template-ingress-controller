@@ -30,6 +30,17 @@ variables:
   CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
   # Coverage packages (excludes generated code) - keep in sync with Makefile
   COVERAGE_PACKAGES: "./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/..."
+  # Chart testing tool versions
+  # renovate: datasource=github-releases depName=helm/chart-testing
+  CT_VERSION: "3.12.0"
+  # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
+  HELM_UNITTEST_VERSION: "0.7.2"
+  # renovate: datasource=github-releases depName=yannh/kubeconform
+  KUBECONFORM_VERSION: "0.6.7"
+  # renovate: datasource=pypi depName=yamllint
+  YAMLLINT_VERSION: "1.35.1"
+  # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
+  MARKDOWNLINT_VERSION: "0.14.0"
 
 # Reusable rules for path-based filtering
 .rules-code:
@@ -117,7 +128,7 @@ build-ci:
     - .haproxy-version-matrix
   script:
     - |
-      CI_IMAGE="${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}"
+      CI_IMAGE="${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}"
       buildctl-daemonless.sh build \
         --frontend dockerfile.v0 \
         --local context=.gitlab/ci/images/ci/ \
@@ -126,6 +137,11 @@ build-ci:
         --opt build-arg:HAPROXY_VERSION=${HAPROXY_VERSION} \
         --opt build-arg:DOCKER_VERSION=${DOCKER_VERSION} \
         --opt build-arg:KIND_VERSION=${KIND_VERSION} \
+        --opt build-arg:CT_VERSION=${CT_VERSION} \
+        --opt build-arg:HELM_UNITTEST_VERSION=${HELM_UNITTEST_VERSION} \
+        --opt build-arg:KUBECONFORM_VERSION=${KUBECONFORM_VERSION} \
+        --opt build-arg:YAMLLINT_VERSION=${YAMLLINT_VERSION} \
+        --opt build-arg:MARKDOWNLINT_VERSION=${MARKDOWNLINT_VERSION} \
         --import-cache type=registry,ref=${CI_IMAGE} \
         --export-cache type=inline \
         --output type=image,name=${CI_IMAGE},push=true
@@ -149,7 +165,7 @@ build-python-docs:
 
 lint:
   stage: lint
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -168,7 +184,7 @@ lint:
 
 audit:
   stage: lint
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   extends:
     - .rules-code
   tags:
@@ -180,13 +196,32 @@ audit:
   script:
     - make audit
 
+chart-test:
+  stage: lint
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
+  extends:
+    - .rules-helm
+  tags:
+    - saas-linux-medium-amd64
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+  script:
+    - make lint-chart-ci KUBE_VERSION="${KIND_NODE_VERSION#v}"
+  artifacts:
+    reports:
+      junit: chart-test-results.xml
+    expire_in: 1 week
+    when: always
+
 # =============================================================================
 # Test Stage
 # =============================================================================
 
 test:
   stage: test
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   extends:
     - .rules-code
   tags:
@@ -218,7 +253,7 @@ test:
 
 .validate-helm-libraries-base:
   stage: test
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -259,7 +294,7 @@ validate-helm-libraries:
 # Separate compilation allows using Go module cache effectively
 compile:
   stage: build
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   extends:
     - .rules-code
   tags:
@@ -323,7 +358,7 @@ build-test-image:
 
 .test-integration-base:
   stage: integration
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   extends:
     - .docker-dind
     - .rules-code
@@ -352,7 +387,7 @@ test-integration:
 # Integration test with coverage collection (single HAProxy version - coverage doesn't vary by version)
 test-integration-coverage:
   stage: integration
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   extends:
     - .docker-dind
     - .rules-code
@@ -383,7 +418,7 @@ test-integration-coverage:
 # Combined unit + integration coverage report
 coverage-combined:
   stage: integration
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   extends:
     - .rules-code
   tags:
@@ -425,7 +460,7 @@ coverage-combined:
 
 test-acceptance:
   stage: integration
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   extends:
     - .docker-dind
     - .rules-code
@@ -503,7 +538,7 @@ test-acceptance:
 
 .test-routes-base:
   stage: integration
-  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
   extends:
     - .docker-dind
   timeout: 25 minutes

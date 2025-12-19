@@ -1,0 +1,155 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: haproxy deployment
+templates:
+  - haproxy-deployment.yaml
+tests:
+  - it: should render deployment when haproxy enabled
+    set:
+      haproxy.enabled: true
+    asserts:
+      - isKind:
+          of: Deployment
+
+  - it: should not render when haproxy disabled
+    set:
+      haproxy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should have haproxy container
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: haproxy
+
+  - it: should have dataplane container
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[1].name
+          value: dataplane
+
+  - it: should configure readiness probe for haproxy
+    set:
+      haproxy.enabled: true
+    asserts:
+      - isNotNull:
+          path: spec.template.spec.containers[0].readinessProbe
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /ready
+
+  - it: should configure liveness probe for haproxy
+    set:
+      haproxy.enabled: true
+    asserts:
+      - isNotNull:
+          path: spec.template.spec.containers[0].livenessProbe
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+
+  - it: should expose http port
+    set:
+      haproxy.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 8080
+            protocol: TCP
+
+  - it: should expose https port
+    set:
+      haproxy.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: https
+            containerPort: 8443
+            protocol: TCP
+
+  - it: should expose stats port
+    set:
+      haproxy.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: stats
+            containerPort: 8404
+            protocol: TCP
+
+  - it: should set replica count from values
+    set:
+      haproxy.enabled: true
+      haproxy.replicaCount: 3
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: should run as non-root user
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+
+  - it: should drop all capabilities for haproxy container
+    set:
+      haproxy.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: should drop all capabilities for dataplane container
+    set:
+      haproxy.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[1].securityContext.capabilities.drop
+          content: ALL
+
+  - it: should include loadbalancer component label
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/component"]
+          value: loadbalancer
+
+  - it: should set priorityClassName when specified
+    set:
+      haproxy.enabled: true
+      haproxy.priorityClassName: system-cluster-critical
+    asserts:
+      - equal:
+          path: spec.template.spec.priorityClassName
+          value: system-cluster-critical
+
+  - it: should set resources for haproxy container
+    set:
+      haproxy.enabled: true
+      haproxy.resources:
+        limits:
+          cpu: 1000m
+          memory: 512Mi
+        requests:
+          cpu: 200m
+          memory: 256Mi
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: 1000m
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 512Mi
