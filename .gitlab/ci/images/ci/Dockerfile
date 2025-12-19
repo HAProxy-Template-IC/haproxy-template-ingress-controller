@@ -19,7 +19,7 @@ ARG HELM_UNITTEST_VERSION=0.8.2
 # renovate: datasource=github-releases depName=yannh/kubeconform
 ARG KUBECONFORM_VERSION=0.6.7
 # renovate: datasource=pypi depName=yamllint
-ARG YAMLLINT_VERSION=1.35.1
+ARG YAMLLINT_VERSION=1.37.1
 # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
 ARG MARKDOWNLINT_VERSION=0.14.0
 
