@@ -32,7 +32,7 @@ require (
 // dynamic include capability, Jinja2-style whitespace control markers ({%- -%}),
 // fixes for variadic method calls, pipe operator with fallback filter, performance optimizations,
 // and parallel template rendering with go render and go render_glob
-replace github.com/open2b/scriggo => gitlab.com/haproxy-template-ic/scriggo v0.0.0-20251219101232-9e385810cbb7
+replace github.com/open2b/scriggo => gitlab.com/haproxy-template-ic/scriggo v0.0.0-20251219125048-1ad21a6c53dc
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
