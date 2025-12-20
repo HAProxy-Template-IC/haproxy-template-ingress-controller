@@ -22,6 +22,14 @@ type SyncResult struct {
 	// Only set when ReloadTriggered is true
 	ReloadID string
 
+	// ReloadVerified indicates whether the reload was verified as successful.
+	// Only set when VerifyReload option is enabled and ReloadTriggered is true.
+	ReloadVerified bool
+
+	// ReloadVerificationError contains an error message if reload verification failed.
+	// This includes timeout errors or explicit reload failures from HAProxy.
+	ReloadVerificationError string
+
 	// FallbackToRaw indicates whether we had to fall back to raw config push
 	// This happens when fine-grained sync encounters non-recoverable errors
 	FallbackToRaw bool
@@ -161,7 +169,13 @@ func (r *SyncResult) String() string {
 	// Reload info
 	if r.ReloadTriggered {
 		if r.ReloadID != "" {
-			parts = append(parts, fmt.Sprintf("Reload: Triggered (ID: %s)", r.ReloadID))
+			if r.ReloadVerified {
+				parts = append(parts, fmt.Sprintf("Reload: Verified (ID: %s)", r.ReloadID))
+			} else if r.ReloadVerificationError != "" {
+				parts = append(parts, fmt.Sprintf("Reload: Failed (ID: %s) - %s", r.ReloadID, r.ReloadVerificationError))
+			} else {
+				parts = append(parts, fmt.Sprintf("Reload: Triggered (ID: %s)", r.ReloadID))
+			}
 		} else {
 			parts = append(parts, "Reload: Triggered")
 		}

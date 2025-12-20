@@ -172,8 +172,9 @@ assert_response_ok() {
     debug "  Extra args: ${extra_args[*]}"
 
     # Retry logic for flaky CI environments
-    # Use 5 retries to handle slow backend initialization (503 errors)
-    local max_retries=5
+    # Use 8 retries with 2s delay (16s total) to handle slow backend initialization,
+    # HAProxy worker handoff, and timing issues in CI environments
+    local max_retries=8
     local retry_delay=2
     local attempt=1
     local response=""
@@ -1089,11 +1090,77 @@ wait_for_httproute_backends() {
         ok "HTTPRoute backends deployed ($gtw_backend_count backends)"
     else
         warn "HTTPRoute backends not found in config (tests may fail)"
+        return
     fi
 
-    # Additional wait for HAProxy to reload with new config
-    # This helps with flakiness when config was just deployed
-    sleep 2
+    # Wait for HAProxy reloads to complete after HTTPRoute config deployment
+    # This prevents race conditions where tests run before HAProxy finishes reloading
+    log INFO "Waiting for HAProxy reloads to complete after HTTPRoute deployment..."
+    local all_reloads_complete=false
+    local reload_attempts=30  # 60 seconds max
+
+    for reload_attempt in $(seq 1 $reload_attempts); do
+        all_reloads_complete=true
+
+        # Get HAProxyCfg status with per-pod deployment info
+        local pods_json
+        pods_json=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get haproxycfg \
+            haproxy-template-ic-config -o json 2>/dev/null) || {
+            debug "Could not get HAProxyCfg status, skipping reload check"
+            break
+        }
+
+        # For each pod in deployedToPods, check reload status via DataPlane API
+        local pod_count
+        pod_count=$(echo "$pods_json" | jq -r '.status.deployedToPods | length' 2>/dev/null || echo 0)
+
+        if [[ "$pod_count" -eq 0 ]]; then
+            debug "No pods in deployedToPods status"
+            all_reloads_complete=false
+            sleep 2
+            continue
+        fi
+
+        for i in $(seq 0 $((pod_count - 1))); do
+            local pod_name reload_id
+            pod_name=$(echo "$pods_json" | jq -r ".status.deployedToPods[$i].podName" 2>/dev/null)
+            reload_id=$(echo "$pods_json" | jq -r ".status.deployedToPods[$i].lastReloadID" 2>/dev/null)
+
+            # Skip if no reload ID (no reload was triggered)
+            if [[ -z "$reload_id" || "$reload_id" == "null" ]]; then
+                debug "Pod $pod_name has no lastReloadID"
+                continue
+            fi
+
+            # Query DataPlane API for reload status via kubectl exec
+            local reload_status
+            reload_status=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic exec "$pod_name" \
+                -c dataplane -- curl -s -u admin:adminpass \
+                "http://localhost:5555/v3/services/haproxy/reloads/${reload_id}" 2>/dev/null | \
+                jq -r '.status' 2>/dev/null) || reload_status=""
+
+            if [[ "$reload_status" != "succeeded" ]]; then
+                debug "Pod $pod_name reload $reload_id status: ${reload_status:-unknown} (attempt $reload_attempt/$reload_attempts)"
+                all_reloads_complete=false
+            fi
+        done
+
+        if [[ "$all_reloads_complete" == "true" ]]; then
+            break
+        fi
+
+        sleep 2
+    done
+
+    if [[ "$all_reloads_complete" == "true" ]]; then
+        ok "HAProxy reloads completed after HTTPRoute deployment"
+    else
+        warn "HAProxy reload check timed out (continuing anyway)"
+    fi
+
+    # Additional stabilization period for worker process handoff
+    # Old HAProxy workers may still handle requests briefly after reload
+    sleep 3
 }
 
 #═══════════════════════════════════════════════════════════════════════════

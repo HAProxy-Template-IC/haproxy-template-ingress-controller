@@ -25,6 +25,9 @@ type ConfigParser interface {
 	ParseFromString(config string) (*parserconfig.StructuredConfig, error)
 }
 
+// Poll interval for reload verification (not exposed as config option).
+const defaultReloadVerificationPollInterval = 500 * time.Millisecond
+
 // orchestrator handles the complete sync workflow.
 type orchestrator struct {
 	client     *client.DataplaneClient
@@ -60,6 +63,51 @@ func newOrchestrator(c *client.DataplaneClient, logger *slog.Logger) (*orchestra
 		comparator: comparator.New(),
 		logger:     logger,
 	}, nil
+}
+
+// verifyReload polls the reload status until it succeeds, fails, or times out.
+// Returns nil if the reload succeeded, or an error describing the failure.
+func (o *orchestrator) verifyReload(ctx context.Context, reloadID string, timeout time.Duration) error {
+	if reloadID == "" {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(defaultReloadVerificationPollInterval)
+	defer ticker.Stop()
+
+	o.logger.Debug("Starting reload verification", "reload_id", reloadID)
+
+	for {
+		select {
+		case <-ticker.C:
+			info, err := o.client.GetReloadStatus(ctx, reloadID)
+			if err != nil {
+				// Log and continue polling - transient errors shouldn't fail immediately
+				o.logger.Warn("reload status check failed, retrying",
+					"reload_id", reloadID, "error", err)
+				continue
+			}
+
+			switch info.Status {
+			case client.ReloadStatusSucceeded:
+				o.logger.Info("reload verified successful", "reload_id", reloadID)
+				return nil
+			case client.ReloadStatusFailed:
+				o.logger.Error("reload failed",
+					"reload_id", reloadID,
+					"response", info.Response)
+				return fmt.Errorf("reload failed: %s", info.Response)
+			case client.ReloadStatusInProgress:
+				o.logger.Debug("reload still in progress", "reload_id", reloadID)
+			}
+
+		case <-ctx.Done():
+			return fmt.Errorf("reload verification timed out after %v", timeout)
+		}
+	}
 }
 
 // sync implements the complete sync workflow with automatic fallback.
@@ -112,7 +160,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		o.logger.Warn("Fine-grained sync failed, attempting fallback to raw config push",
 			"error", err)
 
-		fallbackResult, fallbackErr := o.attemptRawFallback(ctx, desiredConfig, diff, auxFiles, startTime)
+		fallbackResult, fallbackErr := o.attemptRawFallback(ctx, desiredConfig, diff, auxFiles, opts, startTime)
 		if fallbackErr != nil {
 			return nil, NewFallbackError(err, fallbackErr)
 		}
@@ -149,13 +197,8 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	// Phase 3: Delete obsolete files AFTER successful config sync
 	o.deleteObsoleteFilesPostConfig(ctx, fileDiff, sslDiff, mapDiff, crtlistDiff)
 
-	o.logger.Info("Fine-grained sync completed successfully",
-		"operations", len(appliedOps),
-		"reload_triggered", reloadTriggered,
-		"retries", max(0, retries-1),
-		"duration", time.Since(startTime))
-
-	return &SyncResult{
+	// Build result
+	result := &SyncResult{
 		Success:           true,
 		AppliedOperations: appliedOps,
 		ReloadTriggered:   reloadTriggered,
@@ -165,11 +208,46 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 		Retries:           max(0, retries-1),
 		Details:           convertDiffSummary(&diff.Summary),
 		Message:           fmt.Sprintf("Successfully applied %d configuration changes", len(appliedOps)),
-	}, nil
+	}
+
+	// Phase 4: Verify reload if triggered and verification enabled
+	if reloadTriggered && opts.VerifyReload {
+		if err := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); err != nil {
+			result.Success = false
+			result.ReloadVerified = false
+			result.ReloadVerificationError = err.Error()
+			result.Duration = time.Since(startTime)
+
+			o.logger.Error("Fine-grained sync completed but reload verification failed",
+				"operations", len(appliedOps),
+				"reload_id", reloadID,
+				"error", err)
+
+			return result, &SyncError{
+				Stage:   "reload_verification",
+				Message: "reload verification failed",
+				Cause:   err,
+				Hints: []string{
+					"HAProxy reload failed, config may have been reverted",
+					"Check HAProxy logs for detailed error information",
+				},
+			}
+		}
+		result.ReloadVerified = true
+	}
+
+	o.logger.Info("Fine-grained sync completed successfully",
+		"operations", len(appliedOps),
+		"reload_triggered", reloadTriggered,
+		"reload_verified", result.ReloadVerified,
+		"retries", max(0, retries-1),
+		"duration", time.Since(startTime))
+
+	return result, nil
 }
 
 // attemptRawFallback attempts to sync using raw configuration push.
-func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig string, diff *comparator.ConfigDiff, auxFiles *AuxiliaryFiles, startTime time.Time) (*SyncResult, error) {
+func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig string, diff *comparator.ConfigDiff, auxFiles *AuxiliaryFiles, opts *SyncOptions, startTime time.Time) (*SyncResult, error) {
 	o.logger.Warn("Falling back to raw configuration push")
 
 	// Phase 1: Sync auxiliary files BEFORE pushing raw config (same as fine-grained sync)
@@ -220,15 +298,12 @@ func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig str
 		}
 	}
 
-	o.logger.Info("Raw configuration push completed successfully",
-		"duration", time.Since(startTime),
-		"reload_id", reloadID)
-
 	// Preserve detailed operation information from diff
 	// Even though we used raw config push, we still know what changes were applied
 	appliedOps := convertOperationsToApplied(diff.Operations)
 
-	return &SyncResult{
+	// Build result
+	result := &SyncResult{
 		Success:           true,
 		AppliedOperations: appliedOps, // Preserve detailed operations instead of generic message
 		ReloadTriggered:   true,       // Raw push always triggers reload
@@ -238,7 +313,39 @@ func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig str
 		Retries:           0,
 		Details:           convertDiffSummary(&diff.Summary),
 		Message:           "Successfully applied configuration via raw config push (fallback)",
-	}, nil
+	}
+
+	// Verify reload if verification enabled (raw push always triggers reload)
+	if opts.VerifyReload {
+		if err := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); err != nil {
+			result.Success = false
+			result.ReloadVerified = false
+			result.ReloadVerificationError = err.Error()
+			result.Duration = time.Since(startTime)
+
+			o.logger.Error("Raw config push completed but reload verification failed",
+				"reload_id", reloadID,
+				"error", err)
+
+			return result, &SyncError{
+				Stage:   "reload_verification",
+				Message: "reload verification failed after raw config push",
+				Cause:   err,
+				Hints: []string{
+					"HAProxy reload failed, config may have been reverted",
+					"Check HAProxy logs for detailed error information",
+				},
+			}
+		}
+		result.ReloadVerified = true
+	}
+
+	o.logger.Info("Raw configuration push completed successfully",
+		"duration", time.Since(startTime),
+		"reload_id", reloadID,
+		"reload_verified", result.ReloadVerified)
+
+	return result, nil
 }
 
 // diff generates a diff without applying any changes.
