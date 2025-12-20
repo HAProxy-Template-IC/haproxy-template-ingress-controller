@@ -87,7 +87,7 @@ CT_VERSION := v3.12.0
 # renovate: datasource=docker depName=helmunittest/helm-unittest versioning=docker
 HELM_UNITTEST_VERSION := 3.17.0-0.7.2
 # renovate: datasource=docker depName=ghcr.io/yannh/kubeconform versioning=docker
-KUBECONFORM_VERSION := v0.6.7-alpine
+KUBECONFORM_VERSION := v0.7.0-alpine
 # renovate: datasource=docker depName=kindest/node
 KUBE_VERSION := 1.35.0
 
