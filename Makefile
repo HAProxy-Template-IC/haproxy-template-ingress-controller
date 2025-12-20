@@ -85,7 +85,7 @@ lint-fix: ## Run golangci-lint with auto-fix
 # renovate: datasource=docker depName=quay.io/helmpack/chart-testing versioning=docker
 CT_VERSION := v3.12.0
 # renovate: datasource=docker depName=helmunittest/helm-unittest versioning=docker
-HELM_UNITTEST_VERSION := 3.17.0-0.7.2
+HELM_UNITTEST_VERSION := 3.17.1-0.7.2
 # renovate: datasource=docker depName=ghcr.io/yannh/kubeconform versioning=docker
 KUBECONFORM_VERSION := v0.6.7-alpine
 # renovate: datasource=docker depName=kindest/node
