@@ -273,3 +273,131 @@ func TestVersionConflictError(t *testing.T) {
 	assert.Contains(t, err.Error(), "45")
 	assert.Contains(t, err.Error(), "version conflict")
 }
+
+// makeReloadStatusHandler creates an HTTP handler for reload status tests.
+func makeReloadStatusHandler(reloadID string, statusCode int, responseBody string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v3/info" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, `{"api":{"version":"v3.2.6 87ad0bcf"}}`)
+			return
+		}
+
+		expectedPath := fmt.Sprintf("/services/haproxy/reloads/%s", reloadID)
+		if r.URL.Path == expectedPath && r.Method == "GET" {
+			w.WriteHeader(statusCode)
+			if responseBody != "" {
+				fmt.Fprint(w, responseBody)
+			}
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// reloadStatusTestCase defines test case data for reload status tests.
+type reloadStatusTestCase struct {
+	name          string
+	reloadID      string
+	statusCode    int
+	responseBody  string
+	expectErr     bool
+	errContains   string
+	wantStatus    ReloadStatus
+	wantResponse  string
+	wantTimestamp int64
+}
+
+// assertReloadStatusResult validates reload status test results.
+func assertReloadStatusResult(t *testing.T, tc *reloadStatusTestCase, info *ReloadInfo, err error) {
+	t.Helper()
+	if tc.expectErr {
+		require.Error(t, err)
+		if tc.errContains != "" {
+			assert.Contains(t, err.Error(), tc.errContains)
+		}
+		return
+	}
+
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(t, tc.reloadID, info.ID)
+	assert.Equal(t, tc.wantStatus, info.Status)
+	if tc.wantResponse != "" {
+		assert.Equal(t, tc.wantResponse, info.Response)
+	}
+	if tc.wantTimestamp != 0 {
+		assert.Equal(t, tc.wantTimestamp, info.ReloadTimestamp)
+	}
+}
+
+func TestGetReloadStatus(t *testing.T) {
+	tests := []reloadStatusTestCase{
+		{
+			name:       "reload succeeded",
+			reloadID:   "abc123",
+			statusCode: http.StatusOK,
+			responseBody: `{
+				"id": "abc123",
+				"status": "succeeded",
+				"reload_timestamp": 1640000000
+			}`,
+			wantStatus:    ReloadStatusSucceeded,
+			wantTimestamp: 1640000000,
+		},
+		{
+			name:       "reload in progress",
+			reloadID:   "def456",
+			statusCode: http.StatusOK,
+			responseBody: `{
+				"id": "def456",
+				"status": "in_progress"
+			}`,
+			wantStatus: ReloadStatusInProgress,
+		},
+		{
+			name:       "reload failed",
+			reloadID:   "ghi789",
+			statusCode: http.StatusOK,
+			responseBody: `{
+				"id": "ghi789",
+				"status": "failed",
+				"response": "configuration validation failed: missing backend"
+			}`,
+			wantStatus:   ReloadStatusFailed,
+			wantResponse: "configuration validation failed: missing backend",
+		},
+		{
+			name:        "reload not found",
+			reloadID:    "nonexistent",
+			statusCode:  http.StatusNotFound,
+			expectErr:   true,
+			errContains: "reload ID not found",
+		},
+		{
+			name:        "server error",
+			reloadID:    "error",
+			statusCode:  http.StatusInternalServerError,
+			expectErr:   true,
+			errContains: "status 500",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, cleanup := createTestClient(t, makeReloadStatusHandler(tt.reloadID, tt.statusCode, tt.responseBody))
+			defer cleanup()
+
+			info, err := client.GetReloadStatus(context.Background(), tt.reloadID)
+			assertReloadStatusResult(t, &tt, info, err)
+		})
+	}
+}
+
+func TestReloadStatusConstants(t *testing.T) {
+	// Verify constants match HAProxy DataPlane API values
+	assert.Equal(t, ReloadStatus("in_progress"), ReloadStatusInProgress)
+	assert.Equal(t, ReloadStatus("succeeded"), ReloadStatusSucceeded)
+	assert.Equal(t, ReloadStatus("failed"), ReloadStatusFailed)
+}

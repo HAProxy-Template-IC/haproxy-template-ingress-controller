@@ -61,7 +61,7 @@ func TestSyncFrontends(t *testing.T) {
 			expectedDeletes:   0,
 			expectedOperations: []string{
 				"Create bind '*:8080' in frontend 'http-in'",
-				"Create bind '192.168.1.100:80' in frontend 'http-in'",
+				"Create bind '*:8081' in frontend 'http-in'",
 			},
 			expectedReload: true,
 		},
@@ -74,7 +74,7 @@ func TestSyncFrontends(t *testing.T) {
 			expectedDeletes:   2,
 			expectedOperations: []string{
 				"Delete bind '*:8080' from frontend 'http-in'",
-				"Delete bind '192.168.1.100:80' from frontend 'http-in'",
+				"Delete bind '*:8081' from frontend 'http-in'",
 			},
 			expectedReload: true,
 		},

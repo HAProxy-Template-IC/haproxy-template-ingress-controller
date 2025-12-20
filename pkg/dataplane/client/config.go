@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -205,4 +206,126 @@ type VersionConflictError struct {
 
 func (e *VersionConflictError) Error() string {
 	return fmt.Sprintf("version conflict: expected %d, got %s", e.ExpectedVersion, e.ActualVersion)
+}
+
+// ReloadStatus represents the status of an HAProxy reload operation.
+type ReloadStatus string
+
+const (
+	// ReloadStatusInProgress indicates the reload is still being processed.
+	ReloadStatusInProgress ReloadStatus = "in_progress"
+	// ReloadStatusSucceeded indicates the reload completed successfully.
+	ReloadStatusSucceeded ReloadStatus = "succeeded"
+	// ReloadStatusFailed indicates the reload failed (HAProxy reverted to previous config).
+	ReloadStatusFailed ReloadStatus = "failed"
+)
+
+// ReloadInfo contains information about an HAProxy reload operation.
+type ReloadInfo struct {
+	// ID is the unique identifier for this reload operation.
+	ID string
+	// Status is the current status of the reload.
+	Status ReloadStatus
+	// Response contains error details if the reload failed.
+	Response string
+	// ReloadTimestamp is the Unix timestamp when the reload occurred.
+	ReloadTimestamp int64
+}
+
+// GetReloadStatus retrieves the status of a specific HAProxy reload operation.
+//
+// This method polls the DataPlane API to check if an async reload has completed.
+// Use this after receiving a 202 response from configuration changes to verify
+// the reload succeeded.
+// Works with all HAProxy DataPlane API versions (v3.0+).
+//
+// Parameters:
+//   - reloadID: The reload identifier from the Reload-ID header
+//
+// Returns:
+//   - ReloadInfo: Current status and details of the reload
+//   - error: Error if the API call fails or reload ID not found
+//
+// Example:
+//
+//	info, err := client.GetReloadStatus(ctx, "abc123")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	switch info.Status {
+//	case ReloadStatusSucceeded:
+//	    log.Println("Reload completed successfully")
+//	case ReloadStatusFailed:
+//	    log.Printf("Reload failed: %s", info.Response)
+//	case ReloadStatusInProgress:
+//	    log.Println("Reload still in progress")
+//	}
+func (c *DataplaneClient) GetReloadStatus(ctx context.Context, reloadID string) (*ReloadInfo, error) {
+	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V32: func(c *v32.Client) (*http.Response, error) {
+			return c.GetReload(ctx, reloadID)
+		},
+		V31: func(c *v31.Client) (*http.Response, error) {
+			return c.GetReload(ctx, reloadID)
+		},
+		V30: func(c *v30.Client) (*http.Response, error) {
+			return c.GetReload(ctx, reloadID)
+		},
+		V32EE: func(c *v32ee.Client) (*http.Response, error) {
+			return c.GetReload(ctx, reloadID)
+		},
+		V31EE: func(c *v31ee.Client) (*http.Response, error) {
+			return c.GetReload(ctx, reloadID)
+		},
+		V30EE: func(c *v30ee.Client) (*http.Response, error) {
+			return c.GetReload(ctx, reloadID)
+		},
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get reload status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("reload ID not found: %s", reloadID)
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get reload status: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse JSON response into ReloadInfo
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read reload status response: %w", err)
+	}
+
+	var reload struct {
+		ID              *string `json:"id"`
+		Status          *string `json:"status"`
+		Response        *string `json:"response"`
+		ReloadTimestamp *int64  `json:"reload_timestamp"`
+	}
+
+	if err := json.Unmarshal(body, &reload); err != nil {
+		return nil, fmt.Errorf("failed to parse reload status response: %w", err)
+	}
+
+	info := &ReloadInfo{}
+	if reload.ID != nil {
+		info.ID = *reload.ID
+	}
+	if reload.Status != nil {
+		info.Status = ReloadStatus(*reload.Status)
+	}
+	if reload.Response != nil {
+		info.Response = *reload.Response
+	}
+	if reload.ReloadTimestamp != nil {
+		info.ReloadTimestamp = *reload.ReloadTimestamp
+	}
+
+	return info, nil
 }

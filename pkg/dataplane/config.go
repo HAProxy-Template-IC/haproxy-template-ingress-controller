@@ -81,15 +81,27 @@ type SyncOptions struct {
 	// When enabled, if fine-grained sync fails with non-recoverable errors,
 	// the library automatically falls back to pushing the complete raw configuration.
 	FallbackToRaw bool
+
+	// VerifyReload enables async reload verification after sync (default: true)
+	// When true, polls the reload status endpoint until succeeded/failed/timeout.
+	// Disable for dry-run or when reload verification is not needed.
+	VerifyReload bool
+
+	// ReloadVerificationTimeout is the maximum time to wait for reload verification (default: 10s)
+	// This should be set higher than the DataPlane API's reload-delay setting.
+	// Only used when VerifyReload is true.
+	ReloadVerificationTimeout time.Duration
 }
 
 // DefaultSyncOptions returns sensible default sync options.
 func DefaultSyncOptions() *SyncOptions {
 	return &SyncOptions{
-		MaxRetries:      3,
-		Timeout:         2 * time.Minute,
-		ContinueOnError: false,
-		FallbackToRaw:   true,
+		MaxRetries:                3,
+		Timeout:                   2 * time.Minute,
+		ContinueOnError:           false,
+		FallbackToRaw:             true,
+		VerifyReload:              true,
+		ReloadVerificationTimeout: 10 * time.Second,
 	}
 }
 
@@ -100,6 +112,7 @@ func DryRunOptions() *SyncOptions {
 		Timeout:         1 * time.Minute,
 		ContinueOnError: false,
 		FallbackToRaw:   false,
+		VerifyReload:    false, // No reload happens in dry-run
 	}
 }
 

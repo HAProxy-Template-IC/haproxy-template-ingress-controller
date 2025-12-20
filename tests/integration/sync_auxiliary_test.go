@@ -177,12 +177,12 @@ func TestSyncAuxiliary(t *testing.T) {
 			initialMapFiles: map[string]string{
 				"domains.map": "map-files/domains.map",
 			},
-			// Desired config needs different map
+			// Desired config needs different map (config also references this new filename)
 			mapFiles: map[string]string{
 				"updated-domains.map": "map-files/updated-domains.map",
 			},
 			expectedCreates: 4,
-			expectedUpdates: 0,
+			expectedUpdates: 1,
 			expectedDeletes: 2,
 			expectedOperations: []string{
 				"Delete backend 'admin'",
@@ -191,6 +191,7 @@ func TestSyncAuxiliary(t *testing.T) {
 				"Create backend 'mobile'",
 				"Create server 'srv1' in backend 'api-v2'",
 				"Create server 'srv1' in backend 'mobile'",
+				"Update backend switching rule (%[req.hdr(host),lower,map(/etc/haproxy/maps/updated-domains.map,web)]) in frontend 'http'",
 			},
 			expectedReload: true,
 		},
