@@ -15,7 +15,7 @@ ARG KIND_VERSION=0.31.0
 # renovate: datasource=github-releases depName=helm/chart-testing
 ARG CT_VERSION=3.14.0
 # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
-ARG HELM_UNITTEST_VERSION=0.8.2
+ARG HELM_UNITTEST_VERSION=1.0.3
 # renovate: datasource=github-releases depName=yannh/kubeconform
 ARG KUBECONFORM_VERSION=0.7.0
 # renovate: datasource=pypi depName=yamllint
