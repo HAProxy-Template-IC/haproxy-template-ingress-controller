@@ -17,7 +17,6 @@ package templating
 import (
 	"encoding/base64"
 	"fmt"
-	"log/slog"
 	"math"
 	"path/filepath"
 	"reflect"
@@ -25,7 +24,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"unicode"
 
 	"github.com/open2b/scriggo/builtin"
@@ -76,7 +74,7 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 	decl["fileRegistry"] = (*FileRegistrar)(nil)
 	decl["dataplane"] = (*map[string]interface{})(nil)
 	decl["capabilities"] = (*map[string]interface{})(nil)
-	decl["shared"] = (*map[string]interface{})(nil)
+	decl["shared"] = (*SharedContext)(nil)
 	decl["extraContext"] = (*map[string]interface{})(nil)
 	decl["http"] = (*HTTPFetcher)(nil)                      // HTTP store for fetching remote content
 	decl["runtimeEnvironment"] = (*RuntimeEnvironment)(nil) // Runtime environment info (GOMAXPROCS, etc.)
@@ -101,11 +99,6 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 
 	// Sorting functions
 	decl[FuncSortStrings] = scriggoSortStrings
-
-	// Cache functions for compute_once pattern
-	decl[FuncHasCached] = scriggoHasCached
-	decl[FuncGetCached] = scriggoGetCached
-	decl[FuncSetCached] = scriggoSetCached
 
 	// Deduplication and filtering functions
 	decl[FuncFirstSeen] = scriggoFirstSeen
@@ -504,86 +497,29 @@ func scriggoSortStrings(items []interface{}) []string {
 	return result
 }
 
-// RenderCacheKey is the context key for per-render cache storage.
-// This type prevents collisions with other context values.
-type renderCacheKey struct{}
-
-// RenderCacheContextKey is exported for use in engine_scriggo.go.
-var RenderCacheContextKey = renderCacheKey{}
-
-// scriggoHasCached checks if a key exists in the per-render cache.
-// This enables the compute_once pattern for expensive operations.
-// Thread-safe for concurrent access during parallel template rendering.
-//
-// Usage in Scriggo templates:
-//
-//	{% if !has_cached("gateway_analysis") %}
-//	    {# expensive computation #}
-//	    {% set_cached("gateway_analysis", result) %}
-//	{% end %}
-func scriggoHasCached(env native.Env, key string) bool {
-	cache := getRenderCache(env)
-	if cache == nil {
-		return false
-	}
-	_, exists := cache.Load(key)
-	return exists
-}
-
-// scriggoGetCached retrieves a value from the per-render cache.
-// Returns nil if the key doesn't exist.
-// Thread-safe for concurrent access during parallel template rendering.
-//
-// Usage in Scriggo templates:
-//
-//	{% var analysis = get_cached("gateway_analysis") %}
-func scriggoGetCached(env native.Env, key string) interface{} {
-	cache := getRenderCache(env)
-	if cache == nil {
-		return nil
-	}
-	value, _ := cache.Load(key)
-	return value
-}
-
-// scriggoSetCached stores a value in the per-render cache.
-// The value persists for the duration of the current render operation.
-// Thread-safe for concurrent access during parallel template rendering.
-//
-// Usage in Scriggo templates:
-//
-//	{% set_cached("gateway_analysis", result) %}
-func scriggoSetCached(env native.Env, key string, value interface{}) {
-	cache := getRenderCache(env)
-	if cache == nil {
-		// Cache not initialized - should not happen if engine is configured correctly.
-		// Log warning to aid debugging when caching unexpectedly fails.
-		slog.Warn("set_cached called but render cache not initialized",
-			"key", key)
-		return
-	}
-	cache.Store(key, value)
-}
-
-// getRenderCache retrieves the per-render cache from the context.
-// Returns a sync.Map for thread-safe concurrent access during parallel template rendering.
-func getRenderCache(env native.Env) *sync.Map {
-	ctx := env.Context()
-	if ctx == nil {
-		return nil
-	}
-	cache, ok := ctx.Value(RenderCacheContextKey).(*sync.Map)
-	if !ok {
-		return nil
-	}
-	return cache
-}
-
 // renderContextKey is the context key for storing the render context (globals).
 type renderContextKey struct{}
 
 // RenderContextContextKey is exported for use in engine_scriggo.go.
 var RenderContextContextKey = renderContextKey{}
+
+// getSharedContext retrieves the SharedContext from the template context.
+// Returns nil if not found or not properly configured.
+func getSharedContext(env native.Env) *SharedContext {
+	ctx := env.Context()
+	if ctx == nil {
+		return nil
+	}
+	renderCtx, ok := ctx.Value(RenderContextContextKey).(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	shared, ok := renderCtx["shared"].(*SharedContext)
+	if !ok {
+		return nil
+	}
+	return shared
+}
 
 // =============================================================================
 // Deduplication and filtering functions
@@ -591,7 +527,8 @@ var RenderContextContextKey = renderContextKey{}
 
 // scriggoFirstSeen checks if a composite key is being seen for the first time.
 // Returns true on first occurrence, false on subsequent calls with the same key.
-// Uses atomic LoadOrStore for thread-safe check-and-set during parallel template rendering.
+// Uses SharedContext.ComputeIfAbsent with the wasComputed return value for thread-safe
+// atomic check-and-set during parallel template rendering.
 //
 // Usage in Scriggo templates:
 //
@@ -605,9 +542,9 @@ func scriggoFirstSeen(env native.Env, parts ...interface{}) bool {
 		return true // No key parts = treat as always first
 	}
 
-	cache := getRenderCache(env)
-	if cache == nil {
-		return true // No cache = treat as first time
+	shared := getSharedContext(env)
+	if shared == nil {
+		return true // No shared context = treat as first time
 	}
 
 	// Build composite key using strings.Builder to avoid intermediate allocations.
@@ -622,12 +559,12 @@ func scriggoFirstSeen(env native.Env, parts ...interface{}) bool {
 		writeToBuilder(&b, part)
 	}
 
-	// LoadOrStore atomically loads or stores a value.
-	// Returns (actual value, loaded) where loaded is true if value was already present.
-	// This is thread-safe and prevents race conditions in parallel template execution.
-	// Use empty struct{} as value to minimize memory (0 bytes vs 1 byte for bool)
-	_, loaded := cache.LoadOrStore(b.String(), struct{}{})
-	return !loaded // First seen if NOT already loaded
+	// Use ComputeIfAbsent - wasComputed tells us if this is the first occurrence.
+	// The compute function just stores a marker value; what matters is wasComputed.
+	_, wasFirst := shared.ComputeIfAbsent(b.String(), func() interface{} {
+		return true
+	})
+	return wasFirst
 }
 
 // writeToBuilder writes a value to a strings.Builder, inlining common type conversions.

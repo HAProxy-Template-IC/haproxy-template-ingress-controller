@@ -505,6 +505,19 @@ func skipIfAcmeProvidersNotSupported(t *testing.T, env fixenv.Env) {
 	}
 }
 
+// skipIfConfigMetadataNotSupported skips the test if config model metadata is not supported.
+// Metadata fields on configuration models (ACL, Server, etc.) require DataPlane API v3.2+.
+// On v3.0/v3.1, the Metadata field is not present in the API schema, so comments are lost
+// during round-trip through the API, causing false positive updates in idempotency tests.
+func skipIfConfigMetadataNotSupported(t *testing.T, env fixenv.Env) {
+	t.Helper()
+	dataplaneClient := TestDataplaneClient(env)
+	if !dataplaneClient.Capabilities().SupportsConfigMetadata {
+		t.Skipf("Skipping test: config model metadata requires DataPlane API v3.2+ (detected version: %s)",
+			dataplaneClient.DetectedVersion())
+	}
+}
+
 // =============================================================================
 // Transaction Helper
 // =============================================================================

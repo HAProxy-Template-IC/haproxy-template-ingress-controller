@@ -316,11 +316,6 @@ haproxyConfig:
     {# Include global top-level snippets (e.g., userlist sections) #}
     {{ render "global-top" }}
 
-    {# Initialize global feature registry for conditional infrastructure #}
-    {# Libraries can register feature needs via features-* snippets #}
-    {# Features are initialized by libraries (e.g., ssl.yaml adds ssl_passthrough_backends) #}
-    {%- shared["globalFeatures"] = map[string]any{} -%}
-
     {# Phase 1: Feature Registration #}
     {# Initialize SSL features first (if SSL library is loaded) #}
     {# Uses render_glob since features-ssl-initialization is from optional ssl.yaml library #}

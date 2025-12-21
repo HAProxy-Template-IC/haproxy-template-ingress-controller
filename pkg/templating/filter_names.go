@@ -54,16 +54,6 @@ const (
 	// Useful when append() returns []any but you need sorted strings.
 	FuncSortStrings = "sort_strings"
 
-	// FuncHasCached checks if a key exists in the per-render cache.
-	// Enables the compute_once pattern for expensive operations.
-	FuncHasCached = "has_cached"
-
-	// FuncGetCached retrieves a value from the per-render cache.
-	FuncGetCached = "get_cached"
-
-	// FuncSetCached stores a value in the per-render cache.
-	FuncSetCached = "set_cached"
-
 	// String manipulation functions (Scriggo).
 
 	// FuncStringsContains checks if a string contains a substring.
@@ -158,9 +148,9 @@ const (
 
 	// Deduplication and filtering functions.
 
-	// FuncFirstSeen checks if a composite key is being seen for the first time in this render.
+	// FuncFirstSeen checks if a composite key is being seen for the first time.
 	// Returns true on first occurrence, false on subsequent calls with same key.
-	// Atomically combines has_cached check and set_cached in one operation.
+	// Thread-safe for parallel template rendering.
 	// Syntax: first_seen("prefix", key1, key2, ...) returns bool.
 	FuncFirstSeen = "first_seen"
 

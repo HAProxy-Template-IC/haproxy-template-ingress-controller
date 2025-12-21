@@ -493,9 +493,11 @@ func TestSSLCertificatesCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareSSLCertificates(ctx, dataplaneClient, desired)
 		require.NoError(t, err)
 
-		// Verify total operations match expected (either fingerprint-based or CREATE-first)
+		// Verify total operations match expected
+		// With fingerprints (v3.2+): 1 operation (only changed file)
+		// Without fingerprints: 2 operations (CREATE-first approach)
 		totalOps := len(diff.ToCreate) + len(diff.ToUpdate)
-		assert.Equal(t, 2, totalOps, "should have 2 total operations (create or update)")
+		assert.True(t, totalOps == 1 || totalOps == 2, "should have 1 (fingerprint-based) or 2 (CREATE-first) total operations, got %d", totalOps)
 		assert.Len(t, diff.ToDelete, 0, "should have 0 certificates to delete")
 	})
 
@@ -1151,4 +1153,172 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, crtlists, "new-list.txt", "crt-list should exist after sync")
 	})
+}
+
+// TestAuxiliaryFilesIdempotency tests that syncing the same content twice results in zero operations.
+// This is a strict test - after the first sync, the second comparison MUST return empty diffs.
+// This test specifically catches false positive change detection bugs.
+func TestAuxiliaryFilesIdempotency(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name string
+		test func(t *testing.T, ctx context.Context, env fixenv.Env)
+	}{
+		{
+			name: "ssl-certificates",
+			test: func(t *testing.T, ctx context.Context, env fixenv.Env) {
+				dataplaneClient := TestDataplaneClient(env)
+
+				// Clean up any existing certificates
+				certs, err := dataplaneClient.GetAllSSLCertificates(ctx)
+				require.NoError(t, err)
+				for _, cert := range certs {
+					_ = dataplaneClient.DeleteSSLCertificate(ctx, cert)
+				}
+
+				desired := []auxiliaryfiles.SSLCertificate{
+					{Path: "example.com.pem", Content: LoadTestFileContent(t, "ssl-certs/example.com.pem")},
+					{Path: "test.com.pem", Content: LoadTestFileContent(t, "ssl-certs/test.com.pem")},
+				}
+
+				// Phase 1: Sync files
+				diff1, err := auxiliaryfiles.CompareSSLCertificates(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+				_, err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff1)
+				require.NoError(t, err)
+
+				// Phase 2: Compare again with SAME content - MUST have zero operations
+				diff2, err := auxiliaryfiles.CompareSSLCertificates(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+
+				// STRICT ASSERTION: idempotent sync must have zero operations
+				assert.Empty(t, diff2.ToCreate, "idempotent sync should have 0 creates")
+				assert.Empty(t, diff2.ToUpdate, "idempotent sync should have 0 updates")
+				assert.Empty(t, diff2.ToDelete, "idempotent sync should have 0 deletes")
+			},
+		},
+		{
+			name: "map-files",
+			test: func(t *testing.T, ctx context.Context, env fixenv.Env) {
+				dataplaneClient := TestDataplaneClient(env)
+
+				// Clean up any existing map files
+				maps, err := dataplaneClient.GetAllMapFiles(ctx)
+				require.NoError(t, err)
+				for _, mapFile := range maps {
+					_ = dataplaneClient.DeleteMapFile(ctx, mapFile)
+				}
+
+				desired := []auxiliaryfiles.MapFile{
+					{Path: "domains.map", Content: LoadTestFileContent(t, "map-files/domains.map")},
+					{Path: "paths.map", Content: LoadTestFileContent(t, "map-files/paths.map")},
+				}
+
+				// Phase 1: Sync files
+				diff1, err := auxiliaryfiles.CompareMapFiles(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+				_, err = auxiliaryfiles.SyncMapFiles(ctx, dataplaneClient, diff1)
+				require.NoError(t, err)
+
+				// Phase 2: Compare again with SAME content - MUST have zero operations
+				diff2, err := auxiliaryfiles.CompareMapFiles(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+
+				// STRICT ASSERTION: idempotent sync must have zero operations
+				assert.Empty(t, diff2.ToCreate, "idempotent sync should have 0 creates")
+				assert.Empty(t, diff2.ToUpdate, "idempotent sync should have 0 updates")
+				assert.Empty(t, diff2.ToDelete, "idempotent sync should have 0 deletes")
+			},
+		},
+		{
+			name: "map-files-without-trailing-newline",
+			test: func(t *testing.T, ctx context.Context, env fixenv.Env) {
+				dataplaneClient := TestDataplaneClient(env)
+
+				// Clean up any existing map files
+				maps, err := dataplaneClient.GetAllMapFiles(ctx)
+				require.NoError(t, err)
+				for _, mapFile := range maps {
+					_ = dataplaneClient.DeleteMapFile(ctx, mapFile)
+				}
+
+				// Content WITHOUT trailing newline - this specifically tests
+				// the normalization fix for map file comparison
+				// (tests if API adds trailing newline to stored content)
+				contentWithoutNewline := "example.com backend1\ntest.com backend2"
+
+				desired := []auxiliaryfiles.MapFile{
+					{Path: "domains.map", Content: contentWithoutNewline},
+				}
+
+				// Phase 1: Sync files
+				diff1, err := auxiliaryfiles.CompareMapFiles(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+				_, err = auxiliaryfiles.SyncMapFiles(ctx, dataplaneClient, diff1)
+				require.NoError(t, err)
+
+				// Phase 2: Compare again with SAME content - MUST have zero operations
+				diff2, err := auxiliaryfiles.CompareMapFiles(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+
+				// Debug: if test fails, show the actual difference
+				if len(diff2.ToUpdate) > 0 {
+					for _, f := range diff2.ToUpdate {
+						t.Logf("False positive update for %s", f.Path)
+						apiContent, _ := dataplaneClient.GetMapFileContent(ctx, f.Path)
+						t.Logf("Desired (len=%d): %q", len(f.Content), f.Content)
+						t.Logf("API     (len=%d): %q", len(apiContent), apiContent)
+					}
+				}
+
+				// STRICT ASSERTION: idempotent sync must have zero operations
+				assert.Empty(t, diff2.ToCreate, "idempotent sync should have 0 creates")
+				assert.Empty(t, diff2.ToUpdate, "idempotent sync should have 0 updates")
+				assert.Empty(t, diff2.ToDelete, "idempotent sync should have 0 deletes")
+			},
+		},
+		{
+			name: "general-files",
+			test: func(t *testing.T, ctx context.Context, env fixenv.Env) {
+				dataplaneClient := TestDataplaneClient(env)
+
+				// Clean up any existing general files
+				files, err := dataplaneClient.GetAllGeneralFiles(ctx)
+				require.NoError(t, err)
+				for _, file := range files {
+					_ = dataplaneClient.DeleteGeneralFile(ctx, file)
+				}
+
+				desired := []auxiliaryfiles.GeneralFile{
+					{Filename: "400.http", Content: LoadTestFileContent(t, "error-files/400.http")},
+					{Filename: "403.http", Content: LoadTestFileContent(t, "error-files/403.http")},
+				}
+
+				// Phase 1: Sync files
+				diff1, err := auxiliaryfiles.CompareGeneralFiles(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+				_, err = auxiliaryfiles.SyncGeneralFiles(ctx, dataplaneClient, diff1)
+				require.NoError(t, err)
+
+				// Phase 2: Compare again with SAME content - MUST have zero operations
+				diff2, err := auxiliaryfiles.CompareGeneralFiles(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+
+				// STRICT ASSERTION: idempotent sync must have zero operations
+				assert.Empty(t, diff2.ToCreate, "idempotent sync should have 0 creates")
+				assert.Empty(t, diff2.ToUpdate, "idempotent sync should have 0 updates")
+				assert.Empty(t, diff2.ToDelete, "idempotent sync should have 0 deletes")
+			},
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := fixenv.New(t)
+			ctx := context.Background()
+			tt.test(t, ctx, env)
+		})
+	}
 }

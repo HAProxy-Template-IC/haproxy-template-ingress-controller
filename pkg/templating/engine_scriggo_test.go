@@ -524,22 +524,18 @@ func TestScriggoFileInfo(t *testing.T) {
 	assert.True(t, fi.ModTime().IsZero())
 }
 
-func TestScriggoEngine_SharedMapAssignment(t *testing.T) {
-	// Test that shared map can be assigned to and accessed
+func TestScriggoEngine_SharedContextAccess(t *testing.T) {
+	// Test that templates can use SharedContext.ComputeIfAbsent and Get methods
 	templates := map[string]string{
-		"test": `{%- shared["key"] = "value" -%}Result: {{ shared["key"] }}`,
+		"test": `{%- var _, _ = shared.ComputeIfAbsent("key", func() interface{} { return "value" }) -%}Result: {{ shared.Get("key") }}`,
 	}
 
 	entryPoints := []string{"test"}
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	context := map[string]interface{}{
-		"shared":           make(map[string]interface{}),
-		"templateSnippets": []string{"snippet1", "snippet2"},
-	}
-
-	output, err := engine.Render("test", context)
+	// SharedContext is auto-created by engine when not provided
+	output, err := engine.Render("test", nil)
 	require.NoError(t, err)
 	assert.Contains(t, output, "Result: value")
 }
@@ -701,46 +697,62 @@ func TestScriggoEngine_DotNotationMethodCallsOnResourceStore(t *testing.T) {
 	assert.Contains(t, output, "ingress-2")
 }
 
-func TestScriggoEngine_ExactProductionTemplate(t *testing.T) {
-	// Test with the EXACT template content from util-haproxytech-ssl-passthrough
-	// to reproduce the production failure
+func TestScriggoEngine_SharedContextComputeIfAbsentPattern(t *testing.T) {
+	// Test the ComputeIfAbsent pattern for caching complex data structures.
+	// This replaces the old has_cached/set_cached/shared["key"] patterns.
 	templates := map[string]string{
-		"util-haproxytech-ssl-passthrough": `{#-
-  HAProxyTech SSL Passthrough Analysis Cache
--#}
-{%- if !has_cached("haproxytech_ssl_passthrough") %}
-  {#- Initialize the cache structure -#}
-  {%- shared["haproxytech_ssl_passthrough"] = map[string]any{"backends": []any{}} %}
-  {%- for _, ingress := range resources.ingresses.List() %}
-    {%- var ssl_passthrough = ingress | dig("metadata", "annotations", "haproxy.org/ssl-passthrough") | fallback("") %}
-    {%- if ssl_passthrough == "true" %}
-      {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
-      {%- for _, rule := range rules %}
-        {%- var host = rule | dig("host") %}
-        {%- if host != nil %}
-          {%- if first_seen("haproxytech_ssl_passthrough_host", host) %}
-            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-            {%- var backend_name = "ssl-passthrough-" + ns + "-" + name %}
-            {%- var backend_info = map[string]any{
-              "name": backend_name,
-              "sni": host,
-              "namespace": ns,
-              "ingress": name,
-            } %}
-            {%- shared["haproxytech_ssl_passthrough"].(map[string]any)["backends"] = append(shared["haproxytech_ssl_passthrough"].(map[string]any)["backends"].([]any), backend_info) %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-    {%- end %}
-  {%- end %}
-  {%- set_cached("haproxytech_ssl_passthrough", true) %}
-{%- end %}`,
+		"test": `{#- Use ComputeIfAbsent to cache analysis once -#}
+{%- var analysis, wasComputed = shared.ComputeIfAbsent("ssl_analysis", func() interface{} {
+  var result = map[string]any{"backends": []any{}}
+  for _, ingress := range resources.ingresses.List() {
+    var ssl = ingress | dig("metadata", "annotations", "haproxy.org/ssl-passthrough") | fallback("")
+    if ssl == "true" {
+      var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring()
+      var name = ingress | dig("metadata", "name") | fallback("") | tostring()
+      if first_seen("ssl_host", ns, name) {
+        var backend = map[string]any{"name": "ssl-" + ns + "-" + name}
+        result["backends"] = append(result["backends"].([]any), backend)
+      }
+    }
+  }
+  return result
+}) %}
+{%- var analysisMap = analysis.(map[string]any) %}
+wasComputed={{ wasComputed }}
+count={{ len(analysisMap["backends"].([]any)) }}`,
 	}
 
-	entryPoints := []string{"util-haproxytech-ssl-passthrough"}
-	_, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	require.NoError(t, err, "Failed to compile exact production template")
+	entryPoints := []string{"test"}
+	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	require.NoError(t, err, "Failed to compile template with ComputeIfAbsent pattern")
+
+	// Create mock store with test data
+	ingressStore := &mockResourceStore{
+		listResult: []interface{}{
+			map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"namespace": "default",
+					"name":      "test-ingress",
+					"annotations": map[string]interface{}{
+						"haproxy.org/ssl-passthrough": "true",
+					},
+				},
+			},
+		},
+	}
+
+	resources := map[string]ResourceStore{
+		"ingresses": ingressStore,
+	}
+
+	context := map[string]interface{}{
+		"resources": resources,
+	}
+
+	output, err := engine.Render("test", context)
+	require.NoError(t, err, "Failed to render template")
+	assert.Contains(t, output, "wasComputed=true")
+	assert.Contains(t, output, "count=1")
 }
 
 func TestScriggoEngine_ImportMacroWithResourceStoreAccess(t *testing.T) {

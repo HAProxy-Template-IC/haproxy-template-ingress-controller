@@ -141,6 +141,7 @@ func TestBuildCapabilities(t *testing.T) {
 				SupportsQUIC:           true,
 				SupportsLogProfiles:    true, // v3.1+ has log_profiles
 				SupportsTraces:         true, // v3.1+ has traces
+				SupportsConfigMetadata: true, // v3.2+ has Metadata field on config models
 				SupportsRuntimeMaps:    true,
 				SupportsRuntimeServers: true,
 			},
@@ -187,6 +188,7 @@ func TestBuildCapabilities(t *testing.T) {
 				SupportsQUIC:                      true,
 				SupportsLogProfiles:               true, // v3.1+ has log_profiles
 				SupportsTraces:                    true, // v3.1+ has traces
+				SupportsConfigMetadata:            true, // v3.2+ has Metadata field on config models
 				SupportsRuntimeMaps:               true,
 				SupportsRuntimeServers:            true,
 				SupportsWAF:                       true,

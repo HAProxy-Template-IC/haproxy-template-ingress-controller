@@ -72,6 +72,9 @@ type Capabilities struct {
 	// Certificate automation capabilities
 	SupportsAcmeProviders bool // /v3/services/haproxy/configuration/acmes (v3.2+)
 
+	// Model metadata capabilities
+	SupportsConfigMetadata bool // Metadata field on config models like ACL, Server, etc. (v3.2+)
+
 	// Runtime capabilities
 	SupportsRuntimeMaps    bool // Runtime map operations (v3.0+)
 	SupportsRuntimeServers bool // Runtime server operations (v3.0+)
@@ -464,9 +467,10 @@ func buildCapabilities(_, minor int, isEnterprise bool) Capabilities {
 
 	// v3.2+ features (community)
 	if minor >= 2 {
-		caps.SupportsCrtList = true     // Only v3.2+ has /storage/ssl_crt_lists
-		caps.SupportsSslCaFiles = true  // Only v3.2+ has /runtime/ssl_ca_files
-		caps.SupportsSslCrlFiles = true // Only v3.2+ has /runtime/ssl_crl_files
+		caps.SupportsCrtList = true        // Only v3.2+ has /storage/ssl_crt_lists
+		caps.SupportsSslCaFiles = true     // Only v3.2+ has /runtime/ssl_ca_files
+		caps.SupportsSslCrlFiles = true    // Only v3.2+ has /runtime/ssl_crl_files
+		caps.SupportsConfigMetadata = true // Metadata field on ACL, Server, etc. models (v3.2+)
 	}
 
 	// Enterprise-only features (available in all enterprise versions)

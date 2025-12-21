@@ -42,14 +42,18 @@ templateSnippets:
           - features-100-haproxytech-ssl-passthrough
       -#}
 
-      {# SSL passthrough backends array - each entry: {name, sni} #}
-      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {# Initialize SSL data structures atomically - ComputeIfAbsent ensures this runs exactly once #}
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any {
+        return map[string]any{
+          "sslPassthroughBackends": []any{},
+          "tlsCertificates": []any{},
+        }
+      }) -%}
+      {# Ensure fields exist (in case globalFeatures was created elsewhere without these fields) #}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- if gf["sslPassthroughBackends"] == nil -%}
         {%- gf["sslPassthroughBackends"] = []any{} -%}
       {%- end -%}
-
-      {# TLS certificates array - each entry: {secret_namespace, secret_name, sni_patterns[]} #}
-      {# Resource libraries register TLS secrets here with their SNI patterns #}
       {%- if gf["tlsCertificates"] == nil -%}
         {%- gf["tlsCertificates"] = []any{} -%}
       {%- end -%}
@@ -74,7 +78,7 @@ templateSnippets:
         See: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/#5.1-crt-list
       -#}
 
-      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- var gf = shared.Get("globalFeatures") -%}
       {%- var crtlistLines = []any{} -%}
 
       {# Generate entries for each registered TLS certificate #}
@@ -131,7 +135,7 @@ templateSnippets:
           - features-050-ssl-initialization
           - features-100-*-ssl-passthrough snippets
       -#}
-      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- var gf = shared.Get("globalFeatures") -%}
       {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
       {%- if len(passthroughBackends) > 0 -%}
       {# TCP frontend extracts SNI and routes to passthrough backends or loopback #}
@@ -172,7 +176,7 @@ templateSnippets:
           - Forwards to unix@/etc/haproxy/ssl-frontend.sock with PROXY protocol
           - Enables HTTPS frontend to receive connections from TCP frontend
       -#}
-      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- var gf = shared.Get("globalFeatures") -%}
       {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
       {%- if len(passthroughBackends) > 0 -%}
       # ssl/backends-ssl-loopback
@@ -201,7 +205,7 @@ templateSnippets:
           - frontend-routing-logic (from base.yaml)
           - features-150-ssl-crtlist (certificate list)
       -#}
-      {%- var gf map[string]any = shared["globalFeatures"] -%}
+      {%- var gf = shared.Get("globalFeatures") -%}
       {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
       # ssl/frontends-https
 
