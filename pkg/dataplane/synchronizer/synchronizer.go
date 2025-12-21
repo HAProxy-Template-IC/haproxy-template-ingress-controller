@@ -207,7 +207,7 @@ func (s *Synchronizer) executeOperations(ctx context.Context, operations []compa
 
 			failed = append(failed, OperationError{
 				Operation: op,
-				Error:     execErr,
+				Cause:     execErr,
 			})
 
 			if !opts.ContinueOnError {

@@ -254,7 +254,7 @@ func TestComponent_Start_MissingCertificate(t *testing.T) {
 	err := component.Start(ctx)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "TLS certificate is empty")
+	assert.Contains(t, err.Error(), "tls certificate is empty")
 }
 
 func TestComponent_Start_MissingKey(t *testing.T) {
@@ -270,7 +270,7 @@ func TestComponent_Start_MissingKey(t *testing.T) {
 	err := component.Start(ctx)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "TLS private key is empty")
+	assert.Contains(t, err.Error(), "tls private key is empty")
 }
 
 // =============================================================================

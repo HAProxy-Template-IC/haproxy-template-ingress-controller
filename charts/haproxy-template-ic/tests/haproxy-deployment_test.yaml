@@ -153,3 +153,313 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].resources.limits.memory
           value: 512Mi
+
+  # Extra volumes and volume mounts
+  - it: should include extra volumes when specified
+    set:
+      haproxy.enabled: true
+      haproxy.extraVolumes:
+        - name: custom-config
+          configMap:
+            name: my-config
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: custom-config
+            configMap:
+              name: my-config
+
+  - it: should include extra volume mounts when specified
+    set:
+      haproxy.enabled: true
+      haproxy.extraVolumeMounts:
+        - name: custom-config
+          mountPath: /etc/custom
+          readOnly: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: custom-config
+            mountPath: /etc/custom
+            readOnly: true
+
+  # Init containers and sidecars
+  - it: should include init containers when specified
+    set:
+      haproxy.enabled: true
+      haproxy.initContainers:
+        - name: init-config
+          image: busybox:1.28
+          command: ["sh", "-c", "echo init"]
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers
+          content:
+            name: init-config
+            image: busybox:1.28
+            command: ["sh", "-c", "echo init"]
+
+  - it: should include sidecars when specified
+    set:
+      haproxy.enabled: true
+      haproxy.sidecars:
+        - name: log-collector
+          image: fluent/fluent-bit:latest
+    asserts:
+      - contains:
+          path: spec.template.spec.containers
+          content:
+            name: log-collector
+            image: fluent/fluent-bit:latest
+
+  # Lifecycle hooks
+  - it: should include lifecycle hooks when specified
+    set:
+      haproxy.enabled: true
+      haproxy.lifecycle:
+        preStop:
+          exec:
+            command: ["/bin/sh", "-c", "sleep 15"]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command
+          value: ["/bin/sh", "-c", "sleep 15"]
+
+  # Termination grace period
+  - it: should set default termination grace period
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 30
+
+  - it: should set custom termination grace period
+    set:
+      haproxy.enabled: true
+      haproxy.terminationGracePeriodSeconds: 60
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 60
+
+  # Update strategy
+  - it: should set default update strategy
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0
+
+  - it: should set custom update strategy
+    set:
+      haproxy.enabled: true
+      haproxy.updateStrategy:
+        type: Recreate
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+
+  # Min ready seconds and revision history
+  - it: should set default minReadySeconds
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.minReadySeconds
+          value: 0
+
+  - it: should set custom minReadySeconds
+    set:
+      haproxy.enabled: true
+      haproxy.minReadySeconds: 10
+    asserts:
+      - equal:
+          path: spec.minReadySeconds
+          value: 10
+
+  - it: should set default revisionHistoryLimit
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 10
+
+  - it: should set custom revisionHistoryLimit
+    set:
+      haproxy.enabled: true
+      haproxy.revisionHistoryLimit: 5
+    asserts:
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 5
+
+  # DNS configuration
+  - it: should set default dnsPolicy
+    set:
+      haproxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.dnsPolicy
+          value: ClusterFirst
+
+  - it: should set custom dnsPolicy
+    set:
+      haproxy.enabled: true
+      haproxy.dnsPolicy: None
+    asserts:
+      - equal:
+          path: spec.template.spec.dnsPolicy
+          value: None
+
+  - it: should set dnsConfig when specified
+    set:
+      haproxy.enabled: true
+      haproxy.dnsConfig:
+        nameservers:
+          - 8.8.8.8
+        options:
+          - name: ndots
+            value: "2"
+    asserts:
+      - contains:
+          path: spec.template.spec.dnsConfig.nameservers
+          content: 8.8.8.8
+      - contains:
+          path: spec.template.spec.dnsConfig.options
+          content:
+            name: ndots
+            value: "2"
+
+  # Host aliases
+  - it: should set hostAliases when specified
+    set:
+      haproxy.enabled: true
+      haproxy.hostAliases:
+        - ip: "127.0.0.1"
+          hostnames:
+            - "foo.local"
+    asserts:
+      - contains:
+          path: spec.template.spec.hostAliases
+          content:
+            ip: "127.0.0.1"
+            hostnames:
+              - "foo.local"
+
+  # Runtime class
+  - it: should not set runtimeClassName by default
+    set:
+      haproxy.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.runtimeClassName
+
+  - it: should set runtimeClassName when specified
+    set:
+      haproxy.enabled: true
+      haproxy.runtimeClassName: gvisor
+    asserts:
+      - equal:
+          path: spec.template.spec.runtimeClassName
+          value: gvisor
+
+  # Node selector
+  - it: should set nodeSelector when specified
+    set:
+      haproxy.enabled: true
+      haproxy.nodeSelector:
+        disktype: ssd
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector.disktype
+          value: ssd
+
+  # Tolerations
+  - it: should set tolerations when specified
+    set:
+      haproxy.enabled: true
+      haproxy.tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: node-role.kubernetes.io/master
+            effect: NoSchedule
+
+  # Affinity
+  - it: should set affinity when specified
+    set:
+      haproxy.enabled: true
+      haproxy.affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+    asserts:
+      - isNotNull:
+          path: spec.template.spec.affinity.nodeAffinity
+
+  # Common labels and annotations
+  - it: should include common labels
+    set:
+      haproxy.enabled: true
+      commonLabels:
+        environment: production
+        team: platform
+    asserts:
+      - equal:
+          path: metadata.labels.environment
+          value: production
+      - equal:
+          path: metadata.labels.team
+          value: platform
+
+  - it: should include common annotations
+    set:
+      haproxy.enabled: true
+      commonAnnotations:
+        config.kubernetes.io/managed-by: helm
+    asserts:
+      - equal:
+          path: metadata.annotations["config.kubernetes.io/managed-by"]
+          value: helm
+
+  # Topology spread constraints
+  - it: should set topologySpreadConstraints when specified
+    set:
+      haproxy.enabled: true
+      haproxy.topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: haproxy
+    asserts:
+      - contains:
+          path: spec.template.spec.topologySpreadConstraints
+          content:
+            maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app: haproxy

@@ -7,13 +7,13 @@ import (
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/k8s/indexer"
-	"haproxy-template-ic/pkg/k8s/types"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	"haproxy-template-ic/pkg/k8s/indexer"
+	"haproxy-template-ic/pkg/k8s/types"
 )
 
 // cacheEntry holds a cached resource with its expiration time.
@@ -115,7 +115,7 @@ func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
 		return nil, &StoreError{
 			Operation: "get",
 			Keys:      keys,
-			Err:       fmt.Errorf("at least one key required"),
+			Cause:     fmt.Errorf("at least one key required"),
 		}
 	}
 
@@ -123,7 +123,7 @@ func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
 		return nil, &StoreError{
 			Operation: "get",
 			Keys:      keys,
-			Err:       fmt.Errorf("too many keys: got %d, expected %d", len(keys), s.numKeys),
+			Cause:     fmt.Errorf("too many keys: got %d, expected %d", len(keys), s.numKeys),
 		}
 	}
 
@@ -174,7 +174,7 @@ func (s *CachedStore) List() ([]interface{}, error) {
 	s.mu.RUnlock()
 
 	// Warn about potential performance impact
-	s.logger.Warn("listing cached store causes individual API lookups which may be expensive",
+	s.logger.Warn("Listing cached store causes individual API lookups which may be expensive",
 		"gvr", s.gvr.String(),
 		"resource_count", len(allRefs),
 		"recommendation", "consider using store=full for frequently listed resources")
@@ -202,7 +202,7 @@ func (s *CachedStore) Add(resource interface{}, keys []string) error {
 		return &StoreError{
 			Operation: "add",
 			Keys:      keys,
-			Err:       fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
+			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
 		}
 	}
 
@@ -238,7 +238,7 @@ func (s *CachedStore) Update(resource interface{}, keys []string) error {
 		return &StoreError{
 			Operation: "update",
 			Keys:      keys,
-			Err:       fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
+			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
 		}
 	}
 
@@ -299,7 +299,7 @@ func (s *CachedStore) Delete(keys ...string) error {
 		return &StoreError{
 			Operation: "delete",
 			Keys:      keys,
-			Err:       fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
+			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
 		}
 	}
 
@@ -385,12 +385,12 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (interface{}, error) {
 		return nil, &StoreError{
 			Operation: "fetch",
 			Keys:      []string{ref.namespace, ref.name},
-			Err:       err,
+			Cause:     err,
 		}
 	}
 
 	// Log cache miss with timing info
-	s.logger.Debug("fetching uncached resource from API",
+	s.logger.Debug("Fetching uncached resource from API",
 		"gvr", s.gvr.String(),
 		"namespace", ref.namespace,
 		"name", ref.name,
@@ -402,7 +402,7 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (interface{}, error) {
 		return nil, &StoreError{
 			Operation: "process",
 			Keys:      []string{ref.namespace, ref.name},
-			Err:       err,
+			Cause:     err,
 		}
 	}
 

@@ -34,8 +34,9 @@ const (
 	// HAProxyValidatorComponentName is the unique identifier for this component.
 	HAProxyValidatorComponentName = "haproxy-validator"
 
-	// EventBufferSize is the size of the event subscription buffer.
-	EventBufferSize = 50
+	// HAProxyValidatorEventBufferSize is the size of the event subscription buffer.
+	// Size 50: Medium-volume component (validation events during reconciliation).
+	HAProxyValidatorEventBufferSize = 50
 )
 
 // HAProxyValidatorComponent validates rendered HAProxy configurations.
@@ -82,7 +83,7 @@ func NewHAProxyValidator(
 ) *HAProxyValidatorComponent {
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	eventChan := eventBus.Subscribe(HAProxyValidatorEventBufferSize)
 
 	return &HAProxyValidatorComponent{
 		eventBus:  eventBus,

@@ -185,16 +185,17 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 }
 
 // CreateSSLCertificate creates a new SSL certificate using multipart form-data.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // The name parameter can use dots (e.g., "example.com.pem"), which will be sanitized
 // automatically before calling the API.
 // Works with all HAProxy DataPlane API versions (v3.0+).
-func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, content string) (string, error) {
 	// Sanitize the name for the API (e.g., "example.com.pem" -> "example_com.pem")
 	sanitizedName := SanitizeSSLCertName(name)
 
 	body, contentType, err := buildMultipartFilePayload(sanitizedName, content)
 	if err != nil {
-		return fmt.Errorf("failed to build payload for SSL certificate '%s': %w", name, err)
+		return "", fmt.Errorf("failed to build payload for SSL certificate '%s': %w", name, err)
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
@@ -219,7 +220,7 @@ func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, conten
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create SSL certificate '%s': %w", name, err)
+		return "", fmt.Errorf("failed to create SSL certificate '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -227,10 +228,11 @@ func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, conten
 }
 
 // UpdateSSLCertificate updates an existing SSL certificate using text/plain content.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // The name parameter can use dots (e.g., "example.com.pem"), which will be sanitized
 // automatically before calling the API.
 // Works with all HAProxy DataPlane API versions (v3.0+).
-func (c *DataplaneClient) UpdateSSLCertificate(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) UpdateSSLCertificate(ctx context.Context, name, content string) (string, error) {
 	// Sanitize the name for the API (e.g., "example.com.pem" -> "example_com.pem")
 	sanitizedName := SanitizeSSLCertName(name)
 
@@ -259,7 +261,7 @@ func (c *DataplaneClient) UpdateSSLCertificate(ctx context.Context, name, conten
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to update SSL certificate '%s': %w", name, err)
+		return "", fmt.Errorf("failed to update SSL certificate '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

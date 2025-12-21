@@ -39,7 +39,8 @@ func TestNewCertLoaderComponent(t *testing.T) {
 
 	require.NotNil(t, component)
 	assert.Equal(t, bus, component.eventBus)
-	assert.Equal(t, logger, component.logger)
+	assert.NotNil(t, component.eventChan) // Event channel subscribed in constructor
+	assert.NotNil(t, component.logger)    // Logger is enhanced with component name
 	assert.NotNil(t, component.stopCh)
 }
 

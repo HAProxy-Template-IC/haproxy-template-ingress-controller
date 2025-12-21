@@ -72,7 +72,7 @@ type Elector struct {
 
 // New creates a new leader elector.
 //
-// The elector is not started until Run() is called.
+// The elector is not started until Start() is called.
 func New(
 	config *Config,
 	clientset kubernetes.Interface,
@@ -119,11 +119,11 @@ func New(
 	return e, nil
 }
 
-// Run starts the leader election loop.
+// Start starts the leader election loop.
 //
 // This function blocks until the context is cancelled or an error occurs.
 // It should be run in a goroutine.
-func (e *Elector) Run(ctx context.Context) error {
+func (e *Elector) Start(ctx context.Context) error {
 	e.logger.Debug("Creating leader election lock",
 		"lease_name", e.config.LeaseName,
 		"lease_namespace", e.config.LeaseNamespace,

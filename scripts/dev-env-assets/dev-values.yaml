@@ -1,5 +1,9 @@
 # Development values for haproxy-template-ic Helm chart
 
+# IngressClass name must match what the demo ingresses use
+ingressClass:
+  name: haproxy-template-ic
+
 # Use local development image
 image:
   repository: haproxy-template-ic

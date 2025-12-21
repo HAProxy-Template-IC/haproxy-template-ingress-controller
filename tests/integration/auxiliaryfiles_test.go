@@ -49,7 +49,7 @@ func TestGeneralFiles(t *testing.T) {
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "error-files/400.http")
-				err := client.CreateGeneralFile(ctx, "400.http", content)
+				_, err := client.CreateGeneralFile(ctx, "400.http", content)
 				require.NoError(t, err)
 			},
 			verify: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -89,7 +89,7 @@ func TestGeneralFiles(t *testing.T) {
 
 				for filename, testdataPath := range files {
 					content := LoadTestFileContent(t, testdataPath)
-					err := client.CreateGeneralFile(ctx, filename, content)
+					_, err := client.CreateGeneralFile(ctx, filename, content)
 					require.NoError(t, err)
 				}
 			},
@@ -123,13 +123,13 @@ func TestGeneralFiles(t *testing.T) {
 				// Create initial file
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "error-files/400.http")
-				err := client.CreateGeneralFile(ctx, "400.http", content)
+				_, err := client.CreateGeneralFile(ctx, "400.http", content)
 				require.NoError(t, err)
 			},
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
 				client := TestDataplaneClient(env)
 				newContent := LoadTestFileContent(t, "error-files/custom400.http")
-				err := client.UpdateGeneralFile(ctx, "400.http", newContent)
+				_, err := client.UpdateGeneralFile(ctx, "400.http", newContent)
 				require.NoError(t, err)
 			},
 			verify: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -153,7 +153,7 @@ func TestGeneralFiles(t *testing.T) {
 				// Create file to delete
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "error-files/400.http")
-				err := client.CreateGeneralFile(ctx, "400.http", content)
+				_, err := client.CreateGeneralFile(ctx, "400.http", content)
 				require.NoError(t, err)
 			},
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -183,7 +183,7 @@ func TestGeneralFiles(t *testing.T) {
 
 				for filename, testdataPath := range files {
 					content := LoadTestFileContent(t, testdataPath)
-					err := client.CreateGeneralFile(ctx, filename, content)
+					_, err := client.CreateGeneralFile(ctx, filename, content)
 					require.NoError(t, err)
 				}
 			},
@@ -209,24 +209,24 @@ func TestGeneralFiles(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range testCases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			env := fixenv.New(t)
 			ctx := context.Background()
 
 			// Setup
-			if tc.setup != nil {
-				tc.setup(t, ctx, env)
+			if tt.setup != nil {
+				tt.setup(t, ctx, env)
 			}
 
 			// Operation
-			tc.operation(t, ctx, env)
+			tt.operation(t, ctx, env)
 
 			// Verify
-			tc.verify(t, ctx, env)
+			tt.verify(t, ctx, env)
 		})
 	}
 }
@@ -254,7 +254,7 @@ func TestSSLCertificates(t *testing.T) {
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "ssl-certs/example.com.pem")
-				err := client.CreateSSLCertificate(ctx, "example.com.pem", content)
+				_, err := client.CreateSSLCertificate(ctx, "example.com.pem", content)
 				require.NoError(t, err)
 			},
 			verify: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -293,7 +293,7 @@ func TestSSLCertificates(t *testing.T) {
 
 				for certName, testdataPath := range certs {
 					content := LoadTestFileContent(t, testdataPath)
-					err := client.CreateSSLCertificate(ctx, certName, content)
+					_, err := client.CreateSSLCertificate(ctx, certName, content)
 					require.NoError(t, err)
 				}
 			},
@@ -322,13 +322,13 @@ func TestSSLCertificates(t *testing.T) {
 				// Create initial certificate
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "ssl-certs/example.com.pem")
-				err := client.CreateSSLCertificate(ctx, "example.com.pem", content)
+				_, err := client.CreateSSLCertificate(ctx, "example.com.pem", content)
 				require.NoError(t, err)
 			},
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
 				client := TestDataplaneClient(env)
 				newContent := LoadTestFileContent(t, "ssl-certs/updated.com.pem")
-				err := client.UpdateSSLCertificate(ctx, "example.com.pem", newContent)
+				_, err := client.UpdateSSLCertificate(ctx, "example.com.pem", newContent)
 				require.NoError(t, err)
 			},
 			verify: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -352,7 +352,7 @@ func TestSSLCertificates(t *testing.T) {
 				// Create certificate to delete
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "ssl-certs/example.com.pem")
-				err := client.CreateSSLCertificate(ctx, "example.com.pem", content)
+				_, err := client.CreateSSLCertificate(ctx, "example.com.pem", content)
 				require.NoError(t, err)
 			},
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -382,7 +382,7 @@ func TestSSLCertificates(t *testing.T) {
 
 				for certName, testdataPath := range certs {
 					content := LoadTestFileContent(t, testdataPath)
-					err := client.CreateSSLCertificate(ctx, certName, content)
+					_, err := client.CreateSSLCertificate(ctx, certName, content)
 					require.NoError(t, err)
 				}
 			},
@@ -408,24 +408,24 @@ func TestSSLCertificates(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range testCases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			env := fixenv.New(t)
 			ctx := context.Background()
 
 			// Setup
-			if tc.setup != nil {
-				tc.setup(t, ctx, env)
+			if tt.setup != nil {
+				tt.setup(t, ctx, env)
 			}
 
 			// Operation
-			tc.operation(t, ctx, env)
+			tt.operation(t, ctx, env)
 
 			// Verify
-			tc.verify(t, ctx, env)
+			tt.verify(t, ctx, env)
 		})
 	}
 }
@@ -469,7 +469,7 @@ func TestSSLCertificatesCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareSSLCertificates(ctx, dataplaneClient, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
+		_, err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
 		require.NoError(t, err)
 
 		// Verify certificates were created
@@ -509,7 +509,7 @@ func TestSSLCertificatesCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareSSLCertificates(ctx, dataplaneClient, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
+		_, err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
 		require.NoError(t, err)
 
 		// Verify certificates still exist
@@ -548,7 +548,7 @@ func TestSSLCertificatesCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareSSLCertificates(ctx, dataplaneClient, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
+		_, err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
 		require.NoError(t, err)
 
 		// Verify certificate was deleted
@@ -576,7 +576,7 @@ func TestSSLCertificatesCompareAndSync(t *testing.T) {
 		assert.LessOrEqual(t, totalOps, 1, "should have at most 1 operation")
 
 		// Verify syncing again doesn't fail (idempotent via CREATE→UPDATE fallback)
-		err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
+		_, err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
 		require.NoError(t, err, "sync should be idempotent")
 	})
 
@@ -604,7 +604,7 @@ func TestSSLCertificatesCompareAndSync(t *testing.T) {
 		assert.Len(t, diff.ToDelete, 0, "should have 0 certificates to delete")
 
 		// Verify sync succeeds (would fail with old bug when trying to UPDATE non-existent cert)
-		err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
+		_, err = auxiliaryfiles.SyncSSLCertificates(ctx, dataplaneClient, diff)
 		require.NoError(t, err, "sync should succeed when creating new certificate")
 
 		// Verify certificate was actually created
@@ -653,7 +653,7 @@ func TestGeneralFilesCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareGeneralFiles(ctx, client, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncGeneralFiles(ctx, client, diff)
+		_, err = auxiliaryfiles.SyncGeneralFiles(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify files were created
@@ -690,7 +690,7 @@ func TestGeneralFilesCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareGeneralFiles(ctx, client, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncGeneralFiles(ctx, client, diff)
+		_, err = auxiliaryfiles.SyncGeneralFiles(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify file content was updated
@@ -725,7 +725,7 @@ func TestGeneralFilesCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareGeneralFiles(ctx, client, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncGeneralFiles(ctx, client, diff)
+		_, err = auxiliaryfiles.SyncGeneralFiles(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify file was deleted
@@ -782,7 +782,7 @@ func TestCRTLists(t *testing.T) {
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "crt-lists/basic-crt-list.txt")
-				err := client.CreateCRTListFile(ctx, "crt-list.txt", content)
+				_, err := client.CreateCRTListFile(ctx, "crt-list.txt", content)
 				require.NoError(t, err)
 			},
 			verify: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -822,7 +822,7 @@ func TestCRTLists(t *testing.T) {
 
 				for filename, testdataPath := range files {
 					content := LoadTestFileContent(t, testdataPath)
-					err := client.CreateCRTListFile(ctx, filename, content)
+					_, err := client.CreateCRTListFile(ctx, filename, content)
 					require.NoError(t, err)
 				}
 			},
@@ -856,13 +856,13 @@ func TestCRTLists(t *testing.T) {
 				// Create initial file
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "crt-lists/basic-crt-list.txt")
-				err := client.CreateCRTListFile(ctx, "crt-list.txt", content)
+				_, err := client.CreateCRTListFile(ctx, "crt-list.txt", content)
 				require.NoError(t, err)
 			},
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
 				client := TestDataplaneClient(env)
 				newContent := LoadTestFileContent(t, "crt-lists/crt-list-updated.txt")
-				err := client.UpdateCRTListFile(ctx, "crt-list.txt", newContent)
+				_, err := client.UpdateCRTListFile(ctx, "crt-list.txt", newContent)
 				require.NoError(t, err)
 			},
 			verify: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -886,7 +886,7 @@ func TestCRTLists(t *testing.T) {
 				// Create file to delete
 				client := TestDataplaneClient(env)
 				content := LoadTestFileContent(t, "crt-lists/basic-crt-list.txt")
-				err := client.CreateCRTListFile(ctx, "crt-list.txt", content)
+				_, err := client.CreateCRTListFile(ctx, "crt-list.txt", content)
 				require.NoError(t, err)
 			},
 			operation: func(t *testing.T, ctx context.Context, env fixenv.Env) {
@@ -916,7 +916,7 @@ func TestCRTLists(t *testing.T) {
 
 				for filename, testdataPath := range files {
 					content := LoadTestFileContent(t, testdataPath)
-					err := client.CreateCRTListFile(ctx, filename, content)
+					_, err := client.CreateCRTListFile(ctx, filename, content)
 					require.NoError(t, err)
 				}
 			},
@@ -942,9 +942,9 @@ func TestCRTLists(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range testCases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			env := fixenv.New(t)
@@ -954,15 +954,15 @@ func TestCRTLists(t *testing.T) {
 			skipIfCRTListNotSupported(t, env)
 
 			// Setup
-			if tc.setup != nil {
-				tc.setup(t, ctx, env)
+			if tt.setup != nil {
+				tt.setup(t, ctx, env)
 			}
 
 			// Operation
-			tc.operation(t, ctx, env)
+			tt.operation(t, ctx, env)
 
 			// Verify
-			tc.verify(t, ctx, env)
+			tt.verify(t, ctx, env)
 		})
 	}
 }
@@ -1010,7 +1010,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareCRTLists(ctx, client, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify crt-lists were created
@@ -1049,7 +1049,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareCRTLists(ctx, client, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify crt-lists still exist
@@ -1090,7 +1090,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareCRTLists(ctx, client, desired)
 		require.NoError(t, err)
 
-		err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify crt-list was deleted
@@ -1116,7 +1116,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		assert.Len(t, diff.ToDelete, 0, "should have 0 crt-lists to delete")
 
 		// Verify syncing again doesn't fail (idempotent)
-		err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err, "sync should be idempotent")
 	})
 
@@ -1143,7 +1143,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		assert.Len(t, diff.ToDelete, 0, "should have 0 crt-lists to delete")
 
 		// Verify sync succeeds
-		err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err, "sync should succeed when creating new crt-list")
 
 		// Verify crt-list was actually created

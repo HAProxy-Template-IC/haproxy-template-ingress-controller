@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -15,7 +16,7 @@ import (
 
 // ErrEnterpriseRequired is returned when an enterprise-only operation is attempted
 // on a HAProxy Community edition instance.
-var ErrEnterpriseRequired = fmt.Errorf("this operation requires HAProxy Enterprise edition")
+var ErrEnterpriseRequired = errors.New("this operation requires HAProxy Enterprise edition")
 
 // CallFunc represents a versioned API call function.
 // Each field is a function that takes a version-specific client and returns a result of type T.

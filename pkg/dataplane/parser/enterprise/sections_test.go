@@ -22,9 +22,9 @@ func TestIsEESection(t *testing.T) {
 		{SectionBackend, false},
 	}
 
-	for _, tc := range tests {
-		t.Run(string(tc.section), func(t *testing.T) {
-			assert.Equal(t, tc.expected, IsEESection(tc.section))
+	for _, tt := range tests {
+		t.Run(string(tt.section), func(t *testing.T) {
+			assert.Equal(t, tt.expected, IsEESection(tt.section))
 		})
 	}
 }
@@ -43,9 +43,9 @@ func TestIsCESection(t *testing.T) {
 		{SectionWAFGlobal, false},
 	}
 
-	for _, tc := range tests {
-		t.Run(string(tc.section), func(t *testing.T) {
-			assert.Equal(t, tc.expected, IsCESection(tc.section))
+	for _, tt := range tests {
+		t.Run(string(tt.section), func(t *testing.T) {
+			assert.Equal(t, tt.expected, IsCESection(tt.section))
 		})
 	}
 }
@@ -79,9 +79,9 @@ func TestIsSingletonSection(t *testing.T) {
 		{SectionWAFProfile, false},
 	}
 
-	for _, tc := range tests {
-		t.Run(string(tc.section), func(t *testing.T) {
-			assert.Equal(t, tc.expected, IsSingletonSection(tc.section))
+	for _, tt := range tests {
+		t.Run(string(tt.section), func(t *testing.T) {
+			assert.Equal(t, tt.expected, IsSingletonSection(tt.section))
 		})
 	}
 }
@@ -101,9 +101,9 @@ func TestIsNamedSection(t *testing.T) {
 		{SectionComments, false}, // special case
 	}
 
-	for _, tc := range tests {
-		t.Run(string(tc.section), func(t *testing.T) {
-			assert.Equal(t, tc.expected, IsNamedSection(tc.section))
+	for _, tt := range tests {
+		t.Run(string(tt.section), func(t *testing.T) {
+			assert.Equal(t, tt.expected, IsNamedSection(tt.section))
 		})
 	}
 }

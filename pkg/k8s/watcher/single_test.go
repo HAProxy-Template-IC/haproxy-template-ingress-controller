@@ -823,8 +823,8 @@ func TestSingleWatcher_LastEventTimeUpdatesOnAllEventTypes(t *testing.T) {
 	// Mark as synced
 	w.synced.Store(true)
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
 			// Reset timestamp
 			w.lastEventTime.Store(0)
 
@@ -834,11 +834,11 @@ func TestSingleWatcher_LastEventTimeUpdatesOnAllEventTypes(t *testing.T) {
 			}
 
 			// Trigger event
-			tc.handler()
+			tt.handler()
 
 			// Verify non-zero after event
 			if w.LastEventTime().IsZero() {
-				t.Errorf("expected LastEventTime() to be non-zero after %s event", tc.name)
+				t.Errorf("expected LastEventTime() to be non-zero after %s event", tt.name)
 			}
 		})
 	}

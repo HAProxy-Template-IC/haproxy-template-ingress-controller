@@ -206,7 +206,7 @@ func TestCreateCRTListFile_Success(t *testing.T) {
 
 	client := newTestClient(t, server)
 
-	err := client.CreateCRTListFile(context.Background(), "new.com.crtlist", "/etc/haproxy/ssl/cert.pem\n")
+	_, err := client.CreateCRTListFile(context.Background(), "new.com.crtlist", "/etc/haproxy/ssl/cert.pem\n")
 	require.NoError(t, err)
 }
 
@@ -226,7 +226,7 @@ func TestCreateCRTListFile_AlreadyExists(t *testing.T) {
 
 	client := newTestClient(t, server)
 
-	err := client.CreateCRTListFile(context.Background(), "existing.com.crtlist", "content")
+	_, err := client.CreateCRTListFile(context.Background(), "existing.com.crtlist", "content")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 }
@@ -240,7 +240,7 @@ func TestCreateCRTListFile_UnsupportedVersion(t *testing.T) {
 
 	client := newTestClient(t, server)
 
-	err := client.CreateCRTListFile(context.Background(), "new.com.crtlist", "content")
+	_, err := client.CreateCRTListFile(context.Background(), "new.com.crtlist", "content")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "v3.2+")
 }
@@ -267,7 +267,7 @@ func TestUpdateCRTListFile_Success(t *testing.T) {
 
 	client := newTestClient(t, server)
 
-	err := client.UpdateCRTListFile(context.Background(), "example.com.crtlist", "updated content\n")
+	_, err := client.UpdateCRTListFile(context.Background(), "example.com.crtlist", "updated content\n")
 	require.NoError(t, err)
 }
 
@@ -287,7 +287,7 @@ func TestUpdateCRTListFile_NotFound(t *testing.T) {
 
 	client := newTestClient(t, server)
 
-	err := client.UpdateCRTListFile(context.Background(), "missing.com.crtlist", "content")
+	_, err := client.UpdateCRTListFile(context.Background(), "missing.com.crtlist", "content")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }

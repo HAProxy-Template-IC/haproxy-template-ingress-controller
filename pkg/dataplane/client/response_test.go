@@ -35,10 +35,10 @@ func TestCheckResponse_Success(t *testing.T) {
 		{"204 No Content", http.StatusNoContent},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			resp := &http.Response{
-				StatusCode: tc.statusCode,
+				StatusCode: tt.statusCode,
 				Body:       io.NopCloser(strings.NewReader("")),
 			}
 
@@ -87,16 +87,16 @@ func TestCheckResponse_ClientError(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			resp := &http.Response{
-				StatusCode: tc.statusCode,
-				Body:       io.NopCloser(strings.NewReader(tc.body)),
+				StatusCode: tt.statusCode,
+				Body:       io.NopCloser(strings.NewReader(tt.body)),
 			}
 
 			err := CheckResponse(resp, "create backend")
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.wantContains)
+			assert.Contains(t, err.Error(), tt.wantContains)
 		})
 	}
 }
@@ -128,16 +128,16 @@ func TestCheckResponse_ServerError(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			resp := &http.Response{
-				StatusCode: tc.statusCode,
-				Body:       io.NopCloser(strings.NewReader(tc.body)),
+				StatusCode: tt.statusCode,
+				Body:       io.NopCloser(strings.NewReader(tt.body)),
 			}
 
 			err := CheckResponse(resp, "sync config")
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.wantContains)
+			assert.Contains(t, err.Error(), tt.wantContains)
 		})
 	}
 }

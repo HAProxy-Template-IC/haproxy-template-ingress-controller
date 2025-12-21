@@ -175,10 +175,10 @@ func TestElector_GetLeader_InitialState(t *testing.T) {
 }
 
 // =============================================================================
-// Run() Tests with Fake Clientset
+// Start() Tests with Fake Clientset
 // =============================================================================
 
-func TestElector_Run_BecomesLeader(t *testing.T) {
+func TestElector_Start_BecomesLeader(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping leader election test in short mode")
 	}
@@ -215,10 +215,10 @@ func TestElector_Run_BecomesLeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Run elector in goroutine
+	// Start elector in goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- elector.Run(ctx)
+		errChan <- elector.Start(ctx)
 	}()
 
 	// Wait for leader election to complete
@@ -243,7 +243,7 @@ func TestElector_Run_BecomesLeader(t *testing.T) {
 	}
 }
 
-func TestElector_Run_ContextCancellation(t *testing.T) {
+func TestElector_Start_ContextCancellation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping leader election test in short mode")
 	}
@@ -269,7 +269,7 @@ func TestElector_Run_ContextCancellation(t *testing.T) {
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- elector.Run(ctx)
+		errChan <- elector.Start(ctx)
 	}()
 
 	// Give it time to start
@@ -287,7 +287,7 @@ func TestElector_Run_ContextCancellation(t *testing.T) {
 	}
 }
 
-func TestElector_Run_OnStoppedLeadingCalled(t *testing.T) {
+func TestElector_Start_OnStoppedLeadingCalled(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping leader election test in short mode")
 	}
@@ -323,7 +323,7 @@ func TestElector_Run_OnStoppedLeadingCalled(t *testing.T) {
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- elector.Run(ctx)
+		errChan <- elector.Start(ctx)
 	}()
 
 	// Wait to become leader
@@ -391,10 +391,10 @@ func TestElector_Callbacks_NilCallbacksHandledGracefully(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 
-	// Run should not panic with nil callbacks
+	// Start should not panic with nil callbacks
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- elector.Run(ctx)
+		errChan <- elector.Start(ctx)
 	}()
 
 	// Wait for leader election

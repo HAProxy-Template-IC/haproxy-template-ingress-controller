@@ -95,7 +95,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.
 		eventBus:         eventBus,
 		eventChan:        eventChan,
 		store:            httpstore.New(logger, evictionMaxAge),
-		logger:           logger.With("component", "httpstore-adapter"),
+		logger:           logger.With("component", ComponentName),
 		refreshers:       make(map[string]*time.Timer),
 		evictionInterval: evictionMaxAge, // Run eviction at same cadence as maxAge
 	}

@@ -6,6 +6,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // -----------------------------------------------------------------------------
@@ -60,20 +63,16 @@ func TestEventBus_PublishSubscribe(t *testing.T) {
 	event := testEvent{message: "hello"}
 	sent := bus.Publish(event)
 
-	if sent != 1 {
-		t.Errorf("expected 1 subscriber to receive event, got %d", sent)
-	}
+	assert.Equal(t, 1, sent, "expected 1 subscriber to receive event")
 
 	// Receive event
 	select {
 	case received := <-sub:
-		if te, ok := received.(testEvent); !ok {
-			t.Errorf("expected testEvent, got %T", received)
-		} else if te.message != "hello" {
-			t.Errorf("expected message 'hello', got '%s'", te.message)
-		}
+		te, ok := received.(testEvent)
+		require.True(t, ok, "expected testEvent, got %T", received)
+		assert.Equal(t, "hello", te.message)
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout waiting for event")
+		require.Fail(t, "timeout waiting for event")
 	}
 }
 
@@ -94,21 +93,17 @@ func TestEventBus_MultipleSubscribers(t *testing.T) {
 	event := testEvent{message: "broadcast"}
 	sent := bus.Publish(event)
 
-	if sent != 5 {
-		t.Errorf("expected 5 subscribers to receive event, got %d", sent)
-	}
+	assert.Equal(t, 5, sent, "expected 5 subscribers to receive event")
 
 	// Verify all subscribers received the event
 	for i, sub := range subs {
 		select {
 		case received := <-sub:
-			if te, ok := received.(testEvent); !ok {
-				t.Errorf("subscriber %d: expected testEvent, got %T", i, received)
-			} else if te.message != "broadcast" {
-				t.Errorf("subscriber %d: expected message 'broadcast', got '%s'", i, te.message)
-			}
+			te, ok := received.(testEvent)
+			require.True(t, ok, "subscriber %d: expected testEvent, got %T", i, received)
+			assert.Equal(t, "broadcast", te.message, "subscriber %d: unexpected message", i)
 		case <-time.After(100 * time.Millisecond):
-			t.Fatalf("subscriber %d: timeout waiting for event", i)
+			require.Fail(t, "subscriber %d: timeout waiting for event", i)
 		}
 	}
 }
@@ -130,9 +125,7 @@ func TestEventBus_SlowSubscriberDropsEvents(t *testing.T) {
 	// This event should be dropped (buffer full)
 	sent := bus.Publish(testEvent{message: "3"})
 
-	if sent != 0 {
-		t.Errorf("expected event to be dropped (sent=0), got sent=%d", sent)
-	}
+	assert.Equal(t, 0, sent, "expected event to be dropped (sent=0)")
 
 	// Drain first two events
 	<-sub
@@ -141,7 +134,7 @@ func TestEventBus_SlowSubscriberDropsEvents(t *testing.T) {
 	// Verify third event was dropped
 	select {
 	case <-sub:
-		t.Error("expected no more events, but received one")
+		assert.Fail(t, "expected no more events, but received one")
 	case <-time.After(10 * time.Millisecond):
 		// Expected: no event received
 	}
@@ -178,7 +171,7 @@ func TestEventBus_ConcurrentPublish(t *testing.T) {
 				return // Success
 			}
 		case <-timeout:
-			t.Fatalf("expected 100 events, received %d", received)
+			require.Fail(t, "expected 100 events", "received %d", received)
 		}
 	}
 }
@@ -211,17 +204,9 @@ func TestEventBus_RequestAllResponses(t *testing.T) {
 		ExpectedResponders: responders,
 	})
 
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-
-	if len(result.Responses) != 3 {
-		t.Errorf("expected 3 responses, got %d", len(result.Responses))
-	}
-
-	if len(result.Errors) != 0 {
-		t.Errorf("expected no errors, got: %v", result.Errors)
-	}
+	require.NoError(t, err, "request failed")
+	assert.Len(t, result.Responses, 3, "expected 3 responses")
+	assert.Empty(t, result.Errors, "expected no errors")
 
 	// Verify all responders replied
 	receivedFrom := make(map[string]bool)
@@ -230,9 +215,7 @@ func TestEventBus_RequestAllResponses(t *testing.T) {
 	}
 
 	for _, name := range responders {
-		if !receivedFrom[name] {
-			t.Errorf("missing response from %s", name)
-		}
+		assert.True(t, receivedFrom[name], "missing response from %s", name)
 	}
 }
 
@@ -255,18 +238,11 @@ func TestEventBus_RequestTimeout(t *testing.T) {
 		ExpectedResponders: []string{"validator-1", "validator-2", "validator-3"},
 	})
 
-	if err == nil {
-		t.Fatal("expected timeout error, got nil")
-	}
+	require.Error(t, err, "expected timeout error")
 
 	// Should have 1 response and 2 errors
-	if len(result.Responses) != 1 {
-		t.Errorf("expected 1 response, got %d", len(result.Responses))
-	}
-
-	if len(result.Errors) != 2 {
-		t.Errorf("expected 2 errors, got %d: %v", len(result.Errors), result.Errors)
-	}
+	assert.Len(t, result.Responses, 1, "expected 1 response")
+	assert.Len(t, result.Errors, 2, "expected 2 errors")
 }
 
 func TestEventBus_RequestMinResponses(t *testing.T) {
@@ -290,18 +266,11 @@ func TestEventBus_RequestMinResponses(t *testing.T) {
 		MinResponses:       2, // Only need 2 responses
 	})
 
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-
-	if len(result.Responses) != 2 {
-		t.Errorf("expected 2 responses, got %d", len(result.Responses))
-	}
+	require.NoError(t, err, "request failed")
+	assert.Len(t, result.Responses, 2, "expected 2 responses")
 
 	// Should have error for missing validator-3
-	if len(result.Errors) != 1 {
-		t.Errorf("expected 1 error, got %d: %v", len(result.Errors), result.Errors)
-	}
+	assert.Len(t, result.Errors, 1, "expected 1 error")
 }
 
 func TestEventBus_RequestConcurrent(t *testing.T) {
@@ -397,14 +366,10 @@ func TestEventBus_RequestContextCancellation(t *testing.T) {
 	// Wait for request to complete
 	select {
 	case <-done:
-		if err == nil {
-			t.Fatal("expected context cancellation error, got nil")
-		}
-		if err != context.Canceled {
-			t.Errorf("expected context.Canceled error, got: %v", err)
-		}
+		require.Error(t, err, "expected context cancellation error")
+		assert.ErrorIs(t, err, context.Canceled, "expected context.Canceled error")
 	case <-time.After(1 * time.Second):
-		t.Fatal("request did not complete after context cancellation")
+		require.Fail(t, "request did not complete after context cancellation")
 	}
 }
 
@@ -419,9 +384,7 @@ func TestEventBus_RequestEmptyResponders(t *testing.T) {
 		ExpectedResponders: []string{}, // Empty!
 	})
 
-	if err == nil {
-		t.Fatal("expected error for empty ExpectedResponders, got nil")
-	}
+	require.Error(t, err, "expected error for empty ExpectedResponders")
 }
 
 func TestEventBus_RequestInvalidMinResponses(t *testing.T) {
@@ -436,9 +399,7 @@ func TestEventBus_RequestInvalidMinResponses(t *testing.T) {
 		MinResponses:       5, // More than expected!
 	})
 
-	if err == nil {
-		t.Fatal("expected error for MinResponses > ExpectedResponders, got nil")
-	}
+	require.Error(t, err, "expected error for MinResponses > ExpectedResponders")
 }
 
 // -----------------------------------------------------------------------------
@@ -501,7 +462,7 @@ func TestEventBus_Start_BuffersEventsBeforeStart(t *testing.T) {
 	// No events should be received yet
 	select {
 	case <-sub:
-		t.Error("expected no events before Start(), but received one")
+		assert.Fail(t, "expected no events before Start(), but received one")
 	case <-time.After(50 * time.Millisecond):
 		// Expected: no events
 	}
@@ -516,20 +477,16 @@ func TestEventBus_Start_BuffersEventsBeforeStart(t *testing.T) {
 		select {
 		case evt := <-sub:
 			te, ok := evt.(testEvent)
-			if !ok {
-				t.Errorf("expected testEvent, got %T", evt)
-			}
+			require.True(t, ok, "expected testEvent, got %T", evt)
 			receivedCount++
 			t.Logf("Received: %s", te.message)
 		case <-timeout:
-			t.Fatalf("expected 3 events, received %d", receivedCount)
+			require.Fail(t, "expected 3 events", "received %d", receivedCount)
 		}
 	}
 
 	// Verify we got exactly 3 events
-	if receivedCount != 3 {
-		t.Errorf("expected 3 events, got %d", receivedCount)
-	}
+	assert.Equal(t, 3, receivedCount)
 }
 
 func TestEventBus_Start_EventsPublishedAfterStart(t *testing.T) {
@@ -544,22 +501,16 @@ func TestEventBus_Start_EventsPublishedAfterStart(t *testing.T) {
 
 	// Publish events AFTER Start()
 	sent := bus.Publish(testEvent{message: "after-start-1"})
-	if sent != 1 {
-		t.Errorf("expected 1 subscriber to receive event, got %d", sent)
-	}
+	assert.Equal(t, 1, sent, "expected 1 subscriber to receive event")
 
 	// Events should be delivered immediately
 	select {
 	case evt := <-sub:
 		te, ok := evt.(testEvent)
-		if !ok {
-			t.Errorf("expected testEvent, got %T", evt)
-		}
-		if te.message != "after-start-1" {
-			t.Errorf("expected 'after-start-1', got '%s'", te.message)
-		}
+		require.True(t, ok, "expected testEvent, got %T", evt)
+		assert.Equal(t, "after-start-1", te.message)
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout waiting for event")
+		require.Fail(t, "timeout waiting for event")
 	}
 }
 
@@ -583,15 +534,11 @@ func TestEventBus_Start_PreservesEventOrder(t *testing.T) {
 		select {
 		case evt := <-sub:
 			te, ok := evt.(testEvent)
-			if !ok {
-				t.Errorf("expected testEvent, got %T", evt)
-			}
+			require.True(t, ok, "expected testEvent, got %T", evt)
 			expected := fmt.Sprintf("event-%d", i)
-			if te.message != expected {
-				t.Errorf("expected '%s', got '%s'", expected, te.message)
-			}
+			assert.Equal(t, expected, te.message)
 		case <-time.After(200 * time.Millisecond):
-			t.Fatalf("timeout waiting for event %d", i)
+			require.Fail(t, "timeout waiting for event", "event %d", i)
 		}
 	}
 }
@@ -620,9 +567,7 @@ func TestEventBus_Start_Idempotent(t *testing.T) {
 		case <-sub:
 			receivedCount++
 		case <-timeout:
-			if receivedCount != 1 {
-				t.Errorf("expected 1 event (idempotent Start), got %d", receivedCount)
-			}
+			assert.Equal(t, 1, receivedCount, "expected 1 event (idempotent Start)")
 			return
 		}
 	}
@@ -654,7 +599,7 @@ func TestEventBus_Start_MultipleSubscribers(t *testing.T) {
 			case <-sub:
 				receivedCount++
 			case <-timeout:
-				t.Fatalf("subscriber %d: expected 2 events, received %d", i, receivedCount)
+				require.Fail(t, "subscriber timeout", "subscriber %d: expected 2 events, received %d", i, receivedCount)
 			}
 		}
 	}
@@ -699,12 +644,8 @@ func TestEventBus_Start_ConcurrentPublish(t *testing.T) {
 		case <-timeout:
 			// Should have received at least the 5 buffered events
 			// May have received up to 10 (5 buffered + 5 concurrent)
-			if receivedCount < 5 {
-				t.Errorf("expected at least 5 events, got %d", receivedCount)
-			}
-			if receivedCount > 10 {
-				t.Errorf("expected at most 10 events, got %d", receivedCount)
-			}
+			assert.GreaterOrEqual(t, receivedCount, 5, "expected at least 5 events")
+			assert.LessOrEqual(t, receivedCount, 10, "expected at most 10 events")
 			return
 		}
 	}
@@ -722,22 +663,16 @@ func TestEventBus_Start_EmptyBuffer(t *testing.T) {
 
 	// Publish after Start
 	sent := bus.Publish(testEvent{message: "after-start"})
-	if sent != 1 {
-		t.Errorf("expected 1 subscriber, got %d", sent)
-	}
+	assert.Equal(t, 1, sent, "expected 1 subscriber")
 
 	// Should receive the event
 	select {
 	case evt := <-sub:
 		te, ok := evt.(testEvent)
-		if !ok {
-			t.Errorf("expected testEvent, got %T", evt)
-		}
-		if te.message != "after-start" {
-			t.Errorf("expected 'after-start', got '%s'", te.message)
-		}
+		require.True(t, ok, "expected testEvent, got %T", evt)
+		assert.Equal(t, "after-start", te.message)
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout waiting for event")
+		require.Fail(t, "timeout waiting for event")
 	}
 }
 
@@ -750,18 +685,14 @@ func TestEventBus_Start_PublishReturnsZeroBeforeStart(t *testing.T) {
 
 	// Publish before Start - should return 0 (buffered)
 	sent := bus.Publish(testEvent{message: "buffered"})
-	if sent != 0 {
-		t.Errorf("expected 0 (buffered), got %d", sent)
-	}
+	assert.Equal(t, 0, sent, "expected 0 (buffered)")
 
 	// Start
 	bus.Start()
 
 	// Publish after Start - should return 1 (sent to subscriber)
 	sent = bus.Publish(testEvent{message: "sent"})
-	if sent != 1 {
-		t.Errorf("expected 1 (sent), got %d", sent)
-	}
+	assert.Equal(t, 1, sent, "expected 1 (sent)")
 }
 
 // -----------------------------------------------------------------------------
@@ -864,14 +795,11 @@ func TestEventBus_SubscribeTypes_FiltersCorrectly(t *testing.T) {
 	for {
 		select {
 		case evt := <-typedSub:
-			if _, ok := evt.(testEvent); !ok {
-				t.Errorf("typed subscription received wrong type: %T", evt)
-			}
+			_, ok := evt.(testEvent)
+			assert.True(t, ok, "typed subscription received wrong type: %T", evt)
 			receivedTyped++
 		case <-timeout:
-			if receivedTyped != 2 {
-				t.Errorf("expected 2 testEvent events, got %d", receivedTyped)
-			}
+			assert.Equal(t, 2, receivedTyped, "expected 2 testEvent events")
 			goto checkUniversal
 		}
 	}
@@ -885,9 +813,7 @@ checkUniversal:
 		case <-universalSub:
 			receivedUniversal++
 		case <-timeout:
-			if receivedUniversal != 3 {
-				t.Errorf("expected 3 total events in universal sub, got %d", receivedUniversal)
-			}
+			assert.Equal(t, 3, receivedUniversal, "expected 3 total events in universal sub")
 			return
 		}
 	}
@@ -917,7 +843,7 @@ func TestEventBus_SubscribeTypes_MultipleTypes(t *testing.T) {
 		case <-typedSub:
 			receivedCount++
 		case <-timeout:
-			t.Fatalf("expected 4 events, got %d", receivedCount)
+			require.Fail(t, "timeout waiting for events", "expected 4 events, got %d", receivedCount)
 		}
 	}
 }
@@ -943,14 +869,11 @@ func TestEventBus_SubscribeTypes_BufferedBeforeStart(t *testing.T) {
 	for {
 		select {
 		case evt := <-typedSub:
-			if _, ok := evt.(testEvent); !ok {
-				t.Errorf("received non-testEvent type: %T", evt)
-			}
+			_, ok := evt.(testEvent)
+			assert.True(t, ok, "received non-testEvent type: %T", evt)
 			receivedCount++
 		case <-timeout:
-			if receivedCount != 2 {
-				t.Errorf("expected 2 buffered testEvent events, got %d", receivedCount)
-			}
+			assert.Equal(t, 2, receivedCount, "expected 2 buffered testEvent events")
 			return
 		}
 	}
@@ -980,14 +903,10 @@ func TestEventBus_Subscribe_Generic(t *testing.T) {
 		select {
 		case evt := <-typedChan:
 			// evt is already testEvent type (no assertion needed)
-			if evt.message == "" {
-				t.Error("received event with empty message")
-			}
+			assert.NotEmpty(t, evt.message, "received event with empty message")
 			receivedCount++
 		case <-timeout:
-			if receivedCount != 2 {
-				t.Errorf("expected 2 typed events, got %d", receivedCount)
-			}
+			assert.Equal(t, 2, receivedCount, "expected 2 typed events")
 			return
 		}
 	}
@@ -1012,7 +931,7 @@ func TestEventBus_Subscribe_Generic_ContextCancellation(t *testing.T) {
 	case <-typedChan:
 		// Good
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout waiting for first event")
+		require.Fail(t, "timeout waiting for first event")
 	}
 
 	// Cancel context
@@ -1061,12 +980,10 @@ func TestEventBus_SubscribeMultiple(t *testing.T) {
 			case testEvent, testRequest:
 				receivedCount++
 			default:
-				t.Errorf("received unexpected event type: %T", evt)
+				assert.Fail(t, "received unexpected event type", "%T", evt)
 			}
 		case <-timeout:
-			if receivedCount != 3 {
-				t.Errorf("expected 3 events, got %d", receivedCount)
-			}
+			assert.Equal(t, 3, receivedCount, "expected 3 events")
 			return
 		}
 	}
@@ -1100,7 +1017,7 @@ func TestEventBus_SubscribeTypes_SlowSubscriberDropsEvents(t *testing.T) {
 	// Verify third event was dropped for typed subscriber
 	select {
 	case <-typedSub:
-		t.Error("expected no more events in typed subscriber, but received one")
+		assert.Fail(t, "expected no more events in typed subscriber, but received one")
 	case <-time.After(50 * time.Millisecond):
 		// Expected: no event received
 	}
@@ -1171,7 +1088,7 @@ func TestEventBus_Unsubscribe(t *testing.T) {
 	case <-sub:
 		// Good - received event
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout waiting for event")
+		require.Fail(t, "timeout waiting for event")
 	}
 
 	// Unsubscribe
@@ -1181,9 +1098,7 @@ func TestEventBus_Unsubscribe(t *testing.T) {
 	sent := bus.Publish(testEvent{message: "after-unsub"})
 
 	// Should report 0 subscribers received (since we unsubscribed)
-	if sent != 0 {
-		t.Errorf("expected 0 subscribers after Unsubscribe, got %d", sent)
-	}
+	assert.Equal(t, 0, sent, "expected 0 subscribers after Unsubscribe")
 }
 
 func TestEventBus_Unsubscribe_ReducesSubscriberCount(t *testing.T) {
@@ -1200,9 +1115,7 @@ func TestEventBus_Unsubscribe_ReducesSubscriberCount(t *testing.T) {
 
 	// Verify all 3 receive events
 	sent := bus.Publish(testEvent{message: "all3"})
-	if sent != 3 {
-		t.Errorf("expected 3 subscribers, got %d", sent)
-	}
+	assert.Equal(t, 3, sent, "expected 3 subscribers")
 
 	// Drain channels
 	<-sub1
@@ -1214,9 +1127,7 @@ func TestEventBus_Unsubscribe_ReducesSubscriberCount(t *testing.T) {
 
 	// Now only 2 should receive
 	sent = bus.Publish(testEvent{message: "only2"})
-	if sent != 2 {
-		t.Errorf("expected 2 subscribers after unsubscribe, got %d", sent)
-	}
+	assert.Equal(t, 2, sent, "expected 2 subscribers after unsubscribe")
 }
 
 func TestEventBus_Unsubscribe_Idempotent(t *testing.T) {
@@ -1247,9 +1158,7 @@ func TestEventBus_Subscribe_Generic_UnsubscribesOnCancel(t *testing.T) {
 
 	// Verify subscription is active
 	sent := bus.Publish(testEvent{message: "before"})
-	if sent < 1 {
-		t.Errorf("expected at least 1 subscriber, got %d", sent)
-	}
+	assert.GreaterOrEqual(t, sent, 1, "expected at least 1 subscriber")
 
 	// Cancel context
 	cancel()
@@ -1264,9 +1173,7 @@ func TestEventBus_Subscribe_Generic_UnsubscribesOnCancel(t *testing.T) {
 	bus.mu.RUnlock()
 
 	// There should be 0 universal subscribers after unsubscribe
-	if subsCount != 0 {
-		t.Errorf("expected 0 universal subscribers after context cancel, got %d", subsCount)
-	}
+	assert.Equal(t, 0, subsCount, "expected 0 universal subscribers after context cancel")
 }
 
 func TestEventBus_SubscribeMultiple_UnsubscribesOnCancel(t *testing.T) {
@@ -1282,9 +1189,7 @@ func TestEventBus_SubscribeMultiple_UnsubscribesOnCancel(t *testing.T) {
 
 	// Verify subscription is active
 	sent := bus.Publish(testEvent{message: "before"})
-	if sent < 1 {
-		t.Errorf("expected at least 1 subscriber, got %d", sent)
-	}
+	assert.GreaterOrEqual(t, sent, 1, "expected at least 1 subscriber")
 
 	// Cancel context
 	cancel()
@@ -1298,7 +1203,5 @@ func TestEventBus_SubscribeMultiple_UnsubscribesOnCancel(t *testing.T) {
 	bus.mu.RUnlock()
 
 	// There should be 0 universal subscribers after unsubscribe
-	if subsCount != 0 {
-		t.Errorf("expected 0 universal subscribers after context cancel, got %d", subsCount)
-	}
+	assert.Equal(t, 0, subsCount, "expected 0 universal subscribers after context cancel")
 }

@@ -330,7 +330,7 @@ func TestNewFailureResult(t *testing.T) {
 	failed := []OperationError{
 		{
 			Operation: newMockOperation(sections.OperationCreate, "server", 30),
-			Error:     errors.New("test error"),
+			Cause:     errors.New("test error"),
 		},
 	}
 	duration := 200 * time.Millisecond
@@ -441,7 +441,7 @@ func TestSyncResult_HasFailures(t *testing.T) {
 			name: "has failures",
 			result: &SyncResult{
 				FailedOperations: []OperationError{
-					{Error: errors.New("test")},
+					{Cause: errors.New("test")},
 				},
 			},
 			expected: true,
@@ -756,11 +756,11 @@ func TestSyncResult_String_WithFailedOperations(t *testing.T) {
 	failed := []OperationError{
 		{
 			Operation: newMockOperation(sections.OperationCreate, "backend", 20),
-			Error:     errors.New("connection refused"),
+			Cause:     errors.New("connection refused"),
 		},
 		{
 			Operation: newMockOperation(sections.OperationCreate, "server", 30),
-			Error:     errors.New("timeout"),
+			Cause:     errors.New("timeout"),
 		},
 	}
 

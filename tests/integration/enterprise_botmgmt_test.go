@@ -188,10 +188,10 @@ func TestSyncEnterpriseSections(t *testing.T) {
 	}
 
 	// Single loop executes all test cases - no code duplication
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			runSyncTest(t, tc) // Reuses existing integration test infrastructure
+			runSyncTest(t, tt) // Reuses existing integration test infrastructure
 		})
 	}
 }

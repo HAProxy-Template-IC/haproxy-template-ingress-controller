@@ -78,7 +78,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 	return &Component{
 		eventBus:  eventBus,
 		eventChan: eventBus.SubscribeLeaderOnly(EventBufferSize),
-		logger:    logger.With("component", "deployer"),
+		logger:    logger.With("component", ComponentName),
 	}
 }
 
@@ -139,7 +139,7 @@ func (c *Component) handleDeploymentScheduled(ctx context.Context, event *events
 	}
 	// Note: flag will be cleared by deployToEndpoints after deployment completes
 
-	c.logger.Info("deployment scheduled, starting execution",
+	c.logger.Info("Deployment scheduled, starting execution",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
 		"config_bytes", len(event.Config),
@@ -226,7 +226,7 @@ func (c *Component) deployToEndpoints(
 	hash := sha256.Sum256([]byte(config))
 	checksum := hex.EncodeToString(hash[:])
 
-	c.logger.Info("starting deployment",
+	c.logger.Info("Starting deployment",
 		"reason", reason,
 		"endpoint_count", len(endpoints),
 		"config_bytes", len(config),
@@ -293,7 +293,7 @@ func (c *Component) deployToEndpoints(
 				failureCount++
 				countMutex.Unlock()
 			} else {
-				c.logger.Info("deployment succeeded for endpoint",
+				c.logger.Info("Deployment succeeded for endpoint",
 					"endpoint", ep.URL,
 					"pod", ep.PodName,
 					"duration_ms", durationMs,
@@ -336,7 +336,7 @@ func (c *Component) deployToEndpoints(
 
 	totalDurationMs := time.Since(startTime).Milliseconds()
 
-	c.logger.Info("deployment completed",
+	c.logger.Info("Deployment completed",
 		"total_endpoints", len(endpoints),
 		"succeeded", successCount,
 		"failed", failureCount,

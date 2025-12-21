@@ -103,22 +103,28 @@ func TransformClientMetadataInJSON(jsonData []byte) ([]byte, error) {
 
 // transformMetadataRecursive walks the JSON object tree and transforms any
 // metadata fields from client-native flat format to API nested format.
+// It handles both nested objects and arrays (e.g., http_request_rule_list).
 func transformMetadataRecursive(obj map[string]interface{}) {
 	for key, value := range obj {
-		v, ok := value.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		if key == "metadata" {
-			// Check if this is a flat metadata map (needs transformation)
-			// vs already nested (has "value" sub-key)
-			if needsMetadataTransformation(v) {
-				obj[key] = ConvertClientMetadataToAPI(v)
+		switch v := value.(type) {
+		case map[string]interface{}:
+			if key == "metadata" {
+				// Check if this is a flat metadata map (needs transformation)
+				// vs already nested (has "value" sub-key)
+				if needsMetadataTransformation(v) {
+					obj[key] = ConvertClientMetadataToAPI(v)
+				}
+			} else {
+				// Recurse into nested objects
+				transformMetadataRecursive(v)
 			}
-		} else {
-			// Recurse into nested objects
-			transformMetadataRecursive(v)
+		case []interface{}:
+			// Recurse into array elements (e.g., http_request_rule_list, servers, binds)
+			for _, elem := range v {
+				if elemMap, ok := elem.(map[string]interface{}); ok {
+					transformMetadataRecursive(elemMap)
+				}
+			}
 		}
 	}
 }

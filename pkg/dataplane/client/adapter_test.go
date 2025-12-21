@@ -49,13 +49,13 @@ func TestNewVersionAdapter(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			// Create a minimal client (nil is fine for this test)
-			adapter := NewVersionAdapter(nil, tc.maxRetries)
+			adapter := NewVersionAdapter(nil, tt.maxRetries)
 
 			require.NotNil(t, adapter)
-			assert.Equal(t, tc.wantMaxRetries, adapter.maxRetries)
+			assert.Equal(t, tt.wantMaxRetries, adapter.maxRetries)
 		})
 	}
 }
@@ -129,18 +129,18 @@ func TestParseVersionFromHeader(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			version, err := ParseVersionFromHeader(tc.header)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			version, err := ParseVersionFromHeader(tt.header)
 
-			if tc.wantErr {
+			if tt.wantErr {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tc.errContains)
+				assert.Contains(t, err.Error(), tt.errContains)
 				return
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tc.wantVersion, version)
+			assert.Equal(t, tt.wantVersion, version)
 		})
 	}
 }

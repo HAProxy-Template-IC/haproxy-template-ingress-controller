@@ -173,3 +173,315 @@ tests:
             name: webhook-certs
             mountPath: /etc/webhook/certs
             readOnly: true
+
+  # Extra volumes and volume mounts
+  - it: should include extra volumes when specified
+    template: deployment.yaml
+    set:
+      extraVolumes:
+        - name: custom-config
+          configMap:
+            name: my-config
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: custom-config
+            configMap:
+              name: my-config
+
+  - it: should include extra volume mounts when specified
+    template: deployment.yaml
+    set:
+      extraVolumeMounts:
+        - name: custom-config
+          mountPath: /etc/custom
+          readOnly: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: custom-config
+            mountPath: /etc/custom
+            readOnly: true
+
+  # Init containers and sidecars
+  - it: should include init containers when specified
+    template: deployment.yaml
+    set:
+      initContainers:
+        - name: init-db
+          image: busybox:1.28
+          command: ["sh", "-c", "echo init"]
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers
+          content:
+            name: init-db
+            image: busybox:1.28
+            command: ["sh", "-c", "echo init"]
+
+  - it: should include sidecars when specified
+    template: deployment.yaml
+    set:
+      sidecars:
+        - name: log-collector
+          image: fluent/fluent-bit:latest
+    asserts:
+      - contains:
+          path: spec.template.spec.containers
+          content:
+            name: log-collector
+            image: fluent/fluent-bit:latest
+
+  # Startup probe
+  - it: should not include startup probe by default
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].startupProbe
+
+  - it: should include startup probe when enabled
+    template: deployment.yaml
+    set:
+      startupProbe.enabled: true
+    asserts:
+      - exists:
+          path: spec.template.spec.containers[0].startupProbe
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.port
+          value: healthz
+
+  - it: should set startup probe parameters
+    template: deployment.yaml
+    set:
+      startupProbe:
+        enabled: true
+        initialDelaySeconds: 5
+        periodSeconds: 15
+        failureThreshold: 20
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.initialDelaySeconds
+          value: 5
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.periodSeconds
+          value: 15
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.failureThreshold
+          value: 20
+
+  # Lifecycle hooks
+  - it: should include lifecycle hooks when specified
+    template: deployment.yaml
+    set:
+      lifecycle:
+        preStop:
+          exec:
+            command: ["/bin/sh", "-c", "sleep 15"]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command
+          value: ["/bin/sh", "-c", "sleep 15"]
+
+  # Termination grace period
+  - it: should set default termination grace period
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 30
+
+  - it: should set custom termination grace period
+    template: deployment.yaml
+    set:
+      terminationGracePeriodSeconds: 60
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 60
+
+  # Update strategy
+  - it: should set default update strategy
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: "25%"
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: "25%"
+
+  - it: should set custom update strategy
+    template: deployment.yaml
+    set:
+      updateStrategy:
+        type: Recreate
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+
+  # Min ready seconds and revision history
+  - it: should set default minReadySeconds
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.minReadySeconds
+          value: 0
+
+  - it: should set custom minReadySeconds
+    template: deployment.yaml
+    set:
+      minReadySeconds: 10
+    asserts:
+      - equal:
+          path: spec.minReadySeconds
+          value: 10
+
+  - it: should set default revisionHistoryLimit
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 10
+
+  - it: should set custom revisionHistoryLimit
+    template: deployment.yaml
+    set:
+      revisionHistoryLimit: 5
+    asserts:
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 5
+
+  # DNS configuration
+  - it: should set default dnsPolicy
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.dnsPolicy
+          value: ClusterFirst
+
+  - it: should set custom dnsPolicy
+    template: deployment.yaml
+    set:
+      dnsPolicy: None
+    asserts:
+      - equal:
+          path: spec.template.spec.dnsPolicy
+          value: None
+
+  - it: should set dnsConfig when specified
+    template: deployment.yaml
+    set:
+      dnsConfig:
+        nameservers:
+          - 8.8.8.8
+        options:
+          - name: ndots
+            value: "2"
+    asserts:
+      - contains:
+          path: spec.template.spec.dnsConfig.nameservers
+          content: 8.8.8.8
+      - contains:
+          path: spec.template.spec.dnsConfig.options
+          content:
+            name: ndots
+            value: "2"
+
+  # Host aliases
+  - it: should set hostAliases when specified
+    template: deployment.yaml
+    set:
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames:
+            - "foo.local"
+    asserts:
+      - contains:
+          path: spec.template.spec.hostAliases
+          content:
+            ip: "127.0.0.1"
+            hostnames:
+              - "foo.local"
+
+  # Runtime class
+  - it: should not set runtimeClassName by default
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.runtimeClassName
+
+  - it: should set runtimeClassName when specified
+    template: deployment.yaml
+    set:
+      runtimeClassName: gvisor
+    asserts:
+      - equal:
+          path: spec.template.spec.runtimeClassName
+          value: gvisor
+
+  # Common labels and annotations
+  - it: should include common labels
+    template: deployment.yaml
+    set:
+      commonLabels:
+        environment: production
+        team: platform
+    asserts:
+      - equal:
+          path: metadata.labels.environment
+          value: production
+      - equal:
+          path: metadata.labels.team
+          value: platform
+
+  - it: should include common annotations
+    template: deployment.yaml
+    set:
+      commonAnnotations:
+        config.kubernetes.io/managed-by: helm
+    asserts:
+      - equal:
+          path: metadata.annotations["config.kubernetes.io/managed-by"]
+          value: helm
+
+  - it: should include deployment annotations
+    template: deployment.yaml
+    set:
+      deploymentAnnotations:
+        reloader.stakater.com/auto: "true"
+    asserts:
+      - equal:
+          path: metadata.annotations["reloader.stakater.com/auto"]
+          value: "true"
+
+  # Topology spread constraints
+  - it: should set topologySpreadConstraints when specified
+    template: deployment.yaml
+    set:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: controller
+    asserts:
+      - contains:
+          path: spec.template.spec.topologySpreadConstraints
+          content:
+            maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app: controller

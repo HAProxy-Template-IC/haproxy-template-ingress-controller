@@ -36,6 +36,7 @@ import (
 // an event when all resource types have completed initial sync.
 type IndexSynchronizationTracker struct {
 	eventBus          *busevents.EventBus
+	eventChan         <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger            *slog.Logger
 	expectedResources map[string]bool // resourceTypeName -> synced
 	resourceCounts    map[string]int  // resourceTypeName -> count
@@ -62,8 +63,13 @@ func New(
 		expectedResources[name] = false
 	}
 
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps
+	eventChan := eventBus.Subscribe(100)
+
 	return &IndexSynchronizationTracker{
 		eventBus:          eventBus,
+		eventChan:         eventChan,
 		logger:            logger,
 		expectedResources: expectedResources,
 		resourceCounts:    make(map[string]int),
@@ -74,19 +80,16 @@ func New(
 // Start begins monitoring resource synchronization events.
 //
 // This method:
-//   - Subscribes to ResourceSyncCompleteEvent
 //   - Tracks which resources have synced
 //   - Publishes IndexSynchronizedEvent when all expected resources are synced
 //   - Runs until ctx is cancelled
 func (t *IndexSynchronizationTracker) Start(ctx context.Context) error {
-	eventChan := t.eventBus.Subscribe(100)
-
 	t.logger.Debug("index synchronization tracker started",
 		"expected_resources", len(t.expectedResources))
 
 	for {
 		select {
-		case event := <-eventChan:
+		case event := <-t.eventChan:
 			// Handle ResourceSyncCompleteEvent
 			if syncEvent, ok := event.(*events.ResourceSyncCompleteEvent); ok {
 				t.handleResourceSyncComplete(syncEvent)

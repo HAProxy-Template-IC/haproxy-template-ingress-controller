@@ -80,7 +80,7 @@ func New(
 	return &Component{
 		publisher: publisher,
 		eventBus:  eventBus,
-		logger:    logger.With("component", "config_publisher"),
+		logger:    logger.With("component", ComponentName),
 		eventChan: eventBus.SubscribeLeaderOnly(EventBufferSize),
 	}
 }
@@ -103,7 +103,7 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Info("starting config publisher component")
+	c.logger.Info("Config publisher starting")
 
 	for {
 		select {
@@ -111,7 +111,7 @@ func (c *Component) Start(ctx context.Context) error {
 			c.handleEvent(event)
 
 		case <-ctx.Done():
-			c.logger.Info("config publisher component stopped")
+			c.logger.Info("Config publisher shutting down", "reason", ctx.Err())
 			return ctx.Err()
 		}
 	}

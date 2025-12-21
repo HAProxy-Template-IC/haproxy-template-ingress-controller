@@ -232,10 +232,10 @@ func TestCalculateBackoff(t *testing.T) {
 		{BackoffExponential, 4, 800 * time.Millisecond},
 	}
 
-	for _, tc := range tests {
-		t.Run(string(tc.strategy), func(t *testing.T) {
-			actual := calculateBackoff(tc.strategy, baseDelay, tc.attempt)
-			assert.Equal(t, tc.expected, actual)
+	for _, tt := range tests {
+		t.Run(string(tt.strategy), func(t *testing.T) {
+			actual := calculateBackoff(tt.strategy, baseDelay, tt.attempt)
+			assert.Equal(t, tt.expected, actual)
 		})
 	}
 }
@@ -268,9 +268,9 @@ func TestIsVersionConflict(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, condition(tc.err))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, condition(tt.err))
 		})
 	}
 }
@@ -353,11 +353,11 @@ func TestIsConnectionError(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			actual := condition(tc.err)
-			assert.Equal(t, tc.expected, actual,
-				"IsConnectionError(%v) = %v, want %v", tc.err, actual, tc.expected)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := condition(tt.err)
+			assert.Equal(t, tt.expected, actual,
+				"IsConnectionError(%v) = %v, want %v", tt.err, actual, tt.expected)
 		})
 	}
 }
@@ -452,10 +452,10 @@ func TestContainsAny(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			actual := containsAny(tc.s, tc.substrings...)
-			assert.Equal(t, tc.expected, actual)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := containsAny(tt.s, tt.substrings...)
+			assert.Equal(t, tt.expected, actual)
 		})
 	}
 }

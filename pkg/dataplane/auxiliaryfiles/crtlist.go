@@ -26,20 +26,20 @@ func (o *crtListFileOps) GetContent(ctx context.Context, id string) (string, err
 	return o.client.GetCRTListFileContent(ctx, filename)
 }
 
-func (o *crtListFileOps) Create(ctx context.Context, id, content string) error {
+func (o *crtListFileOps) Create(ctx context.Context, id, content string) (string, error) {
 	// Extract filename from path (API expects filename only)
 	filename := filepath.Base(id)
-	err := o.client.CreateCRTListFile(ctx, filename, content)
+	reloadID, err := o.client.CreateCRTListFile(ctx, filename, content)
 	if err != nil && strings.Contains(err.Error(), "already exists") {
 		// CRT-list file already exists, fall back to update instead of failing.
 		// This handles the case where a previous deployment partially succeeded
 		// or where path normalization causes comparison mismatches.
 		return o.Update(ctx, id, content)
 	}
-	return err
+	return reloadID, err
 }
 
-func (o *crtListFileOps) Update(ctx context.Context, id, content string) error {
+func (o *crtListFileOps) Update(ctx context.Context, id, content string) (string, error) {
 	// Extract filename from path (API expects filename only)
 	filename := filepath.Base(id)
 	return o.client.UpdateCRTListFile(ctx, filename, content)
@@ -193,12 +193,13 @@ func CompareCRTLists(ctx context.Context, c *client.DataplaneClient, desired []C
 //   - Phase 2 (post-config): Call with diff containing ToDelete
 //
 // The caller is responsible for splitting the diff into these phases.
+// Returns reload IDs from create/update operations that triggered reloads.
 //
 // Version compatibility: CRT-list storage is only available in HAProxy DataPlane API v3.2+.
 // On older versions (3.0, 3.1), this function automatically falls back to general file storage.
-func SyncCRTLists(ctx context.Context, c *client.DataplaneClient, diff *CRTListDiff) error {
+func SyncCRTLists(ctx context.Context, c *client.DataplaneClient, diff *CRTListDiff) ([]string, error) {
 	if diff == nil {
-		return nil
+		return nil, nil
 	}
 
 	// Check if CRT-list storage is supported by this HAProxy version

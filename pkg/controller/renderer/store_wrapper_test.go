@@ -685,7 +685,7 @@ func (m *mockStoreWithError) Get(keys ...string) ([]interface{}, error) {
 		return nil, &store.StoreError{
 			Operation: "get",
 			Keys:      keys,
-			Err:       nil,
+			Cause:     nil,
 		}
 	}
 	return []interface{}{}, nil
@@ -695,7 +695,7 @@ func (m *mockStoreWithError) List() ([]interface{}, error) {
 	if m.returnError {
 		return nil, &store.StoreError{
 			Operation: "list",
-			Err:       nil,
+			Cause:     nil,
 		}
 	}
 	return []interface{}{}, nil

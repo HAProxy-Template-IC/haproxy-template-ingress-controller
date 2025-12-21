@@ -10,6 +10,12 @@ import (
 	busevents "haproxy-template-ic/pkg/events"
 )
 
+const (
+	// EventBufferSize is the size of the event subscription buffer.
+	// Size 10: Low-volume component (~1 validation request per reconciliation).
+	EventBufferSize = 10
+)
+
 // ValidationHandler defines the interface for validator-specific validation logic.
 //
 // Each validator (basic, template, jsonpath) implements this interface to provide
@@ -33,6 +39,7 @@ type ValidationHandler interface {
 // for their specific validation logic.
 type BaseValidator struct {
 	eventBus    *busevents.EventBus
+	eventChan   <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger      *slog.Logger
 	stopCh      chan struct{}
 	stopOnce    sync.Once
@@ -59,9 +66,14 @@ func NewBaseValidator(
 	description string,
 	handler ValidationHandler,
 ) *BaseValidator {
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps
+	eventChan := eventBus.Subscribe(EventBufferSize)
+
 	return &BaseValidator{
 		eventBus:    eventBus,
-		logger:      logger,
+		eventChan:   eventChan,
+		logger:      logger.With("component", name+"-validator"),
 		stopCh:      make(chan struct{}),
 		name:        name,
 		description: description,
@@ -72,31 +84,29 @@ func NewBaseValidator(
 // Start begins processing validation requests from the EventBus.
 //
 // This method blocks until Stop() is called or the context is canceled.
-// It should typically be run in a goroutine.
+// The component is already subscribed to the EventBus (subscription happens in constructor).
+// Returns nil on graceful shutdown.
 //
 // The event loop:
-//  1. Subscribes to all events on the bus
-//  2. Filters for ConfigValidationRequest events
-//  3. Wraps handling in panic recovery
-//  4. Delegates to the ValidationHandler
+//  1. Filters for ConfigValidationRequest events
+//  2. Wraps handling in panic recovery
+//  3. Delegates to the ValidationHandler
 //
 // Example:
 //
 //	go validator.Start(ctx)
-func (v *BaseValidator) Start(ctx context.Context) {
-	eventCh := v.eventBus.Subscribe(10)
-
-	v.logger.Info(fmt.Sprintf("%s component started", v.description))
+func (v *BaseValidator) Start(ctx context.Context) error {
+	v.logger.Info(fmt.Sprintf("%s starting", v.description))
 
 	for {
 		select {
 		case <-ctx.Done():
-			v.logger.Info(fmt.Sprintf("%s component stopped", v.description), "reason", ctx.Err())
-			return
+			v.logger.Info(fmt.Sprintf("%s shutting down", v.description), "reason", ctx.Err())
+			return nil
 		case <-v.stopCh:
-			v.logger.Info(fmt.Sprintf("%s component stopped", v.description))
-			return
-		case event := <-eventCh:
+			v.logger.Info(fmt.Sprintf("%s shutting down", v.description))
+			return nil
+		case event := <-v.eventChan:
 			v.handleEvent(event)
 		}
 	}

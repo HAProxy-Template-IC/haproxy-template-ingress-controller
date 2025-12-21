@@ -96,11 +96,11 @@ func TestMarshalForVersion(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := MarshalForVersion(tc.model)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := MarshalForVersion(tt.model)
 
-			if tc.wantErr {
+			if tt.wantErr {
 				require.Error(t, err)
 				return
 			}
@@ -216,12 +216,12 @@ func TestConvertToVersioned_InvalidJSON(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := ConvertToVersioned[testV32, testV31, testV30](tc.jsonData, tc.minor)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ConvertToVersioned[testV32, testV31, testV30](tt.jsonData, tt.minor)
 
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.errContains)
+			assert.Contains(t, err.Error(), tt.errContains)
 		})
 	}
 }
@@ -259,10 +259,10 @@ func TestVersionMinorFromPtr(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := VersionMinorFromPtr(tc.versionMinor)
-			assert.Equal(t, tc.want, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := VersionMinorFromPtr(tt.versionMinor)
+			assert.Equal(t, tt.want, result)
 		})
 	}
 }

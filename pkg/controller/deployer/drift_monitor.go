@@ -85,7 +85,7 @@ func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger
 	return &DriftPreventionMonitor{
 		eventBus:                eventBus,
 		eventChan:               eventChan,
-		logger:                  logger.With("component", "drift-prevention-monitor"),
+		logger:                  logger.With("component", DriftMonitorComponentName),
 		driftPreventionInterval: driftPreventionInterval,
 	}
 }

@@ -102,16 +102,16 @@ func New(
 	return c, nil
 }
 
-// Run starts the leader election loop.
+// Start starts the leader election loop.
 //
 // This function blocks until the context is cancelled or an error occurs.
 // It should be run in a goroutine.
-func (c *Component) Run(ctx context.Context) error {
+func (c *Component) Start(ctx context.Context) error {
 	// Publish start event with all metadata
 	c.eventBus.Publish(events.NewLeaderElectionStartedEvent(c.identity, c.leaseName, c.leaseNamespace))
 
-	// Run pure elector (blocks)
-	return c.elector.Run(ctx)
+	// Start pure elector (blocks)
+	return c.elector.Start(ctx)
 }
 
 // IsLeader returns true if this instance is currently the leader.

@@ -64,9 +64,10 @@ func CompareSSLCrlFiles(ctx context.Context, c *client.DataplaneClient, desired 
 // If the API version doesn't support CRL file storage, operations are skipped with a warning.
 //
 // The caller is responsible for splitting the diff into these phases.
-func SyncSSLCrlFiles(ctx context.Context, c *client.DataplaneClient, diff *SSLCrlFileDiff) error {
+// Returns reload IDs from create/update operations that triggered reloads.
+func SyncSSLCrlFiles(ctx context.Context, c *client.DataplaneClient, diff *SSLCrlFileDiff) ([]string, error) {
 	if diff == nil {
-		return nil
+		return nil, nil
 	}
 
 	ops := newSSLCrlOps(c)

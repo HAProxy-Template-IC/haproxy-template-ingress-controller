@@ -66,27 +66,27 @@ func TestHTTPRequests_Parse_EEActions(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			p := NewHTTPRequests()
 
-			_, err := p.Parse(tc.line, tc.parts, "")
+			_, err := p.Parse(tt.line, tt.parts, "")
 
-			if tc.wantErr {
+			if tt.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
 
 			eeActions := p.GetEEActions()
-			if tc.wantEE {
+			if tt.wantEE {
 				require.Len(t, eeActions, 1, "expected 1 EE action")
-				assert.Equal(t, tc.wantType, eeActions[0].Type)
-				if tc.wantProfile != "" {
-					assert.Equal(t, tc.wantProfile, eeActions[0].Profile)
+				assert.Equal(t, tt.wantType, eeActions[0].Type)
+				if tt.wantProfile != "" {
+					assert.Equal(t, tt.wantProfile, eeActions[0].Profile)
 				}
-				if tc.wantCond != "" {
-					assert.Equal(t, tc.wantCond, eeActions[0].Cond)
+				if tt.wantCond != "" {
+					assert.Equal(t, tt.wantCond, eeActions[0].Cond)
 				}
 			} else {
 				assert.Empty(t, eeActions, "expected no EE actions for CE directive")
@@ -154,30 +154,30 @@ func TestFilters_Parse_EEFilters(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			p := NewFilters()
 
-			_, err := p.Parse(tc.line, tc.parts, "")
+			_, err := p.Parse(tt.line, tt.parts, "")
 
-			if tc.wantErr {
+			if tt.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
 
 			eeFilters := p.GetEEFilters()
-			if tc.wantEE {
+			if tt.wantEE {
 				require.Len(t, eeFilters, 1, "expected 1 EE filter")
-				assert.Equal(t, tc.wantType, eeFilters[0].Type)
-				if tc.wantRulesFile != "" {
-					assert.Equal(t, tc.wantRulesFile, eeFilters[0].RulesFile)
+				assert.Equal(t, tt.wantType, eeFilters[0].Type)
+				if tt.wantRulesFile != "" {
+					assert.Equal(t, tt.wantRulesFile, eeFilters[0].RulesFile)
 				}
-				if tc.wantLearning {
+				if tt.wantLearning {
 					assert.True(t, eeFilters[0].Learning)
 				}
-				if tc.wantProfile != "" {
-					assert.Equal(t, tc.wantProfile, eeFilters[0].Profile)
+				if tt.wantProfile != "" {
+					assert.Equal(t, tt.wantProfile, eeFilters[0].Profile)
 				}
 			} else {
 				assert.Empty(t, eeFilters, "expected no EE filters for CE directive")
@@ -224,13 +224,13 @@ func TestGlobalEE_Parse(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			p := NewGlobalEE()
 
-			_, err := p.Parse(tc.line, tc.parts, "")
+			_, err := p.Parse(tt.line, tt.parts, "")
 
-			if tc.wantErr {
+			if tt.wantErr {
 				require.Error(t, err)
 				return
 			}
@@ -238,8 +238,8 @@ func TestGlobalEE_Parse(t *testing.T) {
 
 			directives := p.GetDirectives()
 			require.Len(t, directives, 1, "expected 1 directive")
-			assert.Equal(t, tc.wantType, directives[0].Type)
-			assert.Equal(t, tc.wantParts, directives[0].Parts)
+			assert.Equal(t, tt.wantType, directives[0].Type)
+			assert.Equal(t, tt.wantParts, directives[0].Parts)
 		})
 	}
 }

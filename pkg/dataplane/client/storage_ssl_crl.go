@@ -79,15 +79,16 @@ func (c *DataplaneClient) GetSSLCrlFileContent(ctx context.Context, name string)
 }
 
 // CreateSSLCrlFile creates a new SSL CRL file using multipart form-data.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // SSL CRL file storage is only available in HAProxy DataPlane API v3.2+.
-func (c *DataplaneClient) CreateSSLCrlFile(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) CreateSSLCrlFile(ctx context.Context, name, content string) (string, error) {
 	if !c.clientset.Capabilities().SupportsSslCrlFiles {
-		return fmt.Errorf("SSL CRL file storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
+		return "", fmt.Errorf("SSL CRL file storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
 	}
 
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
-		return fmt.Errorf("failed to build payload for SSL CRL file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to build payload for SSL CRL file '%s': %w", name, err)
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -105,7 +106,7 @@ func (c *DataplaneClient) CreateSSLCrlFile(ctx context.Context, name, content st
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create SSL CRL file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to create SSL CRL file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -113,8 +114,9 @@ func (c *DataplaneClient) CreateSSLCrlFile(ctx context.Context, name, content st
 }
 
 // UpdateSSLCrlFile updates an existing SSL CRL file using text/plain content-type.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // SSL CRL file storage is only available in HAProxy DataPlane API v3.2+.
-func (c *DataplaneClient) UpdateSSLCrlFile(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) UpdateSSLCrlFile(ctx context.Context, name, content string) (string, error) {
 	body := bytes.NewReader([]byte(content))
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -132,7 +134,7 @@ func (c *DataplaneClient) UpdateSSLCrlFile(ctx context.Context, name, content st
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to update SSL CRL file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to update SSL CRL file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

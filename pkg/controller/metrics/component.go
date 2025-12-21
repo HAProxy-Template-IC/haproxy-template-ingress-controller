@@ -16,7 +16,6 @@ package metrics
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"haproxy-template-ic/pkg/controller/events"
@@ -31,21 +30,14 @@ import (
 // IMPORTANT: Instance-based, created fresh per application iteration.
 // When the iteration ends (context cancelled), the component stops and
 // the metrics it was updating become eligible for garbage collection.
-//
-// Lifecycle: NewComponent() → Start(ctx)
-//   - Start() must be called (in a goroutine) before eventBus.Start()
-//   - This ensures the component receives all buffered startup events
 type Component struct {
 	metrics        *Metrics
 	eventBus       *pkgevents.EventBus
-	resourceCounts map[string]int // Tracks current resource counts
+	eventChan      <-chan pkgevents.Event // Subscribed in constructor for proper startup synchronization
+	resourceCounts map[string]int         // Tracks current resource counts
 
 	// Leader election tracking
 	becameLeaderAt time.Time // When this replica became leader (zero if not leader)
-
-	// Initialization state (guarded by initOnce)
-	initOnce  sync.Once
-	eventChan <-chan pkgevents.Event
 }
 
 // New creates a new metrics component that listens to events.
@@ -59,34 +51,25 @@ type Component struct {
 //	registry := prometheus.NewRegistry()
 //	metrics := metrics.NewMetrics(registry)
 //	component := metrics.New(metrics, eventBus)
-//	go component.Start(ctx)  // Subscribe and process events in background
-//	eventBus.Start()         // Release buffered events
+//	go component.Start(ctx)
+//	eventBus.Start()
 func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps
+	eventChan := eventBus.Subscribe(200) // Large buffer for high-frequency metrics
+
 	return &Component{
 		metrics:        metrics,
 		eventBus:       eventBus,
+		eventChan:      eventChan,
 		resourceCounts: make(map[string]int),
 	}
 }
 
-// Start subscribes to the EventBus and begins processing events.
-//
-// This method:
-// 1. Subscribes to the EventBus (exactly once, thread-safe)
-// 2. Starts the event processing loop
-//
-// IMPORTANT: Call this (in a goroutine) BEFORE bus.Start() to ensure the component
-// receives all buffered startup events. The subscription happens immediately when
-// this method is called, before the event loop starts.
+// Start begins the metrics event processing loop.
 //
 // This method blocks until the context is cancelled.
 func (c *Component) Start(ctx context.Context) error {
-	// Subscribe to EventBus exactly once (thread-safe)
-	c.initOnce.Do(func() {
-		c.eventChan = c.eventBus.Subscribe(200) // Large buffer for high-frequency metrics
-	})
-
-	// Event processing loop
 	for {
 		select {
 		case event := <-c.eventChan:

@@ -1,0 +1,153 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: pod monitor
+templates:
+  - podmonitor.yaml
+tests:
+  - it: should not render when podMonitor is disabled
+    set:
+      monitoring.podMonitor.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render when podMonitor is enabled
+    set:
+      monitoring.podMonitor.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodMonitor
+
+  - it: should set correct apiVersion
+    set:
+      monitoring.podMonitor.enabled: true
+    asserts:
+      - isAPIVersion:
+          of: monitoring.coreos.com/v1
+
+  - it: should select controller pods
+    set:
+      monitoring.podMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+          value: controller
+
+  - it: should set default scrape interval
+    set:
+      monitoring.podMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].interval
+          value: 30s
+
+  - it: should set custom scrape interval
+    set:
+      monitoring.podMonitor.enabled: true
+      monitoring.podMonitor.interval: 15s
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].interval
+          value: 15s
+
+  - it: should set default scrape timeout
+    set:
+      monitoring.podMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].scrapeTimeout
+          value: 10s
+
+  - it: should set custom scrape timeout
+    set:
+      monitoring.podMonitor.enabled: true
+      monitoring.podMonitor.scrapeTimeout: 5s
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].scrapeTimeout
+          value: 5s
+
+  - it: should scrape metrics port
+    set:
+      monitoring.podMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: metrics
+
+  - it: should scrape /metrics path
+    set:
+      monitoring.podMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].path
+          value: /metrics
+
+  - it: should set namespace selector to release namespace
+    release:
+      namespace: my-namespace
+    set:
+      monitoring.podMonitor.enabled: true
+    asserts:
+      - contains:
+          path: spec.namespaceSelector.matchNames
+          content: my-namespace
+
+  - it: should include custom labels
+    set:
+      monitoring.podMonitor.enabled: true
+      monitoring.podMonitor.labels:
+        prometheus: kube-prometheus
+    asserts:
+      - equal:
+          path: metadata.labels.prometheus
+          value: kube-prometheus
+
+  - it: should include common labels
+    set:
+      monitoring.podMonitor.enabled: true
+      commonLabels:
+        environment: production
+    asserts:
+      - equal:
+          path: metadata.labels.environment
+          value: production
+
+  - it: should include common annotations
+    set:
+      monitoring.podMonitor.enabled: true
+      commonAnnotations:
+        team: platform
+    asserts:
+      - equal:
+          path: metadata.annotations.team
+          value: platform
+
+  - it: should include relabelings when specified
+    set:
+      monitoring.podMonitor.enabled: true
+      monitoring.podMonitor.relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_app]
+          targetLabel: app
+    asserts:
+      - contains:
+          path: spec.podMetricsEndpoints[0].relabelings
+          content:
+            sourceLabels: [__meta_kubernetes_pod_label_app]
+            targetLabel: app
+
+  - it: should include metricRelabelings when specified
+    set:
+      monitoring.podMonitor.enabled: true
+      monitoring.podMonitor.metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: "expensive_metric.*"
+          action: drop
+    asserts:
+      - contains:
+          path: spec.podMetricsEndpoints[0].metricRelabelings
+          content:
+            sourceLabels: [__name__]
+            regex: "expensive_metric.*"
+            action: drop

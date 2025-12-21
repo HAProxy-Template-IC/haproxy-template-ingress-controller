@@ -23,19 +23,19 @@ func makeKeyString(keys []string) string {
 type StoreError struct {
 	Operation string
 	Keys      []string
-	Err       error
+	Cause     error
 }
 
 func (e *StoreError) Error() string {
 	keyStr := strings.Join(e.Keys, "/")
 	if keyStr == "" {
-		return fmt.Sprintf("store error during %s: %v", e.Operation, e.Err)
+		return fmt.Sprintf("store error during %s: %v", e.Operation, e.Cause)
 	}
-	return fmt.Sprintf("store error during %s for key '%s': %v", e.Operation, keyStr, e.Err)
+	return fmt.Sprintf("store error during %s for key '%s': %v", e.Operation, keyStr, e.Cause)
 }
 
 func (e *StoreError) Unwrap() error {
-	return e.Err
+	return e.Cause
 }
 
 // extractNamespaceName extracts namespace and name from a Kubernetes resource.

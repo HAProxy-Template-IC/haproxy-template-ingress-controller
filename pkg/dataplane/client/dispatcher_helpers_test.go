@@ -536,10 +536,10 @@ func TestDispatchHelpers_VersionRouting(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			server := newMockServer(t, mockServerConfig{
-				apiVersion: tc.apiVersion,
+				apiVersion: tt.apiVersion,
 			})
 			defer server.Close()
 
@@ -582,7 +582,7 @@ func TestDispatchHelpers_VersionRouting(t *testing.T) {
 			if resp.Body != nil {
 				resp.Body.Close()
 			}
-			assert.Equal(t, tc.expectedVersion, calledVersion)
+			assert.Equal(t, tt.expectedVersion, calledVersion)
 		})
 	}
 }

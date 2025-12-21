@@ -37,7 +37,7 @@ func NewJSONPathEvaluator(expression string) (*JSONPathEvaluator, error) {
 		return nil, &JSONPathError{
 			Expression: expression,
 			Operation:  "parse",
-			Err:        err,
+			Cause:      err,
 		}
 	}
 
@@ -65,7 +65,7 @@ func (e *JSONPathEvaluator) Evaluate(resource interface{}) (string, error) {
 		return "", &JSONPathError{
 			Expression: e.expression,
 			Operation:  "execute",
-			Err:        err,
+			Cause:      err,
 		}
 	}
 
@@ -74,7 +74,7 @@ func (e *JSONPathEvaluator) Evaluate(resource interface{}) (string, error) {
 		return "", &JSONPathError{
 			Expression: e.expression,
 			Operation:  "execute",
-			Err:        fmt.Errorf("no results found"),
+			Cause:      fmt.Errorf("no results found"),
 		}
 	}
 
@@ -146,14 +146,14 @@ func unwrapUnstructured(resource interface{}) interface{} {
 type JSONPathError struct {
 	Expression string
 	Operation  string
-	Err        error
+	Cause      error
 }
 
 func (e *JSONPathError) Error() string {
 	return fmt.Sprintf("JSONPath error in %s for expression '%s': %v",
-		e.Operation, e.Expression, e.Err)
+		e.Operation, e.Expression, e.Cause)
 }
 
 func (e *JSONPathError) Unwrap() error {
-	return e.Err
+	return e.Cause
 }

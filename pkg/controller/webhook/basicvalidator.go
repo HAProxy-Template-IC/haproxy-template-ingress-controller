@@ -26,6 +26,9 @@ import (
 )
 
 const (
+	// BasicValidatorComponentName is the unique identifier for the basic validator component.
+	BasicValidatorComponentName = "basic-validator"
+
 	// BasicValidatorID identifies the basic validator in scatter-gather responses.
 	BasicValidatorID = "basic"
 )
@@ -40,27 +43,37 @@ const (
 // It subscribes to WebhookValidationRequest events and publishes
 // WebhookValidationResponse events.
 type BasicValidatorComponent struct {
-	eventBus *busevents.EventBus
-	logger   *slog.Logger
+	eventBus  *busevents.EventBus
+	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
+	logger    *slog.Logger
 }
 
 // NewBasicValidatorComponent creates a new basic validator component.
 func NewBasicValidatorComponent(eventBus *busevents.EventBus, logger *slog.Logger) *BasicValidatorComponent {
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps
+	eventChan := eventBus.Subscribe(EventBufferSize)
+
 	return &BasicValidatorComponent{
-		eventBus: eventBus,
-		logger:   logger.With("component", "basic-validator"),
+		eventBus:  eventBus,
+		eventChan: eventChan,
+		logger:    logger.With("component", BasicValidatorComponentName),
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (b *BasicValidatorComponent) Name() string {
+	return BasicValidatorComponentName
 }
 
 // Start begins the validator's event loop.
 func (b *BasicValidatorComponent) Start(ctx context.Context) error {
 	b.logger.Info("Basic validator starting")
 
-	eventChan := b.eventBus.Subscribe(EventBufferSize)
-
 	for {
 		select {
-		case event := <-eventChan:
+		case event := <-b.eventChan:
 			b.handleEvent(event)
 
 		case <-ctx.Done():

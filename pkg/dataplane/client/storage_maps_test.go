@@ -38,11 +38,13 @@ func getAllMapFiles(ctx context.Context, c *DataplaneClient) ([]string, error) {
 }
 
 func createMapFile(ctx context.Context, c *DataplaneClient, name, content string) error {
-	return c.CreateMapFile(ctx, name, content)
+	_, err := c.CreateMapFile(ctx, name, content)
+	return err
 }
 
 func updateMapFile(ctx context.Context, c *DataplaneClient, name, content string) error {
-	return c.UpdateMapFile(ctx, name, content)
+	_, err := c.UpdateMapFile(ctx, name, content)
+	return err
 }
 
 func deleteMapFile(ctx context.Context, c *DataplaneClient, name string) error {

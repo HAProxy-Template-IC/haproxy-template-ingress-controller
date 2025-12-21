@@ -64,9 +64,10 @@ func CompareSSLCaFiles(ctx context.Context, c *client.DataplaneClient, desired [
 // If the API version doesn't support CA file storage, operations are skipped with a warning.
 //
 // The caller is responsible for splitting the diff into these phases.
-func SyncSSLCaFiles(ctx context.Context, c *client.DataplaneClient, diff *SSLCaFileDiff) error {
+// Returns reload IDs from create/update operations that triggered reloads.
+func SyncSSLCaFiles(ctx context.Context, c *client.DataplaneClient, diff *SSLCaFileDiff) ([]string, error) {
 	if diff == nil {
-		return nil
+		return nil, nil
 	}
 
 	ops := newSSLCaOps(c)

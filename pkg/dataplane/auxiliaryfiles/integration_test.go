@@ -272,7 +272,7 @@ func TestSyncGeneralFiles_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("sync nil diff", func(t *testing.T) {
-		err := SyncGeneralFiles(ctx, c, nil)
+		_, err := SyncGeneralFiles(ctx, c, nil)
 		require.NoError(t, err)
 	})
 
@@ -283,7 +283,7 @@ func TestSyncGeneralFiles_Integration(t *testing.T) {
 			ToDelete: []string{"todelete.http"},
 		}
 
-		err := SyncGeneralFiles(ctx, c, diff)
+		_, err := SyncGeneralFiles(ctx, c, diff)
 		require.NoError(t, err)
 
 		_, ok := generalFiles.get("todelete.http")
@@ -342,7 +342,7 @@ func TestSyncMapFiles_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("sync nil diff", func(t *testing.T) {
-		err := SyncMapFiles(ctx, c, nil)
+		_, err := SyncMapFiles(ctx, c, nil)
 		require.NoError(t, err)
 	})
 
@@ -353,7 +353,7 @@ func TestSyncMapFiles_Integration(t *testing.T) {
 			ToDelete: []string{"old.map"},
 		}
 
-		err := SyncMapFiles(ctx, c, diff)
+		_, err := SyncMapFiles(ctx, c, diff)
 		require.NoError(t, err)
 
 		_, ok := mapFiles.get("old.map")
@@ -414,7 +414,7 @@ func TestSyncCRTLists_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("sync nil diff", func(t *testing.T) {
-		err := SyncCRTLists(ctx, c, nil)
+		_, err := SyncCRTLists(ctx, c, nil)
 		require.NoError(t, err)
 	})
 
@@ -425,7 +425,7 @@ func TestSyncCRTLists_Integration(t *testing.T) {
 			ToDelete: []string{"todelete.txt"},
 		}
 
-		err := SyncCRTLists(ctx, c, diff)
+		_, err := SyncCRTLists(ctx, c, diff)
 		require.NoError(t, err)
 
 		_, ok := crtLists.get("todelete.txt")

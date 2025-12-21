@@ -122,12 +122,22 @@ Uses mustMergeOverwrite for deep merging of all nested structures
 {{- /* Load ingress library if enabled */ -}}
 {{- if $context.Values.controller.templateLibraries.ingress.enabled }}
   {{- $ingressLibrary := $context.Files.Get "libraries/ingress.yaml" | fromYaml }}
+  {{- /* Inject ingressClassName from values into fieldSelector */ -}}
+  {{- if and $ingressLibrary.watchedResources $ingressLibrary.watchedResources.ingresses }}
+    {{- $fieldSelector := printf "spec.ingressClassName=%s" $context.Values.ingressClass.name }}
+    {{- $_ := set $ingressLibrary.watchedResources.ingresses "fieldSelector" $fieldSelector }}
+  {{- end }}
   {{- $merged = mustMergeOverwrite $merged $ingressLibrary }}
 {{- end }}
 
 {{- /* Load gateway library if enabled AND Gateway API CRDs are available */ -}}
 {{- if and $context.Values.controller.templateLibraries.gateway.enabled ($context.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}
   {{- $gatewayLibrary := $context.Files.Get "libraries/gateway.yaml" | fromYaml }}
+  {{- /* Inject gatewayClassName from values into fieldSelector */ -}}
+  {{- if and $gatewayLibrary.watchedResources $gatewayLibrary.watchedResources.gateways }}
+    {{- $fieldSelector := printf "spec.gatewayClassName=%s" $context.Values.gatewayClass.name }}
+    {{- $_ := set $gatewayLibrary.watchedResources.gateways "fieldSelector" $fieldSelector }}
+  {{- end }}
   {{- $merged = mustMergeOverwrite $merged $gatewayLibrary }}
 {{- end }}
 

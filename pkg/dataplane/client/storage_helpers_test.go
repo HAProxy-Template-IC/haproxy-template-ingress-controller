@@ -24,6 +24,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestReloadIDHeaderConstant(t *testing.T) {
+	// Verify the header constant matches what HAProxy Data Plane API sends
+	assert.Equal(t, "Reload-Id", ReloadIDHeader)
+}
+
 func TestBuildMultipartFilePayload(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -109,26 +114,49 @@ func TestBuildMultipartFilePayloadWithID(t *testing.T) {
 
 func TestCheckCreateResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		statusCode   int
-		resourceType string
-		resourceName string
-		expectErr    bool
-		errContains  string
+		name           string
+		statusCode     int
+		headers        http.Header
+		resourceType   string
+		resourceName   string
+		expectErr      bool
+		errContains    string
+		expectReloadID string
 	}{
 		{
-			name:         "201 Created success",
-			statusCode:   http.StatusCreated,
-			resourceType: "certificate",
-			resourceName: "cert.pem",
-			expectErr:    false,
+			name:           "201 Created success - no reload",
+			statusCode:     http.StatusCreated,
+			resourceType:   "certificate",
+			resourceName:   "cert.pem",
+			expectErr:      false,
+			expectReloadID: "",
 		},
 		{
-			name:         "202 Accepted success",
-			statusCode:   http.StatusAccepted,
-			resourceType: "map file",
-			resourceName: "hosts.map",
-			expectErr:    false,
+			name:           "200 OK success - no reload",
+			statusCode:     http.StatusOK,
+			resourceType:   "certificate",
+			resourceName:   "cert.pem",
+			expectErr:      false,
+			expectReloadID: "",
+		},
+		{
+			name:       "202 Accepted - with reload ID",
+			statusCode: http.StatusAccepted,
+			headers: http.Header{
+				"Reload-Id": []string{"reload-abc123"},
+			},
+			resourceType:   "map file",
+			resourceName:   "hosts.map",
+			expectErr:      false,
+			expectReloadID: "reload-abc123",
+		},
+		{
+			name:           "202 Accepted - without reload ID header",
+			statusCode:     http.StatusAccepted,
+			resourceType:   "map file",
+			resourceName:   "hosts.map",
+			expectErr:      false,
+			expectReloadID: "",
 		},
 		{
 			name:         "409 Conflict - already exists",
@@ -152,16 +180,18 @@ func TestCheckCreateResponse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			resp := &http.Response{
 				StatusCode: tt.statusCode,
+				Header:     tt.headers,
 				Body:       io.NopCloser(strings.NewReader("error body")),
 			}
 
-			err := checkCreateResponse(resp, tt.resourceType, tt.resourceName)
+			reloadID, err := checkCreateResponse(resp, tt.resourceType, tt.resourceName)
 
 			if tt.expectErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errContains)
 			} else {
 				require.NoError(t, err)
+				assert.Equal(t, tt.expectReloadID, reloadID)
 			}
 		})
 	}
@@ -169,26 +199,41 @@ func TestCheckCreateResponse(t *testing.T) {
 
 func TestCheckUpdateResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		statusCode   int
-		resourceType string
-		resourceName string
-		expectErr    bool
-		errContains  string
+		name           string
+		statusCode     int
+		headers        http.Header
+		resourceType   string
+		resourceName   string
+		expectErr      bool
+		errContains    string
+		expectReloadID string
 	}{
 		{
-			name:         "200 OK success",
-			statusCode:   http.StatusOK,
-			resourceType: "certificate",
-			resourceName: "cert.pem",
-			expectErr:    false,
+			name:           "200 OK success - no reload",
+			statusCode:     http.StatusOK,
+			resourceType:   "certificate",
+			resourceName:   "cert.pem",
+			expectErr:      false,
+			expectReloadID: "",
 		},
 		{
-			name:         "202 Accepted success",
-			statusCode:   http.StatusAccepted,
-			resourceType: "map file",
-			resourceName: "hosts.map",
-			expectErr:    false,
+			name:       "202 Accepted - with reload ID",
+			statusCode: http.StatusAccepted,
+			headers: http.Header{
+				"Reload-Id": []string{"reload-xyz789"},
+			},
+			resourceType:   "map file",
+			resourceName:   "hosts.map",
+			expectErr:      false,
+			expectReloadID: "reload-xyz789",
+		},
+		{
+			name:           "202 Accepted - without reload ID header",
+			statusCode:     http.StatusAccepted,
+			resourceType:   "map file",
+			resourceName:   "hosts.map",
+			expectErr:      false,
+			expectReloadID: "",
 		},
 		{
 			name:         "404 Not Found",
@@ -212,16 +257,18 @@ func TestCheckUpdateResponse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			resp := &http.Response{
 				StatusCode: tt.statusCode,
+				Header:     tt.headers,
 				Body:       io.NopCloser(strings.NewReader("error body")),
 			}
 
-			err := checkUpdateResponse(resp, tt.resourceType, tt.resourceName)
+			reloadID, err := checkUpdateResponse(resp, tt.resourceType, tt.resourceName)
 
 			if tt.expectErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errContains)
 			} else {
 				require.NoError(t, err)
+				assert.Equal(t, tt.expectReloadID, reloadID)
 			}
 		})
 	}

@@ -60,7 +60,7 @@ callbacks := leaderelection.Callbacks{
 
 // Pure elector just invokes callbacks
 elector, _ := leaderelection.New(config, clientset, callbacks, logger)
-elector.Run(ctx)
+elector.Start(ctx)
 ```
 
 ### Thread-Safe State
@@ -97,7 +97,7 @@ func TestElector_BecomesLeader(t *testing.T) {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    go elector.Run(ctx)
+    go elector.Start(ctx)
 
     // Wait for election
     time.Sleep(2 * time.Second)
@@ -116,7 +116,7 @@ Leader election releases lease when context cancelled (if `ReleaseOnCancel: true
 ```go
 ctx, cancel := context.WithCancel(context.Background())
 
-go elector.Run(ctx)
+go elector.Start(ctx)
 
 // Later: trigger graceful shutdown
 cancel()  // Elector stops, releases lease

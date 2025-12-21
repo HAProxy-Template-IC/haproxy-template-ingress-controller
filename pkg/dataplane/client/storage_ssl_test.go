@@ -46,10 +46,10 @@ func TestSanitizeSSLCertName(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := SanitizeSSLCertName(tc.input)
-			assert.Equal(t, tc.expected, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := SanitizeSSLCertName(tt.input)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -69,11 +69,13 @@ func getAllSSLCertificates(ctx context.Context, c *DataplaneClient) ([]string, e
 }
 
 func createSSLCertificate(ctx context.Context, c *DataplaneClient, name, content string) error {
-	return c.CreateSSLCertificate(ctx, name, content)
+	_, err := c.CreateSSLCertificate(ctx, name, content)
+	return err
 }
 
 func updateSSLCertificate(ctx context.Context, c *DataplaneClient, name, content string) error {
-	return c.UpdateSSLCertificate(ctx, name, content)
+	_, err := c.UpdateSSLCertificate(ctx, name, content)
+	return err
 }
 
 func deleteSSLCertificate(ctx context.Context, c *DataplaneClient, name string) error {

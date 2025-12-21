@@ -32,6 +32,8 @@ const (
 	SchedulerComponentName = "deployment-scheduler"
 
 	// SchedulerEventBufferSize is the size of the event subscription buffer for the scheduler.
+	// Size 50: Moderate-volume component handling template, validation, and discovery events.
+	// Note: Named with "Scheduler" prefix to avoid conflict with EventBufferSize in this package.
 	SchedulerEventBufferSize = 50
 )
 
@@ -102,7 +104,7 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 	return &DeploymentScheduler{
 		eventBus:              eventBus,
 		eventChan:             eventBus.SubscribeLeaderOnly(SchedulerEventBufferSize),
-		logger:                logger.With("component", "deployment-scheduler"),
+		logger:                logger.With("component", SchedulerComponentName),
 		minDeploymentInterval: minDeploymentInterval,
 	}
 }
@@ -215,7 +217,7 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 // This is called during full reconciliation cycles (config or resource changes).
 func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, event *events.ValidationCompletedEvent) {
 	correlationID := event.CorrelationID()
-	s.logger.Info("validation completed, preparing deployment",
+	s.logger.Info("Validation completed, preparing deployment",
 		"warnings", len(event.Warnings),
 		"duration_ms", event.DurationMs,
 		"correlation_id", correlationID)
@@ -348,7 +350,7 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 		s.pendingDeployment = nil
 		s.schedulerMutex.Unlock()
 
-		s.logger.Info("deployment completed, processing queued deployment",
+		s.logger.Info("Deployment completed, processing queued deployment",
 			"pending_reason", pending.reason,
 			"pending_endpoint_count", len(pending.endpoints),
 			"correlation_id", pending.correlationID)
@@ -386,7 +388,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 			correlationID: correlationID,
 		}
 		s.schedulerMutex.Unlock()
-		s.logger.Info("deployment in progress, queued for later",
+		s.logger.Info("Deployment in progress, queued for later",
 			"reason", reason,
 			"endpoint_count", len(endpoints),
 			"correlation_id", correlationID)
@@ -425,7 +427,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		timeSinceLastDeployment := time.Since(lastDeploymentEnd)
 		if timeSinceLastDeployment < s.minDeploymentInterval {
 			sleepDuration := s.minDeploymentInterval - timeSinceLastDeployment
-			s.logger.Info("enforcing minimum deployment interval",
+			s.logger.Info("Enforcing minimum deployment interval",
 				"sleep_duration_ms", sleepDuration.Milliseconds(),
 				"min_interval_ms", s.minDeploymentInterval.Milliseconds(),
 				"time_since_last_ms", timeSinceLastDeployment.Milliseconds())
@@ -440,7 +442,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 				s.schedulerMutex.Lock()
 				s.deploymentInProgress = false
 				s.schedulerMutex.Unlock()
-				s.logger.Info("deployment scheduling cancelled during rate limit sleep",
+				s.logger.Info("Deployment scheduling cancelled during rate limit sleep",
 					"reason", reason)
 				return
 			}
@@ -467,7 +469,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	}
 
 	// Publish DeploymentScheduledEvent with correlation
-	s.logger.Info("scheduling deployment",
+	s.logger.Info("Scheduling deployment",
 		"reason", reason,
 		"endpoint_count", len(endpoints),
 		"config_bytes", len(config),
@@ -503,13 +505,13 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		s.schedulerMutex.Lock()
 		s.deploymentInProgress = false // Shutdown case - safe to clear
 		s.schedulerMutex.Unlock()
-		s.logger.Info("deployment scheduling cancelled, discarding pending deployment",
+		s.logger.Info("Deployment scheduling cancelled, discarding pending deployment",
 			"reason", pending.reason)
 		return
 	default:
 	}
 
-	s.logger.Info("processing queued deployment",
+	s.logger.Info("Processing queued deployment",
 		"reason", pending.reason,
 		"endpoint_count", len(pending.endpoints),
 		"correlation_id", pending.correlationID)
@@ -549,7 +551,7 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	defer s.schedulerMutex.Unlock()
 
 	if s.deploymentInProgress || s.pendingDeployment != nil {
-		s.logger.Info("lost leadership, clearing deployment state",
+		s.logger.Info("Lost leadership, clearing deployment state",
 			"deployment_in_progress", s.deploymentInProgress,
 			"has_pending", s.pendingDeployment != nil)
 	}

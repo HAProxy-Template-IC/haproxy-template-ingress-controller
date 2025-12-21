@@ -24,13 +24,13 @@
 package enterprise
 
 import (
-	"fmt"
+	"errors"
 
 	"haproxy-template-ic/pkg/dataplane/client"
 )
 
 // ErrNotFound is returned when a requested resource does not exist.
-var ErrNotFound = fmt.Errorf("resource not found")
+var ErrNotFound = errors.New("resource not found")
 
 // Operations provides access to all enterprise-only operations.
 // This is the main entry point for enterprise features.

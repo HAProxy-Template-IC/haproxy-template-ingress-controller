@@ -1,6 +1,7 @@
-# Ingress template library for HAProxy Template Ingress Controller
-# Provides support for Kubernetes networking.k8s.io/v1 Ingress resources
-# Implements the resource_ingress_* plugin interface for the base library
+# Ingress Template Library
+#
+# Provides Kubernetes networking.k8s.io/v1 Ingress support.
+# Features: path matching (Exact, Prefix), TLS certificates, backend generation.
 
 watchedResources:
   ingresses:
@@ -8,9 +9,7 @@ watchedResources:
     resources: ingresses
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
-    # Filter by ingress class name (only watches ingresses with matching spec.ingressClassName)
-    # Set to empty string ("") to watch all ingresses regardless of class
-    fieldSelector: "spec.ingressClassName=haproxy"
+    # fieldSelector: injected by Helm from ingressClass.name
   services:
     apiVersion: v1
     resources: services
@@ -21,30 +20,13 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
 
 templateSnippets:
+  # ============================================================================
+  # Feature Registration
+  # ============================================================================
+
   features-100-ingress-tls:
     template: |
-      {#-
-        Ingress TLS Certificate Registration
-
-        Purpose: Registers TLS certificates from Ingress spec.tls with SSL infrastructure.
-
-        Extension Point: features-* (priority 100)
-
-        Dependencies:
-          - ssl.yaml features-050-ssl-initialization (initializes tlsCertificates array)
-          - secrets watchedResource
-
-        Behavior:
-          - Scans all Ingress resources for spec.tls entries
-          - Fetches referenced TLS Secrets
-          - Registers certificate files via fileRegistry.Register()
-          - Appends to shared.globalFeatures.tlsCertificates for crt-list generation
-          - Deduplicates: each secret registered only once
-      -#}
-      {#- Register TLS certificates from Ingress spec.tls with SSL infrastructure -#}
-      {#- Each TLS entry contains hosts (SNI patterns) and a secretName -#}
-      {#- Dynamically generates certificate files using file_registry.Register() -#}
-      {#- Deduplication: Only register each secret once even if multiple Ingresses use it -#}
+      {#- Registers TLS certificates from Ingress spec.tls with SSL infrastructure -#}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%%
           var tlsList = ingress | dig("spec", "tls")
@@ -94,24 +76,13 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  # ============================================================================
+  # Backend Generation
+  # ============================================================================
+
   util-backend-name-ingress:
     template: |
-      {#-
-        Ingress Backend Name Generator
-
-        Purpose: Generates consistent backend names for Ingress resources.
-
-        Provides:
-          - BackendNameIngress(ingress, path) macro
-
-        Naming Pattern:
-          ing_<namespace>_<ingress-name>_<service-name>_<port>
-
-        Usage:
-          {% import "util-backend-name-ingress" for BackendNameIngress %}
-          {{ BackendNameIngress(ingress, path) }}
-      -#}
-
+      {#- Generates backend name: ing_<ns>_<name>_<svc>_<port> -#}
       {% macro BackendNameIngress(ingress any, path any) string %}{%%
         var namespace = tostring(ingress | dig("metadata", "namespace") | fallback(""))
         var name = tostring(ingress | dig("metadata", "name") | fallback(""))
@@ -122,104 +93,62 @@ templateSnippets:
 
   util-path-map-entry-ingress-shard:
     template: |
-      {#-
-        Ingress Path Map Entry Shard Processor
-
-        Purpose: Generates map file entries for a slice of Ingress resources.
-        This is the inner macro used by sharding - accepts ingresses as parameter.
-
-        Provides:
-          - PathMapEntryIngressShard(ingresses, pathTypes, suffix) macro
-      -#}
+      {#- Generates map entries for a slice of Ingress resources -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
 
       {% macro PathMapEntryIngressShard(ingresses []any, pathTypes []string, suffix string) string %}
-        {%- for _, ingress := range ingresses %}
-        {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
-        {%- var allPaths = []any{} %}
-        {%- for _, rule := range rules %}
-        {%- var http = rule | dig("http") %}
-        {%- if http != nil %}
-        {%- var paths = http | dig("paths") | fallback([]any{}) %}
-        {%- for _, path := range paths %}
-        {%- var pathValue = path | dig("path") %}
-        {%- if pathValue != nil %}
-        {%- var pathType = path | dig("pathType") | fallback("") %}
-        {%- for _, checkType := range pathTypes %}
-        {%- if pathType == checkType %}
-        {%- allPaths = append(allPaths, path) %}
-        {%- end %}
-        {%- end %}
-        {%- end %}
-        {%- end %}
-        {%- end %}
-        {%- end %}
-        {%- if len(allPaths) > 0 %}
-      # Ingress: {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} ({{ len(allPaths) }} paths)
-        {% for _, rule := range rules -%}
-        {%- var http = rule | dig("http") -%}
-        {%- if http != nil -%}
-        {%- var paths = http | dig("paths") | fallback([]any{}) -%}
-        {%- for _, path := range paths -%}
-        {%- var pathValue = path | dig("path") -%}
-        {%- if pathValue != nil -%}
-        {%- var pathType = path | dig("pathType") | fallback("") -%}
-        {%- for _, checkType := range pathTypes -%}
-        {%- if pathType == checkType %}
-      #   - {{ rule | dig("host") | fallback("") }}{{ pathValue }} → {{ path | dig("backend", "service", "name") | fallback("") }}:{{ (path | dig("backend", "service", "port", "number")) | fallback(path | dig("backend", "service", "port", "name") | fallback("")) }}
-        {% end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end %}
-        {% for _, rule := range rules -%}
-        {%- var http = rule | dig("http") -%}
-        {%- if http != nil -%}
-        {%- var paths = http | dig("paths") | fallback([]any{}) -%}
-        {%- for _, path := range paths -%}
-        {%- var pathValue = path | dig("path") -%}
-        {%- if pathValue != nil -%}
-        {%- var pathType = path | dig("pathType") | fallback("") -%}
-        {%- for _, checkType := range pathTypes -%}
-        {%- if pathType == checkType %}
-        {%- var pathStr = pathValue | tostring() -%}
-        {%- var actualSuffix = suffix -%}
-        {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}
-          {%- actualSuffix = "" -%}
-        {%- end %}
-      {{ rule | dig("host") | fallback("") }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
-        {% end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
+        {%- for _, ingress := range ingresses -%}
+          {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) -%}
+          {%- var matchCount = 0 -%}
+          {#- Count matching paths -#}
+          {%- for _, rule := range rules -%}
+            {%- var http = rule | dig("http") -%}
+            {%- if http != nil -%}
+              {%- for _, path := range http | dig("paths") | fallback([]any{}) -%}
+                {%- var pathValue = path | dig("path") -%}
+                {%- if pathValue != nil -%}
+                  {%- var pathType = path | dig("pathType") | fallback("") -%}
+                  {%- for _, checkType := range pathTypes -%}
+                    {%- if pathType == checkType -%}{%- matchCount = matchCount + 1 -%}{%- end -%}
+                  {%- end -%}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+          {%- if matchCount > 0 -%}
+      {{ "\n" }}# Ingress: {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} ({{ matchCount }} paths)
+            {%- for _, rule := range rules -%}
+              {%- var http = rule | dig("http") -%}
+              {%- if http != nil -%}
+                {%- for _, path := range http | dig("paths") | fallback([]any{}) -%}
+                  {%- var pathValue = path | dig("path") -%}
+                  {%- if pathValue != nil -%}
+                    {%- var pathType = path | dig("pathType") | fallback("") -%}
+                    {%- for _, checkType := range pathTypes -%}
+                      {%- if pathType == checkType -%}
+                        {%- var pathStr = pathValue | tostring() -%}
+                        {%- var actualSuffix = suffix -%}
+                        {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
+      {{ "\n" }}{{ rule | dig("host") | fallback("") }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+                      {%- end -%}
+                    {%- end -%}
+                  {%- end -%}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
         {%- end %}
       {% end %}
 
+  # ============================================================================
+  # Map File Generation (Sharded)
+  # ============================================================================
+
   util-sharded-path-map-entry-ingress:
     template: |
-      {#-
-        Sharded Ingress Path Map Entry Generator
-
-        Purpose: Wraps PathMapEntryIngressShard with parallel sharding logic.
-
-        Provides:
-          - ShardedPathMapEntryIngress(pathTypes, suffix) macro
-
-        Parameters:
-          - pathTypes ([]string): List of pathTypes to include
-          - suffix (string): Suffix to append to paths
-
-        Usage:
-          {% import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress %}
-          {{ ShardedPathMapEntryIngress([]string{"Exact"}, "") }}
-      -#}
+      {#- Wraps PathMapEntryIngressShard with parallel sharding logic -#}
       {%- import "util-path-map-entry-ingress-shard" for PathMapEntryIngressShard -%}
       {%- import "util-macros" for CalculateShardCount -%}
-
       {% macro ShardedPathMapEntryIngress(pathTypes []string, suffix string) string %}
       {%- var allIngresses = resources.ingresses.List() -%}
       {%- var n = toint(CalculateShardCount(len(allIngresses), 100)) -%}
@@ -234,98 +163,73 @@ templateSnippets:
 
   util-path-map-entry-ingress:
     template: |
-      {#-
-        Ingress Path Map Entry Generator (Compatibility Wrapper)
-
-        Purpose: Provides backward-compatible PathMapEntryIngress macro.
-        Internally uses the sharded implementation.
-
-        Provides:
-          - PathMapEntryIngress(pathTypes, suffix) macro
-      -#}
+      {#- Backward-compatible wrapper for ShardedPathMapEntryIngress -#}
       {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
-
       {% macro PathMapEntryIngress(pathTypes []string, suffix string) string %}
       {{ ShardedPathMapEntryIngress(pathTypes, suffix) }}
       {% end %}
 
-  backends-500-ingress:
+  # ============================================================================
+  # Backend Generation
+  # ============================================================================
+
+  util-generate-backends-ingress:
     template: |
-      {#-
-        Ingress Backend Definitions
-
-        Purpose: Generates HAProxy backend sections for all Ingress resources.
-
-        Extension Point: backends-* (priority 500)
-
-        Dependencies:
-          - util-backend-name-ingress
-          - util-backend-servers (from base.yaml)
-          - backend-directives-* (extension point for haproxytech annotations)
-
-        Behavior:
-          - Iterates all Ingress resources
-          - Generates one backend per unique service+port combination
-          - Deduplicates: multiple paths to same service+port share one backend
-          - Injects backend-directives-* snippets for annotations (load balancing, timeouts, etc.)
-
-        Parallel Sharding:
-          - Shard count is auto-calculated: clamp(resourceCount / 300, 1, 2 * GOMAXPROCS)
-          - Override by setting extraContext.shardCountOverride
-          - When shardCount > 1, work is split across parallel shards using go MacroName()
-          - Each shard processes a subset of ingresses
-          - Deduplication via first_seen() is thread-safe (uses sync.Map)
-      -#}
+      {#- Generates backend sections for a list of Ingresses -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-backend-servers" for BackendServers -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {#- Macro to process a slice of ingresses (used by both sequential and parallel paths) -#}
-      {% macro BackendsIngressShard(ingresses []any) string %}
+      {% macro GenerateIngressBackends(ingresses []any) string %}
         {%- for _, ingress := range ingresses -%}
-        {%- var rules = ingress | dig("spec", "rules") %}
-        {%- if rules != nil %}
-        {%- for _, rule := range rules -%}
-        {%- var httpPaths = rule | dig("http", "paths") %}
-        {%- if httpPaths != nil %}
-        {%- for _, path := range httpPaths -%}
-        {%- var service = path | dig("backend", "service") %}
-        {%- if service != nil %}
-        {%- var serviceName = service | dig("name") | fallback("") -%}
-        {%- var port = service | dig("port", "number") | fallback(80) -%}
-        {#- Deduplication: first_seen checks if this backend was already generated -#}
-        {%- var portIdentifier = (service | dig("port", "name")) | fallback(service | dig("port", "number") | fallback("")) -%}
-        {%- if first_seen("ingress_backend", ingress | dig("metadata", "namespace"), ingress | dig("metadata", "name"), serviceName, portIdentifier) -%}
-      # Backend for: Ingress {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} → Service {{ serviceName }}:{{ port }}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") -%}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") -%}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
+            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
+              {%- var svc = path | dig("backend", "service") -%}
+              {%- if svc != nil -%}
+                {%- var svcName = svc | dig("name") | fallback("") -%}
+                {%- var port = svc | dig("port", "number") | fallback(80) -%}
+                {%- var portId = (svc | dig("port", "name")) | fallback(svc | dig("port", "number") | fallback("")) -%}
+                {%- if first_seen("ingress_backend", ns, name, svcName, portId) -%}
+                  {%- var healthPath = path | dig("path") | fallback("/") %}
+      # Backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
       backend {{ BackendNameIngress(ingress, path) }}
         balance roundrobin
-        option httpchk GET {{ path | dig("path") | fallback("/") }}
+        option httpchk GET {{ healthPath }}
         default-server check
-        {#- Initialize server options map before backend-directives can append to it -#}
-        {%- var serverOpts = map[string]any{"flags": []any{}} %}
-        {{- render_glob "backend-directives-*" inherit_context }}
-        {{ BackendServers(tostring(serviceName), 0, toint(port), serverOpts) }}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
-        {%- end -%}
+                  {%- var serverOpts = map[string]any{"flags": []any{}} -%}
+                  {{- render_glob "backend-directives-*" inherit_context }}
+        {{ BackendServers(tostring(svcName), 0, toint(port), serverOpts) }}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end %}
+      {% end %}
+
+  util-sharded-backends-ingress:
+    template: |
+      {#- Sharded backend generator for Ingress resources -#}
+      {%- import "util-generate-backends-ingress" for GenerateIngressBackends -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {% macro ShardedIngressBackends(ingresses []any) string %}
+        {%- var n = toint(CalculateShardCount(len(ingresses), 100)) -%}
+        {%- if n <= 1 || len(ingresses) < 100 -%}
+      {{ GenerateIngressBackends(ingresses) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateIngressBackends(shard_slice(ingresses, i, n)) }}
+          {%- end -%}
         {%- end -%}
       {% end %}
-      {#- Get sharding configuration (auto-calculated based on resource count and GOMAXPROCS) -#}
-      {%- var allIngresses = resources.ingresses.List() %}
-      {%- var shardCount = toint(CalculateShardCount(len(allIngresses), 100)) %}
+
+  backends-500-ingress:
+    template: |
+      {#- Generates HAProxy backend sections for all Ingress resources -#}
+      {%- import "util-sharded-backends-ingress" for ShardedIngressBackends -%}
+      {%- var allIngresses = resources.ingresses.List() -%}
       {%- if len(allIngresses) > 0 %}
       # ingress/backends-ingress
-      {%- end %}
-      {%- if shardCount <= 1 || len(allIngresses) < 100 %}
-      {#- Sequential execution: process all ingresses in a single pass -#}
-      {{ BackendsIngressShard(allIngresses) }}
-      {%- else %}
-      {#- Parallel execution: split work across shards using go MacroName() -#}
-      {%- for shardIdx := 0; shardIdx < shardCount; shardIdx++ %}
-      {{ go BackendsIngressShard(shard_slice(allIngresses, shardIdx, shardCount)) }}
-      {%- end %}
+      {{ ShardedIngressBackends(allIngresses) }}
       {%- end -%}
   util-generate-host-map-ingress:
     template: |

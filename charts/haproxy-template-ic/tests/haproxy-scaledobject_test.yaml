@@ -1,0 +1,210 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: haproxy keda scaledobject
+templates:
+  - haproxy-scaledobject.yaml
+tests:
+  - it: should not render when keda is disabled
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not render when haproxy is disabled
+    set:
+      haproxy.enabled: false
+      haproxy.keda.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render when both haproxy and keda are enabled
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ScaledObject
+
+  - it: should set correct apiVersion
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - isAPIVersion:
+          of: keda.sh/v1alpha1
+
+  - it: should reference haproxy deployment
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - equal:
+          path: spec.scaleTargetRef.kind
+          value: Deployment
+      - matchRegex:
+          path: spec.scaleTargetRef.name
+          pattern: ".*-haproxy$"
+
+  - it: should set default scaling parameters
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - equal:
+          path: spec.pollingInterval
+          value: 30
+      - equal:
+          path: spec.cooldownPeriod
+          value: 300
+      - equal:
+          path: spec.minReplicaCount
+          value: 2
+      - equal:
+          path: spec.maxReplicaCount
+          value: 10
+
+  - it: should set custom scaling parameters
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      haproxy.keda.pollingInterval: 15
+      haproxy.keda.cooldownPeriod: 600
+      haproxy.keda.minReplicaCount: 3
+      haproxy.keda.maxReplicaCount: 20
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - equal:
+          path: spec.pollingInterval
+          value: 15
+      - equal:
+          path: spec.cooldownPeriod
+          value: 600
+      - equal:
+          path: spec.minReplicaCount
+          value: 3
+      - equal:
+          path: spec.maxReplicaCount
+          value: 20
+
+  - it: should set fallback configuration
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      haproxy.keda.fallback:
+        failureThreshold: 5
+        replicas: 4
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - equal:
+          path: spec.fallback.failureThreshold
+          value: 5
+      - equal:
+          path: spec.fallback.replicas
+          value: 4
+
+  - it: should include triggers
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - contains:
+          path: spec.triggers
+          content:
+            type: prometheus
+            metadata:
+              serverAddress: http://prometheus:9090
+              threshold: "100"
+              query: sum(rate(haproxy_server_connections_total[1m]))
+
+  - it: should include loadbalancer component label
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: loadbalancer
+
+  - it: should include common labels when specified
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      commonLabels:
+        environment: production
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - equal:
+          path: metadata.labels.environment
+          value: production
+
+  - it: should include common annotations when specified
+    set:
+      haproxy.enabled: true
+      haproxy.keda.enabled: true
+      commonAnnotations:
+        team: platform
+      haproxy.keda.triggers:
+        - type: prometheus
+          metadata:
+            serverAddress: http://prometheus:9090
+            threshold: "100"
+            query: sum(rate(haproxy_server_connections_total[1m]))
+    asserts:
+      - equal:
+          path: metadata.annotations.team
+          value: platform

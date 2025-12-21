@@ -1,311 +1,211 @@
-# Base template library for HAProxy Template Ingress Controller
-# Contains resource-agnostic core template snippets, files, and HAProxy configuration
-# Uses plugin patterns (resource_*) to discover resource-specific implementations
+# Base Template Library for HAProxy Template Ingress Controller
 #
-# NOTE: SSL/TLS infrastructure moved to ssl.yaml library
-# - SSL test fixtures (moved to ssl.yaml)
-# - util-ssl-bind-options (moved to ssl.yaml)
-# - sslCertificates.default.pem (moved to ssl.yaml)
-# - frontend https (moved to ssl.yaml)
-# - SSL passthrough infrastructure (moved to ssl.yaml)
+# Provides resource-agnostic building blocks for HAProxy configuration generation.
+# Libraries like ingress.yaml and gateway.yaml extend these primitives via:
+#   - Plugin patterns: render_glob "backends-*", "map-host-*", etc.
+#   - Composable macros: import and extend utility functions
+#
+# SSL/TLS infrastructure is in ssl.yaml (loaded separately when needed)
 
 templateSnippets:
+  # ============================================================================
+  # Core Utility Macros
+  # ============================================================================
+
   util-macros:
     template: |
-      {#-
-        Utility Macros
+      {#- Core utility macros for template rendering -#}
 
-        Purpose: Reusable macros for template orchestration and string manipulation.
-
-        Provides:
-          - SanitizeRegex(pattern): Escapes regex patterns for HAProxy double-quoted context
-          - CalculateShardCount(resourceCount, itemsPerShard): Calculates optimal shard count
-
-        Usage:
-          {% import "util-macros" for SanitizeRegex, CalculateShardCount %}
-          {{ SanitizeRegex("^/api/v[0-9]+$") }}
-          {%- var shards = CalculateShardCount(len(resources.ingresses.List()), 300) %}
-      -#}
+      {#- Escapes $ for HAProxy double-quoted contexts (prevents env var expansion) -#}
       {% macro SanitizeRegex(pattern string) string %}
         {%% show replace(pattern, "$", "\\$") %%}
       {% end %}
 
-      {#-
-        CalculateShardCount - Calculates optimal shard count for parallel template rendering.
-
-        Formula: clamp(resourceCount / itemsPerShard, 1, 2 * GOMAXPROCS)
-
-        Parameters:
-          - resourceCount: Number of resources to process
-          - itemsPerShard: Target items per shard (recommended: 300)
-
-        Returns: Optimal shard count as string (use toint() to convert)
-
-        Override: Set extraContext.shardCountOverride to force a specific value.
-      -#}
+      {#- Calculates optimal shard count: clamp(count / itemsPerShard, 1, 2*GOMAXPROCS) -#}
       {% macro CalculateShardCount(resourceCount int, itemsPerShard int) string %}
         {%%
-          // Check for override first
           var override = extraContext | dig("shardCountOverride")
           if override != nil {
             show tostring(toint(override))
             return
           }
-
-          // Calculate max shards as 2x GOMAXPROCS
           var maxShards = runtimeEnvironment.GOMAXPROCS * 2
-          if maxShards < 1 {
-            maxShards = 1
-          }
-
-          // Calculate shard count based on resource count
+          if maxShards < 1 { maxShards = 1 }
           var shardCount = resourceCount / itemsPerShard
-          if shardCount < 1 {
-            shardCount = 1
-          }
-          if shardCount > maxShards {
-            shardCount = maxShards
-          }
-
+          if shardCount < 1 { shardCount = 1 }
+          if shardCount > maxShards { shardCount = maxShards }
           show tostring(shardCount)
         %%}
       {% end %}
 
+
+  # ============================================================================
+  # Ingress Helpers
+  # ============================================================================
+
+  util-ingress-helpers:
+    template: |
+      {#- Generates HAProxy host match condition: { var(txn.host) -m str host1 } or ... -#}
+      {% macro HostMatchCondition(hosts []any) string %}
+        {%%
+          var parts = []any{}
+          for _, host := range hosts {
+            parts = append(parts, "{ var(txn.host) -m str " + tostring(host) + " }")
+          }
+          show join(parts, " or ")
+        %%}
+      {% end %}
+
+  # ============================================================================
+  # Frontend Routing Logic
+  # ============================================================================
+
   frontend-routing-logic:
     template: |-
       {#-
-        Frontend Routing Logic
+        Path-based routing with qualifier system for backend selection.
 
-        Purpose: Core path-based routing with qualifier system for backend selection.
+        Qualifiers (set by map files, resolved here):
+          - BACKEND:<name> → Direct routing to named backend
+          - MULTIBACKEND:<weight>:<key> → Weighted routing via weighted-multi-backend.map
 
-        Extension Point: Rendered directly by haproxyConfig template.
-
-        Qualifiers:
-          - BACKEND:<name> - Direct routing to named backend
-          - MULTIBACKEND:<weight>:<key> - Weighted routing via weighted-multi-backend.map
-
-        Path Matching Order (default):
-          1. Exact match (path-exact.map)
-          2. Regex match (path-regex.map)
-          3. Prefix-exact match (path-prefix-exact.map)
-          4. Prefix match (path-prefix.map)
-
-        Override: Use path-regex-last library for performance-first ordering (Exact > Prefix > Regex).
+        Path Matching Order: Exact > Regex > Prefix-exact > Prefix
+        (Override with path-regex-last library for: Exact > Prefix > Regex)
 
         Extension Points:
-          - frontend-matchers-advanced-* - Advanced matchers (method, headers, query)
+          - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
       -#}
-      {%- var hostMap, hostMapErr = pathResolver.GetPath("host.map", "map") -%}
-      {%- if hostMapErr != nil -%}{{ fail("failed to resolve host.map path: " + tostring(hostMapErr)) }}{%- end -%}
-      {%- var pathExactMap, pathExactMapErr = pathResolver.GetPath("path-exact.map", "map") -%}
-      {%- if pathExactMapErr != nil -%}{{ fail("failed to resolve path-exact.map path: " + tostring(pathExactMapErr)) }}{%- end -%}
-      {%- var pathRegexMap, pathRegexMapErr = pathResolver.GetPath("path-regex.map", "map") -%}
-      {%- if pathRegexMapErr != nil -%}{{ fail("failed to resolve path-regex.map path: " + tostring(pathRegexMapErr)) }}{%- end -%}
-      {%- var pathPrefixExactMap, pathPrefixExactMapErr = pathResolver.GetPath("path-prefix-exact.map", "map") -%}
-      {%- if pathPrefixExactMapErr != nil -%}{{ fail("failed to resolve path-prefix-exact.map path: " + tostring(pathPrefixExactMapErr)) }}{%- end -%}
-      {%- var pathPrefixMap, pathPrefixMapErr = pathResolver.GetPath("path-prefix.map", "map") -%}
-      {%- if pathPrefixMapErr != nil -%}{{ fail("failed to resolve path-prefix.map path: " + tostring(pathPrefixMapErr)) }}{%- end -%}
-      {%- var weightedMap, weightedMapErr = pathResolver.GetPath("weighted-multi-backend.map", "map") -%}
-      {%- if weightedMapErr != nil -%}{{ fail("failed to resolve weighted-multi-backend.map path: " + tostring(weightedMapErr)) }}{%- end -%}
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       # base/frontend-routing-logic
 
-      # Set variables for path-based routing
+      # Host and path extraction
       http-request set-var(txn.base) base
       http-request set-var(txn.path) path
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      http-request set-var(txn.host_match) var(txn.host),map({{ hostMap }})
-      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ hostMap }},'') if !{ var(txn.host_match) -m found }
+      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }})
+      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
 
-      # Path matching order: Exact > Regex > Prefix-exact > Prefix
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ pathExactMap }})
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ pathRegexMap }}) if !{ var(txn.path_match) -m found }
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ pathPrefixExactMap }}) if !{ var(txn.path_match) -m found }
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ pathPrefixMap }}) if !{ var(txn.path_match) -m found }
+      # Path matching: Exact > Regex > Prefix-exact > Prefix
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
 
-      # Parse qualifier from path match (field 1 = qualifier type)
-      # Empty string if no path match - falls through gracefully
+      # Parse qualifier type
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
 
-      # Extension point for advanced matchers (method/header/query)
-      # Libraries can inject ordered http-request statements here
+      # Extension point: advanced matchers (method/header/query)
       {{- render_glob "frontend-matchers-advanced-*" }}
-      # Re-parse path_match_qualifier after advanced matchers may have changed path_match
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
 
-      # MULTIBACKEND qualifier: weighted routing
-      # Format: MULTIBACKEND:<total_weight>:<route_key>
-      # Field 2 = total_weight, Field 3 = route_key
-      # Result: sets txn.backend_name via weighted-multi-backend.map lookup
+      # MULTIBACKEND: weighted routing via random selection
       http-request set-var(txn.total_weight) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.random_weight) rand(),mod(txn.total_weight) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.route_key) var(txn.path_match),field(3,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.lookup_key) var(txn.random_weight),concat(:,txn.route_key,) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ weightedMap }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ mapPath("weighted-multi-backend.map") }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
 
-      # BACKEND qualifier: direct routing
-      # Format: BACKEND:<backend_name>
-      # Field 2 = backend name
-      # Result: sets txn.backend_name directly
+      # BACKEND: direct routing
       http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
+
+  # ============================================================================
+  # Backend Server Generation
+  # ============================================================================
 
   util-backend-servers:
     template: |
       {#-
-        Backend Server Pool Generation
-
-        Purpose: Generates HAProxy server lines from Kubernetes EndpointSlices.
-
-        Provides:
-          - BackendServers(serviceName, maxServerSlots, port, serverOpts) macro
+        Generates HAProxy server lines from Kubernetes EndpointSlices.
 
         Parameters:
-          - serviceName (string): Kubernetes Service name to look up endpoints
-          - maxServerSlots (int): Maximum server slots (0 = use serverOpts.serverSlotsValue or default 10)
-          - port (int): Target port number
-          - serverOpts (map): Server options map with keys:
-            - serverSlotsValue (int): Override for max slots
-            - flags ([]any): Server flags (e.g., ["ssl", "verify none"])
-            - podMaxconnValue (any): Per-pod maxconn value
-
-        Usage:
-          {% import "util-backend-servers" for BackendServers %}
-          {{ BackendServers("my-service", 10, 8080, nil) }}
-          {{ BackendServers("my-service", 0, 8080, serverOpts) }}
+          - serviceName: Service name to look up endpoints
+          - maxServerSlots: Max slots (0 = use serverOpts.serverSlotsValue or 10)
+          - port: Target port number
+          - serverOpts: Options map { serverSlotsValue, flags[], podMaxconnValue }
       -#}
-
       {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any) string %}
         {%%
-          // Determine slot count
+          // Resolve slot count
           var slots = 10
           if maxServerSlots > 0 {
             slots = maxServerSlots
-          } else if serverOpts != nil {
-            var serverSlotsValue = serverOpts | dig("serverSlotsValue")
-            if serverSlotsValue != nil {
-              slots = serverSlotsValue
-            }
+          } else if v := serverOpts | dig("serverSlotsValue"); v != nil {
+            slots = v
           }
 
-          // Collect endpoints from EndpointSlices
+          // Collect endpoints
           var endpoints = []any{}
-          for _, endpointSlice := range resources.endpoints.Fetch(serviceName) {
-            var epList = endpointSlice | dig("endpoints") | fallback([]any{})
-            for _, ep := range epList {
-              var addresses = ep | dig("addresses") | fallback([]any{})
-              for _, address := range addresses {
-                var endpointName string = address
-                var targetRef = ep | dig("targetRef")
-                if targetRef != nil {
-                  var refName = targetRef | dig("name")
-                  if refName != nil {
-                    endpointName = refName
-                  }
-                }
-                endpoints = append(endpoints, map[string]any{"name": endpointName, "address": address, "port": port})
-              }
-            }
-          }
-          var activeCount = len(endpoints)
-
-          // Build server options string from flags
-          var serverOptsStr = ""
-          if serverOpts != nil {
-            var flags = serverOpts | dig("flags")
-            if flags != nil {
-              var flagsSlice []any = flags
-              if len(flagsSlice) > 0 {
-                serverOptsStr = " " + join(toStringSlice(flagsSlice), " ")
+          for _, slice := range resources.endpoints.Fetch(serviceName) {
+            for _, ep := range slice | dig("endpoints") | fallback([]any{}) {
+              for _, addr := range ep | dig("addresses") | fallback([]any{}) {
+                var name = ep | dig("targetRef", "name") | fallback(addr)
+                endpoints = append(endpoints, map[string]any{"name": name, "address": addr, "port": port})
               }
             }
           }
 
-          // Build maxconn option
-          var maxconnOpt = ""
-          if serverOpts != nil {
-            var podMaxconn = serverOpts | dig("podMaxconnValue")
-            if podMaxconn != nil {
-              maxconnOpt = " maxconn " + podMaxconn
-            }
+          // Build options string
+          var optsStr = ""
+          if flags := serverOpts | dig("flags"); flags != nil && len(flags.([]any)) > 0 {
+            optsStr = " " + join(toStringSlice(flags), " ")
+          }
+          if maxconn := serverOpts | dig("podMaxconnValue"); maxconn != nil {
+            optsStr = optsStr + " maxconn " + maxconn
           }
         %%}
-      # base/util-backend-servers
       {%- for i := 1; i <= slots; i++ %}
-      {%- if i-1 < activeCount %}
+      {%- if i-1 < len(endpoints) %}
       {%- var ep map[string]any = endpoints[i-1] %}
-      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{{ serverOptsStr }}{{ maxconnOpt }} check  # Pod: {{ ep["name"] }}
+      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{{ optsStr }} check  # Pod: {{ ep["name"] }}
       {% else %}
       server SRV_{{ i }} 127.0.0.1:1 disabled  # Placeholder
       {% end %}
       {% end %}
       {% end %}
+  # ============================================================================
+  # Extension Points
+  # ============================================================================
+
   global-top:
     template: |
-      {#-
-        Global Top-Level Sections
-
-        Purpose: Orchestrator that renders all global-top-* snippets for top-level HAProxy sections.
-
-        Extension Point: Implements render_glob "global-top-*" pattern.
-
-        Generated Sections:
-          - userlist (authentication) - from haproxytech.yaml
-          - resolvers (DNS) - future use
-
-        Usage:
-          {{ render "global-top" }}
-      -#}
+      {#- Renders global-top-* snippets (e.g., userlist sections from haproxytech.yaml) -#}
       {{- render_glob "global-top-*" -}}
+
+# ============================================================================
+# Map Files
+# ============================================================================
+# Map files provide host and path routing tables.
+# Resource libraries populate these via map-*-* snippets.
 
 maps:
   host.map:
     template: |
-      # base/host.map
-      {# Generic host mapping infrastructure #}
-      {# Resource libraries populate this map via map-host-* snippets #}
+      # Host to normalized host mapping (strips port, wildcards)
       {{- render_glob "map-host-*" -}}
 
   path-exact.map:
     template: |
-      # base/path-exact.map
-      # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
-      # It should be used with the equality string matcher. Example:
-      #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("path-exact.map", "map") }})
-      {# Resource libraries populate this map via map-path-exact-* snippets #}
-      {{- render_glob "map-path-exact-*" -}}
+      # Exact path matches (use with map() function)
+      {{ render_glob "map-path-exact-*" -}}
 
   path-prefix-exact.map:
     template: |
-      # base/path-prefix-exact.map
-      # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
-      {# Resource libraries populate this map via map-path-prefix-exact-* snippets #}
-      {{- render_glob "map-path-prefix-exact-*" -}}
+      # Prefix boundary matches without trailing slash
+      {{ render_glob "map-path-prefix-exact-*" -}}
 
   path-prefix.map:
     template: |
-      # base/path-prefix.map
-      # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
-      # It should be used with the prefix string matcher. Example:
-      #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("path-prefix.map", "map") }})
-      {# Resource libraries populate this map via map-path-prefix-* snippets #}
-      {{- render_glob "map-path-prefix-*" -}}
+      # Prefix matches with trailing slash (use with map_beg())
+      {{ render_glob "map-path-prefix-*" -}}
 
   path-regex.map:
     template: |
-      # base/path-regex.map
-      # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
-      # It should be used with the regex string matcher. Example:
-      #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ pathResolver.GetPath("path-regex.map", "map") }})
-      {# Resource libraries populate this map via map-path-regex-* snippets #}
+      # Regex matches (use with map_reg())
       {{- render_glob "map-path-regex-*" -}}
 
   weighted-multi-backend.map:
     template: |
-      # base/weighted-multi-backend.map
-      # Weighted multi-backend routing map
-      # Maps random_number:route_key to backend name for MULTIBACKEND qualifier
-      # Format: <0 to total_weight-1>:<namespace>_<resource>_<rule_idx> <backend_name>
-      # Entries are expanded: weight N generates N consecutive entries
-      # Libraries populate via map-weighted-backend-* pattern
+      # Weighted routing: random_weight:route_key → backend_name
       {{- render_glob "map-weighted-backend-*" }}
 
 files:

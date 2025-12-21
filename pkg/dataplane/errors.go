@@ -94,21 +94,21 @@ type ValidationError struct {
 	// Message is the validation error message
 	Message string
 
-	// Err is the underlying error
-	Err error
+	// Cause is the underlying error
+	Cause error
 }
 
 // Error implements the error interface.
 func (e *ValidationError) Error() string {
 	if e.Phase != "" {
-		return fmt.Sprintf("%s validation failed: %s: %v", e.Phase, e.Message, e.Err)
+		return fmt.Sprintf("%s validation failed: %s: %v", e.Phase, e.Message, e.Cause)
 	}
-	return fmt.Sprintf("HAProxy validation failed: %s: %v", e.Message, e.Err)
+	return fmt.Sprintf("HAProxy validation failed: %s: %v", e.Message, e.Cause)
 }
 
 // Unwrap returns the underlying error for error unwrapping.
 func (e *ValidationError) Unwrap() error {
-	return e.Err
+	return e.Cause
 }
 
 // ConflictError represents unresolved version conflicts after exhausting retries.
@@ -217,7 +217,7 @@ func NewValidationError(message string, cause error) *SyncError {
 	return &SyncError{
 		Stage:   "apply",
 		Message: "HAProxy rejected the configuration",
-		Cause:   &ValidationError{Phase: "semantic", Message: message, Err: cause},
+		Cause:   &ValidationError{Phase: "semantic", Message: message, Cause: cause},
 		Hints: []string{
 			"Review the validation error message from HAProxy",
 			"Check for references to non-existent backends or servers",

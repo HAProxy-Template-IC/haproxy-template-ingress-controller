@@ -31,10 +31,12 @@ type FileOperations[T FileItem] interface {
 	GetContent(ctx context.Context, id string) (string, error)
 
 	// Create creates a new file with the given identifier and content.
-	Create(ctx context.Context, id, content string) error
+	// Returns the reload ID if a reload was triggered (empty string if not).
+	Create(ctx context.Context, id, content string) (string, error)
 
 	// Update updates an existing file with new content.
-	Update(ctx context.Context, id, content string) error
+	// Returns the reload ID if a reload was triggered (empty string if not).
+	Update(ctx context.Context, id, content string) (string, error)
 
 	// Delete removes a file by identifier.
 	Delete(ctx context.Context, id string) error
@@ -186,36 +188,47 @@ func Compare[T FileItem](
 //   - diff: The diff to apply (may contain create, update, and/or delete operations)
 //
 // Returns:
+//   - []string: Reload IDs from create/update operations that triggered reloads
 //   - error: Any error encountered during synchronization
 func Sync[T FileItem](
 	ctx context.Context,
 	ops FileOperations[T],
 	diff *FileDiffGeneric[T],
-) error {
+) ([]string, error) {
 	if diff == nil {
-		return nil
+		return nil, nil
 	}
+
+	var reloadIDs []string
 
 	// Create new files
 	for _, file := range diff.ToCreate {
-		if err := ops.Create(ctx, file.GetIdentifier(), file.GetContent()); err != nil {
-			return fmt.Errorf("failed to create file '%s': %w", file.GetIdentifier(), err)
+		reloadID, err := ops.Create(ctx, file.GetIdentifier(), file.GetContent())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file '%s': %w", file.GetIdentifier(), err)
+		}
+		if reloadID != "" {
+			reloadIDs = append(reloadIDs, reloadID)
 		}
 	}
 
 	// Update existing files
 	for _, file := range diff.ToUpdate {
-		if err := ops.Update(ctx, file.GetIdentifier(), file.GetContent()); err != nil {
-			return fmt.Errorf("failed to update file '%s': %w", file.GetIdentifier(), err)
+		reloadID, err := ops.Update(ctx, file.GetIdentifier(), file.GetContent())
+		if err != nil {
+			return nil, fmt.Errorf("failed to update file '%s': %w", file.GetIdentifier(), err)
+		}
+		if reloadID != "" {
+			reloadIDs = append(reloadIDs, reloadID)
 		}
 	}
 
 	// Delete obsolete files
 	for _, id := range diff.ToDelete {
 		if err := ops.Delete(ctx, id); err != nil {
-			return fmt.Errorf("failed to delete file '%s': %w", id, err)
+			return nil, fmt.Errorf("failed to delete file '%s': %w", id, err)
 		}
 	}
 
-	return nil
+	return reloadIDs, nil
 }

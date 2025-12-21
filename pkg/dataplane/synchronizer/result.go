@@ -38,7 +38,7 @@ type SyncResult struct {
 // OperationError represents a failed operation with its error.
 type OperationError struct {
 	Operation comparator.Operation
-	Error     error
+	Cause     error
 }
 
 // HasChanges returns true if there are configuration changes.
@@ -79,7 +79,7 @@ func (r *SyncResult) String() string {
 	if r.HasFailures() {
 		parts = append(parts, fmt.Sprintf("\nFailed: %d operations", len(r.FailedOperations)))
 		for _, fe := range r.FailedOperations {
-			parts = append(parts, fmt.Sprintf("  - %s: %v", fe.Operation.Describe(), fe.Error))
+			parts = append(parts, fmt.Sprintf("  - %s: %v", fe.Operation.Describe(), fe.Cause))
 		}
 	}
 

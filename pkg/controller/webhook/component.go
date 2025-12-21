@@ -38,6 +38,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "webhook"
+
 	// DefaultWebhookPort is the default HTTPS port for the webhook server.
 	DefaultWebhookPort = 9443
 
@@ -121,11 +124,17 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config, rest
 
 	return &Component{
 		eventBus:   eventBus,
-		logger:     logger.With("component", "webhook"),
+		logger:     logger.With("component", ComponentName),
 		config:     *config,
 		restMapper: restMapper,
 		metrics:    metrics,
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (c *Component) Name() string {
+	return ComponentName
 }
 
 // Start starts the webhook component.
@@ -145,10 +154,10 @@ func (c *Component) Start(ctx context.Context) error {
 
 	// Validate certificates are present
 	if len(c.config.CertPEM) == 0 {
-		return fmt.Errorf("TLS certificate is empty")
+		return fmt.Errorf("tls certificate is empty")
 	}
 	if len(c.config.KeyPEM) == 0 {
-		return fmt.Errorf("TLS private key is empty")
+		return fmt.Errorf("tls private key is empty")
 	}
 
 	c.logger.Info("TLS certificates validated successfully",

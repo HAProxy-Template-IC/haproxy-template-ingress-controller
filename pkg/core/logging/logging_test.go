@@ -155,21 +155,21 @@ func TestLoggerFiltering(t *testing.T) {
 		{"DEBUG", slog.LevelDebug, true},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.loggerLevel+"_logs_"+tc.logLevel.String(), func(t *testing.T) {
+	for _, tt := range testCases {
+		t.Run(tt.loggerLevel+"_logs_"+tt.logLevel.String(), func(t *testing.T) {
 			var buf bytes.Buffer
 			handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{
-				Level: parseLogLevel(tc.loggerLevel),
+				Level: parseLogLevel(tt.loggerLevel),
 			})
 			logger := slog.New(handler)
 
 			// Log at the test level
-			logger.Log(context.Background(), tc.logLevel, "test message")
+			logger.Log(context.Background(), tt.logLevel, "test message")
 
-			if tc.shouldLog {
-				assert.NotEmpty(t, buf.String(), "Expected log output for %s logger at %s level", tc.loggerLevel, tc.logLevel)
+			if tt.shouldLog {
+				assert.NotEmpty(t, buf.String(), "Expected log output for %s logger at %s level", tt.loggerLevel, tt.logLevel)
 			} else {
-				assert.Empty(t, buf.String(), "Expected no log output for %s logger at %s level", tc.loggerLevel, tc.logLevel)
+				assert.Empty(t, buf.String(), "Expected no log output for %s logger at %s level", tt.loggerLevel, tt.logLevel)
 			}
 		})
 	}
