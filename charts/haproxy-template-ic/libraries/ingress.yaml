@@ -27,6 +27,7 @@ templateSnippets:
   features-100-ingress-tls:
     template: |
       {#- Registers TLS certificates from Ingress spec.tls with SSL infrastructure -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%%
           var tlsList = ingress | dig("spec", "tls")
@@ -71,7 +72,7 @@ templateSnippets:
               "secret_name": secretName,
               "sni_patterns": tls | dig("hosts") | fallback([]any{}),
             }
-            shared["globalFeatures"].(map[string]any)["tlsCertificates"] = append(shared["globalFeatures"].(map[string]any)["tlsCertificates"].([]any), tlsCert)
+            gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), tlsCert)
           %%}
         {%- end %}
       {%- end %}

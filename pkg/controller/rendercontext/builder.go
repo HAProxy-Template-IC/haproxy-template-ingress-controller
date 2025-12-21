@@ -173,7 +173,7 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 		"fileRegistry":     fileRegistry,
 		"pathResolver":     b.pathResolver,
 		"dataplane":        b.config.Dataplane,
-		"shared":           make(map[string]interface{}),
+		"shared":           templating.NewSharedContext(),
 		"runtimeEnvironment": &templating.RuntimeEnvironment{
 			GOMAXPROCS: runtime.GOMAXPROCS(0),
 		},

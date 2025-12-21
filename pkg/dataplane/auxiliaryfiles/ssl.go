@@ -48,9 +48,15 @@ func calculateCertIdentifier(content string) string {
 	}
 
 	// Return format matching API fallback: "cert:serial:XXX:issuers:YYY"
-	// The API returns issuers as a single string, and we use cert.Issuer.String()
-	// which also returns a single string like "CN=...,O=...,C=..." for consistency.
-	return fmt.Sprintf("cert:serial:%s:issuers:%s", cert.SerialNumber.String(), cert.Issuer.String())
+	// The API returns issuers as just the Common Name (e.g., "example.com"),
+	// not the full Distinguished Name (e.g., "CN=example.com,O=Org,C=US").
+	// We must use CommonName to match the API format for accurate comparison.
+	issuerCN := cert.Issuer.CommonName
+	if issuerCN == "" {
+		// Fallback for self-signed certs where issuer may be empty but subject has CN
+		issuerCN = cert.Subject.CommonName
+	}
+	return fmt.Sprintf("cert:serial:%s:issuers:%s", cert.SerialNumber.String(), issuerCN)
 }
 
 // sslCertificateOps implements FileOperations for SSLCertificate.

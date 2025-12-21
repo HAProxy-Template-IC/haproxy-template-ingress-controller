@@ -219,6 +219,16 @@ func (e *ScriggoEngine) Render(templateName string, templateContext map[string]i
 		return "", e.templateNotFoundError(templateName)
 	}
 
+	// Ensure template context exists with shared context for cross-template caching.
+	// This allows first_seen and other cache functions to work even when caller
+	// passes nil context (e.g., in tests).
+	if templateContext == nil {
+		templateContext = make(map[string]interface{})
+	}
+	if _, ok := templateContext["shared"]; !ok {
+		templateContext["shared"] = NewSharedContext()
+	}
+
 	// Setup tracing if enabled
 	e.tracing.mu.Lock()
 	tracingEnabled := e.tracing.enabled
@@ -232,14 +242,8 @@ func (e *ScriggoEngine) Render(templateName string, templateContext map[string]i
 		fmt.Fprintf(traceBuilder, "Rendering: %s\n", templateName)
 	}
 
-	// Create per-render cache and pass via context
-	// This enables cache functions (has_cached, get_cached, set_cached) to work
-	// Uses sync.Map for thread-safe concurrent access during parallel template rendering
-	renderCache := &sync.Map{}
-	ctx := context.WithValue(context.Background(), RenderCacheContextKey, renderCache)
-
-	// Add render context (globals) for resource accessor functions
-	ctx = context.WithValue(ctx, RenderContextContextKey, templateContext)
+	// Add render context (globals) for resource accessor functions like first_seen
+	ctx := context.WithValue(context.Background(), RenderContextContextKey, templateContext)
 
 	// Setup run options with profiling and parallelism settings
 	runOpts := &scriggo.RunOptions{

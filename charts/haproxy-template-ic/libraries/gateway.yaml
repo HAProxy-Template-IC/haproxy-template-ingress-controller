@@ -54,17 +54,17 @@ templateSnippets:
 
   features-100-gateway-ssl-passthrough:
     template: |
-      {#- Register SSL passthrough backends with global feature registry -#}
+      {#- Register SSL passthrough backends with global feature registry. -#}
       {{ render "util-gateway-ssl-passthrough" }}
-      {%- if shared.globalFeatures != nil %}
-        {%- var globalFeatures map[string]any = shared.globalFeatures %}
-        {%- var sslBackends = globalFeatures | dig("sslPassthroughBackends") %}
-        {%- if sslBackends != nil %}
-          {%- var gwPassthrough map[string]any = shared.gateway_ssl_passthrough %}
-          {%- var gatewayBackends []any = gwPassthrough["backends"] %}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
+      {%- if sslBackends != nil %}
+        {%- var gwVal, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any { return nil }) %}
+        {%- if gwVal != nil %}
+          {%- var gwPassthrough = gwVal.(map[string]any) %}
+          {%- var gatewayBackends = gwPassthrough["backends"].([]any) %}
           {%- for _, backend := range gatewayBackends %}
-            {%- var sslPassthroughBackends []any = globalFeatures["sslPassthroughBackends"] %}
-            {%- globalFeatures["sslPassthroughBackends"] = append(sslPassthroughBackends, backend) %}
+            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
           {%- end %}
         {%- end %}
       {%- end %}
@@ -74,7 +74,7 @@ templateSnippets:
     template: |
       {#- Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
       {#- Dynamically generates certificate files using fileRegistry.Register() #}
-      {%- var globalFeatures map[string]any = shared.globalFeatures %}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {#- Gateway API TLS configuration structure:
           Gateway.spec.listeners[]:
             - name: https
@@ -152,8 +152,8 @@ templateSnippets:
                 "secret_name": certName,
                 "sni_patterns": sniPatterns,
               }
-              var tlsCerts []any = globalFeatures["tlsCertificates"]
-              globalFeatures["tlsCertificates"] = append(tlsCerts, tlsCert)
+              var tlsCerts []any = gf["tlsCertificates"]
+              gf["tlsCertificates"] = append(tlsCerts, tlsCert)
             %%}
           {%- end %}
         {%- end %}
@@ -165,19 +165,38 @@ templateSnippets:
 
   util-gateway-analysis:
     template: |
-      {#- Caches route analysis in shared.gatewayAnalysis: {sortedRoutes, pathGroups, allRoutes} -#}
+      {#- Caches route analysis in shared.gatewayAnalysis: {sortedRoutes, pathGroups, allRoutes}
+          Uses ComputeIfAbsent for race-free caching across parallel template renders.
+          The compute function runs exactly once, even with concurrent access. -#}
       {%- import "util-analyze-routes" for AnalyzeRoutes %}
-      {%- if !has_cached("gatewayAnalysis") %}
-        {%- shared["gatewayAnalysis"] = map[string]any{"pathGroups": map[string]any{}, "sortedRoutes": []any{}, "allRoutes": []any{}} %}
-        {{- AnalyzeRoutes(shared["gatewayAnalysis"].(map[string]any)) -}}
-        {%- set_cached("gatewayAnalysis", true) %}
-      {%- end %}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any {
+          var analysis = map[string]any{"pathGroups": map[string]any{}, "sortedRoutes": []any{}, "allRoutes": []any{}}
+          AnalyzeRoutes(analysis)
+          return analysis
+        })
+      %%}
 
   util-gateway-ssl-passthrough:
     template: |
-      {#- Caches SSL passthrough backends in shared.gateway_ssl_passthrough.backends -#}
-      {%- if !has_cached("gateway_ssl_passthrough") %}
-        {%- shared["gateway_ssl_passthrough"] = map[string]any{"backends": []any{}} %}
+      {#- Caches SSL passthrough backends in shared["gateway_ssl_passthrough"].backends
+          Uses ComputeIfAbsent for race-free caching across parallel template renders.
+          Note: first_seen() calls are safe inside the compute function due to the
+          deadlock-free implementation of ComputeIfAbsent. -#}
+      {%- import "util-build-ssl-passthrough" for BuildSSLPassthrough %}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any {
+          var sslData = map[string]any{"backends": []any{}}
+          BuildSSLPassthrough(sslData)
+          return sslData
+        })
+      %%}
+
+  util-build-ssl-passthrough:
+    template: |
+      {#- Macro to populate SSL passthrough backend data.
+          Called from ComputeIfAbsent to enable use of template functions (dig, toSlice, etc.). -#}
+      {%- macro BuildSSLPassthrough(sslData map[string]any) %}
         {%- for _, route := range resources.httproutes.List() %}
           {%%
             var hasPassthrough = false
@@ -200,16 +219,14 @@ templateSnippets:
           %%}
           {%- for _, host := range route | dig("spec", "hostnames") | toSlice() %}
             {%- if first_seen("gateway_ssl_passthrough_hosts", host) %}
-              {%- var backends = shared["gateway_ssl_passthrough"].(map[string]any)["backends"].([]any) %}
-              {%- shared["gateway_ssl_passthrough"].(map[string]any)["backends"] = append(backends, map[string]any{
+              {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
                 "name": "ssl-passthrough-" + ns + "-" + routeName,
                 "sni": host, "namespace": ns, "route": routeName, "route_type": "httproute",
               }) %}
             {%- end %}
           {%- end %}
         {%- end %}
-        {%- set_cached("gateway_ssl_passthrough", true) %}
-      {%- end %}
+      {%- end macro %}
 
   util-analyze-routes:
     template: |
@@ -513,6 +530,10 @@ templateSnippets:
     template: |
       {#- Generate backend definitions from HTTPRoute and GRPCRoute resources -#}
       {%- import "util-sharded-gateway-backends" for ShardedGatewayBackends -%}
+      {#- Pre-cache gateway analysis during haproxy.cfg render (sequential).
+          This ensures the cache is populated BEFORE map files render in parallel,
+          preventing race conditions on the shared map. -#}
+      {{- render "util-gateway-analysis" -}}
       # gateway/backends-gateway
       {{ ShardedGatewayBackends(resources.httproutes.List(), "", "gatewayBackends_http") }}
       {{- ShardedGatewayBackends(resources.grpcroutes.List(), "h2", "gatewayBackends_grpc") -}}
@@ -536,7 +557,7 @@ templateSnippets:
       {%- import "util-backend-servers" for BackendServers -%}
       {{ render "util-gateway-ssl-passthrough" }}
 
-      {%- var sslPassthroughData map[string]any = shared["gateway_ssl_passthrough"] %}
+      {%- var sslPassthroughData = shared.Get("gateway_ssl_passthrough").(map[string]any) %}
       {%- var sslBackends []any = sslPassthroughData["backends"] %}
       {%- for _, backendInfo := range sslBackends %}
         {%- var biNamespace = backendInfo["namespace"] %}
@@ -623,7 +644,7 @@ templateSnippets:
       {#- Get cached route analysis (runs once, shared across all renders) #}
       {{ render "util-gateway-analysis" }}
 
-      {%- var gatewayAnalysis map[string]any = shared["gatewayAnalysis"] %}
+      {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
       {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
       {%- var pathGroups map[string]any = gatewayAnalysis["pathGroups"] %}
 
@@ -851,7 +872,7 @@ templateSnippets:
          This is injected into base template via the advanced-matcher-* extension point #}
       # gateway/frontend-matchers-advanced-500-gateway
       {{ render "util-gateway-analysis" -}}
-      {%- var gatewayAnalysis map[string]any = shared["gatewayAnalysis"] %}
+      {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
       {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
       {%- if len(sortedRoutes) > 0 %}
       # Advanced route matching (method/header/query)
@@ -985,8 +1006,10 @@ templateSnippets:
          Runs after frontend-matchers-advanced-500-gateway sets req.gw_rule_id (900 prefix ensures late ordering) #}
       # gateway/frontend-matchers-advanced-900-path-match
       {{ render "util-gateway-analysis" -}}
-
-      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- var gatewayAllRoutes = ga["allRoutes"] | toSlice() %}
       {%- if len(gatewayAllRoutes) > 0 %}
       # Set txn.path_match for backend selection based on req.gw_rule_id
       {% for _, routeInfo := range gatewayAllRoutes -%}
@@ -1019,9 +1042,12 @@ templateSnippets:
       {#- RequestHeaderModifier: set, add, or remove request headers -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
-      {%- if shared.gatewayAnalysis.hasRequestHeader_filter %}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasRequestHeader_filter"] %}
       # gateway/frontend-filters-gateway-request-header
-      {%- for _, routeInfo := range shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
           {%- if (filter | dig("type")) == "RequestHeaderModifier" %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
@@ -1051,9 +1077,12 @@ templateSnippets:
       {#- ResponseHeaderModifier: set, add, or remove response headers -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
-      {%- if shared.gatewayAnalysis.hasResponseHeader_filter %}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasResponseHeader_filter"] %}
       # gateway/frontend-filters-gateway-response-header
-      {%- for _, routeInfo := range shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
           {%- if (filter | dig("type")) == "ResponseHeaderModifier" %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
@@ -1083,9 +1112,12 @@ templateSnippets:
       {#- RequestRedirect: redirect to different scheme, host, port, or path -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
-      {%- if shared.gatewayAnalysis.hasRedirect_filter %}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasRedirect_filter"] %}
       # gateway/frontend-filters-gateway-redirect
-      {%- for _, routeInfo := range shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
           {%- if (filter | dig("type")) == "RequestRedirect" && (routeInfo | dig("resource_type")) == "httproute" %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
@@ -1139,9 +1171,12 @@ templateSnippets:
       {#- URLRewrite: rewrite hostname or path before backend -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
-      {%- if shared.gatewayAnalysis.hasUrlrewrite_filter %}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasUrlrewrite_filter"] %}
       # gateway/frontend-filters-gateway-urlrewrite
-      {%- for _, routeInfo := range shared.gatewayAnalysis.allRoutes | toSlice() %}
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
           {%- if (filter | dig("type")) == "URLRewrite" && (routeInfo | dig("resource_type")) == "httproute" %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
@@ -1439,7 +1474,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "split.example.com/app GW_ROUTE_ID:http:default_split-route_0"
+        pattern: "split.example.com/app/ GW_ROUTE_ID:http:default_split-route_0"
         description: Path map must use GW_ROUTE_ID qualifier
 
       - type: contains
@@ -1495,7 +1530,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^split\\.example\\.com/app GW_ROUTE_ID:"
+        pattern: "(?m)^split\\.example\\.com/app/ GW_ROUTE_ID:"
         description: Path map entries must start at beginning of line (Gateway API)
 
       - type: contains
@@ -1821,7 +1856,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "api.example.com/api GW_ROUTE_ID:http"
+        pattern: "api.example.com/api/ GW_ROUTE_ID:http"
         description: Conflicting paths must use GW_ROUTE_ID qualifier
 
       - type: contains
@@ -2295,9 +2330,9 @@ validationTests:
       - type: match_order
         target: map:path-prefix.map
         patterns:
-          - "/api/v1/users.*default_route1_0"   # Most specific: longest path + method + headers
-          - "/api/v1[^/].*default_route1_1"      # Medium: medium path + method
-          - "/api[^/].*default_route1_2"         # Least specific: shortest path, no extra matchers
+          - "/api/v1/users/.*default_route1_0"   # Most specific: longest path + method + headers
+          - "/api/v1/ .*default_route1_1"        # Medium: medium path + method
+          - "/api/ .*default_route1_2"           # Least specific: shortest path, no extra matchers
         description: Routes must be ordered by Gateway API precedence (most specific first)
 
   test-httproute-same-path-matcher-precedence:
@@ -2600,7 +2635,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "api.example.com/api GW_ROUTE_ID:http:default_multi-rule_0__default_multi-rule_1"
+        pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_multi-rule_0__default_multi-rule_1"
         description: Same route conflicts must include both rule indices
 
       - type: contains
@@ -2975,7 +3010,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "api.example.com/api GW_ROUTE_ID:http:default_route-get_0__default_route-post_0"
+        pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_route-get_0__default_route-post_0"
         description: Cross-route conflicts must be detected and marked with GW_ROUTE_ID qualifier
 
   test-grpcroute-multiple-headers:
@@ -3230,7 +3265,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "api\\.example\\.com/rest GW_ROUTE_ID:http:default_http-route_0"
+        pattern: "api\\.example\\.com/rest/ GW_ROUTE_ID:http:default_http-route_0"
         description: HTTPRoute path must route to HTTP service
 
       - type: contains

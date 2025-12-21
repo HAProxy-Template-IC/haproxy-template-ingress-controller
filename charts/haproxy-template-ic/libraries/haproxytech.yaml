@@ -43,9 +43,23 @@ templateSnippets:
 
   util-haproxytech-ssl-passthrough:
     template: |
-      {#- Caches SSL passthrough backends from haproxy.org/ssl-passthrough annotations -#}
-      {%- if !has_cached("haproxytech_sslPassthrough") %}
-        {%- shared["haproxytech_sslPassthrough"] = map[string]any{"backends": []any{}} %}
+      {#- Caches SSL passthrough backends from haproxy.org/ssl-passthrough annotations.
+          Uses ComputeIfAbsent for race-free caching across parallel template renders.
+          The compute function runs exactly once, even with concurrent access. -#}
+      {%- import "util-build-haproxytech-ssl-passthrough" for BuildHaproxytechSSLPassthrough %}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("haproxytech_sslPassthrough", func() any {
+          var sslData = map[string]any{"backends": []any{}}
+          BuildHaproxytechSSLPassthrough(sslData)
+          return sslData
+        })
+      %%}
+
+  util-build-haproxytech-ssl-passthrough:
+    template: |
+      {#- Macro to populate SSL passthrough data from haproxy.org/ssl-passthrough annotations.
+          Called from ComputeIfAbsent to enable use of template functions. -#}
+      {%- macro BuildHaproxytechSSLPassthrough(sslData map[string]any) %}
         {%- for _, ingress := range resources.ingresses.List() %}
           {%- var passthrough = ingress | dig("metadata", "annotations", "haproxy.org/ssl-passthrough") | fallback("") | tostring() %}
           {%- if passthrough == "true" %}
@@ -54,8 +68,7 @@ templateSnippets:
             {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
               {%- var host = rule | dig("host") %}
               {%- if host != nil && first_seen("haproxytech_sslPassthrough_host", tostring(host)) %}
-                {%- var backends = shared["haproxytech_sslPassthrough"].(map[string]any)["backends"].([]any) %}
-                {%- shared["haproxytech_sslPassthrough"].(map[string]any)["backends"] = append(backends, map[string]any{
+                {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
                   "name": "ssl-passthrough-" + ns + "-" + name,
                   "sni": host, "namespace": ns, "ingress": name,
                 }) %}
@@ -63,8 +76,7 @@ templateSnippets:
             {%- end %}
           {%- end %}
         {%- end %}
-        {%- set_cached("haproxytech_sslPassthrough", true) %}
-      {%- end %}
+      {%- end macro %}
 
   # ============================================================================
   # Frontend Filters - Applied before backend selection
@@ -693,15 +705,16 @@ templateSnippets:
 
   features-100-haproxytech-ssl-passthrough:
     template: |
-      {#- Register SSL passthrough backends with global feature registry -#}
+      {#- Register SSL passthrough backends with global feature registry. -#}
       {{ render "util-haproxytech-ssl-passthrough" }}
-      {%- if shared.globalFeatures != nil %}
-        {%- var globalFeatures = shared.globalFeatures.(map[string]any) %}
-        {%- var sslBackends = globalFeatures | dig("sslPassthroughBackends") %}
-        {%- if sslBackends != nil %}
-          {%- var haproxytechBackends = shared.haproxytech_sslPassthrough.(map[string]any).backends.([]any) %}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
+      {%- if sslBackends != nil %}
+        {%- var htVal, _ = shared.ComputeIfAbsent("haproxytech_sslPassthrough", func() any { return nil }) %}
+        {%- if htVal != nil %}
+          {%- var haproxytechBackends = htVal.(map[string]any)["backends"].([]any) %}
           {%- for _, backend := range haproxytechBackends %}
-            {%- globalFeatures["sslPassthroughBackends"] = append(globalFeatures["sslPassthroughBackends"].([]any), backend) %}
+            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
           {%- end %}
         {%- end %}
       {%- end %}
@@ -711,7 +724,9 @@ templateSnippets:
       {#- Generate SSL passthrough backends from Ingress resources -#}
       {%- import "util-backend-servers" for BackendServers -%}
       {{ render "util-haproxytech-ssl-passthrough" }}
-      {%- var sslData = shared["haproxytech_sslPassthrough"].(map[string]any) %}
+      {%- var htVal, _ = shared.ComputeIfAbsent("haproxytech_sslPassthrough", func() any { return nil }) %}
+      {%- if htVal == nil %}{% return %}{% end %}
+      {%- var sslData = htVal.(map[string]any) %}
       {%- var backends = sslData["backends"].([]any) %}
       {%- for _, backendInfo := range backends %}
         {%- var info = backendInfo.(map[string]any) %}

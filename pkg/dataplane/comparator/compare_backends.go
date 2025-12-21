@@ -60,23 +60,42 @@ func (c *Comparator) compareAddedBackends(desiredBackends, currentBackends map[s
 		operations = append(operations, sections.NewBackendCreate(backend))
 		summary.BackendsAdded = append(summary.BackendsAdded, name)
 
-		// Also create servers for this new backend
-		// Compare against an empty backend to get all server create operations
-		emptyBackend := &models.Backend{}
-		emptyBackend.Name = name
-		emptyBackend.Servers = make(map[string]models.Server)
-		serverOps := c.compareServers(name, emptyBackend, backend, summary)
-		if len(serverOps) > 0 {
-			operations = append(operations, serverOps...)
-		}
-
-		// Also create server templates for this new backend
-		emptyBackend.ServerTemplates = make(map[string]models.ServerTemplate)
-		serverTemplateOps := c.compareServerTemplates(name, emptyBackend, backend)
-		if len(serverTemplateOps) > 0 {
-			operations = append(operations, serverTemplateOps...)
-		}
+		// Create operations for all nested elements in the new backend
+		nestedOps := c.createNestedBackendOperations(name, backend, summary)
+		operations = append(operations, nestedOps...)
 	}
+
+	return operations
+}
+
+// createNestedBackendOperations creates operations for all nested elements of a new backend.
+// Compares against empty collections to generate create operations for each element.
+func (c *Comparator) createNestedBackendOperations(name string, backend *models.Backend, summary *DiffSummary) []Operation {
+	var operations []Operation
+
+	// Create an empty backend to compare against for servers and server templates
+	emptyBackend := &models.Backend{}
+	emptyBackend.Name = name
+	emptyBackend.Servers = make(map[string]models.Server)
+	emptyBackend.ServerTemplates = make(map[string]models.ServerTemplate)
+
+	// Servers and server templates
+	operations = append(operations, c.compareServers(name, emptyBackend, backend, summary)...)
+	operations = append(operations, c.compareServerTemplates(name, emptyBackend, backend)...)
+
+	// ACLs and rules (compare against nil for empty collections)
+	operations = append(operations, c.compareACLs("backend", name, nil, backend.ACLList, summary)...)
+	operations = append(operations, c.compareHTTPRequestRules("backend", name, nil, backend.HTTPRequestRuleList)...)
+	operations = append(operations, c.compareHTTPResponseRules("backend", name, nil, backend.HTTPResponseRuleList)...)
+	operations = append(operations, c.compareTCPRequestRules("backend", name, nil, backend.TCPRequestRuleList)...)
+	operations = append(operations, c.compareTCPResponseRules(name, nil, backend.TCPResponseRuleList)...)
+	operations = append(operations, c.compareLogTargets("backend", name, nil, backend.LogTargetList)...)
+	operations = append(operations, c.compareStickRules(name, nil, backend.StickRuleList)...)
+	operations = append(operations, c.compareHTTPAfterResponseRules(name, nil, backend.HTTPAfterResponseRuleList)...)
+	operations = append(operations, c.compareServerSwitchingRules(name, nil, backend.ServerSwitchingRuleList)...)
+	operations = append(operations, c.compareFilters("backend", name, nil, backend.FilterList)...)
+	operations = append(operations, c.compareHTTPChecks(name, nil, backend.HTTPCheckList)...)
+	operations = append(operations, c.compareTCPChecks(name, nil, backend.TCPCheckRuleList)...)
 
 	return operations
 }
