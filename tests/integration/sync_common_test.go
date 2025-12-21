@@ -180,7 +180,7 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 			require.NoError(t, err, "failed to read initial test file %s", testdataFile)
 
 			filename := filepath.Base(haproxyPath)
-			err = client.CreateGeneralFile(ctx, filename, string(content))
+			_, err = client.CreateGeneralFile(ctx, filename, string(content))
 			if err != nil && !strings.Contains(err.Error(), "already exists") {
 				require.NoError(t, err, "failed to upload initial general file %s", filename)
 			}
@@ -195,7 +195,7 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 			content, err := os.ReadFile(fullPath)
 			require.NoError(t, err, "failed to read initial SSL cert %s", testdataFile)
 
-			err = client.CreateSSLCertificate(ctx, certName, string(content))
+			_, err = client.CreateSSLCertificate(ctx, certName, string(content))
 			if err != nil && !strings.Contains(err.Error(), "already exists") {
 				require.NoError(t, err, "failed to upload initial SSL certificate %s", certName)
 			}
@@ -210,7 +210,7 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 			content, err := os.ReadFile(fullPath)
 			require.NoError(t, err, "failed to read initial map file %s", testdataFile)
 
-			err = client.CreateMapFile(ctx, mapName, string(content))
+			_, err = client.CreateMapFile(ctx, mapName, string(content))
 			if err != nil && !strings.Contains(err.Error(), "already exists") {
 				require.NoError(t, err, "failed to upload initial map file %s", mapName)
 			}

@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+// ReloadIDHeader is the HTTP header name used by HAProxy Data Plane API
+// to return the reload ID when an operation triggers a reload.
+const ReloadIDHeader = "Reload-Id"
+
 // buildMultipartFilePayload creates multipart form-data for file upload.
 // Returns the body buffer and content-type header.
 func buildMultipartFilePayload(filename, content string) (*bytes.Buffer, string, error) {
@@ -70,36 +74,44 @@ func buildMultipartFilePayloadWithID(filename, content, id string) (*bytes.Buffe
 	return body, writer.FormDataContentType(), nil
 }
 
-// checkCreateResponse validates a Create operation response.
-// Handles: 409 Conflict, expects 201/202.
-func checkCreateResponse(resp *http.Response, resourceType, name string) error {
+// checkCreateResponse validates a Create operation response and extracts the reload ID.
+// Returns the reload ID (empty string if no reload triggered) and any error.
+// Handles: 409 Conflict, expects 201/200/202.
+func checkCreateResponse(resp *http.Response, resourceType, name string) (string, error) {
 	if resp.StatusCode == http.StatusConflict {
-		return fmt.Errorf("%s '%s' already exists", resourceType, name)
+		return "", fmt.Errorf("%s '%s' already exists", resourceType, name)
 	}
 
-	// Accept both 201 (Created) and 202 (Accepted) as success
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
+	// Accept 201 (Created), 200 (OK), and 202 (Accepted) as success
+	switch resp.StatusCode {
+	case http.StatusCreated, http.StatusOK:
+		return "", nil // No reload triggered
+	case http.StatusAccepted:
+		return resp.Header.Get(ReloadIDHeader), nil // Reload triggered
+	default:
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("create %s '%s' failed with status %d: %s", resourceType, name, resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("create %s '%s' failed with status %d: %s", resourceType, name, resp.StatusCode, string(bodyBytes))
 	}
-
-	return nil
 }
 
-// checkUpdateResponse validates an Update operation response.
+// checkUpdateResponse validates an Update operation response and extracts the reload ID.
+// Returns the reload ID (empty string if no reload triggered) and any error.
 // Handles: 404 NotFound, expects 200/202.
-func checkUpdateResponse(resp *http.Response, resourceType, name string) error {
+func checkUpdateResponse(resp *http.Response, resourceType, name string) (string, error) {
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("%s '%s' not found", resourceType, name)
+		return "", fmt.Errorf("%s '%s' not found", resourceType, name)
 	}
 
-	// Accept both 200 (OK) and 202 (Accepted) as success
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+	// Accept 200 (OK) and 202 (Accepted) as success
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return "", nil // No reload triggered
+	case http.StatusAccepted:
+		return resp.Header.Get(ReloadIDHeader), nil // Reload triggered
+	default:
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("update %s '%s' failed with status %d: %s", resourceType, name, resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("update %s '%s' failed with status %d: %s", resourceType, name, resp.StatusCode, string(bodyBytes))
 	}
-
-	return nil
 }
 
 // checkDeleteResponse validates a Delete operation response.

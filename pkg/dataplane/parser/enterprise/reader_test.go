@@ -46,11 +46,11 @@ func TestTokenizeLine(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			parts, comment := tokenizeLine(tc.line)
-			assert.Equal(t, tc.wantParts, parts)
-			assert.Equal(t, tc.wantComment, comment)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parts, comment := tokenizeLine(tt.line)
+			assert.Equal(t, tt.wantParts, parts)
+			assert.Equal(t, tt.wantComment, comment)
 		})
 	}
 }
@@ -191,10 +191,10 @@ func TestSplitFields(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := splitFields(tc.input)
-			assert.Equal(t, tc.want, got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitFields(tt.input)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -226,10 +226,10 @@ func TestIsInQuotes(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := isInQuotes(tc.line, tc.pos)
-			assert.Equal(t, tc.want, got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isInQuotes(tt.line, tt.pos)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

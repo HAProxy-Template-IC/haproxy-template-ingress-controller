@@ -220,7 +220,7 @@ store := httpstore.New(logger, 2*time.Minute)  // maxAge for eviction
 component := httpstore.New(eventBus, logger, 2*time.Minute)  // different package!
 
 // Wrapper provides template-callable interface
-wrapper := httpstore.NewHTTPStoreWrapper(component, logger, isValidation, ctx)
+wrapper := httpstore.NewHTTPStoreWrapper(ctx, component, logger, isValidation)
 ```
 
 ## Testing

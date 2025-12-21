@@ -3,6 +3,7 @@ package enterprise
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -13,10 +14,10 @@ import (
 )
 
 // ErrUDPLBACLsRequiresV32 is returned when ACL operations are attempted on pre-3.2 enterprise.
-var ErrUDPLBACLsRequiresV32 = fmt.Errorf("UDP load balancer ACL operations require HAProxy Enterprise v3.2+")
+var ErrUDPLBACLsRequiresV32 = errors.New("UDP load balancer ACL operations require HAProxy Enterprise v3.2+")
 
 // ErrUDPLBServerSwitchingRequiresV32 is returned when server switching rule operations are attempted on pre-3.2 enterprise.
-var ErrUDPLBServerSwitchingRequiresV32 = fmt.Errorf("UDP load balancer server switching rules require HAProxy Enterprise v3.2+")
+var ErrUDPLBServerSwitchingRequiresV32 = errors.New("UDP load balancer server switching rules require HAProxy Enterprise v3.2+")
 
 // UDPLBOperations provides operations for HAProxy Enterprise UDP load balancing.
 // This includes UDP load balancers and their child resources (ACLs, binds, log targets, server switching rules).

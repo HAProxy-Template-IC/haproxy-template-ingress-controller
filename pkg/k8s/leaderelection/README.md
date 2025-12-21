@@ -51,9 +51,9 @@ if err != nil {
     panic(err)
 }
 
-// Run leader election (blocks until context cancelled)
+// Start leader election (blocks until context cancelled)
 ctx := context.Background()
-elector.Run(ctx)
+elector.Start(ctx)
 ```
 
 ## API
@@ -84,7 +84,7 @@ Event callbacks:
 Main leader election type:
 
 - `New()`: Create new elector
-- `Run(ctx)`: Start leader election loop (blocks)
+- `Start(ctx)`: Start leader election loop (blocks)
 - `IsLeader()`: Check if currently leader
 - `GetLeader()`: Get current leader identity
 

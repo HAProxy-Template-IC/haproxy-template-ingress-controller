@@ -417,13 +417,13 @@ func TestValidationError_Unwrap(t *testing.T) {
 	innerErr := &ValidationError{
 		Phase:   "syntax",
 		Message: "inner error",
-		Err:     nil,
+		Cause:   nil,
 	}
 
 	outerErr := &ValidationError{
 		Phase:   "semantic",
 		Message: "outer error",
-		Err:     innerErr,
+		Cause:   innerErr,
 	}
 
 	unwrapped := outerErr.Unwrap()
@@ -744,7 +744,7 @@ func TestValidationError_Error(t *testing.T) {
 			err: &ValidationError{
 				Phase:   "syntax",
 				Message: "invalid directive",
-				Err:     nil,
+				Cause:   nil,
 			},
 			contains: []string{"syntax", "validation failed", "invalid directive"},
 		},
@@ -753,7 +753,7 @@ func TestValidationError_Error(t *testing.T) {
 			err: &ValidationError{
 				Phase:   "semantic",
 				Message: "backend not found",
-				Err:     nil,
+				Cause:   nil,
 			},
 			contains: []string{"semantic", "validation failed", "backend not found"},
 		},
@@ -762,7 +762,7 @@ func TestValidationError_Error(t *testing.T) {
 			err: &ValidationError{
 				Phase:   "",
 				Message: "generic error",
-				Err:     nil,
+				Cause:   nil,
 			},
 			contains: []string{"HAProxy validation failed", "generic error"},
 		},

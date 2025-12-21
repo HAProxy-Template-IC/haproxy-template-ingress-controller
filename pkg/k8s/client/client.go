@@ -82,7 +82,7 @@ func New(cfg Config) (*Client, error) {
 		if err != nil {
 			return nil, &ClientError{
 				Operation: "build kubeconfig",
-				Err:       err,
+				Cause:     err,
 			}
 		}
 	} else {
@@ -91,7 +91,7 @@ func New(cfg Config) (*Client, error) {
 		if err != nil {
 			return nil, &ClientError{
 				Operation: "get in-cluster config",
-				Err:       err,
+				Cause:     err,
 			}
 		}
 	}
@@ -101,7 +101,7 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, &ClientError{
 			Operation: "create clientset",
-			Err:       err,
+			Cause:     err,
 		}
 	}
 
@@ -110,7 +110,7 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, &ClientError{
 			Operation: "create dynamic client",
-			Err:       err,
+			Cause:     err,
 		}
 	}
 
@@ -193,7 +193,7 @@ func (c *Client) GetResource(ctx context.Context, gvr schema.GroupVersionResourc
 	if c.namespace == "" {
 		return nil, &ClientError{
 			Operation: "get resource",
-			Err:       fmt.Errorf("no namespace available (not in cluster and not specified)"),
+			Cause:     fmt.Errorf("no namespace available (not in cluster and not specified)"),
 		}
 	}
 
@@ -201,7 +201,7 @@ func (c *Client) GetResource(ctx context.Context, gvr schema.GroupVersionResourc
 	if err != nil {
 		return nil, &ClientError{
 			Operation: fmt.Sprintf("get resource %s/%s in namespace %s", gvr.Resource, name, c.namespace),
-			Err:       err,
+			Cause:     err,
 		}
 	}
 
@@ -226,8 +226,8 @@ func DiscoverNamespaceFromFile(path string) (string, error) {
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return "", &NamespaceDiscoveryError{
-			Path: path,
-			Err:  err,
+			Path:  path,
+			Cause: err,
 		}
 	}
 
@@ -235,16 +235,16 @@ func DiscoverNamespaceFromFile(path string) (string, error) {
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return "", &NamespaceDiscoveryError{
-			Path: path,
-			Err:  err,
+			Path:  path,
+			Cause: err,
 		}
 	}
 
 	namespace := string(data)
 	if namespace == "" {
 		return "", &NamespaceDiscoveryError{
-			Path: path,
-			Err:  os.ErrInvalid,
+			Path:  path,
+			Cause: os.ErrInvalid,
 		}
 	}
 

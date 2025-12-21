@@ -199,12 +199,15 @@ func OrderOperations(ops []Operation) []Operation {
 	}
 
 	// Sort creates by priority (ascending: parents first)
-	sort.Slice(creates, func(i, j int) bool {
+	// Using stable sort to preserve original order when priorities are equal
+	// (e.g., ACLs must be created in index order: 0, 1, 2, not randomized)
+	sort.SliceStable(creates, func(i, j int) bool {
 		return creates[i].Priority() < creates[j].Priority()
 	})
 
 	// Sort deletes by priority (descending: children first)
-	sort.Slice(deletes, func(i, j int) bool {
+	// Using stable sort for consistent ordering of operations with equal priority
+	sort.SliceStable(deletes, func(i, j int) bool {
 		return deletes[i].Priority() > deletes[j].Priority()
 	})
 

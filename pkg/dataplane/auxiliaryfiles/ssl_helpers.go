@@ -14,8 +14,8 @@ import (
 type sslStorageOps[T FileItem] struct {
 	getAll     func(ctx context.Context) ([]string, error)
 	getContent func(ctx context.Context, id string) (string, error)
-	create     func(ctx context.Context, id, content string) error
-	update     func(ctx context.Context, id, content string) error
+	create     func(ctx context.Context, id, content string) (string, error)
+	update     func(ctx context.Context, id, content string) (string, error)
 	delete     func(ctx context.Context, id string) error
 }
 
@@ -27,16 +27,16 @@ func (o *sslStorageOps[T]) GetContent(ctx context.Context, id string) (string, e
 	return o.getContent(ctx, id)
 }
 
-func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) error {
-	err := o.create(ctx, id, content)
+func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) (string, error) {
+	reloadID, err := o.create(ctx, id, content)
 	if err != nil && strings.Contains(err.Error(), "already exists") {
 		// File already exists, fall back to update instead of failing.
 		return o.Update(ctx, id, content)
 	}
-	return err
+	return reloadID, err
 }
 
-func (o *sslStorageOps[T]) Update(ctx context.Context, id, content string) error {
+func (o *sslStorageOps[T]) Update(ctx context.Context, id, content string) (string, error) {
 	return o.update(ctx, id, content)
 }
 
@@ -113,14 +113,15 @@ func compareSSLStorageFiles[T FileItem](
 
 // syncSSLStorageFiles is a generic helper for syncing SSL storage files (CA, CRL).
 // It handles capability checking and delegates to the generic Sync function.
+// Returns reload IDs from create/update operations that triggered reloads.
 func syncSSLStorageFiles[T FileItem](
 	ctx context.Context,
 	diff *FileDiffGeneric[T],
 	ops FileOperations[T],
 	config sslStorageConfig,
-) error {
+) ([]string, error) {
 	if diff == nil {
-		return nil
+		return nil, nil
 	}
 
 	// Check if storage is supported
@@ -132,7 +133,7 @@ func syncSSLStorageFiles[T FileItem](
 				"updates", len(diff.ToUpdate),
 				"deletes", len(diff.ToDelete))
 		}
-		return nil
+		return nil, nil
 	}
 
 	return Sync[T](ctx, ops, diff)

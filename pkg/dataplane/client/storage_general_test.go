@@ -38,11 +38,13 @@ func getAllGeneralFiles(ctx context.Context, c *DataplaneClient) ([]string, erro
 }
 
 func createGeneralFile(ctx context.Context, c *DataplaneClient, name, content string) error {
-	return c.CreateGeneralFile(ctx, name, content)
+	_, err := c.CreateGeneralFile(ctx, name, content)
+	return err
 }
 
 func updateGeneralFile(ctx context.Context, c *DataplaneClient, name, content string) error {
-	return c.UpdateGeneralFile(ctx, name, content)
+	_, err := c.UpdateGeneralFile(ctx, name, content)
+	return err
 }
 
 func deleteGeneralFile(ctx context.Context, c *DataplaneClient, name string) error {

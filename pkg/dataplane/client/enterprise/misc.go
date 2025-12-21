@@ -3,6 +3,7 @@ package enterprise
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -75,7 +76,7 @@ func (m *MiscOperations) GetFacts(ctx context.Context, refresh bool) (*Facts, er
 // =============================================================================
 
 // ErrPingRequiresV32 is returned when Ping is called on v3.0 or v3.1.
-var ErrPingRequiresV32 = fmt.Errorf("ping endpoint requires HAProxy Enterprise v3.2+")
+var ErrPingRequiresV32 = errors.New("ping endpoint requires HAProxy Enterprise v3.2+")
 
 // Ping checks if the DataPlane API is responsive.
 // Note: This method is only available in HAProxy Enterprise v3.2+.

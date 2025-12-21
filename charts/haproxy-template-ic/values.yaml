@@ -3,6 +3,16 @@
 # Port architecture: Container ports (*.ports.*) are the source of truth.
 # Services reference them by name (targetPort: http). See README for details.
 
+# Common labels added to all resources
+# These are merged with chart-defined labels
+commonLabels: {}
+# environment: production
+# team: platform
+
+# Common annotations added to all resources
+commonAnnotations: {}
+# config.kubernetes.io/managed-by: helm
+
 # Replica count for controller
 # Default: 2 replicas for high availability with leader election
 # Only the leader replica deploys configs; followers remain ready for failover
@@ -411,6 +421,21 @@ securityContext:
 # Ports are defined in controller.ports and referenced in template
 service:
   type: ClusterIP
+  # Service annotations
+  annotations: {}
+  # Cluster IP (leave empty for auto-assignment)
+  clusterIP: ""
+  # Load balancer configuration (when type: LoadBalancer)
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+  loadBalancerClass: ""
+  # External traffic policy (Cluster or Local)
+  externalTrafficPolicy: ""
+  # Internal traffic policy
+  internalTrafficPolicy: ""
+  # Session affinity (None or ClientIP)
+  sessionAffinity: ""
+  sessionAffinityConfig: {}
 # Liveness and readiness probes
 livenessProbe:
   httpGet:
@@ -450,6 +475,87 @@ nodeSelector: {}
 tolerations: []
 # Affinity rules
 affinity: {}
+# Extra volumes for controller pod
+# Use this to add custom volumes (ConfigMaps, Secrets, emptyDir, etc.)
+extraVolumes: []
+# - name: custom-config
+#   configMap:
+#     name: my-config
+# - name: tmp-data
+#   emptyDir: {}
+# Extra volume mounts for controller container
+extraVolumeMounts: []
+# - name: custom-config
+#   mountPath: /etc/custom-config
+#   readOnly: true
+# Init containers for controller pod
+# Run before the main container starts
+initContainers: []
+# - name: wait-for-db
+#   image: busybox:1.36
+#   command: ['sh', '-c', 'until nc -z db 5432; do sleep 1; done']
+# Sidecar containers for controller pod
+sidecars: []
+# - name: log-collector
+#   image: fluent/fluent-bit:latest
+#   volumeMounts:
+#     - name: logs
+#       mountPath: /var/log
+# Startup probe (useful for slow-starting containers)
+# When enabled, liveness and readiness probes are disabled until startup succeeds
+startupProbe:
+  enabled: false
+  httpGet:
+    path: /healthz
+    port: healthz
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 1
+  successThreshold: 1
+  failureThreshold: 30
+# Container lifecycle hooks
+lifecycle: {}
+# preStop:
+#   exec:
+#     command: ["/bin/sh", "-c", "sleep 15"]
+# postStart:
+#   httpGet:
+#     path: /ready
+#     port: 8080
+# Termination grace period in seconds
+terminationGracePeriodSeconds: 30
+# Deployment update strategy
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%
+    maxUnavailable: 25%
+# Minimum seconds for pod to be considered ready after becoming healthy
+minReadySeconds: 0
+# Number of old ReplicaSets to retain for rollback
+revisionHistoryLimit: 10
+# Deployment-level annotations (different from pod annotations)
+deploymentAnnotations: {}
+# reloader.stakater.com/auto: "true"
+# DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
+dnsPolicy: ClusterFirst
+# DNS config for custom DNS settings
+dnsConfig: {}
+# nameservers:
+#   - 8.8.8.8
+# searches:
+#   - my-namespace.svc.cluster.local
+# options:
+#   - name: ndots
+#     value: "2"
+# Host aliases (/etc/hosts entries)
+hostAliases: []
+# - ip: "127.0.0.1"
+#   hostnames:
+#     - "foo.local"
+#     - "bar.local"
+# Runtime class name (for specialized runtimes like gVisor, Kata)
+runtimeClassName: ""
 # Autoscaling configuration
 autoscaling:
   enabled: false
@@ -504,6 +610,62 @@ monitoring:
     # - sourceLabels: [__name__]
     #   regex: 'haproxy_ic_event_subscribers'
     #   action: drop
+  # PodMonitor for Prometheus Operator (alternative to ServiceMonitor)
+  # Use when metrics are exposed directly on pods rather than via Service
+  podMonitor:
+    enabled: false
+    # Scrape interval for metrics collection
+    interval: 30s
+    # Timeout for each scrape
+    scrapeTimeout: 10s
+    # Additional labels for PodMonitor resource
+    labels: {}
+    # Relabeling configurations
+    relabelings: []
+    # Metric relabeling configurations
+    metricRelabelings: []
+  # PrometheusRule for alerting
+  # Creates alerting rules for Prometheus Operator
+  prometheusRule:
+    enabled: false
+    # Additional labels for PrometheusRule resource
+    # Used by Prometheus to select which PrometheusRules to use
+    labels: {}
+    # Custom alerting rules (overrides default rules when non-empty)
+    rules: []
+    # - alert: HAProxyControllerReconciliationErrors
+    #   expr: rate(haproxy_ic_reconciliation_errors_total[5m]) > 0
+    #   for: 5m
+    #   labels:
+    #     severity: warning
+    #   annotations:
+    #     summary: "HAProxy controller has reconciliation errors"
+    # Default rules (created when rules is empty and defaultRules.enabled is true)
+    defaultRules:
+      enabled: true
+      # Individual rule toggles
+      reconciliationErrors: true
+      deploymentFailures: true
+      highQueueDepth: true
+      leaderElectionLost: true
+  # Grafana dashboard ConfigMap
+  # Creates a ConfigMap with dashboard JSON for Grafana sidecar discovery
+  grafanaDashboard:
+    enabled: false
+    # Labels for dashboard discovery (Grafana sidecar)
+    labels:
+      grafana_dashboard: "1"
+    # Annotations
+    annotations: {}
+    # Dashboard folder in Grafana
+    folder: "HAProxy"
+    # Dashboard namespace (if different from release namespace)
+    namespace: ""
+    # Use built-in dashboard (includes all 11 controller metrics)
+    # Set to false to provide your own dashboard JSON via customDashboard
+    useBuiltIn: true
+    # Custom dashboard JSON (only used when useBuiltIn: false)
+    customDashboard: {}
 # HAProxy data plane configuration
 # Deploys HAProxy pods with Dataplane API sidecars
 # The controller manages these pods' configurations
@@ -556,6 +718,20 @@ haproxy:
   service:
     type: NodePort
     annotations: {}
+    # LoadBalancer configuration (when type: LoadBalancer)
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    loadBalancerClass: ""
+    # External traffic policy (Cluster or Local)
+    # Local preserves client source IP but may cause uneven load distribution
+    externalTrafficPolicy: ""
+    # Internal traffic policy
+    internalTrafficPolicy: ""
+    # Health check node port (for LoadBalancer with Local traffic policy)
+    healthCheckNodePort: ""
+    # Publish not-ready addresses
+    publishNotReadyAddresses: false
+    # Port configurations
     http:
       port: 80
       # targetPort: http (set in template)
@@ -606,6 +782,117 @@ haproxy:
   #         app.kubernetes.io/name: haproxy-template-ic
   #         app.kubernetes.io/component: loadbalancer
   topologySpreadConstraints: []
+  # Node selector for HAProxy pods
+  nodeSelector: {}
+  # Tolerations for HAProxy pods
+  tolerations: []
+  # Affinity rules for HAProxy pods
+  affinity: {}
+  # DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
+  dnsPolicy: ClusterFirst
+  # DNS config for custom nameservers, searches, and options
+  dnsConfig: {}
+  # nameservers:
+  #   - 8.8.8.8
+  # searches:
+  #   - my-namespace.svc.cluster.local
+  # options:
+  #   - name: ndots
+  #     value: "2"
+  # Host aliases (/etc/hosts entries)
+  hostAliases: []
+  # - ip: "127.0.0.1"
+  #   hostnames:
+  #     - "foo.local"
+  # Runtime class name (for specialized runtimes like gVisor, Kata)
+  runtimeClassName: ""
+  # Extra volumes for HAProxy pod
+  extraVolumes: []
+  # - name: custom-config
+  #   configMap:
+  #     name: my-haproxy-config
+  # Extra volume mounts for HAProxy container
+  extraVolumeMounts: []
+  # - name: custom-config
+  #   mountPath: /etc/haproxy/custom
+  #   readOnly: true
+  # Init containers for HAProxy pod
+  initContainers: []
+  # - name: init-config
+  #   image: busybox:1.36
+  #   command: ['sh', '-c', 'echo "Initializing..."']
+  # Sidecar containers for HAProxy pod
+  sidecars: []
+  # - name: log-shipper
+  #   image: fluent/fluent-bit:latest
+  # Container lifecycle hooks for HAProxy container
+  lifecycle: {}
+  # preStop:
+  #   exec:
+  #     command: ["/bin/sh", "-c", "sleep 30"]
+  # Termination grace period in seconds
+  terminationGracePeriodSeconds: 30
+  # Deployment update strategy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  # Minimum seconds for pod to be considered ready
+  minReadySeconds: 0
+  # Number of old ReplicaSets to retain
+  revisionHistoryLimit: 10
+  # KEDA autoscaling for HAProxy loadbalancer
+  # Enables event-driven scaling based on traffic metrics
+  keda:
+    enabled: false
+    # Scaling limits
+    minReplicaCount: 2
+    maxReplicaCount: 10
+    # How often KEDA checks triggers (seconds)
+    pollingInterval: 30
+    # Cooldown period before scaling down (seconds)
+    cooldownPeriod: 300
+    # Fallback configuration if trigger fails
+    fallback:
+      failureThreshold: 3
+      replicas: 2
+    # Advanced HPA behavior configuration
+    advanced: {}
+    # horizontalPodAutoscalerConfig:
+    #   behavior:
+    #     scaleDown:
+    #       stabilizationWindowSeconds: 300
+    #       policies:
+    #         - type: Percent
+    #           value: 10
+    #           periodSeconds: 60
+    #     scaleUp:
+    #       stabilizationWindowSeconds: 0
+    # Triggers (required when keda.enabled is true)
+    # See: https://keda.sh/docs/2.17/scalers/
+    triggers: []
+    # Example: Scale based on HAProxy connection count
+    # - type: prometheus
+    #   metadata:
+    #     serverAddress: http://prometheus:9090
+    #     metricName: haproxy_connections_total
+    #     threshold: "1000"
+    #     query: sum(rate(haproxy_server_connections_total[1m]))
+    # Example: Scale based on HTTP requests per second
+    # - type: prometheus
+    #   metadata:
+    #     serverAddress: http://prometheus:9090
+    #     metricName: haproxy_http_requests_per_second
+    #     threshold: "500"
+    #     query: sum(rate(haproxy_http_requests_total[1m]))
+    # Example: Time-based scaling for business hours
+    # - type: cron
+    #   metadata:
+    #     timezone: UTC
+    #     start: 0 8 * * 1-5
+    #     end: 0 18 * * 1-5
+    #     desiredReplicas: "5"
   # Pod security context for HAProxy deployment
   # Complies with Pod Security Standards (PSS) Restricted profile
   # NO NET_BIND_SERVICE capability required - HAProxy binds to unprivileged ports (8080, 8443, 8404)

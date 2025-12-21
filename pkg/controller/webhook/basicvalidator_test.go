@@ -37,7 +37,8 @@ func TestBasicValidatorComponent_New(t *testing.T) {
 }
 
 func TestBasicValidatorComponent_validateBasicStructure(t *testing.T) {
-	component := NewBasicValidatorComponent(nil, testLogger())
+	eventBus := busevents.NewEventBus(10)
+	component := NewBasicValidatorComponent(eventBus, testLogger())
 
 	t.Run("valid object with name", func(t *testing.T) {
 		obj := &unstructured.Unstructured{
@@ -107,9 +108,8 @@ func TestBasicValidatorComponent_handleValidationRequest(t *testing.T) {
 	t.Run("allows valid object", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
 		eventChan := eventBus.Subscribe(50)
-		eventBus.Start()
-
 		component := NewBasicValidatorComponent(eventBus, testLogger())
+		eventBus.Start()
 
 		obj := &unstructured.Unstructured{
 			Object: map[string]interface{}{
@@ -149,9 +149,8 @@ func TestBasicValidatorComponent_handleValidationRequest(t *testing.T) {
 	t.Run("denies object without name", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
 		eventChan := eventBus.Subscribe(50)
-		eventBus.Start()
-
 		component := NewBasicValidatorComponent(eventBus, testLogger())
+		eventBus.Start()
 
 		obj := &unstructured.Unstructured{
 			Object: map[string]interface{}{
@@ -190,9 +189,8 @@ func TestBasicValidatorComponent_handleValidationRequest(t *testing.T) {
 	t.Run("denies invalid object type", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
 		eventChan := eventBus.Subscribe(50)
-		eventBus.Start()
-
 		component := NewBasicValidatorComponent(eventBus, testLogger())
+		eventBus.Start()
 
 		// Pass a non-unstructured object
 		req := events.NewWebhookValidationRequest(
@@ -223,9 +221,8 @@ func TestBasicValidatorComponent_handleEvent(t *testing.T) {
 	t.Run("processes WebhookValidationRequest", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
 		eventChan := eventBus.Subscribe(50)
-		eventBus.Start()
-
 		component := NewBasicValidatorComponent(eventBus, testLogger())
+		eventBus.Start()
 
 		obj := &unstructured.Unstructured{
 			Object: map[string]interface{}{
@@ -263,9 +260,8 @@ func TestBasicValidatorComponent_handleEvent(t *testing.T) {
 	t.Run("ignores other event types", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
 		eventChan := eventBus.Subscribe(50)
-		eventBus.Start()
-
 		component := NewBasicValidatorComponent(eventBus, testLogger())
+		eventBus.Start()
 
 		// Create a different event type
 		otherEvent := events.NewValidationStartedEvent()
@@ -288,9 +284,8 @@ func TestBasicValidatorComponent_Start(t *testing.T) {
 
 		eventBus := busevents.NewEventBus(100)
 		eventChan := eventBus.Subscribe(50)
-		eventBus.Start()
-
 		component := NewBasicValidatorComponent(eventBus, testLogger())
+		eventBus.Start()
 
 		// Start component in goroutine
 		done := make(chan error, 1)

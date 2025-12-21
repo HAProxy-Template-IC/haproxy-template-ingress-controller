@@ -19,11 +19,11 @@ func (o *mapFileOps) GetContent(ctx context.Context, id string) (string, error) 
 	return o.client.GetMapFileContent(ctx, id)
 }
 
-func (o *mapFileOps) Create(ctx context.Context, id, content string) error {
+func (o *mapFileOps) Create(ctx context.Context, id, content string) (string, error) {
 	return o.client.CreateMapFile(ctx, id, content)
 }
 
-func (o *mapFileOps) Update(ctx context.Context, id, content string) error {
+func (o *mapFileOps) Update(ctx context.Context, id, content string) (string, error) {
 	return o.client.UpdateMapFile(ctx, id, content)
 }
 
@@ -70,9 +70,10 @@ func CompareMapFiles(ctx context.Context, c *client.DataplaneClient, desired []M
 //   - Phase 2 (post-config): Call with diff containing ToDelete
 //
 // The caller is responsible for splitting the diff into these phases.
-func SyncMapFiles(ctx context.Context, c *client.DataplaneClient, diff *MapFileDiff) error {
+// Returns reload IDs from create/update operations that triggered reloads.
+func SyncMapFiles(ctx context.Context, c *client.DataplaneClient, diff *MapFileDiff) ([]string, error) {
 	if diff == nil {
-		return nil
+		return nil, nil
 	}
 
 	ops := &mapFileOps{client: c}

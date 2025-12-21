@@ -190,7 +190,7 @@ func New(
 		config:          cfg,
 		stores:          stores,
 		haproxyPodStore: haproxyPodStore,
-		logger:          logger,
+		logger:          logger.With("component", ComponentName),
 		capabilities:    capabilities,
 	}, nil
 }

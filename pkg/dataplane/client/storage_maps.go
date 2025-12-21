@@ -81,11 +81,12 @@ func (c *DataplaneClient) GetMapFileContent(ctx context.Context, name string) (s
 }
 
 // CreateMapFile creates a new map file using multipart form-data.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // Works with all HAProxy DataPlane API versions (v3.0+).
-func (c *DataplaneClient) CreateMapFile(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) CreateMapFile(ctx context.Context, name, content string) (string, error) {
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
-		return fmt.Errorf("failed to build payload for map file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to build payload for map file '%s': %w", name, err)
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
@@ -110,7 +111,7 @@ func (c *DataplaneClient) CreateMapFile(ctx context.Context, name, content strin
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create map file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to create map file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -118,10 +119,11 @@ func (c *DataplaneClient) CreateMapFile(ctx context.Context, name, content strin
 }
 
 // UpdateMapFile updates an existing map file using text/plain content-type.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // Note: The Dataplane API requires text/plain or application/json for UPDATE operations,
 // while CREATE operations accept multipart/form-data.
 // Works with all HAProxy DataPlane API versions (v3.0+).
-func (c *DataplaneClient) UpdateMapFile(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) UpdateMapFile(ctx context.Context, name, content string) (string, error) {
 	// Use text/plain content-type for UPDATE (API v3 requirement)
 	body := bytes.NewReader([]byte(content))
 
@@ -147,7 +149,7 @@ func (c *DataplaneClient) UpdateMapFile(ctx context.Context, name, content strin
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to update map file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to update map file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

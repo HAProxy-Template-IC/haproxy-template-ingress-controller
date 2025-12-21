@@ -419,11 +419,11 @@ func TestSyncBackends(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		tc := tc // capture range variable
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range testCases {
+		tt := tt // capture range variable
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			runSyncTest(t, tc)
+			runSyncTest(t, tt)
 		})
 	}
 }

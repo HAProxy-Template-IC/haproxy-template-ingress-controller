@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"haproxy-template-ic/pkg/controller"
+	"haproxy-template-ic/pkg/core/logging"
 	"haproxy-template-ic/pkg/k8s/client"
 )
 
@@ -133,7 +134,7 @@ func runController(cmd *cobra.Command, args []string) error {
 	case "2":
 		logLevel = slog.LevelDebug
 	case "3":
-		logLevel = slog.Level(-8) // TRACE level
+		logLevel = logging.LevelTrace
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

@@ -110,7 +110,7 @@ type Component struct {
 // is configured via ConfigValidatedEvent. This constructor only detects the
 // local HAProxy version for future compatibility checking.
 func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) {
-	componentLogger := logger.With("component", "discovery")
+	componentLogger := logger.With("component", ComponentName)
 
 	// Detect local HAProxy version at startup (fatal if fails)
 	localVersion, err := dataplane.DetectLocalVersion()
@@ -155,7 +155,7 @@ func (c *Component) Name() string {
 // Note: Event subscription occurs in the constructor (New()) to ensure proper
 // startup synchronization and avoid missing events during initialization.
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Info("starting discovery component")
+	c.logger.Info("Discovery starting")
 
 	// Perform initial discovery check
 	// This ensures we discover pods even if ResourceSyncCompleteEvent was already published
@@ -167,7 +167,7 @@ func (c *Component) Start(ctx context.Context) error {
 			c.handleEvent(event)
 
 		case <-ctx.Done():
-			c.logger.Info("discovery component stopping")
+			c.logger.Info("Discovery shutting down", "reason", ctx.Err())
 			return ctx.Err()
 		}
 	}
@@ -339,7 +339,7 @@ func (c *Component) handleResourceSyncComplete(event *events.ResourceSyncComplet
 // This ensures the DeploymentScheduler (which only starts on the leader) receives
 // current endpoint state even if pods were discovered before leadership was acquired.
 func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
-	c.logger.Info("became leader, re-discovering HAProxy pods for deployment scheduler")
+	c.logger.Info("Became leader, re-discovering HAProxy pods for deployment scheduler")
 
 	// Get current state
 	c.mu.RLock()
@@ -408,7 +408,7 @@ func (c *Component) performInitialDiscovery() {
 		return
 	}
 
-	c.logger.Info("found existing pods during initial discovery check",
+	c.logger.Info("Found existing pods during initial discovery check",
 		"count", len(pods))
 
 	// Trigger discovery
@@ -450,7 +450,7 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	admittedEndpoints := c.filterByVersion(candidates, credentials)
 
 	// Log summary
-	c.logger.Info("discovered HAProxy pods",
+	c.logger.Info("Discovered HAProxy pods",
 		"candidates", len(candidates),
 		"admitted", len(admittedEndpoints))
 
@@ -465,7 +465,7 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	for podName, podNamespace := range c.lastEndpoints {
 		if _, exists := currentEndpoints[podName]; !exists {
 			// Pod was removed from admitted set
-			c.logger.Info("detected pod termination",
+			c.logger.Info("Detected pod termination",
 				"pod_name", podName,
 				"pod_namespace", podNamespace)
 
@@ -569,7 +569,7 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 				c.warnedPods[podName] = true
 			}
 		} else {
-			c.logger.Info("pod admitted with matching version",
+			c.logger.Info("Pod admitted with matching version",
 				"pod", podName,
 				"version", remoteVersion.Full)
 		}

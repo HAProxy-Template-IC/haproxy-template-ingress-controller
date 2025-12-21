@@ -52,10 +52,10 @@ Creates a new ConfigLoader component.
 ### Start
 
 ```go
-func (c *ConfigLoaderComponent) Start(ctx context.Context)
+func (c *ConfigLoaderComponent) Start(ctx context.Context) error
 ```
 
-Starts the component's event loop. Blocks until context is cancelled.
+Starts the component's event loop. Blocks until context is cancelled. Returns nil on graceful shutdown.
 
 **Process**:
 

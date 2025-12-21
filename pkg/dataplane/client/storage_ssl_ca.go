@@ -79,15 +79,16 @@ func (c *DataplaneClient) GetSSLCaFileContent(ctx context.Context, name string) 
 }
 
 // CreateSSLCaFile creates a new SSL CA file using multipart form-data.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
-func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content string) (string, error) {
 	if !c.clientset.Capabilities().SupportsSslCaFiles {
-		return fmt.Errorf("SSL CA file storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
+		return "", fmt.Errorf("SSL CA file storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
 	}
 
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
-		return fmt.Errorf("failed to build payload for SSL CA file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to build payload for SSL CA file '%s': %w", name, err)
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -105,7 +106,7 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create SSL CA file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to create SSL CA file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -113,8 +114,9 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 }
 
 // UpdateSSLCaFile updates an existing SSL CA file using text/plain content-type.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
-func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content string) (string, error) {
 	body := bytes.NewReader([]byte(content))
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -132,7 +134,7 @@ func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content str
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to update SSL CA file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to update SSL CA file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

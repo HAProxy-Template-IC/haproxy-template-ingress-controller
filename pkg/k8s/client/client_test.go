@@ -200,7 +200,7 @@ func TestDiscoverNamespace_UsesDefaultPath(t *testing.T) {
 func TestClientError_Error(t *testing.T) {
 	err := &ClientError{
 		Operation: "create client",
-		Err:       errors.New("connection refused"),
+		Cause:     errors.New("connection refused"),
 	}
 
 	assert.Contains(t, err.Error(), "create client")
@@ -211,7 +211,7 @@ func TestClientError_Unwrap(t *testing.T) {
 	underlying := errors.New("underlying error")
 	err := &ClientError{
 		Operation: "test",
-		Err:       underlying,
+		Cause:     underlying,
 	}
 
 	assert.Equal(t, underlying, err.Unwrap())
@@ -220,8 +220,8 @@ func TestClientError_Unwrap(t *testing.T) {
 
 func TestNamespaceDiscoveryError_Error(t *testing.T) {
 	err := &NamespaceDiscoveryError{
-		Path: "/path/to/namespace",
-		Err:  os.ErrNotExist,
+		Path:  "/path/to/namespace",
+		Cause: os.ErrNotExist,
 	}
 
 	assert.Contains(t, err.Error(), "/path/to/namespace")
@@ -231,8 +231,8 @@ func TestNamespaceDiscoveryError_Error(t *testing.T) {
 func TestNamespaceDiscoveryError_Unwrap(t *testing.T) {
 	underlying := os.ErrNotExist
 	err := &NamespaceDiscoveryError{
-		Path: "/path/to/namespace",
-		Err:  underlying,
+		Path:  "/path/to/namespace",
+		Cause: underlying,
 	}
 
 	assert.Equal(t, underlying, err.Unwrap())

@@ -481,22 +481,22 @@ var eeCombinedTest = EETestCase{
 func TestParseFromString_EnterpriseEdition(t *testing.T) {
 	// Run all section tests
 	t.Run("sections", func(t *testing.T) {
-		for _, tc := range eeSectionTests {
-			t.Run(tc.Name, runParseTest(tc))
+		for _, tt := range eeSectionTests {
+			t.Run(tt.Name, runParseTest(tt))
 		}
 	})
 
 	// Run all directive tests
 	t.Run("directives", func(t *testing.T) {
-		for _, tc := range eeDirectiveTests {
-			t.Run(tc.Name, runParseTest(tc))
+		for _, tt := range eeDirectiveTests {
+			t.Run(tt.Name, runParseTest(tt))
 		}
 	})
 
 	// Run all action tests
 	t.Run("actions", func(t *testing.T) {
-		for _, tc := range eeActionTests {
-			t.Run(tc.Name, runParseTest(tc))
+		for _, tt := range eeActionTests {
+			t.Run(tt.Name, runParseTest(tt))
 		}
 	})
 

@@ -181,6 +181,16 @@ func TestTransformClientMetadataInJSON(t *testing.T) {
 			input:   `{invalid}`,
 			wantErr: true,
 		},
+		{
+			name:  "metadata in array elements is transformed",
+			input: `{"http_request_rule_list":[{"type":"add-header","metadata":{"comment":"rule1"}},{"type":"set-header","metadata":{"comment":"rule2"}}]}`,
+			want:  `{"http_request_rule_list":[{"metadata":{"comment":{"value":"rule1"}},"type":"add-header"},{"metadata":{"comment":{"value":"rule2"}},"type":"set-header"}]}`,
+		},
+		{
+			name:  "deeply nested arrays with metadata",
+			input: `{"backend":{"name":"test","servers":[{"name":"srv1","metadata":{"comment":"server1"}}]}}`,
+			want:  `{"backend":{"name":"test","servers":[{"metadata":{"comment":{"value":"server1"}},"name":"srv1"}]}}`,
+		},
 	}
 
 	for _, tt := range tests {

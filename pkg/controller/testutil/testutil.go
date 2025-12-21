@@ -191,22 +191,24 @@ func ComponentStopTest(t *testing.T, bus *busevents.EventBus, startFunc, stopFun
 //	    component := NewCertLoaderComponent(bus, logger)
 //	    testutil.RunComponentStartStop(t, bus, component.Start, component.Stop)
 //	}
-func RunComponentStartStop(t *testing.T, bus *busevents.EventBus, startFunc func(context.Context), stopFunc func()) {
+func RunComponentStartStop(t *testing.T, bus *busevents.EventBus, startFunc func(context.Context) error, stopFunc func()) {
 	t.Helper()
 	bus.Start()
 
-	done := make(chan struct{})
+	errChan := make(chan error, 1)
 	go func() {
-		startFunc(context.Background())
-		close(done)
+		errChan <- startFunc(context.Background())
 	}()
 
 	time.Sleep(StartupDelay)
 	stopFunc()
 
 	select {
-	case <-done:
-		// Success
+	case err := <-errChan:
+		if err != nil {
+			t.Fatalf("component Start returned unexpected error: %v", err)
+		}
+		// Success - component stopped cleanly
 	case <-time.After(LongTimeout):
 		t.Fatal("component did not stop in time")
 	}
@@ -222,24 +224,27 @@ func RunComponentStartStop(t *testing.T, bus *busevents.EventBus, startFunc func
 //	    component := NewCertLoaderComponent(bus, logger)
 //	    testutil.RunComponentContextCancel(t, bus, component.Start)
 //	}
-func RunComponentContextCancel(t *testing.T, bus *busevents.EventBus, startFunc func(context.Context)) {
+func RunComponentContextCancel(t *testing.T, bus *busevents.EventBus, startFunc func(context.Context) error) {
 	t.Helper()
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+	errChan := make(chan error, 1)
 	go func() {
-		startFunc(ctx)
-		close(done)
+		errChan <- startFunc(ctx)
 	}()
 
 	time.Sleep(StartupDelay)
 	cancel()
 
 	select {
-	case <-done:
-		// Success
+	case err := <-errChan:
+		// nil and context.Canceled are both acceptable for graceful shutdown
+		if err != nil && err != context.Canceled {
+			t.Fatalf("component Start returned unexpected error: %v", err)
+		}
+		// Success - component stopped cleanly
 	case <-time.After(LongTimeout):
 		t.Fatal("component did not stop in time after context cancel")
 	}

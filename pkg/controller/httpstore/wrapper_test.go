@@ -31,7 +31,7 @@ func TestNewHTTPStoreWrapper(t *testing.T) {
 	component := New(bus, logger, 0)
 	ctx := context.Background()
 
-	wrapper := NewHTTPStoreWrapper(component, logger, true, ctx)
+	wrapper := NewHTTPStoreWrapper(ctx, component, logger, true)
 
 	require.NotNil(t, wrapper)
 	assert.Equal(t, component, wrapper.component)
@@ -42,7 +42,7 @@ func TestNewHTTPStoreWrapper(t *testing.T) {
 func TestParseArgs_NoArgs(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(component, logger, false, context.Background())
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
 
 	_, err := wrapper.Fetch()
 	require.Error(t, err)
@@ -52,7 +52,7 @@ func TestParseArgs_NoArgs(t *testing.T) {
 func TestParseArgs_InvalidURL(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(component, logger, false, context.Background())
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
 
 	_, err := wrapper.Fetch(12345) // Not a string
 	require.Error(t, err)
@@ -62,7 +62,7 @@ func TestParseArgs_InvalidURL(t *testing.T) {
 func TestParseArgs_InvalidOptions(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(component, logger, false, context.Background())
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
 
 	_, err := wrapper.Fetch("http://example.com", "not-a-map")
 	require.Error(t, err)
@@ -72,7 +72,7 @@ func TestParseArgs_InvalidOptions(t *testing.T) {
 func TestParseArgs_InvalidAuth(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(component, logger, false, context.Background())
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
 
 	_, err := wrapper.Fetch("http://example.com", nil, "not-a-map")
 	require.Error(t, err)
@@ -582,7 +582,7 @@ func TestHTTPStoreWrapper_GetCachedContent_Validation(t *testing.T) {
 	component := New(bus, logger, 0)
 
 	// Create wrapper in validation mode
-	wrapper := NewHTTPStoreWrapper(component, logger, true, context.Background())
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, true)
 
 	// URL not in cache
 	content, ok := wrapper.getCachedContent("http://example.com")
@@ -595,7 +595,7 @@ func TestHTTPStoreWrapper_GetCachedContent_Production(t *testing.T) {
 	component := New(bus, logger, 0)
 
 	// Create wrapper in production mode
-	wrapper := NewHTTPStoreWrapper(component, logger, false, context.Background())
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
 
 	// URL not in cache
 	content, ok := wrapper.getCachedContent("http://example.com")

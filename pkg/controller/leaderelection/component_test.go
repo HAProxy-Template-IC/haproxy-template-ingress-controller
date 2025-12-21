@@ -278,12 +278,12 @@ func TestComponent_Run_PublishesLeaderElectionStartedEvent(t *testing.T) {
 	component, err := New(config, clientset, bus, callbacks, logger)
 	require.NoError(t, err)
 
-	// Cancel context immediately to prevent Run() from blocking forever
+	// Cancel context immediately to prevent Start() from blocking forever
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	// Run should publish LeaderElectionStartedEvent before trying to acquire lease
-	go component.Run(ctx)
+	// Start should publish LeaderElectionStartedEvent before trying to acquire lease
+	go component.Start(ctx)
 
 	// Wait for event
 	timeout := time.After(1 * time.Second)

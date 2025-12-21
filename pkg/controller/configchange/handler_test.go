@@ -41,7 +41,8 @@ func TestNewConfigChangeHandler(t *testing.T) {
 
 	require.NotNil(t, handler)
 	assert.Equal(t, bus, handler.eventBus)
-	assert.Equal(t, logger, handler.logger)
+	assert.NotNil(t, handler.eventChan) // Event channel subscribed in constructor
+	assert.NotNil(t, handler.logger)    // Logger is enhanced with component name
 	// Can't directly compare bidirectional channel to send-only channel, just verify it's set
 	assert.NotNil(t, handler.configChangeCh)
 	assert.Equal(t, validators, handler.validators)

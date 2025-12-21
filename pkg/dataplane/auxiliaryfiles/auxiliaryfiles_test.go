@@ -274,8 +274,8 @@ func TestCRTListDiff_HasChanges(t *testing.T) {
 type mockFileOps[T FileItem] struct {
 	getAllFunc     func(ctx context.Context) ([]string, error)
 	getContentFunc func(ctx context.Context, id string) (string, error)
-	createFunc     func(ctx context.Context, id, content string) error
-	updateFunc     func(ctx context.Context, id, content string) error
+	createFunc     func(ctx context.Context, id, content string) (string, error)
+	updateFunc     func(ctx context.Context, id, content string) (string, error)
 	deleteFunc     func(ctx context.Context, id string) error
 }
 
@@ -293,18 +293,18 @@ func (m *mockFileOps[T]) GetContent(ctx context.Context, id string) (string, err
 	return "", nil
 }
 
-func (m *mockFileOps[T]) Create(ctx context.Context, id, content string) error {
+func (m *mockFileOps[T]) Create(ctx context.Context, id, content string) (string, error) {
 	if m.createFunc != nil {
 		return m.createFunc(ctx, id, content)
 	}
-	return nil
+	return "", nil
 }
 
-func (m *mockFileOps[T]) Update(ctx context.Context, id, content string) error {
+func (m *mockFileOps[T]) Update(ctx context.Context, id, content string) (string, error) {
 	if m.updateFunc != nil {
 		return m.updateFunc(ctx, id, content)
 	}
-	return nil
+	return "", nil
 }
 
 func (m *mockFileOps[T]) Delete(ctx context.Context, id string) error {
@@ -525,7 +525,7 @@ func TestSync_NilDiff(t *testing.T) {
 	ctx := context.Background()
 	ops := &mockFileOps[GeneralFile]{}
 
-	err := Sync[GeneralFile](ctx, ops, nil)
+	_, err := Sync[GeneralFile](ctx, ops, nil)
 	require.NoError(t, err)
 }
 
@@ -540,7 +540,7 @@ func TestSync_EmptyDiff(t *testing.T) {
 		ToDelete: []string{},
 	}
 
-	err := Sync[GeneralFile](ctx, ops, diff)
+	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.NoError(t, err)
 }
 
@@ -550,9 +550,9 @@ func TestSync_CreateFiles(t *testing.T) {
 
 	var created []string
 	ops := &mockFileOps[GeneralFile]{
-		createFunc: func(ctx context.Context, id, content string) error {
+		createFunc: func(ctx context.Context, id, content string) (string, error) {
 			created = append(created, id)
-			return nil
+			return "", nil
 		},
 	}
 
@@ -563,7 +563,7 @@ func TestSync_CreateFiles(t *testing.T) {
 		},
 	}
 
-	err := Sync[GeneralFile](ctx, ops, diff)
+	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"400.http", "500.http"}, created)
 }
@@ -574,9 +574,9 @@ func TestSync_UpdateFiles(t *testing.T) {
 
 	var updated []string
 	ops := &mockFileOps[GeneralFile]{
-		updateFunc: func(ctx context.Context, id, content string) error {
+		updateFunc: func(ctx context.Context, id, content string) (string, error) {
 			updated = append(updated, id)
-			return nil
+			return "", nil
 		},
 	}
 
@@ -586,7 +586,7 @@ func TestSync_UpdateFiles(t *testing.T) {
 		},
 	}
 
-	err := Sync[GeneralFile](ctx, ops, diff)
+	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"400.http"}, updated)
 }
@@ -607,7 +607,7 @@ func TestSync_DeleteFiles(t *testing.T) {
 		ToDelete: []string{"old.http", "unused.http"},
 	}
 
-	err := Sync[GeneralFile](ctx, ops, diff)
+	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"old.http", "unused.http"}, deleted)
 }
@@ -617,8 +617,8 @@ func TestSync_CreateError(t *testing.T) {
 	ctx := context.Background()
 
 	ops := &mockFileOps[GeneralFile]{
-		createFunc: func(ctx context.Context, id, content string) error {
-			return errors.New("storage full")
+		createFunc: func(ctx context.Context, id, content string) (string, error) {
+			return "", errors.New("storage full")
 		},
 	}
 
@@ -626,7 +626,7 @@ func TestSync_CreateError(t *testing.T) {
 		ToCreate: []GeneralFile{{Filename: "400.http", Content: "content"}},
 	}
 
-	err := Sync[GeneralFile](ctx, ops, diff)
+	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create file")
 }
@@ -636,8 +636,8 @@ func TestSync_UpdateError(t *testing.T) {
 	ctx := context.Background()
 
 	ops := &mockFileOps[GeneralFile]{
-		updateFunc: func(ctx context.Context, id, content string) error {
-			return errors.New("permission denied")
+		updateFunc: func(ctx context.Context, id, content string) (string, error) {
+			return "", errors.New("permission denied")
 		},
 	}
 
@@ -645,7 +645,7 @@ func TestSync_UpdateError(t *testing.T) {
 		ToUpdate: []GeneralFile{{Filename: "400.http", Content: "content"}},
 	}
 
-	err := Sync[GeneralFile](ctx, ops, diff)
+	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to update file")
 }
@@ -664,7 +664,7 @@ func TestSync_DeleteError(t *testing.T) {
 		ToDelete: []string{"old.http"},
 	}
 
-	err := Sync[GeneralFile](ctx, ops, diff)
+	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to delete file")
 }
@@ -979,13 +979,13 @@ func TestSync_WithSSLCertificates(t *testing.T) {
 
 	var operations []string
 	ops := &mockFileOps[SSLCertificate]{
-		createFunc: func(ctx context.Context, id, content string) error {
+		createFunc: func(ctx context.Context, id, content string) (string, error) {
 			operations = append(operations, "create:"+id)
-			return nil
+			return "", nil
 		},
-		updateFunc: func(ctx context.Context, id, content string) error {
+		updateFunc: func(ctx context.Context, id, content string) (string, error) {
 			operations = append(operations, "update:"+id)
-			return nil
+			return "", nil
 		},
 		deleteFunc: func(ctx context.Context, id string) error {
 			operations = append(operations, "delete:"+id)
@@ -999,7 +999,7 @@ func TestSync_WithSSLCertificates(t *testing.T) {
 		ToDelete: []string{"old.pem"},
 	}
 
-	err := Sync[SSLCertificate](ctx, ops, diff)
+	_, err := Sync[SSLCertificate](ctx, ops, diff)
 	require.NoError(t, err)
 
 	assert.ElementsMatch(t, []string{
@@ -1015,13 +1015,13 @@ func TestSync_ExecutionOrder(t *testing.T) {
 
 	var order []string
 	ops := &mockFileOps[GeneralFile]{
-		createFunc: func(ctx context.Context, id, content string) error {
+		createFunc: func(ctx context.Context, id, content string) (string, error) {
 			order = append(order, "create:"+id)
-			return nil
+			return "", nil
 		},
-		updateFunc: func(ctx context.Context, id, content string) error {
+		updateFunc: func(ctx context.Context, id, content string) (string, error) {
 			order = append(order, "update:"+id)
-			return nil
+			return "", nil
 		},
 		deleteFunc: func(ctx context.Context, id string) error {
 			order = append(order, "delete:"+id)
@@ -1035,7 +1035,7 @@ func TestSync_ExecutionOrder(t *testing.T) {
 		ToDelete: []string{"old.http"},
 	}
 
-	err := Sync[GeneralFile](ctx, ops, diff)
+	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.NoError(t, err)
 
 	// Verify order: creates, then updates, then deletes
@@ -1043,4 +1043,101 @@ func TestSync_ExecutionOrder(t *testing.T) {
 	assert.Equal(t, "create:new.http", order[0])
 	assert.Equal(t, "update:existing.http", order[1])
 	assert.Equal(t, "delete:old.http", order[2])
+}
+
+func TestSync_ReturnsReloadIDs(t *testing.T) {
+	ctx := context.Background()
+
+	ops := &mockFileOps[GeneralFile]{
+		createFunc: func(ctx context.Context, id, content string) (string, error) {
+			// Return reload ID for create operations
+			return "reload-create-" + id, nil
+		},
+		updateFunc: func(ctx context.Context, id, content string) (string, error) {
+			// Return reload ID for update operations
+			return "reload-update-" + id, nil
+		},
+		deleteFunc: func(ctx context.Context, id string) error {
+			return nil
+		},
+	}
+
+	diff := &FileDiffGeneric[GeneralFile]{
+		ToCreate: []GeneralFile{
+			{Filename: "new1.http", Content: "c1"},
+			{Filename: "new2.http", Content: "c2"},
+		},
+		ToUpdate: []GeneralFile{
+			{Filename: "existing.http", Content: "c3"},
+		},
+		ToDelete: []string{"old.http"},
+	}
+
+	reloadIDs, err := Sync[GeneralFile](ctx, ops, diff)
+	require.NoError(t, err)
+
+	// Should have 3 reload IDs: 2 creates + 1 update
+	require.Len(t, reloadIDs, 3)
+	assert.Equal(t, "reload-create-new1.http", reloadIDs[0])
+	assert.Equal(t, "reload-create-new2.http", reloadIDs[1])
+	assert.Equal(t, "reload-update-existing.http", reloadIDs[2])
+}
+
+func TestSync_FiltersEmptyReloadIDs(t *testing.T) {
+	ctx := context.Background()
+
+	ops := &mockFileOps[GeneralFile]{
+		createFunc: func(ctx context.Context, id, content string) (string, error) {
+			// First create returns reload ID, second returns empty
+			if id == "new1.http" {
+				return "reload-123", nil
+			}
+			return "", nil // No reload triggered
+		},
+		updateFunc: func(ctx context.Context, id, content string) (string, error) {
+			return "", nil // No reload triggered
+		},
+	}
+
+	diff := &FileDiffGeneric[GeneralFile]{
+		ToCreate: []GeneralFile{
+			{Filename: "new1.http", Content: "c1"},
+			{Filename: "new2.http", Content: "c2"},
+		},
+		ToUpdate: []GeneralFile{
+			{Filename: "existing.http", Content: "c3"},
+		},
+	}
+
+	reloadIDs, err := Sync[GeneralFile](ctx, ops, diff)
+	require.NoError(t, err)
+
+	// Should only have 1 reload ID (empty ones filtered out)
+	require.Len(t, reloadIDs, 1)
+	assert.Equal(t, "reload-123", reloadIDs[0])
+}
+
+func TestSync_NoChangesReturnsEmptyReloadIDs(t *testing.T) {
+	ctx := context.Background()
+
+	ops := &mockFileOps[GeneralFile]{}
+
+	diff := &FileDiffGeneric[GeneralFile]{
+		ToCreate: []GeneralFile{},
+		ToUpdate: []GeneralFile{},
+		ToDelete: []string{},
+	}
+
+	reloadIDs, err := Sync[GeneralFile](ctx, ops, diff)
+	require.NoError(t, err)
+	assert.Empty(t, reloadIDs)
+}
+
+func TestSync_NilDiffReturnsNilReloadIDs(t *testing.T) {
+	ctx := context.Background()
+	ops := &mockFileOps[GeneralFile]{}
+
+	reloadIDs, err := Sync[GeneralFile](ctx, ops, nil)
+	require.NoError(t, err)
+	assert.Nil(t, reloadIDs)
 }

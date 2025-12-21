@@ -177,7 +177,7 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		minor = endpoint.CachedMinorVersion
 		detectedVersion = endpoint.CachedFullVersion
 		isEnterprise = endpoint.CachedIsEnterprise
-		logger.Debug("using cached version from discovery",
+		logger.Debug("Using cached version from discovery",
 			"version", detectedVersion,
 			"major", major,
 			"minor", minor,
@@ -193,7 +193,7 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		// Parse version string (e.g., "v3.2.6 87ad0bcf" -> major=3, minor=2)
 		major, minor, err = ParseVersion(versionInfo.API.Version)
 		if err != nil {
-			logger.Warn("failed to parse version, assuming v3.0",
+			logger.Warn("Failed to parse version, assuming v3.0",
 				"version", versionInfo.API.Version,
 				"error", err,
 			)
@@ -204,7 +204,7 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		// Detect enterprise edition from version string
 		isEnterprise = IsEnterpriseVersion(detectedVersion)
 
-		logger.Debug("detected DataPlane API version",
+		logger.Debug("Detected DataPlane API version",
 			"version", detectedVersion,
 			"major", major,
 			"minor", minor,

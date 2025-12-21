@@ -70,20 +70,20 @@ func (o *sslCertificateOps) GetContent(ctx context.Context, id string) (string, 
 	return o.client.GetSSLCertificateContent(ctx, filename)
 }
 
-func (o *sslCertificateOps) Create(ctx context.Context, id, content string) error {
+func (o *sslCertificateOps) Create(ctx context.Context, id, content string) (string, error) {
 	// Extract filename from path (API expects filename only)
 	filename := filepath.Base(id)
-	err := o.client.CreateSSLCertificate(ctx, filename, content)
+	reloadID, err := o.client.CreateSSLCertificate(ctx, filename, content)
 	if err != nil && strings.Contains(err.Error(), "already exists") {
 		// Certificate already exists, fall back to update instead of failing.
 		// This handles the case where a previous deployment partially succeeded
 		// or where path normalization causes comparison mismatches.
 		return o.Update(ctx, id, content)
 	}
-	return err
+	return reloadID, err
 }
 
-func (o *sslCertificateOps) Update(ctx context.Context, id, content string) error {
+func (o *sslCertificateOps) Update(ctx context.Context, id, content string) (string, error) {
 	// Extract filename from path (API expects filename only)
 	filename := filepath.Base(id)
 	return o.client.UpdateSSLCertificate(ctx, filename, content)
@@ -181,9 +181,10 @@ func CompareSSLCertificates(ctx context.Context, c *client.DataplaneClient, desi
 //   - Phase 2 (post-config): Call with diff containing ToDelete
 //
 // The caller is responsible for splitting the diff into these phases.
-func SyncSSLCertificates(ctx context.Context, c *client.DataplaneClient, diff *SSLCertificateDiff) error {
+// Returns reload IDs from create/update operations that triggered reloads.
+func SyncSSLCertificates(ctx context.Context, c *client.DataplaneClient, diff *SSLCertificateDiff) ([]string, error) {
 	if diff == nil {
-		return nil
+		return nil, nil
 	}
 
 	ops := &sslCertificateOps{client: c}

@@ -805,12 +805,6 @@ deploy_haproxy() {
     ok "HAProxy deployment is ready."
 }
 
-deploy_ingressclass() {
-    log INFO "Deploying IngressClass resource..."
-    kubectl apply -f "${ASSETS_DIR}/ingressclass.yaml" >/dev/null
-    ok "IngressClass 'haproxy-template-ic' deployed."
-}
-
 deploy_gateway_demo() {
 	log INFO "Deploying Gateway API demo resources..."
 
@@ -1555,8 +1549,6 @@ dev_up() {
         err "HAProxy deployment failed"
         return 1
     }
-
-    deploy_ingressclass
 
     if [[ "$SKIP_ECHO" != "true" ]]; then
         deploy_echo_server

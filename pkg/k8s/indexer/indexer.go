@@ -91,7 +91,7 @@ func (idx *Indexer) ExtractKeys(resource interface{}) ([]string, error) {
 			return nil, &IndexError{
 				Expression: eval.Expression(),
 				Position:   i,
-				Err:        err,
+				Cause:      err,
 			}
 		}
 		keys[i] = key
@@ -159,14 +159,14 @@ func (idx *Indexer) IndexExpressions() []string {
 type IndexError struct {
 	Expression string
 	Position   int
-	Err        error
+	Cause      error
 }
 
 func (e *IndexError) Error() string {
 	return fmt.Sprintf("index error at position %d for expression '%s': %v",
-		e.Position, e.Expression, e.Err)
+		e.Position, e.Expression, e.Cause)
 }
 
 func (e *IndexError) Unwrap() error {
-	return e.Err
+	return e.Cause
 }

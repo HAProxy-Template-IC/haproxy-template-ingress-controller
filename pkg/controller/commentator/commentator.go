@@ -16,14 +16,20 @@ const (
 	// ComponentName is the unique identifier for this component.
 	ComponentName = "commentator"
 
+	// EventBufferSize is the size of the event subscription buffer.
+	// Size 200: High-volume component that observes all events for logging.
+	EventBufferSize = 200
+
 	// maxErrorPreviewLength is the maximum length for error message previews
 	// in validation failure summaries. Longer errors are truncated.
 	maxErrorPreviewLength = 80
 )
 
-// - Decouples logging from business logic.
+// EventCommentator provides domain-aware logging for all events flowing through the EventBus.
+// It decouples logging from business logic.
 type EventCommentator struct {
 	eventBus   *busevents.EventBus
+	eventChan  <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger     *slog.Logger
 	ringBuffer *RingBuffer
 	stopCh     chan struct{}
@@ -39,9 +45,14 @@ type EventCommentator struct {
 // Returns:
 //   - *EventCommentator ready to start
 func NewEventCommentator(eventBus *busevents.EventBus, logger *slog.Logger, bufferSize int) *EventCommentator {
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps
+	eventChan := eventBus.Subscribe(EventBufferSize)
+
 	return &EventCommentator{
 		eventBus:   eventBus,
-		logger:     logger,
+		eventChan:  eventChan,
+		logger:     logger.With("component", ComponentName),
 		ringBuffer: NewRingBuffer(bufferSize),
 		stopCh:     make(chan struct{}),
 	}
@@ -56,26 +67,24 @@ func (ec *EventCommentator) Name() string {
 // Start begins processing events from the EventBus.
 //
 // This method blocks until Stop() is called or the context is canceled.
-// It should typically be run in a goroutine.
+// The component is already subscribed to the EventBus (subscription happens in constructor).
+// Returns nil on graceful shutdown.
 //
 // Example:
 //
 //	go commentator.Start(ctx)
-func (ec *EventCommentator) Start(ctx context.Context) {
-	// Subscribe to all events with generous buffer
-	eventCh := ec.eventBus.Subscribe(200)
-
-	ec.logger.Info("Event commentator started", "buffer_capacity", ec.ringBuffer.Capacity())
+func (ec *EventCommentator) Start(ctx context.Context) error {
+	ec.logger.Info("Event commentator starting", "buffer_capacity", ec.ringBuffer.Capacity())
 
 	for {
 		select {
 		case <-ctx.Done():
-			ec.logger.Info("Event commentator stopped", "reason", ctx.Err())
-			return
+			ec.logger.Info("Event commentator shutting down", "reason", ctx.Err())
+			return nil
 		case <-ec.stopCh:
-			ec.logger.Info("Event commentator stopped")
-			return
-		case event := <-eventCh:
+			ec.logger.Info("Event commentator shutting down")
+			return nil
+		case event := <-ec.eventChan:
 			ec.processEvent(event)
 		}
 	}

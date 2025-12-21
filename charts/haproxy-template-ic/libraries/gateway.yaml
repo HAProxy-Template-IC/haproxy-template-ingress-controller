@@ -1,25 +1,18 @@
-# Gateway API template library for HAProxy Template Ingress Controller
-# Provides support for Kubernetes Gateway API v1.2.0 (gateway.networking.k8s.io/v1)
-# Implements the resource_gateway_* plugin interface for the base library
+# Gateway API Template Library
 #
-# Full feature documentation: ../docs/libraries/gateway.md
+# Provides Kubernetes Gateway API v1.2.0 support (HTTPRoute, GRPCRoute).
+# Documentation: ../docs/libraries/gateway.md
 #
-# Supported resources:
-# - HTTPRoute: HTTP/HTTPS routing with path matching and weighted traffic splitting
-# - GRPCRoute: gRPC backend generation with HTTP/2 protocol support
+# Features:
+#   - Path matching: Exact, PathPrefix, RegularExpression
+#   - Advanced matching: Method, headers, query params (HTTPRoute), gRPC method (GRPCRoute)
+#   - Filters: RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite
+#   - Traffic splitting: Weighted backends via MULTIBACKEND qualifier
 #
-# Key features:
-# - Path matching: Exact, PathPrefix, RegularExpression (HTTPRoute only)
-# - Method, header, and query parameter matching (HTTPRoute and GRPCRoute)
-# - Core filters: RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite
-# - Weighted traffic splitting: backendRefs with weights for both HTTPRoute and GRPCRoute
-# - Host-based routing: Multiple hostnames per route
-# - Backend deduplication: Prevents duplicate backend definitions
-# - Optimized routing: Single backends use BACKEND qualifier, multiple use MULTIBACKEND
-#
-# Known limitations:
-# - Extended filters not implemented: RequestMirror
-# - GRPCRoute method-based routing not fully implemented (partial support)
+# Architecture:
+#   - util-gateway-analysis: Central cached analysis of all routes
+#   - Sharded generation: Automatic parallel processing for large route sets
+#   - Extension points: frontend-matchers-advanced-*, frontend-filters-*
 
 watchedResources:
   gateways:
@@ -27,7 +20,7 @@ watchedResources:
     resources: gateways
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: false
-    # Watch Gateway resources for TLS configuration
+    # fieldSelector: injected by Helm from gatewayClass.name
 
   httproutes:
     apiVersion: gateway.networking.k8s.io/v1
@@ -55,18 +48,14 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
 
 templateSnippets:
+  # ============================================================================
+  # Feature Registration
+  # ============================================================================
+
   features-100-gateway-ssl-passthrough:
     template: |
-      {#-
-        Gateway API SSL Passthrough Feature Registration
-
-        Uses util-gateway-ssl-passthrough to get cached SSL passthrough analysis
-        and registers detected backends with the global feature registry.
-      -#}
-      {#- Get cached SSL passthrough analysis (runs once, shared across all includes) #}
+      {#- Register SSL passthrough backends with global feature registry -#}
       {{ render "util-gateway-ssl-passthrough" }}
-
-      {#- Register backends with global feature registry (only if SSL library is loaded) #}
       {%- if shared.globalFeatures != nil %}
         {%- var globalFeatures map[string]any = shared.globalFeatures %}
         {%- var sslBackends = globalFeatures | dig("sslPassthroughBackends") %}
@@ -170,148 +159,67 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
-  # Utility snippet: Gateway Route Analysis Cache
-  # Provides cached analysis of HTTPRoute/GRPCRoute resources
+  # ============================================================================
+  # Route Analysis (Cached)
+  # ============================================================================
+
   util-gateway-analysis:
     template: |
-      {#-
-        Gateway Route Analysis Cache
-
-        Provides cached analysis of HTTPRoute/GRPCRoute resources for efficient
-        template rendering. The analysis runs only ONCE per render, even when
-        this snippet is rendered from multiple locations.
-
-        After rendering this snippet, the following variable is available:
-          shared["gatewayAnalysis"] - map containing:
-            ["sortedRoutes"] - list of routes sorted by specificity (most specific first)
-            ["pathGroups"]   - dict of routes grouped by host+path for conflict detection
-            ["allRoutes"]    - flat list of all route objects
-
-        Usage:
-          {{ render "util-gateway-analysis" }}
-          {%- var ga map[string]any = shared["gatewayAnalysis"] %}
-          {%- var sortedRoutes []any = ga["sortedRoutes"] %}
-          {%- for _, route := range sortedRoutes %}
-            ... process route ...
-          {%- end %}
-
-        Note: Uses 'shared' namespace to cache data across template renders
-        (haproxy.cfg, map files, etc.) within the same reconciliation.
-      -#}
+      {#- Caches route analysis in shared.gatewayAnalysis: {sortedRoutes, pathGroups, allRoutes} -#}
       {%- import "util-analyze-routes" for AnalyzeRoutes %}
       {%- if !has_cached("gatewayAnalysis") %}
         {%- shared["gatewayAnalysis"] = map[string]any{"pathGroups": map[string]any{}, "sortedRoutes": []any{}, "allRoutes": []any{}} %}
-        {%- var ga map[string]any = shared["gatewayAnalysis"] %}
-        {{- AnalyzeRoutes(ga) -}}
+        {{- AnalyzeRoutes(shared["gatewayAnalysis"].(map[string]any)) -}}
         {%- set_cached("gatewayAnalysis", true) %}
       {%- end %}
 
-  # Utility snippet: Gateway SSL Passthrough Cache
-  # Provides cached analysis of HTTPRoutes with SSL passthrough extensions
   util-gateway-ssl-passthrough:
     template: |
-      {#-
-        Gateway SSL Passthrough Analysis Cache
-
-        Scans HTTPRoutes for SSL passthrough extension refs and caches the results.
-        The analysis runs only ONCE per render, even when rendered from multiple locations.
-
-        After rendering this snippet, the following variable is available:
-          shared["gateway_ssl_passthrough"] - map containing:
-            ["backends"] - list of SSL passthrough backend definitions
-                           Each entry has: name, sni, namespace, route, route_type
-
-        Usage:
-          {{ render "util-gateway-ssl-passthrough" }}
-          {%- var gsp map[string]any = shared["gateway_ssl_passthrough"] %}
-          {%- var backends []any = gsp["backends"] %}
-          {%- for _, backend := range backends %}
-            ... configure backend ...
-          {%- end %}
-
-        Note: Uses 'shared' namespace to cache data across template renders
-        (haproxy.cfg, map files, etc.) within the same reconciliation.
-      -#}
+      {#- Caches SSL passthrough backends in shared.gateway_ssl_passthrough.backends -#}
       {%- if !has_cached("gateway_ssl_passthrough") %}
         {%- shared["gateway_ssl_passthrough"] = map[string]any{"backends": []any{}} %}
-        {#- Scan HTTPRoutes for SSL passthrough extension refs #}
-        {%- for _, httproute := range resources.httproutes.List() %}
+        {%- for _, route := range resources.httproutes.List() %}
           {%%
-            var hasSslPassthrough = false
-            // Check if any rule has SSL passthrough filter
-            for _, rule := range httproute | dig("spec", "rules") | toSlice() {
+            var hasPassthrough = false
+            for _, rule := range route | dig("spec", "rules") | toSlice() {
               for _, filter := range rule | dig("filters") | toSlice() {
                 var filterType = filter | dig("type") | fallback("")
                 if filterType == "ExtensionRef" {
-                  var extKind = filter | dig("extensionRef", "kind") | fallback("")
-                  var extName = filter | dig("extensionRef", "name") | fallback("")
-                  if extKind == "SSLPassthrough" {
-                    hasSslPassthrough = true
-                  } else if extName != "" && (extName | toLower() | regex_search("ssl.*passthrough")) {
-                    hasSslPassthrough = true
+                  var kind = filter | dig("extensionRef", "kind") | fallback("")
+                  var name = filter | dig("extensionRef", "name") | fallback("")
+                  if kind == "SSLPassthrough" || (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
+                    hasPassthrough = true
                   }
                 }
               }
             }
+            if !hasPassthrough { continue }
 
-            if !hasSslPassthrough {
-              continue
-            }
-
-            // Register each hostname as a passthrough backend
-            var routeNs = httproute | dig("metadata", "namespace") | fallback("")
-            var routeName = httproute | dig("metadata", "name") | fallback("")
+            var ns = route | dig("metadata", "namespace") | fallback("")
+            var routeName = route | dig("metadata", "name") | fallback("")
           %%}
-          {%- for _, hostname := range httproute | dig("spec", "hostnames") | toSlice() %}
-            {%%
-              var hostnameStr = hostname
-              if !first_seen("gateway_ssl_passthrough_hosts", hostnameStr) {
-                continue
-              }
-              var backendName = "ssl-passthrough-" + routeNs + "-" + routeName
-              var backendEntry = map[string]any{
-                "name": backendName,
-                "sni": hostnameStr,
-                "namespace": routeNs,
-                "route": routeName,
-                "route_type": "httproute",
-              }
-              var gsp map[string]any = shared["gateway_ssl_passthrough"]
-              var gspBackends []any = gsp["backends"]
-              gsp["backends"] = append(gspBackends, backendEntry)
-            %%}
+          {%- for _, host := range route | dig("spec", "hostnames") | toSlice() %}
+            {%- if first_seen("gateway_ssl_passthrough_hosts", host) %}
+              {%- var backends = shared["gateway_ssl_passthrough"].(map[string]any)["backends"].([]any) %}
+              {%- shared["gateway_ssl_passthrough"].(map[string]any)["backends"] = append(backends, map[string]any{
+                "name": "ssl-passthrough-" + ns + "-" + routeName,
+                "sni": host, "namespace": ns, "route": routeName, "route_type": "httproute",
+              }) %}
+            {%- end %}
           {%- end %}
         {%- end %}
-
-        {#- TODO: Add TLSRoute support when available #}
-        {#- TLSRoute is the natural Gateway API resource for SSL passthrough #}
         {%- set_cached("gateway_ssl_passthrough", true) %}
       {%- end %}
 
-  # Route analysis system - collects and analyzes all routes for conflicts
   util-analyze-routes:
     template: |
+      {#-
+        Analyzes HTTPRoute/GRPCRoute resources and populates result with:
+        - allRoutes: flat list of normalized route objects
+        - pathGroups: routes grouped by host+path for conflict detection
+        - sortedRoutes: routes sorted by precedence (method > headers > query > order)
+      -#}
       {%- macro AnalyzeRoutes(result map[string]any) %}
-        {#-
-          Gateway API Conflict Resolution Precedence
-
-          When multiple HTTPRoutes match the same host and path, the following
-          precedence order is used to select the winning route:
-
-          1. HTTP method specificity (routes with method matchers win over catch-all)
-          2. Number of header matchers (more specific matchers win)
-          3. Number of query parameter matchers (more specific matchers win)
-          4. Route order (older resources / earlier rules win as tie-breaker)
-
-          This implements Gateway API spec semantics for route precedence.
-
-          The analyze_routes macro:
-          - Collects all routes with normalized structure
-          - Detects conflicts (same host + path with different matchers)
-          - Builds conflictGroup strings for VAR qualifier routing
-          - Sorts routes by precedence order for advanced matcher generation
-          - Modifies result map with: allRoutes, pathGroups, sortedRoutes
-        -#}
         {%- var allRoutes = []any{} %}
 
         {#- Process HTTPRoutes #}
@@ -524,6 +432,22 @@ templateSnippets:
       {#- Macro to generate gateway backend name from route and backend info #}
       {%- macro BackendNameGateway(route any, backend any) string -%}
       gtw_{{ route | dig("metadata", "namespace") | fallback("") }}_{{ route | dig("metadata", "name") | fallback("") }}_{{ backend | dig("name") | fallback("") }}_{{ backend | dig("port") | fallback("") }}
+      {%- end macro -%}
+
+  util-route-condition:
+    template: |
+      {#-
+        RouteIdCondition - Generates HAProxy condition to match a Gateway route by ID.
+
+        This is the standard pattern for filter processing: check if req.gw_rule_id
+        matches the specific routeId set by the advanced matchers.
+
+        Usage:
+          {%- import "util-route-condition" for RouteIdCondition -%}
+          http-request set-header X-Custom "value" if {{ RouteIdCondition(routeInfo | dig("routeId")) }}
+      -#}
+      {%- macro RouteIdCondition(routeId string) string -%}
+      { var(req.gw_rule_id) -m str "{{ routeId }}" }
       {%- end macro -%}
 
   util-generate-backends-gateway:
@@ -1092,48 +1016,29 @@ templateSnippets:
   # Filter: RequestHeaderModifier - modifies request headers before backend selection
   frontend-filters-500-gateway-request-header:
     template: |
-      {#- Generate http-request header modification statements #}
-      {#- This is injected into base template via the frontend-filters-* extension point #}
-      {#- Runs AFTER routing decisions, BEFORE backend selection #}
-      {#- sanitize_regex is a built-in Scriggo function, no import needed #}
-      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {#- RequestHeaderModifier: set, add, or remove request headers -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
-
-      {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
       {%- if shared.gatewayAnalysis.hasRequestHeader_filter %}
       # gateway/frontend-filters-gateway-request-header
-      # RequestHeaderModifier filters
-      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
-      {%- for _, routeInfo := range gatewayAllRoutes %}
-        {%- var riFilters []any = routeInfo | dig("filters") | fallback([]any{}) %}
-        {%- for _, filter := range riFilters %}
-          {%- if (filter["type"]) == "RequestHeaderModifier" %}
-            {#- Simple route ID check - all condition evaluation done by advanced matchers #}
-            {%- var condition = "{ var(req.gw_rule_id) -m str \"" + (routeInfo | dig("routeId")) + "\" }" %}
-            {#- Generate header modification statements #}
-            {%- var reqHeaderMod = filter | dig("requestHeaderModifier") %}
-            {%- if reqHeaderMod != nil %}
-              {#- Set headers (replace if exists) #}
-              {%- var setHeaders []any = reqHeaderMod | dig("set") | fallback([]any{}) %}
-              {%- for _, header := range setHeaders %}
-                      http-request set-header {{ header["name"] }} "{{ header["value"] }}" if {{ condition }}
+      {%- for _, routeInfo := range shared.gatewayAnalysis.allRoutes | toSlice() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) == "RequestHeaderModifier" %}
+            {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+            {%- var cond = RouteIdCondition(routeId) %}
+            {%- var mod = filter | dig("requestHeaderModifier") %}
+            {%- if mod != nil %}
+              {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
+      http-request set-header {{ h | dig("name") }} "{{ h | dig("value") }}" if {{ cond }}
               {%- end %}
-
-              {#- Add headers (append if exists) #}
-              {%- var addHeaders []any = reqHeaderMod | dig("add") | fallback([]any{}) %}
-              {%- for _, header := range addHeaders %}
-                      http-request add-header {{ header["name"] }} "{{ header["value"] }}" if {{ condition }}
+              {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
+      http-request add-header {{ h | dig("name") }} "{{ h | dig("value") }}" if {{ cond }}
               {%- end %}
-
-              {#- Remove headers #}
-              {%- var removeHeaders []any = reqHeaderMod | dig("remove") | fallback([]any{}) %}
-              {%- for _, headerName := range removeHeaders %}
-      http-request del-header {{ headerName }} if {{ condition }}
+              {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
+      http-request del-header {{ name }} if {{ cond }}
               {%- end %}
-
-              {#- Debug: track filter application #}
               {%- if debug | fallback(false) %}
-      http-request set-var(txn.filters_applied) str(RequestHeaderModifier) if {{ condition }} !{ var(txn.filters_applied) -m found }
+      http-request set-var(txn.filters_applied) str(RequestHeaderModifier) if {{ cond }} !{ var(txn.filters_applied) -m found }
               {%- end %}
             {%- end %}
           {%- end %}
@@ -1143,48 +1048,29 @@ templateSnippets:
   # Filter: ResponseHeaderModifier - modifies response headers before sending to client
   frontend-filters-500-gateway-response-header:
     template: |
-      {#- Generate http-response header modification statements #}
-      {#- This is injected into base template via the frontend-filters-* extension point #}
-      {#- Runs AFTER routing decisions, BEFORE backend selection #}
-      {#- sanitize_regex is a built-in Scriggo function, no import needed #}
-      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {#- ResponseHeaderModifier: set, add, or remove response headers -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
-
-      {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
       {%- if shared.gatewayAnalysis.hasResponseHeader_filter %}
-      # ResponseHeaderModifier filters
-      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
-      {%- for _, routeInfo := range gatewayAllRoutes %}
-        {%- var riFilters []any = routeInfo | dig("filters") | fallback([]any{}) %}
-        {%- for _, filter := range riFilters %}
-          {%- if (filter["type"]) == "ResponseHeaderModifier" %}
-            {#- Simple route ID check - all condition evaluation done by advanced matchers #}
-            {%- var condition = "{ var(req.gw_rule_id) -m str \"" + (routeInfo | dig("routeId")) + "\" }" %}
-
-            {#- Generate response header modification statements #}
-            {%- var respHeaderMod = filter | dig("responseHeaderModifier") %}
-            {%- if respHeaderMod != nil %}
-              {#- Debug: track filter application (must be http-request for txn variables) #}
+      # gateway/frontend-filters-gateway-response-header
+      {%- for _, routeInfo := range shared.gatewayAnalysis.allRoutes | toSlice() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) == "ResponseHeaderModifier" %}
+            {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+            {%- var cond = RouteIdCondition(routeId) %}
+            {%- var mod = filter | dig("responseHeaderModifier") %}
+            {%- if mod != nil %}
               {%- if debug | fallback(false) %}
-      http-request set-var(txn.filters_applied) str(ResponseHeaderModifier) if {{ condition }} !{ var(txn.filters_applied) -m found }
+      http-request set-var(txn.filters_applied) str(ResponseHeaderModifier) if {{ cond }} !{ var(txn.filters_applied) -m found }
               {%- end %}
-
-              {#- Set headers (replace if exists) #}
-              {%- var setHeaders []any = respHeaderMod | dig("set") | fallback([]any{}) %}
-              {%- for _, header := range setHeaders %}
-                      http-response set-header {{ header["name"] }} "{{ header["value"] }}" if {{ condition }}
+              {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
+      http-response set-header {{ h | dig("name") }} "{{ h | dig("value") }}" if {{ cond }}
               {%- end %}
-
-              {#- Add headers (append if exists) #}
-              {%- var addHeaders []any = respHeaderMod | dig("add") | fallback([]any{}) %}
-              {%- for _, header := range addHeaders %}
-                      http-response add-header {{ header["name"] }} "{{ header["value"] }}" if {{ condition }}
+              {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
+      http-response add-header {{ h | dig("name") }} "{{ h | dig("value") }}" if {{ cond }}
               {%- end %}
-
-              {#- Remove headers #}
-              {%- var removeHeaders []any = respHeaderMod | dig("remove") | fallback([]any{}) %}
-              {%- for _, headerName := range removeHeaders %}
-      http-response del-header {{ headerName }} if {{ condition }}
+              {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
+      http-response del-header {{ name }} if {{ cond }}
               {%- end %}
             {%- end %}
           {%- end %}
@@ -1194,90 +1080,54 @@ templateSnippets:
   # Filter: RequestRedirect - redirects requests to different locations
   frontend-filters-500-gateway-redirect:
     template: |
-      {#- Generate http-request redirect statements #}
-      {#- This is injected into base template via the frontend-filters-* extension point #}
-      {#- Runs AFTER routing decisions, BEFORE backend selection #}
-      {#- sanitize_regex is a built-in Scriggo function, no import needed #}
-      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {#- RequestRedirect: redirect to different scheme, host, port, or path -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
-
-      {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
       {%- if shared.gatewayAnalysis.hasRedirect_filter %}
       # gateway/frontend-filters-gateway-redirect
-      # RequestRedirect filters
-      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
-      {%- for _, routeInfo := range gatewayAllRoutes %}
-        {%- var riFilters []any = routeInfo | dig("filters") | fallback([]any{}) %}
-        {%- for _, filter := range riFilters %}
-          {%- var filterType = filter["type"] %}
-          {%- var resType = routeInfo | dig("resource_type") %}
-          {%- if filterType == "RequestRedirect" && resType == "httproute" %}
-            {#- Simple route ID check - all condition evaluation done by advanced matchers #}
-            {%- var condition = "{ var(req.gw_rule_id) -m str \"" + (routeInfo | dig("routeId")) + "\" }" %}
-            {#- Build redirect directive #}
-            {%- var requestRedirect = filter | dig("requestRedirect") %}
-            {%- if requestRedirect != nil %}
-              {%- var redirect map[string]any = requestRedirect %}
-              {%- var statusCode = redirect | dig("statusCode") | fallback(302) %}
-              {#- Build redirect location components #}
-              {%- var redirParts = []any{} %}
-              {#- Scheme #}
-              {%- var redirScheme = redirect | dig("scheme") | fallback("") %}
-              {%- if redirScheme != "" %}
-                {%- redirParts = append(redirParts, "scheme " + redirScheme) %}
-              {%- end %}
-
-              {#- Path modification #}
-              {%- var redirPath = redirect | dig("path") %}
-              {%- if redirPath != nil %}
-                {%- var pathMap map[string]any = redirPath %}
-                {%- var pathType = pathMap | dig("type") %}
+      {%- for _, routeInfo := range shared.gatewayAnalysis.allRoutes | toSlice() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) == "RequestRedirect" && (routeInfo | dig("resource_type")) == "httproute" %}
+            {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+            {%- var cond = RouteIdCondition(routeId) %}
+            {%- var redir = filter | dig("requestRedirect") %}
+            {%- if redir != nil %}
+              {%- var parts = []any{} %}
+              {#- Scheme -#}
+              {%- var scheme = redir | dig("scheme") | fallback("") %}
+              {%- if scheme != "" %}{%- parts = append(parts, "scheme " + scheme) %}{%- end %}
+              {#- Path modification -#}
+              {%- var pathMod = redir | dig("path") %}
+              {%- if pathMod != nil %}
+                {%- var pathType = pathMod | dig("type") %}
                 {%- if pathType == "ReplaceFullPath" %}
-                  {#- Full path replacement: use location with scheme://host:port/newpath #}
-                  {%- var scheme = redirect | dig("scheme") | fallback("http") %}
-                  {%- var hostname = redirect | dig("hostname") | fallback("%[req.hdr(Host)]") %}
-                  {%- var port = redirect | dig("port") | fallback("") %}
-                  {%- var replaceFullPath = pathMap | dig("replaceFullPath") %}
-                  {%- var location = "" %}
-                  {%- if port != "" %}
-                    {%- location = scheme + "://" + hostname + ":" + port + replaceFullPath %}
-                  {%- else %}
-                    {%- location = scheme + "://" + hostname + replaceFullPath %}
-                  {%- end %}
-                  {%- redirParts = append(redirParts, "location \"" + location + "\"") %}
+                  {%- var s = redir | dig("scheme") | fallback("http") %}
+                  {%- var h = redir | dig("hostname") | fallback("%[req.hdr(Host)]") %}
+                  {%- var p = redir | dig("port") | fallback("") %}
+                  {%- var fullPath = pathMod | dig("replaceFullPath") %}
+                  {%- var loc = s + "://" + h %}
+                  {%- if p != "" %}{%- loc = loc + ":" + p %}{%- end %}
+                  {%- parts = append(parts, "location \"" + loc + fullPath + "\"") %}
                 {%- else if pathType == "ReplacePrefixMatch" %}
-                  {#- Prefix replacement: use prefix #}
-                  {%- var replacePrefixMatch = pathMap | dig("replacePrefixMatch") %}
-                  {%- redirParts = append(redirParts, "prefix \"" + replacePrefixMatch + "\"") %}
+                  {%- parts = append(parts, "prefix \"" + (pathMod | dig("replacePrefixMatch")) + "\"") %}
                 {%- end %}
               {%- else %}
-                {%- var redirHostname = redirect | dig("hostname") | fallback("") %}
-                {%- var redirPort = redirect | dig("port") | fallback("") %}
-                {%- if redirHostname != "" || redirPort != "" %}
-                  {#- Hostname/port change without path modification: construct full location #}
-                  {%- var scheme = redirect | dig("scheme") | fallback("http") %}
-                  {%- var hostname = redirect | dig("hostname") | fallback("%[req.hdr(Host)]") %}
-                  {%- var port = redirect | dig("port") | fallback("") %}
-                  {%- var location = "" %}
-                  {%- if port != "" %}
-                    {%- location = scheme + "://" + hostname + ":" + port + "%[path]" %}
-                  {%- else %}
-                    {%- location = scheme + "://" + hostname + "%[path]" %}
-                  {%- end %}
-                  {%- redirParts = append(redirParts, "location \"" + location + "\"") %}
+                {#- Hostname/port change without path modification -#}
+                {%- var h = redir | dig("hostname") | fallback("") %}
+                {%- var p = redir | dig("port") | fallback("") %}
+                {%- if h != "" || p != "" %}
+                  {%- var s = redir | dig("scheme") | fallback("http") %}
+                  {%- var host = redir | dig("hostname") | fallback("%[req.hdr(Host)]") %}
+                  {%- var loc = s + "://" + host %}
+                  {%- if p != "" %}{%- loc = loc + ":" + p %}{%- end %}
+                  {%- parts = append(parts, "location \"" + loc + "%[path]\"") %}
                 {%- end %}
               {%- end %}
-
-              {#- Status code #}
-              {%- redirParts = append(redirParts, "code " + statusCode) %}
-
-              {#- Debug: track filter application #}
+              {%- parts = append(parts, "code " + (redir | dig("statusCode") | fallback(302))) %}
               {%- if debug | fallback(false) %}
-      http-request set-var(txn.filters_applied) str(RequestRedirect) if {{ condition }} !{ var(txn.filters_applied) -m found }
+      http-request set-var(txn.filters_applied) str(RequestRedirect) if {{ cond }} !{ var(txn.filters_applied) -m found }
               {%- end %}
-
-              {#- Generate redirect directive #}
-      http-request redirect {{ redirParts | join(" ") }} if {{ condition }}
+      http-request redirect {{ parts | join(" ") }} if {{ cond }}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -1286,56 +1136,34 @@ templateSnippets:
   # Filter: URLRewrite - rewrites request URLs before sending to backend
   frontend-filters-500-gateway-urlrewrite:
     template: |
-      {#- Generate http-request URL rewrite statements #}
-      {#- This is injected into base template via the frontend-filters-* extension point #}
-      {#- Runs AFTER routing decisions, BEFORE backend selection #}
-      {#- sanitize_regex is a built-in Scriggo function, no import needed #}
-      {#- Get cached route analysis (runs once, shared across all includes) #}
+      {#- URLRewrite: rewrite hostname or path before backend -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
-
-      {#- Use pre-computed flag from analyze_routes (optimization: avoids O(routes) loop) #}
       {%- if shared.gatewayAnalysis.hasUrlrewrite_filter %}
       # gateway/frontend-filters-gateway-urlrewrite
-      # URLRewrite filters
-      {%- var gatewayAllRoutes = shared.gatewayAnalysis.allRoutes | toSlice() %}
-      {%- for _, routeInfo := range gatewayAllRoutes %}
-        {%- var riFilters []any = routeInfo | dig("filters") | fallback([]any{}) %}
-        {%- for _, filter := range riFilters %}
-          {%- var filterType = filter["type"] %}
-          {%- var resType = routeInfo | dig("resource_type") %}
-          {%- if filterType == "URLRewrite" && resType == "httproute" %}
-            {#- Simple route ID check - all condition evaluation done by advanced matchers #}
-            {%- var condition = "{ var(req.gw_rule_id) -m str \"" + (routeInfo | dig("routeId")) + "\" }" %}
-
-            {#- Apply URL rewrite directives #}
-            {%- var urlRewrite = filter | dig("urlRewrite") %}
-            {%- if urlRewrite != nil %}
-              {%- var rewrite map[string]any = urlRewrite %}
-              {#- Debug: track filter application #}
+      {%- for _, routeInfo := range shared.gatewayAnalysis.allRoutes | toSlice() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) == "URLRewrite" && (routeInfo | dig("resource_type")) == "httproute" %}
+            {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+            {%- var cond = RouteIdCondition(routeId) %}
+            {%- var rw = filter | dig("urlRewrite") %}
+            {%- if rw != nil %}
               {%- if debug | fallback(false) %}
-      http-request set-var(txn.filters_applied) str(URLRewrite) if {{ condition }} !{ var(txn.filters_applied) -m found }
+      http-request set-var(txn.filters_applied) str(URLRewrite) if {{ cond }} !{ var(txn.filters_applied) -m found }
               {%- end %}
-              {#- Hostname rewrite #}
-              {%- var rwHostname = rewrite | dig("hostname") | fallback("") %}
-              {%- if rwHostname != "" %}
-      http-request set-header Host "{{ rwHostname }}" if {{ condition }}
+              {%- var hostname = rw | dig("hostname") | fallback("") %}
+              {%- if hostname != "" %}
+      http-request set-header Host "{{ hostname }}" if {{ cond }}
               {%- end %}
-              {#- Path rewrite #}
-              {%- var rwPath = rewrite | dig("path") %}
-              {%- if rwPath != nil %}
-                {%- var pathMap map[string]any = rwPath %}
-                {%- var pathType = pathMap | dig("type") %}
+              {%- var pathMod = rw | dig("path") %}
+              {%- if pathMod != nil %}
+                {%- var pathType = pathMod | dig("type") %}
                 {%- if pathType == "ReplaceFullPath" %}
-                  {%- var replaceFullPath = pathMap | dig("replaceFullPath") %}
-      http-request set-path "{{ replaceFullPath }}" if {{ condition }}
+      http-request set-path "{{ pathMod | dig("replaceFullPath") }}" if {{ cond }}
                 {%- else if pathType == "ReplacePrefixMatch" %}
-                  {#- For prefix replacement, use replace-path to substitute the matched prefix #}
-                  {#- Match the route's path prefix and replace with new prefix #}
-                  {%- var originalPrefix = routeInfo | dig("path", "value") %}
-                  {%- var newPrefix = pathMap | dig("replacePrefixMatch") %}
-                  {#- Escape regex special chars in original prefix for matching #}
-                  {%- var regexPrefix = originalPrefix | replace(".", "\\.") | replace("/", "\\/") %}
-      http-request replace-path "^{{ regexPrefix }}(.*)" "{{ newPrefix }}\\1" if {{ condition }}
+                  {%- var origPrefix = routeInfo | dig("path", "value") %}
+                  {%- var regexPrefix = origPrefix | replace(".", "\\.") | replace("/", "\\/") %}
+      http-request replace-path "^{{ regexPrefix }}(.*)" "{{ pathMod | dig("replacePrefixMatch") }}\\1" if {{ cond }}
                 {%- end %}
               {%- end %}
             {%- end %}

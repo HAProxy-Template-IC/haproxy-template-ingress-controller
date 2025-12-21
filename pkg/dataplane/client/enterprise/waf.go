@@ -3,6 +3,7 @@ package enterprise
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,11 +16,11 @@ import (
 
 // ErrWAFGlobalRequiresV32 is returned when WAF Global operations are attempted
 // on HAProxy Enterprise v3.0 or v3.1 (WAF Global is v3.2+ only).
-var ErrWAFGlobalRequiresV32 = fmt.Errorf("WAF global configuration requires HAProxy Enterprise DataPlane API v3.2+")
+var ErrWAFGlobalRequiresV32 = errors.New("WAF global configuration requires HAProxy Enterprise DataPlane API v3.2+")
 
 // ErrWAFProfilesRequiresV32 is returned when WAF Profile operations are attempted
 // on HAProxy Enterprise v3.0 or v3.1 (WAF Profiles are v3.2+ only).
-var ErrWAFProfilesRequiresV32 = fmt.Errorf("WAF profiles require HAProxy Enterprise DataPlane API v3.2+")
+var ErrWAFProfilesRequiresV32 = errors.New("WAF profiles require HAProxy Enterprise DataPlane API v3.2+")
 
 // WAFOperations provides operations for HAProxy Enterprise WAF management.
 // This includes WAF global settings, profiles, body rules, and rulesets.

@@ -13,6 +13,13 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "configchange-handler"
+
+	// EventBufferSize is the size of the event subscription buffer.
+	// Size 50: Moderate-volume component handling config and validation events.
+	EventBufferSize = 50
+
 	// DefaultReinitDebounceInterval is the default time to wait after the last config
 	// change before signaling controller reinitialization. This allows rapid CRD updates
 	// to be coalesced, ensuring templates are fully rendered before reinitialization starts.
@@ -41,6 +48,7 @@ const (
 // event bus for coordinating validation across multiple validators.
 type ConfigChangeHandler struct {
 	eventBus       *busevents.EventBus
+	eventChan      <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger         *slog.Logger
 	configChangeCh chan<- *coreconfig.Config
 	validators     []string
@@ -88,9 +96,14 @@ func NewConfigChangeHandler(
 		debounceInterval = DefaultReinitDebounceInterval
 	}
 
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps
+	eventChan := eventBus.Subscribe(EventBufferSize)
+
 	return &ConfigChangeHandler{
 		eventBus:         eventBus,
-		logger:           logger,
+		eventChan:        eventChan,
+		logger:           logger.With("component", ComponentName),
 		configChangeCh:   configChangeCh,
 		validators:       validators,
 		stopCh:           make(chan struct{}),
@@ -121,30 +134,29 @@ func (h *ConfigChangeHandler) SetInitialConfigVersion(version string) {
 // Start begins processing events from the EventBus.
 //
 // This method blocks until Stop() is called or the context is canceled.
-// It should typically be run in a goroutine.
+// The component is already subscribed to the EventBus (subscription happens in constructor).
+// Returns nil on graceful shutdown.
 //
 // Example:
 //
 //	go handler.Start(ctx)
-func (h *ConfigChangeHandler) Start(ctx context.Context) {
-	eventCh := h.eventBus.Subscribe(50)
-
-	h.logger.Info("ConfigChangeHandler started", "validators", h.validators)
+func (h *ConfigChangeHandler) Start(ctx context.Context) error {
+	h.logger.Info("ConfigChangeHandler starting", "validators", h.validators)
 
 	for {
 		select {
 		case <-ctx.Done():
-			h.logger.Info("ConfigChangeHandler stopped", "reason", ctx.Err())
+			h.logger.Info("ConfigChangeHandler shutting down", "reason", ctx.Err())
 			h.cleanup()
-			return
+			return nil
 		case <-h.stopCh:
-			h.logger.Info("ConfigChangeHandler stopped")
+			h.logger.Info("ConfigChangeHandler shutting down")
 			h.cleanup()
-			return
+			return nil
 		case <-h.getDebounceTimerChan():
 			// Debounce timer expired - send pending config
 			h.sendPendingConfig()
-		case event := <-eventCh:
+		case event := <-h.eventChan:
 			switch e := event.(type) {
 			case *events.ConfigParsedEvent:
 				h.handleConfigParsed(ctx, e)

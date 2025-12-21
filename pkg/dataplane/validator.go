@@ -131,7 +131,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 		return &ValidationError{
 			Phase:   "syntax",
 			Message: "configuration has syntax errors",
-			Err:     err,
+			Cause:   err,
 		}
 	}
 
@@ -141,7 +141,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 		return &ValidationError{
 			Phase:   "schema",
 			Message: "configuration violates API schema constraints",
-			Err:     err,
+			Cause:   err,
 		}
 	}
 	schemaMs = time.Since(schemaStart).Milliseconds()
@@ -152,7 +152,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 		return &ValidationError{
 			Phase:   "semantic",
 			Message: "configuration has semantic errors",
-			Err:     err,
+			Cause:   err,
 		}
 	}
 	semanticMs = time.Since(semanticStart).Milliseconds()

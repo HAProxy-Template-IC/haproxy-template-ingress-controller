@@ -42,11 +42,11 @@ type HTTPStoreWrapper struct {
 // NewHTTPStoreWrapper creates a new HTTPStoreWrapper.
 //
 // Parameters:
+//   - ctx: Context for HTTP requests
 //   - component: The httpstore component for store access and URL registration
 //   - logger: Logger for debug messages
 //   - isValidation: If true, return pending content; if false, return accepted only
-//   - ctx: Context for HTTP requests
-func NewHTTPStoreWrapper(component *Component, logger *slog.Logger, isValidation bool, ctx context.Context) *HTTPStoreWrapper {
+func NewHTTPStoreWrapper(ctx context.Context, component *Component, logger *slog.Logger, isValidation bool) *HTTPStoreWrapper {
 	return &HTTPStoreWrapper{
 		component:    component,
 		logger:       logger.With("component", "http-wrapper"),

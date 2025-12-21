@@ -45,6 +45,9 @@ import (
 )
 
 const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "dryrun-validator"
+
 	// ValidatorID identifies this validator in scatter-gather responses.
 	ValidatorID = "dryrun"
 
@@ -116,9 +119,15 @@ func New(
 		engine:          engine,
 		validationPaths: validationPaths,
 		testRunner:      testRunnerInstance,
-		logger:          logger.With("component", "dryrun-validator"),
+		logger:          logger.With("component", ComponentName),
 		capabilities:    capabilities,
 	}
+}
+
+// Name returns the unique identifier for this component.
+// Implements the lifecycle.Component interface.
+func (c *Component) Name() string {
+	return ComponentName
 }
 
 // Start begins the validator's event loop.

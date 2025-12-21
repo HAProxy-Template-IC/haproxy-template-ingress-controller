@@ -33,10 +33,10 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 	var httpFetcher templating.HTTPFetcher
 	if c.httpStoreComponent != nil {
 		httpFetcher = httpstore.NewHTTPStoreWrapper(
+			ctx,
 			c.httpStoreComponent,
 			c.logger,
 			isValidation,
-			ctx,
 		)
 	} else {
 		c.logger.Warn("httpStoreComponent is nil, http.Fetch() will not be available in templates")

@@ -55,7 +55,7 @@ func (f *FieldFilter) Filter(resource interface{}) error {
 		if err := f.removeField(rv, pattern); err != nil {
 			return &FilterError{
 				Pattern: pattern,
-				Err:     err,
+				Cause:   err,
 			}
 		}
 	}
@@ -253,13 +253,13 @@ func unwrapUnstructuredForFilter(resource interface{}) interface{} {
 // FilterError represents an error during field filtering.
 type FilterError struct {
 	Pattern string
-	Err     error
+	Cause   error
 }
 
 func (e *FilterError) Error() string {
-	return fmt.Sprintf("filter error for pattern '%s': %v", e.Pattern, e.Err)
+	return fmt.Sprintf("filter error for pattern '%s': %v", e.Pattern, e.Cause)
 }
 
 func (e *FilterError) Unwrap() error {
-	return e.Err
+	return e.Cause
 }

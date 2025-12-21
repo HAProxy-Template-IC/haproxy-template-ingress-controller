@@ -26,6 +26,15 @@ import (
 	busevents "haproxy-template-ic/pkg/events"
 )
 
+const (
+	// ComponentName is the unique identifier for this component.
+	ComponentName = "certloader"
+
+	// EventBufferSize is the size of the event subscription buffer.
+	// Size 50: Low-volume component (~1 event per certificate change).
+	EventBufferSize = 50
+)
+
 // CertLoaderComponent subscribes to CertResourceChangedEvent and extracts TLS certificate data.
 //
 // This component is responsible for:
@@ -39,9 +48,10 @@ import (
 // Kubernetes. It simply reacts to CertResourceChangedEvent and produces
 // CertParsedEvent.
 type CertLoaderComponent struct {
-	eventBus *busevents.EventBus
-	logger   *slog.Logger
-	stopCh   chan struct{}
+	eventBus  *busevents.EventBus
+	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
+	logger    *slog.Logger
+	stopCh    chan struct{}
 }
 
 // NewCertLoaderComponent creates a new CertLoader component.
@@ -53,35 +63,39 @@ type CertLoaderComponent struct {
 // Returns:
 //   - *CertLoaderComponent ready to start
 func NewCertLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CertLoaderComponent {
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps
+	eventChan := eventBus.Subscribe(EventBufferSize)
+
 	return &CertLoaderComponent{
-		eventBus: eventBus,
-		logger:   logger,
-		stopCh:   make(chan struct{}),
+		eventBus:  eventBus,
+		eventChan: eventChan,
+		logger:    logger.With("component", ComponentName),
+		stopCh:    make(chan struct{}),
 	}
 }
 
 // Start begins processing events from the EventBus.
 //
 // This method blocks until Stop() is called or the context is canceled.
-// It should typically be run in a goroutine.
+// The component is already subscribed to the EventBus (subscription happens in constructor).
+// Returns nil on graceful shutdown.
 //
 // Example:
 //
 //	go component.Start(ctx)
-func (c *CertLoaderComponent) Start(ctx context.Context) {
-	eventCh := c.eventBus.Subscribe(50)
-
-	c.logger.Info("CertLoader component started")
+func (c *CertLoaderComponent) Start(ctx context.Context) error {
+	c.logger.Info("CertLoader starting")
 
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("CertLoader component stopped", "reason", ctx.Err())
-			return
+			c.logger.Info("CertLoader shutting down", "reason", ctx.Err())
+			return nil
 		case <-c.stopCh:
-			c.logger.Info("CertLoader component stopped")
-			return
-		case event := <-eventCh:
+			c.logger.Info("CertLoader shutting down")
+			return nil
+		case event := <-c.eventChan:
 			if certEvent, ok := event.(*events.CertResourceChangedEvent); ok {
 				c.processCertChange(certEvent)
 			}

@@ -36,7 +36,8 @@ func TestNewEventCommentator(t *testing.T) {
 
 	require.NotNil(t, ec)
 	assert.NotNil(t, ec.eventBus)
-	assert.NotNil(t, ec.logger)
+	assert.NotNil(t, ec.eventChan) // Event channel subscribed in constructor
+	assert.NotNil(t, ec.logger)    // Logger is enhanced with component name
 	assert.NotNil(t, ec.ringBuffer)
 	assert.Equal(t, 500, ec.ringBuffer.Capacity())
 	assert.NotNil(t, ec.stopCh)

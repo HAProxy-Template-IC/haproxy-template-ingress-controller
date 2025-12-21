@@ -432,27 +432,51 @@ func setupComponents(
 
 	// Start components in errgroup (these return nil on graceful shutdown)
 	g.Go(func() error {
-		eventCommentator.Start(gCtx)
+		if err := eventCommentator.Start(gCtx); err != nil {
+			logger.Error("event commentator failed", "error", err)
+			cancel()
+			return err
+		}
 		return nil
 	})
 	g.Go(func() error {
-		configLoaderComponent.Start(gCtx)
+		if err := configLoaderComponent.Start(gCtx); err != nil {
+			logger.Error("config loader failed", "error", err)
+			cancel()
+			return err
+		}
 		return nil
 	})
 	g.Go(func() error {
-		credentialsLoaderComponent.Start(gCtx)
+		if err := credentialsLoaderComponent.Start(gCtx); err != nil {
+			logger.Error("credentials loader failed", "error", err)
+			cancel()
+			return err
+		}
 		return nil
 	})
 	g.Go(func() error {
-		basicValidator.Start(gCtx)
+		if err := basicValidator.Start(gCtx); err != nil {
+			logger.Error("basic validator failed", "error", err)
+			cancel()
+			return err
+		}
 		return nil
 	})
 	g.Go(func() error {
-		templateValidator.Start(gCtx)
+		if err := templateValidator.Start(gCtx); err != nil {
+			logger.Error("template validator failed", "error", err)
+			cancel()
+			return err
+		}
 		return nil
 	})
 	g.Go(func() error {
-		jsonpathValidator.Start(gCtx)
+		if err := jsonpathValidator.Start(gCtx); err != nil {
+			logger.Error("jsonpath validator failed", "error", err)
+			cancel()
+			return err
+		}
 		return nil
 	})
 	g.Go(func() error {
@@ -464,7 +488,11 @@ func setupComponents(
 		return nil
 	})
 	g.Go(func() error {
-		configChangeHandlerComponent.Start(gCtx)
+		if err := configChangeHandlerComponent.Start(gCtx); err != nil {
+			logger.Error("config change handler failed", "error", err)
+			cancel()
+			return err
+		}
 		return nil
 	})
 
@@ -1281,7 +1309,7 @@ func setupLeaderElection(
 		// Start leader election loop in errgroup for graceful shutdown
 		// This ensures the elector can release the lease on context cancellation
 		g.Go(func() error {
-			if err := elector.Run(iterCtx); err != nil {
+			if err := elector.Start(iterCtx); err != nil {
 				logger.Error("leader election failed", "error", err)
 				return err
 			}

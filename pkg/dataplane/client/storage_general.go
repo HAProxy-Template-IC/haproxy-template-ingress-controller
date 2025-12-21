@@ -86,11 +86,12 @@ func (c *DataplaneClient) GetGeneralFileContent(ctx context.Context, path string
 }
 
 // CreateGeneralFile creates a new general file using multipart form-data.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // Works with all HAProxy DataPlane API versions (v3.0+).
-func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content string) error {
+func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content string) (string, error) {
 	body, contentType, err := buildMultipartFilePayloadWithID(path, content, path)
 	if err != nil {
-		return fmt.Errorf("failed to build payload for general file '%s': %w", path, err)
+		return "", fmt.Errorf("failed to build payload for general file '%s': %w", path, err)
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
@@ -115,7 +116,7 @@ func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content s
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create general file '%s': %w", path, err)
+		return "", fmt.Errorf("failed to create general file '%s': %w", path, err)
 	}
 	defer resp.Body.Close()
 
@@ -123,11 +124,12 @@ func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content s
 }
 
 // UpdateGeneralFile updates an existing general file using multipart form-data.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // Works with all HAProxy DataPlane API versions (v3.0+).
-func (c *DataplaneClient) UpdateGeneralFile(ctx context.Context, path, content string) error {
+func (c *DataplaneClient) UpdateGeneralFile(ctx context.Context, path, content string) (string, error) {
 	body, contentType, err := buildMultipartFilePayload(path, content)
 	if err != nil {
-		return fmt.Errorf("failed to build payload for general file '%s': %w", path, err)
+		return "", fmt.Errorf("failed to build payload for general file '%s': %w", path, err)
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
@@ -152,7 +154,7 @@ func (c *DataplaneClient) UpdateGeneralFile(ctx context.Context, path, content s
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to update general file '%s': %w", path, err)
+		return "", fmt.Errorf("failed to update general file '%s': %w", path, err)
 	}
 	defer resp.Body.Close()
 

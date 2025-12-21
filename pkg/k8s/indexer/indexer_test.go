@@ -227,13 +227,13 @@ func TestIndexError(t *testing.T) {
 	baseErr := &JSONPathError{
 		Expression: "metadata.missing",
 		Operation:  "evaluate",
-		Err:        nil,
+		Cause:      nil,
 	}
 
 	indexErr := &IndexError{
 		Expression: "metadata.missing",
 		Position:   0,
-		Err:        baseErr,
+		Cause:      baseErr,
 	}
 
 	// Test Error() method
@@ -260,12 +260,12 @@ func TestFilterError(t *testing.T) {
 	baseErr := &JSONPathError{
 		Expression: "metadata.managedFields",
 		Operation:  "filter",
-		Err:        nil,
+		Cause:      nil,
 	}
 
 	filterErr := &FilterError{
 		Pattern: "metadata.managedFields",
-		Err:     baseErr,
+		Cause:   baseErr,
 	}
 
 	// Test Error() method
@@ -286,12 +286,12 @@ func TestFilterError(t *testing.T) {
 
 // TestJSONPathError verifies JSONPathError error handling.
 func TestJSONPathError(t *testing.T) {
-	baseErr := &FilterError{Pattern: "test", Err: nil}
+	baseErr := &FilterError{Pattern: "test", Cause: nil}
 
 	jsonpathErr := &JSONPathError{
 		Expression: "metadata.name",
 		Operation:  "evaluate",
-		Err:        baseErr,
+		Cause:      baseErr,
 	}
 
 	// Test Error() method (already covered elsewhere)

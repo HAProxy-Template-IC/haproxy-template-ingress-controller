@@ -50,7 +50,7 @@ func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
 		return nil, &StoreError{
 			Operation: "get",
 			Keys:      keys,
-			Err:       fmt.Errorf("at least one key required"),
+			Cause:     fmt.Errorf("at least one key required"),
 		}
 	}
 
@@ -58,7 +58,7 @@ func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
 		return nil, &StoreError{
 			Operation: "get",
 			Keys:      keys,
-			Err:       fmt.Errorf("too many keys: got %d, expected %d", len(keys), s.numKeys),
+			Cause:     fmt.Errorf("too many keys: got %d, expected %d", len(keys), s.numKeys),
 		}
 	}
 
@@ -145,7 +145,7 @@ func (s *MemoryStore) Add(resource interface{}, keys []string) error {
 		return &StoreError{
 			Operation: "add",
 			Keys:      keys,
-			Err:       fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
+			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
 		}
 	}
 
@@ -166,7 +166,7 @@ func (s *MemoryStore) Update(resource interface{}, keys []string) error {
 		return &StoreError{
 			Operation: "update",
 			Keys:      keys,
-			Err:       fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
+			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
 		}
 	}
 
@@ -211,7 +211,7 @@ func (s *MemoryStore) Delete(keys ...string) error {
 		return &StoreError{
 			Operation: "delete",
 			Keys:      keys,
-			Err:       fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
+			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
 		}
 	}
 

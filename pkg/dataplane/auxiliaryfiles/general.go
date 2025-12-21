@@ -19,11 +19,11 @@ func (o *generalFileOps) GetContent(ctx context.Context, id string) (string, err
 	return o.client.GetGeneralFileContent(ctx, id)
 }
 
-func (o *generalFileOps) Create(ctx context.Context, id, content string) error {
+func (o *generalFileOps) Create(ctx context.Context, id, content string) (string, error) {
 	return o.client.CreateGeneralFile(ctx, id, content)
 }
 
-func (o *generalFileOps) Update(ctx context.Context, id, content string) error {
+func (o *generalFileOps) Update(ctx context.Context, id, content string) (string, error) {
 	return o.client.UpdateGeneralFile(ctx, id, content)
 }
 
@@ -70,9 +70,10 @@ func CompareGeneralFiles(ctx context.Context, c *client.DataplaneClient, desired
 //   - Phase 2 (post-config): Call with diff containing ToDelete
 //
 // The caller is responsible for splitting the diff into these phases.
-func SyncGeneralFiles(ctx context.Context, c *client.DataplaneClient, diff *FileDiff) error {
+// Returns reload IDs from create/update operations that triggered reloads.
+func SyncGeneralFiles(ctx context.Context, c *client.DataplaneClient, diff *FileDiff) ([]string, error) {
 	if diff == nil {
-		return nil
+		return nil, nil
 	}
 
 	ops := &generalFileOps{client: c}

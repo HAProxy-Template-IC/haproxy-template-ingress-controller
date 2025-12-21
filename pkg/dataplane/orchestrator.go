@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -86,28 +87,69 @@ func (o *orchestrator) verifyReload(ctx context.Context, reloadID string, timeou
 			info, err := o.client.GetReloadStatus(ctx, reloadID)
 			if err != nil {
 				// Log and continue polling - transient errors shouldn't fail immediately
-				o.logger.Warn("reload status check failed, retrying",
+				o.logger.Warn("Reload status check failed, retrying",
 					"reload_id", reloadID, "error", err)
 				continue
 			}
 
 			switch info.Status {
 			case client.ReloadStatusSucceeded:
-				o.logger.Info("reload verified successful", "reload_id", reloadID)
+				o.logger.Info("Reload verified successful", "reload_id", reloadID)
 				return nil
 			case client.ReloadStatusFailed:
-				o.logger.Error("reload failed",
+				o.logger.Error("Reload failed",
 					"reload_id", reloadID,
 					"response", info.Response)
 				return fmt.Errorf("reload failed: %s", info.Response)
 			case client.ReloadStatusInProgress:
-				o.logger.Debug("reload still in progress", "reload_id", reloadID)
+				o.logger.Debug("Reload still in progress", "reload_id", reloadID)
 			}
 
 		case <-ctx.Done():
 			return fmt.Errorf("reload verification timed out after %v", timeout)
 		}
 	}
+}
+
+// verifyAuxiliaryReloads verifies that all auxiliary file reloads completed successfully.
+// This is called after syncing auxiliary files (Phase 1) and before config operations (Phase 2)
+// to prevent race conditions where config operations reference files before their reloads complete.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - reloadIDs: List of reload IDs to verify
+//   - opts: Sync options (must have VerifyReload=true for verification to occur)
+//   - context: Description of the context (e.g., "before config sync") for log messages
+//
+// Returns error if any reload verification fails.
+func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []string, opts *SyncOptions, logContext string) error {
+	if !opts.VerifyReload || len(reloadIDs) == 0 {
+		return nil
+	}
+
+	o.logger.Info("Verifying auxiliary file reloads",
+		"context", logContext,
+		"count", len(reloadIDs),
+		"reload_ids", reloadIDs)
+
+	for _, reloadID := range reloadIDs {
+		if err := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); err != nil {
+			return &SyncError{
+				Stage:   "auxiliary_reload_verification",
+				Message: fmt.Sprintf("auxiliary file reload %s failed", reloadID),
+				Cause:   err,
+				Hints: []string{
+					"HAProxy auxiliary file reload failed",
+					"Map file or SSL certificate update may not have been applied",
+					"Check HAProxy logs for detailed error information",
+				},
+			}
+		}
+	}
+
+	o.logger.Info("All auxiliary file reloads verified successfully",
+		"count", len(reloadIDs))
+	return nil
 }
 
 // sync implements the complete sync workflow with automatic fallback.
@@ -153,14 +195,15 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 	}
 
 	// Step 7: Attempt fine-grained sync with retry logic (pass pre-computed diffs)
-	result, err := o.attemptFineGrainedSyncWithDiffs(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
+	// The function returns whether Phase 1 (aux files) completed successfully
+	result, auxFilesSynced, err := o.attemptFineGrainedSyncWithDiffs(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
 
 	// Step 7: If fine-grained sync failed and fallback is enabled, try raw config push
 	if err != nil && opts.FallbackToRaw {
 		o.logger.Warn("Fine-grained sync failed, attempting fallback to raw config push",
 			"error", err)
 
-		fallbackResult, fallbackErr := o.attemptRawFallback(ctx, desiredConfig, diff, auxFiles, opts, startTime)
+		fallbackResult, fallbackErr := o.attemptRawFallback(ctx, desiredConfig, diff, auxDiffs, opts, startTime, auxFilesSynced)
 		if fallbackErr != nil {
 			return nil, NewFallbackError(err, fallbackErr)
 		}
@@ -173,6 +216,8 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 
 // attemptFineGrainedSyncWithDiffs attempts fine-grained sync with pre-computed auxiliary file diffs.
 // This version accepts pre-computed diffs to avoid redundant comparison when diffs are already known.
+// Returns (result, auxFilesSynced, error) where auxFilesSynced indicates if Phase 1 completed successfully.
+// This is used to avoid re-syncing aux files in fallback if they were already synced.
 func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	ctx context.Context,
 	diff *comparator.ConfigDiff,
@@ -182,16 +227,26 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	mapDiff *auxiliaryfiles.MapFileDiff,
 	crtlistDiff *auxiliaryfiles.CRTListDiff,
 	startTime time.Time,
-) (*SyncResult, error) {
+) (*SyncResult, bool, error) {
 	// Phase 1: Sync auxiliary files (pre-config) using pre-computed diffs
-	if err := o.syncAuxiliaryFilesPreConfig(ctx, fileDiff, sslDiff, mapDiff, crtlistDiff); err != nil {
-		return nil, err
+	auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, fileDiff, sslDiff, mapDiff, crtlistDiff)
+	if err != nil {
+		return nil, false, err
 	}
+
+	// Phase 1.5: Verify auxiliary file reloads completed BEFORE config operations
+	// This prevents the race condition where config operations reference files before their reloads complete.
+	if err := o.verifyAuxiliaryReloads(ctx, auxReloadIDs, opts, "before config sync"); err != nil {
+		return nil, false, err
+	}
+
+	// At this point, aux files are synced successfully (Phase 1 complete)
+	auxFilesSynced := true
 
 	// Phase 2: Execute configuration sync with retry logic
 	appliedOps, reloadTriggered, reloadID, retries, err := o.executeConfigOperations(ctx, diff, opts)
 	if err != nil {
-		return nil, err
+		return nil, auxFilesSynced, err
 	}
 
 	// Phase 3: Delete obsolete files AFTER successful config sync
@@ -223,7 +278,7 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 				"reload_id", reloadID,
 				"error", err)
 
-			return result, &SyncError{
+			return result, auxFilesSynced, &SyncError{
 				Stage:   "reload_verification",
 				Message: "reload verification failed",
 				Cause:   err,
@@ -243,47 +298,35 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 		"retries", max(0, retries-1),
 		"duration", time.Since(startTime))
 
-	return result, nil
+	return result, auxFilesSynced, nil
 }
 
 // attemptRawFallback attempts to sync using raw configuration push.
-func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig string, diff *comparator.ConfigDiff, auxFiles *AuxiliaryFiles, opts *SyncOptions, startTime time.Time) (*SyncResult, error) {
+// Uses the same auxiliary file sync and reload verification as the fine-grained path.
+// If auxFilesAlreadySynced is true, Phase 1 is skipped because aux files were already synced
+// in the failed fine-grained sync attempt.
+func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig string, diff *comparator.ConfigDiff, auxDiffs *auxiliaryFileDiffs, opts *SyncOptions, startTime time.Time, auxFilesAlreadySynced bool) (*SyncResult, error) {
 	o.logger.Warn("Falling back to raw configuration push")
 
 	// Phase 1: Sync auxiliary files BEFORE pushing raw config (same as fine-grained sync)
-	// Files must exist before HAProxy validates the configuration
-	g, gCtx := errgroup.WithContext(ctx)
+	// Files must exist before HAProxy validates the configuration.
+	// Skip if aux files were already synced in the failed fine-grained sync attempt.
+	if !auxFilesAlreadySynced {
+		auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff)
+		if err != nil {
+			return nil, err
+		}
 
-	// Sync general files
-	g.Go(func() error {
-		_, err := o.syncGeneralFilesPreConfig(gCtx, auxFiles.GeneralFiles)
-		return err
-	})
-
-	// Sync SSL certificates
-	g.Go(func() error {
-		_, err := o.syncSSLCertificatesPreConfig(gCtx, auxFiles.SSLCertificates)
-		return err
-	})
-
-	// Sync map files
-	g.Go(func() error {
-		_, err := o.syncMapFilesPreConfig(gCtx, auxFiles.MapFiles)
-		return err
-	})
-
-	// Sync crt-list files
-	g.Go(func() error {
-		_, err := o.syncCRTListsPreConfig(gCtx, auxFiles.CRTListFiles)
-		return err
-	})
-
-	// Wait for all auxiliary file syncs to complete
-	if err := g.Wait(); err != nil {
-		return nil, err
+		// Phase 1.5: Verify auxiliary file reloads completed BEFORE raw config push
+		// This prevents the race condition where config operations reference files before their reloads complete.
+		if err := o.verifyAuxiliaryReloads(ctx, auxReloadIDs, opts, "before raw config push"); err != nil {
+			return nil, err
+		}
+	} else {
+		o.logger.Info("Skipping aux file sync in fallback - already synced in fine-grained attempt")
 	}
 
-	// Phase 2: Push raw configuration (now that auxiliary files exist)
+	// Phase 2: Push raw configuration (now that auxiliary files exist and reloads verified)
 	reloadID, err := o.client.PushRawConfiguration(ctx, desiredConfig)
 	if err != nil {
 		return nil, &SyncError{
@@ -481,234 +524,6 @@ func convertDiffSummary(summary *comparator.DiffSummary) DiffDetails {
 	}
 }
 
-// syncGeneralFilesPreConfig handles general file comparison and pre-config sync.
-// It returns the file diff for later use in post-config deletion.
-func (o *orchestrator) syncGeneralFilesPreConfig(ctx context.Context, generalFiles []auxiliaryfiles.GeneralFile) (*auxiliaryfiles.FileDiff, error) {
-	if len(generalFiles) == 0 {
-		return &auxiliaryfiles.FileDiff{}, nil
-	}
-
-	o.logger.Debug("Comparing general files", "desired_files", len(generalFiles))
-
-	fileDiff, err := auxiliaryfiles.CompareGeneralFiles(ctx, o.client, generalFiles)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare_files",
-			Message: "failed to compare general files",
-			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check file permissions on HAProxy storage",
-			},
-		}
-	}
-
-	hasChanges := len(fileDiff.ToCreate) > 0 || len(fileDiff.ToUpdate) > 0 || len(fileDiff.ToDelete) > 0
-	if !hasChanges {
-		o.logger.Debug("No general file changes detected")
-		return fileDiff, nil
-	}
-
-	o.logger.Info("General file changes detected",
-		"creates", len(fileDiff.ToCreate),
-		"updates", len(fileDiff.ToUpdate),
-		"deletes", len(fileDiff.ToDelete))
-
-	// Sync creates and updates BEFORE config sync (don't delete yet)
-	preConfigDiff := &auxiliaryfiles.FileDiff{
-		ToCreate: fileDiff.ToCreate,
-		ToUpdate: fileDiff.ToUpdate,
-		ToDelete: nil,
-	}
-
-	if err := auxiliaryfiles.SyncGeneralFiles(ctx, o.client, preConfigDiff); err != nil {
-		return nil, &SyncError{
-			Stage:   "sync_files_pre",
-			Message: "failed to sync general files before config sync",
-			Cause:   err,
-			Hints: []string{
-				"Check HAProxy storage is writable",
-				"Verify file contents are valid",
-				"Review error message for specific file failures",
-			},
-		}
-	}
-
-	o.logger.Info("General files synced successfully (pre-config phase)")
-	return fileDiff, nil
-}
-
-// syncSSLCertificatesPreConfig handles SSL certificate comparison and pre-config sync.
-// It returns the SSL diff for later use in post-config deletion.
-func (o *orchestrator) syncSSLCertificatesPreConfig(ctx context.Context, sslCertificates []auxiliaryfiles.SSLCertificate) (*auxiliaryfiles.SSLCertificateDiff, error) {
-	if len(sslCertificates) == 0 {
-		return &auxiliaryfiles.SSLCertificateDiff{}, nil
-	}
-
-	o.logger.Debug("Comparing SSL certificates", "desired_certs", len(sslCertificates))
-
-	sslDiff, err := auxiliaryfiles.CompareSSLCertificates(ctx, o.client, sslCertificates)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare_ssl",
-			Message: "failed to compare SSL certificates",
-			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check SSL storage permissions",
-			},
-		}
-	}
-
-	hasChanges := len(sslDiff.ToCreate) > 0 || len(sslDiff.ToUpdate) > 0 || len(sslDiff.ToDelete) > 0
-	if !hasChanges {
-		o.logger.Debug("No SSL certificate changes detected")
-		return sslDiff, nil
-	}
-
-	o.logger.Info("SSL certificate changes detected",
-		"creates", len(sslDiff.ToCreate),
-		"updates", len(sslDiff.ToUpdate),
-		"deletes", len(sslDiff.ToDelete))
-
-	// Sync creates and updates BEFORE config sync (don't delete yet)
-	preConfigSSL := &auxiliaryfiles.SSLCertificateDiff{
-		ToCreate: sslDiff.ToCreate,
-		ToUpdate: sslDiff.ToUpdate,
-		ToDelete: nil,
-	}
-
-	if err := auxiliaryfiles.SyncSSLCertificates(ctx, o.client, preConfigSSL); err != nil {
-		return nil, &SyncError{
-			Stage:   "sync_ssl_pre",
-			Message: "failed to sync SSL certificates before config sync",
-			Cause:   err,
-			Hints: []string{
-				"Check SSL storage is writable",
-				"Verify certificate contents are valid PEM format",
-				"Review error message for specific certificate failures",
-			},
-		}
-	}
-
-	o.logger.Info("SSL certificates synced successfully (pre-config phase)")
-	return sslDiff, nil
-}
-
-// syncMapFilesPreConfig handles map file comparison and pre-config sync.
-// It returns the map diff for later use in post-config deletion.
-func (o *orchestrator) syncMapFilesPreConfig(ctx context.Context, mapFiles []auxiliaryfiles.MapFile) (*auxiliaryfiles.MapFileDiff, error) {
-	if len(mapFiles) == 0 {
-		return &auxiliaryfiles.MapFileDiff{}, nil
-	}
-
-	o.logger.Debug("Comparing map files", "desired_maps", len(mapFiles))
-
-	mapDiff, err := auxiliaryfiles.CompareMapFiles(ctx, o.client, mapFiles)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare_maps",
-			Message: "failed to compare map files",
-			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check map storage permissions",
-			},
-		}
-	}
-
-	hasChanges := len(mapDiff.ToCreate) > 0 || len(mapDiff.ToUpdate) > 0 || len(mapDiff.ToDelete) > 0
-	if !hasChanges {
-		o.logger.Debug("No map file changes detected")
-		return mapDiff, nil
-	}
-
-	o.logger.Info("Map file changes detected",
-		"creates", len(mapDiff.ToCreate),
-		"updates", len(mapDiff.ToUpdate),
-		"deletes", len(mapDiff.ToDelete))
-
-	// Sync creates and updates BEFORE config sync (don't delete yet)
-	preConfigMap := &auxiliaryfiles.MapFileDiff{
-		ToCreate: mapDiff.ToCreate,
-		ToUpdate: mapDiff.ToUpdate,
-		ToDelete: nil,
-	}
-
-	if err := auxiliaryfiles.SyncMapFiles(ctx, o.client, preConfigMap); err != nil {
-		return nil, &SyncError{
-			Stage:   "sync_maps_pre",
-			Message: "failed to sync map files before config sync",
-			Cause:   err,
-			Hints: []string{
-				"Check map storage is writable",
-				"Verify map file contents are valid",
-				"Review error message for specific map file failures",
-			},
-		}
-	}
-
-	o.logger.Info("Map files synced successfully (pre-config phase)")
-	return mapDiff, nil
-}
-
-// syncCRTListsPreConfig handles crt-list file comparison and pre-config sync.
-// It returns the crt-list diff for later use in post-config deletion.
-func (o *orchestrator) syncCRTListsPreConfig(ctx context.Context, crtListFiles []auxiliaryfiles.CRTListFile) (*auxiliaryfiles.CRTListDiff, error) {
-	if len(crtListFiles) == 0 {
-		return &auxiliaryfiles.CRTListDiff{}, nil
-	}
-
-	o.logger.Debug("Comparing crt-list files", "desired_crtlists", len(crtListFiles))
-
-	crtListDiff, err := auxiliaryfiles.CompareCRTLists(ctx, o.client, crtListFiles)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare_crtlists",
-			Message: "failed to compare crt-list files",
-			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check crt-list storage permissions",
-			},
-		}
-	}
-
-	hasChanges := len(crtListDiff.ToCreate) > 0 || len(crtListDiff.ToUpdate) > 0 || len(crtListDiff.ToDelete) > 0
-	if !hasChanges {
-		o.logger.Debug("No crt-list file changes detected")
-		return crtListDiff, nil
-	}
-
-	o.logger.Info("CRT-list file changes detected",
-		"creates", len(crtListDiff.ToCreate),
-		"updates", len(crtListDiff.ToUpdate),
-		"deletes", len(crtListDiff.ToDelete))
-
-	// Sync creates and updates BEFORE config sync (don't delete yet)
-	preConfigCRTList := &auxiliaryfiles.CRTListDiff{
-		ToCreate: crtListDiff.ToCreate,
-		ToUpdate: crtListDiff.ToUpdate,
-		ToDelete: nil,
-	}
-
-	if err := auxiliaryfiles.SyncCRTLists(ctx, o.client, preConfigCRTList); err != nil {
-		return nil, &SyncError{
-			Stage:   "sync_crtlists_pre",
-			Message: "failed to sync crt-list files before config sync",
-			Cause:   err,
-			Hints: []string{
-				"Check crt-list storage is writable",
-				"Verify crt-list file contents are valid",
-				"Review error message for specific crt-list file failures",
-			},
-		}
-	}
-
-	o.logger.Info("CRT-list files synced successfully (pre-config phase)")
-	return crtListDiff, nil
-}
-
 // areAllOperationsRuntimeEligible checks if all operations can be executed via Runtime API without reload.
 //
 // Currently, only server UPDATE operations are runtime-eligible because they can modify
@@ -744,7 +559,7 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 			ToDelete: fileDiff.ToDelete,
 		}
 
-		if err := auxiliaryfiles.SyncGeneralFiles(ctx, o.client, postConfigDiff); err != nil {
+		if _, err := auxiliaryfiles.SyncGeneralFiles(ctx, o.client, postConfigDiff); err != nil {
 			o.logger.Warn("Failed to delete obsolete general files", "error", err, "files", fileDiff.ToDelete)
 		} else {
 			o.logger.Info("Obsolete general files deleted successfully")
@@ -761,7 +576,7 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 			ToDelete: sslDiff.ToDelete,
 		}
 
-		if err := auxiliaryfiles.SyncSSLCertificates(ctx, o.client, postConfigSSL); err != nil {
+		if _, err := auxiliaryfiles.SyncSSLCertificates(ctx, o.client, postConfigSSL); err != nil {
 			o.logger.Warn("Failed to delete obsolete SSL certificates", "error", err, "certificates", sslDiff.ToDelete)
 		} else {
 			o.logger.Info("Obsolete SSL certificates deleted successfully")
@@ -778,7 +593,7 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 			ToDelete: mapDiff.ToDelete,
 		}
 
-		if err := auxiliaryfiles.SyncMapFiles(ctx, o.client, postConfigMap); err != nil {
+		if _, err := auxiliaryfiles.SyncMapFiles(ctx, o.client, postConfigMap); err != nil {
 			o.logger.Warn("Failed to delete obsolete map files", "error", err, "maps", mapDiff.ToDelete)
 		} else {
 			o.logger.Info("Obsolete map files deleted successfully")
@@ -795,7 +610,7 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 			ToDelete: crtlistDiff.ToDelete,
 		}
 
-		if err := auxiliaryfiles.SyncCRTLists(ctx, o.client, postConfigCRTList); err != nil {
+		if _, err := auxiliaryfiles.SyncCRTLists(ctx, o.client, postConfigCRTList); err != nil {
 			o.logger.Warn("Failed to delete obsolete crt-list files", "error", err, "crtlists", crtlistDiff.ToDelete)
 		} else {
 			o.logger.Info("Obsolete crt-list files deleted successfully")
@@ -1174,19 +989,21 @@ type auxiliaryFileSyncParams struct {
 	stage        string
 	message      string
 	hints        []string
-	syncFunc     func(context.Context) error
+	syncFunc     func(context.Context) ([]string, error) // Returns (reloadIDs, error)
 }
 
 // syncAuxiliaryFileType is a helper that executes auxiliary file sync with the common pattern.
 // It logs changes, executes the sync function, handles errors, and logs success.
-func (o *orchestrator) syncAuxiliaryFileType(ctx context.Context, params *auxiliaryFileSyncParams) error {
+// Returns reload IDs from create/update operations that triggered reloads.
+func (o *orchestrator) syncAuxiliaryFileType(ctx context.Context, params *auxiliaryFileSyncParams) ([]string, error) {
 	o.logger.Info(params.resourceType+" changes detected",
 		"creates", params.creates,
 		"updates", params.updates,
 		"deletes", params.deletes)
 
-	if err := params.syncFunc(ctx); err != nil {
-		return &SyncError{
+	reloadIDs, err := params.syncFunc(ctx)
+	if err != nil {
+		return nil, &SyncError{
 			Stage:   params.stage,
 			Message: params.message,
 			Cause:   err,
@@ -1194,129 +1011,165 @@ func (o *orchestrator) syncAuxiliaryFileType(ctx context.Context, params *auxili
 		}
 	}
 
-	o.logger.Info(params.resourceType + " synced successfully (pre-config phase)")
-	return nil
+	o.logger.Info(params.resourceType+" synced successfully (pre-config phase)",
+		"reload_ids", len(reloadIDs))
+	return reloadIDs, nil
+}
+
+// scheduleAuxiliarySync schedules an auxiliary file sync task in the errgroup and collects reload IDs.
+// This helper reduces cognitive complexity by extracting the common goroutine pattern.
+func (o *orchestrator) scheduleAuxiliarySync(
+	g *errgroup.Group,
+	ctx context.Context,
+	params *auxiliaryFileSyncParams,
+	reloadIDs *[]string,
+	mu *sync.Mutex,
+) {
+	g.Go(func() error {
+		ids, err := o.syncAuxiliaryFileType(ctx, params)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		*reloadIDs = append(*reloadIDs, ids...)
+		mu.Unlock()
+		return nil
+	})
 }
 
 // syncAuxiliaryFilesPreConfig syncs all auxiliary files before config sync (Phase 1).
 // Only creates and updates are synced; deletions are deferred until post-config phase.
+// Returns reload IDs from create/update operations that triggered reloads.
+//
+// IMPORTANT: SSL certificates are synced FIRST (synchronously) before other aux files.
+// This ordering prevents a race condition where CRT-list, map, or general file syncs
+// trigger a HAProxy reload before all SSL certificates are uploaded. When HAProxy reloads,
+// it validates the current config which may reference SSL certs still being uploaded in parallel.
+// By syncing SSL certs first, we ensure they exist before any reload can be triggered.
 func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 	ctx context.Context,
 	fileDiff *auxiliaryfiles.FileDiff,
 	sslDiff *auxiliaryfiles.SSLCertificateDiff,
 	mapDiff *auxiliaryfiles.MapFileDiff,
 	crtlistDiff *auxiliaryfiles.CRTListDiff,
-) error {
+) ([]string, error) {
+	var allReloadIDs []string
+	var mu sync.Mutex
+
+	// Phase 1a: Sync SSL certificates FIRST (synchronously)
+	// SSL certificates must exist before any other aux file sync triggers a reload,
+	// because the HAProxy config may reference these certificates.
+	if sslDiff != nil && sslDiff.HasChanges() {
+		reloadIDs, err := o.syncAuxiliaryFileType(ctx, &auxiliaryFileSyncParams{
+			resourceType: "SSL certificate",
+			creates:      len(sslDiff.ToCreate),
+			updates:      len(sslDiff.ToUpdate),
+			deletes:      len(sslDiff.ToDelete),
+			stage:        "sync_ssl_pre",
+			message:      "failed to sync SSL certificates before config sync",
+			hints: []string{
+				"Check SSL storage permissions",
+				"Verify certificate contents are valid PEM format",
+				"Review error message for specific certificate failures",
+			},
+			syncFunc: func(ctx context.Context) ([]string, error) {
+				preConfigSSL := &auxiliaryfiles.SSLCertificateDiff{
+					ToCreate: sslDiff.ToCreate,
+					ToUpdate: sslDiff.ToUpdate,
+					ToDelete: nil,
+				}
+				return auxiliaryfiles.SyncSSLCertificates(ctx, o.client, preConfigSSL)
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		allReloadIDs = append(allReloadIDs, reloadIDs...)
+	}
+
+	// Phase 1b: Sync remaining aux files in parallel
+	// Now that SSL certs exist, other aux file syncs can safely trigger reloads.
 	g, gCtx := errgroup.WithContext(ctx)
 
 	// Sync general files if there are changes
 	if fileDiff != nil && fileDiff.HasChanges() {
-		g.Go(func() error {
-			return o.syncAuxiliaryFileType(gCtx, &auxiliaryFileSyncParams{
-				resourceType: "General file",
-				creates:      len(fileDiff.ToCreate),
-				updates:      len(fileDiff.ToUpdate),
-				deletes:      len(fileDiff.ToDelete),
-				stage:        "sync_files_pre",
-				message:      "failed to sync general files before config sync",
-				hints: []string{
-					"Check HAProxy storage is writable",
-					"Verify file contents are valid",
-					"Review error message for specific file failures",
-				},
-				syncFunc: func(ctx context.Context) error {
-					preConfigDiff := &auxiliaryfiles.FileDiff{
-						ToCreate: fileDiff.ToCreate,
-						ToUpdate: fileDiff.ToUpdate,
-						ToDelete: nil,
-					}
-					return auxiliaryfiles.SyncGeneralFiles(ctx, o.client, preConfigDiff)
-				},
-			})
-		})
-	}
-
-	// Sync SSL certificates if there are changes
-	if sslDiff != nil && sslDiff.HasChanges() {
-		g.Go(func() error {
-			return o.syncAuxiliaryFileType(gCtx, &auxiliaryFileSyncParams{
-				resourceType: "SSL certificate",
-				creates:      len(sslDiff.ToCreate),
-				updates:      len(sslDiff.ToUpdate),
-				deletes:      len(sslDiff.ToDelete),
-				stage:        "sync_ssl_pre",
-				message:      "failed to sync SSL certificates before config sync",
-				hints: []string{
-					"Check SSL storage permissions",
-					"Verify certificate contents are valid PEM format",
-					"Review error message for specific certificate failures",
-				},
-				syncFunc: func(ctx context.Context) error {
-					preConfigSSL := &auxiliaryfiles.SSLCertificateDiff{
-						ToCreate: sslDiff.ToCreate,
-						ToUpdate: sslDiff.ToUpdate,
-						ToDelete: nil,
-					}
-					return auxiliaryfiles.SyncSSLCertificates(ctx, o.client, preConfigSSL)
-				},
-			})
-		})
+		o.scheduleAuxiliarySync(g, gCtx, &auxiliaryFileSyncParams{
+			resourceType: "General file",
+			creates:      len(fileDiff.ToCreate),
+			updates:      len(fileDiff.ToUpdate),
+			deletes:      len(fileDiff.ToDelete),
+			stage:        "sync_files_pre",
+			message:      "failed to sync general files before config sync",
+			hints: []string{
+				"Check HAProxy storage is writable",
+				"Verify file contents are valid",
+				"Review error message for specific file failures",
+			},
+			syncFunc: func(ctx context.Context) ([]string, error) {
+				preConfigDiff := &auxiliaryfiles.FileDiff{
+					ToCreate: fileDiff.ToCreate,
+					ToUpdate: fileDiff.ToUpdate,
+					ToDelete: nil,
+				}
+				return auxiliaryfiles.SyncGeneralFiles(ctx, o.client, preConfigDiff)
+			},
+		}, &allReloadIDs, &mu)
 	}
 
 	// Sync map files if there are changes
 	if mapDiff != nil && mapDiff.HasChanges() {
-		g.Go(func() error {
-			return o.syncAuxiliaryFileType(gCtx, &auxiliaryFileSyncParams{
-				resourceType: "Map file",
-				creates:      len(mapDiff.ToCreate),
-				updates:      len(mapDiff.ToUpdate),
-				deletes:      len(mapDiff.ToDelete),
-				stage:        "sync_maps_pre",
-				message:      "failed to sync map files before config sync",
-				hints: []string{
-					"Check map storage permissions",
-					"Verify map file format is correct",
-					"Review error message for specific map failures",
-				},
-				syncFunc: func(ctx context.Context) error {
-					preConfigMap := &auxiliaryfiles.MapFileDiff{
-						ToCreate: mapDiff.ToCreate,
-						ToUpdate: mapDiff.ToUpdate,
-						ToDelete: nil,
-					}
-					return auxiliaryfiles.SyncMapFiles(ctx, o.client, preConfigMap)
-				},
-			})
-		})
+		o.scheduleAuxiliarySync(g, gCtx, &auxiliaryFileSyncParams{
+			resourceType: "Map file",
+			creates:      len(mapDiff.ToCreate),
+			updates:      len(mapDiff.ToUpdate),
+			deletes:      len(mapDiff.ToDelete),
+			stage:        "sync_maps_pre",
+			message:      "failed to sync map files before config sync",
+			hints: []string{
+				"Check map storage permissions",
+				"Verify map file format is correct",
+				"Review error message for specific map failures",
+			},
+			syncFunc: func(ctx context.Context) ([]string, error) {
+				preConfigMap := &auxiliaryfiles.MapFileDiff{
+					ToCreate: mapDiff.ToCreate,
+					ToUpdate: mapDiff.ToUpdate,
+					ToDelete: nil,
+				}
+				return auxiliaryfiles.SyncMapFiles(ctx, o.client, preConfigMap)
+			},
+		}, &allReloadIDs, &mu)
 	}
 
 	// Sync crt-list files if there are changes
 	if crtlistDiff != nil && crtlistDiff.HasChanges() {
-		g.Go(func() error {
-			return o.syncAuxiliaryFileType(gCtx, &auxiliaryFileSyncParams{
-				resourceType: "CRT-list file",
-				creates:      len(crtlistDiff.ToCreate),
-				updates:      len(crtlistDiff.ToUpdate),
-				deletes:      len(crtlistDiff.ToDelete),
-				stage:        "sync_crtlists_pre",
-				message:      "failed to sync crt-list files before config sync",
-				hints: []string{
-					"Check crt-list storage permissions",
-					"Verify crt-list file format is correct",
-					"Review error message for specific crt-list failures",
-				},
-				syncFunc: func(ctx context.Context) error {
-					preConfigCRTList := &auxiliaryfiles.CRTListDiff{
-						ToCreate: crtlistDiff.ToCreate,
-						ToUpdate: crtlistDiff.ToUpdate,
-						ToDelete: nil,
-					}
-					return auxiliaryfiles.SyncCRTLists(ctx, o.client, preConfigCRTList)
-				},
-			})
-		})
+		o.scheduleAuxiliarySync(g, gCtx, &auxiliaryFileSyncParams{
+			resourceType: "CRT-list file",
+			creates:      len(crtlistDiff.ToCreate),
+			updates:      len(crtlistDiff.ToUpdate),
+			deletes:      len(crtlistDiff.ToDelete),
+			stage:        "sync_crtlists_pre",
+			message:      "failed to sync crt-list files before config sync",
+			hints: []string{
+				"Check crt-list storage permissions",
+				"Verify crt-list file format is correct",
+				"Review error message for specific crt-list failures",
+			},
+			syncFunc: func(ctx context.Context) ([]string, error) {
+				preConfigCRTList := &auxiliaryfiles.CRTListDiff{
+					ToCreate: crtlistDiff.ToCreate,
+					ToUpdate: crtlistDiff.ToUpdate,
+					ToDelete: nil,
+				}
+				return auxiliaryfiles.SyncCRTLists(ctx, o.client, preConfigCRTList)
+			},
+		}, &allReloadIDs, &mu)
 	}
 
-	// Wait for all auxiliary file syncs to complete
-	return g.Wait()
+	// Wait for all remaining auxiliary file syncs to complete
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	return allReloadIDs, nil
 }

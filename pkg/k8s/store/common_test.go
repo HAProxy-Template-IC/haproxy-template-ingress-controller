@@ -19,7 +19,7 @@ func TestStoreError_Error(t *testing.T) {
 			err: &StoreError{
 				Operation: "add",
 				Keys:      []string{"default", "my-resource"},
-				Err:       errors.New("invalid key count"),
+				Cause:     errors.New("invalid key count"),
 			},
 			contains: []string{"add", "default/my-resource", "invalid key count"},
 		},
@@ -28,7 +28,7 @@ func TestStoreError_Error(t *testing.T) {
 			err: &StoreError{
 				Operation: "list",
 				Keys:      nil,
-				Err:       errors.New("store empty"),
+				Cause:     errors.New("store empty"),
 			},
 			contains: []string{"list", "store empty"},
 		},
@@ -37,7 +37,7 @@ func TestStoreError_Error(t *testing.T) {
 			err: &StoreError{
 				Operation: "delete",
 				Keys:      []string{},
-				Err:       errors.New("no keys provided"),
+				Cause:     errors.New("no keys provided"),
 			},
 			contains: []string{"delete", "no keys provided"},
 		},
@@ -62,7 +62,7 @@ func TestStoreError_Unwrap(t *testing.T) {
 	storeErr := &StoreError{
 		Operation: "add",
 		Keys:      []string{"default"},
-		Err:       baseErr,
+		Cause:     baseErr,
 	}
 
 	unwrapped := storeErr.Unwrap()

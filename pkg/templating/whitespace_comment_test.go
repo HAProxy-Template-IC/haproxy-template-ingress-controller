@@ -35,12 +35,12 @@ func TestWhitespaceComments(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			templates := map[string]string{
-				"main":                               tc.template,
-				"snippet-a":                          tc.snippet,
-				"frontend-matchers-advanced-gateway": tc.snippet,
+				"main":                               tt.template,
+				"snippet-a":                          tt.snippet,
+				"frontend-matchers-advanced-gateway": tt.snippet,
 			}
 			engine, err := templating.NewScriggo(templates, []string{"main"}, nil, nil, nil)
 			if err != nil {
@@ -52,8 +52,8 @@ func TestWhitespaceComments(t *testing.T) {
 				t.Fatalf("Render error: %v", err)
 			}
 
-			t.Logf("Template:\n%q", tc.template)
-			t.Logf("Snippet:\n%q", tc.snippet)
+			t.Logf("Template:\n%q", tt.template)
+			t.Logf("Snippet:\n%q", tt.snippet)
 			t.Logf("Got:\n%q", output)
 		})
 	}

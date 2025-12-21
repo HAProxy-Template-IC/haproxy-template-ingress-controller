@@ -101,13 +101,14 @@ func (c *DataplaneClient) GetCRTListFileContent(ctx context.Context, name string
 }
 
 // CreateCRTListFile creates a new crt-list file using multipart form-data.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // The name parameter can use dots (e.g., "example.com.crtlist"), which will be sanitized
 // automatically before calling the API.
 // CRT-list storage is only available in HAProxy DataPlane API v3.2+.
-func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content string) (string, error) {
 	// Check if crt-list is supported
 	if !c.clientset.Capabilities().SupportsCrtList {
-		return fmt.Errorf("crt-list storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
+		return "", fmt.Errorf("crt-list storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
 	}
 
 	// Sanitize the name for the API (e.g., "example.com.crtlist" -> "example_com.crtlist")
@@ -115,7 +116,7 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 
 	body, contentType, err := buildMultipartFilePayload(sanitizedName, content)
 	if err != nil {
-		return fmt.Errorf("failed to build payload for crt-list file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to build payload for crt-list file '%s': %w", name, err)
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -133,7 +134,7 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create crt-list file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to create crt-list file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -141,12 +142,13 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 }
 
 // UpdateCRTListFile updates an existing crt-list file using text/plain content-type.
+// Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // Note: The Dataplane API requires text/plain or application/json for UPDATE operations,
 // while CREATE operations accept multipart/form-data.
 // The name parameter can use dots (e.g., "example.com.crtlist"), which will be sanitized
 // automatically before calling the API.
 // CRT-list storage is only available in HAProxy DataPlane API v3.2+.
-func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content string) error {
+func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content string) (string, error) {
 	// Sanitize the name for the API (e.g., "example.com.crtlist" -> "example_com.crtlist")
 	sanitizedName := sanitizeCRTListName(name)
 
@@ -168,7 +170,7 @@ func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content s
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to update crt-list file '%s': %w", name, err)
+		return "", fmt.Errorf("failed to update crt-list file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

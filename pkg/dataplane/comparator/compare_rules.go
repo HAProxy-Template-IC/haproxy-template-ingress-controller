@@ -1,6 +1,8 @@
 package comparator
 
 import (
+	"sort"
+
 	"github.com/haproxytech/client-native/v6/models"
 
 	"haproxy-template-ic/pkg/dataplane/comparator/sections"
@@ -66,17 +68,31 @@ func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, des
 }
 
 // compareAddedACLs compares added ACLs and creates operations for them.
+// Operations are sorted by index to ensure correct insertion order (index 0 before 1, etc.)
+// since the DataPlane API requires indices to be valid at insertion time.
 func (c *Comparator) compareAddedACLs(parentType, parentName string, desiredACLMap, currentACLMap map[string]int, desiredACLs models.Acls) []Operation {
-	var operations []Operation
-
+	// Collect indices of ACLs to add, then sort them
+	// This is necessary because map iteration order is not guaranteed,
+	// but the DataPlane API requires ACLs to be created in index order
+	// (can't create index 2 before index 0 exists)
+	var indicesToAdd []int
 	for name, idx := range desiredACLMap {
 		if _, exists := currentACLMap[name]; !exists {
-			acl := desiredACLs[idx]
-			if parentType == parentTypeFrontend {
-				operations = append(operations, sections.NewACLFrontendCreate(parentName, acl, idx))
-			} else {
-				operations = append(operations, sections.NewACLBackendCreate(parentName, acl, idx))
-			}
+			indicesToAdd = append(indicesToAdd, idx)
+		}
+	}
+
+	// Sort indices to ensure correct insertion order
+	sort.Ints(indicesToAdd)
+
+	// Create operations in sorted index order
+	var operations []Operation
+	for _, idx := range indicesToAdd {
+		acl := desiredACLs[idx]
+		if parentType == parentTypeFrontend {
+			operations = append(operations, sections.NewACLFrontendCreate(parentName, acl, idx))
+		} else {
+			operations = append(operations, sections.NewACLBackendCreate(parentName, acl, idx))
 		}
 	}
 
