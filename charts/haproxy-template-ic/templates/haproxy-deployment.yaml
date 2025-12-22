@@ -99,9 +99,8 @@ spec:
           args:
             - |
               # Create required directories
+              # Note: fsGroup handles ownership - no chown needed (and CAP_CHOWN is dropped)
               mkdir -p /etc/haproxy/maps /etc/haproxy/certs /etc/haproxy/errors /etc/haproxy/general
-              # Use UIDs for chown (user/group names differ between Community and Enterprise)
-              chown -R {{ include "haproxy-template-ic.haproxy.runAsUser" . }}:{{ include "haproxy-template-ic.haproxy.runAsGroup" . }} /etc/haproxy || true
 
               # Copy initial config
               cp /config/haproxy.cfg /etc/haproxy/haproxy.cfg

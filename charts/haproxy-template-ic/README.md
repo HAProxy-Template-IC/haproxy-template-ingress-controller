@@ -754,35 +754,48 @@ spec:
 
 ## SSL Certificate Configuration
 
-The controller requires a default SSL certificate for HTTPS traffic. The certificate must be provided as a Kubernetes TLS Secret before HAProxy can serve HTTPS traffic.
+The controller requires a default SSL certificate for HTTPS traffic.
 
-### Quick Start (Development/Testing)
+### Default Behavior (Development/Testing)
 
-For local development and testing, use the provided helper script to generate a self-signed certificate:
+The chart works out of the box with cert-manager installed. By default, it creates:
 
-```bash
-# Generate wildcard certificate for *.example.com
-./scripts/generate-dev-ssl-cert.sh
+- A self-signed `Issuer` named `<release>-ssl-selfsigned`
+- A `Certificate` for `localdev.me` and `*.localdev.me`
 
-# Or specify custom namespace and secret name
-./scripts/generate-dev-ssl-cert.sh my-namespace my-cert-secret
-```
-
-This creates a self-signed certificate valid for 365 days.
-
-### Production Deployment
-
-For production, use **cert-manager** (recommended) or provide your own certificate:
-
-#### Option 1: Using cert-manager (Recommended)
-
-Install cert-manager and create a Certificate resource:
+The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local development. No additional configuration is required beyond having cert-manager installed:
 
 ```bash
 # Install cert-manager (if not already installed)
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.0/cert-manager.yaml
 
-# Create an Issuer or ClusterIssuer (example with Let's Encrypt)
+# Install the chart - SSL works out of the box
+helm install my-release haproxy-template-ic/haproxy-template-ic
+```
+
+**Note:** The default self-signed certificate is intended for development and testing only. For production, override with your own domain and issuer.
+
+### Production Deployment
+
+For production, override the default certificate configuration with your actual domain and a trusted issuer:
+
+```yaml
+controller:
+  defaultSSLCertificate:
+    certManager:
+      createIssuer: false  # Use your own issuer
+      dnsNames:
+        - "*.example.com"
+        - "example.com"
+      issuerRef:
+        name: letsencrypt-prod
+        kind: ClusterIssuer
+```
+
+This requires an existing ClusterIssuer or Issuer. Create one if you haven't already:
+
+```bash
+# Create a ClusterIssuer (example with Let's Encrypt)
 kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -799,80 +812,26 @@ spec:
         ingress:
           class: haproxy
 EOF
-
-# Create Certificate resource for default SSL
-kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: default-ssl-cert
-  namespace: haproxy-template-ic
-spec:
-  secretName: default-ssl-cert
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
-  dnsNames:
-    - '*.example.com'
-    - 'example.com'
-EOF
 ```
 
-The certificate will be automatically created, renewed, and stored in the Secret `default-ssl-cert`.
+The Helm chart creates a Certificate resource that cert-manager uses to automatically provision and renew the TLS Secret.
 
-#### Option 2: Manual Certificate
+### Alternative: Manual Certificate
 
-Create a TLS Secret manually with your own certificate:
+To manage certificates without cert-manager, disable cert-manager integration and create a TLS Secret manually:
+
+```yaml
+controller:
+  defaultSSLCertificate:
+    certManager:
+      enabled: false
+```
 
 ```bash
 kubectl create secret tls default-ssl-cert \
   --cert=path/to/tls.crt \
   --key=path/to/tls.key \
   --namespace=haproxy-template-ic
-```
-
-#### Option 3: Inline Certificate (Testing Only)
-
-**WARNING**: Not recommended for production. Embeds secrets in Helm values.
-
-```yaml
-controller:
-  defaultSSLCertificate:
-    create: true
-    cert: |
-      -----BEGIN CERTIFICATE-----
-      MIIDXTCCAkWgAwIBAgIJAKJ...
-      -----END CERTIFICATE-----
-    key: |
-      -----BEGIN PRIVATE KEY-----
-      MIIEvQIBADANBgkqhkiG9w...
-      -----END PRIVATE KEY-----
-```
-
-### Configuration
-
-Configure the SSL certificate in `values.yaml`:
-
-```yaml
-controller:
-  defaultSSLCertificate:
-    # Enable default SSL certificate requirement
-    enabled: true
-
-    # Name of the TLS Secret (must exist in cluster)
-    secretName: "default-ssl-cert"
-
-    # Namespace of the Secret (defaults to Release.Namespace)
-    namespace: ""
-
-    # Advanced: Create Secret from inline cert/key (testing only)
-    create: false
-    # cert: |
-    #   -----BEGIN CERTIFICATE-----
-    #   ...
-    # key: |
-    #   -----BEGIN PRIVATE KEY-----
-    #   ...
 ```
 
 ### Custom Certificate Names
@@ -958,6 +917,45 @@ kubectl get secret default-ssl-cert -n haproxy-template-ic -o jsonpath='{.data.t
 **Certificate not being updated:**
 
 The controller watches Secrets with `store: on-demand`. Changes are detected automatically, but HAProxy deployment follows the configured drift prevention interval (default: 60s).
+
+## Webhook Certificate Configuration
+
+The admission webhook requires TLS certificates. The simplest setup uses cert-manager with a self-signed issuer:
+
+```yaml
+webhook:
+  enabled: true
+  certManager:
+    enabled: true
+    createIssuer: true  # Creates a self-signed Issuer automatically
+```
+
+This is the recommended approach when cert-manager is installed. The chart creates:
+
+- A self-signed `Issuer` resource
+- A `Certificate` resource that references the Issuer
+- The webhook is automatically configured with CA bundle injection
+
+To use an existing Issuer or ClusterIssuer instead:
+
+```yaml
+webhook:
+  certManager:
+    enabled: true
+    createIssuer: false
+    issuerRef:
+      name: my-existing-issuer
+      kind: ClusterIssuer
+```
+
+For manual certificate management without cert-manager, provide the CA bundle:
+
+```yaml
+webhook:
+  certManager:
+    enabled: false
+  caBundle: "LS0tLS1CRUdJTi..."  # Base64-encoded CA certificate
+```
 
 ## Ingress Annotations
 
@@ -1370,6 +1368,13 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.defaultSSLCertificate.enabled` | bool | `true` | Enable default SSL certificate requirement |
 | `controller.defaultSSLCertificate.secretName` | string | `default-ssl-cert` | TLS Secret name containing certificate |
 | `controller.defaultSSLCertificate.namespace` | string | `""` | Secret namespace (defaults to Release.Namespace) |
+| `controller.defaultSSLCertificate.certManager.enabled` | bool | `true` | Use cert-manager for certificate provisioning |
+| `controller.defaultSSLCertificate.certManager.createIssuer` | bool | `true` | Create self-signed Issuer (dev/test only) |
+| `controller.defaultSSLCertificate.certManager.dnsNames` | list | `["localdev.me", "*.localdev.me"]` | DNS names for the certificate |
+| `controller.defaultSSLCertificate.certManager.issuerRef.name` | string | `""` | Issuer name (auto-set when createIssuer=true) |
+| `controller.defaultSSLCertificate.certManager.issuerRef.kind` | string | `Issuer` | Issuer kind |
+| `controller.defaultSSLCertificate.certManager.duration` | duration | `8760h` | Certificate validity (1 year) |
+| `controller.defaultSSLCertificate.certManager.renewBefore` | duration | `720h` | Renew before expiry (30 days) |
 | `controller.defaultSSLCertificate.create` | bool | `false` | Create Secret from inline cert/key (testing only) |
 | `controller.defaultSSLCertificate.cert` | string | `""` | PEM certificate (when create=true) |
 | `controller.defaultSSLCertificate.key` | string | `""` | PEM private key (when create=true) |
@@ -1422,8 +1427,9 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `webhook.secretName` | string | Auto-generated | Webhook TLS certificate secret name |
 | `webhook.service.port` | int | `443` | Webhook service port |
 | `webhook.certManager.enabled` | bool | `false` | Use cert-manager for certificates |
-| `webhook.certManager.issuerRef.name` | string | `selfsigned-issuer` | cert-manager Issuer name |
-| `webhook.certManager.issuerRef.kind` | string | `Issuer` | cert-manager Issuer kind |
+| `webhook.certManager.createIssuer` | bool | `true` | Create a self-signed Issuer for webhook certs |
+| `webhook.certManager.issuerRef.name` | string | `""` | Issuer name (auto-set when createIssuer=true) |
+| `webhook.certManager.issuerRef.kind` | string | `Issuer` | Issuer kind |
 | `webhook.certManager.duration` | duration | `8760h` | Certificate validity (1 year) |
 | `webhook.certManager.renewBefore` | duration | `720h` | Renew before expiry (30 days) |
 | `webhook.caBundle` | string | `""` | Base64-encoded CA bundle (manual certs) |

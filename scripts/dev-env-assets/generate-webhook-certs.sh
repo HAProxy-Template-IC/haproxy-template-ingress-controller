@@ -5,13 +5,13 @@
 #
 # Usage: ./generate-webhook-certs.sh <namespace> <service-name> <output-dir>
 #
-# Example: ./generate-webhook-certs.sh haproxy-template-ic haproxy-template-ic-webhook /tmp/certs
+# Example: ./generate-webhook-certs.sh haptic haptic-webhook /tmp/certs
 #
 
 set -euo pipefail
 
-NAMESPACE="${1:-haproxy-template-ic}"
-SERVICE_NAME="${2:-haproxy-template-ic-webhook}"
+NAMESPACE="${1:-haptic}"
+SERVICE_NAME="${2:-haptic-webhook}"
 OUTPUT_DIR="${3:-/tmp/webhook-certs}"
 
 # Certificate validity (1 year for dev is fine)

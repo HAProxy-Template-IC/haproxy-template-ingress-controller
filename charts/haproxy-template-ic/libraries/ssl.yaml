@@ -249,8 +249,8 @@ sslCertificates:
       {# Default SSL certificate for HTTPS frontend #}
       {# Loads certificate from TLS Secret (configurable via values.yaml) #}
       {# Secret name and namespace come from templatingSettings.extraContext #}
-      {%- var certNamespace = default_ssl_certNamespace default "haproxy-template-ic" -%}
-      {%- var certName = default_ssl_certName default "default-ssl-cert" -%}
+      {%- var certNamespace = extraContext | dig("default_ssl_cert_namespace") | fallback("haproxy-template-ic") -%}
+      {%- var certName = extraContext | dig("default_ssl_cert_name") | fallback("default-ssl-cert") -%}
       {%- var secret = resources.secrets.GetSingle(certNamespace, certName) -%}
       {%- if secret == nil -%}
       {{ fail("TLS Secret not found: " + certNamespace + "/" + certName + ". Ensure the Secret exists and is watched.") }}

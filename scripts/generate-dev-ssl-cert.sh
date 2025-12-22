@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Configuration
-NAMESPACE="${1:-haproxy-template-ic}"
+NAMESPACE="${1:-haptic}"
 SECRET_NAME="${2:-default-ssl-cert}"
 CERT_DOMAIN="*.example.com"
 CERT_VALIDITY_DAYS=365
