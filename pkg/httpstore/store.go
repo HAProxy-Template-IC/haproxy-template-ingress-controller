@@ -138,7 +138,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	}
 	s.mu.Unlock()
 
-	s.logger.Info("Cached HTTP content",
+	s.logger.Debug("Cached HTTP content",
 		"url", url,
 		"size", len(content),
 		"checksum", checksum[:16]+"...")

@@ -181,7 +181,11 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 
 		time.Sleep(10 * time.Millisecond)
 
-		event := events.NewDeploymentCompletedEvent(1, 1, 0, 100)
+		event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			Total:      1,
+			Succeeded:  1,
+			DurationMs: 100,
+		})
 		monitor.handleEvent(event)
 
 		monitor.mu.Lock()

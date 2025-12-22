@@ -94,7 +94,7 @@ func (o *orchestrator) verifyReload(ctx context.Context, reloadID string, timeou
 
 			switch info.Status {
 			case client.ReloadStatusSucceeded:
-				o.logger.Info("Reload verified successful", "reload_id", reloadID)
+				o.logger.Debug("Reload verified successful", "reload_id", reloadID)
 				return nil
 			case client.ReloadStatusFailed:
 				o.logger.Error("Reload failed",
@@ -127,7 +127,7 @@ func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []s
 		return nil
 	}
 
-	o.logger.Info("Verifying auxiliary file reloads",
+	o.logger.Debug("Verifying auxiliary file reloads",
 		"context", logContext,
 		"count", len(reloadIDs),
 		"reload_ids", reloadIDs)
@@ -147,7 +147,7 @@ func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []s
 		}
 	}
 
-	o.logger.Info("All auxiliary file reloads verified successfully",
+	o.logger.Debug("all auxiliary file reloads verified",
 		"count", len(reloadIDs))
 	return nil
 }
@@ -291,7 +291,7 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 		result.ReloadVerified = true
 	}
 
-	o.logger.Info("Fine-grained sync completed successfully",
+	o.logger.Debug("fine-grained sync completed",
 		"operations", len(appliedOps),
 		"reload_triggered", reloadTriggered,
 		"reload_verified", result.ReloadVerified,
@@ -862,7 +862,7 @@ func (o *orchestrator) executeConfigOperations(
 		// Execute with transaction (triggers reload)
 		commitResult, err = adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
 			retries++
-			o.logger.Info("Executing fine-grained sync",
+			o.logger.Debug("Executing fine-grained sync",
 				"attempt", retries,
 				"transaction_id", tx.ID,
 				"version", tx.Version)
@@ -951,7 +951,7 @@ func (o *orchestrator) checkForChanges(
 
 	// Log changes
 	if diff.Summary.HasChanges() {
-		o.logger.Info("Configuration changes detected",
+		o.logger.Debug("configuration changes detected",
 			"total_operations", diff.Summary.TotalOperations(),
 			"creates", diff.Summary.TotalCreates,
 			"updates", diff.Summary.TotalUpdates,
@@ -959,7 +959,7 @@ func (o *orchestrator) checkForChanges(
 	}
 
 	if hasAuxChanges {
-		o.logger.Info("Auxiliary file changes detected",
+		o.logger.Debug("auxiliary file changes detected",
 			"general_files", fileDiff != nil && fileDiff.HasChanges(),
 			"ssl_certs", sslDiff != nil && sslDiff.HasChanges(),
 			"maps", mapDiff != nil && mapDiff.HasChanges(),
@@ -977,7 +977,7 @@ func (o *orchestrator) checkForChanges(
 
 // createNoChangesResult creates a SyncResult for when no changes are detected.
 func (o *orchestrator) createNoChangesResult(startTime time.Time, summary *comparator.DiffSummary) *SyncResult {
-	o.logger.Info("No configuration or auxiliary file changes detected")
+	o.logger.Debug("No configuration or auxiliary file changes detected")
 	return &SyncResult{
 		Success:           true,
 		AppliedOperations: nil,
@@ -1006,7 +1006,7 @@ type auxiliaryFileSyncParams struct {
 // It logs changes, executes the sync function, handles errors, and logs success.
 // Returns reload IDs from create/update operations that triggered reloads.
 func (o *orchestrator) syncAuxiliaryFileType(ctx context.Context, params *auxiliaryFileSyncParams) ([]string, error) {
-	o.logger.Info(params.resourceType+" changes detected",
+	o.logger.Debug(params.resourceType+" changes detected",
 		"creates", params.creates,
 		"updates", params.updates,
 		"deletes", params.deletes)
@@ -1021,7 +1021,7 @@ func (o *orchestrator) syncAuxiliaryFileType(ctx context.Context, params *auxili
 		}
 	}
 
-	o.logger.Info(params.resourceType+" synced successfully (pre-config phase)",
+	o.logger.Debug(params.resourceType+" synced successfully (pre-config phase)",
 		"reload_ids", len(reloadIDs))
 	return reloadIDs, nil
 }

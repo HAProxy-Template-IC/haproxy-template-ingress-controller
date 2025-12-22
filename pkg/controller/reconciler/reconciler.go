@@ -129,7 +129,7 @@ func (r *Reconciler) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (r *Reconciler) Start(ctx context.Context) error {
-	r.logger.Info("Reconciler starting",
+	r.logger.Debug("reconciler starting",
 		"debounce_interval", r.debounceInterval)
 
 	for {
@@ -330,7 +330,7 @@ func (r *Reconciler) triggerReconciliation(reason string) {
 	// Create event with new correlation ID to trace this reconciliation cycle
 	event := events.NewReconciliationTriggeredEvent(reason, events.WithNewCorrelation())
 
-	r.logger.Info("Triggering reconciliation",
+	r.logger.Debug("Triggering reconciliation",
 		"reason", reason,
 		"correlation_id", event.CorrelationID())
 

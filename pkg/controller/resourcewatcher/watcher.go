@@ -203,7 +203,7 @@ func New(
 //
 // Use WaitForAllSync() to wait for initial synchronization to complete.
 func (r *ResourceWatcherComponent) Start(ctx context.Context) error {
-	r.logger.Info("Starting resource watchers", "count", len(r.watchers))
+	r.logger.Debug("starting resource watchers", "count", len(r.watchers))
 
 	// Start all watchers in goroutines
 	for resourceTypeName, w := range r.watchers {
@@ -222,7 +222,7 @@ func (r *ResourceWatcherComponent) Start(ctx context.Context) error {
 		}()
 	}
 
-	r.logger.Info("All resource watchers started")
+	r.logger.Debug("all resource watchers started")
 
 	// Wait for context cancellation
 	<-ctx.Done()
@@ -237,7 +237,7 @@ func (r *ResourceWatcherComponent) Start(ctx context.Context) error {
 //   - nil if all watchers synced successfully
 //   - error if sync fails or context is cancelled
 func (r *ResourceWatcherComponent) WaitForAllSync(ctx context.Context) error {
-	r.logger.Info("Waiting for all resource watchers to sync", "count", len(r.watchers))
+	r.logger.Debug("waiting for all resource watchers to sync", "count", len(r.watchers))
 
 	// Wait for all watchers to sync in parallel using errgroup
 	g, gCtx := errgroup.WithContext(ctx)
@@ -260,7 +260,7 @@ func (r *ResourceWatcherComponent) WaitForAllSync(ctx context.Context) error {
 		return err
 	}
 
-	r.logger.Info("All resource watchers synced successfully")
+	r.logger.Debug("All resource watchers synced successfully")
 	return nil
 }
 

@@ -124,30 +124,51 @@ func (e *InstanceDeploymentFailedEvent) Timestamp() time.Time { return e.timesta
 //
 // This event propagates the correlation ID from DeploymentStartedEvent.
 type DeploymentCompletedEvent struct {
-	Total      int // Total number of instances
-	Succeeded  int // Number of successful deployments
-	Failed     int // Number of failed deployments
-	DurationMs int64
-	timestamp  time.Time
+	Total              int   // Total number of instances
+	Succeeded          int   // Number of successful deployments
+	Failed             int   // Number of failed deployments
+	DurationMs         int64 // Total deployment duration in milliseconds
+	ReloadsTriggered   int   // Count of instances that triggered HAProxy reload
+	TotalAPIOperations int   // Sum of API operations across all instances
+	timestamp          time.Time
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
+}
+
+// DeploymentResult contains the outcome of a deployment operation.
+// Used with NewDeploymentCompletedEvent for cleaner parameter passing.
+type DeploymentResult struct {
+	Total              int   // Total number of instances
+	Succeeded          int   // Number of successful deployments
+	Failed             int   // Number of failed deployments
+	DurationMs         int64 // Total deployment duration in milliseconds
+	ReloadsTriggered   int   // Count of instances that triggered HAProxy reload
+	TotalAPIOperations int   // Sum of API operations across all instances
 }
 
 // NewDeploymentCompletedEvent creates a new DeploymentCompletedEvent.
 //
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentCompletedEvent(total, succeeded, failed, durationMs,
-//	    events.PropagateCorrelation(startedEvent))
-func NewDeploymentCompletedEvent(total, succeeded, failed int, durationMs int64, opts ...CorrelationOption) *DeploymentCompletedEvent {
+//	event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+//	    Total:              len(endpoints),
+//	    Succeeded:          successCount,
+//	    Failed:             failureCount,
+//	    DurationMs:         totalDurationMs,
+//	    ReloadsTriggered:   reloads,
+//	    TotalAPIOperations: ops,
+//	}, events.PropagateCorrelation(startedEvent))
+func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOption) *DeploymentCompletedEvent {
 	return &DeploymentCompletedEvent{
-		Total:       total,
-		Succeeded:   succeeded,
-		Failed:      failed,
-		DurationMs:  durationMs,
-		timestamp:   time.Now(),
-		Correlation: NewCorrelation(opts...),
+		Total:              result.Total,
+		Succeeded:          result.Succeeded,
+		Failed:             result.Failed,
+		DurationMs:         result.DurationMs,
+		ReloadsTriggered:   result.ReloadsTriggered,
+		TotalAPIOperations: result.TotalAPIOperations,
+		timestamp:          time.Now(),
+		Correlation:        NewCorrelation(opts...),
 	}
 }
 

@@ -135,7 +135,7 @@ func (c *Component) Name() string {
 // This method blocks until the context is cancelled. It processes
 // WebhookValidationRequest events from the pre-subscribed channel.
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Info("DryRun validator starting")
+	c.logger.Debug("dryrun validator starting")
 
 	for {
 		select {

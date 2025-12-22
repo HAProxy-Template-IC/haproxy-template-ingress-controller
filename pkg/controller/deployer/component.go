@@ -26,6 +26,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -100,7 +101,7 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Info("Deployer starting")
+	c.logger.Debug("deployer starting")
 
 	for {
 		select {
@@ -139,7 +140,7 @@ func (c *Component) handleDeploymentScheduled(ctx context.Context, event *events
 	}
 	// Note: flag will be cleared by deployToEndpoints after deployment completes
 
-	c.logger.Info("Deployment scheduled, starting execution",
+	c.logger.Debug("Deployment scheduled, starting execution",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
 		"config_bytes", len(event.Config),
@@ -211,10 +212,7 @@ func (c *Component) deployToEndpoints(
 		c.logger.Error("no valid endpoints to deploy to")
 		// Publish completion event so downstream components know deployment didn't happen
 		c.eventBus.Publish(events.NewDeploymentCompletedEvent(
-			0, // total
-			0, // succeeded
-			0, // failed
-			0, // duration
+			events.DeploymentResult{},
 			events.WithCorrelation(correlationID, correlationID),
 		))
 		return
@@ -226,7 +224,7 @@ func (c *Component) deployToEndpoints(
 	hash := sha256.Sum256([]byte(config))
 	checksum := hex.EncodeToString(hash[:])
 
-	c.logger.Info("Starting deployment",
+	c.logger.Debug("Starting deployment",
 		"reason", reason,
 		"endpoint_count", len(endpoints),
 		"config_bytes", len(config),
@@ -241,9 +239,10 @@ func (c *Component) deployToEndpoints(
 
 	// Deploy to all endpoints in parallel
 	var wg sync.WaitGroup
-	successCount := 0
-	failureCount := 0
-	var countMutex sync.Mutex
+	var successCount int32
+	var failureCount int32
+	var reloadsTriggered int32
+	var totalOperations int32
 
 	for i := range endpoints {
 		wg.Add(1)
@@ -289,11 +288,9 @@ func (c *Component) deployToEndpoints(
 					))
 				}
 
-				countMutex.Lock()
-				failureCount++
-				countMutex.Unlock()
+				atomic.AddInt32(&failureCount, 1)
 			} else {
-				c.logger.Info("Deployment succeeded for endpoint",
+				c.logger.Debug("Deployment succeeded for endpoint",
 					"endpoint", ep.URL,
 					"pod", ep.PodName,
 					"duration_ms", durationMs,
@@ -324,9 +321,14 @@ func (c *Component) deployToEndpoints(
 					))
 				}
 
-				countMutex.Lock()
-				successCount++
-				countMutex.Unlock()
+				atomic.AddInt32(&successCount, 1)
+
+				// Track reloads and operations for aggregate metrics
+				if syncResult.ReloadTriggered {
+					atomic.AddInt32(&reloadsTriggered, 1)
+				}
+				// Details is always populated per dataplane.SyncResult contract
+				atomic.AddInt32(&totalOperations, safeIntToInt32(syncResult.Details.TotalOperations))
 			}
 		}(&endpoints[i])
 	}
@@ -336,19 +338,25 @@ func (c *Component) deployToEndpoints(
 
 	totalDurationMs := time.Since(startTime).Milliseconds()
 
-	c.logger.Info("Deployment completed",
+	c.logger.Debug("Deployment completed",
 		"total_endpoints", len(endpoints),
 		"succeeded", successCount,
 		"failed", failureCount,
+		"reloads_triggered", reloadsTriggered,
+		"total_operations", totalOperations,
 		"duration_ms", totalDurationMs,
 		"correlation_id", correlationID)
 
 	// Publish DeploymentCompletedEvent with correlation
 	c.eventBus.Publish(events.NewDeploymentCompletedEvent(
-		len(endpoints),
-		successCount,
-		failureCount,
-		totalDurationMs,
+		events.DeploymentResult{
+			Total:              len(endpoints),
+			Succeeded:          int(successCount),
+			Failed:             int(failureCount),
+			DurationMs:         totalDurationMs,
+			ReloadsTriggered:   int(reloadsTriggered),
+			TotalAPIOperations: int(totalOperations),
+		},
 		events.WithCorrelation(correlationID, correlationID),
 	))
 }
@@ -383,6 +391,17 @@ func (c *Component) deployToSingleEndpoint(
 		"duration", result.Duration)
 
 	return result, nil
+}
+
+// safeIntToInt32 converts int to int32 with bounds checking to prevent overflow.
+func safeIntToInt32(n int) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if n < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(n)
 }
 
 // convertSyncResultToMetadata converts dataplane.SyncResult to events.SyncMetadata.

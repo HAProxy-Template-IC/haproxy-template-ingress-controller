@@ -688,18 +688,33 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentCompletedEvent", func(t *testing.T) {
-		event := NewDeploymentCompletedEvent(10, 8, 2, 500)
+		event := NewDeploymentCompletedEvent(DeploymentResult{
+			Total:              10,
+			Succeeded:          8,
+			Failed:             2,
+			DurationMs:         500,
+			ReloadsTriggered:   3,
+			TotalAPIOperations: 25,
+		})
 		require.NotNil(t, event)
 		assert.Equal(t, 10, event.Total)
 		assert.Equal(t, 8, event.Succeeded)
 		assert.Equal(t, 2, event.Failed)
 		assert.Equal(t, int64(500), event.DurationMs)
+		assert.Equal(t, 3, event.ReloadsTriggered)
+		assert.Equal(t, 25, event.TotalAPIOperations)
 		assert.Equal(t, EventTypeDeploymentCompleted, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
 
 	t.Run("DeploymentCompletedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewDeploymentCompletedEvent(5, 5, 0, 100, WithNewCorrelation())
+		event := NewDeploymentCompletedEvent(DeploymentResult{
+			Total:              5,
+			Succeeded:          5,
+			DurationMs:         100,
+			ReloadsTriggered:   5,
+			TotalAPIOperations: 15,
+		}, WithNewCorrelation())
 		require.NotNil(t, event)
 		assert.NotEmpty(t, event.CorrelationID())
 	})
@@ -1152,7 +1167,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"DeploymentStarted", NewDeploymentStartedEvent(nil)},
 		{"InstanceDeployed", NewInstanceDeployedEvent(nil, 0, false)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
-		{"DeploymentCompleted", NewDeploymentCompletedEvent(0, 0, 0, 0)},
+		{"DeploymentCompleted", NewDeploymentCompletedEvent(DeploymentResult{})},
 		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r")},
 		{"DriftPreventionTriggered", NewDriftPreventionTriggeredEvent(0)},
 		// Discovery events

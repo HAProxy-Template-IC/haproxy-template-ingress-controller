@@ -113,7 +113,7 @@ func (e *Executor) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (e *Executor) Start(ctx context.Context) error {
-	e.logger.Info("Executor starting")
+	e.logger.Debug("executor starting")
 
 	for {
 		select {
@@ -160,7 +160,7 @@ func (e *Executor) handleReconciliationTriggered(event *events.ReconciliationTri
 	e.reconciliationStarts[event.CorrelationID()] = time.Now()
 	e.mu.Unlock()
 
-	e.logger.Info("Reconciliation triggered", "reason", event.Reason)
+	e.logger.Debug("Reconciliation triggered", "reason", event.Reason)
 
 	// Publish reconciliation started event
 	e.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason))

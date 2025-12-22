@@ -157,7 +157,7 @@ func (s *configState) Message() string {
 func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, webhookCertSecretName string, debugPort int) error {
 	logger := slog.Default()
 
-	logger.Info("HAProxy Template Ingress Controller starting",
+	logger.Debug("HAProxy Template Ingress Controller starting",
 		"crd_name", crdName,
 		"secret", secretName,
 		"webhook_cert_secret", webhookCertSecretName,
@@ -623,7 +623,7 @@ func setupInfrastructureServers(
 	eventBuffer *debug.EventBuffer, // Pre-created buffer (created before EventBus.Start())
 	logger *slog.Logger,
 ) {
-	logger.Info("Stage 6: Registering debug variables and updating health checker")
+	logger.Info("Stage 8: Registering debug variables and updating health checker")
 
 	// Start event buffer (created before EventBus.Start() to ensure proper subscription)
 	go func() {
@@ -709,7 +709,7 @@ func setupResourceWatchers(
 	if err := resourceWatcher.WaitForAllSync(iterCtx); err != nil {
 		return nil, fmt.Errorf("resource watcher sync failed: %w", err)
 	}
-	logger.Info("All resource indices synced successfully")
+	logger.Debug("all resource indices synced")
 
 	return resourceWatcher, nil
 }
@@ -794,7 +794,7 @@ func setupConfigWatchers(
 		return err
 	}
 
-	logger.Info("Watchers synced successfully")
+	logger.Debug("config and secret watchers synced")
 
 	// Initial config already passed via bootstrap event. Watchers handle subsequent changes only.
 
@@ -989,7 +989,7 @@ func startLeaderOnlyComponents(
 		}
 	}()
 
-	logger.Info("Leader-only components started via lifecycle registry",
+	logger.Debug("Leader-only components started via lifecycle registry",
 		"components", "Deployer, DeploymentScheduler, ConfigPublisher")
 
 	return &leaderOnlyComponents{
@@ -1042,7 +1042,7 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 
 	callbacks := k8sleaderelection.Callbacks{
 		OnStartedLeading: func(_ context.Context) {
-			deps.logger.Info("Became leader, starting deployment components")
+			deps.logger.Debug("Became leader, starting deployment components")
 			state.mu.Lock()
 			defer state.mu.Unlock()
 			state.components = startLeaderOnlyComponents(
@@ -1061,7 +1061,7 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 			state.components = nil
 		},
 		OnNewLeader: func(identity string) {
-			deps.logger.Info("New leader observed",
+			deps.logger.Debug("New leader observed",
 				"leader_identity", identity,
 				"is_self", identity == deps.podName,
 			)

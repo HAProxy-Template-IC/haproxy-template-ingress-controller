@@ -69,7 +69,7 @@ func (b *BasicValidatorComponent) Name() string {
 
 // Start begins the validator's event loop.
 func (b *BasicValidatorComponent) Start(ctx context.Context) error {
-	b.logger.Info("Basic validator starting")
+	b.logger.Debug("basic validator starting")
 
 	for {
 		select {

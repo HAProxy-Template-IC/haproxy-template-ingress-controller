@@ -140,7 +140,7 @@ func (t *IndexSynchronizationTracker) handleResourceSyncComplete(event *events.R
 	if t.allResourcesSynced() && !t.allSynced {
 		t.allSynced = true
 
-		t.logger.Info("all resource indices synchronized",
+		t.logger.Debug("all resource indices synchronized",
 			"total_resources", len(t.expectedResources),
 			"resource_counts", t.resourceCounts)
 

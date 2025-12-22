@@ -94,7 +94,11 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	eventBus.Start()
 
 	// Publish deployment completed event
-	eventBus.Publish(events.NewDeploymentCompletedEvent(2, 2, 0, 2500))
+	eventBus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		Total:      2,
+		Succeeded:  2,
+		DurationMs: 2500,
+	}))
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -103,7 +107,12 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentErrors))
 
 	// Publish deployment with partial failure
-	eventBus.Publish(events.NewDeploymentCompletedEvent(2, 1, 1, 3000))
+	eventBus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		Total:      2,
+		Succeeded:  1,
+		Failed:     1,
+		DurationMs: 3000,
+	}))
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -246,7 +255,12 @@ func TestComponent_AllEventTypes(t *testing.T) {
 
 	// Publish various event types
 	eventBus.Publish(events.NewReconciliationCompletedEvent(1000))
-	eventBus.Publish(events.NewDeploymentCompletedEvent(2, 2, 0, 2000))
+	eventBus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		Total:      2,
+		Succeeded:  2,
+		Failed:     0,
+		DurationMs: 2000,
+	}))
 	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, ""))
 	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
 		"services": 15,

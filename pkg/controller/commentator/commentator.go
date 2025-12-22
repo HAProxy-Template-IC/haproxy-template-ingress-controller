@@ -25,6 +25,35 @@ const (
 	maxErrorPreviewLength = 80
 )
 
+// ReconciliationSummary contains aggregated metrics from a complete reconciliation cycle.
+// It is computed by correlating events with the same correlation ID.
+type ReconciliationSummary struct {
+	// Trigger is the reason that initiated the reconciliation.
+	Trigger string
+
+	// RenderMs is the time spent rendering templates.
+	RenderMs int64
+
+	// ValidateMs is the time spent validating the HAProxy configuration.
+	ValidateMs int64
+
+	// DeployMs is the time spent deploying to HAProxy instances.
+	DeployMs int64
+
+	// TotalMs is the wall-clock time from reconciliation trigger to deployment completion.
+	// This may be less than the sum of individual phase durations if there are gaps.
+	TotalMs int64
+
+	// Instances is the "succeeded/total" string for deployment.
+	Instances string
+
+	// Reloads is the number of HAProxy reloads triggered.
+	Reloads int
+
+	// Operations is the total number of API operations performed.
+	Operations int
+}
+
 // EventCommentator provides domain-aware logging for all events flowing through the EventBus.
 // It decouples logging from business logic.
 type EventCommentator struct {
@@ -74,7 +103,7 @@ func (ec *EventCommentator) Name() string {
 //
 //	go commentator.Start(ctx)
 func (ec *EventCommentator) Start(ctx context.Context) error {
-	ec.logger.Info("Event commentator starting", "buffer_capacity", ec.ringBuffer.Capacity())
+	ec.logger.Debug("event commentator starting", "buffer_capacity", ec.ringBuffer.Capacity())
 
 	for {
 		select {
@@ -112,6 +141,55 @@ func (ec *EventCommentator) FindByCorrelationID(correlationID string, maxCount i
 // This method is used for debugging recent event activity.
 func (ec *EventCommentator) FindRecent(n int) []busevents.Event {
 	return ec.ringBuffer.FindRecent(n)
+}
+
+// computeReconciliationSummary aggregates metrics from a reconciliation cycle
+// by correlating events with the same correlation ID.
+//
+// This method extracts SRP-violating logic from generateInsight into a dedicated
+// function focused solely on event correlation and metric aggregation.
+func (ec *EventCommentator) computeReconciliationSummary(
+	deploymentEvent *events.DeploymentCompletedEvent,
+) ReconciliationSummary {
+	summary := ReconciliationSummary{
+		Instances:  fmt.Sprintf("%d/%d", deploymentEvent.Succeeded, deploymentEvent.Total),
+		Reloads:    deploymentEvent.ReloadsTriggered,
+		Operations: deploymentEvent.TotalAPIOperations,
+		DeployMs:   deploymentEvent.DurationMs,
+	}
+
+	correlationID := deploymentEvent.CorrelationID()
+	if correlationID == "" {
+		return summary
+	}
+
+	// Find correlated events to extract phase timings
+	correlatedEvents := ec.ringBuffer.FindByCorrelationID(correlationID, 0)
+
+	var triggerTimestamp time.Time
+
+	for _, evt := range correlatedEvents {
+		switch te := evt.(type) {
+		case *events.ReconciliationTriggeredEvent:
+			summary.Trigger = te.Reason
+			triggerTimestamp = te.Timestamp()
+		case *events.TemplateRenderedEvent:
+			summary.RenderMs = te.DurationMs
+		case *events.ValidationCompletedEvent:
+			summary.ValidateMs = te.DurationMs
+		}
+	}
+
+	// Calculate actual wall-clock time from trigger to completion
+	// This is more accurate than summing individual phase durations
+	if !triggerTimestamp.IsZero() {
+		summary.TotalMs = deploymentEvent.Timestamp().Sub(triggerTimestamp).Milliseconds()
+	} else {
+		// Fallback to sum of individual phases if trigger event not found
+		summary.TotalMs = summary.RenderMs + summary.ValidateMs + summary.DeployMs
+	}
+
+	return summary
 }
 
 // processEvent handles a single event: adds to buffer and logs with domain insights.
@@ -180,12 +258,12 @@ func (ec *EventCommentator) determineLogLevel(eventType string) slog.Level {
 		return slog.LevelWarn
 
 	// Info level - lifecycle and completion events
+	// Note: ReconciliationCompleted and ValidationCompleted are demoted to DEBUG
+	// because DeploymentCompletedEvent now produces a consolidated summary
 	case events.EventTypeControllerStarted,
 		events.EventTypeControllerShutdown,
 		events.EventTypeConfigValidated,
 		events.EventTypeIndexSynchronized,
-		events.EventTypeReconciliationCompleted,
-		events.EventTypeValidationCompleted,
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeLeaderElectionStarted,
 		events.EventTypeBecameLeader,
@@ -465,10 +543,19 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 			append(attrs, "error", e.Error, "retryable", e.Retryable)
 
 	case *events.DeploymentCompletedEvent:
-		successRate := float64(e.Succeeded) / float64(e.Total) * 100
-		return fmt.Sprintf("Deployment completed: %d/%d instances succeeded (%.0f%%) in %dms",
-				e.Succeeded, e.Total, successRate, e.DurationMs),
-			append(attrs, "total", e.Total, "succeeded", e.Succeeded, "failed", e.Failed, "duration_ms", e.DurationMs)
+		// Compute consolidated reconciliation summary using dedicated method
+		summary := ec.computeReconciliationSummary(e)
+
+		return "Reconciliation",
+			append(attrs,
+				"trigger", summary.Trigger,
+				"instances", summary.Instances,
+				"reloads", summary.Reloads,
+				"ops", summary.Operations,
+				"render_ms", summary.RenderMs,
+				"validate_ms", summary.ValidateMs,
+				"deploy_ms", summary.DeployMs,
+				"total_ms", summary.TotalMs)
 
 	// Storage Events
 	case *events.StorageSyncStartedEvent:

@@ -129,14 +129,14 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 			want:      slog.LevelInfo,
 		},
 		{
-			name:      "reconciliation completed is info",
+			name:      "reconciliation completed is debug (consolidated in DeploymentCompletedEvent)",
 			eventType: events.EventTypeReconciliationCompleted,
-			want:      slog.LevelInfo,
+			want:      slog.LevelDebug,
 		},
 		{
-			name:      "validation completed is info",
+			name:      "validation completed is debug (consolidated in DeploymentCompletedEvent)",
 			eventType: events.EventTypeValidationCompleted,
-			want:      slog.LevelInfo,
+			want:      slog.LevelDebug,
 		},
 		{
 			name:      "deployment completed is info",
@@ -386,15 +386,21 @@ func TestEventCommentator_GenerateInsight_DeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentCompletedEvent", func(t *testing.T) {
-		event := events.NewDeploymentCompletedEvent(3, 2, 1, 500)
+		event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			Total:              3,
+			Succeeded:          2,
+			Failed:             1,
+			DurationMs:         500,
+			ReloadsTriggered:   1,
+			TotalAPIOperations: 10,
+		})
 
 		insight, attrs := ec.generateInsight(event)
 
-		assert.Contains(t, insight, "Deployment completed")
-		assert.Contains(t, insight, "2/3")
-		assertContainsAttr(t, attrs, "total", 3)
-		assertContainsAttr(t, attrs, "succeeded", 2)
-		assertContainsAttr(t, attrs, "failed", 1)
+		assert.Contains(t, insight, "Reconciliation")
+		assertContainsAttr(t, attrs, "instances", "2/3")
+		assertContainsAttr(t, attrs, "reloads", 1)
+		assertContainsAttr(t, attrs, "ops", 10)
 	})
 }
 

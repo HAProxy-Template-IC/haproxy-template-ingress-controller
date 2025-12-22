@@ -308,7 +308,7 @@ func (r *Registry) waitForDependencies(ctx context.Context, comp *registeredComp
 func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent) error {
 	name := comp.component.Name()
 
-	r.logger.Info("Starting component", "name", name)
+	r.logger.Debug("starting component", "name", name)
 
 	// Set status to Running before calling Start()
 	r.updateStatus(name, StatusRunning, nil)

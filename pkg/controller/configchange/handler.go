@@ -141,7 +141,7 @@ func (h *ConfigChangeHandler) SetInitialConfigVersion(version string) {
 //
 //	go handler.Start(ctx)
 func (h *ConfigChangeHandler) Start(ctx context.Context) error {
-	h.logger.Info("ConfigChangeHandler starting", "validators", h.validators)
+	h.logger.Debug("config change handler starting", "validators", h.validators)
 
 	for {
 		select {
@@ -417,7 +417,7 @@ func (h *ConfigChangeHandler) handleBecameLeader(_ *events.BecameLeaderEvent) {
 		return
 	}
 
-	h.logger.Info("became leader, re-publishing last validated config for leader-only components",
+	h.logger.Debug("became leader, re-publishing last validated config for leader-only components",
 		"config_version", validatedEvent.Version,
 		"secret_version", validatedEvent.SecretVersion)
 

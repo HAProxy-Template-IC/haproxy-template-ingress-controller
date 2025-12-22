@@ -114,7 +114,7 @@ func (m *DriftPreventionMonitor) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
-	m.logger.Info("DriftPreventionMonitor starting",
+	m.logger.Debug("drift monitor starting",
 		"drift_prevention_interval_ms", m.driftPreventionInterval.Milliseconds())
 
 	// Start initial drift prevention timer

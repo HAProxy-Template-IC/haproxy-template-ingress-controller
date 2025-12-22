@@ -15,12 +15,22 @@ import (
 
 // Typical capacity: 1000 events (configurable).
 type RingBuffer struct {
-	events    []busevents.Event // Circular buffer (time-ordered)
-	head      int               // Next write position
-	size      int               // Current number of events
-	capacity  int               // Maximum capacity
-	typeIndex map[string][]int  // Event type -> slice of indices in events[]
-	mu        sync.RWMutex
+	events   []busevents.Event // Circular buffer (time-ordered)
+	head     int               // Next write position
+	size     int               // Current number of events
+	capacity int               // Maximum capacity
+
+	// typeIndex maps event types to indices in the events array.
+	// Uses lazy cleanup during reads to remove stale indices.
+	typeIndex map[string][]int
+
+	// correlationIndex maps correlation IDs to indices in the events array.
+	// Unlike typeIndex, correlation IDs are unique per reconciliation cycle,
+	// so we must actively clean up when events are overwritten to prevent
+	// memory growth.
+	correlationIndex map[string][]int
+
+	mu sync.RWMutex
 }
 
 // NewRingBuffer creates a new ring buffer with the specified capacity.
@@ -32,23 +42,33 @@ type RingBuffer struct {
 //   - *RingBuffer ready for use
 func NewRingBuffer(capacity int) *RingBuffer {
 	return &RingBuffer{
-		events:    make([]busevents.Event, capacity),
-		head:      0,
-		size:      0,
-		capacity:  capacity,
-		typeIndex: make(map[string][]int),
+		events:           make([]busevents.Event, capacity),
+		head:             0,
+		size:             0,
+		capacity:         capacity,
+		typeIndex:        make(map[string][]int),
+		correlationIndex: make(map[string][]int),
 	}
 }
 
 // Add appends an event to the buffer.
 //
 // If the buffer is full, the oldest event is overwritten (circular behavior).
-// The type index is updated to include the new event.
+// The type index and correlation index are updated to include the new event.
+// Old correlation index entries are actively cleaned up when events are
+// overwritten to prevent memory growth.
 //
-// This operation is O(1) with lazy cleanup of stale indices.
+// This operation is O(1) amortized.
 func (rb *RingBuffer) Add(event busevents.Event) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
+
+	// Clean up old correlation index entry before overwriting
+	// This is critical because correlation IDs are unique per reconciliation
+	// cycle and would otherwise accumulate indefinitely
+	if rb.size == rb.capacity {
+		rb.cleanupOldEventCorrelation(rb.head)
+	}
 
 	// Write event at head position
 	rb.events[rb.head] = event
@@ -57,12 +77,61 @@ func (rb *RingBuffer) Add(event busevents.Event) {
 	eventType := event.EventType()
 	rb.typeIndex[eventType] = append(rb.typeIndex[eventType], rb.head)
 
+	// Update correlation index for events that have correlation IDs
+	if correlated, ok := event.(events.CorrelatedEvent); ok {
+		if corrID := correlated.CorrelationID(); corrID != "" {
+			rb.correlationIndex[corrID] = append(rb.correlationIndex[corrID], rb.head)
+		}
+	}
+
 	// Advance head (circular)
 	rb.head = (rb.head + 1) % rb.capacity
 
 	// Update size
 	if rb.size < rb.capacity {
 		rb.size++
+	}
+}
+
+// cleanupOldEventCorrelation removes the correlation index entry for the event
+// being overwritten. This prevents memory growth from accumulating stale
+// correlation ID entries.
+//
+// Must be called with rb.mu held.
+func (rb *RingBuffer) cleanupOldEventCorrelation(idx int) {
+	oldEvent := rb.events[idx]
+	if oldEvent == nil {
+		return
+	}
+
+	correlated, ok := oldEvent.(events.CorrelatedEvent)
+	if !ok {
+		return
+	}
+
+	corrID := correlated.CorrelationID()
+	if corrID == "" {
+		return
+	}
+
+	indices := rb.correlationIndex[corrID]
+	if len(indices) == 0 {
+		return
+	}
+
+	// Remove this index from the slice
+	newIndices := make([]int, 0, len(indices)-1)
+	for _, i := range indices {
+		if i != idx {
+			newIndices = append(newIndices, i)
+		}
+	}
+
+	if len(newIndices) == 0 {
+		// No more events with this correlation ID, remove the map entry entirely
+		delete(rb.correlationIndex, corrID)
+	} else {
+		rb.correlationIndex[corrID] = newIndices
 	}
 }
 
@@ -79,38 +148,32 @@ func (rb *RingBuffer) Add(event busevents.Event) {
 //	    // Process events (newest first)
 //	}
 func (rb *RingBuffer) FindByType(eventType string) []busevents.Event {
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
 
 	indices := rb.typeIndex[eventType]
 	if len(indices) == 0 {
 		return nil
 	}
 
-	// Filter out stale indices (lazy cleanup)
-	var result []busevents.Event
-	validIndices := make([]int, 0, len(indices))
-
-	for _, idx := range indices {
-		event := rb.events[idx]
-		// Check if this index still contains an event of the expected type
-		if event != nil && event.EventType() == eventType {
-			result = append(result, event)
-			validIndices = append(validIndices, idx)
-		}
-	}
+	result, validIndices := rb.filterValidIndices(indices, func(event busevents.Event) bool {
+		return event != nil && event.EventType() == eventType
+	})
 
 	// Update index with valid indices (lazy cleanup)
-	rb.mu.RUnlock()
-	rb.mu.Lock()
-	rb.typeIndex[eventType] = validIndices
-	rb.mu.Unlock()
-	rb.mu.RLock()
+	if len(validIndices) == 0 {
+		delete(rb.typeIndex, eventType)
+	} else {
+		rb.typeIndex[eventType] = validIndices
+	}
+
+	// Return nil if no events found (consistent with early return above)
+	if len(result) == 0 {
+		return nil
+	}
 
 	// Reverse to get newest first
-	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
-		result[i], result[j] = result[j], result[i]
-	}
+	reverseEvents(result)
 
 	return result
 }
@@ -233,6 +296,8 @@ func (rb *RingBuffer) Capacity() int {
 // Returns:
 //   - Slice of events matching the correlation ID, newest first
 //
+// Complexity: O(k) where k = number of events with that correlation ID (typically 10-15 for a reconciliation cycle)
+//
 // Example:
 //
 //	// Find all events in a reconciliation cycle
@@ -242,16 +307,67 @@ func (rb *RingBuffer) FindByCorrelationID(correlationID string, maxCount int) []
 		return nil
 	}
 
-	predicate := func(e busevents.Event) bool {
-		if correlated, ok := e.(events.CorrelatedEvent); ok {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	indices := rb.correlationIndex[correlationID]
+	if len(indices) == 0 {
+		return nil
+	}
+
+	result, validIndices := rb.filterValidIndices(indices, func(event busevents.Event) bool {
+		if correlated, ok := event.(events.CorrelatedEvent); ok {
 			return correlated.CorrelationID() == correlationID
 		}
 		return false
+	})
+
+	// Update index with valid indices (lazy cleanup)
+	if len(validIndices) == 0 {
+		delete(rb.correlationIndex, correlationID)
+	} else {
+		rb.correlationIndex[correlationID] = validIndices
 	}
 
-	if maxCount <= 0 {
-		maxCount = rb.capacity // Return all matching events
+	// Return nil if no events found (consistent with early return above)
+	if len(result) == 0 {
+		return nil
 	}
 
-	return rb.FindRecentByPredicate(maxCount, predicate)
+	// Apply maxCount limit (keep most recent, which are at the end before reversal)
+	if maxCount > 0 && len(result) > maxCount {
+		result = result[len(result)-maxCount:]
+	}
+
+	// Reverse to get newest first
+	reverseEvents(result)
+
+	return result
+}
+
+// filterValidIndices filters a slice of indices, keeping only those where the
+// event at that index satisfies the predicate.
+//
+// Returns both the matching events and the valid indices for index cleanup.
+// Must be called with rb.mu held.
+func (rb *RingBuffer) filterValidIndices(indices []int, predicate func(busevents.Event) bool) (result []busevents.Event, validIndices []int) {
+	result = make([]busevents.Event, 0, len(indices))
+	validIndices = make([]int, 0, len(indices))
+
+	for _, idx := range indices {
+		event := rb.events[idx]
+		if predicate(event) {
+			result = append(result, event)
+			validIndices = append(validIndices, idx)
+		}
+	}
+
+	return result, validIndices
+}
+
+// reverseEvents reverses a slice of events in place.
+func reverseEvents(evts []busevents.Event) {
+	for i, j := 0, len(evts)-1; i < j; i, j = i+1, j-1 {
+		evts[i], evts[j] = evts[j], evts[i]
+	}
 }

@@ -66,7 +66,7 @@ func (s *Synchronizer) WithLogger(logger *slog.Logger) *Synchronizer {
 func (s *Synchronizer) Sync(ctx context.Context, current, desired *parser.StructuredConfig, opts SyncOptions) (*SyncResult, error) {
 	startTime := time.Now()
 
-	s.logger.Info("Starting synchronization",
+	s.logger.Debug("starting synchronization",
 		"policy", opts.Policy,
 		"validate_before_apply", opts.ValidateBeforeApply,
 		"continue_on_error", opts.ContinueOnError,
@@ -84,7 +84,7 @@ func (s *Synchronizer) Sync(ctx context.Context, current, desired *parser.Struct
 		return NewNoChangesResult(opts.Policy, time.Since(startTime)), nil
 	}
 
-	s.logger.Info("Configuration changes detected",
+	s.logger.Debug("configuration changes detected",
 		"total_operations", diff.Summary.TotalOperations(),
 		"creates", diff.Summary.TotalCreates,
 		"updates", diff.Summary.TotalUpdates,
@@ -130,7 +130,7 @@ func (s *Synchronizer) apply(ctx context.Context, diff *comparator.ConfigDiff, o
 	// Execute with retry logic
 	_, err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
 		retries++
-		s.logger.Info("Executing sync transaction",
+		s.logger.Debug("executing sync transaction",
 			"attempt", retries,
 			"transaction_id", tx.ID,
 			"version", tx.Version,
@@ -155,7 +155,7 @@ func (s *Synchronizer) apply(ctx context.Context, diff *comparator.ConfigDiff, o
 
 		// All operations succeeded or we're continuing despite errors
 		duration := time.Since(startTime)
-		s.logger.Info("Sync transaction completed",
+		s.logger.Debug("sync transaction completed",
 			"applied", len(applied),
 			"failed", len(failed),
 			"duration", duration,

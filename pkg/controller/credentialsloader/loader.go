@@ -71,7 +71,7 @@ func NewCredentialsLoaderComponent(eventBus *busevents.EventBus, logger *slog.Lo
 //
 //	go component.Start(ctx)
 func (c *CredentialsLoaderComponent) Start(ctx context.Context) error {
-	c.logger.Info("CredentialsLoader starting")
+	c.logger.Debug("credentials loader starting")
 
 	for {
 		select {

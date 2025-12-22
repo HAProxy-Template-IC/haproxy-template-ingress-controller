@@ -155,7 +155,7 @@ func (e *Elector) Start(ctx context.Context) error {
 				e.leader = e.config.Identity
 				e.mu.Unlock()
 
-				e.logger.Info("Started leading",
+				e.logger.Debug("Started leading",
 					"identity", e.config.Identity,
 					"lease", e.config.LeaseName)
 
@@ -184,7 +184,7 @@ func (e *Elector) Start(ctx context.Context) error {
 				isSelf := identity == e.config.Identity
 				e.mu.Unlock()
 
-				e.logger.Info("New leader observed",
+				e.logger.Debug("New leader observed",
 					"leader", identity,
 					"is_self", isSelf,
 					"lease", e.config.LeaseName)
