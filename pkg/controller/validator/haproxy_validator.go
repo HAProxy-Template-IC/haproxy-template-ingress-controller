@@ -116,7 +116,7 @@ func (v *HAProxyValidatorComponent) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (v *HAProxyValidatorComponent) Start(ctx context.Context) error {
-	v.logger.Info("HAProxy Validator starting")
+	v.logger.Debug("HAProxy validator starting")
 
 	for {
 		select {
@@ -247,7 +247,7 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 	}
 
 	if succeeded {
-		v.logger.Info("became leader, re-publishing last validation result (success) for DeploymentScheduler",
+		v.logger.Debug("became leader, re-publishing last validation result (success) for DeploymentScheduler",
 			"warnings", len(warnings),
 			"duration_ms", durationMs,
 			"correlation_id", correlationID,
@@ -261,7 +261,7 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 			events.WithCorrelation(correlationID, correlationID),
 		))
 	} else {
-		v.logger.Info("became leader, last validation failed, skipping state replay")
+		v.logger.Debug("became leader, last validation failed, skipping state replay")
 		// Note: We only replay ValidationCompletedEvent (success), not ValidationFailedEvent.
 		// DeploymentScheduler only acts on successful validation, so replaying failures
 		// would be unnecessary and could cause confusion.

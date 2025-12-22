@@ -85,7 +85,7 @@ func NewCertLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *
 //
 //	go component.Start(ctx)
 func (c *CertLoaderComponent) Start(ctx context.Context) error {
-	c.logger.Info("CertLoader starting")
+	c.logger.Debug("cert loader starting")
 
 	for {
 		select {

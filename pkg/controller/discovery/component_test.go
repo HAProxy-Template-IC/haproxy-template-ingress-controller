@@ -89,7 +89,10 @@ func TestComponent_ConfigValidatedEvent(t *testing.T) {
 	// Publish CredentialsUpdatedEvent first (need credentials)
 	bus.Publish(events.NewCredentialsUpdatedEvent(credentials, "v1"))
 
-	// Wait briefly for credentials to be processed
+	// Publish ResourceSyncCompleteEvent for haproxy-pods (required for initial discovery)
+	bus.Publish(events.NewResourceSyncCompleteEvent("haproxy-pods", 2))
+
+	// Wait briefly for credentials and sync to be processed
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish ConfigValidatedEvent
@@ -137,7 +140,10 @@ func TestComponent_CredentialsUpdatedEvent(t *testing.T) {
 	}
 	bus.Publish(events.NewConfigValidatedEvent(config, nil, "v1", "v1"))
 
-	// Wait briefly for config to be processed
+	// Publish ResourceSyncCompleteEvent for haproxy-pods (required for initial discovery)
+	bus.Publish(events.NewResourceSyncCompleteEvent("haproxy-pods", 1))
+
+	// Wait briefly for config and sync to be processed
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish CredentialsUpdatedEvent
@@ -189,9 +195,11 @@ func TestComponent_ResourceIndexUpdatedEvent(t *testing.T) {
 	}
 	bus.Publish(events.NewConfigValidatedEvent(config, nil, "v1", "v1"))
 	bus.Publish(events.NewCredentialsUpdatedEvent(credentials, "v1"))
+	bus.Publish(events.NewResourceSyncCompleteEvent("haproxy-pods", 1))
 
-	// Wait briefly for prerequisites to be processed
+	// Wait briefly for prerequisites to be processed and drain initial discovery event
 	time.Sleep(testutil.StartupDelay)
+	testutil.DrainChannel(eventChan)
 
 	// Publish ResourceIndexUpdatedEvent for haproxy-pods (real-time change, not initial sync)
 	changeStats := types.ChangeStats{
@@ -202,7 +210,7 @@ func TestComponent_ResourceIndexUpdatedEvent(t *testing.T) {
 	}
 	bus.Publish(events.NewResourceIndexUpdatedEvent("haproxy-pods", changeStats))
 
-	// Wait for HAProxyPodsDiscoveredEvent - verifies that ResourceIndexUpdatedEvent triggers discovery.
+	// Wait for HAProxyPodsDiscoveredEvent - verifies that ResourceIndexUpdatedEvent triggers re-discovery.
 	// Note: Pods won't be admitted (Count=0) because version check fails without real HTTP endpoints.
 	// Actual pod discovery with endpoint verification is covered by integration tests.
 	discovered := testutil.WaitForEvent[*events.HAProxyPodsDiscoveredEvent](t, eventChan, testutil.VeryLongTimeout)
@@ -607,17 +615,19 @@ func TestComponent_BecameLeaderEvent(t *testing.T) {
 	}
 	bus.Publish(events.NewConfigValidatedEvent(config, nil, "v1", "v1"))
 	bus.Publish(events.NewCredentialsUpdatedEvent(credentials, "v1"))
+	bus.Publish(events.NewResourceSyncCompleteEvent("haproxy-pods", 2))
 
-	// Wait for prerequisites to be processed and drain any events triggered
+	// Wait for prerequisites to be processed and initial discovery to complete
+	// The initial discovery will cache lastDiscoveredEvent for BecameLeaderEvent replay
 	time.Sleep(testutil.DebounceWait)
 	testutil.DrainChannel(eventChan)
 
-	// Now publish BecameLeaderEvent
+	// Now publish BecameLeaderEvent - should re-publish cached lastDiscoveredEvent
 	bus.Publish(events.NewBecameLeaderEvent("test-identity"))
 
-	// Wait for HAProxyPodsDiscoveredEvent triggered by BecameLeaderEvent
+	// Wait for HAProxyPodsDiscoveredEvent triggered by BecameLeaderEvent state replay
 	// Note: Pods won't be admitted (Count=0) because version check fails without real HTTP endpoints
-	// But this tests that BecameLeaderEvent triggers the discovery flow
+	// But this tests that BecameLeaderEvent triggers the state replay flow
 	discovered := testutil.WaitForEvent[*events.HAProxyPodsDiscoveredEvent](t, eventChan, testutil.VeryLongTimeout)
 	assert.NotNil(t, discovered, "discovery event should be published")
 }

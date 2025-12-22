@@ -103,7 +103,7 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Info("Config publisher starting")
+	c.logger.Debug("config publisher starting")
 
 	for {
 		select {
@@ -225,7 +225,7 @@ func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent
 		return
 	}
 
-	c.logger.Info("publishing configuration after successful validation",
+	c.logger.Debug("publishing configuration after successful validation",
 		"config_name", templateConfig.Name,
 		"config_namespace", templateConfig.Namespace,
 	)
@@ -266,7 +266,7 @@ func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent
 		return
 	}
 
-	c.logger.Info("configuration published successfully",
+	c.logger.Debug("configuration published successfully",
 		"runtime_config_name", result.RuntimeConfigName,
 		"runtime_config_namespace", result.RuntimeConfigNamespace,
 		"map_file_count", len(result.MapFileNames),

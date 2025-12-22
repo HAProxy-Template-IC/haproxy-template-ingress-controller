@@ -72,7 +72,7 @@ func NewConfigLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger)
 //
 //	go component.Start(ctx)
 func (c *ConfigLoaderComponent) Start(ctx context.Context) error {
-	c.logger.Info("ConfigLoader starting")
+	c.logger.Debug("config loader starting")
 
 	for {
 		select {

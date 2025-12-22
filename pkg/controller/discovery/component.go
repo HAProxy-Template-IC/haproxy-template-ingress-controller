@@ -77,13 +77,16 @@ type Component struct {
 	eventChan <-chan busevents.Event
 
 	// State protected by mutex
-	mu               sync.RWMutex
-	dataplanePort    int
-	credentials      *coreconfig.Credentials
-	podStore         types.Store
-	lastEndpoints    map[string]string // Map of PodName → PodNamespace for tracking removals
-	hasCredentials   bool
-	hasDataplanePort bool
+	mu                   sync.RWMutex
+	dataplanePort        int
+	credentials          *coreconfig.Credentials
+	podStore             types.Store
+	lastEndpoints        map[string]string                  // Map of PodName → PodNamespace for tracking removals
+	lastDiscoveredEvent  *events.HAProxyPodsDiscoveredEvent // Cache for state replay on BecameLeaderEvent
+	hasCredentials       bool
+	hasDataplanePort     bool
+	initialSyncComplete  bool // Set when ResourceSyncCompleteEvent for haproxy-pods is received
+	initialDiscoveryDone bool // Set after the first discovery is performed
 
 	// Version filtering state
 	localVersion   *dataplane.Version             // Local HAProxy version detected at startup
@@ -118,7 +121,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) 
 		return nil, fmt.Errorf("failed to detect local HAProxy version: %w", err)
 	}
 
-	componentLogger.Info("detected local HAProxy version",
+	componentLogger.Debug("detected local HAProxy version",
 		"version", localVersion.Full,
 		"major", localVersion.Major,
 		"minor", localVersion.Minor)
@@ -144,22 +147,18 @@ func (c *Component) Name() string {
 // Start begins the Discovery component's event processing loop.
 //
 // This method:
-//   - Checks for existing pods and triggers initial discovery if needed
 //   - Maintains state from config and credential updates
-//   - Triggers discovery when HAProxy pods change
+//   - Triggers discovery when HAProxy pods change (via ResourceSyncCompleteEvent)
 //   - Publishes discovered endpoints
 //   - Runs until context is cancelled
 //
 // Returns an error if the event loop fails.
 //
 // Note: Event subscription occurs in the constructor (New()) to ensure proper
-// startup synchronization and avoid missing events during initialization.
+// startup synchronization. ResourceSyncCompleteEvent is buffered until EventBus.Start()
+// is called, so no events are missed.
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Info("Discovery starting")
-
-	// Perform initial discovery check
-	// This ensures we discover pods even if ResourceSyncCompleteEvent was already published
-	c.performInitialDiscovery()
+	c.logger.Debug("discovery starting")
 
 	for {
 		select {
@@ -193,9 +192,52 @@ func (c *Component) handleEvent(event interface{}) {
 	}
 }
 
+// tryInitialDiscovery attempts to perform the initial discovery if all conditions are met.
+// This function is called by multiple handlers (ConfigValidated, CredentialsUpdated,
+// ResourceSyncComplete) to ensure exactly ONE initial discovery is performed at startup.
+//
+// Thread-safe: Uses mutex to ensure atomic check-and-set of initialDiscoveryDone.
+func (c *Component) tryInitialDiscovery(source string) {
+	c.mu.Lock()
+
+	// Already done - skip
+	if c.initialDiscoveryDone {
+		c.mu.Unlock()
+		c.logger.Debug("tryInitialDiscovery: already done, skipping", "source", source)
+		return
+	}
+
+	// Check all requirements
+	if !c.initialSyncComplete {
+		c.mu.Unlock()
+		c.logger.Debug("tryInitialDiscovery: initial sync not complete", "source", source)
+		return
+	}
+
+	if !c.hasCredentials || !c.hasDataplanePort || c.podStore == nil {
+		c.mu.Unlock()
+		c.logger.Debug("tryInitialDiscovery: missing requirements",
+			"source", source,
+			"has_credentials", c.hasCredentials,
+			"has_dataplane_port", c.hasDataplanePort,
+			"has_pod_store", c.podStore != nil)
+		return
+	}
+
+	// All conditions met - mark as done and capture state
+	c.initialDiscoveryDone = true
+	podStore := c.podStore
+	credentials := c.credentials
+	c.mu.Unlock()
+
+	c.logger.Debug("performing initial discovery", "source", source)
+	c.triggerDiscovery(podStore, *credentials, source)
+}
+
 // handleConfigValidated processes ConfigValidatedEvent.
 //
-// Updates dataplanePort from config and triggers discovery if credentials are available.
+// Updates dataplanePort from config and tries to trigger initial discovery.
+// Also triggers re-discovery after initial discovery for subsequent config changes.
 func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	// Type-assert config
 	config, ok := event.Config.(*coreconfig.Config)
@@ -210,6 +252,7 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	oldPort := c.dataplanePort
 	c.dataplanePort = config.Dataplane.Port
 	c.hasDataplanePort = true
+	initialDiscoveryDone := c.initialDiscoveryDone
 
 	// Recreate discovery instance with new port and local version
 	c.discovery = &Discovery{
@@ -217,7 +260,7 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 		localVersion:  c.localVersion,
 	}
 
-	// Check if we have all requirements for discovery
+	// Capture state for re-discovery (after initial)
 	podStore := c.podStore
 	credentials := c.credentials
 	hasCredentials := c.hasCredentials
@@ -227,15 +270,22 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 		"old_port", oldPort,
 		"new_port", c.dataplanePort)
 
-	// Trigger discovery if we have everything
+	// Try initial discovery (might be blocked by missing requirements)
+	if !initialDiscoveryDone {
+		c.tryInitialDiscovery("config_validated")
+		return
+	}
+
+	// After initial discovery, trigger re-discovery for config changes
 	if hasCredentials && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials)
+		c.triggerDiscovery(podStore, *credentials, "config_validated")
 	}
 }
 
 // handleCredentialsUpdated processes CredentialsUpdatedEvent.
 //
-// Updates credentials and triggers discovery if config and pod store are available.
+// Updates credentials and tries to trigger initial discovery.
+// Also triggers re-discovery after initial discovery for subsequent credential changes.
 func (c *Component) handleCredentialsUpdated(event *events.CredentialsUpdatedEvent) {
 	// Type-assert credentials
 	credentials, ok := event.Credentials.(*coreconfig.Credentials)
@@ -249,24 +299,31 @@ func (c *Component) handleCredentialsUpdated(event *events.CredentialsUpdatedEve
 	c.mu.Lock()
 	c.credentials = credentials
 	c.hasCredentials = true
+	initialDiscoveryDone := c.initialDiscoveryDone
 
-	// Check if we have all requirements for discovery
+	// Capture state for re-discovery (after initial)
 	podStore := c.podStore
 	hasDataplanePort := c.hasDataplanePort
 	c.mu.Unlock()
 
-	c.logger.Debug("credentials updated",
-		"secret_version", event.SecretVersion)
+	c.logger.Debug("credentials updated", "secret_version", event.SecretVersion)
 
-	// Trigger discovery if we have everything
+	// Try initial discovery (might be blocked by missing requirements)
+	if !initialDiscoveryDone {
+		c.tryInitialDiscovery("credentials_updated")
+		return
+	}
+
+	// After initial discovery, trigger re-discovery for credential changes
 	if hasDataplanePort && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials)
+		c.triggerDiscovery(podStore, *credentials, "credentials_updated")
 	}
 }
 
 // handleResourceIndexUpdated processes ResourceIndexUpdatedEvent.
 //
-// Triggers discovery when HAProxy pods change (ignores initial sync).
+// Triggers discovery when HAProxy pods change AFTER initial discovery is complete.
+// This handler is for subsequent changes only, not for initial startup.
 func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdatedEvent) {
 	// Only handle haproxy-pods resource type
 	if event.ResourceTypeName != "haproxy-pods" {
@@ -279,22 +336,32 @@ func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdate
 		return
 	}
 
-	c.logger.Debug("haproxy pods changed",
-		"created", event.ChangeStats.Created,
-		"modified", event.ChangeStats.Modified,
-		"deleted", event.ChangeStats.Deleted)
-
 	// Get current state
 	c.mu.RLock()
 	podStore := c.podStore
 	credentials := c.credentials
 	hasCredentials := c.hasCredentials
 	hasDataplanePort := c.hasDataplanePort
+	initialDiscoveryDone := c.initialDiscoveryDone
 	c.mu.RUnlock()
 
-	// Trigger discovery if we have everything
+	// If initial discovery hasn't been done yet, this event might be part of the startup
+	// sequence arriving concurrently with other events. Try initial discovery which will
+	// atomically check and set the flag to prevent duplicates.
+	if !initialDiscoveryDone {
+		// Try initial discovery - it will check atomically and only trigger once
+		c.tryInitialDiscovery("resource_index_updated")
+		return
+	}
+
+	c.logger.Debug("haproxy pods changed",
+		"created", event.ChangeStats.Created,
+		"modified", event.ChangeStats.Modified,
+		"deleted", event.ChangeStats.Deleted)
+
+	// Trigger discovery if we have everything (for subsequent changes after initial)
 	if hasCredentials && hasDataplanePort && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials)
+		c.triggerDiscovery(podStore, *credentials, "resource_index_updated")
 	} else {
 		c.logger.Debug("skipping discovery, missing requirements",
 			"has_credentials", hasCredentials,
@@ -305,7 +372,9 @@ func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdate
 
 // handleResourceSyncComplete processes ResourceSyncCompleteEvent.
 //
-// Triggers discovery after initial sync completes for HAProxy pods.
+// Sets the initialSyncComplete flag and tries to trigger initial discovery.
+// Other handlers (ConfigValidated, CredentialsUpdated) also try initial discovery
+// when they complete, ensuring discovery happens as soon as all requirements are met.
 func (c *Component) handleResourceSyncComplete(event *events.ResourceSyncCompleteEvent) {
 	// Only handle haproxy-pods resource type
 	if event.ResourceTypeName != "haproxy-pods" {
@@ -314,50 +383,44 @@ func (c *Component) handleResourceSyncComplete(event *events.ResourceSyncComplet
 
 	c.logger.Debug("haproxy pods initial sync complete")
 
-	// Get current state
-	c.mu.RLock()
-	podStore := c.podStore
-	credentials := c.credentials
-	hasCredentials := c.hasCredentials
-	hasDataplanePort := c.hasDataplanePort
-	c.mu.RUnlock()
-
-	// Trigger discovery if we have everything
-	if hasCredentials && hasDataplanePort && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials)
-	} else {
-		c.logger.Debug("skipping discovery after sync, missing requirements",
-			"has_credentials", hasCredentials,
-			"has_dataplane_port", hasDataplanePort,
-			"has_pod_store", podStore != nil)
+	// Set initialSyncComplete atomically and check for duplicate
+	c.mu.Lock()
+	if c.initialSyncComplete {
+		// Already processed - skip duplicate
+		c.mu.Unlock()
+		c.logger.Debug("skipping duplicate ResourceSyncCompleteEvent for haproxy-pods")
+		return
 	}
+	c.initialSyncComplete = true
+	c.mu.Unlock()
+
+	// Try to perform initial discovery (might be blocked by missing credentials/config)
+	c.tryInitialDiscovery("resource_sync_complete")
 }
 
 // handleBecameLeader processes BecameLeaderEvent.
 //
-// Re-publishes HAProxy pod discovery when this replica becomes leader.
+// Re-publishes the cached HAProxyPodsDiscoveredEvent when this replica becomes leader.
 // This ensures the DeploymentScheduler (which only starts on the leader) receives
 // current endpoint state even if pods were discovered before leadership was acquired.
+//
+// Unlike other event handlers, this does NOT re-run discovery - it re-publishes
+// the cached event to avoid duplicate work and duplicate log messages.
 func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
-	c.logger.Info("Became leader, re-discovering HAProxy pods for deployment scheduler")
-
-	// Get current state
 	c.mu.RLock()
-	podStore := c.podStore
-	credentials := c.credentials
-	hasCredentials := c.hasCredentials
-	hasDataplanePort := c.hasDataplanePort
+	hasEvent := c.lastDiscoveredEvent != nil
+	event := c.lastDiscoveredEvent
 	c.mu.RUnlock()
 
-	// Trigger discovery if we have everything
-	if hasCredentials && hasDataplanePort && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials)
-	} else {
-		c.logger.Warn("became leader but cannot discover pods yet, missing requirements",
-			"has_credentials", hasCredentials,
-			"has_dataplane_port", hasDataplanePort,
-			"has_pod_store", podStore != nil)
+	if !hasEvent {
+		c.logger.Debug("became leader but no discovery result available yet, skipping state replay")
+		return
 	}
+
+	c.logger.Info("became leader, re-publishing last discovered endpoints for deployment scheduler",
+		"endpoint_count", event.Count)
+
+	c.eventBus.Publish(event)
 }
 
 // SetPodStore sets the pod store reference.
@@ -375,46 +438,6 @@ func (c *Component) SetPodStore(store types.Store) {
 	c.logger.Debug("pod store set")
 }
 
-// performInitialDiscovery checks if pods already exist and triggers discovery.
-//
-// This is called after subscribing to events to handle the case where
-// ResourceSyncCompleteEvent was already published before we subscribed.
-func (c *Component) performInitialDiscovery() {
-	c.mu.RLock()
-	podStore := c.podStore
-	credentials := c.credentials
-	hasCredentials := c.hasCredentials
-	hasDataplanePort := c.hasDataplanePort
-	c.mu.RUnlock()
-
-	// Check if we have all requirements
-	if !hasCredentials || !hasDataplanePort || podStore == nil {
-		c.logger.Debug("skipping initial discovery, missing requirements",
-			"has_credentials", hasCredentials,
-			"has_dataplane_port", hasDataplanePort,
-			"has_pod_store", podStore != nil)
-		return
-	}
-
-	// Check if pods exist in store
-	pods, err := podStore.List()
-	if err != nil {
-		c.logger.Error("failed to list pods during initial discovery", "error", err)
-		return
-	}
-
-	if len(pods) == 0 {
-		c.logger.Debug("no pods found during initial discovery check")
-		return
-	}
-
-	c.logger.Info("Found existing pods during initial discovery check",
-		"count", len(pods))
-
-	// Trigger discovery
-	c.triggerDiscovery(podStore, *credentials)
-}
-
 // triggerDiscovery performs endpoint discovery with version filtering and publishes the results.
 //
 // This method:
@@ -425,8 +448,8 @@ func (c *Component) performInitialDiscovery() {
 //  5. Permanently rejects pods with incompatible versions
 //  6. Publishes HAProxyPodTerminatedEvent for removed pods
 //  7. Publishes HAProxyPodsDiscoveredEvent with version-validated endpoints
-func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfig.Credentials) {
-	c.logger.Debug("triggering HAProxy pod discovery")
+func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfig.Credentials, source string) {
+	c.logger.Debug("triggering HAProxy pod discovery", "source", source)
 
 	// Call pure Discovery component with logger for debugging
 	candidates, err := c.discovery.DiscoverEndpointsWithLogger(podStore, credentials, c.logger)
@@ -449,10 +472,24 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	// Filter candidates by version compatibility
 	admittedEndpoints := c.filterByVersion(candidates, credentials)
 
-	// Log summary
-	c.logger.Info("Discovered HAProxy pods",
-		"candidates", len(candidates),
-		"admitted", len(admittedEndpoints))
+	// Log summary - only at INFO level when count changes or pods are admitted
+	// This prevents log spam when repeatedly discovering the same empty/non-empty set
+	c.mu.RLock()
+	previousCount := len(c.lastEndpoints)
+	c.mu.RUnlock()
+
+	countChanged := len(admittedEndpoints) != previousCount
+	if len(admittedEndpoints) > 0 || countChanged {
+		c.logger.Info("Discovered HAProxy pods",
+			"source", source,
+			"candidates", len(candidates),
+			"admitted", len(admittedEndpoints))
+	} else {
+		c.logger.Debug("Discovered HAProxy pods",
+			"source", source,
+			"candidates", len(candidates),
+			"admitted", len(admittedEndpoints))
+	}
 
 	// Build map of admitted endpoints for comparison
 	currentEndpoints := make(map[string]string)
@@ -486,11 +523,15 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 		endpointsInterface[i] = *ep
 	}
 
+	// Create event and cache for state replay (used by handleBecameLeader)
+	event := events.NewHAProxyPodsDiscoveredEvent(endpointsInterface, len(admittedEndpoints))
+
+	c.mu.Lock()
+	c.lastDiscoveredEvent = event
+	c.mu.Unlock()
+
 	// Publish HAProxyPodsDiscoveredEvent
-	c.eventBus.Publish(events.NewHAProxyPodsDiscoveredEvent(
-		endpointsInterface,
-		len(admittedEndpoints),
-	))
+	c.eventBus.Publish(event)
 }
 
 // filterByVersion filters candidate endpoints by version compatibility.
@@ -745,7 +786,7 @@ func (c *Component) handleRetryTimer() {
 
 	// Trigger discovery if we have everything
 	if hasCredentials && hasDataplanePort && podStore != nil {
-		c.triggerDiscovery(podStore, *credentials)
+		c.triggerDiscovery(podStore, *credentials, "retry_timer")
 	} else {
 		c.logger.Warn("retry timer fired but cannot discover pods, missing requirements",
 			"has_credentials", hasCredentials,

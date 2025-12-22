@@ -225,7 +225,7 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Info("Renderer starting")
+	c.logger.Debug("renderer starting")
 
 	// Store context for HTTP requests during rendering
 	c.ctx = ctx
@@ -465,7 +465,7 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 		len(productionResult.auxiliaryFiles.GeneralFiles) +
 		len(productionResult.auxiliaryFiles.SSLCertificates)
 
-	c.logger.Info("Template rendering completed (parallel)",
+	c.logger.Debug("Template rendering completed (parallel)",
 		"total_ms", durationMs,
 		"setup_ms", setupMs,
 		"prod_render_ms", productionResult.durationMs,
@@ -543,7 +543,7 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver, isValida
 
 	totalMs := time.Since(renderStart).Milliseconds()
 
-	c.logger.Info("Render breakdown",
+	c.logger.Debug("Render breakdown",
 		"path", label,
 		"context_ms", contextMs,
 		"main_template_ms", mainMs,
@@ -584,7 +584,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 		return
 	}
 
-	c.logger.Info("Became leader, re-publishing last rendered config for DeploymentScheduler",
+	c.logger.Debug("Became leader, re-publishing last rendered config for DeploymentScheduler",
 		"production_config_bytes", len(haproxyConfig),
 		"validation_config_bytes", len(validationConfig),
 		"auxiliary_files", auxFileCount,

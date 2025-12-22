@@ -421,7 +421,12 @@ func TestStateCache_HandleDeploymentCompleted_AllSucceeded(t *testing.T) {
 	bus.Start()
 
 	// Publish deployment completed event - all succeeded
-	bus.Publish(events.NewDeploymentCompletedEvent(2, 2, 0, 500))
+	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		Total:      2,
+		Succeeded:  2,
+		Failed:     0,
+		DurationMs: 500,
+	}))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -448,7 +453,12 @@ func TestStateCache_HandleDeploymentCompleted_Partial(t *testing.T) {
 	bus.Start()
 
 	// Publish deployment completed event - partial success
-	bus.Publish(events.NewDeploymentCompletedEvent(3, 2, 1, 500))
+	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		Total:      3,
+		Succeeded:  2,
+		Failed:     1,
+		DurationMs: 500,
+	}))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -472,7 +482,12 @@ func TestStateCache_HandleDeploymentCompleted_AllFailed(t *testing.T) {
 	bus.Start()
 
 	// Publish deployment completed event - all failed
-	bus.Publish(events.NewDeploymentCompletedEvent(2, 0, 2, 500))
+	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		Total:      2,
+		Succeeded:  0,
+		Failed:     2,
+		DurationMs: 500,
+	}))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -703,7 +718,12 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 	// Set up some pipeline state
 	bus.Publish(events.NewTemplateRenderedEvent("config", "config", nil, nil, nil, 0, 100, ""))
 	bus.Publish(events.NewValidationCompletedEvent(nil, 50, ""))
-	bus.Publish(events.NewDeploymentCompletedEvent(2, 2, 0, 500))
+	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		Total:      2,
+		Succeeded:  2,
+		Failed:     0,
+		DurationMs: 500,
+	}))
 	bus.Publish(events.NewInstanceDeploymentFailedEvent(&testEndpoint{url: "http://fail:5555"}, "error", false))
 
 	time.Sleep(50 * time.Millisecond)

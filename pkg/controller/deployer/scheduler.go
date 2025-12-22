@@ -129,7 +129,7 @@ func (s *DeploymentScheduler) Name() string {
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.ctx = ctx // Save context for scheduling operations
 
-	s.logger.Info("DeploymentScheduler starting",
+	s.logger.Debug("deployment scheduler starting",
 		"min_deployment_interval_ms", s.minDeploymentInterval.Milliseconds())
 
 	for {
@@ -217,7 +217,7 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 // This is called during full reconciliation cycles (config or resource changes).
 func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, event *events.ValidationCompletedEvent) {
 	correlationID := event.CorrelationID()
-	s.logger.Info("Validation completed, preparing deployment",
+	s.logger.Debug("Validation completed, preparing deployment",
 		"warnings", len(event.Warnings),
 		"duration_ms", event.DurationMs,
 		"correlation_id", correlationID)
@@ -268,7 +268,7 @@ func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *e
 	hasValidConfig := s.hasValidConfig
 	s.mu.Unlock()
 
-	s.logger.Info("HAProxy pods discovered",
+	s.logger.Debug("HAProxy pods discovered",
 		"count", endpointCount)
 
 	if !hasValidConfig {
@@ -350,7 +350,7 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 		s.pendingDeployment = nil
 		s.schedulerMutex.Unlock()
 
-		s.logger.Info("Deployment completed, processing queued deployment",
+		s.logger.Debug("Deployment completed, processing queued deployment",
 			"pending_reason", pending.reason,
 			"pending_endpoint_count", len(pending.endpoints),
 			"correlation_id", pending.correlationID)
@@ -388,7 +388,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 			correlationID: correlationID,
 		}
 		s.schedulerMutex.Unlock()
-		s.logger.Info("Deployment in progress, queued for later",
+		s.logger.Debug("Deployment in progress, queued for later",
 			"reason", reason,
 			"endpoint_count", len(endpoints),
 			"correlation_id", correlationID)
@@ -427,7 +427,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		timeSinceLastDeployment := time.Since(lastDeploymentEnd)
 		if timeSinceLastDeployment < s.minDeploymentInterval {
 			sleepDuration := s.minDeploymentInterval - timeSinceLastDeployment
-			s.logger.Info("Enforcing minimum deployment interval",
+			s.logger.Debug("Enforcing minimum deployment interval",
 				"sleep_duration_ms", sleepDuration.Milliseconds(),
 				"min_interval_ms", s.minDeploymentInterval.Milliseconds(),
 				"time_since_last_ms", timeSinceLastDeployment.Milliseconds())
@@ -469,7 +469,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	}
 
 	// Publish DeploymentScheduledEvent with correlation
-	s.logger.Info("Scheduling deployment",
+	s.logger.Debug("Scheduling deployment",
 		"reason", reason,
 		"endpoint_count", len(endpoints),
 		"config_bytes", len(config),
@@ -511,7 +511,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	default:
 	}
 
-	s.logger.Info("Processing queued deployment",
+	s.logger.Debug("Processing queued deployment",
 		"reason", pending.reason,
 		"endpoint_count", len(pending.endpoints),
 		"correlation_id", pending.correlationID)
