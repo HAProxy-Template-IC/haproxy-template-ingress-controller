@@ -91,40 +91,60 @@ controller:
     pathRegexLast:
       enabled: false
   # Default SSL Certificate Configuration
-  # REQUIRED: A default SSL certificate is required for HTTPS traffic
-  # The certificate must be provided as a Kubernetes TLS Secret containing:
-  #   - tls.crt: PEM-encoded certificate
-  #   - tls.key: PEM-encoded private key
+  # A default SSL certificate is required for HTTPS traffic.
   #
-  # For development/testing (quick start):
-  #   Run: ./scripts/generate-dev-ssl-cert.sh
-  #   This creates a self-signed certificate valid for *.example.com
+  # DEFAULT BEHAVIOR (works out of the box with cert-manager):
+  # The chart creates a self-signed certificate for localdev.me (dev/test only).
+  # For production, override certManager.dnsNames and certManager.issuerRef.
   #
-  # For production (recommended):
-  #   Use cert-manager to automatically provision and renew certificates
-  #   See: https://cert-manager.io/docs/
-  #
-  # The Secret must exist before HAProxy can serve HTTPS traffic.
-  # The template will reference this Secret by name and namespace.
+  # Certificate management options:
+  #   1. cert-manager (default): Uses self-signed issuer for localdev.me
+  #   2. Manual: Set certManager.enabled=false, create TLS Secret externally
+  #   3. Inline (testing only): Set create=true with cert/key values
   defaultSSLCertificate:
     # Enable default SSL certificate requirement
     # Set to false to disable HTTPS support (HTTP only mode)
     enabled: true
     # Name of the Kubernetes TLS Secret containing the default certificate
-    # The Secret must exist in the specified namespace (or Release.Namespace)
+    # When using cert-manager, this is the Secret name that cert-manager will create
     secretName: "default-ssl-cert"
     # Namespace of the TLS Secret
     # Defaults to Release.Namespace if empty
-    # Leave empty to use the same namespace as the controller
     namespace: ""
-    # ADVANCED: Create TLS Secret from inline certificate and key
-    # WARNING: NOT recommended for production - use for testing/development only
     #
-    # When enabled, creates a Secret with the provided certificate and key
-    # This embeds secrets in Helm values which is a security risk
-    # Production deployments should use cert-manager or external secret management
+    # cert-manager configuration (enabled by default)
+    # Requires cert-manager to be installed in the cluster
+    # Creates a Certificate resource that provisions the TLS Secret automatically
+    certManager:
+      enabled: true
+      # Create a self-signed Issuer for the certificate
+      # When true, the chart creates an Issuer named <release>-ssl-selfsigned
+      # When false, you must provide an existing Issuer via issuerRef
+      createIssuer: true
+      # DNS names for the certificate
+      # Default: localdev.me (resolves to 127.0.0.1, useful for local development)
+      # PRODUCTION: Override with your actual domain names
+      dnsNames:
+        - "localdev.me"
+        - "*.localdev.me"
+      # Issuer reference for cert-manager Certificate resource
+      # When createIssuer=true, this is auto-configured to use the self-signed Issuer
+      # When createIssuer=false, you must specify an existing Issuer or ClusterIssuer
+      issuerRef:
+        # Name of the Issuer (auto-set when createIssuer=true)
+        name: ""
+        kind: Issuer
+        # group: cert-manager.io  # Optional, defaults to cert-manager.io
+      # Certificate validity duration (default: 1 year for self-signed)
+      duration: 8760h # 1 year
+      # Renew certificate when this much time is left (default: 30 days)
+      renewBefore: 720h # 30 days
     #
-    # Leave create=false (default) to reference an existing Secret
+    # Manual certificate management
+    # Set certManager.enabled=false and create the TLS Secret externally
+    #
+    # Inline certificate (testing only)
+    # WARNING: NOT recommended - embeds secrets in Helm values
     create: false
     # cert: |
     #   -----BEGIN CERTIFICATE-----
@@ -290,19 +310,28 @@ webhook:
   # Certificate management
   # Choose ONE of the following options:
   #
-  # Option 1: Use cert-manager (recommended for production)
+  # Option 1: Use cert-manager (default, recommended)
   # Requires cert-manager to be installed in the cluster
+  # Creates a self-signed certificate automatically for dev/test
   certManager:
-    enabled: false
+    enabled: true
+    # Create a self-signed Issuer for webhook certificates
+    # When enabled, the chart creates an Issuer that can sign webhook certificates
+    # This is the simplest setup - just set enabled=true and createIssuer=true
+    createIssuer: true
     # Issuer reference for cert-manager Certificate resource
+    # When createIssuer=true, this references the auto-created Issuer
+    # When createIssuer=false, this must reference an existing Issuer/ClusterIssuer
     issuerRef:
-      name: selfsigned-issuer
+      # Name of the Issuer (auto-set when createIssuer=true)
+      name: ""
       kind: Issuer
       # group: cert-manager.io  # Optional, defaults to cert-manager.io
     # Certificate validity duration (default: 1 year)
     duration: 8760h # 1 year
     # Renew certificate when this much time is left (default: 30 days)
     renewBefore: 720h # 30 days
+  #
   # Option 2: Manual certificate management
   # Provide base64-encoded CA bundle for ValidatingWebhookConfiguration
   # This is required when certManager.enabled is false

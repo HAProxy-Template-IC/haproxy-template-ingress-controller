@@ -10,7 +10,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Configuration
-CLUSTER_NAME="haproxy-template-ic-dev"
+# Naming conventions - defaults match chart name for clean resource names
+# Override via environment variables if needed
+CLUSTER_NAME="${CLUSTER_NAME:-haproxy-template-ic-dev}"
+CTRL_NAMESPACE="${CTRL_NAMESPACE:-haptic}"
+RELEASE_NAME="${RELEASE_NAME:-haptic}"
+
+# Derived resource names
+HAPROXY_SERVICE="${RELEASE_NAME}-haproxy"
+CONTROLLER_DEPLOY="${RELEASE_NAME}-controller"
+CONFIG_NAME="${RELEASE_NAME}-config"
+
 ECHO_NAMESPACE="echo"
 NODEPORT="30080"
 HTTPS_NODEPORT="30443"
@@ -470,11 +480,11 @@ assert_rate_limited() {
 
     # Get HAProxy service ClusterIP to test from within cluster
     local haproxy_ip
-    haproxy_ip=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get svc haproxy-template-ic-haproxy -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+    haproxy_ip=$(kubectl --context "kind-${CLUSTER_NAME}" -n "$CTRL_NAMESPACE" get svc ${HAPROXY_SERVICE} -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
 
     if [[ -z "$haproxy_ip" ]]; then
         warn "Could not get HAProxy ClusterIP, using service DNS name"
-        haproxy_ip="haproxy-template-ic-haproxy.haproxy-template-ic.svc"
+        haproxy_ip="${HAPROXY_SERVICE}.${CTRL_NAMESPACE}.svc"
     fi
 
     # Send significantly more requests to ensure rate limiting triggers reliably
@@ -631,16 +641,16 @@ wait_for_services_ready() {
 
     # Step 1: Wait for HAProxy pods to be ready
     log INFO "Checking HAProxy pod readiness..."
-    if ! kubectl -n haproxy-template-ic wait --for=condition=ready pod \
+    if ! kubectl -n "$CTRL_NAMESPACE" wait --for=condition=ready pod \
         -l app.kubernetes.io/component=loadbalancer --timeout=120s >/dev/null 2>&1; then
         echo
         err "HAProxy pods are not ready after 120s"
         echo
         echo "HAProxy pod status:"
-        kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer
+        kubectl -n "$CTRL_NAMESPACE" get pods -l app.kubernetes.io/component=loadbalancer
         echo
         echo "Recent pod events:"
-        kubectl -n haproxy-template-ic get events --sort-by='.lastTimestamp' | tail -10
+        kubectl -n "$CTRL_NAMESPACE" get events --sort-by='.lastTimestamp' | tail -10
         echo
         exit 1
     fi
@@ -846,7 +856,7 @@ wait_for_services_ready() {
     while [[ $attempt -le $config_attempts ]]; do
         # Check if HAProxyCfg was DEPLOYED (not just checked) AFTER the Ingress was created
         # deployedAt updates only on actual config changes, lastCheckedAt updates on drift checks too
-        local deployed_at=$(kubectl -n haproxy-template-ic get haproxycfg -o json 2>/dev/null | \
+        local deployed_at=$(kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
             jq -r '.items[0].status.deployedToPods[0].deployedAt // empty')
 
         if [[ -n "$deployed_at" ]]; then
@@ -859,7 +869,7 @@ wait_for_services_ready() {
             if [[ $deployed_epoch -gt $ingress_created_epoch ]]; then
                 # Also verify the configuration actually contains backends
                 # Use // "" to convert null to empty string before grep
-                local backend_count=$(kubectl -n haproxy-template-ic get haproxycfg -o json 2>/dev/null | \
+                local backend_count=$(kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
                     jq -r '.items[0].spec.content // ""' | grep -c "^backend.*echo" 2>/dev/null)
 
                 debug "Configuration has $backend_count echo backends"
@@ -867,7 +877,7 @@ wait_for_services_ready() {
                 if [[ $backend_count -gt 0 ]]; then
                     # Also verify haproxy-demo-backend has real servers (not placeholders)
                     # Placeholders use 127.0.0.1:1, real servers use pod IPs (10.x.x.x)
-                    local haproxy_cfg=$(kubectl -n haproxy-template-ic get haproxycfg -o json 2>/dev/null | \
+                    local haproxy_cfg=$(kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
                         jq -r '.items[0].spec.content // ""')
                     local demo_backend_servers
                     demo_backend_servers=$(echo "$haproxy_cfg" | \
@@ -905,15 +915,15 @@ wait_for_services_ready() {
         echo "Configuration may be empty or missing Service/Endpoint data."
         echo
         echo "HAProxyCfg checksum:"
-        kubectl -n haproxy-template-ic get haproxycfg -o jsonpath='{.items[0].spec.checksum}' 2>/dev/null || echo "  (not found)"
+        kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o jsonpath='{.items[0].spec.checksum}' 2>/dev/null || echo "  (not found)"
         echo
         echo
         echo "Backend count in HAProxyCfg:"
-        kubectl -n haproxy-template-ic get haproxycfg -o json 2>/dev/null | \
+        kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
             jq -r '.items[0].spec.content' | grep -c "^backend" 2>/dev/null || echo "  0"
         echo
         echo "Controller logs (last 30 lines):"
-        kubectl -n haproxy-template-ic logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=30 2>/dev/null || echo "  (no logs available)"
+        kubectl -n "$CTRL_NAMESPACE" logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=30 2>/dev/null || echo "  (no logs available)"
         echo
         exit 1
     fi
@@ -931,8 +941,8 @@ wait_for_services_ready() {
 
         # Get HAProxyCfg status with per-pod deployment info
         local pods_json
-        pods_json=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get haproxycfg \
-            haproxy-template-ic-config -o json 2>/dev/null) || {
+        pods_json=$(kubectl --context "kind-${CLUSTER_NAME}" -n "$CTRL_NAMESPACE" get haproxycfg \
+            ${CONFIG_NAME} -o json 2>/dev/null) || {
             debug "Could not get HAProxyCfg status, skipping reload check"
             break
         }
@@ -961,7 +971,7 @@ wait_for_services_ready() {
 
             # Query DataPlane API for reload status via kubectl exec
             local reload_status
-            reload_status=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic exec "$pod_name" \
+            reload_status=$(kubectl --context "kind-${CLUSTER_NAME}" -n "$CTRL_NAMESPACE" exec "$pod_name" \
                 -c dataplane -- curl -s -u admin:adminpass \
                 "http://localhost:5555/v3/services/haproxy/reloads/${reload_id}" 2>/dev/null | \
                 jq -r '.status' 2>/dev/null) || reload_status=""
@@ -1030,7 +1040,7 @@ wait_for_services_ready() {
         echo
         echo "Diagnostics:"
         echo "  HAProxy pods:"
-        kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer
+        kubectl -n "$CTRL_NAMESPACE" get pods -l app.kubernetes.io/component=loadbalancer
         echo
         echo "  Echo pods:"
         kubectl -n echo get pods
@@ -1039,10 +1049,10 @@ wait_for_services_ready() {
         kubectl -n echo get endpoints
         echo
         echo "  HAProxy logs (last 20 lines):"
-        kubectl -n haproxy-template-ic logs -l app.kubernetes.io/component=loadbalancer --tail=20 -c haproxy 2>/dev/null || echo "  (no logs available)"
+        kubectl -n "$CTRL_NAMESPACE" logs -l app.kubernetes.io/component=loadbalancer --tail=20 -c haproxy 2>/dev/null || echo "  (no logs available)"
         echo
         echo "  Controller logs (last 20 lines):"
-        kubectl -n haproxy-template-ic logs deployment/haproxy-template-ic-controller --tail=20 2>/dev/null || echo "  (no logs available)"
+        kubectl -n "$CTRL_NAMESPACE" logs deployment/${CONTROLLER_DEPLOY} --tail=20 2>/dev/null || echo "  (no logs available)"
         echo
         exit 1
     fi
@@ -1069,7 +1079,7 @@ wait_for_httproute_backends() {
 
     while [[ $attempt -le $config_attempts ]]; do
         # Check if HAProxyCfg contains Gateway/HTTPRoute backends (prefixed with gtw_)
-        local gtw_backend_count=$(kubectl -n haproxy-template-ic get haproxycfg -o json 2>/dev/null | \
+        local gtw_backend_count=$(kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
             jq -r '.items[0].spec.content // ""' | grep -c "^backend gtw_" 2>/dev/null || echo 0)
 
         debug "HTTPRoute backend count: $gtw_backend_count (attempt $attempt/$config_attempts)"
@@ -1104,8 +1114,8 @@ wait_for_httproute_backends() {
 
         # Get HAProxyCfg status with per-pod deployment info
         local pods_json
-        pods_json=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get haproxycfg \
-            haproxy-template-ic-config -o json 2>/dev/null) || {
+        pods_json=$(kubectl --context "kind-${CLUSTER_NAME}" -n "$CTRL_NAMESPACE" get haproxycfg \
+            ${CONFIG_NAME} -o json 2>/dev/null) || {
             debug "Could not get HAProxyCfg status, skipping reload check"
             break
         }
@@ -1134,7 +1144,7 @@ wait_for_httproute_backends() {
 
             # Query DataPlane API for reload status via kubectl exec
             local reload_status
-            reload_status=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic exec "$pod_name" \
+            reload_status=$(kubectl --context "kind-${CLUSTER_NAME}" -n "$CTRL_NAMESPACE" exec "$pod_name" \
                 -c dataplane -- curl -s -u admin:adminpass \
                 "http://localhost:5555/v3/services/haproxy/reloads/${reload_id}" 2>/dev/null | \
                 jq -r '.status' 2>/dev/null) || reload_status=""
@@ -1693,11 +1703,11 @@ test_ingress_scale_slots() {
     # Verify server slots in HAProxy config
     # This is a capacity planning feature - verify it's configured correctly
     local haproxy_pod
-    haproxy_pod=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer -o name 2>/dev/null | awk 'NR==1')
+    haproxy_pod=$(kubectl --context "kind-${CLUSTER_NAME}" -n "$CTRL_NAMESPACE" get pods -l app.kubernetes.io/component=loadbalancer -o name 2>/dev/null | awk 'NR==1')
 
     if [[ -n "$haproxy_pod" ]]; then
         local backend_config
-        backend_config=$(kubectl --context "kind-${CLUSTER_NAME}" -n haproxy-template-ic exec "$haproxy_pod" -c haproxy -- cat /etc/haproxy/haproxy.cfg 2>/dev/null | grep -A 20 "backend.*echo-scale-slots")
+        backend_config=$(kubectl --context "kind-${CLUSTER_NAME}" -n "$CTRL_NAMESPACE" exec "$haproxy_pod" -c haproxy -- cat /etc/haproxy/haproxy.cfg 2>/dev/null | grep -A 20 "backend.*echo-scale-slots")
 
         if [[ "$backend_config" == *"server-template"* ]] || [[ "$backend_config" == *"scale-server-slots"* ]]; then
             ok "Server slot pre-allocation configured in HAProxy"

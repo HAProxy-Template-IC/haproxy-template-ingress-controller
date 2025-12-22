@@ -8,13 +8,16 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ASSETS_DIR="${SCRIPT_DIR}/dev-env-assets"
 
 # Default configuration
-CLUSTER_NAME="haproxy-template-ic-dev"
-CTRL_NAMESPACE="haproxy-template-ic"
+# Naming conventions - defaults match chart name for clean resource names
+# Override via environment variables if needed
+CLUSTER_NAME="${CLUSTER_NAME:-haproxy-template-ic-dev}"
+CTRL_NAMESPACE="${CTRL_NAMESPACE:-haptic}"
+HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-haptic}"
+
 ECHO_NAMESPACE="echo"
 ECHO_APP_NAME="echo-server"
 ECHO_IMAGE="ealen/echo-server:latest"
 LOCAL_IMAGE="haproxy-template-ic:dev"
-HELM_RELEASE_NAME="haproxy-template-ic"
 HAPROXY_VERSION="${HAPROXY_VERSION:-3.2}"
 HAPROXY_ENTERPRISE="${HAPROXY_ENTERPRISE:-false}"
 TIMEOUT="180"
@@ -148,7 +151,7 @@ COMMANDS:
 
 OPTIONS:
     --cluster-name NAME     Custom cluster name (default: haproxy-template-ic-dev)
-    --namespace NAME        Custom controller namespace (default: haproxy-template-ic)
+    --namespace NAME        Custom controller namespace (default: haptic)
     --image-tag TAG         Custom image tag (default: dev)
     --timeout SECONDS       Deployment timeout (default: 180)
     --skip-build            Use existing image if available
@@ -976,14 +979,14 @@ deploy_ingress_demo() {
 dev_logs() {
     verify_cluster_context
     # Use label selector to find controller deployment
-    kubectl -n "$CTRL_NAMESPACE" logs -f -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller"
+    kubectl -n "$CTRL_NAMESPACE" logs -f -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller"
 }
 
 dev_exec() {
     verify_cluster_context
     # Get the deployment name using label selector
     local deploy_name
-    deploy_name=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}')
+    deploy_name=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}')
     kubectl -n "$CTRL_NAMESPACE" exec -it deploy/"$deploy_name" -- sh
 }
 
@@ -1215,7 +1218,7 @@ port_forward_haproxy() {
 
     # Get controller deployment name and verify it exists
     local ctrl_deploy
-    ctrl_deploy=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    ctrl_deploy=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     if [[ -z "$ctrl_deploy" ]]; then
         warn "Controller deployment not found"
@@ -1402,7 +1405,7 @@ dev_metrics() {
 
 	# Get controller deployment
 	local ctrl_deploy
-	ctrl_deploy=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+	ctrl_deploy=$(kubectl -n "$CTRL_NAMESPACE" get deployment -l "app.kubernetes.io/instance=${HELM_RELEASE_NAME},app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
 	if [[ -z "$ctrl_deploy" ]]; then
 		err "Controller deployment not found in namespace '$CTRL_NAMESPACE'"

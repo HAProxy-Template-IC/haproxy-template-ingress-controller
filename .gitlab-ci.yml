@@ -525,7 +525,7 @@ test-acceptance:
           echo "=== Namespace: $ns ===" >> debug-logs/test-namespaces.log
 
           # Controller pod logs with timestamps for correlation
-          kubectl -n "$ns" logs -l app=haproxy-template-ic --all-containers=true \
+          kubectl -n "$ns" logs -l app.kubernetes.io/name=haptic --all-containers=true \
             --timestamps=true --since=10m \
             >> debug-logs/controller-$ns.log 2>&1 || true
 
@@ -574,6 +574,10 @@ test-acceptance:
     - job: build-ci
       optional: true
     - job: build-test-image
+  variables:
+    # Controller namespace and release name - must match scripts/start-dev-env.sh defaults
+    CTRL_NAMESPACE: haptic
+    RELEASE_NAME: haptic
   rules:
     - changes:
         - "**/*.go"
@@ -620,35 +624,35 @@ test-acceptance:
         mkdir -p debug-logs
 
         # Controller logs - ALL pods (not just one from deployment)
-        for pod in $(kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/name=haproxy-template-ic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+        for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/name=haptic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== Controller: $pod ===" >> debug-logs/controller.log
-          kubectl -n haproxy-template-ic logs "$pod" --all-containers=true >> debug-logs/controller.log 2>&1 || true
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> debug-logs/controller.log 2>&1 || true
         done
         [ -f debug-logs/controller.log ] || echo "Failed to get controller logs" > debug-logs/controller.log
 
         # HAProxy and Dataplane logs - ALL pods
-        for pod in $(kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+        for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> debug-logs/haproxy.log
-          kubectl -n haproxy-template-ic logs "$pod" -c haproxy >> debug-logs/haproxy.log 2>&1 || true
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> debug-logs/haproxy.log 2>&1 || true
           echo "=== Dataplane: $pod ===" >> debug-logs/dataplane.log
-          kubectl -n haproxy-template-ic logs "$pod" -c dataplane >> debug-logs/dataplane.log 2>&1 || true
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> debug-logs/dataplane.log 2>&1 || true
         done
         [ -f debug-logs/haproxy.log ] || echo "Failed to get HAProxy logs" > debug-logs/haproxy.log
         [ -f debug-logs/dataplane.log ] || echo "Failed to get dataplane logs" > debug-logs/dataplane.log
 
         # HAProxy configuration (useful for debugging routing issues)
-        kubectl -n haproxy-template-ic exec deployment/haproxy-template-ic-haproxy -c haproxy -- \
+        kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
           cat /etc/haproxy/haproxy.cfg > debug-logs/haproxy.cfg 2>&1 || echo "Failed to get HAProxy config"
 
         # Pod status summary
         kubectl get pods -A -o wide > debug-logs/pod-status.log 2>&1 || true
 
         # Events (useful for deployment issues)
-        kubectl get events -n haproxy-template-ic --sort-by=.lastTimestamp \
+        kubectl get events -n ${CTRL_NAMESPACE} --sort-by=.lastTimestamp \
           > debug-logs/events.log 2>&1 || true
 
         # Service details (including NodePorts) - critical for port connectivity issues
-        kubectl get svc -n haproxy-template-ic -o yaml \
+        kubectl get svc -n ${CTRL_NAMESPACE} -o yaml \
           > debug-logs/services.yaml 2>&1 || true
 
         # Network connectivity diagnostics
@@ -685,6 +689,94 @@ test-routes:
   extends:
     - .test-routes-base
     - .haproxy-version-matrix
+
+# Helm chart default values test with cert-manager
+# Verifies that the chart works out-of-the-box with default values when cert-manager is installed
+test-helm-defaults:
+  stage: integration
+  image: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
+  extends:
+    - .docker-dind
+    - .rules-helm
+  timeout: 15 minutes
+  interruptible: true
+  needs:
+    - job: build-ci
+      optional: true
+    - job: build-test-image
+  variables:
+    # Unique cluster name - different from haproxy-test (integration) and haproxy-template-ic-dev (dev/routes)
+    CLUSTER_NAME: helm-defaults
+    NAMESPACE: haptic
+    HAPROXY_VERSION: "3.2"
+  before_script:
+    - |
+      # Pull pre-built test image from registry
+      TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
+      docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      docker pull ${TEST_IMAGE}
+    - |
+      # Pre-create kind cluster with DinD-compatible networking
+      kind create cluster --name ${CLUSTER_NAME} --config .gitlab/ci/kind-config-dind.yaml --wait 120s
+    - |
+      # Fix kubeconfig to use "docker" hostname instead of 0.0.0.0
+      mkdir -p ~/.kube
+      kind get kubeconfig --name ${CLUSTER_NAME} > ~/.kube/config
+      sed -i 's|https://0\.0\.0\.0:|https://docker:|g' ~/.kube/config
+    - |
+      # Wait for API server to be ready
+      for i in $(seq 1 30); do
+        if kubectl get nodes &>/dev/null; then
+          echo "API server is ready"
+          break
+        fi
+        echo "Waiting for API server... (attempt $i/30)"
+        sleep 2
+      done
+    - |
+      # Load test image into kind cluster
+      kind load docker-image ${TEST_IMAGE} --name ${CLUSTER_NAME}
+  script:
+    - ./scripts/test-helm-defaults.sh --image "${TEST_IMAGE}"
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ]; then
+        echo "Job failed - extracting debug logs..."
+        mkdir -p debug-logs
+
+        echo "=== Pod Status ===" > debug-logs/pods.log
+        kubectl get pods -A -o wide >> debug-logs/pods.log 2>&1 || true
+
+        echo "=== Events ===" > debug-logs/events.log
+        kubectl get events -A --sort-by='.lastTimestamp' >> debug-logs/events.log 2>&1 || true
+
+        echo "=== Controller Logs ===" > debug-logs/controller.log
+        kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/component=controller --tail=200 >> debug-logs/controller.log 2>&1 || true
+
+        echo "=== HAProxy Logs ===" > debug-logs/haproxy.log
+        kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/component=loadbalancer --tail=200 >> debug-logs/haproxy.log 2>&1 || true
+
+        echo "=== Certificates ===" > debug-logs/certificates.log
+        kubectl get certificates -A -o wide >> debug-logs/certificates.log 2>&1 || true
+        kubectl describe certificates -n ${NAMESPACE} >> debug-logs/certificates.log 2>&1 || true
+
+        echo "=== Issuers ===" > debug-logs/issuers.log
+        kubectl get issuers -A -o wide >> debug-logs/issuers.log 2>&1 || true
+
+        echo "=== TLS Secrets ===" > debug-logs/secrets.log
+        kubectl get secrets -A --field-selector type=kubernetes.io/tls >> debug-logs/secrets.log 2>&1 || true
+
+        echo "Debug logs extracted to debug-logs/"
+        ls -la debug-logs/
+      fi
+    - kind delete cluster --name ${CLUSTER_NAME} || true
+  artifacts:
+    paths:
+      - debug-logs/
+    when: on_failure
+    expire_in: 1 week
+  tags:
+    - saas-linux-large-amd64
 
 # =============================================================================
 # Deploy Stage

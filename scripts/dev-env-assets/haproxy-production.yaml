@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: haproxy-production-config
-  namespace: haproxy-template-ic
+  namespace: haptic
 data:
   haproxy.cfg: |
     global
@@ -34,7 +34,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: haproxy-production
-  namespace: haproxy-template-ic
+  namespace: haptic
   labels:
     app: haproxy
     component: loadbalancer
@@ -206,7 +206,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: haproxy-production
-  namespace: haproxy-template-ic
+  namespace: haptic
   labels:
     app: haproxy
     component: loadbalancer
@@ -237,7 +237,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: haproxy-production-dataplane
-  namespace: haproxy-template-ic
+  namespace: haptic
   labels:
     app: haproxy
     component: loadbalancer
