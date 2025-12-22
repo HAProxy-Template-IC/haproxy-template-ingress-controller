@@ -8,7 +8,7 @@
 # 1. Validates the version format (SemVer)
 # 2. Checks that CHANGELOG.md has an entry for the version
 # 3. Updates the VERSION file
-# 4. Updates Chart.yaml appVersion
+# 4. Updates Chart.yaml appVersion and artifacthub.io/images annotation
 # 5. Commits changes and creates a git tag
 #
 # After running this script, push the tag to trigger CI:
@@ -86,6 +86,10 @@ echo "$VERSION" > VERSION
 # Update Chart.yaml appVersion
 echo "Updating Chart.yaml appVersion..."
 sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/haproxy-template-ic/Chart.yaml
+
+# Update Chart.yaml artifacthub.io/images annotation
+echo "Updating Chart.yaml artifacthub.io/images annotation..."
+sed -i "s|haproxy-template-ingress-controller:[0-9a-z.-]*|haproxy-template-ingress-controller:$VERSION|" charts/haproxy-template-ic/Chart.yaml
 
 # Show changes
 echo ""

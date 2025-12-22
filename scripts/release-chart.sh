@@ -67,6 +67,17 @@ if [[ -n $(git status --porcelain) ]]; then
     fi
 fi
 
+# Check CHANGELOG.md has entry for this version
+if ! grep -q "## \[$VERSION\]" CHANGELOG.md; then
+    error "CHANGELOG.md has no entry for version $VERSION
+
+Please update CHANGELOG.md before releasing:
+1. Add a [Chart] prefixed entry under [$VERSION] section
+2. Run this script again
+
+Note: Chart-only releases should prefix entries with [Chart]"
+fi
+
 # Update Chart.yaml version
 echo "Updating Chart.yaml version..."
 sed -i "s/^version:.*/version: $VERSION/" charts/haproxy-template-ic/Chart.yaml
