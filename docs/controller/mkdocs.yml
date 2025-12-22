@@ -88,6 +88,7 @@ nav:
     - Considerations: development/design/considerations.md
     - Appendices: development/design/appendices.md
     - Linting: development/linting.md
+    - Releasing: development/releasing.md
 
 extra:
   alternate:
