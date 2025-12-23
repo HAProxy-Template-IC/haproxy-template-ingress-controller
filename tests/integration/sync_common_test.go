@@ -252,6 +252,37 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	t.Logf("Sync completed: %d operations, reload=%v, reloadID=%s",
 		len(result.AppliedOperations), result.ReloadTriggered, result.ReloadID)
 
+	// Step 3.5: Wait for sync result to be reflected in raw configuration
+	// After HAProxy reload completes, there may be a brief delay before the raw config
+	// API endpoint returns the updated configuration, especially in resource-constrained
+	// CI environments (DinD). Without this wait, idempotency checks may fail because
+	// the API returns stale data.
+	if result.ReloadTriggered {
+		err = WaitForCondition(ctx, FastWaitConfig(), func(ctx context.Context) (bool, error) {
+			currentConfig, err := client.GetRawConfiguration(ctx)
+			if err != nil {
+				return false, nil // Retry on error
+			}
+			currentParsed, err := parser.ParseFromString(currentConfig)
+			if err != nil {
+				return false, nil // Retry on parse error
+			}
+			desiredParsed, err := parser.ParseFromString(desiredConfigContent)
+			if err != nil {
+				return false, err // This shouldn't fail - desired is constant
+			}
+			verifyDiff, err := comp.Compare(currentParsed, desiredParsed)
+			if err != nil {
+				return false, nil // Retry on comparison error
+			}
+			return verifyDiff.Summary.TotalCreates == 0 &&
+				verifyDiff.Summary.TotalUpdates == 0 &&
+				verifyDiff.Summary.TotalDeletes == 0, nil
+		})
+		require.NoError(t, err, "sync result should be reflected in raw config within timeout")
+		t.Logf("Sync result verified in raw config")
+	}
+
 	// Step 3: Assert operation counts from sync result
 	// Skip operation checks when fallback to raw push is expected, as operations aren't tracked during raw push
 	if !tc.expectedFallbackToRaw {
