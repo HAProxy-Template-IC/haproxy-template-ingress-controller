@@ -734,10 +734,10 @@ The `controller validate` command supports `--debug-filters` flag:
 
 ```bash
 # Enable filter debug logging during validation tests
-./bin/controller validate --test test-gateway-route-precedence --debug-filters
+./bin/haptic-controller validate --test test-gateway-route-precedence --debug-filters
 
 # Combine with other debugging flags
-./bin/controller validate --debug-filters --trace-templates --dump-rendered
+./bin/haptic-controller validate --debug-filters --trace-templates --dump-rendered
 ```
 
 **How it works:**

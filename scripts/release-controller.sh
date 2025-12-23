@@ -12,7 +12,7 @@
 # 5. Commits changes and creates a git tag
 #
 # After running this script, push the tag to trigger CI:
-#   git push origin main controller-v<version>
+#   git push origin main haptic-controller-v<version>
 
 set -euo pipefail
 
@@ -100,12 +100,12 @@ git diff --stat
 echo ""
 echo "Creating commit and tag..."
 git add VERSION charts/haptic/Chart.yaml
-git commit -m "release: controller v$VERSION"
-git tag -a "controller-v$VERSION" -m "Controller release v$VERSION"
+git commit -m "release: haptic-controller v$VERSION"
+git tag -a "haptic-controller-v$VERSION" -m "Controller release v$VERSION"
 
 success ""
-success "Created tag: controller-v$VERSION"
+success "Created tag: haptic-controller-v$VERSION"
 success ""
 echo "Next steps:"
 echo "  1. Review the commit: git show HEAD"
-echo "  2. Push to trigger CI: git push origin main controller-v$VERSION"
+echo "  2. Push to trigger CI: git push origin main haptic-controller-v$VERSION"

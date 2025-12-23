@@ -306,7 +306,7 @@ test:
         --set controller.templateLibraries.haproxytech.enabled=true \
         | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > /tmp/merged-config.yaml
-      ./bin/controller validate -f /tmp/merged-config.yaml
+      ./bin/haptic-controller validate -f /tmp/merged-config.yaml
 
 validate-helm-libraries:
   extends:
@@ -336,11 +336,11 @@ compile:
         -trimpath \
         -buildvcs=false \
         -ldflags="-s -w -X main.version=ci-${CI_PIPELINE_ID} -X main.commit=${CI_COMMIT_SHA}" \
-        -o controller \
+        -o haptic-controller \
         ./cmd/controller
   artifacts:
     paths:
-      - controller
+      - haptic-controller
     expire_in: 1 hour
 
 # Package pre-built binary into Docker image for each HAProxy version
@@ -367,7 +367,7 @@ build-test-image:
       TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
       # Create binary context with pre-compiled controller
       mkdir -p binary-context
-      cp controller binary-context/controller
+      cp haptic-controller binary-context/haptic-controller
       # Build using named context override - 'binary' stage uses our pre-built binary
       buildctl-daemonless.sh build \
         --frontend dockerfile.v0 \

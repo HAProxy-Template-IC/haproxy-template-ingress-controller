@@ -173,7 +173,7 @@ Profile template rendering:
 
 ```bash
 # Enable template tracing
-./bin/controller validate -f config.yaml --trace
+./bin/haptic-controller validate -f config.yaml --trace
 
 # View trace output
 cat /tmp/template-trace.log

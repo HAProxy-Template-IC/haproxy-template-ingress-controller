@@ -35,7 +35,7 @@ import (
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
-	Use:   "controller",
+	Use:   "haptic-controller",
 	Short: "HAProxy Template Ingress Controller",
 	Long: `HAProxy Template Ingress Controller - Template-driven HAProxy configuration management.
 
@@ -44,7 +44,7 @@ The controller provides two main commands:
   run      - Run the controller (watches CRDs and manages HAProxy)
   validate - Validate a HAProxyTemplateConfig with embedded tests
 
-Use "controller [command] --help" for more information about a command.`,
+Use "haptic-controller [command] --help" for more information about a command.`,
 }
 
 const (

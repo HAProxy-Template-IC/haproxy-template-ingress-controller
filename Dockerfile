@@ -56,7 +56,7 @@ RUN CGO_ENABLED=0 \
     -buildvcs=false \
     -pgo=auto \
     -ldflags="-s -w -X main.version=${GIT_TAG} -X main.commit=${GIT_COMMIT}" \
-    -o /build/controller \
+    -o /build/haptic-controller \
     ./cmd/controller
 
 # -----------------------------------------------------------------------------
@@ -65,7 +65,7 @@ RUN CGO_ENABLED=0 \
 # pre-compiled binary instead of building from source (used in GitLab CI)
 # -----------------------------------------------------------------------------
 FROM scratch AS binary
-COPY --from=builder /build/controller /controller
+COPY --from=builder /build/haptic-controller /haptic-controller
 
 # -----------------------------------------------------------------------------
 # Runtime stage - minimal image with HAProxy for validation
@@ -74,10 +74,10 @@ FROM haproxytech/haproxy-debian:${HAPROXY_VERSION} AS runtime
 
 # Copy the controller binary from the 'binary' stage
 # When using --build-context binary=<path>, this copies from the external context
-COPY --from=binary /controller /usr/local/bin/controller
+COPY --from=binary /haptic-controller /usr/local/bin/haptic-controller
 
 # Ensure binary is executable
-RUN chmod +x /usr/local/bin/controller
+RUN chmod +x /usr/local/bin/haptic-controller
 
 # Create validation directories for HAProxy configuration validation
 # These directories must be writable by the haproxy user
@@ -91,7 +91,7 @@ RUN mkdir -p /usr/local/etc/haproxy/maps \
 USER haproxy
 
 # Set the entrypoint to the controller
-ENTRYPOINT ["/usr/local/bin/controller"]
+ENTRYPOINT ["/usr/local/bin/haptic-controller"]
 
 # Default command (can be overridden)
 CMD ["run"]
