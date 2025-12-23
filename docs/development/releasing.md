@@ -55,6 +55,22 @@ appVersion: "0.1.0"   # Controller version this chart deploys
 - `version`: Incremented for any chart change (templates, values, docs)
 - `appVersion`: Set to the controller version the chart is designed for
 
+### Changelogs
+
+The project maintains separate CHANGELOGs for the controller and the Helm chart:
+
+| Component | CHANGELOG Location |
+|-----------|-------------------|
+| Controller | `/CHANGELOG.md` |
+| Chart | `/charts/haptic/CHANGELOG.md` |
+
+This separation supports the decoupled versioning model:
+
+- **Controller CHANGELOG**: Go code changes, new features, bug fixes, API changes
+- **Chart CHANGELOG**: Helm template changes, values.yaml updates, Kubernetes compatibility
+
+Changes that affect both (e.g., a new CRD field requiring code and chart changes) should be documented in both CHANGELOGs.
+
 ## Release Artifacts
 
 ### Controller Release
@@ -132,7 +148,11 @@ After merge, CI automatically creates the `haptic-controller-v0.1.0-beta.1` tag 
 
 ### Releasing a Chart Version
 
-1. **Run the release script**:
+1. **Update `charts/haptic/CHANGELOG.md`**:
+   - Rename `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD`
+   - Add new empty `[Unreleased]` section
+
+2. **Run the release script**:
 
    ```bash
    ./scripts/release-chart.sh 0.2.0
@@ -140,10 +160,11 @@ After merge, CI automatically creates the `haptic-controller-v0.1.0-beta.1` tag 
 
    The script:
    - Validates version format
+   - Checks `charts/haptic/CHANGELOG.md` has an entry
    - Updates Chart.yaml version
    - Creates release commit
 
-2. **Push to release branch and create MR**:
+3. **Push to release branch and create MR**:
 
    ```bash
    git checkout -b release/haptic-chart-v0.2.0
@@ -151,7 +172,7 @@ After merge, CI automatically creates the `haptic-controller-v0.1.0-beta.1` tag 
    glab mr create --title "release: chart v0.2.0" --target-branch main
    ```
 
-3. **Merge the MR** through GitLab.
+4. **Merge the MR** through GitLab.
 
 After merge, CI automatically creates the `haptic-chart-v0.2.0` tag and triggers the release pipeline.
 
