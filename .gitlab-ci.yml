@@ -543,6 +543,22 @@ test-acceptance:
             >> debug-logs/configmaps-$ns.log 2>&1 || true
         done
 
+        # Kind control plane logs for diagnosing API server/kube-proxy issues
+        echo "Extracting Kind control plane logs..."
+
+        # Use kind's built-in log export (most comprehensive)
+        kind export logs debug-logs/kind-logs --name haproxy-test 2>/dev/null || true
+
+        # Fallback: get kube-system pod logs directly
+        kubectl -n kube-system get pods -o wide >> debug-logs/kube-system-pods.log 2>&1 || true
+        kubectl -n kube-system logs -l component=kube-proxy --all-containers=true \
+          --timestamps=true --since=10m >> debug-logs/kube-proxy.log 2>&1 || true
+        kubectl -n kube-system logs -l k8s-app=kube-dns --all-containers=true \
+          --timestamps=true --since=10m >> debug-logs/coredns.log 2>&1 || true
+
+        # API server and etcd logs from docker (Kind runs as docker container)
+        docker logs haproxy-test-control-plane >> debug-logs/kind-node.log 2>&1 || true
+
         echo "Debug logs extracted"
         ls -la debug-logs/ || true
       fi
