@@ -125,7 +125,7 @@ func createInvalidTestConfig() *coreconfig.Config {
 			MetricsPort: 9090,
 		},
 		Logging: coreconfig.LoggingConfig{
-			Verbose: 1,
+			Level: "INFO",
 		},
 		WatchedResourcesIgnoreFields: []string{
 			"invalid[[JSONPath", // Invalid JSONPath (jsonpath validator should catch)
@@ -158,7 +158,7 @@ func createValidTestConfig() *coreconfig.Config {
 			MetricsPort: 9090,
 		},
 		Logging: coreconfig.LoggingConfig{
-			Verbose: 1,
+			Level: "INFO",
 		},
 		WatchedResourcesIgnoreFields: []string{
 			"metadata.managedFields",

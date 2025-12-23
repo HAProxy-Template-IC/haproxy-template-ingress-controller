@@ -25,7 +25,7 @@ controller:
   metrics_port: 9090
 
 logging:
-  verbose: 2  # 0=WARNING, 1=INFO, 2=DEBUG
+  level: DEBUG  # TRACE, DEBUG, INFO, WARN, ERROR
 
 validation:
   dataplane_host: localhost

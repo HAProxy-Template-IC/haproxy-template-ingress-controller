@@ -513,7 +513,7 @@ func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateC
 				},
 			},
 			Logging: haproxyv1alpha1.LoggingConfig{
-				Verbose: 2, // DEBUG level for tests
+				Level: "DEBUG", // DEBUG level for tests
 			},
 			Dataplane: haproxyv1alpha1.DataplaneConfig{
 				Port:              5555,

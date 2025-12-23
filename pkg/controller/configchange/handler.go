@@ -413,11 +413,11 @@ func (h *ConfigChangeHandler) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	h.mu.RUnlock()
 
 	if !hasState {
-		h.logger.Debug("became leader but no validated config available yet, skipping state replay")
+		h.logger.Debug("Became leader but no validated config available yet, skipping state replay")
 		return
 	}
 
-	h.logger.Debug("became leader, re-publishing last validated config for leader-only components",
+	h.logger.Debug("Became leader, re-publishing last validated config for leader-only components",
 		"config_version", validatedEvent.Version,
 		"secret_version", validatedEvent.SecretVersion)
 

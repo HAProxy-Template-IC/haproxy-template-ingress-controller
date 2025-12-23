@@ -658,7 +658,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 				"lease_namespace", e.LeaseNamespace)
 
 	case *events.BecameLeaderEvent:
-		return fmt.Sprintf("🎖️  Became leader: %s", e.Identity),
+		return fmt.Sprintf("Became leader: %s", e.Identity),
 			append(attrs, "identity", e.Identity)
 
 	case *events.LostLeadershipEvent:
@@ -666,7 +666,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		if e.Reason != "" {
 			reasonMsg = fmt.Sprintf(" (reason: %s)", e.Reason)
 		}
-		return fmt.Sprintf("⚠️  Lost leadership: %s%s", e.Identity, reasonMsg),
+		return fmt.Sprintf("Lost leadership: %s%s", e.Identity, reasonMsg),
 			append(attrs,
 				"identity", e.Identity,
 				"reason", e.Reason)

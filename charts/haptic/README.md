@@ -66,7 +66,8 @@ helm install my-controller haptic/haptic \
 | `gatewayClass.name` | GatewayClass name | `haproxy` |
 | `controller.debugPort` | Introspection HTTP server port (provides /healthz and /debug/*) | `8080` |
 | `controller.config.podSelector` | Labels to match HAProxy pods | `{app.kubernetes.io/component: loadbalancer}` |
-| `controller.config.logging.verbose` | Log level (0=WARN, 1=INFO, 2=DEBUG) | `1` |
+| `controller.logLevel` | Initial log level (LOG_LEVEL env var) | `INFO` |
+| `controller.config.logging.level` | Log level from ConfigMap (overrides env var if set) | `""` |
 | `credentials.dataplane.username` | Dataplane API username | `admin` |
 | `credentials.dataplane.password` | Dataplane API password | `adminpass` |
 | `networkPolicy.enabled` | Enable NetworkPolicy | `true` |
@@ -1414,7 +1415,8 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.config.logging.verbose` | int | `1` | Log level (0=WARN, 1=INFO, 2=DEBUG) |
+| `controller.logLevel` | string | `INFO` | Initial log level: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive) |
+| `controller.config.logging.level` | string | `""` | Log level from ConfigMap. If set, overrides controller.logLevel at runtime |
 | `controller.config.templatingSettings.extraContext.debug` | bool | `true` | Enable debug headers in HAProxy responses |
 | `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields]` | Fields to ignore in watched resources |
 

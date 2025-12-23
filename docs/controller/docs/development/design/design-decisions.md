@@ -1646,8 +1646,9 @@ func (rb *RingBuffer) CountRecent(duration time.Duration, predicate func(events.
 func main() {
     // ... create eventBus ...
 
-    // Create logger from pkg/core/logging
-    logger := logging.NewLogger(config.Logging.Verbose)
+    // Create dynamic logger from pkg/core/logging
+    // LOG_LEVEL env var used at startup, can be overridden by ConfigMap
+    logger := logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
 
     // Start event commentator early (Stage 1)
     commentator := commentator.NewEventCommentator(eventBus, logger, 100)

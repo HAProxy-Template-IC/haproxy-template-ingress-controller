@@ -71,7 +71,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 
 	// Convert logging config
 	loggingConfig := config.LoggingConfig{
-		Verbose: spec.Logging.Verbose,
+		Level: spec.Logging.Level,
 	}
 
 	// Convert dataplane config

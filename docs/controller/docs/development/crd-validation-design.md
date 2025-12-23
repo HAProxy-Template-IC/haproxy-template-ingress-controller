@@ -76,7 +76,7 @@ spec:
 
   # Logging configuration
   logging:
-    verbose: 1  # 0=WARNING, 1=INFO, 2=DEBUG
+    level: INFO  # TRACE, DEBUG, INFO, WARN, ERROR
 
   # Dataplane API configuration
   dataplane:

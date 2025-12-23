@@ -16,7 +16,7 @@ func TestValidateStructure_Success(t *testing.T) {
 			MetricsPort: 9090,
 		},
 		Logging: LoggingConfig{
-			Verbose: 1,
+			Level: "INFO",
 		},
 		Dataplane: DataplaneConfig{
 			Port:              5555,
@@ -174,13 +174,14 @@ func TestValidateOperatorConfig_SamePort(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot be the same")
 }
 
-func TestValidateLoggingConfig_InvalidVerbose(t *testing.T) {
+func TestValidateLoggingConfig_InvalidLevel(t *testing.T) {
 	tests := []struct {
-		name    string
-		verbose int
+		name  string
+		level string
 	}{
-		{"negative", -1},
-		{"too large", 3},
+		{"invalid string", "INVALID"},
+		{"numeric string", "1"},
+		{"typo", "DEBG"},
 	}
 
 	for _, tt := range tests {
@@ -194,7 +195,7 @@ func TestValidateLoggingConfig_InvalidVerbose(t *testing.T) {
 					MetricsPort: 9090,
 				},
 				Logging: LoggingConfig{
-					Verbose: tt.verbose,
+					Level: tt.level,
 				},
 				WatchedResources: map[string]WatchedResource{
 					"ingresses": {
@@ -210,7 +211,48 @@ func TestValidateLoggingConfig_InvalidVerbose(t *testing.T) {
 
 			err := ValidateStructure(cfg)
 			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "verbose")
+			assert.Contains(t, err.Error(), "level")
+		})
+	}
+}
+
+func TestValidateLoggingConfig_ValidLevels(t *testing.T) {
+	validLevels := []string{"", "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"}
+
+	for _, level := range validLevels {
+		t.Run("level_"+level, func(t *testing.T) {
+			cfg := &Config{
+				PodSelector: PodSelector{
+					MatchLabels: map[string]string{"app": "haproxy"},
+				},
+				Controller: ControllerConfig{
+					HealthzPort: 8080,
+					MetricsPort: 9090,
+				},
+				Logging: LoggingConfig{
+					Level: level,
+				},
+				Dataplane: DataplaneConfig{
+					Port:              5555,
+					MapsDir:           "/etc/haproxy/maps",
+					SSLCertsDir:       "/etc/haproxy/certs",
+					GeneralStorageDir: "/etc/haproxy/general",
+					ConfigFile:        "/etc/haproxy/haproxy.cfg",
+				},
+				WatchedResources: map[string]WatchedResource{
+					"ingresses": {
+						APIVersion: "networking.k8s.io/v1",
+						Resources:  "ingresses",
+						IndexBy:    []string{"metadata.namespace"},
+					},
+				},
+				HAProxyConfig: HAProxyConfig{
+					Template: "global",
+				},
+			}
+
+			err := ValidateStructure(cfg)
+			assert.NoError(t, err)
 		})
 	}
 }

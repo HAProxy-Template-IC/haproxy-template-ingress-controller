@@ -10,8 +10,9 @@ const (
 	// DefaultMetricsPort is the default port for Prometheus metrics.
 	DefaultMetricsPort = 9090
 
-	// DefaultVerbose is the default log level (1 = INFO).
-	DefaultVerbose = 1
+	// DefaultLevel is the default log level.
+	// Empty string means use LOG_LEVEL env var or default to INFO.
+	DefaultLevel = ""
 
 	// DefaultDataplanePort is the default Dataplane API port for production HAProxy pods.
 	DefaultDataplanePort = 5555
@@ -92,7 +93,7 @@ func SetDefaults(cfg *Config) {
 	}
 
 	// Logging defaults
-	// Note: Verbose level 0 is valid (WARNING), so we don't set a default
+	// Note: Empty Level is valid (means use LOG_LEVEL env var or default to INFO)
 
 	// Dataplane defaults
 	// Note: This port should never remain 0 after defaults are applied

@@ -25,6 +25,7 @@ import (
 	"haptic/pkg/controller/events"
 	"haptic/pkg/controller/resourcewatcher"
 	coreconfig "haptic/pkg/core/config"
+	"haptic/pkg/core/logging"
 	"haptic/pkg/dataplane"
 	busevents "haptic/pkg/events"
 )
@@ -176,6 +177,19 @@ func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 		sc.currentConfig = cfg
 		sc.currentConfigVersion = e.Version
 		sc.mu.Unlock()
+
+		// Update log level dynamically if configured in ConfigMap
+		// Empty Level means use LOG_LEVEL env var (don't change)
+		if cfg.Logging.Level != "" {
+			oldLevel := logging.GetLevel()
+			logging.SetLevel(cfg.Logging.Level)
+			newLevel := logging.GetLevel()
+			if oldLevel != newLevel {
+				sc.logger.Info("Log level updated from config",
+					"old_level", oldLevel,
+					"new_level", newLevel)
+			}
+		}
 	} else {
 		sc.logger.Error("type assertion failed for ConfigValidatedEvent config",
 			"expected", "*coreconfig.Config",

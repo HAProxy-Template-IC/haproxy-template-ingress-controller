@@ -3,6 +3,11 @@
 #
 # Usage: helm install -f values-dev.yaml
 
+# Controller configuration overrides for development
+controller:
+  # Use DEBUG log level for development
+  logLevel: DEBUG
+
 # HAProxy configuration overrides for development
 haproxy:
   enabled: true
