@@ -129,6 +129,7 @@ spec:
               dataplaneapi:
                 host: 0.0.0.0
                 port: 5555
+                disable_inotify: true
                 user:
                   - name: admin
                     password: adminpass

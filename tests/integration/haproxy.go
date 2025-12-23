@@ -193,9 +193,14 @@ frontend status
 `
 
 	// Create Dataplane API YAML config
+	// Note: disable_inotify prevents a race condition where the file watcher
+	// triggers ReplaceConfiguration() during ongoing API operations, causing
+	// spurious 404 errors. Since we manage config exclusively via the API,
+	// we don't need the file watcher.
 	dataplaneConfig := fmt.Sprintf(`dataplaneapi:
   host: 0.0.0.0
   port: %d
+  disable_inotify: true
   user:
     - name: %s
       password: %s
