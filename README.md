@@ -12,7 +12,7 @@
 
 **HAPTIC** (**HA**Proxy **T**emplate **I**ngress **C**ontroller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
-> **Documentation**: <https://haproxy-template-ic.github.io/>
+> **Documentation**: <https://haproxy-template-ic.gitlab.io/>
 
 ## Key Features
 
@@ -41,7 +41,7 @@ helm repo update
 helm install my-controller haptic/haptic
 ```
 
-For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-template-ic.github.io/controller/getting-started/) guide.
+For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-template-ic.gitlab.io/controller/latest/getting-started/) guide.
 
 ## Development
 
