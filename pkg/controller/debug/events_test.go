@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/events"
+	"haptic/pkg/events"
 )
 
 // testEvent is a simple event type for testing.

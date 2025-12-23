@@ -1,6 +1,6 @@
 # Event Immutability Analyzer
 
-A custom Go analyzer that detects modifications to event struct fields in the haproxy-template-ic controller.
+A custom Go analyzer that detects modifications to event struct fields in the HAPTIC controller.
 
 ## Purpose
 

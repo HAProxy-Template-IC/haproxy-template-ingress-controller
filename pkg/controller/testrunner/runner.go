@@ -38,14 +38,14 @@ import (
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/rendercontext"
+	"haptic/pkg/controller/rendercontext"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/core/logging"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	"haproxy-template-ic/pkg/k8s/types"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/core/config"
+	"haptic/pkg/core/logging"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/k8s/types"
+	"haptic/pkg/templating"
 )
 
 // Runner executes validation tests for HAProxyTemplateConfig.

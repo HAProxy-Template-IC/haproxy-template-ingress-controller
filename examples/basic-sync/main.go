@@ -26,7 +26,7 @@ import (
 	"os"
 	"time"
 
-	"haproxy-template-ic/pkg/dataplane"
+	"haptic/pkg/dataplane"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"haproxy-template-ic/pkg/dataplane/comparator"
+	"haptic/pkg/dataplane/comparator"
 )
 
 // SyncResult represents the outcome of a synchronization operation.

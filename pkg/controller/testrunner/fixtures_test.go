@@ -24,11 +24,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"haproxy-template-ic/pkg/controller/rendercontext"
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/controller/rendercontext"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/templating"
 )
 
 // =============================================================================

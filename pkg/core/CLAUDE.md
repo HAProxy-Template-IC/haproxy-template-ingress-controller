@@ -240,7 +240,7 @@ func TestLoadCredentials_MissingRequired(t *testing.T) {
 // Bad - config package importing other packages
 package config
 
-import "haproxy-template-ic/pkg/templating"
+import "haptic/pkg/templating"
 
 func (c *Config) ValidateTemplates() error {
     engine, err := templating.New(...)  // DON'T DO THIS
@@ -598,10 +598,10 @@ func ParseConfig(data map[string][]byte) (*Config, error) {
 
 ```bash
 # Verify ConfigMap
-kubectl get configmap haproxy-template-ic-config -o yaml
+kubectl get configmap haptic-config -o yaml
 
 # Check controller logs
-kubectl logs deployment/haproxy-template-ic-controller | grep "config"
+kubectl logs deployment/haptic-controller | grep "config"
 ```
 
 ### Credentials Not Loading
@@ -615,13 +615,13 @@ kubectl logs deployment/haproxy-template-ic-controller | grep "config"
 
 ```bash
 # Verify Secret exists (don't print values)
-kubectl get secret haproxy-template-ic-credentials
+kubectl get secret haptic-credentials
 
 # Check Secret keys
-kubectl get secret haproxy-template-ic-credentials -o json | jq '.data | keys'
+kubectl get secret haptic-credentials -o json | jq '.data | keys'
 
 # Verify RBAC
-kubectl auth can-i get secrets --as=system:serviceaccount:default:haproxy-template-ic
+kubectl auth can-i get secrets --as=system:serviceaccount:default:haptic
 ```
 
 ### Validation Errors

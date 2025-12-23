@@ -1,6 +1,6 @@
-# HAProxy Template IC
+# HAPTIC
 
-A template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
+**HAPTIC** (HAProxy Template Ingress Controller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
 ```mermaid
 flowchart LR
@@ -11,16 +11,16 @@ flowchart LR
 !!! note "Community Project"
     This is an independent community project and is not affiliated with or endorsed by HAProxy Technologies.
 
-## What is HAProxy Template IC?
+## What is HAPTIC?
 
-HAProxy Template IC is an event-driven Kubernetes controller that:
+HAPTIC is an event-driven Kubernetes controller that:
 
 - **Watches any Kubernetes resource** - Ingresses, Services, Secrets, Gateway API resources, or any custom resource type you configure
 - **Renders Scriggo templates** - A fast, Go-native template engine
 - **Validates before deployment** - Deploy with confidence knowing configurations are validated before they reach your load balancers
 - **Deploys configurations** to HAProxy pods via the Dataplane API
 
-Unlike traditional ingress controllers with hardcoded configuration logic, HAProxy Template IC uses a template-driven approach that gives you full control over the generated HAProxy configuration. This means you can:
+Unlike traditional ingress controllers with hardcoded configuration logic, HAPTIC uses a template-driven approach that gives you full control over the generated HAProxy configuration. This means you can:
 
 - **Define custom annotations** that your platform users can use, implemented with just a few lines of template code
 - **Support new standards** like Gateway API without waiting for controller updates
@@ -30,7 +30,7 @@ Unlike traditional ingress controllers with hardcoded configuration logic, HAPro
 
 ### Template-Driven Flexibility
 
-Traditional ingress controllers embed configuration logic in code. HAProxy Template IC inverts this:
+Traditional ingress controllers embed configuration logic in code. HAPTIC inverts this:
 
 - **Full HAProxy access** - Write any HAProxy directive using the [configuration language](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
 - **Add features without code changes** - New directives are template updates, not controller releases
@@ -89,7 +89,7 @@ For a complete walkthrough, see the [Getting Started](getting-started.md) guide 
 ```bash
 helm repo add haproxy-template-ic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
 helm repo update
-helm install my-controller haproxy-template-ic/haproxy-template-ic
+helm install my-controller haptic/haptic
 ```
 
 The Helm chart includes template libraries that support Kubernetes Ingress resources out of the box. See the [Helm Chart Documentation](/helm-chart/latest/) for configuration options.
@@ -128,7 +128,7 @@ spec:
 
 ### Extend with Custom Annotations
 
-One of the key strengths of HAProxy Template IC is how easily you can add custom behavior. For example, suppose your platform users need to inject a `X-Request-ID` header for distributed tracing. With traditional ingress controllers, you'd wait for a new release or fork the project. With HAProxy Template IC, you add a template snippet to your Helm values:
+One of the key strengths of HAPTIC is how easily you can add custom behavior. For example, suppose your platform users need to inject a `X-Request-ID` header for distributed tracing. With traditional ingress controllers, you'd wait for a new release or fork the project. With HAPTIC, you add a template snippet to your Helm values:
 
 ```yaml
 controller:

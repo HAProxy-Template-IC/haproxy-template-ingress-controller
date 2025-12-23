@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/core/config"
+	"haptic/pkg/templating"
 )
 
 func TestNewEngineFromConfig_ScriggoDefault(t *testing.T) {

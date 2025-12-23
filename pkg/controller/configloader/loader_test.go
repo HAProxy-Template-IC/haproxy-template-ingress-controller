@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
+	"haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

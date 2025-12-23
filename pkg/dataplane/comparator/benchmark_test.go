@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"testing"
 
-	"haproxy-template-ic/pkg/dataplane/client"
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
-	"haproxy-template-ic/pkg/dataplane/parser"
+	"haptic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/parser"
 )
 
 // Package-level result sink prevents compiler dead code elimination.

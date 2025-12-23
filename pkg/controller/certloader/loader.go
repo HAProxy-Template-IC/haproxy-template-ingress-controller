@@ -22,8 +22,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
 )
 
 const (

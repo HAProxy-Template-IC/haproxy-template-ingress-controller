@@ -6,7 +6,7 @@ import (
 	"context"
 	"time"
 
-	"haproxy-template-ic/tests/testutil"
+	"haptic/tests/testutil"
 )
 
 // WaitConfig is an alias for testutil.WaitConfig for backward compatibility.

@@ -227,11 +227,27 @@ go test -v -timeout 15m ./tests/acceptance
 
 ## Debugging
 
+### Preserve Namespace After Test
+
+By default, test namespaces are deleted after each test completes. To preserve namespaces for debugging (especially useful for flaky tests), set `KEEP_NAMESPACE=true`:
+
+```bash
+# Run test with namespace preservation
+KEEP_NAMESPACE=true go test -tags=acceptance -v ./tests/acceptance -run TestDataplaneUnreachable
+
+# After test completes (or fails), inspect the namespace
+kubectl --context kind-haproxy-test get pods -n test-dp-unreach-<hash>
+kubectl --context kind-haproxy-test logs -n test-dp-unreach-<hash> -l app=haptic-controller
+
+# Clean up manually when done
+kubectl --context kind-haproxy-test delete namespace test-dp-unreach-<hash>
+```
+
 ### View Controller Logs
 
 ```bash
 # In one terminal: follow logs
-kubectl logs -n haproxy-test haproxy-template-ic-xxx -f
+kubectl logs -n haproxy-test haptic-xxx -f
 
 # In another terminal: run test
 go test -v ./tests/acceptance -run TestConfigMapReload
@@ -242,11 +258,11 @@ go test -v ./tests/acceptance -run TestConfigMapReload
 ```bash
 # During or after test - use NodePort (tests create the service automatically)
 NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-NODE_PORT=$(kubectl get svc -n haproxy-test haproxy-template-ic-debug -o jsonpath='{.spec.ports[0].nodePort}')
+NODE_PORT=$(kubectl get svc -n haproxy-test haptic-debug -o jsonpath='{.spec.ports[0].nodePort}')
 curl http://$NODE_IP:$NODE_PORT/debug/vars/config
 
 # Or use port-forward for manual debugging (not used in actual tests)
-kubectl port-forward -n haproxy-test pod/haproxy-template-ic-xxx 6060:6060
+kubectl port-forward -n haproxy-test pod/haptic-xxx 6060:6060
 
 # Query endpoints
 curl http://localhost:6060/debug/vars
@@ -262,7 +278,7 @@ curl http://localhost:6060/debug/vars/events
 kubectl get all -n haproxy-test
 
 # Describe deployment
-kubectl describe deployment -n haproxy-test haproxy-template-ic-controller
+kubectl describe deployment -n haproxy-test haptic-controller
 
 # Get ConfigMap
 kubectl get configmap -n haproxy-test haproxy-config -o yaml
@@ -372,8 +388,8 @@ assert.Contains(t, fmt.Sprint(config), "version 2")
 
 ```bash
 kubectl get pods -n haproxy-test
-kubectl describe pod -n haproxy-test haproxy-template-ic-xxx
-kubectl logs -n haproxy-test haproxy-template-ic-xxx
+kubectl describe pod -n haproxy-test haptic-xxx
+kubectl logs -n haproxy-test haptic-xxx
 ```
 
 ### Debug Client Access Fails
@@ -390,14 +406,14 @@ kubectl logs -n haproxy-test haproxy-template-ic-xxx
 
 ```bash
 # Check pod status
-kubectl get pod -n haproxy-test haproxy-template-ic-xxx
+kubectl get pod -n haproxy-test haptic-xxx
 
 # Check debug service exists and has NodePort
-kubectl get svc -n haproxy-test haproxy-template-ic-debug
+kubectl get svc -n haproxy-test haptic-debug
 
 # Test direct access via NodePort
 NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-NODE_PORT=$(kubectl get svc -n haproxy-test haproxy-template-ic-debug -o jsonpath='{.spec.ports[0].nodePort}')
+NODE_PORT=$(kubectl get svc -n haproxy-test haptic-debug -o jsonpath='{.spec.ports[0].nodePort}')
 curl -v http://$NODE_IP:$NODE_PORT/debug/vars/config
 ```
 
@@ -418,10 +434,10 @@ curl -v http://$NODE_IP:$NODE_PORT/debug/vars/config
 kubectl get configmap -n haproxy-test haproxy-config -o yaml
 
 # Check controller logs
-kubectl logs -n haproxy-test haproxy-template-ic-xxx
+kubectl logs -n haproxy-test haptic-xxx
 
 # Check if pod restarted
-kubectl get pod -n haproxy-test haproxy-template-ic-xxx -o jsonpath='{.status.containerStatuses[0].restartCount}'
+kubectl get pod -n haproxy-test haptic-xxx -o jsonpath='{.status.containerStatuses[0].restartCount}'
 ```
 
 ## Constants
@@ -429,7 +445,7 @@ kubectl get pod -n haproxy-test haproxy-template-ic-xxx -o jsonpath='{.status.co
 ```go
 const (
     TestNamespace           = "haproxy-test"
-    ControllerDeploymentName = "haproxy-template-ic-controller"
+    ControllerDeploymentName = "haptic-controller"
     ControllerConfigMapName  = "haproxy-config"
     ControllerSecretName     = "haproxy-credentials"
     DebugPort               = 6060

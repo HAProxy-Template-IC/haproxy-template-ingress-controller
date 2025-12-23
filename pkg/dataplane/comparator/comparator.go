@@ -3,8 +3,8 @@ package comparator
 import (
 	"fmt"
 
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
-	"haproxy-template-ic/pkg/dataplane/parser"
+	"haptic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/parser"
 )
 
 const (

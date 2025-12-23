@@ -164,14 +164,14 @@ When creating a new component that maintains state used by leader-only component
 
 ```bash
 # Deploy with 2 replicas
-kubectl -n haproxy-template-ic scale deployment haproxy-template-ic-controller --replicas=2
+kubectl -n haptic scale deployment haptic-controller --replicas=2
 
 # Watch logs for leadership events
-kubectl -n haproxy-template-ic logs -f -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
+kubectl -n haptic logs -f -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
 
 # Delete current leader pod to trigger election
-LEADER_POD=$(kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')
-kubectl -n haproxy-template-ic delete pod $LEADER_POD
+LEADER_POD=$(kubectl -n haptic get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')
+kubectl -n haptic delete pod $LEADER_POD
 
 # Verify:
 # - New leader logs "became leader, re-publishing..."

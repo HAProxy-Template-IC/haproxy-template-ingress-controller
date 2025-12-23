@@ -17,6 +17,6 @@ rules:
     max-spaces-inside: 1
 
 ignore:
-  - charts/haproxy-template-ic/templates/  # Helm templates contain Go template syntax
+  - charts/haptic/templates/  # Helm templates contain Go template syntax
   - pkg/generated/
   - node_modules/

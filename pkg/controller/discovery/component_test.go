@@ -25,13 +25,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/k8s/store"
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	coreconfig "haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/k8s/store"
+	"haptic/pkg/k8s/types"
 )
 
 // createTestComponent creates a new Component for testing, skipping if haproxy is not available.

@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	haproxyv1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	"haproxy-template-ic/pkg/generated/clientset/versioned"
+	haproxyv1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/generated/clientset/versioned"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

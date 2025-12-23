@@ -16,7 +16,7 @@ This package provides controller-specific implementations of the generic `pkg/in
 ## Installation
 
 ```go
-import "haproxy-template-ic/pkg/controller/debug"
+import "haptic/pkg/controller/debug"
 ```
 
 ## Quick Start
@@ -26,8 +26,8 @@ package main
 
 import (
     "context"
-    "haproxy-template-ic/pkg/controller/debug"
-    "haproxy-template-ic/pkg/introspection"
+    "haptic/pkg/controller/debug"
+    "haptic/pkg/introspection"
 )
 
 func main() {
@@ -621,7 +621,7 @@ For controller running in Kubernetes pod:
 
 ```bash
 # Forward debug port from pod
-kubectl port-forward -n haproxy-test pod/haproxy-template-ic-xxx 6060:6060
+kubectl <cmd> haptic-xxx 6060:6060
 
 # Access endpoints
 curl http://localhost:6060/debug/vars/config

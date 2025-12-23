@@ -49,7 +49,7 @@ metadata:
   name: my-haproxy-config
   namespace: default
   labels:
-    app.kubernetes.io/name: haproxy-template-ic
+    app.kubernetes.io/name: haptic
     app.kubernetes.io/instance: my-instance
 spec:
   # Reference to Secret containing credentials
@@ -69,7 +69,7 @@ spec:
     metricsPort: 9090
     leaderElection:
       enabled: true
-      leaseName: haproxy-template-ic-leader
+      leaseName: haptic-leader
       leaseDuration: 60s
       renewDeadline: 15s
       retryPeriod: 5s
@@ -432,15 +432,15 @@ go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
 # Generate CRD manifests
 controller-gen crd:crdVersions=v1 \
     paths=./pkg/apis/haproxytemplate/v1alpha1/... \
-    output:crd:dir=./charts/haproxy-template-ic/crds/
+    output:crd:dir=./charts/haptic/crds/
 ```
 
 ### Helm Chart Integration
 
-Place generated CRD in `charts/haproxy-template-ic/crds/`:
+Place generated CRD in `charts/haptic/crds/`:
 
 ```
-charts/haproxy-template-ic/
+charts/haptic/
 ├── crds/
 │   └── haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml
 ├── templates/
@@ -457,7 +457,7 @@ charts/haproxy-template-ic/
 - CRDs are **not templated** (no Helm variable substitution)
 - CRDs **cannot be upgraded** via `helm upgrade` (Helm limitation)
 - CRDs **cannot be deleted** via `helm uninstall` (prevents data loss)
-- To update CRD schema: `kubectl apply -f charts/haproxy-template-ic/crds/`
+- To update CRD schema: `kubectl apply -f charts/haptic/crds/`
 
 ### RBAC Requirements
 
@@ -467,7 +467,7 @@ The controller needs additional permissions to watch CRDs:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: haproxy-template-ic
+  name: haptic
 rules:
   # CRD permissions
   - apiGroups: ["haproxy-template-ic.gitlab.io"]
@@ -624,9 +624,9 @@ Currently watches a ConfigMap and publishes `ConfigParsedEvent`.
 package configloader
 
 import (
-    "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-    "haproxy-template-ic/pkg/controller/events"
-    haproxyversioned "haproxy-template-ic/pkg/generated/clientset/versioned"
+    "haptic/pkg/apis/haproxytemplate/v1alpha1"
+    "haptic/pkg/controller/events"
+    haproxyversioned "haptic/pkg/generated/clientset/versioned"
 )
 
 type Component struct {
@@ -774,7 +774,7 @@ import (
     "os"
 
     "github.com/spf13/cobra"
-    "haproxy-template-ic/pkg/controller/testrunner"
+    "haptic/pkg/controller/testrunner"
 )
 
 func newValidateCommand() *cobra.Command {
@@ -857,10 +857,10 @@ import (
     "context"
     "fmt"
 
-    "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-    "haproxy-template-ic/pkg/controller/resourcestore"
-    "haproxy-template-ic/pkg/dataplane"
-    "haproxy-template-ic/pkg/templating"
+    "haptic/pkg/apis/haproxytemplate/v1alpha1"
+    "haptic/pkg/controller/resourcestore"
+    "haptic/pkg/dataplane"
+    "haptic/pkg/templating"
 )
 
 type Runner struct {
@@ -1073,18 +1073,18 @@ Time: 2.0s
 
 ### Webhook Configuration
 
-Location: `charts/haproxy-template-ic/templates/validatingwebhook.yaml`
+Location: `charts/haptic/templates/validatingwebhook.yaml`
 
 ```yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: haproxy-template-ic-webhook
+  name: haptic-webhook
 webhooks:
   - name: validate.haproxytemplateconfig.haproxy-template-ic.gitlab.io
     clientConfig:
       service:
-        name: haproxy-template-ic-webhook
+        name: haptic-webhook
         namespace: {{ .Release.Namespace }}
         path: /validate-haproxytemplateconfig
       caBundle: {{ .Values.webhook.caBundle }}
@@ -1105,7 +1105,7 @@ webhooks:
         - key: app.kubernetes.io/name
           operator: In
           values:
-            - haproxy-template-ic
+            - haptic
 
     sideEffects: None
     admissionReviewVersions: ["v1"]
@@ -1128,8 +1128,8 @@ import (
     admissionv1 "k8s.io/api/admission/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-    "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-    "haproxy-template-ic/pkg/controller/testrunner"
+    "haptic/pkg/apis/haproxytemplate/v1alpha1"
+    "haptic/pkg/controller/testrunner"
 )
 
 type Server struct {
@@ -1259,13 +1259,13 @@ Example with cert-manager:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: haproxy-template-ic-webhook-cert
+  name: haptic-webhook-cert
   namespace: default
 spec:
   secretName: haproxy-webhook-certs
   dnsNames:
-    - haproxy-template-ic-webhook.default.svc
-    - haproxy-template-ic-webhook.default.svc.cluster.local
+    - haptic-webhook.default.svc
+    - haptic-webhook.default.svc.cluster.local
   issuerRef:
     name: selfsigned-issuer
     kind: ClusterIssuer
@@ -1304,7 +1304,7 @@ metadata:
   name: controller-a-config
   namespace: shared-namespace
   labels:
-    app.kubernetes.io/name: haproxy-template-ic
+    app.kubernetes.io/name: haptic
     app.kubernetes.io/instance: controller-a  # Matches controller A's webhook
 
 # Controller B's config
@@ -1314,7 +1314,7 @@ metadata:
   name: controller-b-config
   namespace: shared-namespace
   labels:
-    app.kubernetes.io/name: haproxy-template-ic
+    app.kubernetes.io/name: haptic
     app.kubernetes.io/instance: controller-b  # Matches controller B's webhook
 ```
 
@@ -1327,7 +1327,7 @@ Each controller's webhook filters by instance label to prevent cross-validation.
 1. **Remove ConfigMap references:**
    - `docs/supported-configuration.md` → Update to CRD syntax
    - `README.md` → Update quick start examples
-   - `charts/haproxy-template-ic/README.md` → Update installation docs
+   - `charts/haptic/README.md` → Update installation docs
    - All example YAML files in `examples/`
 
 2. **Update CLAUDE.md files:**
@@ -1410,7 +1410,7 @@ controller validate --name haproxy-config --namespace default
 - [ ] Create `pkg/apis/haproxytemplate/v1alpha1/` package
 - [ ] Define Go types with kubebuilder markers
 - [ ] Generate CRD YAML with controller-gen
-- [ ] Place CRD in `charts/haproxy-template-ic/crds/`
+- [ ] Place CRD in `charts/haptic/crds/`
 - [ ] Generate clientset, informers, listers
 - [ ] Update RBAC for CRD permissions
 

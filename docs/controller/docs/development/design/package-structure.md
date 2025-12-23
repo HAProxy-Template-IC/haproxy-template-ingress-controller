@@ -3,7 +3,7 @@
 The application is organized into focused Go packages following clean architecture principles:
 
 ```
-haproxy-template-ic/
+haptic/
 ├── cmd/
 │   └── controller/          # Main entry point
 │       └── main.go
@@ -219,7 +219,7 @@ The controller monitors two critical single resources using `SingleWatcher`:
    - Changes trigger scatter-gather validation before becoming active
 
 2. **Controller Credentials (Secret)**:
-   - Secret name: Configurable via environment variable (default: haproxy-template-ic-credentials)
+   - Secret name: Configurable via environment variable (default: haptic-credentials)
    - Contains 4 required keys:
      - `dataplane_username`: Username for HAProxy Dataplane API
      - `dataplane_password`: Password for HAProxy Dataplane API

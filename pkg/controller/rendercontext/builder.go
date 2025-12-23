@@ -34,10 +34,10 @@ import (
 	"runtime"
 	"sort"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/k8s/types"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/k8s/types"
+	"haptic/pkg/templating"
 )
 
 // Builder constructs template rendering contexts with consistent structure.

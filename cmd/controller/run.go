@@ -28,9 +28,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"haproxy-template-ic/pkg/controller"
-	"haproxy-template-ic/pkg/core/logging"
-	"haproxy-template-ic/pkg/k8s/client"
+	"haptic/pkg/controller"
+	"haptic/pkg/core/logging"
+	"haptic/pkg/k8s/client"
 )
 
 var (

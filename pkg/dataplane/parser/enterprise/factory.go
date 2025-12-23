@@ -7,7 +7,7 @@ import (
 	"github.com/haproxytech/client-native/v6/config-parser/parsers/extra"
 	"github.com/haproxytech/client-native/v6/config-parser/parsers/tcp"
 
-	eeparsers "haproxy-template-ic/pkg/dataplane/parser/enterprise/parsers"
+	eeparsers "haptic/pkg/dataplane/parser/enterprise/parsers"
 )
 
 // DefaultFactory implements ParserFactory using client-native parsers.

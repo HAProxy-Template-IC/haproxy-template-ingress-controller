@@ -25,8 +25,8 @@ import (
 	"log/slog"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
 )
 
 const (

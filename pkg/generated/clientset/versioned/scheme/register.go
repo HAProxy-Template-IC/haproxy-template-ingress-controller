@@ -17,7 +17,7 @@
 package scheme
 
 import (
-	haproxytemplateicv1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
+	haproxytemplateicv1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

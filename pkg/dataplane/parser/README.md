@@ -9,7 +9,7 @@ Parses HAProxy configuration files into structured format for comparison and val
 ## Quick Start
 
 ```go
-import "haproxy-template-ic/pkg/dataplane/parser"
+import "haptic/pkg/dataplane/parser"
 
 parser, err := parser.New()
 parsed, err := parser.Parse(haproxyConfig)

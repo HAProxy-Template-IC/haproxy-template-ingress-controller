@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/dataplane/client"
-	"haproxy-template-ic/pkg/dataplane/comparator"
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/comparator"
+	"haptic/pkg/dataplane/comparator/sections"
 )
 
 // mockOperation implements comparator.Operation for testing.

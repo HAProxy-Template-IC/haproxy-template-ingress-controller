@@ -17,7 +17,7 @@
 package internalinterfaces
 
 import (
-	versioned "haproxy-template-ic/pkg/generated/clientset/versioned"
+	versioned "haptic/pkg/generated/clientset/versioned"
 	time "time"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"

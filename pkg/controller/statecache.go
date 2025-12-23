@@ -21,12 +21,12 @@ import (
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/debug"
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/resourcewatcher"
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/debug"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/resourcewatcher"
+	coreconfig "haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	busevents "haptic/pkg/events"
 )
 
 // Pipeline status constants.

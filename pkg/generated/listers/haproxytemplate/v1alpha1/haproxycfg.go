@@ -17,7 +17,7 @@
 package v1alpha1
 
 import (
-	haproxytemplatev1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
+	haproxytemplatev1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
 
 	labels "k8s.io/apimachinery/pkg/labels"
 	listers "k8s.io/client-go/listers"

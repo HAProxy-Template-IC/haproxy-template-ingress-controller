@@ -23,8 +23,8 @@ import (
 
 	"k8s.io/client-go/util/jsonpath"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
 )
 
 // assertHAProxyValid validates that the HAProxy configuration is syntactically valid.

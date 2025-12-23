@@ -242,7 +242,7 @@ install_helm_chart() {
     # We'll wait for certificates, then pods separately
     local helm_args=(
         "upgrade" "--install" "$RELEASE_NAME"
-        "$PROJECT_ROOT/charts/haproxy-template-ic"
+        "$PROJECT_ROOT/charts/haptic"
         "--namespace" "$NAMESPACE"
         "--create-namespace"
     )

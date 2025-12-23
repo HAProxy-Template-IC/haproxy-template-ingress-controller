@@ -164,7 +164,7 @@ Install from OCI registry:
 
 ```bash
 helm install haproxy-ic \
-  oci://registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/charts/haproxy-template-ic \
+  oci://registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic \
   --version 0.1.0
 ```
 
@@ -198,7 +198,7 @@ cosign verify registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-c
 
 ```bash
 cosign verify \
-  oci://registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/charts/haproxy-template-ic:0.1.0
+  oci://registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic:0.1.0
 ```
 
 ## Version Compatibility Matrix

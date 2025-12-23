@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
-project_name: haproxy-template-ingress-controller
+project_name: haptic
 
 before:
   hooks:
@@ -64,7 +64,7 @@ changelog:
 
 release:
   gitlab:
-    owner: haproxy-template-ic
+    owner: haptic
     name: haproxy-template-ingress-controller
 
   # GitLab CI-specific settings

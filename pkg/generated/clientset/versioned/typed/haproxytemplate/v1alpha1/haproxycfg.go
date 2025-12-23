@@ -18,8 +18,8 @@ package v1alpha1
 
 import (
 	context "context"
-	haproxytemplatev1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	scheme "haproxy-template-ic/pkg/generated/clientset/versioned/scheme"
+	haproxytemplatev1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
+	scheme "haptic/pkg/generated/clientset/versioned/scheme"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"

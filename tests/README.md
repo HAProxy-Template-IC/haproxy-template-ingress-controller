@@ -263,10 +263,10 @@ kind delete cluster --name=haproxy-test
 go test -v ./tests/acceptance -run TestConfigMapReload
 
 # Access controller logs during test
-kubectl logs -n haproxy-test haproxy-template-ic-xxx -f
+kubectl logs -n haproxy-test haptic-xxx -f
 
 # Access debug endpoint
-kubectl port-forward -n haproxy-test pod/haproxy-template-ic-xxx 6060:6060
+kubectl port-forward -n haproxy-test pod/haptic-xxx 6060:6060
 curl http://localhost:6060/debug/vars/config
 ```
 

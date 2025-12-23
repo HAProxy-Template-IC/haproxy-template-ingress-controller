@@ -1,0 +1,97 @@
+HAPTIC (HAProxy Template Ingress Controller) has been installed!
+
+Controller Status:
+  kubectl get pods -l app.kubernetes.io/name={{ include "haptic.name" . }} -n {{ .Release.Namespace }}
+
+{{- if and (.Values.controller.config.controller.leaderElection.enabled) (gt (.Values.replicaCount | int) 1) }}
+
+High Availability ({{ .Values.replicaCount }} replicas):
+  ✓ Leader election is enabled
+  Only the leader replica deploys configs to HAProxy
+  All replicas watch resources and remain ready for failover
+
+  Check current leader:
+    kubectl get lease {{ .Values.controller.config.controller.leaderElection.leaseName }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.holderIdentity}'
+
+  View leadership metrics:
+    kubectl port-forward -n {{ .Release.Namespace }} deployment/{{ include "haptic.fullname" . }} 9090:9090
+    curl http://localhost:9090/metrics | grep leader_election_is_leader
+{{- else if eq (.Values.replicaCount | int) 1 }}
+
+Single Replica Mode:
+  Running with 1 replica (leader election disabled)
+  For high availability, scale to 2+ replicas:
+    helm upgrade {{ .Release.Name }} charts/haptic --reuse-values --set replicaCount=2
+{{- end }}
+
+View Logs:
+  kubectl logs -f -l app.kubernetes.io/name={{ include "haptic.name" . }} -n {{ .Release.Namespace }}
+
+Configuration:
+  ConfigMap: {{ .Values.controller.configmapName }}
+  Secret: {{ include "haptic.fullname" . }}-credentials
+
+Introspection Endpoint:
+  Health checks and debugging are available on port {{ .Values.controller.debugPort }}
+  Access via: kubectl port-forward -n {{ .Release.Namespace }} pod/<controller-pod> {{ .Values.controller.debugPort }}:{{ .Values.controller.debugPort }}
+  Endpoints: /healthz, /debug/vars, /debug/pprof
+
+Metrics Endpoint:
+  Prometheus metrics are available on port {{ .Values.controller.config.controller.metricsPort }}
+  Access via: kubectl port-forward -n {{ .Release.Namespace }} pod/<controller-pod> {{ .Values.controller.config.controller.metricsPort }}:{{ .Values.controller.config.controller.metricsPort }}
+  URL: http://localhost:{{ .Values.controller.config.controller.metricsPort }}/metrics
+
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+
+  ✓ ServiceMonitor has been created for Prometheus Operator
+  Prometheus will automatically discover and scrape metrics
+{{- else }}
+
+  ServiceMonitor: disabled (set monitoring.serviceMonitor.enabled=true to enable)
+{{- end }}
+
+{{- if and .Values.controller.templateLibraries.gateway.enabled (not (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass")) }}
+
+⚠️  WARNING: Gateway API library is enabled but Gateway API CRDs are not installed.
+
+The controller will not watch HTTPRoute/GRPCRoute resources.
+
+To fix this, install Gateway API CRDs:
+
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+
+Then restart or reinstall this Helm release.
+{{- end }}
+
+{{- if .Values.networkPolicy.enabled }}
+
+NetworkPolicy:
+  NetworkPolicy has been created to allow:
+  - DNS resolution (kube-system namespace)
+  - Kubernetes API access
+  - HAProxy Dataplane API access (cross-namespace)
+  {{- if .Values.networkPolicy.ingress.monitoring.enabled }}
+  - Prometheus metrics scraping ✓
+  {{- else }}
+  - Prometheus metrics scraping (disabled - set networkPolicy.ingress.monitoring.enabled=true)
+  {{- end }}
+
+  If you experience connectivity issues, check the NetworkPolicy configuration.
+{{- end }}
+
+Next Steps:
+  1. Deploy HAProxy pods with labels matching pod_selector:
+{{- range $key, $value := .Values.controller.config.podSelector.matchLabels }}
+     {{ $key }}: {{ $value }}
+{{- end }}
+
+  2. Each HAProxy pod should include:
+     - HAProxy container with Dataplane API sidecar
+     - Shared emptyDir volume for config
+     - Dataplane API accessible on port 5555
+     - Same pod labels for NetworkPolicy matching
+
+  3. Create Ingress resources to configure routing
+
+For more information, visit:
+  https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller

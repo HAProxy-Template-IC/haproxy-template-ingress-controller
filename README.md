@@ -1,8 +1,8 @@
-# HAProxy Template I(ngress)C(ontroller)
+# HAPTIC
 
 <div align="center">
 
-<img src="docs/controller/docs/assets/logo.svg" alt="HAProxy Template IC Logo" width="400">
+<img src="docs/controller/docs/assets/logo.svg" alt="HAPTIC Logo" width="400">
 
 </div>
 
@@ -10,7 +10,7 @@
 [![Build Status](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/pipeline.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/pipelines)
 [![Coverage](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/coverage.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/graphs/main/charts)
 
-A template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
+**HAPTIC** (**HA**Proxy **T**emplate **I**ngress **C**ontroller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
 > **Documentation**: <https://haproxy-template-ic.github.io/>
 
@@ -18,7 +18,7 @@ A template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kub
 
 ### Template-Driven Flexibility
 
-Traditional ingress controllers embed configuration logic in code. HAProxy Template IC inverts this:
+Traditional ingress controllers embed configuration logic in code. HAPTIC inverts this:
 
 - **Full HAProxy access** - Write any HAProxy directive using the [configuration language](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
 - **Add features without code changes** - New directives are template updates, not controller releases
@@ -36,9 +36,9 @@ Traditional ingress controllers embed configuration logic in code. HAProxy Templ
 ## Quick Start
 
 ```bash
-helm repo add haproxy-template-ic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
+helm repo add haptic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
 helm repo update
-helm install my-controller haproxy-template-ic/haproxy-template-ic
+helm install my-controller haptic/haptic
 ```
 
 For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-template-ic.github.io/controller/getting-started/) guide.
@@ -95,7 +95,7 @@ The project includes scripts for local development with kind:
 ```
 
 > [!WARNING]
-> Always use the `kind-haproxy-template-ic-dev` cluster context for development work. The `kind-haproxy-test` context is reserved for integration tests and will be automatically created and destroyed by test runs.
+> Always use the `kind-haptic-dev` cluster context for development work. The `kind-haproxy-test` context is reserved for integration tests and will be automatically created and destroyed by test runs.
 
 ### Pre-commit Hooks
 

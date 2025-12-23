@@ -14,7 +14,7 @@
 
 // Package eventimmutability provides a linter that detects modifications to event struct fields.
 //
-// This analyzer enforces the immutability contract for event structs in the haproxy-template-ic
+// This analyzer enforces the immutability contract for event structs in HAPTIC
 // controller. Events are passed by reference through the event bus, and consumers must treat
 // them as read-only to prevent unintended side effects.
 //
@@ -250,6 +250,6 @@ func run(pass *analysis.Pass) (interface{}, error) {
 func isEventPackage(pkgPath string) bool {
 	// Match both the full path and relative path patterns
 	return strings.HasSuffix(pkgPath, "/pkg/controller/events") ||
-		strings.HasSuffix(pkgPath, "haproxy-template-ic/pkg/controller/events") ||
-		pkgPath == "haproxy-template-ic/pkg/controller/events"
+		strings.HasSuffix(pkgPath, "haptic/pkg/controller/events") ||
+		pkgPath == "haptic/pkg/controller/events"
 }

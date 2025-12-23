@@ -15,7 +15,7 @@ The `config` package provides configuration loading, validation, and default val
 ```go
 import (
     "log"
-    "haproxy-template-ic/pkg/core/config"
+    "haptic/pkg/core/config"
 )
 
 // 1. Parse YAML configuration
@@ -40,7 +40,7 @@ if err := config.ValidateStructure(cfg); err != nil {
 ```go
 import (
     "log"
-    "haproxy-template-ic/pkg/core/config"
+    "haptic/pkg/core/config"
 )
 
 // Load credentials from Kubernetes Secret
@@ -64,7 +64,7 @@ import (
     "context"
     "log"
 
-    "haproxy-template-ic/pkg/core/config"
+    "haptic/pkg/core/config"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/client-go/kubernetes"
 )

@@ -28,9 +28,9 @@ The `pkg/k8s` package provides a high-level interface for watching Kubernetes re
 
 ```go
 import (
-    "haproxy-template-ic/pkg/k8s/client"
-    "haproxy-template-ic/pkg/k8s/types"
-    "haproxy-template-ic/pkg/k8s/watcher"
+    "haptic/pkg/k8s/client"
+    "haptic/pkg/k8s/types"
+    "haptic/pkg/k8s/watcher"
 )
 ```
 
@@ -46,9 +46,9 @@ import (
     "fmt"
     "time"
 
-    "haproxy-template-ic/pkg/k8s/client"
-    "haproxy-template-ic/pkg/k8s/types"
-    "haproxy-template-ic/pkg/k8s/watcher"
+    "haptic/pkg/k8s/client"
+    "haptic/pkg/k8s/types"
+    "haptic/pkg/k8s/watcher"
 
     "k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -98,9 +98,9 @@ import (
     "context"
     "fmt"
 
-    "haproxy-template-ic/pkg/k8s/client"
-    "haproxy-template-ic/pkg/k8s/types"
-    "haproxy-template-ic/pkg/k8s/watcher"
+    "haptic/pkg/k8s/client"
+    "haptic/pkg/k8s/types"
+    "haptic/pkg/k8s/watcher"
 
     corev1 "k8s.io/api/core/v1"
     "k8s.io/apimachinery/pkg/runtime/schema"

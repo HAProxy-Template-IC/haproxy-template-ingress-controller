@@ -22,10 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	"haproxy-template-ic/pkg/dataplane"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	"haptic/pkg/dataplane"
+	busevents "haptic/pkg/events"
 )
 
 // Test helper to create a test deployer component.

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- HAProxy Template IC — simplified icon (auto light/dark adaptive SVG) -->
+<!-- HAPTIC — simplified icon (auto light/dark adaptive SVG) -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 160" width="380" height="160" role="img" aria-labelledby="title desc">
-  <title id="title">HAProxy Template IC icon (auto light/dark)</title>
+  <title id="title">HAPTIC icon (auto light/dark)</title>
   <desc id="desc">Adaptive minimalist icon with templating tag "{%%}" in monospace font. Automatically switches color scheme between light and dark mode.</desc>
 
   <style>

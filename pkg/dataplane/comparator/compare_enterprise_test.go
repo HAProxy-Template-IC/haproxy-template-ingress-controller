@@ -3,9 +3,9 @@ package comparator
 import (
 	"testing"
 
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
-	"haproxy-template-ic/pkg/dataplane/parser"
-	v32ee "haproxy-template-ic/pkg/generated/dataplaneapi/v32ee"
+	"haptic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/parser"
+	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

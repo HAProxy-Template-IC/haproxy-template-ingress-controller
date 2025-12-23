@@ -19,8 +19,8 @@ import (
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/webhook"
+	"haptic/pkg/core/config"
+	"haptic/pkg/webhook"
 )
 
 // ExtractWebhookRules extracts webhook rules from controller configuration.

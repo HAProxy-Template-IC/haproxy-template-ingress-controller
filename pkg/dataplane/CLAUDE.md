@@ -193,7 +193,7 @@ The `Capabilities` struct is exported from `pkg/dataplane` for use in components
 // pkg/dataplane/capabilities.go
 package dataplane
 
-import "haproxy-template-ic/pkg/dataplane/client"
+import "haptic/pkg/dataplane/client"
 
 // Capabilities represents HAProxy feature availability based on version.
 // This is a type alias for client.Capabilities, exported for use by
@@ -628,7 +628,7 @@ Converts client-native parser models to Dataplane API models using JSON marshali
 
 ```go
 // Transform client-native model to API model
-import "haproxy-template-ic/pkg/dataplane/transform"
+import "haptic/pkg/dataplane/transform"
 
 // Client-native model from parser
 clientACL := &models.ACL{

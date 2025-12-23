@@ -19,8 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"haproxy-template-ic/pkg/controller/rendercontext"
-	"haproxy-template-ic/pkg/core/config"
+	"haptic/pkg/controller/rendercontext"
+	"haptic/pkg/core/config"
 )
 
 func TestSortSnippetNames(t *testing.T) {

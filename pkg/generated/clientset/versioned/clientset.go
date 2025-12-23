@@ -18,7 +18,7 @@ package versioned
 
 import (
 	fmt "fmt"
-	haproxytemplateicv1alpha1 "haproxy-template-ic/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1"
+	haproxytemplateicv1alpha1 "haptic/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"

@@ -9,7 +9,7 @@ Compares parsed HAProxy configurations to determine if deployment is needed.
 ## Quick Start
 
 ```go
-import "haproxy-template-ic/pkg/dataplane/comparator"
+import "haptic/pkg/dataplane/comparator"
 
 comp := comparator.New()
 needsUpdate := comp.Compare(current, desired)

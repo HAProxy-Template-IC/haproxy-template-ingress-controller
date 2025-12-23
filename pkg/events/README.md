@@ -34,7 +34,7 @@ Thread-safe pub/sub coordinator with startup synchronization.
 **Usage:**
 
 ```go
-import "haproxy-template-ic/pkg/events"
+import "haptic/pkg/events"
 
 // Create bus with buffer capacity for pre-start events
 bus := events.NewEventBus(100)
@@ -126,7 +126,7 @@ type Response interface {
 import (
     "context"
     "time"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/events"
 )
 
 // Create request

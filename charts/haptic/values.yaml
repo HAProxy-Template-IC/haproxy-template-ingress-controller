@@ -1,0 +1,1126 @@
+# Default values for haptic.
+#
+# Port architecture: Container ports (*.ports.*) are the source of truth.
+# Services reference them by name (targetPort: http). See README for details.
+
+# Common labels added to all resources
+# These are merged with chart-defined labels
+commonLabels: {}
+# environment: production
+# team: platform
+
+# Common annotations added to all resources
+commonAnnotations: {}
+# config.kubernetes.io/managed-by: helm
+
+# Replica count for controller
+# Default: 2 replicas for high availability with leader election
+# Only the leader replica deploys configs; followers remain ready for failover
+replicaCount: 2
+# Controller image configuration
+image:
+  repository: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion
+  tag: ""
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+# Controller configuration
+controller:
+  # Name of the HAProxyTemplateConfig CRD
+  # This is the name of the HAProxyTemplateConfig custom resource
+  crdName: haptic-config
+  # Introspection HTTP server port
+  # Provides /healthz, /debug/vars, and /debug/pprof endpoints
+  # Health checks use this port (see controller.ports.healthz)
+  # Access via: kubectl port-forward pod/controller-xxx 8080:8080
+  debugPort: 8080
+  # Controller container ports
+  # These are the ports the controller container listens on
+  # Services and health probes reference these by name
+  ports:
+    healthz: 8080 # Health check endpoint
+    metrics: 9090 # Prometheus metrics endpoint
+    webhook: 9443 # Admission webhook HTTPS endpoint
+  # Template libraries
+  # Control which predefined template libraries to include
+  # Libraries are merged in order: base -> ssl -> ingress -> gateway -> haproxytech -> values.yaml
+  # User-provided config in controller.config always takes precedence
+  # Each library can define its own watched resources (conditionally included when enabled)
+  templateLibraries:
+    # Base library: Resource-agnostic core configuration
+    # Provides generic HAProxy configuration, error pages, and plugin orchestration
+    # Uses resource_* patterns to discover and include resource-specific implementations
+    base:
+      enabled: true
+    # SSL library: SSL/TLS infrastructure and certificate management
+    # Provides HTTPS frontend, SSL passthrough infrastructure, and default certificate loading
+    # Watched resources: secrets (for SSL certificate loading)
+    # Features: HTTPS termination, SSL passthrough (coordinated with resource libraries)
+    ssl:
+      enabled: true
+    # Ingress library: Kubernetes Ingress resource support
+    # Provides routing and backend management for networking.k8s.io/v1 Ingress resources
+    # Implements resource_ingress_* plugin interface (backends, maps, routing logic)
+    # Watched resources: ingresses (filtered by spec.ingressClassName)
+    ingress:
+      enabled: true
+    # Gateway library: Kubernetes Gateway API support
+    # Provides routing for gateway.networking.k8s.io/v1 resources (HTTPRoute, GRPCRoute)
+    # Implements resource_gateway_* plugin interface
+    # Watched resources: httproutes, grpcroutes
+    # Features: Path matching, header matching, traffic splitting, host-based routing
+    gateway:
+      enabled: true
+    # HAProxyTech library: Support for haproxy.org/* annotations
+    # Currently includes basic authentication (haproxy.org/auth-type, haproxy.org/auth-secret)
+    # Works with both Ingress and Gateway API resources
+    haproxytech:
+      enabled: true
+    # HAProxy Ingress library: haproxy-ingress.github.io annotation compatibility
+    # Provides support for haproxy-ingress.github.io/path-type annotation
+    # Supports: "regex" path type for Ingress resources with pathType: ImplementationSpecific
+    # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
+    haproxyIngress:
+      enabled: false
+    # Path Regex Last library: Performance-first path matching order
+    # Overrides default ordering to: Exact > Prefix > Regex (regex moved to last)
+    # Default (de facto standard): Exact > Regex > Prefix
+    # Enable for HAProxy-optimized performance (exact/prefix faster than regex)
+    pathRegexLast:
+      enabled: false
+  # Default SSL Certificate Configuration
+  # A default SSL certificate is required for HTTPS traffic.
+  #
+  # DEFAULT BEHAVIOR (works out of the box with cert-manager):
+  # The chart creates a self-signed certificate for localdev.me (dev/test only).
+  # For production, override certManager.dnsNames and certManager.issuerRef.
+  #
+  # Certificate management options:
+  #   1. cert-manager (default): Uses self-signed issuer for localdev.me
+  #   2. Manual: Set certManager.enabled=false, create TLS Secret externally
+  #   3. Inline (testing only): Set create=true with cert/key values
+  defaultSSLCertificate:
+    # Enable default SSL certificate requirement
+    # Set to false to disable HTTPS support (HTTP only mode)
+    enabled: true
+    # Name of the Kubernetes TLS Secret containing the default certificate
+    # When using cert-manager, this is the Secret name that cert-manager will create
+    secretName: "default-ssl-cert"
+    # Namespace of the TLS Secret
+    # Defaults to Release.Namespace if empty
+    namespace: ""
+    #
+    # cert-manager configuration (enabled by default)
+    # Requires cert-manager to be installed in the cluster
+    # Creates a Certificate resource that provisions the TLS Secret automatically
+    certManager:
+      enabled: true
+      # Create a self-signed Issuer for the certificate
+      # When true, the chart creates an Issuer named <release>-ssl-selfsigned
+      # When false, you must provide an existing Issuer via issuerRef
+      createIssuer: true
+      # DNS names for the certificate
+      # Default: localdev.me (resolves to 127.0.0.1, useful for local development)
+      # PRODUCTION: Override with your actual domain names
+      dnsNames:
+        - "localdev.me"
+        - "*.localdev.me"
+      # Issuer reference for cert-manager Certificate resource
+      # When createIssuer=true, this is auto-configured to use the self-signed Issuer
+      # When createIssuer=false, you must specify an existing Issuer or ClusterIssuer
+      issuerRef:
+        # Name of the Issuer (auto-set when createIssuer=true)
+        name: ""
+        kind: Issuer
+        # group: cert-manager.io  # Optional, defaults to cert-manager.io
+      # Certificate validity duration (default: 1 year for self-signed)
+      duration: 8760h # 1 year
+      # Renew certificate when this much time is left (default: 30 days)
+      renewBefore: 720h # 30 days
+    #
+    # Manual certificate management
+    # Set certManager.enabled=false and create the TLS Secret externally
+    #
+    # Inline certificate (testing only)
+    # WARNING: NOT recommended - embeds secrets in Helm values
+    create: false
+    # cert: |
+    #   -----BEGIN CERTIFICATE-----
+    #   MIIDXTCCAkWgAwIBAgIJAKJ... (your certificate)
+    #   -----END CERTIFICATE-----
+    # key: |
+    #   -----BEGIN PRIVATE KEY-----
+    #   MIIEvQIBADANBgkqhkiG9w... (your private key)
+    #   -----END PRIVATE KEY-----
+  # HAProxyTemplateConfig specification
+  # This configuration is rendered into a HAProxyTemplateConfig CRD
+  # Users can customize this configuration using Helm values or create
+  # the HAProxyTemplateConfig resource manually
+  config:
+    # Reference to the Secret containing HAProxy Dataplane API credentials
+    # The Secret is automatically created by the Helm chart
+    credentialsSecretRef:
+      # Name will be set by the template to: {{ include "haptic.fullname" . }}-credentials
+      name: "" # Will be filled in by Helm template
+      # Namespace defaults to Release.Namespace if not specified
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/component: loadbalancer
+        # app.kubernetes.io/name and app.kubernetes.io/instance are set dynamically by template
+    controller:
+      # Health check and metrics ports
+      # These must match the container ports defined in controller.ports
+      healthzPort: 8080
+      metricsPort: 9090
+      # Leader election for high availability
+      # When multiple controller replicas are running, only the leader performs
+      # write operations (deploying configs to HAProxy). All replicas continue
+      # watching resources, rendering configs, and validating (hot standby).
+      leaderElection:
+        # Enable leader election (recommended when replicaCount > 1)
+        enabled: true
+        # Name of the Lease resource used for coordination
+        # Defaults to the Helm release fullname if not specified
+        # This ensures multiple releases in the same namespace don't conflict
+        leaseName: ""
+        # Duration that non-leader candidates wait to acquire leadership
+        # Default: 15s (failover happens within this time after leader failure)
+        leaseDuration: 15s
+        # Duration the leader retries refreshing leadership before giving up
+        # Default: 10s (should be < lease_duration, maintains 1.5x safety ratio)
+        renewDeadline: 10s
+        # Interval between leadership refresh attempts
+        # Default: 2s (should be < renew_deadline, typically 1/5 of it)
+        retryPeriod: 2s
+    dataplane:
+      # Port is defined in haproxy.ports.dataplane and referenced here
+      port: 5555 # Must match haproxy.ports.dataplane value
+      # Minimum time between consecutive deployments (rate limiting)
+      # Prevents rapid-fire deployments from hammering HAProxy instances
+      # Default: 2s
+      minDeploymentInterval: 2s
+      # Interval for periodic drift prevention deployments
+      # Triggers deployment if no deployment occurred within this interval
+      # Helps detect and correct configuration drift from external changes
+      # Default: 60s
+      driftPreventionInterval: 60s
+      # Directory paths for HAProxy auxiliary files
+      # These paths are used for both validation and deployment
+      # See: https://www.haproxy.com/documentation/haproxy-data-plane-api/reference/configuration-file/#resources
+      mapsDir: /etc/haproxy/maps
+      sslCertsDir: /etc/haproxy/ssl
+      generalStorageDir: /etc/haproxy/general
+      configFile: /etc/haproxy/haproxy.cfg
+    logging:
+      verbose: 1 # 0=WARNING, 1=INFO, 2=DEBUG
+    # Template rendering settings
+    # extraContext provides custom variables available to all templates
+    templatingSettings:
+      engine: scriggo # Template engine: "scriggo" (Go templates)
+      extraContext:
+        # Enable debug headers in HAProxy responses
+        # When enabled, HAProxy adds headers like X-HAProxy-Backend, X-Gateway-Matched-Route
+        # to show internal routing decisions
+        debug: true
+        # Parallel sharding is auto-calculated based on resource count and GOMAXPROCS.
+        # Formula: clamp(resourceCount / 300, 1, 2 * GOMAXPROCS)
+        # Override by setting shardCountOverride to a specific value:
+        # shardCountOverride: 8
+        # HAProxy bind ports are defined in haproxy.ports (referenced by templates)
+    watchedResourcesIgnoreFields:
+      - metadata.managedFields
+    watchedResources:
+      # Resource-specific watched resources are defined in template libraries:
+      # - ingresses: Defined in ingress library (when enabled)
+      # - httproutes, grpcroutes: Defined in gateway library (when enabled)
+      #
+      # Core resources (always watched):
+      services:
+        apiVersion: v1
+        resources: services
+        indexBy: ["metadata.namespace", "metadata.name"]
+      endpoints:
+        apiVersion: discovery.k8s.io/v1
+        resources: endpointslices
+        indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
+      secrets:
+        apiVersion: v1
+        resources: secrets
+        store: on-demand
+        indexBy: ["metadata.namespace", "metadata.name"]
+        #
+        # You can add custom watched resources here or override library-defined resources
+        # Example - Watch ConfigMaps:
+        # configmaps:
+        #   apiVersion: v1
+        #   resources: configmaps
+        #   indexBy: ["metadata.namespace", "metadata.name"]
+    # Template customization
+    # The sections below (templateSnippets, maps, files, haproxyConfig, validationTests)
+    # are provided by template libraries (see controller.templateLibraries above).
+    # You can override or extend library templates by defining them here.
+    # User-provided values always take precedence over library defaults.
+    #
+    # Example - Override a specific template snippet:
+    # templateSnippets:
+    #   backend-name:
+    #     template: >-
+    #       custom_{{ ingress.metadata.name }}
+    #
+    # Example - Add a custom map:
+    # maps:
+    #   custom.map:
+    #     template: |
+    #       # Your custom map content
+    #
+    # Example - Add custom validation tests:
+    # validationTests:
+    #   test-custom-feature:
+    #     description: Test custom feature
+    #     fixtures:
+    #       ingresses: [...]
+    #     assertions: [...]
+  # Uncomment and customize as needed:
+  # templateSnippets:
+  # maps:
+  # files:
+  # haproxyConfig:
+  # validationTests:
+
+# Webhook configuration
+# Kubernetes admission webhook for resource validation
+# ValidatingWebhookConfiguration is created by Helm at installation time
+webhook:
+  # Enable webhook validation
+  # Requires watched_resources to have enable_validation_webhook: true
+  enabled: true
+  # Webhook HTTPS server port is defined in controller.ports.webhook
+
+  # Secret name containing webhook TLS certificates
+  # The Secret must contain keys: tls.crt, tls.key, ca.crt
+  # Defaults to: {{ include "haptic.fullname" . }}-webhook-cert
+  # Leave empty to use the default naming convention
+  secretName: ""
+  # Service configuration for webhook endpoint
+  service:
+    # Service port (exposed to Kubernetes API server)
+    port: 443
+  # Certificate management
+  # Choose ONE of the following options:
+  #
+  # Option 1: Use cert-manager (default, recommended)
+  # Requires cert-manager to be installed in the cluster
+  # Creates a self-signed certificate automatically for dev/test
+  certManager:
+    enabled: true
+    # Create a self-signed Issuer for webhook certificates
+    # When enabled, the chart creates an Issuer that can sign webhook certificates
+    # This is the simplest setup - just set enabled=true and createIssuer=true
+    createIssuer: true
+    # Issuer reference for cert-manager Certificate resource
+    # When createIssuer=true, this references the auto-created Issuer
+    # When createIssuer=false, this must reference an existing Issuer/ClusterIssuer
+    issuerRef:
+      # Name of the Issuer (auto-set when createIssuer=true)
+      name: ""
+      kind: Issuer
+      # group: cert-manager.io  # Optional, defaults to cert-manager.io
+    # Certificate validity duration (default: 1 year)
+    duration: 8760h # 1 year
+    # Renew certificate when this much time is left (default: 30 days)
+    renewBefore: 720h # 30 days
+  #
+  # Option 2: Manual certificate management
+  # Provide base64-encoded CA bundle for ValidatingWebhookConfiguration
+  # This is required when certManager.enabled is false
+  # Create the certificate Secret manually with keys: tls.crt, tls.key, ca.crt
+  # Secret name is configured via webhook.secretName (default: haproxy-webhook-certs)
+  caBundle: "" # Base64-encoded CA certificate
+  # Example:
+  # caBundle: LS0tLS1CRUdJTi...
+# IngressClass resource
+# Creates an IngressClass resource for Kubernetes 1.18+
+# Only created when ingress library is enabled and API is available
+ingressClass:
+  # Enable IngressClass creation
+  enabled: true
+  # Name of the IngressClass
+  name: haproxy
+  # Mark as default IngressClass for the cluster
+  # Warning: Only one IngressClass should be marked as default cluster-wide
+  # Set to true only if this is the sole ingress controller
+  default: false
+  # Controller identifier (must be unique across all ingress controllers)
+  # This value should match what the controller uses to identify itself
+  controllerName: haproxy-template-ic.gitlab.io/controller
+# GatewayClass resource
+# Creates a GatewayClass resource for Gateway API
+# Only created when gateway library is enabled and Gateway API CRDs are installed
+# Prerequisites: Gateway API CRDs must be installed first:
+#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+gatewayClass:
+  # Enable GatewayClass creation
+  enabled: true
+  # Name of the GatewayClass
+  name: haproxy
+  # Mark as default GatewayClass for the cluster
+  # Warning: Only one GatewayClass should be marked as default cluster-wide
+  # Set to true only if this is the sole Gateway API controller
+  default: false
+  # Controller identifier (must be unique across all Gateway API controllers)
+  # This value should match what the controller uses to identify itself
+  controllerName: haproxy-template-ic.gitlab.io/controller
+  # Reference to HAProxyTemplateConfig for controller-specific configuration
+  # Automatically points to the HAProxyTemplateConfig created by this chart
+  # This links Gateway API configuration to the controller's template-based config
+  parametersRef:
+    group: haproxy-template-ic.gitlab.io
+    kind: HAProxyTemplateConfig
+    # Name will default to controller.crdName if empty
+    name: ""
+    # Namespace will default to Release.Namespace if empty
+    namespace: ""
+# Dataplane API credentials
+credentials:
+  dataplane:
+    username: admin
+    password: adminpass
+# ServiceAccount configuration
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+# RBAC configuration
+rbac:
+  # Specifies whether RBAC resources should be created
+  create: true
+# Pod annotations
+podAnnotations: {}
+# Pod labels
+podLabels: {}
+# Priority class for pod scheduling
+# Used to mark critical workloads for preferential scheduling and preemption
+# Common values:
+#   - system-cluster-critical: Highest priority for cluster infrastructure
+#   - system-node-critical: High priority for node management components
+#   - "" (empty): Default priority (recommended for most deployments)
+# Requires priority class to be pre-created in the cluster
+priorityClassName: ""
+# Topology spread constraints for high availability
+# Controls pod distribution across topology domains (zones, nodes, etc.)
+# Default: [] (empty, user opt-in)
+# Example for zone spreading:
+#   - maxSkew: 1
+#     topologyKey: topology.kubernetes.io/zone
+#     whenUnsatisfiable: DoNotSchedule
+#     labelSelector:
+#       matchLabels:
+#         app.kubernetes.io/name: haptic
+#         app.kubernetes.io/component: controller
+topologySpreadConstraints: []
+# Pod security context
+# Complies with Pod Security Standards (PSS) Restricted profile
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532 # nonroot user
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+# Container security context
+# Complies with Pod Security Standards (PSS) Restricted profile
+# No capabilities required - controller uses only standard syscalls
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+# Service configuration
+# Exposes controller endpoints (health and metrics)
+# Ports are defined in controller.ports and referenced in template
+service:
+  type: ClusterIP
+  # Service annotations
+  annotations: {}
+  # Cluster IP (leave empty for auto-assignment)
+  clusterIP: ""
+  # Load balancer configuration (when type: LoadBalancer)
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+  loadBalancerClass: ""
+  # External traffic policy (Cluster or Local)
+  externalTrafficPolicy: ""
+  # Internal traffic policy
+  internalTrafficPolicy: ""
+  # Session affinity (None or ClientIP)
+  sessionAffinity: ""
+  sessionAffinityConfig: {}
+# Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: healthz
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: healthz
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 3
+# Resources limits and requests
+# Note: The controller automatically detects and respects container resource limits:
+# - CPU limits: Go 1.25+ automatically sets GOMAXPROCS based on cgroup CPU limits
+# - Memory limits: automemlimit library automatically sets GOMEMLIMIT to 90% of cgroup memory limits
+#
+# The AUTOMEMLIMIT environment variable can be used to adjust the memory limit ratio (default: 0.9)
+# Example: AUTOMEMLIMIT=0.8 sets GOMEMLIMIT to 80% of the container memory limit
+#
+# Default requests ensure proper scheduling and QoS (Burstable class)
+# Limits can be set based on workload requirements
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+    # Optional limits - comment out if you prefer unbounded limits
+    # limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+# Node selector
+nodeSelector: {}
+# Tolerations
+tolerations: []
+# Affinity rules
+affinity: {}
+# Extra volumes for controller pod
+# Use this to add custom volumes (ConfigMaps, Secrets, emptyDir, etc.)
+extraVolumes: []
+# - name: custom-config
+#   configMap:
+#     name: my-config
+# - name: tmp-data
+#   emptyDir: {}
+# Extra volume mounts for controller container
+extraVolumeMounts: []
+# - name: custom-config
+#   mountPath: /etc/custom-config
+#   readOnly: true
+# Init containers for controller pod
+# Run before the main container starts
+initContainers: []
+# - name: wait-for-db
+#   image: busybox:1.36
+#   command: ['sh', '-c', 'until nc -z db 5432; do sleep 1; done']
+# Sidecar containers for controller pod
+sidecars: []
+# - name: log-collector
+#   image: fluent/fluent-bit:latest
+#   volumeMounts:
+#     - name: logs
+#       mountPath: /var/log
+# Startup probe (useful for slow-starting containers)
+# When enabled, liveness and readiness probes are disabled until startup succeeds
+startupProbe:
+  enabled: false
+  httpGet:
+    path: /healthz
+    port: healthz
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 1
+  successThreshold: 1
+  failureThreshold: 30
+# Container lifecycle hooks
+lifecycle: {}
+# preStop:
+#   exec:
+#     command: ["/bin/sh", "-c", "sleep 15"]
+# postStart:
+#   httpGet:
+#     path: /ready
+#     port: 8080
+# Termination grace period in seconds
+terminationGracePeriodSeconds: 30
+# Deployment update strategy
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%
+    maxUnavailable: 25%
+# Minimum seconds for pod to be considered ready after becoming healthy
+minReadySeconds: 0
+# Number of old ReplicaSets to retain for rollback
+revisionHistoryLimit: 10
+# Deployment-level annotations (different from pod annotations)
+deploymentAnnotations: {}
+# reloader.stakater.com/auto: "true"
+# DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
+dnsPolicy: ClusterFirst
+# DNS config for custom DNS settings
+dnsConfig: {}
+# nameservers:
+#   - 8.8.8.8
+# searches:
+#   - my-namespace.svc.cluster.local
+# options:
+#   - name: ndots
+#     value: "2"
+# Host aliases (/etc/hosts entries)
+hostAliases: []
+# - ip: "127.0.0.1"
+#   hostnames:
+#     - "foo.local"
+#     - "bar.local"
+# Runtime class name (for specialized runtimes like gVisor, Kata)
+runtimeClassName: ""
+# Autoscaling configuration
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+# Pod Disruption Budget
+# Enabled by default to protect against simultaneous pod eviction during cluster operations
+# Only applies when replicaCount > 1 (see template conditional)
+podDisruptionBudget:
+  enabled: true
+  # Only one of minAvailable or maxUnavailable should be set
+  minAvailable: 1
+  # maxUnavailable: 1
+# Prometheus Metrics and Monitoring
+# The controller exposes 11 Prometheus metrics on port 9090 covering:
+# - Reconciliation cycles and errors
+# - Deployment operations and duration
+# - Configuration validation
+# - Resource counts and event bus activity
+#
+# Metrics endpoint: http://<pod-ip>:9090/metrics
+# Access via: kubectl port-forward pod/<controller-pod> 9090:9090
+#
+# For complete metric definitions and queries, see:
+# pkg/controller/metrics/README.md in the repository
+monitoring:
+  # ServiceMonitor for Prometheus Operator
+  # Creates a ServiceMonitor resource that configures Prometheus to scrape metrics
+  serviceMonitor:
+    enabled: false
+    # Scrape interval for metrics collection
+    interval: 30s
+    # Timeout for each scrape
+    scrapeTimeout: 10s
+    # Additional labels for ServiceMonitor resource
+    # Used by Prometheus to select which ServiceMonitors to use
+    labels: {}
+    #   prometheus: kube-prometheus
+    #   release: prometheus
+    # Relabeling configurations applied before scraping
+    # https://prometheus.io/docs/prometheus/latest/configuration/configuration/#relabel_config
+    relabelings: []
+    # Example: Add cluster label
+    # - sourceLabels: [__address__]
+    #   targetLabel: cluster
+    #   replacement: production
+    # Metric relabeling configurations applied to scraped metrics
+    metricRelabelings: []
+    # Example: Drop specific metrics
+    # - sourceLabels: [__name__]
+    #   regex: 'haptic_event_subscribers'
+    #   action: drop
+  # PodMonitor for Prometheus Operator (alternative to ServiceMonitor)
+  # Use when metrics are exposed directly on pods rather than via Service
+  podMonitor:
+    enabled: false
+    # Scrape interval for metrics collection
+    interval: 30s
+    # Timeout for each scrape
+    scrapeTimeout: 10s
+    # Additional labels for PodMonitor resource
+    labels: {}
+    # Relabeling configurations
+    relabelings: []
+    # Metric relabeling configurations
+    metricRelabelings: []
+  # PrometheusRule for alerting
+  # Creates alerting rules for Prometheus Operator
+  prometheusRule:
+    enabled: false
+    # Additional labels for PrometheusRule resource
+    # Used by Prometheus to select which PrometheusRules to use
+    labels: {}
+    # Custom alerting rules (overrides default rules when non-empty)
+    rules: []
+    # - alert: HAProxyControllerReconciliationErrors
+    #   expr: rate(haptic_reconciliation_errors_total[5m]) > 0
+    #   for: 5m
+    #   labels:
+    #     severity: warning
+    #   annotations:
+    #     summary: "HAProxy controller has reconciliation errors"
+    # Default rules (created when rules is empty and defaultRules.enabled is true)
+    defaultRules:
+      enabled: true
+      # Individual rule toggles
+      reconciliationErrors: true
+      deploymentFailures: true
+      highQueueDepth: true
+      leaderElectionLost: true
+  # Grafana dashboard ConfigMap
+  # Creates a ConfigMap with dashboard JSON for Grafana sidecar discovery
+  grafanaDashboard:
+    enabled: false
+    # Labels for dashboard discovery (Grafana sidecar)
+    labels:
+      grafana_dashboard: "1"
+    # Annotations
+    annotations: {}
+    # Dashboard folder in Grafana
+    folder: "HAProxy"
+    # Dashboard namespace (if different from release namespace)
+    namespace: ""
+    # Use built-in dashboard (includes all 11 controller metrics)
+    # Set to false to provide your own dashboard JSON via customDashboard
+    useBuiltIn: true
+    # Custom dashboard JSON (only used when useBuiltIn: false)
+    customDashboard: {}
+# HAProxy data plane configuration
+# Deploys HAProxy pods with Dataplane API sidecars
+# The controller manages these pods' configurations
+haproxy:
+  # Enable HAProxy deployment as part of this chart
+  # Set to false to use external HAProxy pods (bring your own HAProxy)
+  enabled: true
+  # HAProxy container ports
+  # These are the ports HAProxy listens on inside the container
+  # Services and NetworkPolicies reference these by name or value
+  ports:
+    http: 8080 # HTTP frontend
+    https: 8443 # HTTPS frontend
+    stats: 8404 # Health/stats page
+    dataplane: 5555 # Dataplane API (for controller communication)
+  # Number of HAProxy replicas
+  replicaCount: 2
+  # HAProxy image configuration
+  image:
+    repository: haproxytech/haproxy-debian
+    pullPolicy: IfNotPresent
+    # HAProxy has independent versioning from controller
+    # Chart default: 3.2 (can override via --set haproxy.image.tag=3.0)
+    # renovate: datasource=docker depName=haproxytech/haproxy-debian
+    tag: "3.4"
+  # Enterprise mode configuration
+  # Set to true when using HAProxy Enterprise images (hapee-registry.haproxy.com/haproxy-enterprise)
+  # Enterprise images have different binary paths and user configuration
+  enterprise:
+    enabled: false
+    # HAProxy Enterprise version (e.g., "3.0", "3.1", "3.2")
+    # Used to construct binary paths: /opt/hapee-{version}/sbin/hapee-lb
+    version: "3.2"
+  # Binary paths - automatically derived from enterprise settings
+  # Override these only if using custom images with non-standard paths
+  # Community defaults:
+  #   haproxyBin: /usr/local/sbin/haproxy
+  #   dataplaneBin: /usr/local/bin/dataplaneapi
+  #   user: haproxy
+  # Enterprise defaults (when enterprise.enabled=true):
+  #   haproxyBin: /opt/hapee-{version}/sbin/hapee-lb
+  #   dataplaneBin: /opt/hapee-extras/sbin/hapee-dataplaneapi
+  #   user: hapee
+  haproxyBin: ""
+  dataplaneBin: ""
+  user: ""
+  # HAProxy service configuration
+  # Service exposes HAProxy container ports externally
+  # targetPort references are defined in template using named ports
+  service:
+    type: NodePort
+    annotations: {}
+    # LoadBalancer configuration (when type: LoadBalancer)
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    loadBalancerClass: ""
+    # External traffic policy (Cluster or Local)
+    # Local preserves client source IP but may cause uneven load distribution
+    externalTrafficPolicy: ""
+    # Internal traffic policy
+    internalTrafficPolicy: ""
+    # Health check node port (for LoadBalancer with Local traffic policy)
+    healthCheckNodePort: ""
+    # Publish not-ready addresses
+    publishNotReadyAddresses: false
+    # Port configurations
+    http:
+      port: 80
+      # targetPort: http (set in template)
+      nodePort: 30080
+    https:
+      port: 443
+      # targetPort: https (set in template)
+      nodePort: 30443
+    stats:
+      port: 8404
+      # targetPort: stats (set in template)
+      nodePort: 30404
+  # Dataplane API sidecar configuration
+  dataplane:
+    service:
+      type: ClusterIP
+      # port references haproxy.ports.dataplane (set in template)
+    credentials:
+      # These are referenced by credentialsSecretRef in controller.config
+      # The secret is created by the chart's credentials template
+      username: admin
+      password: adminpass
+  # Resource limits and requests for HAProxy containers
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # Priority class for pod scheduling
+  # Used to mark critical workloads for preferential scheduling and preemption
+  # Common values:
+  #   - system-cluster-critical: Highest priority for cluster infrastructure
+  #   - system-node-critical: High priority for node management components
+  #   - "" (empty): Default priority (recommended for most deployments)
+  # Requires priority class to be pre-created in the cluster
+  priorityClassName: ""
+  # Topology spread constraints for high availability
+  # Controls pod distribution across topology domains (zones, nodes, etc.)
+  # Default: [] (empty, user opt-in)
+  # Example for zone spreading:
+  #   - maxSkew: 1
+  #     topologyKey: topology.kubernetes.io/zone
+  #     whenUnsatisfiable: DoNotSchedule
+  #     labelSelector:
+  #       matchLabels:
+  #         app.kubernetes.io/name: haptic
+  #         app.kubernetes.io/component: loadbalancer
+  topologySpreadConstraints: []
+  # Node selector for HAProxy pods
+  nodeSelector: {}
+  # Tolerations for HAProxy pods
+  tolerations: []
+  # Affinity rules for HAProxy pods
+  affinity: {}
+  # DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
+  dnsPolicy: ClusterFirst
+  # DNS config for custom nameservers, searches, and options
+  dnsConfig: {}
+  # nameservers:
+  #   - 8.8.8.8
+  # searches:
+  #   - my-namespace.svc.cluster.local
+  # options:
+  #   - name: ndots
+  #     value: "2"
+  # Host aliases (/etc/hosts entries)
+  hostAliases: []
+  # - ip: "127.0.0.1"
+  #   hostnames:
+  #     - "foo.local"
+  # Runtime class name (for specialized runtimes like gVisor, Kata)
+  runtimeClassName: ""
+  # Extra volumes for HAProxy pod
+  extraVolumes: []
+  # - name: custom-config
+  #   configMap:
+  #     name: my-haproxy-config
+  # Extra volume mounts for HAProxy container
+  extraVolumeMounts: []
+  # - name: custom-config
+  #   mountPath: /etc/haproxy/custom
+  #   readOnly: true
+  # Init containers for HAProxy pod
+  initContainers: []
+  # - name: init-config
+  #   image: busybox:1.36
+  #   command: ['sh', '-c', 'echo "Initializing..."']
+  # Sidecar containers for HAProxy pod
+  sidecars: []
+  # - name: log-shipper
+  #   image: fluent/fluent-bit:latest
+  # Container lifecycle hooks for HAProxy container
+  lifecycle: {}
+  # preStop:
+  #   exec:
+  #     command: ["/bin/sh", "-c", "sleep 30"]
+  # Termination grace period in seconds
+  terminationGracePeriodSeconds: 30
+  # Deployment update strategy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  # Minimum seconds for pod to be considered ready
+  minReadySeconds: 0
+  # Number of old ReplicaSets to retain
+  revisionHistoryLimit: 10
+  # KEDA autoscaling for HAProxy loadbalancer
+  # Enables event-driven scaling based on traffic metrics
+  keda:
+    enabled: false
+    # Scaling limits
+    minReplicaCount: 2
+    maxReplicaCount: 10
+    # How often KEDA checks triggers (seconds)
+    pollingInterval: 30
+    # Cooldown period before scaling down (seconds)
+    cooldownPeriod: 300
+    # Fallback configuration if trigger fails
+    fallback:
+      failureThreshold: 3
+      replicas: 2
+    # Advanced HPA behavior configuration
+    advanced: {}
+    # horizontalPodAutoscalerConfig:
+    #   behavior:
+    #     scaleDown:
+    #       stabilizationWindowSeconds: 300
+    #       policies:
+    #         - type: Percent
+    #           value: 10
+    #           periodSeconds: 60
+    #     scaleUp:
+    #       stabilizationWindowSeconds: 0
+    # Triggers (required when keda.enabled is true)
+    # See: https://keda.sh/docs/2.17/scalers/
+    triggers: []
+    # Example: Scale based on HAProxy connection count
+    # - type: prometheus
+    #   metadata:
+    #     serverAddress: http://prometheus:9090
+    #     metricName: haproxy_connections_total
+    #     threshold: "1000"
+    #     query: sum(rate(haproxy_server_connections_total[1m]))
+    # Example: Scale based on HTTP requests per second
+    # - type: prometheus
+    #   metadata:
+    #     serverAddress: http://prometheus:9090
+    #     metricName: haproxy_http_requests_per_second
+    #     threshold: "500"
+    #     query: sum(rate(haproxy_http_requests_total[1m]))
+    # Example: Time-based scaling for business hours
+    # - type: cron
+    #   metadata:
+    #     timezone: UTC
+    #     start: 0 8 * * 1-5
+    #     end: 0 18 * * 1-5
+    #     desiredReplicas: "5"
+  # Pod security context for HAProxy deployment
+  # Complies with Pod Security Standards (PSS) Restricted profile
+  # NO NET_BIND_SERVICE capability required - HAProxy binds to unprivileged ports (8080, 8443, 8404)
+  # Kubernetes Service handles mapping to privileged ports (80, 443)
+  #
+  # UIDs are auto-derived based on enterprise.enabled:
+  #   Community: runAsUser=99, runAsGroup=99, fsGroup=99 (haproxy user)
+  #   Enterprise: runAsUser=1000, runAsGroup=1000, fsGroup=1000 (hapee-lb user)
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  # Initial HAProxy configuration
+  # This provides a minimal working config until the controller deploys the full config
+  initialConfig: |
+    global
+        log stdout len 4096 local0 info
+
+    defaults
+        mode http
+        log global
+        option httplog
+        timeout connect 5000
+        timeout client 50000
+        timeout server 50000
+
+    frontend status
+        bind *:8404
+        http-request return status 200 content-type text/plain string "OK" if { path /healthz }
+
+    frontend http_frontend
+        bind *:8080
+        default_backend default_backend
+
+    backend default_backend
+        http-request return status 404
+  # NetworkPolicy configuration for HAProxy loadbalancer pods
+  # This controls network access to/from HAProxy pods that handle incoming traffic
+  #
+  # !!! warning "CNI Plugin Requirement"
+  #     NetworkPolicies require a CNI plugin that supports NetworkPolicy enforcement
+  #     (e.g., Calico, Cilium, Weave Net). Clusters without a compatible CNI plugin
+  #     will ignore NetworkPolicy resources. kind clusters use kindnet by default,
+  #     which does NOT support NetworkPolicy. To test NetworkPolicies with kind,
+  #     install Calico or Cilium.
+  #
+  # !!! warning "Deny-All Prevention"
+  #     Setting allowExternal: false with empty allowedSources will cause
+  #     Helm installation to fail with a validation error. This prevents
+  #     accidental creation of a deny-all policy that blocks all traffic.
+  #     Either set allowExternal: true OR provide allowedSources.
+  networkPolicy:
+    # Enable NetworkPolicy for HAProxy loadbalancer pods
+    # Disabled by default to match common ingress controller practice
+    # Enable in production to restrict network access
+    enabled: false
+    # Allow external traffic (from any source including internet)
+    # true: Allow traffic from any source (required for public-facing ingress with NodePort/LoadBalancer)
+    # false: Only allow from specific sources defined in allowedSources
+    #
+    # When true, the NetworkPolicy omits the 'from' clause for HTTP/HTTPS ingress rules,
+    # which is the standard Kubernetes pattern for allowing traffic from any source.
+    allowExternal: true
+    # When allowExternal: false, define allowed traffic sources
+    # REQUIRED if allowExternal is false - empty list will cause Helm validation error
+    #
+    # Example - allow only from specific namespaces:
+    # allowedSources:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: frontend
+    #     podSelector:
+    #       matchLabels:
+    #         app: nginx
+    #
+    # Example - allow from any pod in specific namespaces:
+    # allowedSources:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         environment: production
+    #
+    # Example - allow from specific IP ranges:
+    # allowedSources:
+    #   - ipBlock:
+    #       cidr: 10.0.0.0/8
+    #       except:
+    #         - 10.1.0.0/16
+    allowedSources: []
+    # Additional custom ingress rules
+    # These are added to the NetworkPolicy as-is
+    # Use this for advanced scenarios not covered by the default rules
+    # Example:
+    # extraIngress:
+    #   - from:
+    #       - ipBlock:
+    #           cidr: 192.168.1.0/24
+    #     ports:
+    #       - port: 8080
+    extraIngress: []
+    # Additional custom egress rules
+    # Default egress rules allow DNS and backend service connections
+    # Use this to add additional egress restrictions
+    # Example:
+    # extraEgress:
+    #   - to:
+    #       - namespaceSelector:
+    #           matchLabels:
+    #             name: external-api
+    #     ports:
+    #       - port: 443
+    extraEgress: []
+# NetworkPolicy configuration for controller pods
+# This controls network access to/from the controller that manages HAProxy configurations
+networkPolicy:
+  enabled: true
+  # Egress rules
+  egress:
+    # Allow DNS resolution (required for service discovery)
+    allowDNS: true
+    # Kubernetes API Server access (required for watching resources)
+    # Configure based on your cluster setup
+    kubernetesApi:
+      # For kind/standard clusters
+      # Adjust this CIDR based on your cluster
+      - cidr: 0.0.0.0/0 # Allow all by default, restrict in production
+        ports:
+          - port: 443
+            protocol: TCP
+          - port: 6443
+            protocol: TCP
+    # HAProxy Dataplane API pods (in any namespace)
+    haproxyPods:
+      # Allow access to all pods matching the pod_selector
+      enabled: true
+      # Pod selector for HAProxy pods
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: loadbalancer
+          # app.kubernetes.io/name and app.kubernetes.io/instance are set dynamically by template
+      # Namespace selector - empty {} means all namespaces
+      namespaceSelector: {}
+      # Ports are defined in haproxy.ports (referenced in template)
+    # Additional custom egress rules
+    additionalRules:
+      # Allow HAProxy (load balancer) to connect to any backend service in the cluster
+      # This is required for HAProxy to proxy traffic and perform health checks
+      - to:
+          - namespaceSelector: {} # All namespaces
+          - podSelector: {} # All pods
+            # Example of additional custom rule:
+            # - to:
+            #     - namespaceSelector:
+            #         matchLabels:
+            #           name: monitoring
+            #   ports:
+            #     - port: 9090
+            #       protocol: TCP
+  # Ingress rules
+  ingress:
+    # Allow Prometheus/monitoring to scrape metrics
+    # IMPORTANT: Enable this if using ServiceMonitor with NetworkPolicy
+    # Without this, Prometheus cannot access the metrics endpoint
+    monitoring:
+      enabled: false # Set to true when using Prometheus with NetworkPolicy
+      # Pod selector for monitoring systems (e.g., Prometheus)
+      # Match the labels of your Prometheus pods
+      podSelector: {}
+      #   matchLabels:
+      #     app: prometheus
+      #     app.kubernetes.io/name: prometheus
+      # Namespace selector for monitoring systems
+      # Match the namespace where Prometheus is running
+      namespaceSelector: {}
+      #   matchLabels:
+      #     name: monitoring
+      #     kubernetes.io/metadata.name: monitoring
+      # Port is defined in controller.ports.metrics (referenced in template)
+    # Allow health checks from load balancers/ingress
+    healthChecks:
+      enabled: true
+      # Allow from anywhere for health checks
+      from:
+        - podSelector: {}
+          # Port is defined in controller.ports.healthz (referenced in template)
+    # Allow controller to access HAProxy Dataplane API
+    # IMPORTANT: This is required for the controller to sync configurations
+    dataplaneApi:
+      enabled: true
+      # Allow from controller pods in the same namespace
+      from:
+        - podSelector: {}
+          # Port is defined in haproxy.ports.dataplane (referenced in template)
+    # Allow Kubernetes API server to call webhook
+    # IMPORTANT: Enable this when webhook is enabled with NetworkPolicy
+    webhook:
+      enabled: true # Automatically enabled when webhook.enabled is true
+      # Allow from all sources (API server nodes)
+      # The Kubernetes API server needs to reach the webhook endpoint
+      from:
+        - podSelector: {}
+        - namespaceSelector: {}
+    # Additional custom ingress rules
+    additionalRules: []

@@ -1,7 +1,7 @@
 package a
 
 import (
-	"haproxy-template-ic/pkg/controller/events"
+	"haptic/pkg/controller/events"
 	"time"
 )
 

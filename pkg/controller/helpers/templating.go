@@ -18,8 +18,8 @@ package helpers
 import (
 	"fmt"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/core/config"
+	"haptic/pkg/templating"
 )
 
 // EngineOptions configures template engine creation.

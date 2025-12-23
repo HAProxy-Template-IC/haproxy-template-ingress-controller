@@ -28,11 +28,11 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haproxy-template-ic/pkg/dataplane/client"
-	"haproxy-template-ic/pkg/dataplane/parser"
-	v30 "haproxy-template-ic/pkg/generated/dataplaneapi/v30"
-	v31 "haproxy-template-ic/pkg/generated/dataplaneapi/v31"
-	v32 "haproxy-template-ic/pkg/generated/dataplaneapi/v32"
+	"haptic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/parser"
+	v30 "haptic/pkg/generated/dataplaneapi/v30"
+	v31 "haptic/pkg/generated/dataplaneapi/v31"
+	v32 "haptic/pkg/generated/dataplaneapi/v32"
 )
 
 // haproxyCheckMutex serializes HAProxy validation to work around issues with

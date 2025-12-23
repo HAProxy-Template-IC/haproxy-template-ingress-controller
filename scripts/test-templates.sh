@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CHART_DIR="${PROJECT_ROOT}/charts/haproxy-template-ic"
+CHART_DIR="${PROJECT_ROOT}/charts/haptic"
 CONTROLLER_BIN="${PROJECT_ROOT}/bin/controller"
 
 # Colors for output

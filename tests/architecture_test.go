@@ -21,7 +21,7 @@ import (
 //nolint:revive // cognitive-complexity: Architecture validation with detailed error reporting
 func TestArchitecture(t *testing.T) {
 	// Load module information
-	moduleInfo := configuration.Load("haproxy-template-ic")
+	moduleInfo := configuration.Load("haptic")
 
 	// Load configuration from arch-go.yml
 	config, err := configuration.LoadConfig("../arch-go.yml")

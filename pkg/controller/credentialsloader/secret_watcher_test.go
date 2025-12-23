@@ -27,8 +27,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
 )
 
 func TestNewSecretWatcher(t *testing.T) {

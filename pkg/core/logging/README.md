@@ -9,7 +9,7 @@ Provides utilities for initializing and configuring structured logging throughou
 ## Installation
 
 ```go
-import "haproxy-template-ic/pkg/core/logging"
+import "haptic/pkg/core/logging"
 ```
 
 ## Quick Start
@@ -17,7 +17,7 @@ import "haproxy-template-ic/pkg/core/logging"
 ```go
 import (
     "log/slog"
-    "haproxy-template-ic/pkg/core/logging"
+    "haptic/pkg/core/logging"
 )
 
 // Initialize logger

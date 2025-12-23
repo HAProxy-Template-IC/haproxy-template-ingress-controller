@@ -3,7 +3,7 @@ package comparator
 import (
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/comparator/sections"
 )
 
 // compareFilters compares filter configurations within a frontend or backend.

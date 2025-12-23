@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/dataplane/parser/enterprise"
-	"haproxy-template-ic/pkg/dataplane/parser/enterprise/parsers"
+	"haptic/pkg/dataplane/parser/enterprise"
+	"haptic/pkg/dataplane/parser/enterprise/parsers"
 )
 
 // =============================================================================

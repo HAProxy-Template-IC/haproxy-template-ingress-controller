@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"time"
 
-	"haproxy-template-ic/pkg/httpstore"
+	"haptic/pkg/httpstore"
 )
 
 // HTTPStoreWrapper wraps HTTPStore for template access.

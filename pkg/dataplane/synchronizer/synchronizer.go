@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"haproxy-template-ic/pkg/dataplane/client"
-	"haproxy-template-ic/pkg/dataplane/comparator"
-	"haproxy-template-ic/pkg/dataplane/parser"
+	"haptic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/comparator"
+	"haptic/pkg/dataplane/parser"
 )
 
 // Synchronizer orchestrates configuration synchronization between

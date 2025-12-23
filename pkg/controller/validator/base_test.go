@@ -23,10 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	coreconfig "haptic/pkg/core/config"
+	busevents "haptic/pkg/events"
 )
 
 // panicHandler is a mock validation handler that panics.

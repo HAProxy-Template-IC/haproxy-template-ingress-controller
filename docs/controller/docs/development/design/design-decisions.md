@@ -203,25 +203,25 @@ go metricsServer.Start(ctx)
 **Metrics Exposed** (11 total):
 
 1. **Reconciliation Metrics**:
-   - `haproxy_ic_reconciliation_total`: Counter for reconciliation cycles
-   - `haproxy_ic_reconciliation_errors_total`: Counter for reconciliation failures
-   - `haproxy_ic_reconciliation_duration_seconds`: Histogram for reconciliation duration
+   - `haptic_reconciliation_total`: Counter for reconciliation cycles
+   - `haptic_reconciliation_errors_total`: Counter for reconciliation failures
+   - `haptic_reconciliation_duration_seconds`: Histogram for reconciliation duration
 
 2. **Deployment Metrics**:
-   - `haproxy_ic_deployment_total`: Counter for deployments
-   - `haproxy_ic_deployment_errors_total`: Counter for deployment failures
-   - `haproxy_ic_deployment_duration_seconds`: Histogram for deployment duration
+   - `haptic_deployment_total`: Counter for deployments
+   - `haptic_deployment_errors_total`: Counter for deployment failures
+   - `haptic_deployment_duration_seconds`: Histogram for deployment duration
 
 3. **Validation Metrics**:
-   - `haproxy_ic_validation_total`: Counter for validations
-   - `haproxy_ic_validation_errors_total`: Counter for validation failures
+   - `haptic_validation_total`: Counter for validations
+   - `haptic_validation_errors_total`: Counter for validation failures
 
 4. **Resource Metrics**:
-   - `haproxy_ic_resource_count`: Gauge vector with type labels (haproxy-pods, watched-resources)
+   - `haptic_resource_count`: Gauge vector with type labels (haproxy-pods, watched-resources)
 
 5. **Event Bus Metrics**:
-   - `haproxy_ic_event_subscribers`: Gauge for active subscribers
-   - `haproxy_ic_events_published_total`: Counter for published events
+   - `haptic_event_subscribers`: Gauge for active subscribers
+   - `haptic_events_published_total`: Counter for published events
 
 See `pkg/controller/metrics/README.md` for complete metric definitions and Prometheus queries.
 
@@ -231,7 +231,7 @@ See `pkg/controller/metrics/README.md` for complete metric definitions and Prome
 import "go.opentelemetry.io/otel"
 
 func (r *Renderer) Render(ctx context.Context, tpl string) (string, error) {
-    ctx, span := otel.Tracer("haproxy-template-ic").Start(ctx, "render_template")
+    ctx, span := otel.Tracer("haptic").Start(ctx, "render_template")
     defer span.End()
 
     span.SetAttributes(
@@ -1373,7 +1373,7 @@ import (
     "log/slog"
     "time"
 
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/events"
 )
 
 // EventCommentator subscribes to all events and produces domain-aware log messages
@@ -1548,7 +1548,7 @@ import (
     "sync"
     "time"
 
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/events"
 )
 
 // EventWithTimestamp wraps an event with its occurrence time

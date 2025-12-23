@@ -9,7 +9,7 @@ Defines configuration schema and provides functions for parsing ConfigMap data a
 ## Installation
 
 ```go
-import "haproxy-template-ic/pkg/core/config"
+import "haptic/pkg/core/config"
 ```
 
 ## Quick Start

@@ -12,7 +12,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Configuration
 # Naming conventions - defaults match chart name for clean resource names
 # Override via environment variables if needed
-CLUSTER_NAME="${CLUSTER_NAME:-haproxy-template-ic-dev}"
+CLUSTER_NAME="${CLUSTER_NAME:-haptic-dev}"
 CTRL_NAMESPACE="${CTRL_NAMESPACE:-haptic}"
 RELEASE_NAME="${RELEASE_NAME:-haptic}"
 

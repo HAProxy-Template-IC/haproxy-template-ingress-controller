@@ -136,10 +136,10 @@ Convenience functions with consistent naming.
 
 **Naming Convention:**
 
-All metrics are prefixed with `haproxy_ic_`:
+All metrics are prefixed with `haptic_`:
 
 ```go
-const metricPrefix = "haproxy_ic_"
+const metricPrefix = "haptic_"
 
 func metricName(name string) string {
     return metricPrefix + name
@@ -225,7 +225,7 @@ func TestNewCounter(t *testing.T) {
     gathered, err := registry.Gather()
     require.NoError(t, err)
     assert.Len(t, gathered, 1)
-    assert.Equal(t, "haproxy_ic_test_total", gathered[0].GetName())
+    assert.Equal(t, "haptic_test_total", gathered[0].GetName())
 
     // Verify value
     assert.Equal(t, 1.0, testutil.ToFloat64(counter))
@@ -411,7 +411,7 @@ func TestNewMetricType(t *testing.T) {
     gathered, err := registry.Gather()
     require.NoError(t, err)
     assert.Len(t, gathered, 1)
-    assert.Equal(t, "haproxy_ic_test", gathered[0].GetName())
+    assert.Equal(t, "haptic_test", gathered[0].GetName())
 }
 ```
 
@@ -544,7 +544,7 @@ package metrics
 
 import (
     "github.com/prometheus/client_golang/prometheus"
-    pkgmetrics "haproxy-template-ic/pkg/metrics"
+    pkgmetrics "haptic/pkg/metrics"
 )
 
 type Metrics struct {

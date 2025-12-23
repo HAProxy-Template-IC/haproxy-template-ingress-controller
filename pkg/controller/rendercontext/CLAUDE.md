@@ -29,7 +29,7 @@ This package consolidates template context creation from 4 previously duplicated
 ## Usage
 
 ```go
-import "haproxy-template-ic/pkg/controller/rendercontext"
+import "haptic/pkg/controller/rendercontext"
 
 builder := rendercontext.NewBuilder(
     cfg,

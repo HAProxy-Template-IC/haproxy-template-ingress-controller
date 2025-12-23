@@ -1,0 +1,6 @@
+chart-dirs:
+  - charts
+target-branch: main
+validate-maintainers: false
+check-version-increment: false
+lint-conf: charts/haptic/.ct/lintconf.yaml

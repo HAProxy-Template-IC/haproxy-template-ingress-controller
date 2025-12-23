@@ -27,9 +27,9 @@ import (
 
     "k8s.io/client-go/kubernetes"
 
-    busevents "haproxy-template-ic/pkg/events"
-    "haproxy-template-ic/pkg/controller/leaderelection"
-    k8sleaderelection "haproxy-template-ic/pkg/k8s/leaderelection"
+    busevents "haptic/pkg/events"
+    "haptic/pkg/controller/leaderelection"
+    k8sleaderelection "haptic/pkg/k8s/leaderelection"
 )
 
 // Create pure leader election config
@@ -245,7 +245,7 @@ func TestLeaderElection_BothReplicasWatchResources(t *testing.T)
 controller:
   leader_election:
     enabled: true
-    lease_name: "haproxy-template-ic-leader"
+    lease_name: "haptic-leader"
     lease_duration: "60s"
     renew_deadline: "15s"
     retry_period: "5s"
@@ -257,7 +257,7 @@ controller:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: haproxy-template-ic
+  name: haptic
 rules:
   # Leader election
   - apiGroups: ["coordination.k8s.io"]
@@ -293,8 +293,8 @@ GET /debug/vars
   "leader_election": {
     "enabled": true,
     "is_leader": true,
-    "identity": "haproxy-template-ic-7f8d9c5b-abc123",
-    "lease_holder": "haproxy-template-ic-7f8d9c5b-abc123",
+    "identity": "haptic-7f8d9c5b-abc123",
+    "lease_holder": "haptic-7f8d9c5b-abc123",
     "time_as_leader": "45m32s",
     "transitions": 2
   }

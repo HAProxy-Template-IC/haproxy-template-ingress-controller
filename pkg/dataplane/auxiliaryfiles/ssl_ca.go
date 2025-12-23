@@ -4,7 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"haproxy-template-ic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/client"
 )
 
 // CompareSSLCaFiles compares the current state of SSL CA files in HAProxy storage

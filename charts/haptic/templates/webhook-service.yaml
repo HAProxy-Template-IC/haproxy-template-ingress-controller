@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "haptic.fullname" . }}-webhook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+spec:
+  type: ClusterIP
+  ports:
+    - name: https-webhook
+      port: {{ .Values.webhook.service.port }}
+      targetPort: webhook
+      protocol: TCP
+  selector:
+    {{- include "haptic.selectorLabels" . | nindent 4 }}

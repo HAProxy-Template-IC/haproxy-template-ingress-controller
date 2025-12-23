@@ -26,10 +26,10 @@ import (
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/core/logging"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/httpstore"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/core/logging"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/httpstore"
 )
 
 const (

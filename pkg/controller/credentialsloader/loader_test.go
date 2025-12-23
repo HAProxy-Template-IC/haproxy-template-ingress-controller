@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	"haproxy-template-ic/pkg/core/config"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	"haptic/pkg/core/config"
 )
 
 // createCredentialsSecret creates an unstructured Secret using testutil helper.

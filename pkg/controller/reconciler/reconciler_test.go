@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	"haptic/pkg/k8s/types"
 )
 
 // TestReconciler_DebounceResourceChanges tests that resource changes are properly debounced.

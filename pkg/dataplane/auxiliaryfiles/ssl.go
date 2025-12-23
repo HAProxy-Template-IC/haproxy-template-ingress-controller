@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"haproxy-template-ic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/client"
 )
 
 // calculateSHA256Fingerprint calculates the SHA256 hash of content.

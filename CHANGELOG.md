@@ -90,9 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Default deployment now uses 2 replicas for HA
 
 - **Leader election metrics**: Three new Prometheus metrics for monitoring leadership
-  - `haproxy_ic_leader_election_is_leader`: Current leadership status (gauge)
-  - `haproxy_ic_leader_election_transitions_total`: Total leadership transitions (counter)
-  - `haproxy_ic_leader_election_time_as_leader_seconds_total`: Cumulative time as leader (counter)
+  - `haptic_leader_election_is_leader`: Current leadership status (gauge)
+  - `haptic_leader_election_transitions_total`: Total leadership transitions (counter)
+  - `haptic_leader_election_time_as_leader_seconds_total`: Cumulative time as leader (counter)
 
 - **High availability operations guide**: Comprehensive documentation in `docs/operations/high-availability.md`
   - Configuration and deployment instructions

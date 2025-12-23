@@ -37,7 +37,7 @@ warn() {
 }
 
 # Check if we're in the repository root
-if [[ ! -f "go.mod" ]] || [[ ! -d "charts/haproxy-template-ic" ]]; then
+if [[ ! -f "go.mod" ]] || [[ ! -d "charts/haptic" ]]; then
     error "This script must be run from the repository root"
 fi
 
@@ -80,7 +80,7 @@ fi
 
 # Update Chart.yaml version
 echo "Updating Chart.yaml version..."
-sed -i "s/^version:.*/version: $VERSION/" charts/haproxy-template-ic/Chart.yaml
+sed -i "s/^version:.*/version: $VERSION/" charts/haptic/Chart.yaml
 
 # Show changes
 echo ""
@@ -90,7 +90,7 @@ git diff --stat
 # Commit and tag
 echo ""
 echo "Creating commit and tag..."
-git add charts/haproxy-template-ic/Chart.yaml
+git add charts/haptic/Chart.yaml
 git commit -m "release: chart v$VERSION"
 git tag -a "chart-v$VERSION" -m "Helm chart release v$VERSION"
 

@@ -10,14 +10,14 @@ ASSETS_DIR="${SCRIPT_DIR}/dev-env-assets"
 # Default configuration
 # Naming conventions - defaults match chart name for clean resource names
 # Override via environment variables if needed
-CLUSTER_NAME="${CLUSTER_NAME:-haproxy-template-ic-dev}"
+CLUSTER_NAME="${CLUSTER_NAME:-haptic-dev}"
 CTRL_NAMESPACE="${CTRL_NAMESPACE:-haptic}"
 HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-haptic}"
 
 ECHO_NAMESPACE="echo"
 ECHO_APP_NAME="echo-server"
 ECHO_IMAGE="ealen/echo-server:latest"
-LOCAL_IMAGE="haproxy-template-ic:dev"
+LOCAL_IMAGE="haptic:dev"
 HAPROXY_VERSION="${HAPROXY_VERSION:-3.2}"
 HAPROXY_ENTERPRISE="${HAPROXY_ENTERPRISE:-false}"
 TIMEOUT="180"
@@ -150,7 +150,7 @@ COMMANDS:
     port-forward Setup port forwarding for HAProxy services
 
 OPTIONS:
-    --cluster-name NAME     Custom cluster name (default: haproxy-template-ic-dev)
+    --cluster-name NAME     Custom cluster name (default: haptic-dev)
     --namespace NAME        Custom controller namespace (default: haptic)
     --image-tag TAG         Custom image tag (default: dev)
     --timeout SECONDS       Deployment timeout (default: 180)
@@ -211,7 +211,7 @@ parse_args() {
                 shift 2
                 ;;
             --image-tag)
-                LOCAL_IMAGE="haproxy-template-ic:$2"
+                LOCAL_IMAGE="haptic:$2"
                 shift 2
                 ;;
             --timeout)
@@ -696,14 +696,14 @@ deploy_controller() {
         return 1
     }
 
-    log INFO "Deploying haproxy-template-ic to namespace '${CTRL_NAMESPACE}' using Helm..."
+    log INFO "Deploying HAPTIC to namespace '${CTRL_NAMESPACE}' using Helm..."
     log INFO "Using image tag: ${IMAGE_TAG}"
     log INFO "Using HAProxy: ${HAPROXY_REPO}:${HAPROXY_TAG}"
 
     # Build Helm command with webhook CA bundle if provided
     local helm_args=(
         "${HELM_RELEASE_NAME}"
-        "${REPO_ROOT}/charts/haproxy-template-ic"
+        "${REPO_ROOT}/charts/haptic"
         "--namespace" "${CTRL_NAMESPACE}"
         "--values" "${ASSETS_DIR}/dev-values.yaml"
         "--set" "image.tag=${IMAGE_TAG}"
@@ -1019,7 +1019,7 @@ dev_restart() {
     # Build Helm command with webhook CA bundle if provided
     local helm_args=(
         "${HELM_RELEASE_NAME}"
-        "${REPO_ROOT}/charts/haproxy-template-ic"
+        "${REPO_ROOT}/charts/haptic"
         "--namespace" "${CTRL_NAMESPACE}"
         "--create-namespace"
         "--values" "${ASSETS_DIR}/dev-values.yaml"

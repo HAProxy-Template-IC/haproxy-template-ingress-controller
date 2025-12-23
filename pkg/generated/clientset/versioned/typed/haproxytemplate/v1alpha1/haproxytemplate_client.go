@@ -17,8 +17,8 @@
 package v1alpha1
 
 import (
-	haproxytemplatev1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	scheme "haproxy-template-ic/pkg/generated/clientset/versioned/scheme"
+	haproxytemplatev1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
+	scheme "haptic/pkg/generated/clientset/versioned/scheme"
 	rest "k8s.io/client-go/rest"
 	http "net/http"
 )

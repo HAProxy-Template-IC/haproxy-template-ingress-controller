@@ -217,17 +217,17 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 
 	// Expected metrics
 	expectedMetrics := []string{
-		"haproxy_ic_reconciliation_duration_seconds",
-		"haproxy_ic_reconciliation_total",
-		"haproxy_ic_reconciliation_errors_total",
-		"haproxy_ic_deployment_duration_seconds",
-		"haproxy_ic_deployment_total",
-		"haproxy_ic_deployment_errors_total",
-		"haproxy_ic_validation_total",
-		"haproxy_ic_validation_errors_total",
-		"haproxy_ic_resource_count",
-		"haproxy_ic_event_subscribers",
-		"haproxy_ic_events_published_total",
+		"haptic_reconciliation_duration_seconds",
+		"haptic_reconciliation_total",
+		"haptic_reconciliation_errors_total",
+		"haptic_deployment_duration_seconds",
+		"haptic_deployment_total",
+		"haptic_deployment_errors_total",
+		"haptic_validation_total",
+		"haptic_validation_errors_total",
+		"haptic_resource_count",
+		"haptic_event_subscribers",
+		"haptic_events_published_total",
 	}
 
 	// Collect registered metric names

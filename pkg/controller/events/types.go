@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package events contains all domain event type definitions for the haproxy-template-ic controller.
+// Package events contains all domain event type definitions for the HAPTIC controller.
 //
 // # Event Immutability Contract
 //

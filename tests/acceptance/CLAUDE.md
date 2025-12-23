@@ -424,16 +424,16 @@ assert.Contains(t, rendered, "maxconn 2000")
 
 ## Docker Image Requirements
 
-**CRITICAL**: Acceptance tests require the Docker image to be tagged as `haproxy-template-ic:test` (NOT `:dev` or any other tag).
+**CRITICAL**: Acceptance tests require the Docker image to be tagged as `haptic:test` (NOT `:dev` or any other tag).
 
 The test framework automatically loads this image into the kind cluster during test setup. If you make code changes, you must rebuild the image with the correct tag:
 
 ```bash
 # Standard rebuild (uses Docker cache for faster builds)
-docker build -t haproxy-template-ic:test -f Dockerfile .
+docker build -t haptic:test -f Dockerfile .
 
 # Force complete rebuild (necessary if cached layers are stale)
-docker build --no-cache -t haproxy-template-ic:test -f Dockerfile .
+docker build --no-cache -t haptic:test -f Dockerfile .
 ```
 
 **When to use `--no-cache`:**
@@ -446,17 +446,40 @@ docker build --no-cache -t haproxy-template-ic:test -f Dockerfile .
 
 ```bash
 # WRONG - tests won't use this image
-docker build -t haproxy-template-ic:dev -f Dockerfile .
+docker build -t haptic:dev -f Dockerfile .
 
 # CORRECT - tests will use this image
-docker build -t haproxy-template-ic:test -f Dockerfile .
+docker build -t haptic:test -f Dockerfile .
 ```
 
 ## Debugging Acceptance Tests
 
-### Keep Resources After Test
+### Keep Namespace After Test (KEEP_NAMESPACE)
 
-E2E framework manages cluster lifecycle. To inspect:
+By default, test namespaces are deleted in the Teardown phase. To preserve namespaces for debugging (especially useful for flaky tests):
+
+```bash
+# Run test with namespace preservation
+KEEP_NAMESPACE=true go test -tags=acceptance -v ./tests/acceptance -run TestDataplaneUnreachable
+
+# After test completes (or fails), inspect the namespace
+kubectl --context kind-haproxy-test get pods -n test-dp-unreach-<hash>
+kubectl --context kind-haproxy-test logs -n test-dp-unreach-<hash> -l app=haptic-controller
+kubectl --context kind-haproxy-test describe pod -n test-dp-unreach-<hash> <pod-name>
+
+# Clean up manually when done
+kubectl --context kind-haproxy-test delete namespace test-dp-unreach-<hash>
+```
+
+**When to use KEEP_NAMESPACE:**
+
+- Debugging flaky tests
+- Investigating controller behavior after test failure
+- Inspecting controller logs when namespace is deleted before you can read them
+
+### Inspect While Test Runs
+
+E2E framework manages cluster lifecycle. To inspect during test execution:
 
 ```bash
 # Run test
@@ -465,15 +488,15 @@ go test -v ./tests/acceptance
 # While test is running or failed, inspect
 kubectl config use-context kind-haproxy-test
 kubectl get pods -n haproxy-test
-kubectl logs -n haproxy-test haproxy-template-ic-xxx
+kubectl logs -n haproxy-test haptic-xxx
 
 # Access debug endpoint via NodePort (tests create the service automatically)
 NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-NODE_PORT=$(kubectl get svc -n haproxy-test haproxy-template-ic-debug -o jsonpath='{.spec.ports[0].nodePort}')
+NODE_PORT=$(kubectl get svc -n haproxy-test haptic-debug -o jsonpath='{.spec.ports[0].nodePort}')
 curl http://$NODE_IP:$NODE_PORT/debug/vars/config
 
 # Or for quick manual testing, use port-forward (not used in actual tests)
-kubectl port-forward -n haproxy-test pod/haproxy-template-ic-xxx 6060:6060
+kubectl port-forward -n haproxy-test pod/haptic-xxx 6060:6060
 curl http://localhost:6060/debug/vars/config
 ```
 
@@ -481,7 +504,7 @@ curl http://localhost:6060/debug/vars/config
 
 ```bash
 # Follow logs during test
-kubectl logs -n haproxy-test haproxy-template-ic-xxx -f
+kubectl logs -n haproxy-test haptic-xxx -f
 ```
 
 ### Manual Test Execution
@@ -493,10 +516,10 @@ kubectl logs -n haproxy-test haproxy-template-ic-xxx -f
 kind create cluster --name haproxy-test
 
 # Build controller image with CORRECT tag
-docker build -t haproxy-template-ic:test -f Dockerfile .
+docker build -t haptic:test -f Dockerfile .
 
 # Load image into kind cluster
-kind load docker-image haproxy-template-ic:test --name haproxy-test
+kind load docker-image haptic:test --name haproxy-test
 
 # Run test
 go test -v ./tests/acceptance
@@ -509,10 +532,10 @@ kind delete cluster --name haproxy-test
 
 ```bash
 # Rebuild without cache to ensure latest code is included
-docker build --no-cache -t haproxy-template-ic:test -f Dockerfile .
+docker build --no-cache -t haptic:test -f Dockerfile .
 
 # Load into kind cluster
-kind load docker-image haproxy-template-ic:test --name haproxy-test
+kind load docker-image haptic:test --name haproxy-test
 
 # Run test again
 go test -v ./tests/acceptance

@@ -575,17 +575,17 @@ func TestComponent_CacheEvents(t *testing.T) {
 ```markdown
 ### Cache Metrics
 
-**haproxy_ic_cache_hit_total** (counter)
+**haptic_cache_hit_total** (counter)
 - Total number of cache hits
 
-**haproxy_ic_cache_miss_total** (counter)
+**haptic_cache_miss_total** (counter)
 - Total number of cache misses
 
 **Example Queries:**
 \`\`\`promql
 # Cache hit rate
-rate(haproxy_ic_cache_hit_total[5m]) /
-(rate(haproxy_ic_cache_hit_total[5m]) + rate(haproxy_ic_cache_miss_total[5m]))
+rate(haptic_cache_hit_total[5m]) /
+(rate(haptic_cache_hit_total[5m]) + rate(haptic_cache_miss_total[5m]))
 \`\`\`
 ```
 

@@ -18,9 +18,9 @@ import (
 	"context"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/events/ringbuffer"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/events/ringbuffer"
 )
 
 // Event represents a debug event with timestamp and details.

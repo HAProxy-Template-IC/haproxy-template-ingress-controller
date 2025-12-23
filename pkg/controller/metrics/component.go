@@ -18,8 +18,8 @@ import (
 	"context"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	pkgevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	pkgevents "haptic/pkg/events"
 )
 
 // Component is an event-driven metrics collector.

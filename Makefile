@@ -19,15 +19,15 @@ OAPI_CODEGEN := $(GO) run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codeg
 CONTROLLER_GEN := $(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen
 
 # Docker variables
-IMAGE_NAME ?= haproxy-template-ic# Container image name (override: IMAGE_NAME=my-image)
+IMAGE_NAME ?= haptic# Container image name (override: IMAGE_NAME=my-image)
 IMAGE_TAG ?= dev# Image tag (override: IMAGE_TAG=v1.0.0)
 REGISTRY ?=# Container registry (e.g., registry.gitlab.com/myorg)
 FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NAME):$(IMAGE_TAG))
-KIND_CLUSTER ?= haproxy-template-ic-dev  # Kind cluster name for local testing
+KIND_CLUSTER ?= haptic-dev  # Kind cluster name for local testing
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
 VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
-CHART_VERSION := $(shell grep '^version:' charts/haproxy-template-ic/Chart.yaml 2>/dev/null | awk '{print $$2}' || echo "dev")
+CHART_VERSION := $(shell grep '^version:' charts/haptic/Chart.yaml 2>/dev/null | awk '{print $$2}' || echo "dev")
 
 # Coverage packages (excludes generated code)
 COVERAGE_PACKAGES := ./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/...
@@ -94,14 +94,14 @@ KUBE_VERSION := 1.35.0
 lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docker
 	@echo "Running chart-testing lint..."
 	docker run --rm -v $(PWD):/data -w /data quay.io/helmpack/chart-testing:$(CT_VERSION) \
-		ct lint --config charts/haproxy-template-ic/.ct/ct.yaml --all
+		ct lint --config charts/haptic/.ct/ct.yaml --all
 	@echo ""
 	@echo "Running helm-unittest..."
-	docker run --rm -v $(PWD)/charts/haproxy-template-ic:/apps \
+	docker run --rm -v $(PWD)/charts/haptic:/apps \
 		helmunittest/helm-unittest:$(HELM_UNITTEST_VERSION) .
 	@echo ""
 	@echo "Running kubeconform..."
-	helm template charts/haproxy-template-ic \
+	helm template charts/haptic \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
 		| docker run --rm -i ghcr.io/yannh/kubeconform:$(KUBECONFORM_VERSION) \
 			-kubernetes-version $(KUBE_VERSION) \
@@ -115,13 +115,13 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 # CI target (runs all chart linting - tools must be installed)
 lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kubeconform)
 	@echo "Running chart-testing lint..."
-	ct lint --config charts/haproxy-template-ic/.ct/ct.yaml --all
+	ct lint --config charts/haptic/.ct/ct.yaml --all
 	@echo ""
 	@echo "Running helm-unittest..."
-	helm unittest charts/haproxy-template-ic --output-type JUnit --output-file chart-test-results.xml
+	helm unittest charts/haptic --output-type JUnit --output-file chart-test-results.xml
 	@echo ""
 	@echo "Running kubeconform..."
-	helm template charts/haproxy-template-ic \
+	helm template charts/haptic \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
 		| kubeconform \
 			-kubernetes-version $(KUBE_VERSION) \
@@ -315,11 +315,11 @@ generate: generate-crds generate-deepcopy generate-clientset generate-dataplanea
 
 generate-crds: ## Generate CRD manifests from Go types
 	@echo "Generating CRD manifests..."
-	@mkdir -p charts/haproxy-template-ic/crds
+	@mkdir -p charts/haptic/crds
 	$(CONTROLLER_GEN) crd:crdVersions=v1 \
 		paths=./pkg/apis/haproxytemplate/v1alpha1/... \
-		output:crd:dir=./charts/haproxy-template-ic/crds/
-	@echo "✓ CRD manifests generated in charts/haproxy-template-ic/crds/"
+		output:crd:dir=./charts/haptic/crds/
+	@echo "✓ CRD manifests generated in charts/haptic/crds/"
 
 generate-deepcopy: ## Generate DeepCopy methods for API types
 	@echo "Generating DeepCopy methods..."

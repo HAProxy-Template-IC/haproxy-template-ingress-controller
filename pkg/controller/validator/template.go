@@ -6,10 +6,10 @@ import (
 	"sort"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/controller/events"
+	coreconfig "haptic/pkg/core/config"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/templating"
 )
 
 // TemplateValidator validates template syntax in configuration.

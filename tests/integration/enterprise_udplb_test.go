@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/dataplane/client/enterprise"
+	"haptic/pkg/dataplane/client/enterprise"
 )
 
 // TestUDPLoadBalancers tests UDP load balancer CRUD operations.

@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
 )
 
 // TestNewDriftPreventionMonitor tests monitor creation.

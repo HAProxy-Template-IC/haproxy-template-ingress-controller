@@ -23,10 +23,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/tools/cache"
 
-	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	"haproxy-template-ic/pkg/generated/clientset/versioned/fake"
+	"haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	"haptic/pkg/generated/clientset/versioned/fake"
 )
 
 func TestNewCRDWatcher(t *testing.T) {

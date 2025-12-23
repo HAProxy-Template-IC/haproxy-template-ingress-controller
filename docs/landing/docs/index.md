@@ -1,6 +1,6 @@
 ---
 template: home.html
-title: HAProxy Template IC
+title: HAPTIC
 hide:
   - navigation
   - toc

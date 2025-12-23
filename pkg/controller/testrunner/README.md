@@ -18,9 +18,9 @@ The test runner is a pure component with no EventBus dependency, designed for di
 ```go
 import (
     "context"
-    "haproxy-template-ic/pkg/controller/testrunner"
-    "haproxy-template-ic/pkg/templating"
-    "haproxy-template-ic/pkg/dataplane"
+    "haptic/pkg/controller/testrunner"
+    "haptic/pkg/templating"
+    "haptic/pkg/dataplane"
 )
 
 // 1. Create template engine

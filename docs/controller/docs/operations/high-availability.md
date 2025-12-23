@@ -35,7 +35,7 @@ controller:
     controller:
       leader_election:
         enabled: true
-        lease_name: haproxy-template-ic-leader
+        lease_name: haptic-leader
         lease_duration: 60s    # Failover happens within this time
         renew_deadline: 15s    # Leader tries to renew for this long
         retry_period: 5s       # Interval between renewal attempts
@@ -87,7 +87,7 @@ Default        = 60s - 15s = 45s (handles up to 4x clock differences)
 Deploy with 2-3 replicas (default Helm configuration):
 
 ```bash
-helm install haproxy-ic charts/haproxy-template-ic \
+helm install haproxy-ic charts/haptic \
   --set replicaCount=2
 ```
 
@@ -97,10 +97,10 @@ Scale the deployment dynamically:
 
 ```bash
 # Scale to 3 replicas
-kubectl scale deployment haproxy-template-ic-controller --replicas=3
+kubectl scale deployment haptic-controller --replicas=3
 
 # Scale back to 2
-kubectl scale deployment haproxy-template-ic-controller --replicas=2
+kubectl scale deployment haptic-controller --replicas=2
 ```
 
 ### RBAC Requirements
@@ -121,21 +121,21 @@ These are automatically configured in the Helm chart's ClusterRole.
 
 ```bash
 # View Lease resource
-kubectl get lease -n <namespace> haproxy-template-ic-leader -o yaml
+kubectl get lease -n <namespace> haptic-leader -o yaml
 
 # Output shows current leader:
 # spec:
-#   holderIdentity: haproxy-template-ic-7d9f8b4c6d-abc12
+#   holderIdentity: haptic-7d9f8b4c6d-abc12
 ```
 
 ### View Leadership Status in Logs
 
 ```bash
 # Leader logs show:
-kubectl logs -n <namespace> deployment/haproxy-template-ic-controller | grep -E "leader|election"
+kubectl logs -n <namespace> deployment/haptic-controller | grep -E "leader|election"
 
 # Example output:
-# level=INFO msg="Leader election started" identity=pod-abc12 lease=haproxy-template-ic-leader
+# level=INFO msg="Leader election started" identity=pod-abc12 lease=haptic-leader
 # level=INFO msg="🎖️  Became leader" identity=pod-abc12 transition_count=1
 ```
 
@@ -144,7 +144,7 @@ kubectl logs -n <namespace> deployment/haproxy-template-ic-controller | grep -E 
 Monitor leader election via metrics endpoint:
 
 ```bash
-kubectl port-forward -n <namespace> deployment/haproxy-template-ic-controller 9090:9090
+kubectl port-forward -n <namespace> deployment/haptic-controller 9090:9090
 curl http://localhost:9090/metrics | grep leader_election
 ```
 
@@ -152,13 +152,13 @@ curl http://localhost:9090/metrics | grep leader_election
 
 ```promql
 # Current leader (should be 1 across all replicas)
-sum(haproxy_ic_leader_election_is_leader)
+sum(haptic_leader_election_is_leader)
 
 # Identify which pod is leader
-haproxy_ic_leader_election_is_leader{pod=~".*"} == 1
+haptic_leader_election_is_leader{pod=~".*"} == 1
 
 # Leadership transition rate (should be low)
-rate(haproxy_ic_leader_election_transitions_total[1h])
+rate(haptic_leader_election_transitions_total[1h])
 ```
 
 ## Troubleshooting
@@ -176,9 +176,9 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 1. **Missing RBAC permissions:**
 
    ```bash
-   kubectl auth can-i get leases --as=system:serviceaccount:<namespace>:haproxy-template-ic
-   kubectl auth can-i create leases --as=system:serviceaccount:<namespace>:haproxy-template-ic
-   kubectl auth can-i update leases --as=system:serviceaccount:<namespace>:haproxy-template-ic
+   kubectl auth can-i get leases --as=system:serviceaccount:<namespace>:haptic
+   kubectl auth can-i create leases --as=system:serviceaccount:<namespace>:haptic
+   kubectl auth can-i update leases --as=system:serviceaccount:<namespace>:haptic
    ```
 
 2. **Missing environment variables:**
@@ -203,7 +203,7 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 
 **Symptoms:**
 
-- `sum(haproxy_ic_leader_election_is_leader) > 1`
+- `sum(haptic_leader_election_is_leader) > 1`
 - Multiple pods deploying configs simultaneously
 - Conflicting deployments in HAProxy
 
@@ -225,14 +225,14 @@ rate(haproxy_ic_leader_election_transitions_total[1h])
 3. Restart all controller pods:
 
    ```bash
-   kubectl rollout restart deployment haproxy-template-ic-controller
+   kubectl rollout restart deployment haptic-controller
    ```
 
 ### Frequent Leadership Changes
 
 **Symptoms:**
 
-- `rate(haproxy_ic_leader_election_transitions_total[1h]) > 5`
+- `rate(haptic_leader_election_transitions_total[1h]) > 5`
 - Logs show frequent "Lost leadership" / "Became leader" messages
 - Deployments failing intermittently
 
@@ -338,7 +338,7 @@ affinity:
         podAffinityTerm:
           labelSelector:
             matchLabels:
-              app.kubernetes.io/name: haproxy-template-ic
+              app.kubernetes.io/name: haptic
           topologyKey: kubernetes.io/hostname
 ```
 
@@ -352,20 +352,20 @@ groups:
     rules:
       # No leader
       - alert: NoLeaderElected
-        expr: sum(haproxy_ic_leader_election_is_leader) < 1
+        expr: sum(haptic_leader_election_is_leader) < 1
         for: 1m
         annotations:
           summary: "No HAProxy controller leader elected"
 
       # Multiple leaders (split-brain)
       - alert: MultipleLeaders
-        expr: sum(haproxy_ic_leader_election_is_leader) > 1
+        expr: sum(haptic_leader_election_is_leader) > 1
         annotations:
           summary: "Multiple HAProxy controller leaders detected (split-brain)"
 
       # Frequent transitions
       - alert: FrequentLeadershipChanges
-        expr: rate(haproxy_ic_leader_election_transitions_total[1h]) > 5
+        expr: rate(haptic_leader_election_transitions_total[1h]) > 5
         for: 15m
         annotations:
           summary: "HAProxy controller experiencing frequent leadership changes"
@@ -391,7 +391,7 @@ To migrate an existing single-replica deployment to HA:
 3. **Upgrade with Helm:**
 
    ```bash
-   helm upgrade haproxy-ic charts/haproxy-template-ic \
+   helm upgrade haproxy-ic charts/haptic \
      --reuse-values \
      -f new-values.yaml
    ```
@@ -399,17 +399,17 @@ To migrate an existing single-replica deployment to HA:
 4. **Verify leadership:**
 
    ```bash
-   kubectl logs -f deployment/haproxy-template-ic-controller | grep leader
+   kubectl logs -f deployment/haptic-controller | grep leader
    ```
 
 5. **Confirm one leader:**
 
    ```bash
-   kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller \
+   kubectl get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller \
      -o custom-columns=NAME:.metadata.name,LEADER:.status.podIP
 
    # Check metrics to identify leader
-   for pod in $(kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller -o name); do
+   for pod in $(kubectl get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o name); do
      echo "$pod:"
      kubectl exec $pod -- wget -qO- localhost:9090/metrics | grep is_leader
    done

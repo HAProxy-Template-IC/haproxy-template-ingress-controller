@@ -299,7 +299,7 @@ test:
   script:
     - make build
     - |
-      helm template charts/haproxy-template-ic \
+      helm template charts/haptic \
         --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
         --set controller.templateLibraries.ingress.enabled=true \
         --set controller.templateLibraries.gateway.enabled=true \
@@ -500,6 +500,7 @@ test-acceptance:
   variables:
     HAPROXY_VERSION: "3.2"
     KIND_NODE_IMAGE: kindest/node:${KIND_NODE_VERSION}
+    KEEP_NAMESPACE: "true"  # Preserve namespaces so after_script can collect logs on failure
   before_script:
     # Pull test image from registry and tag it for the acceptance tests
     # The Go test code handles kind cluster creation with DinD support
@@ -507,7 +508,7 @@ test-acceptance:
       TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
       docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
       docker pull ${TEST_IMAGE}
-      docker tag ${TEST_IMAGE} haproxy-template-ic:test
+      docker tag ${TEST_IMAGE} haptic:test
   script:
     - go tool gotestsum --junitfile report-acceptance.xml --format testname -- -tags=acceptance -v -timeout 25m -run TestAllAcceptanceParallel ./tests/acceptance/...
   after_script:
@@ -592,16 +593,16 @@ test-acceptance:
       TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
       docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
       docker pull ${TEST_IMAGE}
-      docker tag ${TEST_IMAGE} haproxy-template-ic:dev
+      docker tag ${TEST_IMAGE} haptic:dev
     - |
       # Pre-create kind cluster with DinD-compatible networking
       # start-dev-env.sh will detect the existing cluster and skip creation
-      kind create cluster --name haproxy-template-ic-dev --image kindest/node:${KIND_NODE_VERSION} \
+      kind create cluster --name haptic-dev --image kindest/node:${KIND_NODE_VERSION} \
         --config .gitlab/ci/kind-config-dind.yaml --wait 120s
     - |
       # Fix kubeconfig to use "docker" hostname instead of 0.0.0.0
       mkdir -p ~/.kube
-      kind get kubeconfig --name haproxy-template-ic-dev > ~/.kube/config
+      kind get kubeconfig --name haptic-dev > ~/.kube/config
       sed -i 's|https://0\.0\.0\.0:|https://docker:|g' ~/.kube/config
     - |
       # Wait for API server to be ready
@@ -678,7 +679,7 @@ test-acceptance:
         ls -la debug-logs/
       fi
     # Clean up cluster
-    - kind delete cluster --name haproxy-template-ic-dev || true
+    - kind delete cluster --name haptic-dev || true
   artifacts:
     paths:
       - debug-logs/
@@ -705,7 +706,7 @@ test-helm-defaults:
       optional: true
     - job: build-test-image
   variables:
-    # Unique cluster name - different from haproxy-test (integration) and haproxy-template-ic-dev (dev/routes)
+    # Unique cluster name - different from haproxy-test (integration) and haptic-dev (dev/routes)
     CLUSTER_NAME: helm-defaults
     NAMESPACE: haptic
     HAPROXY_VERSION: "3.2"
@@ -906,10 +907,10 @@ release-chart:
         echo "Helm Chart Release ${VERSION}" > .release-notes.md
       fi
     # Package and push chart to OCI registry
-    - helm package charts/haproxy-template-ic --version $VERSION
+    - helm package charts/haptic --version $VERSION
     - helm push haproxy-template-ic-$VERSION.tgz oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts
     # Sign the OCI artifact
-    - cosign sign --yes oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts/haproxy-template-ic:$VERSION
+    - cosign sign --yes oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic:$VERSION
     # Create GitLab release
     - |
       RELEASE_NAME="Helm Chart ${VERSION}"

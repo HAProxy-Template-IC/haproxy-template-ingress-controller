@@ -32,16 +32,16 @@ import (
 	"strings"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/rendercontext"
-	"haproxy-template-ic/pkg/controller/resourcestore"
-	"haproxy-template-ic/pkg/controller/testrunner"
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/k8s/types"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/rendercontext"
+	"haptic/pkg/controller/resourcestore"
+	"haptic/pkg/controller/testrunner"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/k8s/types"
+	"haptic/pkg/templating"
 )
 
 const (

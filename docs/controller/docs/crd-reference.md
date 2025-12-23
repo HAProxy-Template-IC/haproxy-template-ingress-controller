@@ -94,7 +94,7 @@ controller:
 
   leaderElection:
     enabled: true
-    leaseName: haproxy-template-ic-leader
+    leaseName: haptic-leader
     leaseDuration: 15s
     renewDeadline: 10s
     retryPeriod: 2s

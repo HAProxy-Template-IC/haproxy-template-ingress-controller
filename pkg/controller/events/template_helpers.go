@@ -14,7 +14,7 @@
 
 package events
 
-import "haproxy-template-ic/pkg/dataplane"
+import "haptic/pkg/dataplane"
 
 // GetValidationAuxiliaryFiles returns ValidationAuxiliaryFiles with proper type.
 // Returns nil, false if the type assertion fails.

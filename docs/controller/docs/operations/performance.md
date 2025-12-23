@@ -45,7 +45,7 @@ Memory usage scales with:
 Monitor memory usage:
 
 ```promql
-container_memory_working_set_bytes{container="haproxy-template-ic"}
+container_memory_working_set_bytes{container="haptic"}
 ```
 
 ### CPU Considerations
@@ -59,7 +59,7 @@ CPU spikes occur during:
 Monitor CPU usage:
 
 ```promql
-rate(container_cpu_usage_seconds_total{container="haproxy-template-ic"}[5m])
+rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
 ```
 
 ## Reconciliation Tuning
@@ -88,14 +88,14 @@ Monitor reconciliation performance:
 
 ```promql
 # Average reconciliation duration
-rate(haproxy_ic_reconciliation_duration_seconds_sum[5m]) /
-rate(haproxy_ic_reconciliation_duration_seconds_count[5m])
+rate(haptic_reconciliation_duration_seconds_sum[5m]) /
+rate(haptic_reconciliation_duration_seconds_count[5m])
 
 # Reconciliation rate
-rate(haproxy_ic_reconciliation_total[5m])
+rate(haptic_reconciliation_total[5m])
 
 # P95 reconciliation latency
-histogram_quantile(0.95, rate(haproxy_ic_reconciliation_duration_seconds_bucket[5m]))
+histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m]))
 ```
 
 **Target metrics:**
@@ -295,7 +295,7 @@ spec:
       resources: ingresses
       labelSelector:
         matchLabels:
-          managed-by: haproxy-template-ic
+          managed-by: haptic
 ```
 
 ## Deployment Performance
@@ -306,11 +306,11 @@ Monitor deployment time:
 
 ```promql
 # Average deployment duration
-rate(haproxy_ic_deployment_duration_seconds_sum[5m]) /
-rate(haproxy_ic_deployment_duration_seconds_count[5m])
+rate(haptic_deployment_duration_seconds_sum[5m]) /
+rate(haptic_deployment_duration_seconds_count[5m])
 
 # P95 deployment latency
-histogram_quantile(0.95, rate(haproxy_ic_deployment_duration_seconds_bucket[5m]))
+histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
 ```
 
 **Target metrics:**
@@ -357,10 +357,10 @@ Monitor event subscriber health:
 
 ```promql
 # Event publishing rate
-rate(haproxy_ic_events_published_total[5m])
+rate(haptic_events_published_total[5m])
 
 # Subscriber count (should be constant)
-haproxy_ic_event_subscribers
+haptic_event_subscribers
 ```
 
 If subscriber count drops, components may be failing.
@@ -405,7 +405,7 @@ To collect a fresh profile from the development environment:
 2. Port-forward to the controller's debug port:
 
     ```bash
-    kubectl -n haproxy-template-ic port-forward deploy/haproxy-template-ic-controller 8080:8080
+    kubectl -n haptic port-forward deploy/haptic-controller 8080:8080
     ```
 
 3. Generate workload (trigger reconciliation by modifying resources)

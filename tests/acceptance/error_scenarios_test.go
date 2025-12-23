@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
 
-	"haproxy-template-ic/tests/testutil"
+	"haptic/tests/testutil"
 )
 
 // Template strings for CRD updates
@@ -968,13 +968,13 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 
 			// Wait for leader election to complete
 			t.Log("Waiting for leader election...")
-			err = WaitForLeaderElection(ctx, clientset, namespace, "haproxy-template-ic-leader", 60*time.Second)
+			err = WaitForLeaderElection(ctx, clientset, namespace, "haptic-leader", 60*time.Second)
 			if err != nil {
 				t.Logf("Leader election wait failed: %v (continuing anyway)", err)
 			}
 
 			// Get current leader
-			initialLeader, err := GetLeaseHolder(ctx, clientset, namespace, "haproxy-template-ic-leader")
+			initialLeader, err := GetLeaseHolder(ctx, clientset, namespace, "haptic-leader")
 			if err != nil {
 				t.Logf("Could not get initial leader: %v", err)
 				initialLeader = ""
@@ -1015,11 +1015,11 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			t.Logf("After leadership transition: %d pods", len(pods.Items))
 
 			// Wait for leader election to complete
-			err = WaitForLeaderElection(ctx, clientset, namespace, "haproxy-template-ic-leader", 30*time.Second)
+			err = WaitForLeaderElection(ctx, clientset, namespace, "haptic-leader", 30*time.Second)
 			if err != nil {
 				t.Logf("Leader election wait failed: %v (continuing anyway)", err)
 			}
-			newLeader, err := GetLeaseHolder(ctx, clientset, namespace, "haproxy-template-ic-leader")
+			newLeader, err := GetLeaseHolder(ctx, clientset, namespace, "haptic-leader")
 			if err != nil {
 				t.Logf("Could not get new leader: %v", err)
 			} else {
@@ -1368,8 +1368,13 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 				// Wait for each version to be processed before applying the next update.
 				// This is critical in CI (DinD) environments where watch event propagation
 				// and controller processing can be slower than locally.
+				//
+				// Use 120s timeout (matching other stress tests like debounce) because:
+				// - This test runs in parallel with 16+ other tests
+				// - The API server can become temporarily overloaded
+				// - Later config updates (version 203) may face more contention
 				expectedVersion := fmt.Sprintf("# version %d", version)
-				err = debugClient.WaitForRenderedConfigContains(ctx, expectedVersion, 60*time.Second)
+				err = debugClient.WaitForRenderedConfigContains(ctx, expectedVersion, 120*time.Second)
 				require.NoError(t, err, "Config update %d (version %d) should be processed", i, version)
 				t.Logf("Config version %d confirmed in rendered config", version)
 			}
@@ -1380,7 +1385,7 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 
 			// Verify config is tracked correctly by polling for the expected version
 			// Use WaitForRenderedConfigContains which has built-in reconnect logic for stability
-			err = debugClient.WaitForRenderedConfigContains(ctx, "# version 20", 60*time.Second)
+			err = debugClient.WaitForRenderedConfigContains(ctx, "# version 20", 120*time.Second)
 			require.NoError(t, err, "Config should reflect updates even with no deployment targets")
 
 			// Wait for validation to complete before checking status
