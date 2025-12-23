@@ -17,15 +17,14 @@ HAPTIC:
 
 - Kubernetes 1.19+
 - Helm 3.0+
-- HAProxy pods with Dataplane API sidecars (deployed separately)
-- **HAProxy 3.0 or newer** (template libraries require HAProxy 3.0+ for SSL/TLS features)
+- **HAProxy 3.0 or newer** (the chart deploys HAProxy by default; template libraries require 3.0+ for SSL/TLS features)
 
 ## Installation
 
 ### Add the Helm Repository
 
 ```bash
-helm repo add haproxy-template-ic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
+helm repo add haptic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
 helm repo update
 ```
 
