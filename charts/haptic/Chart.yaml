@@ -3,7 +3,7 @@ name: haptic
 description: HAPTIC - HAProxy Template Ingress Controller
 type: application
 version: 0.1.0
-appVersion: "0.1.0"
+appVersion: "0.1.0-alpha.1"
 keywords:
   - haproxy
   - ingress
@@ -19,7 +19,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller:0.1.0
+      image: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller:0.1.0-alpha.1
       platforms:
         - linux/amd64
         - linux/arm64
