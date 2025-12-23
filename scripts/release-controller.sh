@@ -9,10 +9,12 @@
 # 2. Checks that CHANGELOG.md has an entry for the version
 # 3. Updates the VERSION file
 # 4. Updates Chart.yaml appVersion and artifacthub.io/images annotation
-# 5. Commits changes and creates a git tag
+# 5. Commits changes (tag is created automatically by CI after merge)
 #
-# After running this script, push the tag to trigger CI:
-#   git push origin main haptic-controller-v<version>
+# After running this script:
+#   1. Push to a release branch and create an MR
+#   2. Merge the MR to main
+#   3. CI automatically creates the tag and triggers the release pipeline
 
 set -euo pipefail
 
@@ -96,16 +98,22 @@ echo ""
 echo "Changes to be committed:"
 git diff --stat
 
-# Commit and tag
+# Commit changes (tag created automatically by CI after merge)
 echo ""
-echo "Creating commit and tag..."
+echo "Creating commit..."
 git add VERSION charts/haptic/Chart.yaml
 git commit -m "release: haptic-controller v$VERSION"
-git tag -a "haptic-controller-v$VERSION" -m "Controller release v$VERSION"
 
 success ""
-success "Created tag: haptic-controller-v$VERSION"
+success "Release commit created for v$VERSION"
 success ""
 echo "Next steps:"
 echo "  1. Review the commit: git show HEAD"
-echo "  2. Push to trigger CI: git push origin main haptic-controller-v$VERSION"
+echo "  2. Create release branch: git checkout -b release/controller-v$VERSION"
+echo "  3. Push and create MR: git push -u origin release/controller-v$VERSION"
+echo "  4. Merge the MR to main"
+echo ""
+echo "After merge, CI will automatically:"
+echo "  - Create tag haptic-controller-v$VERSION"
+echo "  - Build binaries and Docker images"
+echo "  - Create GitLab release"

@@ -19,12 +19,12 @@ vX.Y.Z-beta.N   # Feature complete, needs testing
 vX.Y.Z-rc.N     # Release candidate, final testing
 ```
 
-Git tags use the prefix `controller-`:
+Git tags use the prefix `haptic-controller-`:
 
 ```
-controller-v0.1.0
-controller-v0.2.0-beta.1
-controller-v1.0.0
+haptic-controller-v0.1.0
+haptic-controller-v0.2.0-beta.1
+haptic-controller-v1.0.0
 ```
 
 ### Chart Versions
@@ -36,11 +36,11 @@ X.Y.Z           # Stable release
 X.Y.Z-beta.N    # Pre-release
 ```
 
-Git tags use the prefix `chart-`:
+Git tags use the prefix `haptic-chart-`:
 
 ```
-chart-v0.1.0
-chart-v0.2.0
+haptic-chart-v0.1.0
+haptic-chart-v0.2.0
 ```
 
 ### Chart.yaml
@@ -59,7 +59,7 @@ appVersion: "0.1.0"   # Controller version this chart deploys
 
 ### Controller Release
 
-When a `controller-v*` tag is pushed, CI automatically:
+When a `haptic-controller-v*` tag is pushed, CI automatically:
 
 1. **Builds Go binaries** for multiple architectures:
    - `linux/amd64` - Intel/AMD servers
@@ -84,13 +84,15 @@ When a `controller-v*` tag is pushed, CI automatically:
 
 ### Chart Release
 
-When a `chart-v*` tag is pushed, CI automatically:
+When a `haptic-chart-v*` tag is pushed, CI automatically:
 
 1. **Packages the Helm chart**
 2. **Pushes to OCI registry**
 3. **Signs with Cosign**
 
 ## Release Process
+
+The main branch is protected, so releases are made via merge requests. CI automatically creates tags when version files change on main.
 
 ### Prerequisites
 
@@ -102,7 +104,6 @@ When a `chart-v*` tag is pushed, CI automatically:
 1. **Update CHANGELOG.md**:
    - Rename `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD`
    - Add new empty `[Unreleased]` section
-   - Commit the change
 
 2. **Run the release script**:
 
@@ -115,13 +116,19 @@ When a `chart-v*` tag is pushed, CI automatically:
    - Checks CHANGELOG.md has an entry
    - Updates VERSION file
    - Updates Chart.yaml appVersion
-   - Creates commit and tag
+   - Creates release commit
 
-3. **Push to trigger CI**:
+3. **Push to release branch and create MR**:
 
    ```bash
-   git push origin main controller-v0.1.0-beta.1
+   git checkout -b release/controller-v0.1.0-beta.1
+   git push -u origin release/controller-v0.1.0-beta.1
+   glab mr create --title "release: haptic-controller v0.1.0-beta.1" --target-branch main
    ```
+
+4. **Merge the MR** through GitLab.
+
+After merge, CI automatically creates the `haptic-controller-v0.1.0-beta.1` tag and triggers the release pipeline.
 
 ### Releasing a Chart Version
 
@@ -134,13 +141,35 @@ When a `chart-v*` tag is pushed, CI automatically:
    The script:
    - Validates version format
    - Updates Chart.yaml version
-   - Creates commit and tag
+   - Creates release commit
 
-2. **Push to trigger CI**:
+2. **Push to release branch and create MR**:
 
    ```bash
-   git push origin main chart-v0.2.0
+   git checkout -b release/haptic-chart-v0.2.0
+   git push -u origin release/haptic-chart-v0.2.0
+   glab mr create --title "release: chart v0.2.0" --target-branch main
    ```
+
+3. **Merge the MR** through GitLab.
+
+After merge, CI automatically creates the `haptic-chart-v0.2.0` tag and triggers the release pipeline.
+
+### Manual Tagging (Fallback)
+
+If automatic tagging fails, create tags manually:
+
+```bash
+# Controller
+git checkout main
+git pull origin main
+git tag -a haptic-controller-v0.1.0-beta.1 -m "Controller release v0.1.0-beta.1"
+git push origin haptic-controller-v0.1.0-beta.1
+
+# Chart
+git tag -a haptic-chart-v0.2.0 -m "Chart release v0.2.0"
+git push origin haptic-chart-v0.2.0
+```
 
 ## Docker Tag Strategy
 
