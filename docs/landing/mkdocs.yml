@@ -1,5 +1,5 @@
 site_name: HAPTIC
-site_url: https://haproxy-template-ic.gitlab.io/
+site_url: https://haproxy-haptic.org/
 site_description: HAPTIC - Template-driven HAProxy Ingress Controller for Kubernetes
 
 repo_name: haproxy-template-ic/haproxy-template-ingress-controller

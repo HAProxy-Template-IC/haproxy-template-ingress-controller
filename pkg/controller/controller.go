@@ -1356,7 +1356,7 @@ func runIteration(
 
 	// Define GVRs for HAProxyTemplateConfig CRD and Secret
 	crdGVR := schema.GroupVersionResource{
-		Group:    "haproxy-template-ic.gitlab.io",
+		Group:    "haproxy-haptic.org",
 		Version:  "v1alpha1",
 		Resource: "haproxytemplateconfigs",
 	}

@@ -87,7 +87,7 @@ For a complete walkthrough, see the [Getting Started](getting-started.md) guide 
 ### Install with Helm
 
 ```bash
-helm repo add haptic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
+helm repo add haptic https://haproxy-haptic.org/haproxy-template-ingress-controller/charts
 helm repo update
 helm install my-controller haptic/haptic
 ```

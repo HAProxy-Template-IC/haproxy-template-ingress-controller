@@ -1,5 +1,5 @@
 site_name: HAPTIC
-site_url: https://haproxy-template-ic.gitlab.io/controller/
+site_url: https://haproxy-haptic.org/controller/
 site_description: HAPTIC - Template-driven HAProxy Ingress Controller for Kubernetes
 
 repo_name: haproxy-template-ic/haproxy-template-ingress-controller
@@ -93,7 +93,7 @@ nav:
 extra:
   alternate:
     - name: Helm Chart Docs
-      link: https://haproxy-template-ic.gitlab.io/helm-chart/latest/
+      link: https://haproxy-haptic.org/helm-chart/latest/
       lang: helm
 
 plugins:

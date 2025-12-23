@@ -1814,7 +1814,7 @@ charts/haptic/
 │   └── ...                     # Other K8s resources
 │
 └── crds/                        # Custom Resource Definitions
-    └── haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml
+    └── haproxy-haptic.org_haproxytemplateconfigs.yaml
 ```
 
 ## Debugging Tips
@@ -1858,6 +1858,6 @@ helm template charts/haptic \
 
 - Helm template reference: <https://helm.sh/docs/chart_template_guide/>
 - yq documentation: <https://github.com/mikefarah/yq>
-- HAProxyTemplateConfig CRD: `crds/haproxy-template-ic.gitlab.io_haproxytemplateconfigs.yaml`
+- HAProxyTemplateConfig CRD: `crds/haproxy-haptic.org_haproxytemplateconfigs.yaml`
 - Controller validation: `pkg/controller/testrunner/CLAUDE.md`
 - Template engine: `pkg/templating/CLAUDE.md`

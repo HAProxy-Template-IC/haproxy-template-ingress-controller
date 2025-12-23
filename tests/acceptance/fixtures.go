@@ -566,27 +566,27 @@ func NewRole(namespace, name string) *rbacv1.Role {
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
-				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxytemplateconfigs"},
 				Verbs:     []string{"get", "watch", "list"},
 			},
 			{
-				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxycfgs"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
 			},
 			{
-				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxycfgs/status"},
 				Verbs:     []string{"get", "update", "patch"},
 			},
 			{
-				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxymapfiles"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
-				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxymapfiles/status"},
 				Verbs:     []string{"get", "update", "patch"},
 			},
@@ -649,7 +649,7 @@ func NewClusterRole(name, namespace string) *rbacv1.ClusterRole {
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
-				APIGroups: []string{"haproxy-template-ic.gitlab.io"},
+				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxytemplateconfigs"},
 				Verbs:     []string{"get", "watch", "list"},
 			},

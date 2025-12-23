@@ -518,7 +518,7 @@ test-acceptance:
           echo "=== Namespace: $ns ===" >> debug-logs/test-namespaces.log
 
           # Controller pod logs with timestamps for correlation
-          kubectl -n "$ns" logs -l app.kubernetes.io/name=haptic --all-containers=true \
+          kubectl -n "$ns" logs -l app=haptic-controller --all-containers=true \
             --timestamps=true --since=10m \
             >> debug-logs/controller-$ns.log 2>&1 || true
 

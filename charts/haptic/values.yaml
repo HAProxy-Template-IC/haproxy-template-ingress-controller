@@ -363,7 +363,7 @@ ingressClass:
   default: false
   # Controller identifier (must be unique across all ingress controllers)
   # This value should match what the controller uses to identify itself
-  controllerName: haproxy-template-ic.gitlab.io/controller
+  controllerName: haproxy-haptic.org/controller
 # GatewayClass resource
 # Creates a GatewayClass resource for Gateway API
 # Only created when gateway library is enabled and Gateway API CRDs are installed
@@ -380,12 +380,12 @@ gatewayClass:
   default: false
   # Controller identifier (must be unique across all Gateway API controllers)
   # This value should match what the controller uses to identify itself
-  controllerName: haproxy-template-ic.gitlab.io/controller
+  controllerName: haproxy-haptic.org/controller
   # Reference to HAProxyTemplateConfig for controller-specific configuration
   # Automatically points to the HAProxyTemplateConfig created by this chart
   # This links Gateway API configuration to the controller's template-based config
   parametersRef:
-    group: haproxy-template-ic.gitlab.io
+    group: haproxy-haptic.org
     kind: HAProxyTemplateConfig
     # Name will default to controller.crdName if empty
     name: ""

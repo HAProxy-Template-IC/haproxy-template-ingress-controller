@@ -940,7 +940,7 @@ func getDynamicClient(config *rest.Config) (dynamic.Interface, error) {
 // haproxyTemplateConfigGVR returns the GroupVersionResource for HAProxyTemplateConfig.
 func haproxyTemplateConfigGVR() schema.GroupVersionResource {
 	return schema.GroupVersionResource{
-		Group:    "haproxy-template-ic.gitlab.io",
+		Group:    "haproxy-haptic.org",
 		Version:  "v1alpha1",
 		Resource: "haproxytemplateconfigs",
 	}

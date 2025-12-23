@@ -22,7 +22,7 @@ Install the controller and HAProxy using Helm:
 
 ```bash
 # Add the Helm repository
-helm repo add haptic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
+helm repo add haptic https://haproxy-haptic.org/haproxy-template-ingress-controller/charts
 helm repo update
 
 # Install (deploys both controller and HAProxy pods)
@@ -347,7 +347,7 @@ helm uninstall haptic -n haptic
 kubectl delete namespace haptic
 
 # Remove CRD (optional, removes all HAProxyTemplateConfig resources)
-kubectl delete crd haproxytemplateconfigs.haproxy-template-ic.gitlab.io
+kubectl delete crd haproxytemplateconfigs.haproxy-haptic.org
 ```
 
 ## See Also

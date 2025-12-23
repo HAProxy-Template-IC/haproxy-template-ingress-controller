@@ -321,11 +321,11 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
 			Labels: map[string]string{
-				"haproxy-template-ic.gitlab.io/template-config": req.TemplateConfigName,
+				"haproxy-haptic.org/template-config": req.TemplateConfigName,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "haproxy-template-ic.gitlab.io/v1alpha1",
+					APIVersion:         "haproxy-haptic.org/v1alpha1",
 					Kind:               "HAProxyTemplateConfig",
 					Name:               req.TemplateConfigName,
 					UID:                req.TemplateConfigUID,
@@ -470,11 +470,11 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
 			Labels: map[string]string{
-				"haproxy-template-ic.gitlab.io/runtime-config": owner.Name,
+				"haproxy-haptic.org/runtime-config": owner.Name,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "haproxy-template-ic.gitlab.io/v1alpha1",
+					APIVersion:         "haproxy-haptic.org/v1alpha1",
 					Kind:               "HAProxyCfg",
 					Name:               owner.Name,
 					UID:                owner.UID,
@@ -535,12 +535,12 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
 			Labels: map[string]string{
-				"haproxy-template-ic.gitlab.io/runtime-config": owner.Name,
-				"haproxy-template-ic.gitlab.io/type":           "ssl-certificate",
+				"haproxy-haptic.org/runtime-config": owner.Name,
+				"haproxy-haptic.org/type":           "ssl-certificate",
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "haproxy-template-ic.gitlab.io/v1alpha1",
+					APIVersion:         "haproxy-haptic.org/v1alpha1",
 					Kind:               "HAProxyCfg",
 					Name:               owner.Name,
 					UID:                owner.UID,

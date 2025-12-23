@@ -341,7 +341,7 @@ func TestParseCRD(t *testing.T) {
 			name: "valid HAProxyTemplateConfig CRD",
 			crd: &unstructured.Unstructured{
 				Object: map[string]interface{}{
-					"apiVersion": "haproxy-template-ic.gitlab.io/v1alpha1",
+					"apiVersion": "haproxy-haptic.org/v1alpha1",
 					"kind":       "HAProxyTemplateConfig",
 					"metadata": map[string]interface{}{
 						"name":      "test-config",
@@ -368,7 +368,7 @@ func TestParseCRD(t *testing.T) {
 			name: "invalid kind",
 			crd: &unstructured.Unstructured{
 				Object: map[string]interface{}{
-					"apiVersion": "haproxy-template-ic.gitlab.io/v1alpha1",
+					"apiVersion": "haproxy-haptic.org/v1alpha1",
 					"kind":       "Deployment",
 					"metadata": map[string]interface{}{
 						"name":      "test-config",
@@ -392,7 +392,7 @@ func TestParseCRD(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "expected apiVersion haproxy-template-ic.gitlab.io/v1alpha1, got apps/v1",
+			errMsg:  "expected apiVersion haproxy-haptic.org/v1alpha1, got apps/v1",
 		},
 	}
 

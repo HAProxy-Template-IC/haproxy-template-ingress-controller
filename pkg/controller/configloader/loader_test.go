@@ -21,7 +21,7 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 	// Create CRD resource
 	crd := &v1alpha1.HAProxyTemplateConfig{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "haproxy-template-ic.gitlab.io/v1alpha1",
+			APIVersion: "haproxy-haptic.org/v1alpha1",
 			Kind:       "HAProxyTemplateConfig",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -151,7 +151,7 @@ func TestConfigLoaderComponent_InvalidResourceType(t *testing.T) {
 
 	// Publish ConfigResourceChangedEvent with non-*unstructured.Unstructured type
 	invalidResource := map[string]interface{}{
-		"apiVersion": "haproxy-template-ic.gitlab.io/v1alpha1",
+		"apiVersion": "haproxy-haptic.org/v1alpha1",
 		"kind":       "HAProxyTemplateConfig",
 	}
 	bus.Publish(events.NewConfigResourceChangedEvent(invalidResource))

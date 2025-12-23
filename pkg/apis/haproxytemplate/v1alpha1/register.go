@@ -22,7 +22,7 @@ import (
 
 const (
 	// GroupName is the group name for this API.
-	GroupName = "haproxy-template-ic.gitlab.io"
+	GroupName = "haproxy-haptic.org"
 
 	// Version is the version for this API.
 	Version = "v1alpha1"

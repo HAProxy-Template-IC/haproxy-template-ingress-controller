@@ -11,7 +11,7 @@ The `HAProxyTemplateConfig` custom resource is the **recommended way** to config
 - Native Kubernetes resource with proper RBAC
 - Better GitOps integration with declarative configuration
 
-**API Group**: `haproxy-template-ic.gitlab.io`
+**API Group**: `haproxy-haptic.org`
 **API Version**: `v1alpha1`
 **Kind**: `HAProxyTemplateConfig`
 **Short Names**: `htplcfg`, `haptpl`
@@ -19,7 +19,7 @@ The `HAProxyTemplateConfig` custom resource is the **recommended way** to config
 ## Basic Example
 
 ```yaml
-apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
+apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: haproxy-config
@@ -416,7 +416,7 @@ data:
 **New (CRD):**
 
 ```yaml
-apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
+apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: haproxy-config
