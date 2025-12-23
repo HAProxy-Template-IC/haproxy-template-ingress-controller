@@ -383,10 +383,10 @@ helm template charts/haptic \
 
 # 2. Validate merged configuration
 make build
-./bin/controller validate -f /tmp/merged-config.yaml
+./bin/haptic-controller validate -f /tmp/merged-config.yaml
 
 # 3. Run specific validation test
-./bin/controller validate -f /tmp/merged-config.yaml \
+./bin/haptic-controller validate -f /tmp/merged-config.yaml \
   --test test-ingress-duplicate-backend-different-ports
 ```
 
@@ -1653,7 +1653,7 @@ haproxyConfig:
 
 ```bash
 # WRONG - library file is incomplete!
-./bin/controller validate -f charts/haptic/libraries/ingress.yaml
+./bin/haptic-controller validate -f charts/haptic/libraries/ingress.yaml
 ```
 
 **Why Bad**: Library files are meant to be merged. Testing them individually will fail because:
@@ -1668,7 +1668,7 @@ haproxyConfig:
 # CORRECT
 helm template charts/haptic \
   | yq 'select(.kind == "HAProxyTemplateConfig")' \
-  | ./bin/controller validate -f -
+  | ./bin/haptic-controller validate -f -
 ```
 
 ### Missing watchedResources

@@ -44,23 +44,23 @@ CLI tool for validating HAProxyTemplateConfig CRDs with embedded validation test
 **Usage:**
 
 ```bash
-controller validate -f config.yaml [flags]
+haptic-controller validate -f config.yaml [flags]
 ```
 
 **Observability Flags:**
 
 ```bash
 # Show rendered content preview for failed assertions (first 200 chars)
-controller validate -f config.yaml --verbose
+haptic-controller validate -f config.yaml --verbose
 
 # Dump complete rendered content (haproxy.cfg, maps, files, certs)
-controller validate -f config.yaml --dump-rendered
+haptic-controller validate -f config.yaml --dump-rendered
 
 # Show template execution trace with timing
-controller validate -f config.yaml --trace-templates
+haptic-controller validate -f config.yaml --trace-templates
 
 # Combine flags for comprehensive debugging
-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
+haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
 ```
 
 **Flag Details:**
@@ -103,19 +103,19 @@ The validate command uses `pkg/controller/testrunner` to execute tests and forma
 
 ```bash
 # 1. Run tests and see enhanced error messages
-controller validate -f config.yaml
+haptic-controller validate -f config.yaml
 # Output: "pattern X not found in map:foo.map (target size: 61 bytes). Hint: Use --verbose"
 
 # 2. Enable verbose mode to see content preview
-controller validate -f config.yaml --verbose
+haptic-controller validate -f config.yaml --verbose
 # Output: Shows first 200 chars of map:foo.map
 
 # 3. See full content if needed
-controller validate -f config.yaml --dump-rendered
+haptic-controller validate -f config.yaml --dump-rendered
 # Output: Complete content of all rendered files
 
 # 4. Identify slow templates
-controller validate -f config.yaml --trace-templates
+haptic-controller validate -f config.yaml --trace-templates
 # Output: Template execution trace with timing
 ```
 

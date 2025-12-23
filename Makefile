@@ -216,7 +216,7 @@ build: ## Build the controller binary (with PGO if profile exists)
 	$(GO) build \
 		-pgo=auto \
 		-ldflags="-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		-o bin/controller \
+		-o bin/haptic-controller \
 		./cmd/controller
 
 ## Docker targets

@@ -87,7 +87,7 @@ spec:
           {{- end }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["/usr/local/bin/controller"]
+          command: ["/usr/local/bin/haptic-controller"]
           args: ["run"]
           ports:
             - name: healthz
