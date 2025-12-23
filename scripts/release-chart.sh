@@ -69,15 +69,14 @@ if [[ -n $(git status --porcelain) ]]; then
     fi
 fi
 
-# Check CHANGELOG.md has entry for this version
-if ! grep -q "## \[$VERSION\]" CHANGELOG.md; then
-    error "CHANGELOG.md has no entry for version $VERSION
+# Check chart CHANGELOG.md has entry for this version
+if ! grep -q "## \[$VERSION\]" charts/haptic/CHANGELOG.md; then
+    error "charts/haptic/CHANGELOG.md has no entry for version $VERSION
 
-Please update CHANGELOG.md before releasing:
-1. Add a [Chart] prefixed entry under [$VERSION] section
-2. Run this script again
-
-Note: Chart-only releases should prefix entries with [Chart]"
+Please update charts/haptic/CHANGELOG.md before releasing:
+1. Rename [Unreleased] section to [$VERSION] - $(date +%Y-%m-%d)
+2. Add a new empty [Unreleased] section at the top
+3. Run this script again"
 fi
 
 # Update Chart.yaml version
