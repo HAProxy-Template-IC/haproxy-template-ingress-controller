@@ -31,15 +31,15 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/helpers"
-	"haproxy-template-ic/pkg/controller/httpstore"
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/k8s/types"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/helpers"
+	"haptic/pkg/controller/httpstore"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/k8s/types"
+	"haptic/pkg/templating"
 )
 
 const (

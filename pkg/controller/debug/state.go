@@ -28,8 +28,8 @@ package debug
 import (
 	"time"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
 )
 
 // StateProvider provides access to controller internal state.

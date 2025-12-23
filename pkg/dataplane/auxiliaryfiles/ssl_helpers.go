@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"haproxy-template-ic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/client"
 )
 
 // sslStorageOps provides a generic FileOperations implementation for SSL storage files (CA, CRL).

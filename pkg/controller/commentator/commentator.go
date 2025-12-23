@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/validator"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/validator"
+	busevents "haptic/pkg/events"
 )
 
 const (

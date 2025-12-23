@@ -16,7 +16,7 @@ This is a pure infrastructure package with no domain dependencies - it can be us
 ## Installation
 
 ```go
-import "haproxy-template-ic/pkg/introspection"
+import "haptic/pkg/introspection"
 ```
 
 ## Quick Start
@@ -27,7 +27,7 @@ package main
 import (
     "context"
     "time"
-    "haproxy-template-ic/pkg/introspection"
+    "haptic/pkg/introspection"
 )
 
 func main() {

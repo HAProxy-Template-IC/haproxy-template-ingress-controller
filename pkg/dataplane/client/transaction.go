@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"sync"
 
-	v30 "haproxy-template-ic/pkg/generated/dataplaneapi/v30"
-	v30ee "haproxy-template-ic/pkg/generated/dataplaneapi/v30ee"
-	v31 "haproxy-template-ic/pkg/generated/dataplaneapi/v31"
-	v31ee "haproxy-template-ic/pkg/generated/dataplaneapi/v31ee"
-	v32 "haproxy-template-ic/pkg/generated/dataplaneapi/v32"
-	v32ee "haproxy-template-ic/pkg/generated/dataplaneapi/v32ee"
+	v30 "haptic/pkg/generated/dataplaneapi/v30"
+	v30ee "haptic/pkg/generated/dataplaneapi/v30ee"
+	v31 "haptic/pkg/generated/dataplaneapi/v31"
+	v31ee "haptic/pkg/generated/dataplaneapi/v31ee"
+	v32 "haptic/pkg/generated/dataplaneapi/v32"
+	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // Transaction represents an HAProxy Dataplane API transaction.

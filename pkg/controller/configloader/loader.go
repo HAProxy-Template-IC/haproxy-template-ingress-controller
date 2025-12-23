@@ -7,11 +7,11 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	"haproxy-template-ic/pkg/controller/conversion"
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/core/config"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"haptic/pkg/controller/conversion"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/core/config"
+	busevents "haptic/pkg/events"
 )
 
 const (

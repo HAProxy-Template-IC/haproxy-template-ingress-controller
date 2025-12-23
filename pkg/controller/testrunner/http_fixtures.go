@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/httpstore"
+	"haptic/pkg/core/config"
+	"haptic/pkg/httpstore"
 )
 
 // FixtureHTTPStoreWrapper wraps an HTTPStore pre-populated with fixtures for test execution.

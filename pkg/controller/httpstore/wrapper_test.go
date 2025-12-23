@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/testutil"
-	"haproxy-template-ic/pkg/httpstore"
+	"haptic/pkg/controller/testutil"
+	"haptic/pkg/httpstore"
 )
 
 func TestNewHTTPStoreWrapper(t *testing.T) {

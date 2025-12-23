@@ -23,12 +23,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/debug"
-	"haproxy-template-ic/pkg/controller/events"
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/debug"
+	"haptic/pkg/controller/events"
+	coreconfig "haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	busevents "haptic/pkg/events"
 )
 
 // testEndpoint implements fmt.Stringer for endpoint URL conversion.

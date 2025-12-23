@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/k8s/client"
-	"haproxy-template-ic/pkg/k8s/types"
-	"haproxy-template-ic/pkg/k8s/watcher"
+	coreconfig "haptic/pkg/core/config"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/k8s/client"
+	"haptic/pkg/k8s/types"
+	"haptic/pkg/k8s/watcher"
 )
 
 func TestToGVR(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
-	"haproxy-template-ic/pkg/k8s/indexer"
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/k8s/indexer"
+	"haptic/pkg/k8s/types"
 )
 
 // cacheEntry holds a cached resource with its expiration time.

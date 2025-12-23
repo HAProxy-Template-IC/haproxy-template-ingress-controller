@@ -10,7 +10,7 @@ import (
 	"github.com/rekby/fixenv"
 	"github.com/stretchr/testify/assert"
 
-	"haproxy-template-ic/pkg/dataplane/client/enterprise"
+	"haptic/pkg/dataplane/client/enterprise"
 )
 
 // isKeepalivedNotInstalled checks if the error indicates Keepalived is not installed.

@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
 
-	"haproxy-template-ic/tests/testutil"
+	"haptic/tests/testutil"
 )
 
 // buildHTTPStoreValidUpdateFeature builds a feature that tests valid HTTP content
@@ -416,7 +416,7 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			t.Log("At least one controller pod ready")
 
 			// Wait for leader election
-			leaseName := "haproxy-template-ic-leader"
+			leaseName := "haptic-leader"
 			err = WaitForLeaderElection(ctx, clientset, namespace, leaseName, 60*time.Second)
 			require.NoError(t, err)
 			t.Log("Leader election complete")

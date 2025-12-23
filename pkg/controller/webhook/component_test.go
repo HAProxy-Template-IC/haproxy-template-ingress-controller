@@ -26,9 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/webhook"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/webhook"
 )
 
 // testLogger creates a slog logger for tests that discards output.

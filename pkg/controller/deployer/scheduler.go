@@ -21,10 +21,10 @@ import (
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/k8s/configpublisher"
+	"haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/k8s/configpublisher"
 )
 
 const (

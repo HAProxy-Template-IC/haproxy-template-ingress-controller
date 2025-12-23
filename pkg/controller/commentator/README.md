@@ -16,7 +16,7 @@ Observability component that subscribes to all controller events and produces st
 ## Quick Start
 
 ```go
-import "haproxy-template-ic/pkg/controller/commentator"
+import "haptic/pkg/controller/commentator"
 
 commentator := commentator.NewEventCommentator(bus, logger, 1000)
 go commentator.Start(ctx)

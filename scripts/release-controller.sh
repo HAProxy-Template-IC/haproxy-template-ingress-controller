@@ -39,7 +39,7 @@ warn() {
 }
 
 # Check if we're in the repository root
-if [[ ! -f "go.mod" ]] || [[ ! -d "charts/haproxy-template-ic" ]]; then
+if [[ ! -f "go.mod" ]] || [[ ! -d "charts/haptic" ]]; then
     error "This script must be run from the repository root"
 fi
 
@@ -85,11 +85,11 @@ echo "$VERSION" > VERSION
 
 # Update Chart.yaml appVersion
 echo "Updating Chart.yaml appVersion..."
-sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/haproxy-template-ic/Chart.yaml
+sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/haptic/Chart.yaml
 
 # Update Chart.yaml artifacthub.io/images annotation
 echo "Updating Chart.yaml artifacthub.io/images annotation..."
-sed -i "s|haproxy-template-ingress-controller:[0-9a-z.-]*|haproxy-template-ingress-controller:$VERSION|" charts/haproxy-template-ic/Chart.yaml
+sed -i "s|haproxy-template-ingress-controller:[0-9a-z.-]*|haproxy-template-ingress-controller:$VERSION|" charts/haptic/Chart.yaml
 
 # Show changes
 echo ""
@@ -99,7 +99,7 @@ git diff --stat
 # Commit and tag
 echo ""
 echo "Creating commit and tag..."
-git add VERSION charts/haproxy-template-ic/Chart.yaml
+git add VERSION charts/haptic/Chart.yaml
 git commit -m "release: controller v$VERSION"
 git tag -a "controller-v$VERSION" -m "Controller release v$VERSION"
 

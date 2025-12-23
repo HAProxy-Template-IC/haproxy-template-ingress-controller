@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/k8s/types"
 )
 
 // TestLifecycleEvents tests lifecycle.go event types.

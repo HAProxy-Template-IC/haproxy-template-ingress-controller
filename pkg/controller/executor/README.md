@@ -9,7 +9,7 @@ Stage 5 component that coordinates Renderer, Validator, and Deployer components 
 ## Quick Start
 
 ```go
-import "haproxy-template-ic/pkg/controller/executor"
+import "haptic/pkg/controller/executor"
 
 executor := executor.New(bus, logger)
 go executor.Start(ctx)

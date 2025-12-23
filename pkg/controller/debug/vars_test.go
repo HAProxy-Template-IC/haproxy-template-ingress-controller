@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/auxiliaryfiles"
 )
 
 // mockStateProvider implements StateProvider for testing.

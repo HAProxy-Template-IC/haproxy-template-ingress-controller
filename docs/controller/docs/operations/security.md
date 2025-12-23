@@ -22,7 +22,7 @@ The Helm chart creates a service account with minimal required permissions:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: haproxy-template-ic-controller
+  name: haptic-controller
 ```
 
 ### ClusterRole Permissions
@@ -179,7 +179,7 @@ The controller is compatible with Kubernetes Pod Security Standards at the "rest
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: haproxy-template-ic
+  name: haptic
   labels:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/audit: restricted
@@ -196,12 +196,12 @@ Limit controller network access:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: haproxy-template-ic
-  namespace: haproxy-template-ic
+  name: haptic
+  namespace: haptic
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: haproxy-template-ic
+      app.kubernetes.io/name: haptic
   policyTypes:
     - Ingress
     - Egress
@@ -237,12 +237,12 @@ If you enable the debug port, restrict access:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: haproxy-template-ic-debug
-  namespace: haproxy-template-ic
+  name: haptic-debug
+  namespace: haptic
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: haproxy-template-ic
+      app.kubernetes.io/name: haptic
   policyTypes:
     - Ingress
   ingress:
@@ -374,7 +374,7 @@ The controller logs security-relevant events:
 
 ```bash
 # View security-related logs
-kubectl logs -n haproxy-template-ic deployment/haproxy-template-ic-controller | grep -E "auth|credential|secret"
+kubectl logs -n haptic deployment/haptic-controller | grep -E "auth|credential|secret"
 ```
 
 ### Kubernetes Audit Policy
@@ -390,7 +390,7 @@ rules:
     resources:
       - group: ""
         resources: ["secrets"]
-    users: ["system:serviceaccount:haproxy-template-ic:haproxy-template-ic"]
+    users: ["system:serviceaccount:haptic:haptic"]
 
   # Audit configuration changes
   - level: RequestResponse

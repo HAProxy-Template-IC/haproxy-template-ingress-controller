@@ -1,6 +1,6 @@
 # Supported HAProxy Configuration
 
-This document provides an overview of HAProxy configuration sections and child components supported by the haproxy-template-ic via the HAProxy Dataplane API.
+This document provides an overview of HAProxy configuration sections and child components supported by HAPTIC via the HAProxy Dataplane API.
 
 ## Overview
 
@@ -284,7 +284,7 @@ The comparator uses the `haproxytech/client-native` models' built-in `.Equal()` 
 
 ## Summary
 
-The haproxy-template-ic provides complete HAProxy Dataplane API coverage:
+HAPTIC provides complete HAProxy Dataplane API coverage:
 
 - 15 main sections fully supported
 - 23 child component types with fine-grained operations

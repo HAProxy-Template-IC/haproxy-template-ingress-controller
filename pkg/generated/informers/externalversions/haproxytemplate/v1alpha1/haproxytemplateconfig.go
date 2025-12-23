@@ -18,10 +18,10 @@ package v1alpha1
 
 import (
 	context "context"
-	apishaproxytemplatev1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	versioned "haproxy-template-ic/pkg/generated/clientset/versioned"
-	internalinterfaces "haproxy-template-ic/pkg/generated/informers/externalversions/internalinterfaces"
-	haproxytemplatev1alpha1 "haproxy-template-ic/pkg/generated/listers/haproxytemplate/v1alpha1"
+	apishaproxytemplatev1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
+	versioned "haptic/pkg/generated/clientset/versioned"
+	internalinterfaces "haptic/pkg/generated/informers/externalversions/internalinterfaces"
+	haproxytemplatev1alpha1 "haptic/pkg/generated/listers/haproxytemplate/v1alpha1"
 	time "time"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"

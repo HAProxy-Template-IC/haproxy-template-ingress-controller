@@ -22,8 +22,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/flowcontrol"
 
-	haproxyv1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	"haproxy-template-ic/tests/kindutil"
+	haproxyv1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"haptic/tests/kindutil"
 )
 
 func init() {

@@ -1,4 +1,4 @@
-module haproxy-template-ic/tools/linters/eventimmutability
+module haptic/tools/linters/eventimmutability
 
 go 1.25.5
 

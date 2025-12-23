@@ -20,9 +20,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/templating"
 )
 
 func TestFileRegistry_Register(t *testing.T) {

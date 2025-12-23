@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/comparator/sections"
 )
 
 // ConfigDiff represents the difference between two HAProxy configurations.

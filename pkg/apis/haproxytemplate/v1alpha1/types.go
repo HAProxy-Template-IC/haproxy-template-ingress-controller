@@ -199,7 +199,7 @@ type LeaderElectionConfig struct {
 
 	// LeaseName is the name of the Lease resource used for coordination.
 	//
-	// Default: haproxy-template-ic-leader
+	// Default: haptic-leader
 	// +kubebuilder:validation:MinLength=1
 	// +optional
 	LeaseName string `json:"leaseName,omitempty"`

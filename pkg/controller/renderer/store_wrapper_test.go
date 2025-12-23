@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"haproxy-template-ic/pkg/k8s/store"
+	"haptic/pkg/k8s/store"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )

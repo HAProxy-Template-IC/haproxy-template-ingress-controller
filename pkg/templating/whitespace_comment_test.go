@@ -3,7 +3,7 @@ package templating_test
 import (
 	"testing"
 
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/templating"
 )
 
 func TestWhitespaceComments(t *testing.T) {

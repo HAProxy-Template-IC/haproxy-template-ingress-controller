@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/dataplane/client"
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/comparator/sections"
 )
 
 // mockTestOperation implements Operation for testing OrderOperations.

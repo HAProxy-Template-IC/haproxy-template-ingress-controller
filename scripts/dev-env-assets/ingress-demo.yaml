@@ -29,7 +29,7 @@ metadata:
   name: echo-basic
   namespace: echo
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo.localdev.me
       http:
@@ -56,7 +56,7 @@ metadata:
     haproxy.org/auth-secret: "echo-auth-secret"
     haproxy.org/auth-realm: "Echo-Server-Protected"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-auth.localdev.me
       http:
@@ -86,7 +86,7 @@ metadata:
     haproxy.org/cors-allow-credentials: "true"
     haproxy.org/cors-max-age: "3600"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-cors.localdev.me
       http:
@@ -114,7 +114,7 @@ metadata:
     haproxy.org/rate-limit-size: "100k"
     haproxy.org/rate-limit-status-code: "429"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-ratelimit.localdev.me
       http:
@@ -140,7 +140,7 @@ metadata:
     # Allow only specific IPs/CIDRs (localhost and cluster internal)
     haproxy.org/allowlist: "127.0.0.1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-allowlist.localdev.me
       http:
@@ -166,7 +166,7 @@ metadata:
     # Deny specific IPs (example - would deny 1.1.1.1)
     haproxy.org/denylist: "1.1.1.1, 8.8.8.8"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-denylist.localdev.me
       http:
@@ -192,7 +192,7 @@ metadata:
     haproxy.org/request-redirect: "https://echo.localdev.me"
     haproxy.org/request-redirect-code: "302"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-redirect.localdev.me
       http:
@@ -220,7 +220,7 @@ metadata:
       X-Custom-Request custom-req-value
       X-Request-ID req-12345
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-headers-request.localdev.me
       http:
@@ -248,7 +248,7 @@ metadata:
       X-Custom-Response custom-resp-value
       X-Frame-Options DENY
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-headers-response.localdev.me
       http:
@@ -273,7 +273,7 @@ metadata:
   annotations:
     haproxy.org/set-host: "internal-api.example.svc.cluster.local"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-sethost.localdev.me
       http:
@@ -299,7 +299,7 @@ metadata:
     # Rewrite /api/v1/* to /*
     haproxy.org/path-rewrite: "^/api/v1/(.*) /\\1"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-rewrite.localdev.me
       http:
@@ -324,7 +324,7 @@ metadata:
   annotations:
     haproxy.org/load-balance: "leastconn"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-loadbalance.localdev.me
       http:
@@ -349,7 +349,7 @@ metadata:
   annotations:
     haproxy.org/cookie-persistence: "SERVERID"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-sticky.localdev.me
       http:
@@ -381,7 +381,7 @@ metadata:
     haproxy.org/timeout-tunnel: "1h"
     haproxy.org/timeout-check: "3s"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-timeouts.localdev.me
       http:
@@ -406,7 +406,7 @@ metadata:
   annotations:
     haproxy.org/forwarded-for: "true"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-forwardedfor.localdev.me
       http:
@@ -435,7 +435,7 @@ metadata:
       Cookie
     haproxy.org/request-capture-len: "256"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-capture.localdev.me
       http:
@@ -462,7 +462,7 @@ metadata:
     haproxy.org/check-http: "GET /health"
     haproxy.org/check-interval: "10s"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-healthcheck.localdev.me
       http:
@@ -487,7 +487,7 @@ metadata:
   annotations:
     haproxy.org/pod-maxconn: "100"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-maxconn.localdev.me
       http:
@@ -512,7 +512,7 @@ metadata:
   annotations:
     haproxy.org/src-ip-header: "CF-Connecting-IP"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-srcip.localdev.me
       http:
@@ -551,7 +551,7 @@ metadata:
     haproxy.org/cookie-persistence: "SERVERID"
     haproxy.org/timeout-server: "30s"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-combined-ingress.localdev.me
       http:
@@ -583,7 +583,7 @@ metadata:
       acl is_api path_beg /api
       http-request set-header X-Backend-Type "api" if is_api
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-backend-snippet.localdev.me
       http:
@@ -610,7 +610,7 @@ metadata:
     haproxy.org/ssl-redirect-code: "301"
     haproxy.org/ssl-redirect-port: "443"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-ssl-redirect.localdev.me
       http:
@@ -638,7 +638,7 @@ metadata:
     # and forwards plain HTTP to echo-server
     haproxy.org/send-proxy-protocol: "proxy-v2"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-proxy-protocol.localdev.me
       http:
@@ -667,7 +667,7 @@ metadata:
     # Note: Not using HTTP/2 to avoid health check timeout issues
     haproxy.org/server-ssl: "true"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-backend-ssl.localdev.me
       http:
@@ -693,7 +693,7 @@ metadata:
     # Pre-allocate 20 server slots (allows scaling without HAProxy reload)
     haproxy.org/scale-server-slots: "20"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-scale-slots.localdev.me
       http:
@@ -766,7 +766,7 @@ metadata:
     # Disable health checks since echo-server doesn't support SSL/mTLS
     haproxy.org/check: "false"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-backend-mtls.localdev.me
       http:
@@ -794,7 +794,7 @@ metadata:
     # Backend must handle SSL/TLS termination
     haproxy.org/ssl-passthrough: "true"
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: echo-passthrough.localdev.me
       http:
@@ -832,7 +832,7 @@ metadata:
   name: echo-tls
   namespace: echo
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   tls:
     - hosts:
         - echo-tls.localdev.me
@@ -874,7 +874,7 @@ metadata:
   name: echo-tls-multi
   namespace: echo
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   tls:
     - hosts:
         - echo-tls-multi.localdev.me
@@ -921,7 +921,7 @@ metadata:
       X-Frame-Options DENY
       X-Content-Type-Options nosniff
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   tls:
     - hosts:
         - echo-tls-combined.localdev.me
@@ -957,7 +957,7 @@ metadata:
   name: echo-http-store-demo
   namespace: echo
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
     - host: http-store-demo.localdev.me
       http:

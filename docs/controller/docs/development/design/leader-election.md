@@ -261,7 +261,7 @@ controller:
 
   leaderElection:
     enabled: true  # Enable leader election (default: true)
-    leaseName: "haproxy-template-ic-leader"
+    leaseName: "haptic-leader"
     leaseDuration: 60s
     renewDeadline: 15s
     retryPeriod: 5s
@@ -274,13 +274,13 @@ controller:
 
 ## RBAC Requirements
 
-**New permissions** (`charts/haproxy-template-ic/templates/rbac.yaml`):
+**New permissions** (`charts/haptic/templates/rbac.yaml`):
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: haproxy-template-ic
+  name: haptic
 rules:
   # ... existing rules ...
 
@@ -294,7 +294,7 @@ The controller creates a Lease in its own namespace (not cluster-wide).
 
 ## Deployment Changes
 
-**Environment variables** (`charts/haproxy-template-ic/templates/deployment.yaml`):
+**Environment variables** (`charts/haptic/templates/deployment.yaml`):
 
 ```yaml
 spec:
@@ -394,9 +394,9 @@ GET /debug/vars
   "leader_election": {
     "enabled": true,
     "is_leader": true,
-    "identity": "haproxy-template-ic-7f8d9c5b-abc123",
-    "lease_name": "haproxy-template-ic-leader",
-    "lease_holder": "haproxy-template-ic-7f8d9c5b-abc123",
+    "identity": "haptic-7f8d9c5b-abc123",
+    "lease_name": "haptic-leader",
+    "lease_holder": "haptic-7f8d9c5b-abc123",
     "time_as_leader": "45m32s",
     "transitions": 2
   }
@@ -455,26 +455,26 @@ func TestLeaderElection_BothReplicasRenderConfigs(t *testing.T)
 
 ```bash
 # Deploy with 3 replicas
-kubectl scale deployment haproxy-template-ic-controller --replicas=3
+kubectl scale deployment haptic-controller --replicas=3
 
 # Check lease status
-kubectl get lease -n haproxy-system haproxy-template-ic-leader -o yaml
+kubectl get lease -n haproxy-system haptic-leader -o yaml
 
 # Verify leader via metrics
-kubectl port-forward deployment/haproxy-template-ic-controller 9090:9090
+kubectl port-forward deployment/haptic-controller 9090:9090
 curl http://localhost:9090/metrics | grep controller_is_leader
 
 # Check logs for leadership events
-kubectl logs -l app=haproxy-template-ic --tail=100 | grep -i leader
+kubectl logs -l app=haptic --tail=100 | grep -i leader
 
 # Simulate failover
 kubectl delete pod <leader-pod>
 
 # Verify new leader takes over
-watch kubectl get lease -n haproxy-system haproxy-template-ic-leader
+watch kubectl get lease -n haproxy-system haptic-leader
 
 # Check HAProxy configs only deployed once per change
-kubectl logs -l app=haproxy-template-ic | grep "deployment completed"
+kubectl logs -l app=haptic | grep "deployment completed"
 ```
 
 ## Failure Scenarios

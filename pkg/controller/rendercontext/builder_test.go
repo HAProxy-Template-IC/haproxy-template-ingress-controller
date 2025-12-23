@@ -22,10 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/k8s/types"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/k8s/types"
+	"haptic/pkg/templating"
 )
 
 func TestNewBuilder(t *testing.T) {

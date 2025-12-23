@@ -18,7 +18,7 @@ import (
 	"github.com/haproxytech/client-native/v6/configuration"
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haproxy-template-ic/pkg/dataplane/parser/parserconfig"
+	"haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // parserMutex protects against concurrent calls to the client-native parser.
@@ -46,7 +46,7 @@ type Parser struct {
 
 // StructuredConfig is a type alias for types.StructuredConfig.
 // This alias is provided for backward compatibility with existing code.
-// New code should import from haproxy-template-ic/pkg/dataplane/parser/parserconfig.
+// New code should import from haptic/pkg/dataplane/parser/parserconfig.
 type StructuredConfig = parserconfig.StructuredConfig
 
 // New creates a new Parser instance.

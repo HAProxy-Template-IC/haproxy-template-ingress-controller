@@ -34,7 +34,7 @@ import (
 
 const (
 	// LeaderElectionLeaseName is the default lease name for leader election.
-	LeaderElectionLeaseName = "haproxy-template-ic-leader"
+	LeaderElectionLeaseName = "haptic-leader"
 )
 
 // buildLeaderElectionTwoReplicasFeature builds a feature that verifies two-replica deployment

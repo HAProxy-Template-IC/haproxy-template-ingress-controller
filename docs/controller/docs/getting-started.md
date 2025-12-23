@@ -200,7 +200,7 @@ Install the controller using Helm with default configuration:
 # helm repo update
 
 # Install from local chart
-helm install haproxy-ic ./charts/haproxy-template-ic \
+helm install haproxy-ic ./charts/haptic \
   --set credentials.dataplane.username=admin \
   --set credentials.dataplane.password=adminpass
 ```
@@ -215,8 +215,8 @@ The default Helm installation:
 Verify the controller is running:
 
 ```bash
-kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=20
+kubectl get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=20
 ```
 
 You should see logs indicating the controller has started and is watching resources.
@@ -280,7 +280,7 @@ metadata:
   name: echo-ingress
   namespace: default
 spec:
-  ingressClassName: haproxy-template-ic
+  ingressClassName: haptic
   rules:
   - host: echo.example.local
     http:
@@ -307,7 +307,7 @@ kubectl apply -f echo-ingress.yaml
 Watch the controller process the Ingress:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=50 -f
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=50 -f
 ```
 
 You should see log entries showing:
@@ -392,10 +392,10 @@ The default configuration is generated from the HAProxyTemplateConfig CRD create
 
 ```bash
 # View the current configuration
-kubectl get haproxytemplateconfig haproxy-template-ic-config -o yaml
+kubectl get haproxytemplateconfig haptic-config -o yaml
 
 # Edit the configuration
-kubectl edit haproxytemplateconfig haproxy-template-ic-config
+kubectl edit haproxytemplateconfig haptic-config
 ```
 
 See [CRD Reference](./crd-reference.md) for all available options.
@@ -440,7 +440,7 @@ Set up Prometheus monitoring for the controller:
 
 ```bash
 # Enable ServiceMonitor if using Prometheus Operator
-helm upgrade haproxy-ic ./charts/haproxy-template-ic \
+helm upgrade haproxy-ic ./charts/haptic \
   --reuse-values \
   --set monitoring.serviceMonitor.enabled=true \
   --set monitoring.serviceMonitor.interval=30s
@@ -455,7 +455,7 @@ See [Monitoring Guide](./operations/monitoring.md) for metrics and dashboards.
 Check the controller logs for errors:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
 ```
 
 Common issues:
@@ -486,7 +486,7 @@ If this fails, check:
 
 Check that:
 
-1. The Ingress has `ingressClassName: haproxy-template-ic`
+1. The Ingress has `ingressClassName: haptic`
 2. The Ingress is in the same namespace as watched resources
 3. The backend Service exists and has endpoints
 

@@ -11,9 +11,9 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
-	"haproxy-template-ic/pkg/dataplane/parser"
-	v32ee "haproxy-template-ic/pkg/generated/dataplaneapi/v32ee"
+	"haptic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/parser"
+	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // compareEnterpriseSections compares all Enterprise Edition sections.

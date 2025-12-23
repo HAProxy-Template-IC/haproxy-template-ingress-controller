@@ -224,7 +224,7 @@ Tests enforce clean architecture via `arch-go.yml`:
 
 ```go
 func TestArchitecture(t *testing.T) {
-    moduleInfo := configuration.Load("haproxy-template-ic")
+    moduleInfo := configuration.Load("haptic")
     config, err := configuration.LoadConfig("../arch-go.yml")
     require.NoError(t, err)
 

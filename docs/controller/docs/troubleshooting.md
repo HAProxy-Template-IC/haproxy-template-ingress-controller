@@ -11,9 +11,9 @@ Common issues and solutions for the HAProxy Template Ingress Controller.
 **Diagnosis**:
 
 ```bash
-kubectl get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=100
-kubectl describe pod -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller
+kubectl get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=100
+kubectl describe pod -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
 ```
 
 **Common Causes**:
@@ -31,7 +31,7 @@ kubectl describe pod -l app.kubernetes.io/name=haproxy-template-ic,app.kubernete
 **Diagnosis**:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller | grep -i "watch\|sync complete"
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "watch\|sync complete"
 ```
 
 **Common Causes**:
@@ -40,7 +40,7 @@ kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/com
 |-------|-------|----------|
 | Informers not syncing | Logs show "timeout waiting for cache sync" | Check API server connectivity, network policies |
 | No matching resources | `kubectl get ingresses -A` | Verify resources exist in watched namespaces |
-| Leader election (HA) | `kubectl get lease haproxy-template-ic-leader -o yaml` | Ensure one pod shows `is_leader=1` |
+| Leader election (HA) | `kubectl get lease haptic-leader -o yaml` | Ensure one pod shows `is_leader=1` |
 
 ## Configuration Issues
 
@@ -51,7 +51,7 @@ kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/com
 **Diagnosis**:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller | grep -i "template\|render"
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "template\|render"
 ```
 
 **Solution**:
@@ -121,7 +121,7 @@ curl -u admin:password http://localhost:5555/v2/info
 
 ```bash
 kubectl exec $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller | grep -i "deployment.*succeeded"
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "deployment.*succeeded"
 ```
 
 **Common Causes**:
@@ -179,7 +179,7 @@ openssl s_client -connect localhost:443 -servername your-host.example.com < /dev
 **Diagnosis**:
 
 ```bash
-kubectl port-forward deployment/haproxy-template-ic-controller 9090:9090
+kubectl port-forward deployment/haptic-controller 9090:9090
 curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 ```
 
@@ -222,13 +222,13 @@ watchedResources:
 
 ```bash
 # Controller version
-kubectl get deployment haproxy-template-ic-controller -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment haptic-controller -o jsonpath='{.spec.template.spec.containers[0].image}'
 
 # Controller logs
-kubectl logs -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller --tail=500 > controller-logs.txt
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=500 > controller-logs.txt
 
 # Configuration
-kubectl get haproxytemplateconfig haproxy-template-ic-config -o yaml > config.yaml
+kubectl get haproxytemplateconfig haptic-config -o yaml > config.yaml
 
 # HAProxy config (sanitize sensitive data!)
 kubectl exec $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.cfg
@@ -247,10 +247,10 @@ The controller supports multiple verbosity levels via the `VERBOSE` environment 
 
 ```bash
 # Enable debug logging
-kubectl set env deployment/haproxy-template-ic-controller VERBOSE=2
+kubectl set env deployment/haptic-controller VERBOSE=2
 
 # Enable trace logging (very verbose)
-kubectl set env deployment/haproxy-template-ic-controller VERBOSE=3
+kubectl set env deployment/haptic-controller VERBOSE=3
 ```
 
 !!! note
@@ -259,8 +259,8 @@ kubectl set env deployment/haproxy-template-ic-controller VERBOSE=3
 ### Enable Debug Server
 
 ```bash
-helm upgrade haproxy-ic ./charts/haproxy-template-ic --reuse-values --set controller.debugPort=6060
-kubectl port-forward deployment/haproxy-template-ic-controller 6060:6060
+helm upgrade haproxy-ic ./charts/haptic --reuse-values --set controller.debugPort=6060
+kubectl port-forward deployment/haptic-controller 6060:6060
 ```
 
 **Available endpoints**:

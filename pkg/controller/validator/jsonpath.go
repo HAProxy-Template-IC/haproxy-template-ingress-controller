@@ -6,10 +6,10 @@ import (
 	"sort"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/k8s/indexer"
+	"haptic/pkg/controller/events"
+	coreconfig "haptic/pkg/core/config"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/k8s/indexer"
 )
 
 // JSONPathValidator validates JSONPath expressions in configuration.

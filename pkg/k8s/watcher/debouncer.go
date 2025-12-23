@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/k8s/types"
 )
 
 // Debouncer batches rapid resource changes into a single callback invocation.

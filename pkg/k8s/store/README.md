@@ -35,7 +35,7 @@ Both implement the `types.Store` interface, allowing transparent switching betwe
 package main
 
 import (
-    "haproxy-template-ic/pkg/k8s/store"
+    "haptic/pkg/k8s/store"
 )
 
 func main() {
@@ -73,8 +73,8 @@ package main
 
 import (
     "time"
-    "haproxy-template-ic/pkg/k8s/store"
-    "haproxy-template-ic/pkg/k8s/indexer"
+    "haptic/pkg/k8s/store"
+    "haptic/pkg/k8s/indexer"
     "k8s.io/apimachinery/pkg/runtime/schema"
     "k8s.io/client-go/dynamic"
 )

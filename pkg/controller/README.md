@@ -90,8 +90,8 @@ Subscribes to all EventBus events and produces domain-aware log messages with co
 
 ```go
 import (
-    "haproxy-template-ic/pkg/controller/commentator"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/controller/commentator"
+    "haptic/pkg/events"
 )
 
 eventBus := events.NewEventBus(1000)
@@ -117,8 +117,8 @@ Loads and parses controller configuration from ConfigMap resources.
 
 ```go
 import (
-    "haproxy-template-ic/pkg/controller/configloader"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/controller/configloader"
+    "haptic/pkg/events"
 )
 
 loader := configloader.New(eventBus)
@@ -179,8 +179,8 @@ Debounces resource changes and triggers reconciliation events (Stage 5, Componen
 
 ```go
 import (
-    "haproxy-template-ic/pkg/controller/reconciler"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/controller/reconciler"
+    "haptic/pkg/events"
 )
 
 // Create with custom debounce interval
@@ -209,8 +209,8 @@ Renders HAProxy configuration and auxiliary files from templates (Stage 5, Compo
 
 ```go
 import (
-    "haproxy-template-ic/pkg/controller/renderer"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/controller/renderer"
+    "haptic/pkg/events"
 )
 
 rendererComponent := renderer.New(eventBus, config, stores, logger)
@@ -239,8 +239,8 @@ Validates rendered HAProxy configurations using two-phase validation (Stage 5, C
 
 ```go
 import (
-    "haproxy-template-ic/pkg/controller/validator"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/controller/validator"
+    "haptic/pkg/events"
 )
 
 haproxyValidator := validator.NewHAProxyValidator(eventBus, logger)
@@ -269,8 +269,8 @@ Orchestrates reconciliation cycles by handling events from pure components (Stag
 
 ```go
 import (
-    "haproxy-template-ic/pkg/controller/executor"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/controller/executor"
+    "haptic/pkg/events"
 )
 
 executorComponent := executor.New(eventBus, logger)
@@ -584,10 +584,10 @@ import (
     "context"
     "log/slog"
 
-    "haproxy-template-ic/pkg/controller"
-    "haproxy-template-ic/pkg/controller/commentator"
-    "haproxy-template-ic/pkg/events"
-    "haproxy-template-ic/pkg/k8s/client"
+    "haptic/pkg/controller"
+    "haptic/pkg/controller/commentator"
+    "haptic/pkg/events"
+    "haptic/pkg/k8s/client"
 )
 
 func main() {

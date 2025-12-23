@@ -19,9 +19,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/templating"
 )
 
 // FileRegistry allows templates to dynamically register auxiliary files

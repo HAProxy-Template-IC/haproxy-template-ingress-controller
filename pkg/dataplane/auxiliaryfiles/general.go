@@ -3,7 +3,7 @@ package auxiliaryfiles
 import (
 	"context"
 
-	"haproxy-template-ic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/client"
 )
 
 // generalFileOps implements FileOperations for GeneralFile.

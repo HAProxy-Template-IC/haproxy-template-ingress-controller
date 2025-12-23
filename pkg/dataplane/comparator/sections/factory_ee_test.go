@@ -3,7 +3,7 @@ package sections
 import (
 	"testing"
 
-	v32ee "haproxy-template-ic/pkg/generated/dataplaneapi/v32ee"
+	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
 
 	"github.com/stretchr/testify/assert"
 )

@@ -10,7 +10,7 @@ import (
 	"github.com/haproxytech/client-native/v6/config-parser/common"
 	"github.com/haproxytech/client-native/v6/config-parser/errors"
 
-	"haproxy-template-ic/pkg/dataplane/parser/parserconfig"
+	"haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // EEGlobalDirective is a type alias for types.EEGlobalDirective.

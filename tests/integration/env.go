@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/rekby/fixenv"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/client"
-	"haproxy-template-ic/pkg/dataplane/comparator"
-	"haproxy-template-ic/pkg/dataplane/parser"
-	"haproxy-template-ic/pkg/dataplane/parser/enterprise"
-	"haproxy-template-ic/pkg/dataplane/parser/parserconfig"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/comparator"
+	"haptic/pkg/dataplane/parser"
+	"haptic/pkg/dataplane/parser/enterprise"
+	"haptic/pkg/dataplane/parser/parserconfig"
 )
 
 const (

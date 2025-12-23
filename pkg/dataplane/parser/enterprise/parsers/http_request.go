@@ -11,7 +11,7 @@ import (
 	"github.com/haproxytech/client-native/v6/config-parser/errors"
 	"github.com/haproxytech/client-native/v6/config-parser/parsers/http"
 
-	"haproxy-template-ic/pkg/dataplane/parser/parserconfig"
+	"haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // EEHTTPRequestAction is a type alias for types.EEHTTPRequestAction.

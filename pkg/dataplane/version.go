@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"haproxy-template-ic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/client"
 )
 
 // Version represents HAProxy or DataPlane API version with major.minor components.

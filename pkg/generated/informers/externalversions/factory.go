@@ -17,9 +17,9 @@
 package externalversions
 
 import (
-	versioned "haproxy-template-ic/pkg/generated/clientset/versioned"
-	haproxytemplate "haproxy-template-ic/pkg/generated/informers/externalversions/haproxytemplate"
-	internalinterfaces "haproxy-template-ic/pkg/generated/informers/externalversions/internalinterfaces"
+	versioned "haptic/pkg/generated/clientset/versioned"
+	haproxytemplate "haptic/pkg/generated/informers/externalversions/haproxytemplate"
+	internalinterfaces "haptic/pkg/generated/informers/externalversions/internalinterfaces"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

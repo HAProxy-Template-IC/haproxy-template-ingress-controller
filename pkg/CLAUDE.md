@@ -119,8 +119,8 @@ Only `pkg/controller` contains event coordination:
 package renderer
 
 import (
-    "haproxy-template-ic/pkg/events"
-    "haproxy-template-ic/pkg/templating"
+    "haptic/pkg/events"
+    "haptic/pkg/templating"
 )
 
 // Event adapter wraps pure component
@@ -196,7 +196,7 @@ Use direct function calls for pure components:
 
 ```go
 // pkg/controller/executor.go
-import "haproxy-template-ic/pkg/templating"
+import "haptic/pkg/templating"
 
 func (e *Executor) render() (string, error) {
     // Direct call to pure component
@@ -251,8 +251,8 @@ Test package interactions:
 package executor
 
 import (
-    "haproxy-template-ic/pkg/events"
-    "haproxy-template-ic/pkg/templating"
+    "haptic/pkg/events"
+    "haptic/pkg/templating"
 )
 
 func TestExecutor_Integration(t *testing.T) {

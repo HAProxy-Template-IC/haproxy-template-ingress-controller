@@ -20,7 +20,7 @@
 package resourcestore
 
 import (
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/k8s/types"
 )
 
 // Store is the interface that resource stores must implement.

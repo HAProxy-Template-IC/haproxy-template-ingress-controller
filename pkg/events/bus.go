@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package events provides an event bus for component coordination in the haproxy-template-ic controller.
+// Package events provides an event bus for component coordination in the HAPTIC controller.
 //
 // The event bus supports two communication patterns:
 // 1. Async pub/sub: Fire-and-forget event publishing for observability and loose coupling

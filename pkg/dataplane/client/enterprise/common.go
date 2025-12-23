@@ -26,7 +26,7 @@ package enterprise
 import (
 	"errors"
 
-	"haproxy-template-ic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/client"
 )
 
 // ErrNotFound is returned when a requested resource does not exist.

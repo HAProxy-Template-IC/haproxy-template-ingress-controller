@@ -73,9 +73,9 @@ TemplateEngine  ────wraps──→  RendererComponent
 package renderer
 
 import (
-    "haproxy-template-ic/pkg/controller/events"
-    "haproxy-template-ic/pkg/templating"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/controller/events"
+    "haptic/pkg/templating"
+    "haptic/pkg/events"
 )
 
 type Component struct {
@@ -215,7 +215,7 @@ All domain-specific event types live here:
 // pkg/controller/events/types.go
 package events
 
-import "haproxy-template-ic/pkg/events"
+import "haptic/pkg/events"
 
 // Lifecycle events
 type ControllerStartedEvent struct {
@@ -1075,11 +1075,11 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 
 ```bash
 # Deploy with 2 replicas
-kubectl -n haproxy-template-ic scale deployment haproxy-template-ic-controller --replicas=2
+kubectl -n haptic scale deployment haptic-controller --replicas=2
 
 # Delete current leader to trigger election
-LEADER=$(kubectl -n haproxy-template-ic get pods -l app.kubernetes.io/name=haproxy-template-ic,app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')
-kubectl -n haproxy-template-ic delete pod $LEADER
+LEADER=$(kubectl -n haptic get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')
+kubectl -n haptic delete pod $LEADER
 
 # Expected log pattern after transition:
 # 14:05:04.123 | INFO | Became leader

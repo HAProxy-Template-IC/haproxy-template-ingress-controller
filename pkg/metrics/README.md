@@ -17,7 +17,7 @@ HTTP server for exposing Prometheus metrics via `/metrics` endpoint.
 ```go
 import (
     "github.com/prometheus/client_golang/prometheus"
-    "haproxy-template-ic/pkg/metrics"
+    "haptic/pkg/metrics"
 )
 
 // Create instance-based registry
@@ -52,7 +52,7 @@ Convenience functions for creating Prometheus metrics with consistent naming.
 ```go
 import (
     "github.com/prometheus/client_golang/prometheus"
-    "haproxy-template-ic/pkg/metrics"
+    "haptic/pkg/metrics"
 )
 
 registry := prometheus.NewRegistry()
@@ -140,7 +140,7 @@ deploymentCounter := metrics.NewCounter(
     "deployment_total",
     "Total deployments",
 )
-// Actual metric name: "haproxy_ic_deployment_total"
+// Actual metric name: "haptic_deployment_total"
 ```
 
 ### Custom Bucket Sizes
@@ -174,17 +174,17 @@ Exposes metrics in Prometheus/OpenMetrics format.
 **Response:**
 
 ```
-# HELP haproxy_ic_requests_total Total requests
-# TYPE haproxy_ic_requests_total counter
-haproxy_ic_requests_total 42
+# HELP haptic_requests_total Total requests
+# TYPE haptic_requests_total counter
+haptic_requests_total 42
 
-# HELP haproxy_ic_duration_seconds Request duration
-# TYPE haproxy_ic_duration_seconds histogram
-haproxy_ic_duration_seconds_bucket{le="0.01"} 10
-haproxy_ic_duration_seconds_bucket{le="0.05"} 25
-haproxy_ic_duration_seconds_bucket{le="+Inf"} 42
-haproxy_ic_duration_seconds_sum 1.5
-haproxy_ic_duration_seconds_count 42
+# HELP haptic_duration_seconds Request duration
+# TYPE haptic_duration_seconds histogram
+haptic_duration_seconds_bucket{le="0.01"} 10
+haptic_duration_seconds_bucket{le="0.05"} 25
+haptic_duration_seconds_bucket{le="+Inf"} 42
+haptic_duration_seconds_sum 1.5
+haptic_duration_seconds_count 42
 ```
 
 ### GET /
@@ -232,7 +232,7 @@ func TestMetricsServer(t *testing.T) {
     defer resp.Body.Close()
 
     body, _ := io.ReadAll(resp.Body)
-    assert.Contains(t, string(body), "haproxy_ic_test_total 42")
+    assert.Contains(t, string(body), "haptic_test_total 42")
 }
 ```
 
@@ -262,13 +262,13 @@ func TestMetricsServer(t *testing.T) {
 Rate of events per second:
 
 ```promql
-rate(haproxy_ic_requests_total[5m])
+rate(haptic_requests_total[5m])
 ```
 
 Total events in time range:
 
 ```promql
-increase(haproxy_ic_requests_total[1h])
+increase(haptic_requests_total[1h])
 ```
 
 ### Histogram Metrics
@@ -276,14 +276,14 @@ increase(haproxy_ic_requests_total[1h])
 Average latency:
 
 ```promql
-rate(haproxy_ic_duration_seconds_sum[5m]) /
-rate(haproxy_ic_duration_seconds_count[5m])
+rate(haptic_duration_seconds_sum[5m]) /
+rate(haptic_duration_seconds_count[5m])
 ```
 
 95th percentile latency:
 
 ```promql
-histogram_quantile(0.95, rate(haproxy_ic_duration_seconds_bucket[5m]))
+histogram_quantile(0.95, rate(haptic_duration_seconds_bucket[5m]))
 ```
 
 ### Gauge Metrics
@@ -291,13 +291,13 @@ histogram_quantile(0.95, rate(haproxy_ic_duration_seconds_bucket[5m]))
 Current value:
 
 ```promql
-haproxy_ic_active_connections
+haptic_active_connections
 ```
 
 Maximum value over time:
 
 ```promql
-max_over_time(haproxy_ic_active_connections[5m])
+max_over_time(haptic_active_connections[5m])
 ```
 
 ## Architecture

@@ -22,7 +22,7 @@ import (
 	"os"
 	"testing"
 
-	"haproxy-template-ic/pkg/dataplane/parser"
+	"haptic/pkg/dataplane/parser"
 )
 
 // Package-level result sink prevents compiler dead code elimination.

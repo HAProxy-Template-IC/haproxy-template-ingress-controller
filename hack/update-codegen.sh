@@ -19,7 +19,7 @@ set -o nounset
 set -o pipefail
 
 SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
-MODULE_NAME="haproxy-template-ic"
+MODULE_NAME="haptic"
 
 echo "Generating clientset, informers, and listers..."
 
@@ -67,21 +67,10 @@ go run k8s.io/code-generator/cmd/informer-gen \
   "${MODULE_NAME}/pkg/apis/haproxytemplate/v1alpha1" \
   2>&1 || true  # Ignore formatting errors
 
-# Fix hyphenated identifiers (client-gen doesn't handle module names with hyphens well)
-# The generator creates invalid Go identifiers with hyphens. We need to fix all of them
-# EXCEPT the import paths and domain names (which are in quotes/comments).
-# Strategy: Replace all occurrences, then restore the import paths and domains.
-# NOTE: gofmt runs during generation and adds spaces around hyphens it thinks are operators,
-# so we also need to fix patterns like "Haproxy - template - ic" -> "HaproxyTemplateIC"
-echo "  Fixing hyphenated identifiers..."
-find "${SCRIPT_ROOT}/pkg/generated" -name "*.go" -type f -exec sed -i \
-  -e 's/Haproxy - template - ic/HaproxyTemplateIC/g' \
-  -e 's/Haproxy-template-ic/HaproxyTemplateIC/g' \
-  -e 's/haproxy - template - ic/haproxytemplateic/g' \
-  -e 's/haproxy-template-ic/haproxytemplateic/g' \
-  -e 's/"haproxytemplateic\//"haproxy-template-ic\//g' \
-  -e 's/haproxytemplateic\.gitlab\.io/haproxy-template-ic.gitlab.io/g' \
-  {} +
+# Note: With the 'haptic' module name (no hyphens), no identifier fixup is needed.
+# The only thing we need to preserve is the API group name which contains hyphens.
+echo "  Preserving API group name..."
+# No-op since haptic has no hyphens that could cause identifier issues
 
 # Format the fixed files
 echo "  Formatting generated code..."

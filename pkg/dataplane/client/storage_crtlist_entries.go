@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	v32 "haproxy-template-ic/pkg/generated/dataplaneapi/v32"
-	v32ee "haproxy-template-ic/pkg/generated/dataplaneapi/v32ee"
+	v32 "haptic/pkg/generated/dataplaneapi/v32"
+	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // CRTListEntry represents an entry within a CRT-list file.

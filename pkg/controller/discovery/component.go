@@ -26,12 +26,12 @@ import (
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/dataplane/client"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/controller/events"
+	coreconfig "haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/dataplane/client"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/k8s/types"
 )
 
 const (

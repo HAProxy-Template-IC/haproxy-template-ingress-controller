@@ -17,7 +17,7 @@
 package fake
 
 import (
-	v1alpha1 "haproxy-template-ic/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1"
+	v1alpha1 "haptic/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1"
 	rest "k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
 )

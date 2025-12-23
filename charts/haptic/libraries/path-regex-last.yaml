@@ -1,0 +1,74 @@
+# Path Regex Last library for HAPTIC
+# Overrides the default path matching order to place regex matching last
+#
+# Default ordering (de facto standard): Exact > Regex > Prefix
+# This library ordering (performance-first): Exact > Prefix > Regex
+#
+# Enable this library for HAProxy-optimized path matching where faster
+# exact and prefix matches are evaluated before slower regex matches.
+#
+# Usage:
+#   controller:
+#     templateLibraries:
+#       pathRegexLast:
+#         enabled: true
+
+templateSnippets:
+  frontend-routing-logic:
+    template: |
+      {#-
+        Frontend Routing Logic (Performance-First Ordering)
+
+        Purpose: Alternative path matching order optimized for performance.
+
+        Overrides: base.yaml frontend-routing-logic
+
+        Path Matching Order:
+          1. Exact match (path-exact.map) - fastest
+          2. Prefix-exact match (path-prefix-exact.map)
+          3. Prefix match (path-prefix.map)
+          4. Regex match (path-regex.map) - slowest, evaluated last
+
+        Why: Regex matching is expensive. This ordering evaluates faster
+        matchers first, only falling back to regex when necessary.
+
+        Enable: Set controller.templateLibraries.pathRegexLast.enabled=true
+      -#}
+      # path-regex-last/frontend-routing-logic
+
+      # Set variables for path-based routing
+      http-request set-var(txn.base) base
+      http-request set-var(txn.path) path
+      http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
+      http-request set-var(txn.host_match) var(txn.host),map({{ pathResolver.GetPath("host.map", "map") }})
+      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ pathResolver.GetPath("host.map", "map") }},'') if !{ var(txn.host_match) -m found }
+
+      # Path matching order: Exact > Prefix-exact > Prefix > Regex
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("path-exact.map", "map") }})
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("path-prefix-exact.map", "map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("path-prefix.map", "map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ pathResolver.GetPath("path-regex.map", "map") }}) if !{ var(txn.path_match) -m found }
+
+      # Parse qualifier from path match (field 1 = qualifier type)
+      # Empty string if no path match - falls through gracefully
+      http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
+
+      # MULTIBACKEND qualifier: weighted routing
+      # Format: MULTIBACKEND:<total_weight>:<route_key>
+      # Field 2 = total_weight, Field 3 = route_key
+      # Result: sets txn.backend_name via weighted-multi-backend.map lookup
+      http-request set-var(txn.total_weight) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.random_weight) rand(),mod(txn.total_weight) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.route_key) var(txn.path_match),field(3,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.lookup_key) var(txn.random_weight),concat(:,txn.route_key,) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ pathResolver.GetPath("weighted-multi-backend.map", "map") }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+
+      # BACKEND qualifier: direct routing
+      # Format: BACKEND:<backend_name>
+      # Field 2 = backend name
+      # Result: sets txn.backend_name directly
+      http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
+
+      # Use backend from txn.backend_name (set by qualifier logic above)
+      # Falls through to default_backend if backend_name is empty
+      use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }

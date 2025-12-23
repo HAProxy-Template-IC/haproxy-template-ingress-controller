@@ -25,10 +25,10 @@ const (
 	HAProxyTemplateConfigKind = "HAProxyTemplateConfig"
 
 	// CRDDirectory is the path to the CRD manifests relative to the test directory.
-	CRDDirectory = "../../charts/haproxy-template-ic/crds/"
+	CRDDirectory = "../../charts/haptic/crds/"
 
 	// ControllerImageName is the Docker image name used for acceptance tests.
-	ControllerImageName = "haproxy-template-ic:test"
+	ControllerImageName = "haptic:test"
 )
 
 // RequiredCRDs lists the CRDs that must be installed for acceptance tests.

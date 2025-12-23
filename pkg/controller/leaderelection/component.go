@@ -7,9 +7,9 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
-	k8sleaderelection "haproxy-template-ic/pkg/k8s/leaderelection"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
+	k8sleaderelection "haptic/pkg/k8s/leaderelection"
 )
 
 // Component is an event adapter that wraps the pure leader election component

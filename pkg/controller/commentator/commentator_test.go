@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
+	"haptic/pkg/k8s/types"
 )
 
 func TestNewEventCommentator(t *testing.T) {

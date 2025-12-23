@@ -23,10 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	"haproxy-template-ic/pkg/dataplane"
+	"haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	"haptic/pkg/dataplane"
 )
 
 // TestNewDeploymentScheduler tests scheduler creation.

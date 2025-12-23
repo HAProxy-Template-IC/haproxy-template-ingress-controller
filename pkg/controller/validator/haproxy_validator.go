@@ -25,9 +25,9 @@ import (
 	"sync"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/dataplane"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/dataplane"
+	busevents "haptic/pkg/events"
 )
 
 const (

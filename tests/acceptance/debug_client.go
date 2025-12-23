@@ -26,7 +26,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
-	"haproxy-template-ic/tests/testutil"
+	"haptic/tests/testutil"
 )
 
 // DebugClient provides access to the controller's debug HTTP server via Kubernetes API proxy.
@@ -60,10 +60,18 @@ func NewDebugClient(clientset kubernetes.Interface, namespace, serviceName strin
 // Wait functions to make multiple attempts within their timeout budgets.
 func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error) {
 	const (
-		maxRetries        = 8                     // Increased for API overload resilience
+		// Retry budget is tuned to work with the outer Wait functions:
+		// - maxRetries reduced from 8 to 4 to allow more outer loop attempts
+		// - maxBackoff reduced from 4s to 2s to fail faster on persistent errors
+		// - minTimeForRetries reduced from 10s to 5s to attempt retries more often
+		//
+		// With these settings, worst-case per proxyGet is ~5.4s (1.4s backoff + 4 API calls)
+		// instead of ~22s (14.2s backoff + 8 API calls). This allows the outer Wait
+		// functions (with 30-60s timeouts) to make more attempts.
+		maxRetries        = 4
 		initialBackoff    = 200 * time.Millisecond
-		maxBackoff        = 4 * time.Second
-		minTimeForRetries = 10 * time.Second     // More time for retries under load
+		maxBackoff        = 2 * time.Second
+		minTimeForRetries = 5 * time.Second
 	)
 
 	// Check if we have enough time remaining for retries.

@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	haproxyv1alpha1 "haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
+	haproxyv1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
 )
 
 // InitialConfigYAML is the initial controller configuration.
@@ -121,7 +121,7 @@ controller:
   metrics_port: 9090
   leader_election:
     enabled: true
-    lease_name: haproxy-template-ic-leader
+    lease_name: haptic-leader
     lease_duration: 60s
     renew_deadline: 15s
     retry_period: 5s
@@ -506,7 +506,7 @@ func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateC
 				MetricsPort: 9090,
 				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
 					Enabled:       &enabled,
-					LeaseName:     "haproxy-template-ic-leader",
+					LeaseName:     "haptic-leader",
 					LeaseDuration: "15s",
 					RenewDeadline: "10s",
 					RetryPeriod:   "2s",
@@ -733,7 +733,7 @@ func NewControllerDeployment(namespace, crdName, secretName, serviceAccountName 
 					Containers: []corev1.Container{
 						{
 							Name:  "controller",
-							Image: "haproxy-template-ic:test",
+							Image: "haptic:test",
 							Env: []corev1.EnvVar{
 								{
 									Name:  "CRD_NAME",
@@ -753,7 +753,7 @@ func NewControllerDeployment(namespace, crdName, secretName, serviceAccountName 
 								},
 								{
 									Name:  "WEBHOOK_SERVICE_NAME",
-									Value: "haproxy-template-ic-webhook",
+									Value: "haptic-webhook",
 								},
 								{
 									Name: "POD_NAME",

@@ -37,8 +37,8 @@ pkg/controller/webhook/ (Event Adapter)
 
 ```go
 import (
-    "haproxy-template-ic/pkg/controller/webhook"
-    "haproxy-template-ic/pkg/webhook"
+    "haptic/pkg/controller/webhook"
+    "haptic/pkg/webhook"
 )
 
 // Create component
@@ -75,7 +75,7 @@ config := webhook.Config{
     ServiceName: "webhook-service",
 
     // Optional (defaults shown)
-    WebhookConfigName: "haproxy-template-ic-webhook",
+    WebhookConfigName: "haptic-webhook",
     Port:              9443,
     Path:              "/validate",
     CertRotationCheckInterval: 24 * time.Hour,

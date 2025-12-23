@@ -19,7 +19,7 @@ package main
 
 import (
     "log"
-    "haproxy-template-ic/pkg/templating"
+    "haptic/pkg/templating"
 )
 
 func main() {

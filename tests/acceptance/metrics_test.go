@@ -123,17 +123,17 @@ func buildMetricsFeature() types.Feature {
 
 			// Define expected metrics
 			expectedMetrics := []string{
-				"haproxy_ic_reconciliation_total",
-				"haproxy_ic_reconciliation_errors_total",
-				"haproxy_ic_reconciliation_duration_seconds",
-				"haproxy_ic_deployment_total",
-				"haproxy_ic_deployment_errors_total",
-				"haproxy_ic_deployment_duration_seconds",
-				"haproxy_ic_validation_total",
-				"haproxy_ic_validation_errors_total",
-				"haproxy_ic_resource_count",
-				"haproxy_ic_event_subscribers",
-				"haproxy_ic_events_published_total",
+				"haptic_reconciliation_total",
+				"haptic_reconciliation_errors_total",
+				"haptic_reconciliation_duration_seconds",
+				"haptic_deployment_total",
+				"haptic_deployment_errors_total",
+				"haptic_deployment_duration_seconds",
+				"haptic_validation_total",
+				"haptic_validation_errors_total",
+				"haptic_resource_count",
+				"haptic_event_subscribers",
+				"haptic_events_published_total",
 			}
 
 			// Verify each metric exists
@@ -160,40 +160,40 @@ func buildMetricsFeature() types.Feature {
 			metricValues := parsePrometheusMetrics(metrics)
 
 			// Check reconciliation metrics (should have occurred at startup)
-			if val, ok := metricValues["haproxy_ic_reconciliation_total"]; ok && val > 0 {
-				t.Logf("✓ haproxy_ic_reconciliation_total = %.0f (operations occurred)", val)
+			if val, ok := metricValues["haptic_reconciliation_total"]; ok && val > 0 {
+				t.Logf("✓ haptic_reconciliation_total = %.0f (operations occurred)", val)
 			} else {
-				t.Error("haproxy_ic_reconciliation_total should be > 0")
+				t.Error("haptic_reconciliation_total should be > 0")
 			}
 
 			// Check validation metrics (should have occurred during startup)
-			if val, ok := metricValues["haproxy_ic_validation_total"]; ok && val > 0 {
-				t.Logf("✓ haproxy_ic_validation_total = %.0f (validations occurred)", val)
+			if val, ok := metricValues["haptic_validation_total"]; ok && val > 0 {
+				t.Logf("✓ haptic_validation_total = %.0f (validations occurred)", val)
 			} else {
-				t.Error("haproxy_ic_validation_total should be > 0")
+				t.Error("haptic_validation_total should be > 0")
 			}
 
 			// Check events published (controller publishes many events)
-			if val, ok := metricValues["haproxy_ic_events_published_total"]; ok && val > 0 {
-				t.Logf("✓ haproxy_ic_events_published_total = %.0f (events flowing)", val)
+			if val, ok := metricValues["haptic_events_published_total"]; ok && val > 0 {
+				t.Logf("✓ haptic_events_published_total = %.0f (events flowing)", val)
 			} else {
-				t.Error("haproxy_ic_events_published_total should be > 0")
+				t.Error("haptic_events_published_total should be > 0")
 			}
 
 			// Check error counters (should be 0 with valid configuration)
 			hasErrors := false
-			if val, ok := metricValues["haproxy_ic_reconciliation_errors_total"]; ok && val > 0 {
-				t.Errorf("haproxy_ic_reconciliation_errors_total = %.0f, expected 0", val)
+			if val, ok := metricValues["haptic_reconciliation_errors_total"]; ok && val > 0 {
+				t.Errorf("haptic_reconciliation_errors_total = %.0f, expected 0", val)
 				hasErrors = true
 			} else {
-				t.Logf("✓ haproxy_ic_reconciliation_errors_total = %.0f (no errors)", val)
+				t.Logf("✓ haptic_reconciliation_errors_total = %.0f (no errors)", val)
 			}
 
-			if val, ok := metricValues["haproxy_ic_validation_errors_total"]; ok && val > 0 {
-				t.Errorf("haproxy_ic_validation_errors_total = %.0f, expected 0", val)
+			if val, ok := metricValues["haptic_validation_errors_total"]; ok && val > 0 {
+				t.Errorf("haptic_validation_errors_total = %.0f, expected 0", val)
 				hasErrors = true
 			} else {
-				t.Logf("✓ haproxy_ic_validation_errors_total = %.0f (no errors)", val)
+				t.Logf("✓ haptic_validation_errors_total = %.0f (no errors)", val)
 			}
 
 			// If errors detected, print controller logs for debugging
@@ -216,7 +216,7 @@ func buildMetricsFeature() types.Feature {
 
 			// Resource count is a gauge with labels, check for the metric with type label
 			resourceCountMetrics := []string{
-				"haproxy_ic_resource_count{type=\"haproxy-pods\"}",
+				"haptic_resource_count{type=\"haproxy-pods\"}",
 			}
 
 			foundAny := false
@@ -244,8 +244,8 @@ func buildMetricsFeature() types.Feature {
 
 			// Histograms should have bucket, sum, and count
 			histogramMetrics := []string{
-				"haproxy_ic_reconciliation_duration_seconds",
-				"haproxy_ic_deployment_duration_seconds",
+				"haptic_reconciliation_duration_seconds",
+				"haptic_deployment_duration_seconds",
 			}
 
 			for _, metric := range histogramMetrics {

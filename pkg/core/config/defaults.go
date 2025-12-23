@@ -42,7 +42,7 @@ const (
 	DefaultLeaderElectionEnabled = true
 
 	// DefaultLeaderElectionLeaseName is the default name for the leader election lease.
-	DefaultLeaderElectionLeaseName = "haproxy-template-ic-leader"
+	DefaultLeaderElectionLeaseName = "haptic-leader"
 
 	// DefaultLeaderElectionLeaseDuration is the default lease duration.
 	DefaultLeaderElectionLeaseDuration = 15 * time.Second

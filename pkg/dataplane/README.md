@@ -17,7 +17,7 @@ A Go library for synchronizing HAProxy configurations via the Dataplane API. Pro
 ## Installation
 
 ```bash
-go get haproxy-template-ic/pkg/dataplane
+go get haptic/pkg/dataplane
 ```
 
 ## Quick Start
@@ -33,7 +33,7 @@ import (
     "context"
     "log"
 
-    "haproxy-template-ic/pkg/dataplane"
+    "haptic/pkg/dataplane"
 )
 
 func main() {
@@ -287,7 +287,7 @@ Validate HAProxy configurations before deployment with two-phase validation:
 
 ```go
 import (
-    "haproxy-template-ic/pkg/dataplane"
+    "haptic/pkg/dataplane"
 )
 
 func main() {
@@ -411,7 +411,7 @@ err := ValidateConfiguration(config, auxFiles, paths)
 The library provides capability detection for HAProxy version-specific features:
 
 ```go
-import "haproxy-template-ic/pkg/dataplane"
+import "haptic/pkg/dataplane"
 
 // When using DataPlane API client
 client, err := dataplane.NewClient(ctx, endpoint)
@@ -724,4 +724,4 @@ if err == nil && result.FallbackToRaw {
 
 ## License
 
-This library is part of the haproxy-template-ic project.
+This library is part of the HAPTIC project.

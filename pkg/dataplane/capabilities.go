@@ -14,7 +14,7 @@
 
 package dataplane
 
-import "haproxy-template-ic/pkg/dataplane/client"
+import "haptic/pkg/dataplane/client"
 
 // Capabilities defines which features are available for a given HAProxy/DataPlane API version.
 // This type is re-exported from pkg/dataplane/client for convenience.

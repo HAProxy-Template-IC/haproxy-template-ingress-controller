@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"golang.org/x/tools/go/analysis/analysistest"
-	"haproxy-template-ic/tools/linters/eventimmutability"
+	"haptic/tools/linters/eventimmutability"
 )
 
 func TestAnalyzer(t *testing.T) {

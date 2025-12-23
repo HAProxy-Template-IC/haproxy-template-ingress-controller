@@ -17,7 +17,7 @@ package metrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	pkgmetrics "haproxy-template-ic/pkg/metrics"
+	pkgmetrics "haptic/pkg/metrics"
 )
 
 // Metrics holds all controller-specific Prometheus metrics.
@@ -86,70 +86,70 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 		// Reconciliation metrics
 		ReconciliationDuration: pkgmetrics.NewHistogramWithBuckets(
 			registry,
-			"haproxy_ic_reconciliation_duration_seconds",
+			"haptic_reconciliation_duration_seconds",
 			"Time spent in reconciliation cycles",
 			pkgmetrics.DurationBuckets(),
 		),
 		ReconciliationTotal: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_reconciliation_total",
+			"haptic_reconciliation_total",
 			"Total number of reconciliation cycles",
 		),
 		ReconciliationErrors: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_reconciliation_errors_total",
+			"haptic_reconciliation_errors_total",
 			"Total number of failed reconciliation cycles",
 		),
 
 		// Deployment metrics
 		DeploymentDuration: pkgmetrics.NewHistogramWithBuckets(
 			registry,
-			"haproxy_ic_deployment_duration_seconds",
+			"haptic_deployment_duration_seconds",
 			"Time spent deploying configurations",
 			pkgmetrics.DurationBuckets(),
 		),
 		DeploymentTotal: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_deployment_total",
+			"haptic_deployment_total",
 			"Total number of deployment attempts",
 		),
 		DeploymentErrors: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_deployment_errors_total",
+			"haptic_deployment_errors_total",
 			"Total number of failed deployments",
 		),
 
 		// Validation metrics
 		ValidationTotal: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_validation_total",
+			"haptic_validation_total",
 			"Total number of validation attempts",
 		),
 		ValidationErrors: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_validation_errors_total",
+			"haptic_validation_errors_total",
 			"Total number of failed validations",
 		),
 
 		// Validation test metrics
 		ValidationTestsTotal: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_validation_tests_total",
+			"haptic_validation_tests_total",
 			"Total number of validation tests executed",
 		),
 		ValidationTestsPassTotal: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_validation_tests_pass_total",
+			"haptic_validation_tests_pass_total",
 			"Total number of validation tests that passed",
 		),
 		ValidationTestsFailTotal: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_validation_tests_fail_total",
+			"haptic_validation_tests_fail_total",
 			"Total number of validation tests that failed",
 		),
 		ValidationTestDuration: pkgmetrics.NewHistogramWithBuckets(
 			registry,
-			"haproxy_ic_validation_test_duration_seconds",
+			"haptic_validation_test_duration_seconds",
 			"Time spent running validation tests",
 			pkgmetrics.DurationBuckets(),
 		),
@@ -157,7 +157,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 		// Resource metrics
 		ResourceCount: pkgmetrics.NewGaugeVec(
 			registry,
-			"haproxy_ic_resource_count",
+			"haptic_resource_count",
 			"Number of resources by type",
 			[]string{"type"},
 		),
@@ -165,59 +165,59 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 		// Event metrics
 		EventSubscribers: pkgmetrics.NewGauge(
 			registry,
-			"haproxy_ic_event_subscribers",
+			"haptic_event_subscribers",
 			"Number of active event subscribers",
 		),
 		EventsPublished: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_events_published_total",
+			"haptic_events_published_total",
 			"Total number of events published",
 		),
 
 		// Webhook metrics
 		WebhookRequestsTotal: pkgmetrics.NewCounterVec(
 			registry,
-			"haproxy_ic_webhook_requests_total",
+			"haptic_webhook_requests_total",
 			"Total number of webhook admission requests",
 			[]string{"gvk", "result"},
 		),
 		WebhookRequestDuration: pkgmetrics.NewHistogramWithBuckets(
 			registry,
-			"haproxy_ic_webhook_request_duration_seconds",
+			"haptic_webhook_request_duration_seconds",
 			"Time spent processing webhook requests",
 			pkgmetrics.DurationBuckets(),
 		),
 		WebhookValidationTotal: pkgmetrics.NewCounterVec(
 			registry,
-			"haproxy_ic_webhook_validation_total",
+			"haptic_webhook_validation_total",
 			"Total number of webhook validation results",
 			[]string{"gvk", "result"},
 		),
 		WebhookCertExpiry: pkgmetrics.NewGauge(
 			registry,
-			"haproxy_ic_webhook_cert_expiry_timestamp_seconds",
+			"haptic_webhook_cert_expiry_timestamp_seconds",
 			"Timestamp when webhook certificates expire",
 		),
 		WebhookCertRotations: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_webhook_cert_rotations_total",
+			"haptic_webhook_cert_rotations_total",
 			"Total number of webhook certificate rotations",
 		),
 
 		// Leader election metrics
 		LeaderElectionIsLeader: pkgmetrics.NewGauge(
 			registry,
-			"haproxy_ic_leader_election_is_leader",
+			"haptic_leader_election_is_leader",
 			"Indicates if this replica is the leader (1) or follower (0)",
 		),
 		LeaderElectionTransitionsTotal: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_leader_election_transitions_total",
+			"haptic_leader_election_transitions_total",
 			"Total number of leadership transitions",
 		),
 		LeaderElectionTimeAsLeaderSeconds: pkgmetrics.NewCounter(
 			registry,
-			"haproxy_ic_leader_election_time_as_leader_seconds_total",
+			"haptic_leader_election_time_as_leader_seconds_total",
 			"Cumulative time spent as leader in seconds",
 		),
 	}

@@ -3,8 +3,8 @@ package comparator
 import (
 	"testing"
 
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
-	"haproxy-template-ic/pkg/dataplane/parser"
+	"haptic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/parser"
 )
 
 // TestCompare_UserlistWithHTTPAuthRule tests that when a backend references a userlist

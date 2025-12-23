@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	busevents "haptic/pkg/events"
 )
 
 // TestExecutor_BasicReconciliationFlow tests the basic event flow of a reconciliation cycle.

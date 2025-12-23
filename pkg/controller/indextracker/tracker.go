@@ -28,8 +28,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
 )
 
 // IndexSynchronizationTracker monitors resource synchronization and publishes

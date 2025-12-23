@@ -17,8 +17,8 @@
 package haproxytemplate
 
 import (
-	v1alpha1 "haproxy-template-ic/pkg/generated/informers/externalversions/haproxytemplate/v1alpha1"
-	internalinterfaces "haproxy-template-ic/pkg/generated/informers/externalversions/internalinterfaces"
+	v1alpha1 "haptic/pkg/generated/informers/externalversions/haproxytemplate/v1alpha1"
+	internalinterfaces "haptic/pkg/generated/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to each of this group's versions.

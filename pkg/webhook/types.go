@@ -187,7 +187,7 @@ type CertConfig struct {
 	CommonName string
 
 	// Organization for the CA certificate.
-	// Default: "haproxy-template-ic"
+	// Default: "haptic"
 	Organization string
 
 	// ValidityDuration is how long certificates are valid.

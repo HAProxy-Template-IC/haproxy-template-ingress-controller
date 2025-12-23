@@ -179,7 +179,7 @@ type LeaderElectionConfig struct {
 	Enabled bool `yaml:"enabled"`
 
 	// LeaseName is the name of the Lease resource used for coordination.
-	// Default: haproxy-template-ic-leader
+	// Default: haptic-leader
 	LeaseName string `yaml:"lease_name"`
 
 	// LeaseDuration is the duration that non-leader candidates will wait

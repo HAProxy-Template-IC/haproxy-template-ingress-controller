@@ -10,14 +10,14 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	"haproxy-template-ic/pkg/dataplane/client"
-	"haproxy-template-ic/pkg/dataplane/comparator"
-	"haproxy-template-ic/pkg/dataplane/comparator/sections"
-	"haproxy-template-ic/pkg/dataplane/parser"
-	"haproxy-template-ic/pkg/dataplane/parser/enterprise"
-	"haproxy-template-ic/pkg/dataplane/parser/parserconfig"
-	"haproxy-template-ic/pkg/dataplane/synchronizer"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/comparator"
+	"haptic/pkg/dataplane/comparator/sections"
+	"haptic/pkg/dataplane/parser"
+	"haptic/pkg/dataplane/parser/enterprise"
+	"haptic/pkg/dataplane/parser/parserconfig"
+	"haptic/pkg/dataplane/synchronizer"
 )
 
 // ConfigParser defines the interface for HAProxy configuration parsing.

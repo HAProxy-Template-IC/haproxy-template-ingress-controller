@@ -1,0 +1,171 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: grafana dashboard
+templates:
+  - grafana-dashboard.yaml
+tests:
+  - it: should not render when grafanaDashboard is disabled
+    set:
+      monitoring.grafanaDashboard.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render when grafanaDashboard is enabled
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+
+  - it: should include grafana_dashboard label by default
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+
+  - it: should include grafana_folder annotation
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - equal:
+          path: metadata.annotations.grafana_folder
+          value: "HAProxy"
+
+  - it: should set custom folder
+    set:
+      monitoring.grafanaDashboard.enabled: true
+      monitoring.grafanaDashboard.folder: "Kubernetes"
+    asserts:
+      - equal:
+          path: metadata.annotations.grafana_folder
+          value: "Kubernetes"
+
+  - it: should include custom labels
+    set:
+      monitoring.grafanaDashboard.enabled: true
+      monitoring.grafanaDashboard.labels:
+        custom-label: custom-value
+    asserts:
+      - equal:
+          path: metadata.labels.custom-label
+          value: custom-value
+
+  - it: should include custom annotations
+    set:
+      monitoring.grafanaDashboard.enabled: true
+      monitoring.grafanaDashboard.annotations:
+        custom-annotation: custom-value
+    asserts:
+      - equal:
+          path: metadata.annotations.custom-annotation
+          value: custom-value
+
+  - it: should include common labels
+    set:
+      monitoring.grafanaDashboard.enabled: true
+      commonLabels:
+        environment: production
+    asserts:
+      - equal:
+          path: metadata.labels.environment
+          value: production
+
+  - it: should include common annotations
+    set:
+      monitoring.grafanaDashboard.enabled: true
+      commonAnnotations:
+        team: platform
+    asserts:
+      - equal:
+          path: metadata.annotations.team
+          value: platform
+
+  - it: should use custom namespace when specified
+    set:
+      monitoring.grafanaDashboard.enabled: true
+      monitoring.grafanaDashboard.namespace: monitoring
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: monitoring
+
+  - it: should use release namespace by default
+    release:
+      namespace: my-namespace
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: my-namespace
+
+  - it: should include dashboard json file
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - exists:
+          path: data["haptic.json"]
+
+  - it: should include dashboard title in json
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "HAPTIC"
+
+  - it: should include dashboard uid in json
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic"
+
+  - it: should include reconciliation metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_reconciliation_total"
+
+  - it: should include deployment metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_deployment_total"
+
+  - it: should include leader election metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_leader_election_is_leader"
+
+  - it: should include resource count metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_resource_count"
+
+  - it: should use custom dashboard when useBuiltIn is false
+    set:
+      monitoring.grafanaDashboard.enabled: true
+      monitoring.grafanaDashboard.useBuiltIn: false
+      monitoring.grafanaDashboard.customDashboard:
+        title: "Custom Dashboard"
+        panels: []
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "Custom Dashboard"

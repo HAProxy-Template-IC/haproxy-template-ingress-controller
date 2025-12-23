@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"haproxy-template-ic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/client"
 )
 
 // crtListFileOps implements FileOperations for CRTListFile.

@@ -17,7 +17,7 @@ package events
 import (
 	"time"
 
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/k8s/types"
 )
 
 // -----------------------------------------------------------------------------

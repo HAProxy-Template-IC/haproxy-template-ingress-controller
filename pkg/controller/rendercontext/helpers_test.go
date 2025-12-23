@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/k8s/types"
 )
 
 // mockStore is a simple mock implementation of types.Store for testing.

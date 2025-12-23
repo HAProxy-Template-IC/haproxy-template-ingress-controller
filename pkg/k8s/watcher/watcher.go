@@ -11,10 +11,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"haproxy-template-ic/pkg/k8s/client"
-	"haproxy-template-ic/pkg/k8s/indexer"
-	"haproxy-template-ic/pkg/k8s/store"
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/k8s/client"
+	"haptic/pkg/k8s/indexer"
+	"haptic/pkg/k8s/store"
+	"haptic/pkg/k8s/types"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

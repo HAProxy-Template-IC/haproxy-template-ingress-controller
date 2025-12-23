@@ -180,11 +180,11 @@ Default: auto-detect from service account
 Purpose: Namespace where controller runs
 
 ENV_VAR: CONFIG_CONFIGMAP_NAME
-Default: haproxy-template-ic-config
+Default: haptic-config
 Purpose: ConfigMap name containing configuration
 
 ENV_VAR: CREDENTIALS_SECRET_NAME
-Default: haproxy-template-ic-credentials
+Default: haptic-credentials
 Purpose: Secret name containing credentials
 
 // Logging
@@ -572,14 +572,14 @@ func (c *Controller) Run(ctx context.Context) error {
 export LOG_LEVEL=debug
 
 # Or in Kubernetes
-kubectl set env deployment/haproxy-template-ic-controller LOG_LEVEL=debug
+kubectl set env deployment/haptic-controller LOG_LEVEL=debug
 ```
 
 ### Check Stage Progress
 
 ```bash
 # Watch logs for stage messages
-kubectl logs -f deployment/haproxy-template-ic-controller | grep "Stage"
+kubectl logs -f deployment/haptic-controller | grep "Stage"
 
 # Expected output:
 # Stage 1: Config management
@@ -594,23 +594,23 @@ kubectl logs -f deployment/haproxy-template-ic-controller | grep "Stage"
 
 ```bash
 # If startup hangs, check which stage
-kubectl logs deployment/haproxy-template-ic-controller | tail -1
+kubectl logs deployment/haptic-controller | tail -1
 
 # Stage 2 stuck? → Check ConfigMap
-kubectl get configmap haproxy-template-ic-config
+kubectl get configmap haptic-config
 
 # Stage 4 stuck? → Check resource syncing
-kubectl logs deployment/haproxy-template-ic-controller | grep "sync"
+kubectl logs deployment/haptic-controller | grep "sync"
 ```
 
 ### Enable Profiling
 
 ```bash
 # Set environment variable
-kubectl set env deployment/haproxy-template-ic-controller ENABLE_PPROF=true
+kubectl set env deployment/haptic-controller ENABLE_PPROF=true
 
 # Port-forward profiling endpoint
-kubectl port-forward deployment/haproxy-template-ic-controller 6060:6060
+kubectl port-forward deployment/haptic-controller 6060:6060
 
 # Profile CPU
 go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
@@ -627,7 +627,7 @@ go tool pprof http://localhost:6060/debug/pprof/heap
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: haproxy-template-ic-controller
+  name: haptic-controller
 rules:
   # Read ConfigMap (configuration)
   - apiGroups: [""]
@@ -657,31 +657,31 @@ rules:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: haproxy-template-ic-controller
+  name: haptic-controller
   namespace: default
 spec:
   replicas: 1  # Single replica (no leader election yet)
   selector:
     matchLabels:
-      app: haproxy-template-ic
+      app: haptic
   template:
     metadata:
       labels:
-        app: haproxy-template-ic
+        app: haptic
     spec:
-      serviceAccountName: haproxy-template-ic-controller
+      serviceAccountName: haptic-controller
       containers:
       - name: controller
-        image: haproxy-template-ic:latest
+        image: haptic:latest
         env:
         - name: LOG_LEVEL
           value: "info"
         - name: LOG_FORMAT
           value: "json"
         - name: CONFIG_CONFIGMAP_NAME
-          value: "haproxy-template-ic-config"
+          value: "haptic-config"
         - name: CREDENTIALS_SECRET_NAME
-          value: "haproxy-template-ic-credentials"
+          value: "haptic-credentials"
         ports:
         - name: health
           containerPort: 8080
@@ -713,4 +713,4 @@ spec:
 - Architecture: `/docs/development/design.md`
 - Controller orchestration: `pkg/controller/CLAUDE.md`
 - Configuration: `pkg/core/CLAUDE.md`
-- Helm chart: `charts/haproxy-template-ic/`
+- Helm chart: `charts/haptic/`

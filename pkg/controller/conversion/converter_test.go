@@ -9,8 +9,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"haproxy-template-ic/pkg/apis/haproxytemplate/v1alpha1"
-	"haproxy-template-ic/pkg/core/config"
+	"haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"haptic/pkg/core/config"
 )
 
 func TestConvertSpec(t *testing.T) {

@@ -1,6 +1,6 @@
 # Monitoring Guide
 
-This guide explains how to monitor the HAProxy Template Ingress Controller using Prometheus metrics, including setup, key metrics, alerting, and dashboards.
+This guide explains how to monitor HAPTIC (HAProxy Template Ingress Controller) using Prometheus metrics, including setup, key metrics, alerting, and dashboards.
 
 ## Overview
 
@@ -36,12 +36,12 @@ Add a scrape config for the controller:
 
 ```yaml
 scrape_configs:
-  - job_name: 'haproxy-template-ic'
+  - job_name: 'haptic''
     kubernetes_sd_configs:
       - role: pod
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
-        regex: haproxy-template-ic
+        regex: haptic
         action: keep
       - source_labels: [__meta_kubernetes_pod_container_port_number]
         regex: "9090"
@@ -65,7 +65,7 @@ serviceMonitor:
 
 ```bash
 # Port-forward to metrics endpoint
-kubectl port-forward -n <namespace> deployment/haproxy-template-ic-controller 9090:9090
+kubectl port-forward -n <namespace> deployment/haptic-controller 9090:9090
 
 # Fetch metrics
 curl http://localhost:9090/metrics
@@ -77,24 +77,24 @@ curl http://localhost:9090/metrics
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `haproxy_ic_reconciliation_total` | Counter | Total reconciliation cycles triggered |
-| `haproxy_ic_reconciliation_duration_seconds` | Histogram | Time spent in reconciliation cycles |
-| `haproxy_ic_reconciliation_errors_total` | Counter | Failed reconciliation cycles |
+| `haptic_reconciliation_total` | Counter | Total reconciliation cycles triggered |
+| `haptic_reconciliation_duration_seconds` | Histogram | Time spent in reconciliation cycles |
+| `haptic_reconciliation_errors_total` | Counter | Failed reconciliation cycles |
 
 **Key queries:**
 
 ```promql
 # Reconciliation rate per second
-rate(haproxy_ic_reconciliation_total[5m])
+rate(haptic_reconciliation_total[5m])
 
 # Average reconciliation duration
-rate(haproxy_ic_reconciliation_duration_seconds_sum[5m]) /
-rate(haproxy_ic_reconciliation_duration_seconds_count[5m])
+rate(haptic_reconciliation_duration_seconds_sum[5m]) /
+rate(haptic_reconciliation_duration_seconds_count[5m])
 
 # Success rate percentage
 100 * (1 - (
-  rate(haproxy_ic_reconciliation_errors_total[5m]) /
-  rate(haproxy_ic_reconciliation_total[5m])
+  rate(haptic_reconciliation_errors_total[5m]) /
+  rate(haptic_reconciliation_total[5m])
 ))
 ```
 
@@ -102,23 +102,23 @@ rate(haproxy_ic_reconciliation_duration_seconds_count[5m])
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `haproxy_ic_deployment_total` | Counter | Total deployment attempts |
-| `haproxy_ic_deployment_duration_seconds` | Histogram | Time spent deploying to HAProxy |
-| `haproxy_ic_deployment_errors_total` | Counter | Failed deployments |
+| `haptic_deployment_total` | Counter | Total deployment attempts |
+| `haptic_deployment_duration_seconds` | Histogram | Time spent deploying to HAProxy |
+| `haptic_deployment_errors_total` | Counter | Failed deployments |
 
 **Key queries:**
 
 ```promql
 # Deployment rate
-rate(haproxy_ic_deployment_total[5m])
+rate(haptic_deployment_total[5m])
 
 # 95th percentile deployment latency
-histogram_quantile(0.95, rate(haproxy_ic_deployment_duration_seconds_bucket[5m]))
+histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
 
 # Deployment success rate
 100 * (1 - (
-  rate(haproxy_ic_deployment_errors_total[5m]) /
-  rate(haproxy_ic_deployment_total[5m])
+  rate(haptic_deployment_errors_total[5m]) /
+  rate(haptic_deployment_total[5m])
 ))
 ```
 
@@ -126,19 +126,19 @@ histogram_quantile(0.95, rate(haproxy_ic_deployment_duration_seconds_bucket[5m])
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `haproxy_ic_validation_total` | Counter | Total validation attempts |
-| `haproxy_ic_validation_errors_total` | Counter | Failed validations |
+| `haptic_validation_total` | Counter | Total validation attempts |
+| `haptic_validation_errors_total` | Counter | Failed validations |
 
 **Key queries:**
 
 ```promql
 # Validation rate
-rate(haproxy_ic_validation_total[5m])
+rate(haptic_validation_total[5m])
 
 # Validation success rate
 100 * (1 - (
-  rate(haproxy_ic_validation_errors_total[5m]) /
-  rate(haproxy_ic_validation_total[5m])
+  rate(haptic_validation_errors_total[5m]) /
+  rate(haptic_validation_total[5m])
 ))
 ```
 
@@ -146,66 +146,66 @@ rate(haproxy_ic_validation_total[5m])
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `haproxy_ic_resource_count` | Gauge | `type` | Current count of watched resources |
+| `haptic_resource_count` | Gauge | `type` | Current count of watched resources |
 
 **Key queries:**
 
 ```promql
 # All resource counts
-haproxy_ic_resource_count
+haptic_resource_count
 
 # Specific resource types
-haproxy_ic_resource_count{type="ingresses"}
-haproxy_ic_resource_count{type="services"}
-haproxy_ic_resource_count{type="haproxy-pods"}
+haptic_resource_count{type="ingresses"}
+haptic_resource_count{type="services"}
+haptic_resource_count{type="haproxy-pods"}
 
 # Resource count changes
-delta(haproxy_ic_resource_count[1h])
+delta(haptic_resource_count[1h])
 ```
 
 ### Event Metrics
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `haproxy_ic_event_subscribers` | Gauge | Active event subscribers |
-| `haproxy_ic_events_published_total` | Counter | Total events published |
+| `haptic_event_subscribers` | Gauge | Active event subscribers |
+| `haptic_events_published_total` | Counter | Total events published |
 
 **Key queries:**
 
 ```promql
 # Event publishing rate
-rate(haproxy_ic_events_published_total[5m])
+rate(haptic_events_published_total[5m])
 
 # Subscriber count (should be constant)
-haproxy_ic_event_subscribers
+haptic_event_subscribers
 
 # Subscriber changes (indicates component restarts)
-delta(haproxy_ic_event_subscribers[5m])
+delta(haptic_event_subscribers[5m])
 ```
 
 ### Leader Election Metrics
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `haproxy_ic_leader_election_is_leader` | Gauge | 1 if this replica is leader, 0 otherwise |
-| `haproxy_ic_leader_election_transitions_total` | Counter | Leadership transitions (gain/loss) |
-| `haproxy_ic_leader_election_time_as_leader_seconds_total` | Counter | Cumulative time as leader |
+| `haptic_leader_election_is_leader` | Gauge | 1 if this replica is leader, 0 otherwise |
+| `haptic_leader_election_transitions_total` | Counter | Leadership transitions (gain/loss) |
+| `haptic_leader_election_time_as_leader_seconds_total` | Counter | Cumulative time as leader |
 
 **Key queries:**
 
 ```promql
 # Current leader count (should be exactly 1)
-sum(haproxy_ic_leader_election_is_leader)
+sum(haptic_leader_election_is_leader)
 
 # Identify leader pod
-haproxy_ic_leader_election_is_leader == 1
+haptic_leader_election_is_leader == 1
 
 # Leadership transition rate
-rate(haproxy_ic_leader_election_transitions_total[1h])
+rate(haptic_leader_election_transitions_total[1h])
 
 # Average time as leader per transition
-haproxy_ic_leader_election_time_as_leader_seconds_total /
-haproxy_ic_leader_election_transitions_total
+haptic_leader_election_time_as_leader_seconds_total /
+haptic_leader_election_transitions_total
 ```
 
 ## Alerting Rules
@@ -214,13 +214,13 @@ haproxy_ic_leader_election_transitions_total
 
 ```yaml
 groups:
-  - name: haproxy-template-ic
+  - name: haptic
     rules:
       # Reconciliation failures
       - alert: HAProxyICHighReconciliationErrorRate
         expr: |
-          rate(haproxy_ic_reconciliation_errors_total[5m]) /
-          rate(haproxy_ic_reconciliation_total[5m]) > 0.1
+          rate(haptic_reconciliation_errors_total[5m]) /
+          rate(haptic_reconciliation_total[5m]) > 0.1
         for: 5m
         labels:
           severity: warning
@@ -232,7 +232,7 @@ groups:
       - alert: HAProxyICHighDeploymentLatency
         expr: |
           histogram_quantile(0.95,
-            rate(haproxy_ic_deployment_duration_seconds_bucket[5m])
+            rate(haptic_deployment_duration_seconds_bucket[5m])
           ) > 5
         for: 5m
         labels:
@@ -244,7 +244,7 @@ groups:
       # Validation failures
       - alert: HAProxyICValidationFailures
         expr: |
-          rate(haproxy_ic_validation_errors_total[5m]) > 0
+          rate(haptic_validation_errors_total[5m]) > 0
         for: 5m
         labels:
           severity: critical
@@ -255,7 +255,7 @@ groups:
       # Component crash
       - alert: HAProxyICComponentStopped
         expr: |
-          delta(haproxy_ic_event_subscribers[5m]) < 0
+          delta(haptic_event_subscribers[5m]) < 0
         labels:
           severity: critical
         annotations:
@@ -264,7 +264,7 @@ groups:
 
       # No leader elected (HA)
       - alert: HAProxyICNoLeader
-        expr: sum(haproxy_ic_leader_election_is_leader) < 1
+        expr: sum(haptic_leader_election_is_leader) < 1
         for: 1m
         labels:
           severity: critical
@@ -274,7 +274,7 @@ groups:
 
       # Multiple leaders (split-brain)
       - alert: HAProxyICMultipleLeaders
-        expr: sum(haproxy_ic_leader_election_is_leader) > 1
+        expr: sum(haptic_leader_election_is_leader) > 1
         labels:
           severity: critical
         annotations:
@@ -283,7 +283,7 @@ groups:
 
       # Frequent leadership changes
       - alert: HAProxyICFrequentLeadershipChanges
-        expr: rate(haproxy_ic_leader_election_transitions_total[1h]) > 5
+        expr: rate(haptic_leader_election_transitions_total[1h]) > 5
         for: 15m
         labels:
           severity: warning
@@ -293,7 +293,7 @@ groups:
 
       # No HAProxy pods discovered
       - alert: HAProxyICNoHAProxyPods
-        expr: haproxy_ic_resource_count{type="haproxy-pods"} < 1
+        expr: haptic_resource_count{type="haproxy-pods"} < 1
         for: 5m
         labels:
           severity: critical
@@ -311,42 +311,42 @@ groups:
 ```promql
 # Success rate (stat panel)
 100 * (1 - (
-  rate(haproxy_ic_reconciliation_errors_total[5m]) /
-  rate(haproxy_ic_reconciliation_total[5m])
+  rate(haptic_reconciliation_errors_total[5m]) /
+  rate(haptic_reconciliation_total[5m])
 ))
 
 # Rate over time (graph)
-rate(haproxy_ic_reconciliation_total[5m])
-rate(haproxy_ic_reconciliation_errors_total[5m])
+rate(haptic_reconciliation_total[5m])
+rate(haptic_reconciliation_errors_total[5m])
 ```
 
 **Deployment Latency Panel:**
 
 ```promql
 # P50, P95, P99 latencies
-histogram_quantile(0.50, rate(haproxy_ic_deployment_duration_seconds_bucket[5m]))
-histogram_quantile(0.95, rate(haproxy_ic_deployment_duration_seconds_bucket[5m]))
-histogram_quantile(0.99, rate(haproxy_ic_deployment_duration_seconds_bucket[5m]))
+histogram_quantile(0.50, rate(haptic_deployment_duration_seconds_bucket[5m]))
+histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
+histogram_quantile(0.99, rate(haptic_deployment_duration_seconds_bucket[5m]))
 ```
 
 **Resource Count Panel:**
 
 ```promql
 # All resource types
-haproxy_ic_resource_count
+haptic_resource_count
 
 # Stacked area chart by type
-haproxy_ic_resource_count{type=~"ingresses|services|endpoints"}
+haptic_resource_count{type=~"ingresses|services|endpoints"}
 ```
 
 **Leader Election Panel:**
 
 ```promql
 # Current leader indicator
-haproxy_ic_leader_election_is_leader == 1
+haptic_leader_election_is_leader == 1
 
 # Transition count over time
-increase(haproxy_ic_leader_election_transitions_total[1h])
+increase(haptic_leader_election_transitions_total[1h])
 ```
 
 ### Dashboard JSON Template
@@ -355,36 +355,36 @@ A basic Grafana dashboard template can be imported from:
 
 ```json
 {
-  "title": "HAProxy Template IC",
+  "title": "HAPTIC",
   "panels": [
     {
       "title": "Reconciliation Rate",
       "targets": [
-        {"expr": "rate(haproxy_ic_reconciliation_total[5m])"}
+        {"expr": "rate(haptic_reconciliation_total[5m])"}
       ]
     },
     {
       "title": "Reconciliation Success Rate",
       "targets": [
-        {"expr": "100 * (1 - rate(haproxy_ic_reconciliation_errors_total[5m]) / rate(haproxy_ic_reconciliation_total[5m]))"}
+        {"expr": "100 * (1 - rate(haptic_reconciliation_errors_total[5m]) / rate(haptic_reconciliation_total[5m]))"}
       ]
     },
     {
       "title": "Deployment Latency",
       "targets": [
-        {"expr": "histogram_quantile(0.95, rate(haproxy_ic_deployment_duration_seconds_bucket[5m]))"}
+        {"expr": "histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))"}
       ]
     },
     {
       "title": "Resource Counts",
       "targets": [
-        {"expr": "haproxy_ic_resource_count"}
+        {"expr": "haptic_resource_count"}
       ]
     },
     {
       "title": "Leader Status",
       "targets": [
-        {"expr": "haproxy_ic_leader_election_is_leader"}
+        {"expr": "haptic_leader_election_is_leader"}
       ]
     }
   ]
@@ -409,22 +409,22 @@ Monitor these metrics for capacity planning:
 
 ```promql
 # Reconciliation frequency (how often config changes)
-rate(haproxy_ic_reconciliation_total[1h]) * 3600
+rate(haptic_reconciliation_total[1h]) * 3600
 
 # Ingress growth rate
-deriv(haproxy_ic_resource_count{type="ingresses"}[1d])
+deriv(haptic_resource_count{type="ingresses"}[1d])
 
 # Average reconciliation overhead
-avg_over_time(haproxy_ic_reconciliation_duration_seconds_sum[1d]) /
-avg_over_time(haproxy_ic_reconciliation_duration_seconds_count[1d])
+avg_over_time(haptic_reconciliation_duration_seconds_sum[1d]) /
+avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
 ```
 
 ### Troubleshooting with Metrics
 
 **High reconciliation error rate:**
 
-1. Check `haproxy_ic_validation_errors_total` - template/config issues
-2. Check `haproxy_ic_deployment_errors_total` - HAProxy connectivity issues
+1. Check `haptic_validation_errors_total` - template/config issues
+2. Check `haptic_deployment_errors_total` - HAProxy connectivity issues
 3. Review controller logs for specific error messages
 
 **Missing metrics:**
@@ -435,8 +435,8 @@ avg_over_time(haproxy_ic_reconciliation_duration_seconds_count[1d])
 
 **Leader election issues:**
 
-1. Check if `sum(haproxy_ic_leader_election_is_leader) != 1`
-2. Review `rate(haproxy_ic_leader_election_transitions_total[1h])` for instability
+1. Check if `sum(haptic_leader_election_is_leader) != 1`
+2. Review `rate(haptic_leader_election_transitions_total[1h])` for instability
 3. See [High Availability Guide](./high-availability.md) for troubleshooting
 
 ## Integration with Existing Monitoring
@@ -453,7 +453,7 @@ serviceMonitor:
     release: prometheus
   namespaceSelector:
     matchNames:
-      - haproxy-template-ic
+      - haptic
 ```
 
 ### Victoria Metrics

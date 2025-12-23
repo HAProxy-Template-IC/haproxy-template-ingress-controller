@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"haproxy-template-ic/pkg/k8s/types"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/k8s/types"
+	"haptic/pkg/templating"
 )
 
 // Verify StoreWrapper implements templating.ResourceStore at compile time.

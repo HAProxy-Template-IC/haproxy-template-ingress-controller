@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"haproxy-template-ic/pkg/controller/events"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	busevents "haptic/pkg/events"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

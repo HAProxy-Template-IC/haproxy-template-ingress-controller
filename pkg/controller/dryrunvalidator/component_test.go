@@ -23,15 +23,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/rendercontext"
-	"haproxy-template-ic/pkg/controller/resourcestore"
-	"haproxy-template-ic/pkg/controller/testrunner"
-	"haproxy-template-ic/pkg/controller/testutil"
-	"haproxy-template-ic/pkg/core/config"
-	"haproxy-template-ic/pkg/dataplane"
-	"haproxy-template-ic/pkg/k8s/types"
-	"haproxy-template-ic/pkg/templating"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/rendercontext"
+	"haptic/pkg/controller/resourcestore"
+	"haptic/pkg/controller/testrunner"
+	"haptic/pkg/controller/testutil"
+	"haptic/pkg/core/config"
+	"haptic/pkg/dataplane"
+	"haptic/pkg/k8s/types"
+	"haptic/pkg/templating"
 )
 
 // =============================================================================

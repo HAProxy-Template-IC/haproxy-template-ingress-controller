@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"haproxy-template-ic/pkg/controller/events"
-	coreconfig "haproxy-template-ic/pkg/core/config"
-	busevents "haproxy-template-ic/pkg/events"
+	"haptic/pkg/controller/events"
+	coreconfig "haptic/pkg/core/config"
+	busevents "haptic/pkg/events"
 )
 
 // BasicValidator validates basic structural configuration requirements.

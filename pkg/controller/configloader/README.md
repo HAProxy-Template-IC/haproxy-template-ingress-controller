@@ -11,15 +11,15 @@ Event-driven component that subscribes to ConfigResourceChangedEvent, extracts Y
 ## Installation
 
 ```go
-import "haproxy-template-ic/pkg/controller/configloader"
+import "haptic/pkg/controller/configloader"
 ```
 
 ## Quick Start
 
 ```go
 import (
-    "haproxy-template-ic/pkg/controller/configloader"
-    "haproxy-template-ic/pkg/events"
+    "haptic/pkg/controller/configloader"
+    "haptic/pkg/events"
 )
 
 // Create component

@@ -20,7 +20,7 @@ Merge Order (lowest to highest priority):
 **Merge Logic** (`templates/_helpers.tpl:69`):
 
 ```yaml
-{{- define "haproxy-template-ic.mergeLibraries" -}}
+{{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
 # Load each library in order using mustMergeOverwrite
 # Later libraries override earlier ones for the same keys
@@ -374,7 +374,7 @@ If you need custom Helm values or specific library combinations:
 
 ```bash
 # 1. Render merged config with Helm and extract HAProxyTemplateConfig
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
   --set controller.templateLibraries.ingress.enabled=true \
   --set controller.templateLibraries.gateway.enabled=false \
@@ -402,7 +402,7 @@ The test script includes this flag automatically. If using the manual workflow, 
 
 ```bash
 # Manual workflow - MUST include --api-versions flag
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
   | yq 'select(.kind == "HAProxyTemplateConfig")' \
   > /tmp/gateway-config.yaml
@@ -416,21 +416,21 @@ Enable/disable libraries to test specific combinations:
 
 ```bash
 # Test only ingress library (no gateway)
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   --set controller.templateLibraries.ingress.enabled=true \
   --set controller.templateLibraries.gateway.enabled=false \
   | yq 'select(.kind == "HAProxyTemplateConfig")' \
   > /tmp/ingress-only.yaml
 
 # Test gateway library (no ingress)
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   --set controller.templateLibraries.ingress.enabled=false \
   --set controller.templateLibraries.gateway.enabled=true \
   | yq 'select(.kind == "HAProxyTemplateConfig")' \
   > /tmp/gateway-only.yaml
 
 # Test with custom values
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   --values my-test-values.yaml \
   | yq 'select(.kind == "HAProxyTemplateConfig")' \
   > /tmp/custom-config.yaml
@@ -1653,7 +1653,7 @@ haproxyConfig:
 
 ```bash
 # WRONG - library file is incomplete!
-./bin/controller validate -f charts/haproxy-template-ic/libraries/ingress.yaml
+./bin/controller validate -f charts/haptic/libraries/ingress.yaml
 ```
 
 **Why Bad**: Library files are meant to be merged. Testing them individually will fail because:
@@ -1666,7 +1666,7 @@ haproxyConfig:
 
 ```bash
 # CORRECT
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   | yq 'select(.kind == "HAProxyTemplateConfig")' \
   | ./bin/controller validate -f -
 ```
@@ -1792,7 +1792,7 @@ indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
 ## Chart Files Overview
 
 ```
-charts/haproxy-template-ic/
+charts/haptic/
 ├── Chart.yaml                   # Helm chart metadata
 ├── values.yaml                  # Default configuration values
 ├── README.md                    # User-facing chart documentation
@@ -1823,7 +1823,7 @@ charts/haproxy-template-ic/
 
 ```bash
 # See the complete merged HAProxyTemplateConfig
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   | yq 'select(.kind == "HAProxyTemplateConfig")'
 ```
 
@@ -1831,7 +1831,7 @@ helm template charts/haproxy-template-ic \
 
 ```bash
 # Extract just the templateSnippets section
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   | yq 'select(.kind == "HAProxyTemplateConfig") | .spec.templateSnippets | keys'
 ```
 
@@ -1839,7 +1839,7 @@ helm template charts/haproxy-template-ic \
 
 ```bash
 # See which resources will be watched
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   | yq 'select(.kind == "HAProxyTemplateConfig") | .spec.watchedResources | keys'
 ```
 
@@ -1847,7 +1847,7 @@ helm template charts/haproxy-template-ic \
 
 ```bash
 # Disable all libraries, enable only one
-helm template charts/haproxy-template-ic \
+helm template charts/haptic \
   --set controller.templateLibraries.ingress.enabled=false \
   --set controller.templateLibraries.gateway.enabled=false \
   --set controller.templateLibraries.haproxytech.enabled=true \

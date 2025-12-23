@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
-	"haproxy-template-ic/pkg/dataplane/client"
+	"haptic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/dataplane/client"
 )
 
 // skipIfCRTListNotSupported skips the test if the HAProxy version doesn't support CRT-list storage.

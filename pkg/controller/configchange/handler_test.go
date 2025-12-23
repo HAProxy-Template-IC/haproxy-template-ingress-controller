@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haproxy-template-ic/pkg/controller/events"
-	"haproxy-template-ic/pkg/controller/testutil"
-	coreconfig "haproxy-template-ic/pkg/core/config"
+	"haptic/pkg/controller/events"
+	"haptic/pkg/controller/testutil"
+	coreconfig "haptic/pkg/core/config"
 )
 
 // testDebounceInterval is a short debounce interval for tests.

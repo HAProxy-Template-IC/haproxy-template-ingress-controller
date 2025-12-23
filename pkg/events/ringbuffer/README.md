@@ -16,7 +16,7 @@ A ring buffer (circular buffer) is a fixed-size data structure that overwrites t
 ## Installation
 
 ```go
-import "haproxy-template-ic/pkg/events/ringbuffer"
+import "haptic/pkg/events/ringbuffer"
 ```
 
 ## Quick Start

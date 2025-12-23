@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"haproxy-template-ic/pkg/k8s/client"
-	"haproxy-template-ic/pkg/k8s/types"
+	"haptic/pkg/k8s/client"
+	"haptic/pkg/k8s/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -302,20 +302,20 @@ When adding new components, explicitly document if they are "pure" or "utility" 
 
 ```go
 // Core packages (minimal dependencies)
-import "haproxy-template-ic/pkg/core/config"
-import "haproxy-template-ic/pkg/core/logging"
+import "haptic/pkg/core/config"
+import "haptic/pkg/core/logging"
 
 // Infrastructure (no domain knowledge)
-import "haproxy-template-ic/pkg/events"
+import "haptic/pkg/events"
 
 // Domain packages (depends on core + infrastructure)
-import "haproxy-template-ic/pkg/templating"
-import "haproxy-template-ic/pkg/k8s"
-import "haproxy-template-ic/pkg/dataplane"
+import "haptic/pkg/templating"
+import "haptic/pkg/k8s"
+import "haptic/pkg/dataplane"
 
 // Coordination (depends on everything)
-import "haproxy-template-ic/pkg/controller"
-import "haproxy-template-ic/pkg/controller/events"  // Event type catalog
+import "haptic/pkg/controller"
+import "haptic/pkg/controller/events"  // Event type catalog
 ```
 
 ### Dependency Rules
@@ -460,15 +460,15 @@ make docker-build
 
 ### Local Kind Cluster
 
-**IMPORTANT**: Always use the `kind-haproxy-template-ic-dev` context for development work.
+**IMPORTANT**: Always use the `kind-haptic-dev` context for development work.
 
 ```bash
 # Verify you're using the correct cluster
 kubectl config current-context
-# Should output: kind-haproxy-template-ic-dev
+# Should output: kind-haptic-dev
 
 # If not, switch to it
-kubectl config use-context kind-haproxy-template-ic-dev
+kubectl config use-context kind-haptic-dev
 
 # Start the dev environment (creates cluster if needed)
 ./scripts/start-dev-env.sh
@@ -496,7 +496,7 @@ kubectl -n echo exec <haproxy-pod> -- cat /etc/haproxy/haproxy.cfg
 
 **Cluster Names:**
 
-- **Dev cluster**: `kind-haproxy-template-ic-dev` - Use this for development
+- **Dev cluster**: `kind-haptic-dev` - Use this for development
 - **Test cluster**: `kind-haproxy-test` - Used by integration tests only
 
 ## Common Patterns

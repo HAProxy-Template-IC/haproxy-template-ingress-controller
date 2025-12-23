@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ import (
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 
-	"haproxy-template-ic/tests/testutil"
+	"haptic/tests/testutil"
 )
 
 // namespaceContextKey is a type-safe key for storing namespace in context.
@@ -55,7 +56,7 @@ type namespaceContextKey struct{}
 
 const (
 	// ControllerDeploymentName is the name of the controller deployment.
-	ControllerDeploymentName = "haproxy-template-ic-controller"
+	ControllerDeploymentName = "haptic-controller"
 
 	// ControllerCRDName is the name of the HAProxyTemplateConfig CRD.
 	ControllerCRDName = "haproxy-config"
@@ -65,19 +66,19 @@ const (
 	ControllerSecretName = "haproxy-credentials"
 
 	// ControllerServiceAccountName is the name of the controller ServiceAccount.
-	ControllerServiceAccountName = "haproxy-template-ic-controller"
+	ControllerServiceAccountName = "haptic-controller"
 
 	// ControllerRoleName is the name of the controller Role.
-	ControllerRoleName = "haproxy-template-ic-controller"
+	ControllerRoleName = "haptic-controller"
 
 	// ControllerRoleBindingName is the name of the controller RoleBinding.
-	ControllerRoleBindingName = "haproxy-template-ic-controller"
+	ControllerRoleBindingName = "haptic-controller"
 
 	// ControllerClusterRoleName is the name of the controller ClusterRole.
-	ControllerClusterRoleName = "haproxy-template-ic-controller"
+	ControllerClusterRoleName = "haptic-controller"
 
 	// ControllerClusterRoleBindingName is the name of the controller ClusterRoleBinding.
-	ControllerClusterRoleBindingName = "haproxy-template-ic-controller"
+	ControllerClusterRoleBindingName = "haptic-controller"
 
 	// DebugPort is the port for the debug HTTP server.
 	DebugPort = 6060
@@ -121,6 +122,18 @@ var (
 	// (like pod exec which requires SPDY upgrade).
 	sharedRESTConfig *rest.Config
 )
+
+// ShouldKeepNamespace returns whether namespaces should be preserved after tests.
+// Set KEEP_NAMESPACE=true to preserve namespaces for debugging failed tests.
+// When enabled, test namespaces and their resources (pods, logs) remain after
+// test completion, allowing inspection of controller behavior.
+//
+// Usage:
+//
+//	KEEP_NAMESPACE=true go test -tags=acceptance ./tests/acceptance/... -run TestName -v
+func ShouldKeepNamespace() bool {
+	return os.Getenv("KEEP_NAMESPACE") == "true"
+}
 
 // RESTConfig returns the shared REST config for operations that require it.
 // This is needed for operations like pod exec that use SPDY streaming.
@@ -268,7 +281,6 @@ func createControllerRBAC(ctx context.Context, client klient.Client, namespace s
 	return nil
 }
 
-
 // createControllerServices creates the debug and metrics ClusterIP services.
 func createControllerServices(ctx context.Context, client klient.Client, namespace string) error {
 	if err := client.Resources().Create(ctx, NewDebugService(namespace, ControllerDeploymentName, DebugPort)); err != nil {
@@ -283,11 +295,21 @@ func createControllerServices(ctx context.Context, client klient.Client, namespa
 // CleanupControllerEnvironment removes cluster-scoped resources and namespace.
 // It returns the context for chaining in Teardown functions.
 // Errors are logged but not returned since cleanup should be best-effort.
+//
+// If KEEP_NAMESPACE=true is set, cleanup is skipped to allow debugging.
 func CleanupControllerEnvironment(ctx context.Context, t *testing.T, cfg klient.Client) context.Context {
 	t.Helper()
 	namespace, err := GetNamespaceFromContext(ctx)
 	if err != nil {
 		t.Logf("Warning: failed to get namespace from context: %v", err)
+		return ctx
+	}
+
+	// Check if we should preserve the namespace for debugging
+	if ShouldKeepNamespace() {
+		t.Logf("Keeping namespace %s (KEEP_NAMESPACE=true)", namespace)
+		t.Logf("To inspect: kubectl --context kind-haproxy-test get pods -n %s", namespace)
+		t.Logf("To cleanup: kubectl --context kind-haproxy-test delete namespace %s", namespace)
 		return ctx
 	}
 
@@ -473,7 +495,7 @@ func WaitForControllerReadyWithMetrics(ctx context.Context, client klient.Client
 			}
 
 			// Step 2: Check metrics indicate reconciliation completed
-			reconciliationValue, err := metricsClient.GetMetricValue(ctx, "haproxy_ic_reconciliation_total")
+			reconciliationValue, err := metricsClient.GetMetricValue(ctx, "haptic_reconciliation_total")
 			if err != nil {
 				return false, fmt.Errorf("metrics not accessible: %w", err)
 			}
@@ -483,7 +505,7 @@ func WaitForControllerReadyWithMetrics(ctx context.Context, client klient.Client
 			}
 
 			// Step 3: Check validation has also completed (happens after reconciliation)
-			validationValue, err := metricsClient.GetMetricValue(ctx, "haproxy_ic_validation_total")
+			validationValue, err := metricsClient.GetMetricValue(ctx, "haptic_validation_total")
 			if err != nil {
 				return false, fmt.Errorf("validation metrics not accessible: %w", err)
 			}
@@ -497,7 +519,6 @@ func WaitForControllerReadyWithMetrics(ctx context.Context, client klient.Client
 
 	return pod, err
 }
-
 
 // GetControllerPod returns the controller pod.
 func GetControllerPod(ctx context.Context, client klient.Client, namespace string) (*corev1.Pod, error) {
@@ -1002,10 +1023,10 @@ func NewMetricsClient(clientset kubernetes.Interface, namespace, serviceName str
 // parallel tests, the API server can be temporarily overloaded.
 func (mc *MetricsClient) GetMetrics(ctx context.Context) (string, error) {
 	const (
-		maxRetries        = 3                   // Reduced from 5 to allow more Wait-level retries
+		maxRetries        = 3 // Reduced from 5 to allow more Wait-level retries
 		initialBackoff    = 100 * time.Millisecond
-		maxBackoff        = 2 * time.Second    // Reduced from 5s for tighter retry budget
-		minTimeForRetries = 3 * time.Second    // Minimum time needed for meaningful retries
+		maxBackoff        = 2 * time.Second // Reduced from 5s for tighter retry budget
+		minTimeForRetries = 3 * time.Second // Minimum time needed for meaningful retries
 	)
 
 	// Check if we have enough time remaining for retries.
@@ -1128,8 +1149,8 @@ func (mc *MetricsClient) GetLeaderPod(ctx context.Context) (string, error) {
 			continue
 		}
 
-		// Look for: haproxy_ic_leader_election_is_leader{pod="pod-name"} 1
-		if strings.Contains(line, "haproxy_ic_leader_election_is_leader") {
+		// Look for: haptic_leader_election_is_leader{pod="pod-name"} 1
+		if strings.Contains(line, "haptic_leader_election_is_leader") {
 			// Check if this metric reports is_leader=1
 			parts := strings.Fields(line)
 			if len(parts) >= 2 {

@@ -7,7 +7,7 @@ package parserconfig
 import (
 	"github.com/haproxytech/client-native/v6/models"
 
-	v32ee "haproxy-template-ic/pkg/generated/dataplaneapi/v32ee"
+	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // =============================================================================

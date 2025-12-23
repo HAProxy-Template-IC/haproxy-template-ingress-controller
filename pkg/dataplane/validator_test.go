@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"haproxy-template-ic/pkg/dataplane/auxiliaryfiles"
+	"haptic/pkg/dataplane/auxiliaryfiles"
 )
 
 // testValidationPaths returns validation paths for testing using temporary directories.

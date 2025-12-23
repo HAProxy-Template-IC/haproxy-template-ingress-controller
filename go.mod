@@ -1,4 +1,4 @@
-module haproxy-template-ic
+module haptic
 
 go 1.25.5
 

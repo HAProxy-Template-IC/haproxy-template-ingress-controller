@@ -14,7 +14,7 @@ This package defines all event types used by the controller for component coordi
 ## Installation
 
 ```go
-import "haproxy-template-ic/pkg/controller/events"
+import "haptic/pkg/controller/events"
 ```
 
 ## Event Categories
@@ -140,7 +140,7 @@ const (
 ### Publishing Events
 
 ```go
-import "haproxy-template-ic/pkg/controller/events"
+import "haptic/pkg/controller/events"
 
 // Create event using constructor (performs defensive copying)
 event := events.NewConfigParsedEvent(config, "v1")

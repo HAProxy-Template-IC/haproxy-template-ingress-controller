@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"haproxy-template-ic/pkg/dataplane/client"
-	v30ee "haproxy-template-ic/pkg/generated/dataplaneapi/v30ee"
-	v31ee "haproxy-template-ic/pkg/generated/dataplaneapi/v31ee"
-	v32ee "haproxy-template-ic/pkg/generated/dataplaneapi/v32ee"
+	"haptic/pkg/dataplane/client"
+	v30ee "haptic/pkg/generated/dataplaneapi/v30ee"
+	v31ee "haptic/pkg/generated/dataplaneapi/v31ee"
+	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // ErrUDPLBACLsRequiresV32 is returned when ACL operations are attempted on pre-3.2 enterprise.
