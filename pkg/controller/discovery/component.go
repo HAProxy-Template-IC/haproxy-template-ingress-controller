@@ -413,11 +413,11 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	c.mu.RUnlock()
 
 	if !hasEvent {
-		c.logger.Debug("became leader but no discovery result available yet, skipping state replay")
+		c.logger.Debug("Became leader but no discovery result available yet, skipping state replay")
 		return
 	}
 
-	c.logger.Info("became leader, re-publishing last discovered endpoints for deployment scheduler",
+	c.logger.Info("Became leader, re-publishing last discovered endpoints for deployment scheduler",
 		"endpoint_count", event.Count)
 
 	c.eventBus.Publish(event)

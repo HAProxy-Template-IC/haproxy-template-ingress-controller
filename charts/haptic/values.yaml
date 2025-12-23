@@ -36,6 +36,11 @@ controller:
   # Health checks use this port (see controller.ports.healthz)
   # Access via: kubectl port-forward pod/controller-xxx 8080:8080
   debugPort: 8080
+  # Initial log level for the controller
+  # Values: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
+  # This sets the LOG_LEVEL environment variable
+  # Can be overridden at runtime via ConfigMap's logging.level field
+  logLevel: INFO
   # Controller container ports
   # These are the ports the controller container listens on
   # Services and health probes reference these by name
@@ -214,7 +219,11 @@ controller:
       generalStorageDir: /etc/haproxy/general
       configFile: /etc/haproxy/haproxy.cfg
     logging:
-      verbose: 1 # 0=WARNING, 1=INFO, 2=DEBUG
+      # Log level for the controller (runtime override)
+      # Values: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
+      # Empty string means use controller.logLevel (LOG_LEVEL env var)
+      # Set this to override the environment variable at runtime
+      level: ""
     # Template rendering settings
     # extraContext provides custom variables available to all templates
     templatingSettings:

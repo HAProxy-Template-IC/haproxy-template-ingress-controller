@@ -242,12 +242,12 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 	v.mu.RUnlock()
 
 	if !hasResult {
-		v.logger.Debug("became leader but no validation result available yet, skipping state replay")
+		v.logger.Debug("Became leader but no validation result available yet, skipping state replay")
 		return
 	}
 
 	if succeeded {
-		v.logger.Debug("became leader, re-publishing last validation result (success) for DeploymentScheduler",
+		v.logger.Debug("Became leader, re-publishing last validation result (success) for DeploymentScheduler",
 			"warnings", len(warnings),
 			"duration_ms", durationMs,
 			"correlation_id", correlationID,
@@ -261,7 +261,7 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 			events.WithCorrelation(correlationID, correlationID),
 		))
 	} else {
-		v.logger.Debug("became leader, last validation failed, skipping state replay")
+		v.logger.Debug("Became leader, last validation failed, skipping state replay")
 		// Note: We only replay ValidationCompletedEvent (success), not ValidationFailedEvent.
 		// DeploymentScheduler only acts on successful validation, so replaying failures
 		// would be unnecessary and could cause confusion.

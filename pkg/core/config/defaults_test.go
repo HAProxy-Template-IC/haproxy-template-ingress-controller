@@ -76,23 +76,23 @@ func TestSetDefaults_OperatorConfig(t *testing.T) {
 }
 
 func TestSetDefaults_LoggingConfig(t *testing.T) {
-	// Logging config has no defaults that override zero values
-	// (Verbose 0 is valid = WARNING level)
+	// Logging config has no defaults that override empty values
+	// (Empty Level is valid = means use LOG_LEVEL env var or default INFO)
 	cfg := &Config{
 		Logging: LoggingConfig{},
 	}
 
 	SetDefaults(cfg)
 
-	// Zero value should remain (it is valid)
-	assert.Equal(t, 0, cfg.Logging.Verbose)
+	// Empty value should remain (it is valid - means use env var)
+	assert.Equal(t, "", cfg.Logging.Level)
 }
 
 func TestSetDefaults_Constants(t *testing.T) {
 	// Verify default constants have expected values
 	assert.Equal(t, 8080, DefaultHealthzPort)
 	assert.Equal(t, 9090, DefaultMetricsPort)
-	assert.Equal(t, 1, DefaultVerbose)
+	assert.Equal(t, "", DefaultLevel)
 	assert.Equal(t, 5555, DefaultDataplanePort)
 	assert.False(t, DefaultEnableValidationWebhook)
 }

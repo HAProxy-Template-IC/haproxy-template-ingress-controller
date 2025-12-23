@@ -206,9 +206,9 @@ type LeaderElectionConfig struct {
 
 // LoggingConfig configures logging behavior.
 type LoggingConfig struct {
-	// Verbose controls log level: 0=WARNING, 1=INFO, 2=DEBUG
-	// Default: 1
-	Verbose int `yaml:"verbose"`
+	// Level controls the log level: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
+	// Empty string means use LOG_LEVEL env var or default (INFO)
+	Level string `yaml:"level"`
 }
 
 // DataplaneConfig configures the Dataplane API for production HAProxy instances.

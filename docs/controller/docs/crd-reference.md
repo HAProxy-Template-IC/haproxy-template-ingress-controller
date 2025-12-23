@@ -117,8 +117,10 @@ Log level configuration.
 
 ```yaml
 logging:
-  verbose: 1  # 0=WARNING, 1=INFO, 2=DEBUG
+  level: DEBUG  # TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
 ```
+
+If not set (empty string), the controller uses the `LOG_LEVEL` environment variable. If neither is set, defaults to INFO.
 
 ### dataplane
 
@@ -388,7 +390,7 @@ kubectl apply -f haproxy-config.yaml
 kubectl patch htplcfg haproxy-config --type=merge -p '
 spec:
   logging:
-    verbose: 2
+    level: DEBUG
 '
 ```
 

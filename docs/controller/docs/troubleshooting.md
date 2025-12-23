@@ -236,25 +236,37 @@ kubectl exec $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.c
 
 ### Enable Debug Logging
 
-The controller supports multiple verbosity levels via the `VERBOSE` environment variable:
+The controller supports multiple log levels via the `LOG_LEVEL` environment variable (case-insensitive):
 
-| Level | Value | Description |
-|-------|-------|-------------|
-| Warn | `0` | Warnings and errors only |
-| Info | `1` | Important state changes (default) |
-| Debug | `2` | Detailed debugging information |
-| Trace | `3` | Very verbose, per-item iteration logs |
+| Level | Description |
+|-------|-------------|
+| ERROR | Errors only |
+| WARN | Warnings and errors |
+| INFO | Important state changes (default) |
+| DEBUG | Detailed debugging information |
+| TRACE | Very verbose, per-item iteration logs |
 
 ```bash
 # Enable debug logging
-kubectl set env deployment/haptic-controller VERBOSE=2
+kubectl set env deployment/haptic-controller LOG_LEVEL=DEBUG
 
 # Enable trace logging (very verbose)
-kubectl set env deployment/haptic-controller VERBOSE=3
+kubectl set env deployment/haptic-controller LOG_LEVEL=TRACE
+```
+
+The log level can also be configured via the ConfigMap's `logging.level` field. When set, the ConfigMap value takes precedence over the `LOG_LEVEL` environment variable:
+
+```yaml
+# In values.yaml
+controller:
+  logLevel: INFO  # Initial level (LOG_LEVEL env var)
+  config:
+    logging:
+      level: DEBUG  # Overrides env var at runtime
 ```
 
 !!! note
-    Trace level (`VERBOSE=3`) produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Use only when debugging specific issues.
+    TRACE level produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Use only when debugging specific issues.
 
 ### Enable Debug Server
 

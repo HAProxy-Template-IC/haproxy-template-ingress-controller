@@ -16,9 +16,10 @@ controller:
     gateway:
       enabled: true
 
+  logLevel: DEBUG  # LOG_LEVEL env var for controller startup
   config:
     logging:
-      verbose: 2  # DEBUG level
+      level: DEBUG  # Runtime log level (overrides env var if set)
 
     templatingSettings:
       extraContext:

@@ -123,23 +123,11 @@ func runController(cmd *cobra.Command, args []string) error {
 		runDebugPort = DefaultDebugPort
 	}
 
-	// Set up structured logging
-	logLevel := slog.LevelInfo
-
-	// Check VERBOSE environment variable for log level
-	// 0 = WARNING, 1 = INFO (default), 2 = DEBUG, 3 = TRACE
-	switch os.Getenv("VERBOSE") {
-	case "0":
-		logLevel = slog.LevelWarn
-	case "2":
-		logLevel = slog.LevelDebug
-	case "3":
-		logLevel = logging.LevelTrace
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel,
-	}))
+	// Set up structured logging with dynamic level support
+	// LOG_LEVEL env var: TRACE, DEBUG, INFO (default), WARN, ERROR (case-insensitive)
+	// The level can be overridden at runtime via ConfigMap's logging.level field
+	logLevelEnv := os.Getenv("LOG_LEVEL")
+	logger := logging.NewDynamicLogger(logLevelEnv)
 	slog.SetDefault(logger)
 
 	// Log detected resource limits for observability
@@ -157,7 +145,7 @@ func runController(cmd *cobra.Command, args []string) error {
 		"secret", runSecretName,
 		"webhook_cert_secret", runWebhookCertSecretName,
 		"debug_port", runDebugPort,
-		"log_level", logLevel.String(),
+		"log_level", logging.GetLevel(),
 		"gomaxprocs", gomaxprocs,
 		"gomemlimit", gomemlimit)
 

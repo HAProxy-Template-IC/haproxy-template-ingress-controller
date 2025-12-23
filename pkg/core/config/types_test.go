@@ -20,7 +20,7 @@ controller:
   metrics_port: 9090
 
 logging:
-  verbose: 2
+  level: DEBUG
 
 watched_resources_ignore_fields:
   - metadata.managedFields
@@ -72,7 +72,7 @@ haproxy_config:
 	assert.Equal(t, 9090, cfg.Controller.MetricsPort)
 
 	// Validate Logging
-	assert.Equal(t, 2, cfg.Logging.Verbose)
+	assert.Equal(t, "DEBUG", cfg.Logging.Level)
 
 	// Validate WatchedResourcesIgnoreFields
 	assert.Equal(t, []string{"metadata.managedFields"}, cfg.WatchedResourcesIgnoreFields)
@@ -143,14 +143,14 @@ metrics_port: 9091
 
 func TestLoggingConfig_UnmarshalYAML(t *testing.T) {
 	yamlConfig := `
-verbose: 1
+level: INFO
 `
 
 	var lc LoggingConfig
 	err := yaml.Unmarshal([]byte(yamlConfig), &lc)
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, lc.Verbose)
+	assert.Equal(t, "INFO", lc.Level)
 }
 
 func TestWatchedResource_UnmarshalYAML(t *testing.T) {

@@ -62,42 +62,149 @@ func TestNewLogger_EmptyLevel_DefaultsToINFO(t *testing.T) {
 }
 
 func TestParseLogLevel_ERROR(t *testing.T) {
-	level := parseLogLevel("ERROR")
+	level := ParseLogLevel("ERROR")
 	assert.Equal(t, slog.LevelError, level)
 }
 
 func TestParseLogLevel_WARNING(t *testing.T) {
-	level := parseLogLevel("WARNING")
+	level := ParseLogLevel("WARNING")
 	assert.Equal(t, slog.LevelWarn, level)
 
 	// Test alias
-	level = parseLogLevel("WARN")
+	level = ParseLogLevel("WARN")
 	assert.Equal(t, slog.LevelWarn, level)
 }
 
 func TestParseLogLevel_INFO(t *testing.T) {
-	level := parseLogLevel("INFO")
+	level := ParseLogLevel("INFO")
 	assert.Equal(t, slog.LevelInfo, level)
 }
 
 func TestParseLogLevel_DEBUG(t *testing.T) {
-	level := parseLogLevel("DEBUG")
+	level := ParseLogLevel("DEBUG")
 	assert.Equal(t, slog.LevelDebug, level)
 }
 
+func TestParseLogLevel_TRACE(t *testing.T) {
+	level := ParseLogLevel("TRACE")
+	assert.Equal(t, LevelTrace, level)
+}
+
 func TestParseLogLevel_Invalid(t *testing.T) {
-	level := parseLogLevel("INVALID")
+	level := ParseLogLevel("INVALID")
 	assert.Equal(t, slog.LevelInfo, level, "Should default to INFO")
 }
 
 func TestParseLogLevel_Empty(t *testing.T) {
-	level := parseLogLevel("")
+	level := ParseLogLevel("")
 	assert.Equal(t, slog.LevelInfo, level, "Should default to INFO")
 }
 
 func TestParseLogLevel_Whitespace(t *testing.T) {
-	level := parseLogLevel("  DEBUG  ")
+	level := ParseLogLevel("  DEBUG  ")
 	assert.Equal(t, slog.LevelDebug, level, "Should trim whitespace")
+}
+
+func TestParseLogLevel_CaseInsensitive(t *testing.T) {
+	testCases := []struct {
+		input    string
+		expected slog.Level
+	}{
+		{"trace", LevelTrace},
+		{"TRACE", LevelTrace},
+		{"Trace", LevelTrace},
+		{"debug", slog.LevelDebug},
+		{"DEBUG", slog.LevelDebug},
+		{"info", slog.LevelInfo},
+		{"INFO", slog.LevelInfo},
+		{"warn", slog.LevelWarn},
+		{"WARN", slog.LevelWarn},
+		{"warning", slog.LevelWarn},
+		{"WARNING", slog.LevelWarn},
+		{"error", slog.LevelError},
+		{"ERROR", slog.LevelError},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.input, func(t *testing.T) {
+			level := ParseLogLevel(tc.input)
+			assert.Equal(t, tc.expected, level)
+		})
+	}
+}
+
+func TestNewDynamicLogger(t *testing.T) {
+	// Test that NewDynamicLogger creates a working logger
+	logger := NewDynamicLogger("DEBUG")
+	assert.NotNil(t, logger)
+	assert.IsType(t, &slog.Logger{}, logger)
+
+	// Verify the level was set
+	assert.Equal(t, "DEBUG", GetLevel())
+}
+
+func TestSetLevel(t *testing.T) {
+	// Set to DEBUG
+	SetLevel("DEBUG")
+	assert.Equal(t, "DEBUG", GetLevel())
+
+	// Set to INFO
+	SetLevel("INFO")
+	assert.Equal(t, "INFO", GetLevel())
+
+	// Set to WARN
+	SetLevel("WARN")
+	assert.Equal(t, "WARN", GetLevel())
+
+	// Set to ERROR
+	SetLevel("ERROR")
+	assert.Equal(t, "ERROR", GetLevel())
+
+	// Set to TRACE
+	SetLevel("TRACE")
+	assert.Equal(t, "TRACE", GetLevel())
+
+	// Empty string should not change the level
+	currentLevel := GetLevel()
+	SetLevel("")
+	assert.Equal(t, currentLevel, GetLevel())
+
+	// Reset to INFO for other tests
+	SetLevel("INFO")
+}
+
+func TestSetLevel_CaseInsensitive(t *testing.T) {
+	SetLevel("debug")
+	assert.Equal(t, "DEBUG", GetLevel())
+
+	SetLevel("Info")
+	assert.Equal(t, "INFO", GetLevel())
+
+	SetLevel("WARN")
+	assert.Equal(t, "WARN", GetLevel())
+}
+
+func TestGetLevel(t *testing.T) {
+	testCases := []struct {
+		setLevel     string
+		expectedName string
+	}{
+		{"ERROR", "ERROR"},
+		{"WARN", "WARN"},
+		{"INFO", "INFO"},
+		{"DEBUG", "DEBUG"},
+		{"TRACE", "TRACE"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.setLevel, func(t *testing.T) {
+			SetLevel(tc.setLevel)
+			assert.Equal(t, tc.expectedName, GetLevel())
+		})
+	}
+
+	// Reset to INFO
+	SetLevel("INFO")
 }
 
 // TestLoggerOutput_Logfmt verifies that the logger produces logfmt-style output.
@@ -159,7 +266,7 @@ func TestLoggerFiltering(t *testing.T) {
 		t.Run(tt.loggerLevel+"_logs_"+tt.logLevel.String(), func(t *testing.T) {
 			var buf bytes.Buffer
 			handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{
-				Level: parseLogLevel(tt.loggerLevel),
+				Level: ParseLogLevel(tt.loggerLevel),
 			})
 			logger := slog.New(handler)
 

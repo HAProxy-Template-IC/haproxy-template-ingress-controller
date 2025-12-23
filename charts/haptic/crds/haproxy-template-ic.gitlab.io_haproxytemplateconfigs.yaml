@@ -28,7 +28,7 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          HAProxyTemplateConfig defines the configuration for HAPTIC (HAProxy Template Ingress Controller).
+          HAProxyTemplateConfig defines the configuration for the HAProxy Template Ingress Controller.
 
           This custom resource replaces the previous ConfigMap-based configuration approach,
           providing better validation, type safety, and support for embedded validation tests.
@@ -311,19 +311,27 @@ spec:
               logging:
                 description: Logging configures logging behavior.
                 properties:
-                  verbose:
+                  level:
                     description: |-
-                      Verbose controls log level.
+                      Level controls the log level.
 
-                      Values:
-                        0: WARNING
-                        1: INFO
-                        2: DEBUG
+                      Values: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
 
-                      Default: 1
-                    maximum: 2
-                    minimum: 0
-                    type: integer
+                      If not set, the LOG_LEVEL environment variable is used.
+                      If neither is set, defaults to INFO.
+                    enum:
+                    - TRACE
+                    - DEBUG
+                    - INFO
+                    - WARN
+                    - ERROR
+                    - trace
+                    - debug
+                    - info
+                    - warn
+                    - error
+                    - ""
+                    type: string
                 type: object
               maps:
                 additionalProperties:

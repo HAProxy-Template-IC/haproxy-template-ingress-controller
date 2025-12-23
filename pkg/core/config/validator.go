@@ -82,8 +82,17 @@ func validateControllerConfig(oc *ControllerConfig) error {
 
 // validateLoggingConfig validates the logging configuration.
 func validateLoggingConfig(lc *LoggingConfig) error {
-	if lc.Verbose < 0 || lc.Verbose > 2 {
-		return fmt.Errorf("verbose must be 0 (WARNING), 1 (INFO), or 2 (DEBUG), got %d", lc.Verbose)
+	if lc.Level == "" {
+		return nil // Empty is valid - means use LOG_LEVEL env var or default
+	}
+
+	validLevels := map[string]bool{
+		"TRACE": true, "DEBUG": true, "INFO": true, "WARN": true, "ERROR": true,
+		"trace": true, "debug": true, "info": true, "warn": true, "error": true,
+		"WARNING": true, "warning": true, // Also accept WARNING as alias for WARN
+	}
+	if !validLevels[lc.Level] {
+		return fmt.Errorf("level must be TRACE, DEBUG, INFO, WARN, or ERROR (case-insensitive), got %q", lc.Level)
 	}
 
 	return nil

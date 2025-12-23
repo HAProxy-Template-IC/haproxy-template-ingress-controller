@@ -234,18 +234,15 @@ type LeaderElectionConfig struct {
 
 // LoggingConfig configures logging behavior.
 type LoggingConfig struct {
-	// Verbose controls log level.
+	// Level controls the log level.
 	//
-	// Values:
-	//   0: WARNING
-	//   1: INFO
-	//   2: DEBUG
+	// Values: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
 	//
-	// Default: 1
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=2
+	// If not set, the LOG_LEVEL environment variable is used.
+	// If neither is set, defaults to INFO.
+	// +kubebuilder:validation:Enum=TRACE;DEBUG;INFO;WARN;ERROR;trace;debug;info;warn;error;""
 	// +optional
-	Verbose int `json:"verbose,omitempty"`
+	Level string `json:"level,omitempty"`
 }
 
 // DataplaneConfig configures the Dataplane API for production HAProxy instances.

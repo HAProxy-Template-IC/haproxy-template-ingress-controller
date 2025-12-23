@@ -82,7 +82,7 @@ func TestConvertSpec(t *testing.T) {
 					},
 				},
 				Logging: v1alpha1.LoggingConfig{
-					Verbose: 1,
+					Level: "INFO",
 				},
 				Dataplane: v1alpha1.DataplaneConfig{
 					Port:                    5555,
@@ -140,7 +140,7 @@ func TestConvertSpec(t *testing.T) {
 					},
 				},
 				Logging: config.LoggingConfig{
-					Verbose: 1,
+					Level: "INFO",
 				},
 				Dataplane: config.DataplaneConfig{
 					Port:                    5555,

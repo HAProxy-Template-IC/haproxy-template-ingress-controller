@@ -136,7 +136,7 @@ kubectl logs -n <namespace> deployment/haptic-controller | grep -E "leader|elect
 
 # Example output:
 # level=INFO msg="Leader election started" identity=pod-abc12 lease=haptic-leader
-# level=INFO msg="🎖️  Became leader" identity=pod-abc12 transition_count=1
+# level=INFO msg="Became leader: pod-abc12" identity=pod-abc12
 ```
 
 ### Prometheus Metrics

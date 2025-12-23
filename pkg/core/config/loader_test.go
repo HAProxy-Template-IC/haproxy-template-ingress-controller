@@ -18,7 +18,7 @@ controller:
   metrics_port: 9090
 
 logging:
-  verbose: 1
+  level: INFO
 
 watched_resources:
   ingresses:
@@ -86,7 +86,7 @@ haproxy_config:
 
 	// Zero values should be present for unset fields
 	assert.Equal(t, 0, cfg.Controller.HealthzPort) // Will be set by defaults
-	assert.Equal(t, 0, cfg.Logging.Verbose)
+	assert.Equal(t, "", cfg.Logging.Level)
 }
 
 func TestParseConfig_ComplexWatchedResources(t *testing.T) {
@@ -266,7 +266,7 @@ controller:
   metrics_port: 9090
 
 logging:
-  verbose: 2
+  level: DEBUG
 
 watched_resources_ignore_fields:
   - metadata.managedFields
@@ -302,7 +302,7 @@ haproxy_config:
 	// Verify all sections were parsed
 	assert.Equal(t, "haproxy", cfg.PodSelector.MatchLabels["app"])
 	assert.Equal(t, 8080, cfg.Controller.HealthzPort)
-	assert.Equal(t, 2, cfg.Logging.Verbose)
+	assert.Equal(t, "DEBUG", cfg.Logging.Level)
 	assert.Len(t, cfg.WatchedResourcesIgnoreFields, 2)
 	assert.Len(t, cfg.WatchedResources, 1)
 	assert.Len(t, cfg.TemplateSnippets, 1)

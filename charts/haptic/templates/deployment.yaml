@@ -123,6 +123,10 @@ spec:
               value: {{ include "haptic.fullname" . }}-webhook
             - name: DEBUG_PORT
               value: {{ .Values.controller.debugPort | quote }}
+            {{- if .Values.controller.logLevel }}
+            - name: LOG_LEVEL
+              value: {{ .Values.controller.logLevel | quote }}
+            {{- end }}
             {{- if .Values.webhook.enabled }}
             - name: WEBHOOK_PORT
               value: {{ .Values.controller.ports.webhook | quote }}
