@@ -24,7 +24,7 @@ HAPTIC:
 ### Add the Helm Repository
 
 ```bash
-helm repo add haptic https://haproxy-template-ic.gitlab.io/haproxy-template-ingress-controller/charts
+helm repo add haptic https://haproxy-haptic.org/haproxy-template-ingress-controller/charts
 helm repo update
 ```
 
@@ -176,7 +176,7 @@ ingressClass:
   enabled: true       # Create IngressClass (default: true)
   name: haproxy       # IngressClass name
   default: false      # Mark as cluster default
-  controllerName: haproxy-template-ic.gitlab.io/controller
+  controllerName: haproxy-haptic.org/controller
 ```
 
 ### Capability Detection
@@ -201,7 +201,7 @@ When running multiple ingress controllers:
 # Controller 1 (haptic)
 ingressClass:
   name: haproxy
-  controllerName: haproxy-template-ic.gitlab.io/controller
+  controllerName: haproxy-haptic.org/controller
 
 # Controller 2 (nginx)
 ingressClass:
@@ -276,9 +276,9 @@ gatewayClass:
   enabled: true
   name: haproxy
   default: false
-  controllerName: haproxy-template-ic.gitlab.io/controller
+  controllerName: haproxy-haptic.org/controller
   parametersRef:
-    group: haproxy-template-ic.gitlab.io
+    group: haproxy-haptic.org
     kind: HAProxyTemplateConfig
     name: ""        # Defaults to controller.crdName
     namespace: ""   # Defaults to Release.Namespace
@@ -327,7 +327,7 @@ When running multiple Gateway API controllers:
 # Controller 1 (haptic)
 gatewayClass:
   name: haproxy
-  controllerName: haproxy-template-ic.gitlab.io/controller
+  controllerName: haproxy-haptic.org/controller
 
 # Controller 2 (nginx-gateway-fabric)
 gatewayClass:
@@ -353,7 +353,7 @@ helm install haproxy-internet ./charts/haptic
 
 # Create separate HAProxyTemplateConfig for internal traffic with different templates
 kubectl apply -f - <<EOF
-apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
+apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: haproxy-internal-config
@@ -372,9 +372,9 @@ kind: GatewayClass
 metadata:
   name: haproxy-internal
 spec:
-  controllerName: haproxy-template-ic.gitlab.io/controller
+  controllerName: haproxy-haptic.org/controller
   parametersRef:
-    group: haproxy-template-ic.gitlab.io
+    group: haproxy-haptic.org
     kind: HAProxyTemplateConfig
     name: haproxy-internal-config
     namespace: default
@@ -1442,7 +1442,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `ingressClass.enabled` | bool | `true` | Create IngressClass resource |
 | `ingressClass.name` | string | `haproxy` | IngressClass name |
 | `ingressClass.default` | bool | `false` | Mark as default IngressClass |
-| `ingressClass.controllerName` | string | `haproxy-template-ic.gitlab.io/controller` | Controller identifier |
+| `ingressClass.controllerName` | string | `haproxy-haptic.org/controller` | Controller identifier |
 
 ### GatewayClass
 
@@ -1451,8 +1451,8 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `gatewayClass.enabled` | bool | `true` | Create GatewayClass resource |
 | `gatewayClass.name` | string | `haproxy` | GatewayClass name |
 | `gatewayClass.default` | bool | `false` | Mark as default GatewayClass |
-| `gatewayClass.controllerName` | string | `haproxy-template-ic.gitlab.io/controller` | Controller identifier |
-| `gatewayClass.parametersRef.group` | string | `haproxy-template-ic.gitlab.io` | HAProxyTemplateConfig API group |
+| `gatewayClass.controllerName` | string | `haproxy-haptic.org/controller` | Controller identifier |
+| `gatewayClass.parametersRef.group` | string | `haproxy-haptic.org` | HAProxyTemplateConfig API group |
 | `gatewayClass.parametersRef.kind` | string | `HAProxyTemplateConfig` | HAProxyTemplateConfig kind |
 | `gatewayClass.parametersRef.name` | string | `""` | Config name (defaults to controller.crdName) |
 | `gatewayClass.parametersRef.namespace` | string | `""` | Config namespace (defaults to Release.Namespace) |

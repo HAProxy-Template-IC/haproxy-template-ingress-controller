@@ -21,7 +21,7 @@
 //   - Kubernetes-native admission webhook support
 //
 // +k8s:deepcopy-gen=package
-// +groupName=haproxy-template-ic.gitlab.io
+// +groupName=haproxy-haptic.org
 package v1alpha1
 
 import (

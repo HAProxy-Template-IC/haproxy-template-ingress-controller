@@ -19,7 +19,7 @@ package acceptance
 // CRD and API constants.
 const (
 	// HAProxyTemplateConfigAPIVersion is the API version for HAProxyTemplateConfig resources.
-	HAProxyTemplateConfigAPIVersion = "haproxy-template-ic.gitlab.io/v1alpha1"
+	HAProxyTemplateConfigAPIVersion = "haproxy-haptic.org/v1alpha1"
 
 	// HAProxyTemplateConfigKind is the Kind name for HAProxyTemplateConfig resources.
 	HAProxyTemplateConfigKind = "HAProxyTemplateConfig"
@@ -33,9 +33,9 @@ const (
 
 // RequiredCRDs lists the CRDs that must be installed for acceptance tests.
 var RequiredCRDs = []string{
-	"crd/haproxytemplateconfigs.haproxy-template-ic.gitlab.io",
-	"crd/haproxycfgs.haproxy-template-ic.gitlab.io",
-	"crd/haproxymapfiles.haproxy-template-ic.gitlab.io",
+	"crd/haproxytemplateconfigs.haproxy-haptic.org",
+	"crd/haproxycfgs.haproxy-haptic.org",
+	"crd/haproxymapfiles.haproxy-haptic.org",
 }
 
 // Debug endpoint paths.

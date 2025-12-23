@@ -9,7 +9,7 @@ Validation tests verify that your templates render correctly and produce valid H
 Add a `validationTests` section to your HAProxyTemplateConfig:
 
 ```yaml
-apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
+apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: my-config
@@ -339,7 +339,7 @@ test1:
 ## Complete Example
 
 ```yaml
-apiVersion: haproxy-template-ic.gitlab.io/v1alpha1
+apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
   name: ingress-routing

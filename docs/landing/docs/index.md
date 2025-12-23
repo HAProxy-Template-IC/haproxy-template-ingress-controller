@@ -1,6 +1,6 @@
 ---
 template: home.html
-title: HAPTIC
+title: Start
 hide:
   - navigation
   - toc

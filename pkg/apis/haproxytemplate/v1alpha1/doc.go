@@ -29,7 +29,7 @@
 //
 // # API Group
 //
-// Group: haproxy-template-ic.gitlab.io
+// Group: haproxy-haptic.org
 // Version: v1alpha1
 //
 // # Resources
@@ -42,5 +42,5 @@
 // and usage patterns.
 //
 // +k8s:deepcopy-gen=package
-// +groupName=haproxy-template-ic.gitlab.io
+// +groupName=haproxy-haptic.org
 package v1alpha1
