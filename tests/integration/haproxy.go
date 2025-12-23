@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -723,4 +725,50 @@ func (h *HAProxyInstance) GetCurrentConfig() (string, error) {
 	}
 
 	return stdout.String(), nil
+}
+
+// GetContainerLogs fetches logs from the specified container in the HAProxy pod
+func (h *HAProxyInstance) GetContainerLogs(containerName string, tailLines int64) (string, error) {
+	ctx := context.Background()
+
+	opts := &corev1.PodLogOptions{
+		Container: containerName,
+		TailLines: &tailLines,
+	}
+
+	req := h.namespace.clientset.CoreV1().Pods(h.Namespace).GetLogs(h.Name, opts)
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get logs for container %s: %w", containerName, err)
+	}
+	defer stream.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, stream); err != nil {
+		return "", fmt.Errorf("failed to read logs: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+// DumpLogsOnFailure prints container logs if the test has failed.
+// Call this in t.Cleanup() to capture logs on any failure.
+func (h *HAProxyInstance) DumpLogsOnFailure(t *testing.T) {
+	if !t.Failed() {
+		return
+	}
+
+	t.Logf("\n========== HAProxy Container Logs (last 100 lines) ==========")
+	if logs, err := h.GetContainerLogs("haproxy", 100); err != nil {
+		t.Logf("Failed to get haproxy logs: %v", err)
+	} else {
+		t.Logf("%s", logs)
+	}
+
+	t.Logf("\n========== Dataplane API Container Logs (last 100 lines) ==========")
+	if logs, err := h.GetContainerLogs("dataplane", 100); err != nil {
+		t.Logf("Failed to get dataplane logs: %v", err)
+	} else {
+		t.Logf("%s", logs)
+	}
 }

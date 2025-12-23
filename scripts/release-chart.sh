@@ -7,10 +7,12 @@
 # This script:
 # 1. Validates the version format (SemVer)
 # 2. Updates Chart.yaml version
-# 3. Commits changes and creates a git tag
+# 3. Commits changes (tag is created automatically by CI after merge)
 #
-# After running this script, push the tag to trigger CI:
-#   git push origin main chart-v<version>
+# After running this script:
+#   1. Push to a release branch and create an MR
+#   2. Merge the MR to main
+#   3. CI automatically creates the tag and triggers the release pipeline
 
 set -euo pipefail
 
@@ -87,16 +89,22 @@ echo ""
 echo "Changes to be committed:"
 git diff --stat
 
-# Commit and tag
+# Commit changes (tag created automatically by CI after merge)
 echo ""
-echo "Creating commit and tag..."
+echo "Creating commit..."
 git add charts/haptic/Chart.yaml
 git commit -m "release: chart v$VERSION"
-git tag -a "chart-v$VERSION" -m "Helm chart release v$VERSION"
 
 success ""
-success "Created tag: chart-v$VERSION"
+success "Release commit created for chart v$VERSION"
 success ""
 echo "Next steps:"
 echo "  1. Review the commit: git show HEAD"
-echo "  2. Push to trigger CI: git push origin main chart-v$VERSION"
+echo "  2. Create release branch: git checkout -b release/haptic-chart-v$VERSION"
+echo "  3. Push and create MR: git push -u origin release/haptic-chart-v$VERSION"
+echo "  4. Merge the MR to main"
+echo ""
+echo "After merge, CI will automatically:"
+echo "  - Create tag haptic-chart-v$VERSION"
+echo "  - Package and push Helm chart to OCI registry"
+echo "  - Create GitLab release"

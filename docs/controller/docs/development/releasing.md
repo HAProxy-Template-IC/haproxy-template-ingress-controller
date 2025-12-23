@@ -52,17 +52,19 @@ Before releasing:
 
 ## Controller Release Process
 
-### 1. Update CHANGELOG.md
+The main branch is protected, so releases are made via merge requests. CI automatically creates tags when the VERSION file changes on main.
+
+### Step 1: Update CHANGELOG.md
 
 Prepare the changelog for release:
 
-```bash
-# Current structure
+```markdown
+# Change from:
 ## [Unreleased]
 ### Added
 - New feature X
 
-# Change to
+# To:
 ## [0.1.0-alpha.1] - 2025-01-15
 ### Added
 - New feature X
@@ -70,16 +72,10 @@ Prepare the changelog for release:
 ## [Unreleased]
 ```
 
-### 2. Run the Release Script
+### Step 2: Run the Release Script
 
 ```bash
 ./scripts/release-controller.sh <version>
-```
-
-**Example:**
-
-```bash
-./scripts/release-controller.sh 0.1.0-alpha.1
 ```
 
 The script will:
@@ -88,19 +84,44 @@ The script will:
 - Check CHANGELOG.md has the version entry
 - Update the `VERSION` file
 - Update `Chart.yaml` appVersion and image annotation
-- Create a commit and annotated tag
+- Create a release commit
 
-### 3. Push to Trigger CI
-
-```bash
-git push origin main controller-v<version>
-```
-
-**Example:**
+### Step 3: Create and Merge Release MR
 
 ```bash
-git push origin main controller-v0.1.0-alpha.1
+# Create release branch
+git checkout -b release/controller-v<version>
+
+# Push branch
+git push -u origin release/controller-v<version>
+
+# Create merge request
+glab mr create --title "release: haptic-controller v<version>" \
+  --description "Release haptic-controller v<version>" \
+  --target-branch main
 ```
+
+Review and merge the MR through GitLab.
+
+### Automatic Tag Creation
+
+After the MR is merged, CI automatically:
+
+1. Detects the VERSION file change on main
+2. Creates and pushes the `haptic-controller-v<version>` tag
+3. Triggers the release pipeline (binaries, images, GitLab release)
+
+No manual tagging is required.
+
+??? note "Manual Tagging (Fallback)"
+    If automatic tagging fails, you can create the tag manually:
+
+    ```bash
+    git checkout main
+    git pull origin main
+    git tag -a haptic-controller-v<version> -m "Controller release v<version>"
+    git push origin haptic-controller-v<version>
+    ```
 
 ### What CI Does Automatically
 
@@ -129,7 +150,7 @@ When a `controller-v*` tag is pushed, CI will:
 
     Controller releases automatically update the chart's `appVersion`.
 
-### 1. Update CHANGELOG.md
+### Step 1: Update CHANGELOG.md
 
 Add a `## [<version>]` section with chart changes prefixed by `[Chart]`:
 
@@ -139,7 +160,7 @@ Add a `## [<version>]` section with chart changes prefixed by `[Chart]`:
 - [Chart] Updated default resource limits
 ```
 
-### 2. Run the Release Script
+### Step 2: Run the Release Script
 
 ```bash
 ./scripts/release-chart.sh <version>
@@ -150,17 +171,43 @@ The script will:
 - Validate version format (SemVer)
 - Check CHANGELOG.md has the version entry
 - Update `Chart.yaml` version
-- Create a commit and annotated tag
+- Create a release commit
 
-### 3. Push to Trigger CI
+### Step 3: Create and Merge Release MR
 
 ```bash
-git push origin main chart-v<version>
+git checkout -b release/haptic-chart-v<version>
+git push -u origin release/haptic-chart-v<version>
+glab mr create --title "release: chart v<version>" \
+  --description "Release chart v<version>" \
+  --target-branch main
 ```
+
+Review and merge the MR through GitLab.
+
+### Automatic Tag Creation
+
+After the MR is merged, CI automatically:
+
+1. Detects the Chart.yaml version change on main
+2. Creates and pushes the `haptic-chart-v<version>` tag
+3. Triggers the release pipeline (OCI registry, GitLab release)
+
+No manual tagging is required.
+
+??? note "Manual Tagging (Fallback)"
+    If automatic tagging fails, you can create the tag manually:
+
+    ```bash
+    git checkout main
+    git pull origin main
+    git tag -a haptic-chart-v<version> -m "Chart release v<version>"
+    git push origin haptic-chart-v<version>
+    ```
 
 ### What CI Does Automatically
 
-When a `chart-v*` tag is pushed, CI will:
+When a `haptic-chart-v*` tag is pushed, CI will:
 
 1. **Package Helm chart** as OCI artifact
 2. **Push to GitLab registry** at `registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/charts`

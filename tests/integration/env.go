@@ -143,6 +143,15 @@ func TestHAProxy(env fixenv.Env) *HAProxyInstance {
 			return nil, fmt.Errorf("failed to deploy haproxy: %w", err)
 		}
 
+		// Register cleanup to dump container logs on test failure
+		// This runs after test completion, so logs include all activity
+		// Type assert to *testing.T to access Failed() method
+		if t, ok := env.T().(*testing.T); ok {
+			t.Cleanup(func() {
+				haproxy.DumpLogsOnFailure(t)
+			})
+		}
+
 		return fixenv.NewGenericResultWithCleanup(haproxy, func() {
 			keepCluster := ShouldKeepCluster()
 			if keepCluster == "true" {
