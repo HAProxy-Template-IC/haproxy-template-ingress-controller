@@ -89,6 +89,7 @@ nav:
     - Appendices: development/design/appendices.md
     - Linting: development/linting.md
     - Releasing: development/releasing.md
+  - Changelog: changelog.md
 
 extra:
   alternate:

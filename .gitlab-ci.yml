@@ -909,9 +909,9 @@ release-chart:
   script:
     # Extract version from tag (haptic-chart-v0.1.0 -> v0.1.0)
     - export VERSION=${CI_COMMIT_TAG#haptic-chart-}
-    # Extract release notes from CHANGELOG.md
+    # Extract release notes from chart CHANGELOG.md
     - |
-      sed -n "/^## \[${VERSION#v}\]/,/^## \[/p" CHANGELOG.md | head -n -1 > .release-notes.md || true
+      sed -n "/^## \[${VERSION#v}\]/,/^## \[/p" charts/haptic/CHANGELOG.md | head -n -1 > .release-notes.md || true
       if [ ! -s .release-notes.md ]; then
         echo "Helm Chart Release ${VERSION}" > .release-notes.md
       fi
