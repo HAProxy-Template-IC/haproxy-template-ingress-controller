@@ -79,10 +79,25 @@ NetworkPolicy:
   If you experience connectivity issues, check the NetworkPolicy configuration.
 {{- end }}
 
+{{- if .Values.haproxy.enabled }}
+HAProxy Data Plane:
+  HAProxy pods with Dataplane API sidecars have been deployed by this chart.
+
+  Verify HAProxy pods are running:
+    kubectl get pods -l app.kubernetes.io/name={{ include "haptic.name" . }},app.kubernetes.io/component=loadbalancer -n {{ .Release.Namespace }}
+
+  HAProxy Service:
+    kubectl get svc {{ include "haptic.fullname" . }}-haproxy -n {{ .Release.Namespace }}
+
+Next Steps:
+  1. Create Ingress or Gateway API resources to configure routing
+  2. Point your DNS or load balancer to the HAProxy service
+
+{{- else }}
 Next Steps:
   1. Deploy HAProxy pods with labels matching pod_selector:
 {{- range $key, $value := .Values.controller.config.podSelector.matchLabels }}
-     {{ $key }}: {{ $value }}
+       {{ $key }}: {{ $value }}
 {{- end }}
 
   2. Each HAProxy pod should include:
@@ -92,6 +107,7 @@ Next Steps:
      - Same pod labels for NetworkPolicy matching
 
   3. Create Ingress resources to configure routing
+{{- end }}
 
 For more information, visit:
   https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller

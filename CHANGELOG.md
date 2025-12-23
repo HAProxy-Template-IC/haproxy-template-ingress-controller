@@ -31,7 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **HAProxy annotation compatibility**: Drop-in compatibility with existing HAProxy ingress controllers
   - `haproxy.org/*` annotations (HAProxyTech ingress controller)
-  - `haproxy-ingress.github.io/*` annotations (jcmoraisjr ingress controller)
   - Backend config snippets, server options, load balancing algorithms
   - SSL passthrough, SSL redirect, CORS, basic auth
 
