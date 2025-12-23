@@ -1861,3 +1861,24 @@ helm template charts/haptic \
 - HAProxyTemplateConfig CRD: `crds/haproxy-haptic.org_haproxytemplateconfigs.yaml`
 - Controller validation: `pkg/controller/testrunner/CLAUDE.md`
 - Template engine: `pkg/templating/CLAUDE.md`
+
+## Changelog Guidelines
+
+The chart CHANGELOG (`charts/haptic/CHANGELOG.md`) documents Helm chart configuration changes.
+
+**Include:**
+
+- New Helm values and configuration options
+- Changes to default values (replicas, resources, etc.)
+- Service configuration changes (ports, types, annotations)
+- RBAC and security context changes
+- Template library additions/changes
+- CRD updates
+
+**Exclude:**
+
+- Controller behavior and features (belong in controller CHANGELOG)
+- Internal implementation details
+- Development workflow changes
+
+For controller changes, see the root `CHANGELOG.md`.

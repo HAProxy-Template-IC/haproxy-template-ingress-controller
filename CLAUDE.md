@@ -687,6 +687,28 @@ func (c *Component) Start(ctx context.Context) error {
 - Linting guidelines: `docs/development/linting.md`
 - Configuration reference: `docs/supported-configuration.md`
 
+## Changelog Guidelines
+
+The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the controller software.
+
+**Include:**
+
+- New features and capabilities (what the controller can do)
+- User-facing commands and APIs
+- Behavior changes and bug fixes
+- Metrics and observability features
+- Security-related changes
+
+**Exclude:**
+
+- Helm chart value names and paths (belong in chart CHANGELOG)
+- Default values and replica counts (belong in chart CHANGELOG)
+- Development scripts and tooling
+- CI/CD pipeline details
+- Internal testing infrastructure
+
+For Helm chart changes, see `charts/haptic/CHANGELOG.md`.
+
 ## Package-Specific Context
 
 For detailed development context on specific packages, see:

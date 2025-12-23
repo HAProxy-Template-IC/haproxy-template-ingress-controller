@@ -62,6 +62,7 @@ nav:
       - HAProxy Annotations: libraries/haproxytech.md
       - HAProxy Ingress: libraries/haproxy-ingress.md
       - Path Regex Last: libraries/path-regex-last.md
+  - Changelog: changelog.md
 
 extra:
   alternate:

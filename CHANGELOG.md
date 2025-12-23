@@ -48,7 +48,6 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
   - Declarative test fixtures (Services, Endpoints, Ingresses, HTTPRoutes)
   - Assertions: HAProxy config validity, pattern matching, exact content
   - Run tests via `controller validate --test <name>`
-  - CI integration for template regression testing
 
 - **Dry-run validation webhook**: Validate configuration changes before applying
   - Admission webhook for HAProxyTemplateConfig CRD
@@ -76,19 +75,16 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
   - HAProxy config validation results
   - Kubernetes API request latencies
 
-- **Default SSL certificate support**: Quick-start TLS configuration for development and testing
-  - Optional reference to existing Kubernetes TLS Secret via `controller.defaultSSLCertificate.secretName`
-  - Optional inline certificate creation via `controller.defaultSSLCertificate.create` with cert/key in values
-  - Development helper script `scripts/generate-dev-ssl-cert.sh` for self-signed certificate generation
-  - Certificate name/namespace passed to templates via `extraContext` (variables: `default_ssl_cert_name`, `default_ssl_cert_namespace`)
-  - Comprehensive SSL configuration documentation in Helm chart README
+- **Default SSL certificate support**: Configure a default TLS certificate for HTTPS termination
+  - Reference an existing Kubernetes TLS Secret
+  - Or create one inline from certificate/key values
+  - Certificate details available to templates for flexible SSL configuration
 
 - **Leader election for high availability**: Multiple controller replicas now supported with automatic leader election
   - Only the leader replica deploys configurations to HAProxy instances
   - All replicas continue watching resources, rendering templates, and validating configs (hot standby)
   - Automatic failover when leader fails (~15-20 seconds downtime)
   - Configurable timing parameters for failover speed and clock skew tolerance
-  - Default deployment now uses 2 replicas for HA
 
 - **Leader election metrics**: Three new Prometheus metrics for monitoring leadership
   - `haptic_leader_election_is_leader`: Current leadership status (gauge)
@@ -100,8 +96,3 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
   - Leadership monitoring and troubleshooting
   - Best practices for production deployments
   - Migration guide from single-replica
-
-- **Separate controller and HAProxy services**: Clean separation of concerns
-  - Controller Service (`haproxy-template-ic`): ClusterIP for operational endpoints (healthz, metrics)
-  - HAProxy Service (`haproxy-template-ic-haproxy`): Configurable LoadBalancer/ClusterIP for ingress traffic
-  - Independent configuration for ports, annotations, and labels
