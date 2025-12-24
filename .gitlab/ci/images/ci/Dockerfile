@@ -22,6 +22,10 @@ ARG KUBECONFORM_VERSION=0.7.0
 ARG YAMLLINT_VERSION=1.37.1
 # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
 ARG MARKDOWNLINT_VERSION=0.14.0
+# renovate: datasource=github-releases depName=goreleaser/goreleaser
+ARG GORELEASER_VERSION=2.13.1
+# renovate: datasource=github-releases depName=sigstore/cosign
+ARG COSIGN_VERSION=2.5.0
 
 # Install HAProxy from haproxy.debian.net and Docker CLI from Docker's apt repository
 RUN apt-get update \
@@ -85,5 +89,14 @@ RUN helm plugin install https://github.com/helm-unittest/helm-unittest.git --ver
 RUN curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
     | tar xzf - -C /usr/local/bin kubeconform
 
+# Install goreleaser
+RUN curl -fsSL "https://github.com/goreleaser/goreleaser/releases/download/v${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz" \
+    | tar xzf - -C /usr/local/bin goreleaser
+
+# Install cosign
+RUN curl -fsSL -o /usr/local/bin/cosign \
+    "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+    && chmod +x /usr/local/bin/cosign
+
 # Verify installations
-RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help | head -1 && kubeconform -v
+RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help | head -1 && kubeconform -v && goreleaser --version && cosign version
