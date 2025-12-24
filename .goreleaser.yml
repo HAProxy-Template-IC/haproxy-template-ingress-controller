@@ -2,11 +2,9 @@
 version: 2
 project_name: haptic
 
-# Monorepo configuration for prefixed tags (haptic-controller-v1.0.0)
-# This strips the prefix before parsing semver
-monorepo:
-  tag_prefix: haptic-controller-
-  dir: .
+# Note: Tag prefix stripping (haptic-controller-v1.0.0 -> v1.0.0) is handled
+# in CI via GORELEASER_CURRENT_TAG environment variable, since monorepo
+# support requires GoReleaser Pro.
 
 before:
   hooks:

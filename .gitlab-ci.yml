@@ -890,6 +890,8 @@ release-controller-binaries:
   script:
     # Extract version from tag (haptic-controller-v0.1.0 -> v0.1.0)
     - export VERSION=${CI_COMMIT_TAG#haptic-controller-}
+    # Override the tag goreleaser detects (monorepo support requires Pro)
+    - export GORELEASER_CURRENT_TAG=${VERSION}
     # Extract release notes from CHANGELOG.md
     - |
       sed -n "/^## \[${VERSION#v}\]/,/^## \[/p" CHANGELOG.md | head -n -1 > /tmp/release-notes.md || true
@@ -992,6 +994,8 @@ release-chart:
     - if: $CI_COMMIT_TAG =~ /^haptic-chart-v.*/
   before_script:
     - helm registry login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    # Docker login needed for cosign to push signatures to OCI registry
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     # Extract version from tag (haptic-chart-v0.1.0 -> v0.1.0)
     - export VERSION=${CI_COMMIT_TAG#haptic-chart-}
