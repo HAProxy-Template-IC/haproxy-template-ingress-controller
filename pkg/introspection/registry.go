@@ -190,3 +190,20 @@ func (r *Registry) Len() int {
 	defer r.mu.RUnlock()
 	return len(r.vars)
 }
+
+// Clear removes all published variables from the registry.
+//
+// This is used between controller iterations to prevent stale references
+// to components from previous iterations. The registry can then be reused
+// with new variables without restarting the HTTP server.
+//
+// Example:
+//
+//	// Between iterations
+//	registry.Clear()
+//	registry.Publish("config", newConfigVar)
+func (r *Registry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.vars = make(map[string]Var)
+}

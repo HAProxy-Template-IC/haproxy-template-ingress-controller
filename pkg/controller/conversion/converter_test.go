@@ -71,8 +71,6 @@ func TestConvertSpec(t *testing.T) {
 					},
 				},
 				Controller: v1alpha1.ControllerConfig{
-					HealthzPort: 8080,
-					MetricsPort: 9090,
 					LeaderElection: v1alpha1.LeaderElectionConfig{
 						Enabled:       boolPtr(true),
 						LeaseName:     "haproxy-leader",
@@ -129,8 +127,6 @@ func TestConvertSpec(t *testing.T) {
 					},
 				},
 				Controller: config.ControllerConfig{
-					HealthzPort: 8080,
-					MetricsPort: 9090,
 					LeaderElection: config.LeaderElectionConfig{
 						Enabled:       true,
 						LeaseName:     "haproxy-leader",

@@ -13,10 +13,6 @@ pod_selector:
   match_labels:
     app: haproxy
 
-controller:
-  healthz_port: 8080
-  metrics_port: 9090
-
 logging:
   level: INFO
 
@@ -37,7 +33,6 @@ haproxy_config:
 	require.NotNil(t, cfg)
 
 	assert.Equal(t, "haproxy", cfg.PodSelector.MatchLabels["app"])
-	assert.Equal(t, 8080, cfg.Controller.HealthzPort)
 	assert.Contains(t, cfg.HAProxyConfig.Template, "global")
 }
 
@@ -85,7 +80,6 @@ haproxy_config:
 	require.NotNil(t, cfg)
 
 	// Zero values should be present for unset fields
-	assert.Equal(t, 0, cfg.Controller.HealthzPort) // Will be set by defaults
 	assert.Equal(t, "", cfg.Logging.Level)
 }
 
@@ -231,8 +225,6 @@ haproxy_config:
 	require.NotNil(t, cfg)
 
 	// Verify defaults were applied
-	assert.Equal(t, DefaultHealthzPort, cfg.Controller.HealthzPort)
-	assert.Equal(t, DefaultMetricsPort, cfg.Controller.MetricsPort)
 	assert.Equal(t, DefaultDataplanePort, cfg.Dataplane.Port)
 }
 
@@ -260,10 +252,6 @@ func TestParseConfig_WithAllSections(t *testing.T) {
 pod_selector:
   match_labels:
     app: haproxy
-
-controller:
-  healthz_port: 8080
-  metrics_port: 9090
 
 logging:
   level: DEBUG
@@ -301,7 +289,6 @@ haproxy_config:
 
 	// Verify all sections were parsed
 	assert.Equal(t, "haproxy", cfg.PodSelector.MatchLabels["app"])
-	assert.Equal(t, 8080, cfg.Controller.HealthzPort)
 	assert.Equal(t, "DEBUG", cfg.Logging.Level)
 	assert.Len(t, cfg.WatchedResourcesIgnoreFields, 2)
 	assert.Len(t, cfg.WatchedResources, 1)

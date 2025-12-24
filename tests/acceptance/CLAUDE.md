@@ -452,6 +452,34 @@ docker build -t haptic:dev -f Dockerfile .
 docker build -t haptic:test -f Dockerfile .
 ```
 
+## Running Acceptance Tests
+
+**CRITICAL: Always use Make commands to run acceptance tests.** Never run `go test` directly or manually build Docker images - the Makefile handles all setup correctly.
+
+```bash
+# Run all acceptance tests (recommended)
+make test-acceptance
+
+# Run acceptance tests in parallel (faster, uses shared cluster)
+make test-acceptance-parallel
+
+# Run a specific test
+TEST_RUN_PATTERN="TestPartialDeploymentFailure" make test-acceptance
+```
+
+The Make targets automatically:
+
+1. Build the Docker image with the correct `:test` tag
+2. Create/reuse the Kind cluster
+3. Load the image into the cluster
+4. Run the tests with proper flags
+
+**Why not run `go test` directly?**
+
+- The Docker image won't include your code changes
+- The Kind cluster may not have the latest image loaded
+- You'll waste time debugging image/cluster state issues
+
 ## Debugging Acceptance Tests
 
 ### Keep Namespace After Test (KEEP_NAMESPACE)
@@ -507,9 +535,9 @@ curl http://localhost:6060/debug/vars/config
 kubectl logs -n haproxy-test haptic-xxx -f
 ```
 
-### Manual Test Execution
+### Manual Test Execution (Advanced - Avoid If Possible)
 
-**IMPORTANT**: Always use the `:test` tag for acceptance tests.
+**Prefer `make test-acceptance` over manual steps.** Only use manual execution when debugging complex issues that require step-by-step control.
 
 ```bash
 # Create cluster manually
@@ -522,7 +550,7 @@ docker build -t haptic:test -f Dockerfile .
 kind load docker-image haptic:test --name haproxy-test
 
 # Run test
-go test -v ./tests/acceptance
+go test -tags=acceptance -v ./tests/acceptance
 
 # Cleanup
 kind delete cluster --name haproxy-test
@@ -538,7 +566,7 @@ docker build --no-cache -t haptic:test -f Dockerfile .
 kind load docker-image haptic:test --name haproxy-test
 
 # Run test again
-go test -v ./tests/acceptance
+go test -tags=acceptance -v ./tests/acceptance
 ```
 
 ## Resources

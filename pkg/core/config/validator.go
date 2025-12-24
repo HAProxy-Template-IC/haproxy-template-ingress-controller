@@ -64,19 +64,9 @@ func validatePodSelector(ps *PodSelector) error {
 }
 
 // validateControllerConfig validates the controller configuration.
-func validateControllerConfig(oc *ControllerConfig) error {
-	if oc.HealthzPort < 1 || oc.HealthzPort > 65535 {
-		return fmt.Errorf("healthz_port must be between 1 and 65535, got %d", oc.HealthzPort)
-	}
-
-	if oc.MetricsPort < 1 || oc.MetricsPort > 65535 {
-		return fmt.Errorf("metrics_port must be between 1 and 65535, got %d", oc.MetricsPort)
-	}
-
-	if oc.HealthzPort == oc.MetricsPort {
-		return fmt.Errorf("healthz_port and metrics_port cannot be the same (%d)", oc.HealthzPort)
-	}
-
+func validateControllerConfig(_ *ControllerConfig) error {
+	// Currently only contains LeaderElection which has its own defaults.
+	// Validation of LeaderElection is handled at runtime when parsing durations.
 	return nil
 }
 

@@ -907,6 +907,9 @@ release-controller-images:
   image: docker:${DOCKER_VERSION}
   tags:
     - saas-linux-large-amd64
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
   needs:
     - release-controller-binaries
   rules:
@@ -979,6 +982,9 @@ release-chart:
   image: ${CI_IMAGE}
   tags:
     - saas-linux-medium-amd64
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
   needs:
     - job: build-ci
       optional: true

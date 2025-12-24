@@ -16,19 +16,19 @@ func TestSetDefaults_AllUnset(t *testing.T) {
 
 	SetDefaults(cfg)
 
-	// Controller defaults
-	assert.Equal(t, DefaultHealthzPort, cfg.Controller.HealthzPort)
-	assert.Equal(t, DefaultMetricsPort, cfg.Controller.MetricsPort)
-
 	// Dataplane defaults
 	assert.Equal(t, DefaultDataplanePort, cfg.Dataplane.Port)
+
+	// Leader election defaults
+	assert.Equal(t, DefaultLeaderElectionLeaseName, cfg.Controller.LeaderElection.LeaseName)
 }
 
 func TestSetDefaults_AllSet(t *testing.T) {
 	cfg := &Config{
 		Controller: ControllerConfig{
-			HealthzPort: 8081,
-			MetricsPort: 9091,
+			LeaderElection: LeaderElectionConfig{
+				LeaseName: "custom-lease",
+			},
 		},
 		Dataplane: DataplaneConfig{
 			Port: 5556,
@@ -38,41 +38,39 @@ func TestSetDefaults_AllSet(t *testing.T) {
 	SetDefaults(cfg)
 
 	// Verify existing values are not overwritten
-	assert.Equal(t, 8081, cfg.Controller.HealthzPort)
-	assert.Equal(t, 9091, cfg.Controller.MetricsPort)
+	assert.Equal(t, "custom-lease", cfg.Controller.LeaderElection.LeaseName)
 	assert.Equal(t, 5556, cfg.Dataplane.Port)
 }
 
 func TestSetDefaults_PartiallySet(t *testing.T) {
 	cfg := &Config{
 		Controller: ControllerConfig{
-			HealthzPort: 8081, // Set
-			// MetricsPort: 0 (unset)
+			LeaderElection: LeaderElectionConfig{
+				LeaseName: "custom-lease", // Set, LeaseDuration left unset
+			},
 		},
-		Dataplane: DataplaneConfig{
-			// Port: 0 (unset)
-		},
+		Dataplane: DataplaneConfig{}, // Port left unset
 	}
 
 	SetDefaults(cfg)
 
 	// Set values should remain
-	assert.Equal(t, 8081, cfg.Controller.HealthzPort)
+	assert.Equal(t, "custom-lease", cfg.Controller.LeaderElection.LeaseName)
 
 	// Unset values should get defaults
-	assert.Equal(t, DefaultMetricsPort, cfg.Controller.MetricsPort)
+	assert.Equal(t, DefaultLeaderElectionLeaseDuration.String(), cfg.Controller.LeaderElection.LeaseDuration)
 	assert.Equal(t, DefaultDataplanePort, cfg.Dataplane.Port)
 }
 
-func TestSetDefaults_OperatorConfig(t *testing.T) {
+func TestSetDefaults_ControllerConfig(t *testing.T) {
 	cfg := &Config{
 		Controller: ControllerConfig{},
 	}
 
 	SetDefaults(cfg)
 
-	assert.Equal(t, DefaultHealthzPort, cfg.Controller.HealthzPort)
-	assert.Equal(t, DefaultMetricsPort, cfg.Controller.MetricsPort)
+	assert.Equal(t, DefaultLeaderElectionLeaseName, cfg.Controller.LeaderElection.LeaseName)
+	assert.Equal(t, DefaultLeaderElectionLeaseDuration.String(), cfg.Controller.LeaderElection.LeaseDuration)
 }
 
 func TestSetDefaults_LoggingConfig(t *testing.T) {
@@ -90,11 +88,10 @@ func TestSetDefaults_LoggingConfig(t *testing.T) {
 
 func TestSetDefaults_Constants(t *testing.T) {
 	// Verify default constants have expected values
-	assert.Equal(t, 8080, DefaultHealthzPort)
-	assert.Equal(t, 9090, DefaultMetricsPort)
 	assert.Equal(t, "", DefaultLevel)
 	assert.Equal(t, 5555, DefaultDataplanePort)
 	assert.False(t, DefaultEnableValidationWebhook)
+	assert.Equal(t, "haptic-leader", DefaultLeaderElectionLeaseName)
 }
 
 func TestSetDefaults_IntegrationWithParsing(t *testing.T) {
@@ -117,15 +114,13 @@ haproxy_config:
 	cfg, err := parseConfig(yamlConfig)
 	assert.NoError(t, err)
 
-	// Before SetDefaults, ports should be 0
-	assert.Equal(t, 0, cfg.Controller.HealthzPort)
-	assert.Equal(t, 0, cfg.Controller.MetricsPort)
+	// Before SetDefaults, leader election fields should be empty
+	assert.Equal(t, "", cfg.Controller.LeaderElection.LeaseName)
 
 	SetDefaults(cfg)
 
-	// After SetDefaults, ports should have default values
-	assert.Equal(t, DefaultHealthzPort, cfg.Controller.HealthzPort)
-	assert.Equal(t, DefaultMetricsPort, cfg.Controller.MetricsPort)
+	// After SetDefaults, leader election should have default values
+	assert.Equal(t, DefaultLeaderElectionLeaseName, cfg.Controller.LeaderElection.LeaseName)
 
 	// After SetDefaults, validation should pass
 	err = ValidateStructure(cfg)
@@ -139,16 +134,16 @@ func TestSetDefaults_Idempotent(t *testing.T) {
 
 	// Apply defaults twice
 	SetDefaults(cfg)
-	firstHealthz := cfg.Controller.HealthzPort
-	firstMetrics := cfg.Controller.MetricsPort
+	firstLeaseName := cfg.Controller.LeaderElection.LeaseName
+	firstPort := cfg.Dataplane.Port
 
 	SetDefaults(cfg)
-	secondHealthz := cfg.Controller.HealthzPort
-	secondMetrics := cfg.Controller.MetricsPort
+	secondLeaseName := cfg.Controller.LeaderElection.LeaseName
+	secondPort := cfg.Dataplane.Port
 
 	// Should be idempotent
-	assert.Equal(t, firstHealthz, secondHealthz)
-	assert.Equal(t, firstMetrics, secondMetrics)
+	assert.Equal(t, firstLeaseName, secondLeaseName)
+	assert.Equal(t, firstPort, secondPort)
 }
 
 func TestDataplaneConfig_GetMinDeploymentInterval(t *testing.T) {
