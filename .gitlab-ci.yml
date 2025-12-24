@@ -42,7 +42,7 @@ variables:
   # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
   MARKDOWNLINT_VERSION: "0.14.0"
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
-  GORELEASER_VERSION: "2.13.1"
+  GORELEASER_VERSION: "2.13.2"
   # renovate: datasource=github-releases depName=sigstore/cosign
   COSIGN_VERSION: "2.6.1"
   # CI images - HAProxy 3.2 for single-run jobs, versioned for matrix jobs
