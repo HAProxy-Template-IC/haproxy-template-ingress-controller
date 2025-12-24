@@ -737,6 +737,18 @@ func setupConfigWatchers(
 			bus.Publish(events.NewConfigResourceChangedEvent(obj))
 			return nil
 		},
+		// OnSyncComplete delivers the current state after initial sync.
+		// This ensures eventual consistency: if updates arrived during the sync window
+		// (when OnChange callbacks are suppressed), the current state is delivered here.
+		OnSyncComplete: func(obj interface{}) error {
+			if obj == nil {
+				logger.Debug("CRD watcher sync complete, no resource in cache (skipping event)")
+				return nil
+			}
+			logger.Debug("CRD watcher sync complete, publishing current state")
+			bus.Publish(events.NewConfigResourceChangedEvent(obj))
+			return nil
+		},
 	}, k8sClient)
 	if err != nil {
 		return fmt.Errorf("failed to create HAProxyTemplateConfig watcher: %w", err)
@@ -747,6 +759,18 @@ func setupConfigWatchers(
 		Namespace: k8sClient.Namespace(),
 		Name:      secretName,
 		OnChange: func(obj interface{}) error {
+			bus.Publish(events.NewSecretResourceChangedEvent(obj))
+			return nil
+		},
+		// OnSyncComplete delivers the current state after initial sync.
+		// This ensures eventual consistency: if updates arrived during the sync window
+		// (when OnChange callbacks are suppressed), the current state is delivered here.
+		OnSyncComplete: func(obj interface{}) error {
+			if obj == nil {
+				logger.Debug("Secret watcher sync complete, no resource in cache (skipping event)")
+				return nil
+			}
+			logger.Debug("Secret watcher sync complete, publishing current state")
 			bus.Publish(events.NewSecretResourceChangedEvent(obj))
 			return nil
 		},
@@ -1604,20 +1628,10 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 		return nil, fmt.Errorf("secret has no data field")
 	}
 
-	// Convert map[string]interface{} to map[string][]byte
-	// Kubernetes Secrets are base64-encoded, so we need to decode them
-	data := make(map[string][]byte)
-	for key, value := range dataRaw {
-		if strValue, ok := value.(string); ok {
-			// Decode base64-encoded value
-			decoded, err := base64.StdEncoding.DecodeString(strValue)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode base64 for key %q: %w", key, err)
-			}
-			data[key] = decoded
-		} else {
-			return nil, fmt.Errorf("secret data key %q has invalid type: %T", key, value)
-		}
+	// Parse Secret data (handles base64 decoding)
+	data, err := coreconfig.ParseSecretData(dataRaw)
+	if err != nil {
+		return nil, err
 	}
 
 	// Load credentials

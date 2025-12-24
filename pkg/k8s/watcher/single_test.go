@@ -996,3 +996,222 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 		t.Errorf("expected 2 callbacks after second real update, got %d", callbackCount)
 	}
 }
+
+// TestSingleWatcher_OnSyncComplete_CalledAfterSync verifies that OnSyncComplete is called
+// after initial sync completes, delivering the current resource from the cache.
+func TestSingleWatcher_OnSyncComplete_CalledAfterSync(t *testing.T) {
+	scheme := runtime.NewScheme()
+	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
+	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
+
+	fakeClientset := kubefake.NewClientset()
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		scheme,
+		map[schema.GroupVersionResource]string{
+			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+		},
+	)
+	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+
+	var onChangeCount int
+	var onSyncCompleteCount int
+	var syncCompleteResource *unstructured.Unstructured
+	var mu sync.Mutex
+
+	cfg := types.SingleWatcherConfig{
+		GVR: schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "configmaps",
+		},
+		Namespace: "default",
+		Name:      "test-config",
+		OnChange: func(obj interface{}) error {
+			mu.Lock()
+			onChangeCount++
+			mu.Unlock()
+			return nil
+		},
+		OnSyncComplete: func(obj interface{}) error {
+			mu.Lock()
+			onSyncCompleteCount++
+			if u, ok := obj.(*unstructured.Unstructured); ok {
+				syncCompleteResource = u
+			}
+			mu.Unlock()
+			return nil
+		},
+	}
+
+	w, err := NewSingle(&cfg, k8sClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	// Start watcher
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = w.Start(ctx)
+	}()
+
+	// Wait for sync
+	err = w.WaitForSync(ctx)
+	if err != nil {
+		t.Fatalf("WaitForSync failed: %v", err)
+	}
+
+	// Give a small buffer for the callback to complete
+	time.Sleep(10 * time.Millisecond)
+
+	mu.Lock()
+	changeCount := onChangeCount
+	syncCount := onSyncCompleteCount
+	mu.Unlock()
+
+	// OnSyncComplete should have been called once
+	if syncCount != 1 {
+		t.Errorf("expected OnSyncComplete to be called once, got %d", syncCount)
+	}
+
+	// OnChange should NOT have been called during sync (no resource exists in fake client)
+	if changeCount != 0 {
+		t.Errorf("expected OnChange to not be called (suppressed during sync), got %d", changeCount)
+	}
+
+	// In this test, the resource doesn't exist, so syncCompleteResource should be nil
+	// (getCurrentResourceFromCache returns nil when no resource is in cache)
+	mu.Lock()
+	res := syncCompleteResource
+	mu.Unlock()
+	if res != nil {
+		t.Errorf("expected syncCompleteResource to be nil (no resource in cache), got %v", res)
+	}
+}
+
+// TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource verifies that OnSyncComplete
+// receives the current resource state from the informer cache.
+func TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource(t *testing.T) {
+	k8sClient := createFakeClientForSingleWatcher()
+
+	var syncCompleteResource *unstructured.Unstructured
+	var mu sync.Mutex
+
+	cfg := types.SingleWatcherConfig{
+		GVR: schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "configmaps",
+		},
+		Namespace: "default",
+		Name:      "test-config",
+		OnChange: func(obj interface{}) error {
+			return nil
+		},
+		OnSyncComplete: func(obj interface{}) error {
+			mu.Lock()
+			if u, ok := obj.(*unstructured.Unstructured); ok {
+				syncCompleteResource = u
+			}
+			mu.Unlock()
+			return nil
+		},
+	}
+
+	w, err := NewSingle(&cfg, k8sClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	// Manually populate the informer cache by simulating what happens during sync.
+	// Add a mock resource directly to the informer's store.
+	mockResource := createUnstructuredConfigMap("test-config", "default", "12345")
+	err = w.informer.GetStore().Add(mockResource)
+	if err != nil {
+		t.Fatalf("failed to add mock resource to store: %v", err)
+	}
+
+	// Mark sync as complete (simulating what Start() does after cache sync)
+	w.synced.Store(true)
+
+	// Invoke OnSyncComplete manually to test the behavior
+	if w.config.OnSyncComplete != nil {
+		resource := w.getCurrentResourceFromCache()
+		if resource != nil {
+			_ = w.config.OnSyncComplete(resource)
+		}
+	}
+
+	// Verify OnSyncComplete received the resource
+	mu.Lock()
+	res := syncCompleteResource
+	mu.Unlock()
+
+	if res == nil {
+		t.Fatal("expected syncCompleteResource to be non-nil")
+	}
+
+	if res.GetName() != "test-config" {
+		t.Errorf("expected resource name 'test-config', got '%s'", res.GetName())
+	}
+
+	if res.GetResourceVersion() != "12345" {
+		t.Errorf("expected resource version '12345', got '%s'", res.GetResourceVersion())
+	}
+}
+
+// TestSingleWatcher_OnSyncComplete_Optional verifies that OnSyncComplete is optional
+// and watcher works correctly when it's not provided.
+func TestSingleWatcher_OnSyncComplete_Optional(t *testing.T) {
+	scheme := runtime.NewScheme()
+	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
+	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
+
+	fakeClientset := kubefake.NewClientset()
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		scheme,
+		map[schema.GroupVersionResource]string{
+			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+		},
+	)
+	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+
+	cfg := types.SingleWatcherConfig{
+		GVR: schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "configmaps",
+		},
+		Namespace: "default",
+		Name:      "test-config",
+		OnChange: func(obj interface{}) error {
+			return nil
+		},
+		// OnSyncComplete is nil - should be optional
+	}
+
+	w, err := NewSingle(&cfg, k8sClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	// Start watcher - should not panic even with nil OnSyncComplete
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = w.Start(ctx)
+	}()
+
+	// Wait for sync - should succeed without OnSyncComplete callback
+	err = w.WaitForSync(ctx)
+	if err != nil {
+		t.Fatalf("WaitForSync failed: %v", err)
+	}
+
+	// Verify watcher is synced
+	if !w.IsSynced() {
+		t.Error("expected watcher to be synced")
+	}
+}
