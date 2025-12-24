@@ -8,11 +8,11 @@ import (
 
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haptic/pkg/dataplane/client"
-	v31 "haptic/pkg/generated/dataplaneapi/v31"
-	v31ee "haptic/pkg/generated/dataplaneapi/v31ee"
-	v32 "haptic/pkg/generated/dataplaneapi/v32"
-	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
+	v31 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v31"
+	v31ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v31ee"
+	v32 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32"
+	v32ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32ee"
 )
 
 // =============================================================================

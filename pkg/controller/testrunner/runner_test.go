@@ -25,10 +25,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"haptic/pkg/controller/conversion"
-	"haptic/pkg/dataplane"
-	"haptic/pkg/templating"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/conversion"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
 )
 
 // Helper function to create RawExtension from map.

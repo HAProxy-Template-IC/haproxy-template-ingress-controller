@@ -5,7 +5,7 @@ import (
 
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haptic/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections"
 )
 
 // safeGetHTTPRequestRule safely retrieves a rule at the given index, returning nil if out of bounds.

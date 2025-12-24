@@ -44,7 +44,6 @@ import (
 //  4. Verify all expected metrics exist
 //  5. Trigger operations (reconciliation, validation, deployment)
 //  6. Verify metrics are updated with correct values
-//
 func buildMetricsFeature() types.Feature {
 	return features.New("Metrics Endpoint").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

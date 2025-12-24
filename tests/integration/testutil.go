@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser"
 )
 
 // getHAPEEMajorMinor extracts the major.minor version from HAPROXY_VERSION env var.

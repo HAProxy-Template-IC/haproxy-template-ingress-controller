@@ -17,7 +17,7 @@
 package v1alpha1
 
 import (
-	internalinterfaces "haptic/pkg/generated/informers/externalversions/internalinterfaces"
+	internalinterfaces "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to all the informers in this group version.

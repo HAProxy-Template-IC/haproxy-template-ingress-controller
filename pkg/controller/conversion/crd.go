@@ -20,8 +20,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"haptic/pkg/core/config"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
 )
 
 // ParseCRD converts an unstructured HAProxyTemplateConfig CRD to typed structs.

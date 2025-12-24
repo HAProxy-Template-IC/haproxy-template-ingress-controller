@@ -17,16 +17,17 @@
 package externalversions
 
 import (
-	versioned "haptic/pkg/generated/clientset/versioned"
-	haproxytemplate "haptic/pkg/generated/informers/externalversions/haproxytemplate"
-	internalinterfaces "haptic/pkg/generated/informers/externalversions/internalinterfaces"
+	reflect "reflect"
+	sync "sync"
+	time "time"
+
+	versioned "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned"
+	haproxytemplate "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/informers/externalversions/haproxytemplate"
+	internalinterfaces "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/informers/externalversions/internalinterfaces"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
-	reflect "reflect"
-	sync "sync"
-	time "time"
 )
 
 // SharedInformerOption defines the functional option type for SharedInformerFactory.

@@ -17,7 +17,7 @@ package configpublisher
 import (
 	"time"
 
-	"haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/auxiliaryfiles"
 
 	"k8s.io/apimachinery/pkg/types"
 )

@@ -10,8 +10,8 @@ import (
 
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haptic/pkg/dataplane/client"
-	"haptic/pkg/dataplane/comparator/sections/executors"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections/executors"
 )
 
 // Operation defines the interface for all HAProxy configuration operations.

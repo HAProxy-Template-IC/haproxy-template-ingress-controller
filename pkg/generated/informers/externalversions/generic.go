@@ -18,7 +18,8 @@ package externalversions
 
 import (
 	fmt "fmt"
-	v1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
+
+	v1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
 
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"

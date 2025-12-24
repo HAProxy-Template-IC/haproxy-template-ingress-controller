@@ -46,7 +46,6 @@ const (
 //  3. Exactly one pod has is_leader=1 metric
 //  4. The other pod has is_leader=0 metric
 //  5. The Lease holder matches the pod with is_leader=1
-//
 func buildLeaderElectionTwoReplicasFeature() types.Feature {
 	return features.New("Leader Election - Two Replicas").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -289,7 +288,6 @@ func TestLeaderElection_TwoReplicas(t *testing.T) {
 //  3. A new leader is elected within the failover window
 //  4. New leader is different from deleted pod
 //  5. Only one leader exists after failover
-//
 func buildLeaderElectionFailoverFeature() types.Feature {
 	return features.New("Leader Election - Failover").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -443,7 +441,6 @@ func TestLeaderElection_Failover(t *testing.T) {
 //  1. Controller starts with leader_election.enabled=false
 //  2. No Lease resource is created
 //  3. Controller operates normally
-//
 func buildLeaderElectionDisabledModeFeature() types.Feature {
 	return features.New("Leader Election - Disabled Mode").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

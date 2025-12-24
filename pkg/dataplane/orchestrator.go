@@ -10,14 +10,14 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"haptic/pkg/dataplane/auxiliaryfiles"
-	"haptic/pkg/dataplane/client"
-	"haptic/pkg/dataplane/comparator"
-	"haptic/pkg/dataplane/comparator/sections"
-	"haptic/pkg/dataplane/parser"
-	"haptic/pkg/dataplane/parser/enterprise"
-	"haptic/pkg/dataplane/parser/parserconfig"
-	"haptic/pkg/dataplane/synchronizer"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser/enterprise"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/synchronizer"
 )
 
 // ConfigParser defines the interface for HAProxy configuration parsing.

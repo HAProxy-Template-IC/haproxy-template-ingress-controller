@@ -29,9 +29,9 @@ import (
 	"github.com/haproxytech/client-native/v6/configuration"
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haptic/pkg/dataplane/parser/enterprise/parsers"
-	"haptic/pkg/dataplane/parser/parserconfig"
-	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser/enterprise/parsers"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser/parserconfig"
+	v32ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32ee"
 )
 
 // parserMutex protects against concurrent parsing.

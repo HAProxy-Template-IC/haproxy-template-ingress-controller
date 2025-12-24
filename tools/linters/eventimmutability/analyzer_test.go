@@ -17,8 +17,8 @@ package eventimmutability_test
 import (
 	"testing"
 
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/tools/linters/eventimmutability"
 	"golang.org/x/tools/go/analysis/analysistest"
-	"haptic/tools/linters/eventimmutability"
 )
 
 func TestAnalyzer(t *testing.T) {

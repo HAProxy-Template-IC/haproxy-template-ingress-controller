@@ -23,12 +23,12 @@ import (
 	"sync"
 	"time"
 
-	busevents "haptic/pkg/events"
+	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
 
-	"haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"haptic/pkg/controller/events"
-	"haptic/pkg/dataplane"
-	"haptic/pkg/k8s/configpublisher"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/configpublisher"
 )
 
 const (

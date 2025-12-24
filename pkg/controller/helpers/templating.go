@@ -18,8 +18,8 @@ package helpers
 import (
 	"fmt"
 
-	"haptic/pkg/core/config"
-	"haptic/pkg/templating"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
 )
 
 // EngineOptions configures template engine creation.

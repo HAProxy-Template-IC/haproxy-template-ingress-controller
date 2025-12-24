@@ -3,7 +3,7 @@ package auxiliaryfiles
 import (
 	"context"
 
-	"haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
 )
 
 // mapFileOps implements FileOperations for MapFile.

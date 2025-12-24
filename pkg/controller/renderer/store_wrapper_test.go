@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"haptic/pkg/k8s/store"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/store"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )

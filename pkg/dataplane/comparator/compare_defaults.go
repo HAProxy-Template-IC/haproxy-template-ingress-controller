@@ -3,8 +3,8 @@ package comparator
 import (
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haptic/pkg/dataplane/comparator/sections"
-	"haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser"
 )
 
 // compareGlobal compares global section configurations between current and desired.

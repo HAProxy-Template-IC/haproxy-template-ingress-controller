@@ -9,8 +9,8 @@
 package sections
 
 import (
-	"haptic/pkg/dataplane/comparator/sections/executors"
-	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections/executors"
+	v32ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32ee"
 )
 
 // Priority constants for Enterprise Edition sections.

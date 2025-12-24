@@ -158,7 +158,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
 )
 
 // Client manages a persistent connection to the HAProxy Dataplane API.

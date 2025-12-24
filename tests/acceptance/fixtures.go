@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	haproxyv1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
+	haproxyv1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
 )
 
 // InitialConfigYAML is the initial controller configuration.

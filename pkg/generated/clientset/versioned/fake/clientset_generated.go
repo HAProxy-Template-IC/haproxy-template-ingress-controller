@@ -17,9 +17,9 @@
 package fake
 
 import (
-	clientset "haptic/pkg/generated/clientset/versioned"
-	haproxytemplateicv1alpha1 "haptic/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1"
-	fakehaproxytemplateicv1alpha1 "haptic/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1/fake"
+	clientset "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned"
+	haproxytemplateicv1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1"
+	fakehaproxytemplateicv1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1/fake"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"

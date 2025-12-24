@@ -24,8 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"haptic/pkg/controller/events"
-	"haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/testutil"
 )
 
 // createTestSecret creates an unstructured TLS Secret using testutil helper.

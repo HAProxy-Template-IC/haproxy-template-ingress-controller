@@ -17,7 +17,7 @@ package parser
 import (
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser/parserconfig"
 )
 
 // NormalizeConfigMetadata normalizes all Metadata fields in a StructuredConfig

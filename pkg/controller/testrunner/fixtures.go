@@ -20,11 +20,11 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"haptic/pkg/controller/resourcestore"
-	"haptic/pkg/core/logging"
-	"haptic/pkg/k8s/indexer"
-	"haptic/pkg/k8s/store"
-	"haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/resourcestore"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/logging"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/indexer"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/store"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
 )
 
 // MergeFixtures deep merges global fixtures with test fixtures by resource identity.

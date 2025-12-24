@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
 )
 
 // MemoryStore stores complete Kubernetes resources in memory using nested maps.

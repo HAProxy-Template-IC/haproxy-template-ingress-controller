@@ -1,4 +1,4 @@
-module haptic/tools/linters/eventimmutability
+module gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/tools/linters/eventimmutability
 
 go 1.25.5
 

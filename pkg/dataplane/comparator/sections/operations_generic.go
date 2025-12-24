@@ -9,7 +9,7 @@ import (
 	"context"
 	"fmt"
 
-	"haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
 )
 
 // OperationType represents the type of HAProxy configuration operation.

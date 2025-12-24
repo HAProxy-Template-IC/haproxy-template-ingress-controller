@@ -318,8 +318,8 @@ chown -R haproxy:haproxy /etc/haproxy /var/lib/dataplaneapi 2>/dev/null || true
 					Image:   cfg.Image,
 					Command: []string{cfg.HAProxyBin},
 					Args: []string{
-						"-W",  // master-worker mode
-						"-db", // disable background mode
+						"-W",                                                 // master-worker mode
+						"-db",                                                // disable background mode
 						"-S", "/etc/haproxy/haproxy-master.sock,level,admin", // master socket with admin access
 						"--",
 						"/etc/haproxy/haproxy.cfg",

@@ -4,7 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
 )
 
 // CompareSSLCrlFiles compares the current state of SSL CRL files in HAProxy storage

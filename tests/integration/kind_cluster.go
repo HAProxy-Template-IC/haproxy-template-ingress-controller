@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/kind/pkg/cluster"
 	"sigs.k8s.io/kind/pkg/cmd"
 
-	"haptic/tests/kindutil"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/tests/kindutil"
 )
 
 // KindClusterConfig holds configuration for creating a Kind cluster

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"haptic/pkg/dataplane/comparator"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator"
 )
 
 // SyncResult represents the outcome of a synchronization operation.

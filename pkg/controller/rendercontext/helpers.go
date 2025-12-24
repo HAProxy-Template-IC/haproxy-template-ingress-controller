@@ -15,9 +15,9 @@
 package rendercontext
 
 import (
-	"haptic/pkg/dataplane"
-	"haptic/pkg/k8s/types"
-	"haptic/pkg/templating"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
 )
 
 // SeparateHAProxyPodStore separates the haproxy-pods store from resource stores.

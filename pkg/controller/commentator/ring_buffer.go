@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"haptic/pkg/controller/events"
-	busevents "haptic/pkg/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
 )
 
 // Typical capacity: 1000 events (configurable).
