@@ -47,10 +47,11 @@ func TestSyncObservability(t *testing.T) {
 			name:              "traces-add",
 			initialConfigFile: "traces/base.cfg",
 			desiredConfigFile: "traces/with-traces.cfg",
-			expectedCreates:   0,
+			expectedCreates:   1,
 			expectedUpdates:   1,
 			expectedDeletes:   0,
 			expectedOperations: []string{
+				"Create ring 'buf1'",
 				"Update traces section",
 			},
 			expectedReload: true,

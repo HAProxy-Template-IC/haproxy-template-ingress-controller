@@ -336,6 +336,67 @@ kubectl delete ns -l 'kubernetes.io/metadata.name~=test-'
 kind delete cluster --name=haproxy-test
 ```
 
+## Flaky Test Policy
+
+**Flaky tests are NEVER acceptable.** A test that sometimes passes and sometimes fails indicates a real problem that must be investigated and fixed.
+
+### What NOT to Do
+
+- **Never blindly retry** - Re-running a pipeline without investigation masks the problem
+- **Never "merge and monitor"** - This pushes broken code to main and wastes everyone's time
+- **Never ignore intermittent failures** - They will get worse, not better
+
+### Why Flaky Tests Matter
+
+Flaky tests indicate real bugs:
+
+- **Timing issues** - Race conditions, missing synchronization, inadequate timeouts
+- **Resource contention** - CI environment constraints, DinD limitations
+- **State leakage** - Tests not properly isolated, shared state corruption
+- **Infrastructure bugs** - Container startup timing, network delays
+
+These are all **real problems** that affect production reliability.
+
+### Investigation Steps
+
+When a test fails intermittently:
+
+1. **Collect evidence** - Download CI logs, artifacts, container logs
+2. **Identify the failure mode** - Timeout? Wrong value? Missing resource?
+3. **Reproduce locally** - Run the test in a loop, simulate CI conditions
+4. **Find root cause** - Don't guess; use logging, debugging, profiling
+5. **Fix properly** - Address the underlying issue, not just the symptom
+6. **Verify the fix** - Run the test many times to confirm stability
+
+### Example Investigation
+
+```bash
+# Download CI job artifacts
+glab api --method GET "projects/<project>/jobs/<job_id>/artifacts" > artifacts.zip
+
+# View job logs
+glab api --method GET "projects/<project>/jobs/<job_id>/trace"
+
+# Run test in loop locally to reproduce
+for i in {1..50}; do
+    echo "Run $i"
+    go test -tags=integration ./tests/integration -run TestFlakyTest -v || break
+done
+```
+
+### Acceptable Responses to Test Failures
+
+1. **Find and fix the bug** - The only correct response
+2. **Improve test infrastructure** - Better timeouts, retries with backoff, improved isolation
+3. **Skip with tracking issue** - Only if fix requires significant work; must have issue linked
+
+**Unacceptable:**
+
+- "Just retry it"
+- "Works on my machine"
+- "CI is flaky, merge anyway"
+- "We'll fix it later"
+
 ## Adding New Test Types
 
 ### Checklist
