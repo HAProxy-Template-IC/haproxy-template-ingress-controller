@@ -41,9 +41,13 @@ variables:
   YAMLLINT_VERSION: "1.37.1"
   # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
   MARKDOWNLINT_VERSION: "0.14.0"
+  # renovate: datasource=github-releases depName=goreleaser/goreleaser
+  GORELEASER_VERSION: "2.13.1"
+  # renovate: datasource=github-releases depName=sigstore/cosign
+  COSIGN_VERSION: "2.5.0"
   # CI images - HAProxy 3.2 for single-run jobs, versioned for matrix jobs
-  CI_IMAGE: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
-  CI_IMAGE_VERSIONED: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}
+  CI_IMAGE: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}-gr${GORELEASER_VERSION}-cs${COSIGN_VERSION}
+  CI_IMAGE_VERSIONED: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}-gr${GORELEASER_VERSION}-cs${COSIGN_VERSION}
 
 # Reusable rules for path-based filtering
 .rules-code:
@@ -131,7 +135,7 @@ build-ci:
     - .haproxy-version-matrix
   script:
     - |
-      CI_IMAGE="${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}"
+      CI_IMAGE="${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}-gr${GORELEASER_VERSION}-cs${COSIGN_VERSION}"
       buildctl-daemonless.sh build \
         --frontend dockerfile.v0 \
         --local context=.gitlab/ci/images/ci/ \
@@ -145,6 +149,8 @@ build-ci:
         --opt build-arg:KUBECONFORM_VERSION=${KUBECONFORM_VERSION} \
         --opt build-arg:YAMLLINT_VERSION=${YAMLLINT_VERSION} \
         --opt build-arg:MARKDOWNLINT_VERSION=${MARKDOWNLINT_VERSION} \
+        --opt build-arg:GORELEASER_VERSION=${GORELEASER_VERSION} \
+        --opt build-arg:COSIGN_VERSION=${COSIGN_VERSION} \
         --import-cache type=registry,ref=${CI_IMAGE} \
         --export-cache type=inline \
         --output type=image,name=${CI_IMAGE},push=true
@@ -204,8 +210,10 @@ audit:
 api-compatibility:
   stage: lint
   image: ${CI_IMAGE}
-  extends:
-    - .rules-code
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never  # Skip on tag pipelines - already checked on branch
+    - !reference [.rules-code, rules]
   tags:
     - saas-linux-small-amd64
   interruptible: true
@@ -801,16 +809,16 @@ test-helm-defaults:
 # Build Go binaries with GoReleaser and create GitLab release
 release-controller-binaries:
   stage: deploy
-  image: goreleaser/goreleaser:v2
+  image: ${CI_IMAGE}
   tags:
     - saas-linux-large-amd64
-  needs: []
+  needs:
+    - job: build-ci
+      optional: true
   variables:
     GIT_DEPTH: 0
   rules:
     - if: $CI_COMMIT_TAG =~ /^haptic-controller-v.*/
-  before_script:
-    - apk add --no-cache cosign
   script:
     # Extract version from tag (haptic-controller-v0.1.0 -> v0.1.0)
     - export VERSION=${CI_COMMIT_TAG#haptic-controller-}
