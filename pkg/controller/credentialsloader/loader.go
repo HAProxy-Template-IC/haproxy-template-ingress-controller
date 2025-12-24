@@ -111,8 +111,9 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 	c.logger.Debug("Processing Secret change", "version", version)
 
 	// Extract Secret data
-	// Note: Secret data is stored as base64-encoded strings in the Kubernetes API,
-	// but when accessed through unstructured, it's already decoded
+	// Note: Secret data is stored as base64-encoded strings in the Kubernetes API.
+	// When accessed through unstructured, the values are still base64-encoded strings
+	// and must be decoded.
 	dataRaw, found, err := unstructured.NestedMap(resource.Object, "data")
 	if err != nil {
 		c.logger.Error("Failed to extract Secret data field",
@@ -127,20 +128,14 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 		return
 	}
 
-	// Convert map[string]interface{} to map[string][]byte
-	// In unstructured resources, Secret data values are strings
-	data := make(map[string][]byte)
-	for key, value := range dataRaw {
-		if strValue, ok := value.(string); ok {
-			data[key] = []byte(strValue)
-		} else {
-			c.logger.Error("Secret data contains non-string value",
-				"key", key,
-				"type", fmt.Sprintf("%T", value),
-				"version", version)
-			c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("Secret data key '%s' has invalid type", key)))
-			return
-		}
+	// Parse Secret data (handles base64 decoding)
+	data, err := config.ParseSecretData(dataRaw)
+	if err != nil {
+		c.logger.Error("Failed to parse Secret data",
+			"error", err,
+			"version", version)
+		c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
+		return
 	}
 
 	// Load the credentials

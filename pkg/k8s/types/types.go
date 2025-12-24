@@ -364,6 +364,15 @@ type SingleWatcherConfig struct {
 	// The callback receives the resource object directly and returns an error if processing fails.
 	OnChange OnResourceChangeCallback
 
+	// OnSyncComplete is called once after initial synchronization completes.
+	// It receives the current resource from the informer cache.
+	//
+	// This ensures the controller has the latest state even if updates
+	// arrived during the sync window (when OnChange callbacks are suppressed).
+	//
+	// This is optional. If nil, no callback is made after sync.
+	OnSyncComplete OnResourceChangeCallback
+
 	// Context is used for cancellation of the watcher.
 	// If nil, context.Background() is used.
 	Context context.Context

@@ -83,6 +83,15 @@ variables:
         - charts/**/mkdocs.yml
         - .gitlab-ci.yml
 
+# Jobs that only run on MRs (skip main branch and tags)
+# Use when tests already passed in MR and don't need to re-run on merge
+.rules-mr-only:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+
 # HAProxy version matrix for multi-version testing
 .haproxy-version-matrix:
   parallel:
@@ -122,6 +131,10 @@ variables:
   tags:
     - saas-linux-medium-amd64
   rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
     - changes:
         - .gitlab/ci/images/**
         - .gitlab-ci.yml
@@ -175,6 +188,12 @@ build-python-docs:
 lint:
   stage: lint
   image: ${CI_IMAGE}
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -194,8 +213,12 @@ lint:
 audit:
   stage: lint
   image: ${CI_IMAGE}
-  extends:
-    - .rules-code
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-code, rules]
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -211,8 +234,10 @@ api-compatibility:
   stage: lint
   image: ${CI_IMAGE}
   rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
     - if: $CI_COMMIT_TAG
-      when: never  # Skip on tag pipelines - already checked on branch
+      when: never
     - !reference [.rules-code, rules]
   tags:
     - saas-linux-small-amd64
@@ -237,8 +262,12 @@ api-compatibility:
 chart-test:
   stage: lint
   image: ${CI_IMAGE}
-  extends:
-    - .rules-helm
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-helm, rules]
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -260,8 +289,12 @@ chart-test:
 test:
   stage: test
   image: ${CI_IMAGE}
-  extends:
-    - .rules-code
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-code, rules]
   tags:
     - saas-linux-large-amd64
   interruptible: true
@@ -299,6 +332,10 @@ test:
     - job: build-ci
       optional: true
   rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
     - changes:
         - "**/*.go"
         - go.mod
@@ -333,8 +370,10 @@ validate-helm-libraries:
 compile:
   stage: build
   image: ${CI_IMAGE}
-  extends:
-    - .rules-code
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-code, rules]
   tags:
     - saas-linux-2xlarge-amd64
   interruptible: true
@@ -362,8 +401,13 @@ build-test-image:
     name: moby/buildkit:rootless
     entrypoint: [""]
   extends:
-    - .rules-code
     - .haproxy-version-matrix
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-code, rules]
   tags:
     - saas-linux-medium-amd64
   needs:
@@ -399,7 +443,12 @@ build-test-image:
   image: ${CI_IMAGE_VERSIONED}
   extends:
     - .docker-dind
-    - .rules-code
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-code, rules]
   timeout: 30 minutes
   interruptible: true
   needs:
@@ -434,8 +483,12 @@ test-integration:
 coverage-combined:
   stage: integration
   image: ${CI_IMAGE}
-  extends:
-    - .rules-code
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-code, rules]
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -493,7 +546,12 @@ test-acceptance:
   image: ${CI_IMAGE_VERSIONED}
   extends:
     - .docker-dind
-    - .rules-code
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-code, rules]
   timeout: 30 minutes
   interruptible: true
   needs:
@@ -599,6 +657,10 @@ test-acceptance:
     CTRL_NAMESPACE: haptic
     RELEASE_NAME: haptic
   rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
     - changes:
         - "**/*.go"
         - go.mod
@@ -717,7 +779,12 @@ test-helm-defaults:
   image: ${CI_IMAGE}
   extends:
     - .docker-dind
-    - .rules-helm
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-helm, rules]
   timeout: 15 minutes
   interruptible: true
   needs:
@@ -817,6 +884,7 @@ release-controller-binaries:
       optional: true
   variables:
     GIT_DEPTH: 0
+    GITLAB_TOKEN: ${CI_JOB_TOKEN}
   rules:
     - if: $CI_COMMIT_TAG =~ /^haptic-controller-v.*/
   script:
@@ -929,7 +997,7 @@ release-chart:
       fi
     # Package and push chart to OCI registry
     - helm package charts/haptic --version $VERSION
-    - helm push haproxy-template-ic-$VERSION.tgz oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts
+    - helm push haptic-$VERSION.tgz oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts
     # Sign the OCI artifact
     - cosign sign --yes oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic:$VERSION
     # Create GitLab release

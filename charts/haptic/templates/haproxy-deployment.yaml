@@ -187,6 +187,9 @@ spec:
                   - name: {{ .Values.haproxy.dataplane.credentials.username }}
                     password: {{ .Values.haproxy.dataplane.credentials.password }}
                     insecure: true
+                userlist:
+                  userlist: ""
+                  userlist_file: ""
                 transaction:
                   transaction_dir: /var/lib/dataplaneapi/transactions
                   backups_number: 10

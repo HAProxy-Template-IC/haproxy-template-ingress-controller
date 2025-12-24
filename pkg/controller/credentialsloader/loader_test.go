@@ -142,6 +142,8 @@ func TestCredentialsLoaderComponent_NonStringDataValue(t *testing.T) {
 	// Create secret with non-string value by directly setting the object map.
 	// We use float64 here because Go's JSON unmarshaling converts numbers to float64,
 	// which is deep-copyable (unlike int which causes a panic in NestedMap).
+	// Note: dataplane_password uses valid base64 to ensure we hit the type check error
+	// for dataplane_username regardless of map iteration order.
 	secret := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
@@ -151,7 +153,7 @@ func TestCredentialsLoaderComponent_NonStringDataValue(t *testing.T) {
 			},
 			"data": map[string]interface{}{
 				"dataplane_username": float64(12345), // Invalid - should be string
-				"dataplane_password": "secret",
+				"dataplane_password": "c2VjcmV0",     // base64("secret") - valid for base64 decode
 			},
 		},
 	}

@@ -327,7 +327,9 @@ func CreateTestSecretWithStringData(name, namespace, resourceVersion string, dat
 	if data != nil {
 		dataMap := make(map[string]interface{})
 		for k, v := range data {
-			dataMap[k] = v
+			// Base64-encode the values to match how Kubernetes stores Secret data
+			// when accessed through the unstructured API
+			dataMap[k] = base64.StdEncoding.EncodeToString([]byte(v))
 		}
 		if err := unstructured.SetNestedField(secret.Object, dataMap, "data"); err != nil {
 			panic(err)

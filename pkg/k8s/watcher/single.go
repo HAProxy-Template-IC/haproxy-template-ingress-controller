@@ -363,6 +363,34 @@ func (w *SingleWatcher) Start(ctx context.Context) error {
 
 		// Mark sync as complete atomically
 		w.synced.Store(true)
+
+		// Invoke OnSyncComplete with current state from cache.
+		// This ensures eventual consistency: even if updates arrived during the sync window
+		// (when OnChange callbacks are suppressed), the current state is delivered here.
+		// The callback is invoked even if no resource exists (nil argument).
+		if w.config.OnSyncComplete != nil {
+			resource := w.getCurrentResourceFromCache()
+			if err := w.config.OnSyncComplete(resource); err != nil {
+				if resource != nil {
+					slog.Warn("SingleWatcher OnSyncComplete callback failed",
+						"error", err,
+						"resource_name", resource.GetName(),
+						"resource_namespace", resource.GetNamespace())
+				} else {
+					slog.Warn("SingleWatcher OnSyncComplete callback failed",
+						"error", err)
+				}
+			} else {
+				if resource != nil {
+					slog.Debug("SingleWatcher OnSyncComplete succeeded",
+						"resource_name", resource.GetName(),
+						"resource_version", resource.GetResourceVersion())
+				} else {
+					slog.Debug("SingleWatcher OnSyncComplete succeeded - no resource in cache")
+				}
+			}
+		}
+
 		close(w.syncCh)
 	})
 
@@ -453,4 +481,18 @@ func (w *SingleWatcher) LastWatchError() time.Time {
 		return time.Time{}
 	}
 	return time.Unix(ts, 0)
+}
+
+// getCurrentResourceFromCache returns the current resource from the informer cache.
+// Returns nil if no resource is in the cache (e.g., resource doesn't exist).
+//
+// This is used by OnSyncComplete to deliver the current state after sync completes,
+// ensuring eventual consistency even if updates arrived during the sync window.
+func (w *SingleWatcher) getCurrentResourceFromCache() *unstructured.Unstructured {
+	items := w.informer.GetStore().List()
+	if len(items) == 0 {
+		return nil
+	}
+	// SingleWatcher watches exactly one resource, so there should be at most 1 item
+	return w.convertToUnstructured(items[0])
 }
