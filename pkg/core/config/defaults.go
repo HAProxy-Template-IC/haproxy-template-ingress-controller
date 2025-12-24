@@ -4,12 +4,6 @@ import "time"
 
 // Default values for configuration fields.
 const (
-	// DefaultHealthzPort is the default port for health check endpoints.
-	DefaultHealthzPort = 8080
-
-	// DefaultMetricsPort is the default port for Prometheus metrics.
-	DefaultMetricsPort = 9090
-
 	// DefaultLevel is the default log level.
 	// Empty string means use LOG_LEVEL env var or default to INFO.
 	DefaultLevel = ""
@@ -68,15 +62,6 @@ const (
 // Most callers should use LoadConfig() instead. This function is primarily
 // useful for testing default application independently from YAML parsing.
 func SetDefaults(cfg *Config) {
-	// Controller defaults
-	// Note: These ports should never remain 0 after defaults are applied
-	if cfg.Controller.HealthzPort == 0 {
-		cfg.Controller.HealthzPort = DefaultHealthzPort
-	}
-	if cfg.Controller.MetricsPort == 0 {
-		cfg.Controller.MetricsPort = DefaultMetricsPort
-	}
-
 	// Leader election defaults
 	// Note: Enabled defaults to true (zero value for bool is false, so we set it explicitly)
 	if cfg.Controller.LeaderElection.LeaseName == "" {

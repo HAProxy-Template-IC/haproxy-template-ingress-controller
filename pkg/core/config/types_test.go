@@ -15,10 +15,6 @@ pod_selector:
     app: haproxy
     component: loadbalancer
 
-controller:
-  healthz_port: 8080
-  metrics_port: 9090
-
 logging:
   level: DEBUG
 
@@ -66,10 +62,6 @@ haproxy_config:
 	// Validate PodSelector
 	assert.Equal(t, "haproxy", cfg.PodSelector.MatchLabels["app"])
 	assert.Equal(t, "loadbalancer", cfg.PodSelector.MatchLabels["component"])
-
-	// Validate Controller
-	assert.Equal(t, 8080, cfg.Controller.HealthzPort)
-	assert.Equal(t, 9090, cfg.Controller.MetricsPort)
 
 	// Validate Logging
 	assert.Equal(t, "DEBUG", cfg.Logging.Level)
@@ -129,16 +121,17 @@ match_labels:
 
 func TestControllerConfig_UnmarshalYAML(t *testing.T) {
 	yamlConfig := `
-healthz_port: 8081
-metrics_port: 9091
+leader_election:
+  enabled: true
+  lease_name: test-lease
 `
 
 	var oc ControllerConfig
 	err := yaml.Unmarshal([]byte(yamlConfig), &oc)
 	require.NoError(t, err)
 
-	assert.Equal(t, 8081, oc.HealthzPort)
-	assert.Equal(t, 9091, oc.MetricsPort)
+	assert.True(t, oc.LeaderElection.Enabled)
+	assert.Equal(t, "test-lease", oc.LeaderElection.LeaseName)
 }
 
 func TestLoggingConfig_UnmarshalYAML(t *testing.T) {

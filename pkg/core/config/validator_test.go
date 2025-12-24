@@ -11,10 +11,7 @@ func TestValidateStructure_Success(t *testing.T) {
 		PodSelector: PodSelector{
 			MatchLabels: map[string]string{"app": "haproxy"},
 		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: ControllerConfig{},
 		Logging: LoggingConfig{
 			Level: "INFO",
 		},
@@ -83,97 +80,6 @@ func TestValidatePodSelector_EmptyLabelValue(t *testing.T) {
 	assert.Contains(t, err.Error(), "match_labels value")
 }
 
-func TestValidateOperatorConfig_InvalidHealthzPort(t *testing.T) {
-	tests := []struct {
-		name string
-		port int
-	}{
-		{"zero", 0},
-		{"negative", -1},
-		{"too large", 65536},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				PodSelector: PodSelector{
-					MatchLabels: map[string]string{"app": "haproxy"},
-				},
-				Controller: ControllerConfig{
-					HealthzPort: tt.port,
-					MetricsPort: 9090,
-				},
-				WatchedResources: map[string]WatchedResource{
-					"ingresses": {
-						APIVersion: "networking.k8s.io/v1",
-						Resources:  "ingresses",
-						IndexBy:    []string{"metadata.namespace"},
-					},
-				},
-				HAProxyConfig: HAProxyConfig{
-					Template: "global",
-				},
-			}
-
-			err := ValidateStructure(cfg)
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "healthz_port")
-		})
-	}
-}
-
-func TestValidateOperatorConfig_InvalidMetricsPort(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 0,
-		},
-		WatchedResources: map[string]WatchedResource{
-			"ingresses": {
-				APIVersion: "networking.k8s.io/v1",
-				Resources:  "ingresses",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-		},
-		HAProxyConfig: HAProxyConfig{
-			Template: "global",
-		},
-	}
-
-	err := ValidateStructure(cfg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "metrics_port")
-}
-
-func TestValidateOperatorConfig_SamePort(t *testing.T) {
-	cfg := &Config{
-		PodSelector: PodSelector{
-			MatchLabels: map[string]string{"app": "haproxy"},
-		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 8080,
-		},
-		WatchedResources: map[string]WatchedResource{
-			"ingresses": {
-				APIVersion: "networking.k8s.io/v1",
-				Resources:  "ingresses",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-		},
-		HAProxyConfig: HAProxyConfig{
-			Template: "global",
-		},
-	}
-
-	err := ValidateStructure(cfg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot be the same")
-}
-
 func TestValidateLoggingConfig_InvalidLevel(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -190,10 +96,7 @@ func TestValidateLoggingConfig_InvalidLevel(t *testing.T) {
 				PodSelector: PodSelector{
 					MatchLabels: map[string]string{"app": "haproxy"},
 				},
-				Controller: ControllerConfig{
-					HealthzPort: 8080,
-					MetricsPort: 9090,
-				},
+				Controller: ControllerConfig{},
 				Logging: LoggingConfig{
 					Level: tt.level,
 				},
@@ -225,10 +128,7 @@ func TestValidateLoggingConfig_ValidLevels(t *testing.T) {
 				PodSelector: PodSelector{
 					MatchLabels: map[string]string{"app": "haproxy"},
 				},
-				Controller: ControllerConfig{
-					HealthzPort: 8080,
-					MetricsPort: 9090,
-				},
+				Controller: ControllerConfig{},
 				Logging: LoggingConfig{
 					Level: level,
 				},
@@ -262,10 +162,7 @@ func TestValidateWatchedResources_Empty(t *testing.T) {
 		PodSelector: PodSelector{
 			MatchLabels: map[string]string{"app": "haproxy"},
 		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: ControllerConfig{},
 		Dataplane: DataplaneConfig{
 			Port:              5555,
 			MapsDir:           "/etc/haproxy/maps",
@@ -289,10 +186,7 @@ func TestValidateWatchedResource_MissingAPIVersion(t *testing.T) {
 		PodSelector: PodSelector{
 			MatchLabels: map[string]string{"app": "haproxy"},
 		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: ControllerConfig{},
 		Dataplane: DataplaneConfig{
 			Port:              5555,
 			MapsDir:           "/etc/haproxy/maps",
@@ -322,10 +216,7 @@ func TestValidateWatchedResource_MissingKind(t *testing.T) {
 		PodSelector: PodSelector{
 			MatchLabels: map[string]string{"app": "haproxy"},
 		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: ControllerConfig{},
 		Dataplane: DataplaneConfig{
 			Port:              5555,
 			MapsDir:           "/etc/haproxy/maps",
@@ -355,10 +246,7 @@ func TestValidateWatchedResource_EmptyIndexBy(t *testing.T) {
 		PodSelector: PodSelector{
 			MatchLabels: map[string]string{"app": "haproxy"},
 		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: ControllerConfig{},
 		Dataplane: DataplaneConfig{
 			Port:              5555,
 			MapsDir:           "/etc/haproxy/maps",
@@ -388,10 +276,7 @@ func TestValidateWatchedResource_EmptyIndexByElement(t *testing.T) {
 		PodSelector: PodSelector{
 			MatchLabels: map[string]string{"app": "haproxy"},
 		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: ControllerConfig{},
 		Dataplane: DataplaneConfig{
 			Port:              5555,
 			MapsDir:           "/etc/haproxy/maps",
@@ -421,10 +306,7 @@ func TestValidateHAProxyConfig_EmptyTemplate(t *testing.T) {
 		PodSelector: PodSelector{
 			MatchLabels: map[string]string{"app": "haproxy"},
 		},
-		Controller: ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: ControllerConfig{},
 		Dataplane: DataplaneConfig{
 			Port:              5555,
 			MapsDir:           "/etc/haproxy/maps",
@@ -514,10 +396,7 @@ func TestValidateDataplaneConfig_InvalidPort(t *testing.T) {
 				PodSelector: PodSelector{
 					MatchLabels: map[string]string{"app": "haproxy"},
 				},
-				Controller: ControllerConfig{
-					HealthzPort: 8080,
-					MetricsPort: 9090,
-				},
+				Controller: ControllerConfig{},
 				Dataplane: DataplaneConfig{
 					Port:              tt.port,
 					MapsDir:           "/etc/haproxy/maps",
@@ -593,10 +472,7 @@ func TestValidateDataplaneConfig_EmptyPaths(t *testing.T) {
 				PodSelector: PodSelector{
 					MatchLabels: map[string]string{"app": "haproxy"},
 				},
-				Controller: ControllerConfig{
-					HealthzPort: 8080,
-					MetricsPort: 9090,
-				},
+				Controller: ControllerConfig{},
 				Dataplane: DataplaneConfig{
 					Port:              5555,
 					MapsDir:           tt.mapsDir,

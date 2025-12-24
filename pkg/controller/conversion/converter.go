@@ -58,8 +58,6 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 
 	controllerConfig := config.ControllerConfig{
-		HealthzPort: spec.Controller.HealthzPort,
-		MetricsPort: spec.Controller.MetricsPort,
 		LeaderElection: config.LeaderElectionConfig{
 			Enabled:       leaderElectionEnabled,
 			LeaseName:     spec.Controller.LeaderElection.LeaseName,

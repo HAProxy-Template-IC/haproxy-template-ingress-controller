@@ -57,14 +57,6 @@ spec:
                 description: Controller contains controller-level settings (ports,
                   leader election, etc.).
                 properties:
-                  healthzPort:
-                    description: |-
-                      HealthzPort is the port for health check endpoints.
-
-                      Default: 8080
-                    maximum: 65535
-                    minimum: 1
-                    type: integer
                   leaderElection:
                     description: LeaderElection configures leader election for high
                       availability.
@@ -111,14 +103,6 @@ spec:
                           Must be less than RenewDeadline
                         type: string
                     type: object
-                  metricsPort:
-                    description: |-
-                      MetricsPort is the port for Prometheus metrics.
-
-                      Default: 9090
-                    maximum: 65535
-                    minimum: 1
-                    type: integer
                 type: object
               credentialsSecretRef:
                 description: |-

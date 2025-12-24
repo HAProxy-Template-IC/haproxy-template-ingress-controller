@@ -132,6 +132,15 @@ func (s *configState) Message() string {
 	return s.message
 }
 
+// persistentInfra holds infrastructure servers that persist across controller iterations.
+// These servers are started once and reused to prevent port binding race conditions
+// during rapid reinitializations.
+type persistentInfra struct {
+	IntrospectionRegistry *introspection.Registry
+	IntrospectionServer   *introspection.Server
+	serverStarted         bool // True after first iteration has started the server
+}
+
 // Run is the main entry point for the controller.
 //
 // It performs initial configuration fetching and validation, then enters a reinitialization
@@ -163,6 +172,20 @@ func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, web
 		"webhook_cert_secret", webhookCertSecretName,
 		"namespace", k8sClient.Namespace())
 
+	// Create persistent infrastructure (lives across iterations)
+	// This prevents port binding race conditions during rapid reinitializations
+	infra := &persistentInfra{
+		IntrospectionRegistry: introspection.NewRegistry(),
+	}
+
+	// Create and start the introspection server once, before the loop
+	// The server will be reused across iterations with the registry cleared between them
+	if debugPort > 0 {
+		infra.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), infra.IntrospectionRegistry)
+		// Note: Setup() and Serve() will be called in startEarlyInfrastructureServers
+		// on the first iteration only
+	}
+
 	// Main reinitialization loop
 	for {
 		select {
@@ -171,7 +194,7 @@ func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, web
 			return nil
 		default:
 			// Run one iteration
-			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertSecretName, debugPort, logger)
+			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertSecretName, debugPort, infra, logger)
 			if err != nil {
 				// Check if error is context cancellation (graceful shutdown)
 				if ctx.Err() != nil {
@@ -380,8 +403,11 @@ type componentSetup struct {
 }
 
 // setupComponents creates and starts all event-driven components.
+// The introspectionRegistry is passed in from the persistent infrastructure
+// to avoid recreating it on each iteration (which would require rebinding the port).
 func setupComponents(
 	ctx context.Context,
+	introspectionRegistry *introspection.Registry,
 	logger *slog.Logger,
 ) *componentSetup {
 	// Create EventBus with buffer for pre-start events
@@ -498,9 +524,8 @@ func setupComponents(
 
 	logger.Debug("All components started")
 
-	// Create introspection registry for debug variables
-	// This registry will be shared between early server startup and later variable registration
-	introspectionRegistry := introspection.NewRegistry()
+	// Note: introspection registry is passed in from persistent infrastructure
+	// to avoid port rebinding issues during rapid reinitializations
 
 	// Create lifecycle registry for managing reconciliation components
 	lifecycleRegistry := lifecycle.NewRegistry().WithLogger(logger)
@@ -520,12 +545,34 @@ func setupComponents(
 	}
 }
 
+// createEarlyHealthChecker creates a health checker that reports unhealthy until config is loaded.
+// This is used during early startup before the full lifecycle-based checker is available.
+func createEarlyHealthChecker(state *configState) func() map[string]introspection.ComponentHealth {
+	return func() map[string]introspection.ComponentHealth {
+		if !state.IsLoaded() {
+			return map[string]introspection.ComponentHealth{
+				"config": {
+					Healthy: false,
+					Error:   state.Message(),
+				},
+			}
+		}
+		return map[string]introspection.ComponentHealth{
+			"config": {Healthy: true},
+		}
+	}
+}
+
 // startEarlyInfrastructureServers starts debug and metrics HTTP servers early in startup.
 // This function is called BEFORE fetching the initial configuration, so servers are available
 // for debugging even if the controller fails to fetch config (e.g., RBAC issues).
 //
 // Unlike setupInfrastructureServers, this uses default/environment-based metrics port
 // since the config hasn't been loaded yet.
+//
+// The introspection server persists across iterations to prevent port binding race conditions.
+// On first iteration: Setup routes and start serving
+// On subsequent iterations: Only update the health checker
 //
 // The introspection server uses two-phase initialization (Setup + Serve):
 // 1. Register custom handlers (including /debug/events) before Setup()
@@ -537,52 +584,47 @@ func setupComponents(
 func startEarlyInfrastructureServers(
 	ctx context.Context,
 	debugPort int,
+	infra *persistentInfra,
 	setup *componentSetup,
 	state *configState,
 	eventBuffer *debug.EventBuffer,
 	logger *slog.Logger,
 ) {
-	logger.Info("Starting infrastructure servers (early initialization)")
+	// Copy server reference to setup for later use by other functions
+	setup.IntrospectionServer = infra.IntrospectionServer
 
-	// Create introspection HTTP server (always enabled for health checks)
-	// Provides /healthz endpoint for Kubernetes probes and /debug/* endpoints for debugging
-	setup.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), setup.IntrospectionRegistry)
+	// Set health checker to use this iteration's state
+	infra.IntrospectionServer.SetHealthChecker(createEarlyHealthChecker(state))
 
-	// Register /debug/events handler BEFORE Setup()
-	// EventBuffer was created before this function to ensure proper subscription ordering
-	debug.RegisterEventsHandler(setup.IntrospectionServer, eventBuffer)
+	if !infra.serverStarted {
+		// First iteration: set up and start the introspection server
+		logger.Info("Starting infrastructure servers (first iteration)")
 
-	// Set initial health checker that reports unhealthy until config is loaded
-	// This will be replaced by the full lifecycle-based checker in setupInfrastructureServers
-	setup.IntrospectionServer.SetHealthChecker(func() map[string]introspection.ComponentHealth {
-		if !state.IsLoaded() {
-			return map[string]introspection.ComponentHealth{
-				"config": {
-					Healthy: false,
-					Error:   state.Message(),
-				},
+		// Register /debug/events handler BEFORE Setup()
+		// EventBuffer was created before this function to ensure proper subscription ordering
+		debug.RegisterEventsHandler(infra.IntrospectionServer, eventBuffer)
+
+		// Setup routes (including custom handlers) - must be called before Serve()
+		infra.IntrospectionServer.Setup()
+
+		// Start serving HTTP requests with the main context (not iteration context)
+		// This ensures the server stays running across iterations
+		go func() {
+			if err := infra.IntrospectionServer.Serve(ctx); err != nil {
+				logger.Error("introspection server failed", "error", err, "port", debugPort)
 			}
-		}
-		// Config loaded - return healthy (will be replaced by full checker later)
-		return map[string]introspection.ComponentHealth{
-			"config": {Healthy: true},
-		}
-	})
+		}()
 
-	// Setup routes (including custom handlers) - must be called before Serve()
-	setup.IntrospectionServer.Setup()
+		logger.Info("Introspection HTTP server started (early startup)",
+			"port", debugPort,
+			"bind_address", fmt.Sprintf("0.0.0.0:%d", debugPort),
+			"endpoints", "/healthz, /debug/vars, /debug/pprof, /debug/events")
 
-	// Start serving HTTP requests
-	go func() {
-		if err := setup.IntrospectionServer.Serve(ctx); err != nil {
-			logger.Error("introspection server failed", "error", err, "port", debugPort)
-		}
-	}()
-
-	logger.Info("Introspection HTTP server started (early startup)",
-		"port", debugPort,
-		"bind_address", fmt.Sprintf("0.0.0.0:%d", debugPort),
-		"endpoints", "/healthz, /debug/vars, /debug/pprof, /debug/events")
+		infra.serverStarted = true
+	} else {
+		// Subsequent iterations: health checker already updated above
+		logger.Info("Reusing existing infrastructure servers (reinitialization)")
+	}
 
 	// Start metrics HTTP server with default port
 	// We use a default because config hasn't been loaded yet
@@ -617,7 +659,6 @@ func startEarlyInfrastructureServers(
 // initialization (Setup/Serve pattern), so it's available even during early startup.
 func setupInfrastructureServers(
 	ctx context.Context,
-	cfg *coreconfig.Config,
 	setup *componentSetup,
 	stateCache *StateCache,
 	eventBuffer *debug.EventBuffer, // Pre-created buffer (created before EventBus.Start())
@@ -656,7 +697,6 @@ func setupInfrastructureServers(
 	})
 
 	logger.Info("Debug variables registered and health checker updated",
-		"metrics_port", cfg.Controller.MetricsPort,
 		"endpoints", "/debug/vars, /debug/pprof, /healthz")
 }
 
@@ -1374,9 +1414,14 @@ func runIteration(
 	secretName string,
 	webhookCertSecretName string,
 	debugPort int,
+	infra *persistentInfra,
 	logger *slog.Logger,
 ) error {
 	logger.Info("Starting controller iteration")
+
+	// Clear the introspection registry to remove stale references from previous iteration
+	// The registry persists across iterations to avoid port rebinding issues
+	infra.IntrospectionRegistry.Clear()
 
 	// Define GVRs for HAProxyTemplateConfig CRD and Secret
 	crdGVR := schema.GroupVersionResource{
@@ -1396,7 +1441,7 @@ func runIteration(
 	state := &configState{}
 
 	// 0. Setup components BEFORE fetching config so we can start servers early
-	setup := setupComponents(ctx, logger)
+	setup := setupComponents(ctx, infra.IntrospectionRegistry, logger)
 	defer setup.Cancel()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
@@ -1408,7 +1453,9 @@ func runIteration(
 	// This allows debugging startup issues and makes health endpoint available immediately
 	// The health checker will report unhealthy until config is loaded
 	// Uses two-phase initialization (Setup/Serve) to register /debug/events before serving
-	startEarlyInfrastructureServers(setup.IterCtx, debugPort, setup, state, eventBuffer, logger)
+	// The introspection server persists across iterations to avoid port rebinding issues
+	// We pass the main ctx (not setup.IterCtx) so the server stays alive across iterations
+	startEarlyInfrastructureServers(ctx, debugPort, infra, setup, state, eventBuffer, logger)
 
 	// 1. Wait for HAProxyTemplateConfig to exist (polls every 5s)
 	// This handles the race condition during fresh installs where the controller pod
@@ -1496,7 +1543,7 @@ func runIteration(
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
 	// This call registers debug variables and updates the health checker
-	setupInfrastructureServers(setup.IterCtx, cfg, setup, stateCache, eventBuffer, logger)
+	setupInfrastructureServers(setup.IterCtx, setup, stateCache, eventBuffer, logger)
 
 	logger.Info("Controller iteration initialized successfully - entering event loop")
 

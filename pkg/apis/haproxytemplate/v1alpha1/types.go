@@ -167,22 +167,6 @@ type PodSelector struct {
 
 // ControllerConfig contains controller-level configuration.
 type ControllerConfig struct {
-	// HealthzPort is the port for health check endpoints.
-	//
-	// Default: 8080
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	HealthzPort int `json:"healthzPort,omitempty"`
-
-	// MetricsPort is the port for Prometheus metrics.
-	//
-	// Default: 9090
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	MetricsPort int `json:"metricsPort,omitempty"`
-
 	// LeaderElection configures leader election for high availability.
 	// +optional
 	LeaderElection LeaderElectionConfig `json:"leaderElection,omitempty"`

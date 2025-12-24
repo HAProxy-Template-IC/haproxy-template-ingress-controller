@@ -120,10 +120,7 @@ func createInvalidTestConfig() *coreconfig.Config {
 		PodSelector: coreconfig.PodSelector{
 			MatchLabels: map[string]string{}, // Invalid: empty (basic validator should catch)
 		},
-		Controller: coreconfig.ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: coreconfig.ControllerConfig{},
 		Logging: coreconfig.LoggingConfig{
 			Level: "INFO",
 		},
@@ -153,10 +150,7 @@ func createValidTestConfig() *coreconfig.Config {
 				"app": "haproxy",
 			},
 		},
-		Controller: coreconfig.ControllerConfig{
-			HealthzPort: 8080,
-			MetricsPort: 9090,
-		},
+		Controller: coreconfig.ControllerConfig{},
 		Logging: coreconfig.LoggingConfig{
 			Level: "INFO",
 		},

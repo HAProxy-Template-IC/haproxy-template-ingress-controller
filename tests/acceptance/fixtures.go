@@ -36,10 +36,6 @@ pod_selector:
     app: haproxy
     component: loadbalancer
 
-controller:
-  healthz_port: 8080
-  metrics_port: 9090
-
 haproxy_config:
   template: |
     global
@@ -75,10 +71,6 @@ pod_selector:
   match_labels:
     app: haproxy
     component: loadbalancer
-
-controller:
-  healthz_port: 8080
-  metrics_port: 9090
 
 haproxy_config:
   template: |
@@ -117,8 +109,6 @@ pod_selector:
     component: loadbalancer
 
 controller:
-  healthz_port: 8080
-  metrics_port: 9090
   leader_election:
     enabled: true
     lease_name: haptic-leader
@@ -192,10 +182,6 @@ pod_selector:
   match_labels:
     app: haproxy
     component: loadbalancer
-
-controller:
-  healthz_port: 8080
-  metrics_port: 9090
 
 haproxy_config:
   template: |
@@ -502,8 +488,6 @@ func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateC
 				},
 			},
 			Controller: haproxyv1alpha1.ControllerConfig{
-				HealthzPort: 8080,
-				MetricsPort: 9090,
 				LeaderElection: haproxyv1alpha1.LeaderElectionConfig{
 					Enabled:       &enabled,
 					LeaseName:     "haptic-leader",
