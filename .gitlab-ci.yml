@@ -1088,7 +1088,8 @@ create-controller-release-tag:
     - |
       curl --fail --request POST \
         --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipeline?ref=${TAG}"
+        --form "ref=${TAG}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/trigger/pipeline"
     - echo "Created and pushed tag ${TAG}, release pipeline triggered"
 
 # Create chart release tag when Chart.yaml version changes on main
@@ -1122,5 +1123,6 @@ create-chart-release-tag:
     - |
       curl --fail --request POST \
         --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipeline?ref=${TAG}"
+        --form "ref=${TAG}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/trigger/pipeline"
     - echo "Created and pushed tag ${TAG}, release pipeline triggered"

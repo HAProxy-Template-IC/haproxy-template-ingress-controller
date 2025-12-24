@@ -2,7 +2,7 @@ apiVersion: v2
 name: haptic
 description: HAPTIC - HAProxy Template Ingress Controller
 type: application
-version: 0.1.0
+version: 0.1.0-alpha.1
 appVersion: "0.1.0-alpha.1"
 keywords:
   - haproxy
