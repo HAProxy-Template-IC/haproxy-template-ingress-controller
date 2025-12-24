@@ -25,7 +25,7 @@ ARG MARKDOWNLINT_VERSION=0.14.0
 # renovate: datasource=github-releases depName=goreleaser/goreleaser
 ARG GORELEASER_VERSION=2.13.1
 # renovate: datasource=github-releases depName=sigstore/cosign
-ARG COSIGN_VERSION=2.5.0
+ARG COSIGN_VERSION=2.6.1
 
 # Install HAProxy from haproxy.debian.net and Docker CLI from Docker's apt repository
 RUN apt-get update \

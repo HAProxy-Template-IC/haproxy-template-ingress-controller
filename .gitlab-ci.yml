@@ -44,7 +44,7 @@ variables:
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
   GORELEASER_VERSION: "2.13.1"
   # renovate: datasource=github-releases depName=sigstore/cosign
-  COSIGN_VERSION: "2.5.0"
+  COSIGN_VERSION: "2.6.1"
   # CI images - HAProxy 3.2 for single-run jobs, versioned for matrix jobs
   CI_IMAGE: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}-gr${GORELEASER_VERSION}-cs${COSIGN_VERSION}
   CI_IMAGE_VERSIONED: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}-gr${GORELEASER_VERSION}-cs${COSIGN_VERSION}
