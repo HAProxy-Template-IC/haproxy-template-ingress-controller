@@ -929,7 +929,7 @@ release-chart:
       if echo "$VERSION" | grep -qE '-(alpha|beta|rc)\.'; then
         RELEASE_NAME="Helm Chart ${VERSION} (Pre-release)"
       fi
-      curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
            --header "Content-Type: application/json" \
            --data "{
              \"name\": \"${RELEASE_NAME}\",
@@ -1086,7 +1086,7 @@ create-controller-release-tag:
     - git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "${TAG}"
     # Trigger release pipeline for the new tag
     - |
-      curl --fail --request POST \
+      curl --fail-with-body --request POST \
         --form "token=${CI_JOB_TOKEN}" \
         --form "ref=${TAG}" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/trigger/pipeline"
@@ -1105,8 +1105,6 @@ create-chart-release-tag:
     - if: $CI_COMMIT_TAG
       when: never  # Don't run on tag pipelines
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      changes:
-        - charts/haptic/Chart.yaml
   script:
     - VERSION=$(yq '.version' charts/haptic/Chart.yaml)
     - TAG="haptic-chart-v${VERSION}"
@@ -1123,7 +1121,7 @@ create-chart-release-tag:
     - git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "${TAG}"
     # Trigger release pipeline for the new tag
     - |
-      curl --fail --request POST \
+      curl --fail-with-body --request POST \
         --form "token=${CI_JOB_TOKEN}" \
         --form "ref=${TAG}" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/trigger/pipeline"
