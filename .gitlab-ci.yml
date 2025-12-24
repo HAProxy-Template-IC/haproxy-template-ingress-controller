@@ -892,12 +892,12 @@ release-controller-binaries:
     - export VERSION=${CI_COMMIT_TAG#haptic-controller-}
     # Extract release notes from CHANGELOG.md
     - |
-      sed -n "/^## \[${VERSION#v}\]/,/^## \[/p" CHANGELOG.md | head -n -1 > .release-notes.md || true
-      if [ ! -s .release-notes.md ]; then
-        echo "Release ${VERSION}" > .release-notes.md
+      sed -n "/^## \[${VERSION#v}\]/,/^## \[/p" CHANGELOG.md | head -n -1 > /tmp/release-notes.md || true
+      if [ ! -s /tmp/release-notes.md ]; then
+        echo "Release ${VERSION}" > /tmp/release-notes.md
       fi
     # Build binaries and create GitLab release
-    - goreleaser release --clean --release-notes .release-notes.md
+    - goreleaser release --clean --release-notes /tmp/release-notes.md
 
 # Build Docker images for each HAProxy version
 release-controller-images:
@@ -997,9 +997,11 @@ release-chart:
       fi
     # Package and push chart to OCI registry
     - helm package charts/haptic --version $VERSION
-    - helm push haptic-$VERSION.tgz oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts
-    # Sign the OCI artifact
-    - cosign sign --yes oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic:$VERSION
+    - |
+      helm push haptic-$VERSION.tgz oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts 2>&1 | tee push-output.txt
+      CHART_DIGEST=$(grep 'Digest:' push-output.txt | awk '{print $2}')
+      # Sign the OCI artifact using digest (cosign doesn't support oci:// prefix)
+      cosign sign --yes ${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic@${CHART_DIGEST}
     # Create GitLab release
     - |
       RELEASE_NAME="Helm Chart ${VERSION}"
