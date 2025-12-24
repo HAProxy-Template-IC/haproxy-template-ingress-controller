@@ -175,9 +175,11 @@ func DeployHAProxy(ns *Namespace, cfg *HAProxyConfig) (*HAProxyInstance, error) 
 	// Create initial HAProxy config
 	// Note: Dataplane API authentication is configured via dataplaneapi.yaml (user section)
 	// and does not require a userlist in the HAProxy config
+	// Note: No stats socket here - the master socket is created via -S flag and handles
+	// both runtime commands and reload. Using a separate stats socket at the same path
+	// would conflict with the master socket.
 	initialHAProxyConfig := `global
     log stdout format raw local0
-    stats socket /etc/haproxy/haproxy-master.sock mode 600 level admin
 
 defaults
     log     global
@@ -220,9 +222,9 @@ haproxy:
   master_worker_mode: true
   master_runtime: /etc/haproxy/haproxy-master.sock
   reload:
-    reload_delay: 5
-    reload_cmd: kill -USR2 1
-    restart_cmd: kill -USR2 1
+    reload_delay: 1
+    reload_cmd: /bin/sh -c "echo reload | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
+    restart_cmd: /bin/sh -c "echo reload | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
     reload_strategy: custom
 log_targets:
 - log_to: stdout
@@ -316,9 +318,9 @@ chown -R haproxy:haproxy /etc/haproxy /var/lib/dataplaneapi 2>/dev/null || true
 					Image:   cfg.Image,
 					Command: []string{cfg.HAProxyBin},
 					Args: []string{
-						"-W",                                     // master-worker mode
-						"-db",                                    // disable background mode
-						"-S", "/etc/haproxy/haproxy-master.sock", // master socket
+						"-W",  // master-worker mode
+						"-db", // disable background mode
+						"-S", "/etc/haproxy/haproxy-master.sock,level,admin", // master socket with admin access
 						"--",
 						"/etc/haproxy/haproxy.cfg",
 					},
