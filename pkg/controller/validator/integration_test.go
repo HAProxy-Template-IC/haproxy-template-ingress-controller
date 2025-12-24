@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"haptic/pkg/controller/events"
-	coreconfig "haptic/pkg/core/config"
-	busevents "haptic/pkg/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	coreconfig "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
+	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
 )
 
 // TestValidationScatterGather tests the full scatter-gather validation flow

@@ -26,7 +26,7 @@ import (
 	"os"
 	"time"
 
-	"haptic/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
 )
 
 func main() {

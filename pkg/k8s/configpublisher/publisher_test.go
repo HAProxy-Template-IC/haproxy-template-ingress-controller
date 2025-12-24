@@ -24,8 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haptic/pkg/dataplane/auxiliaryfiles"
-	"haptic/pkg/generated/clientset/versioned/fake"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned/fake"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"

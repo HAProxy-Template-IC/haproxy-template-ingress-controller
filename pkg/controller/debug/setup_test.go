@@ -26,10 +26,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haptic/pkg/core/config"
-	"haptic/pkg/dataplane"
-	busevents "haptic/pkg/events"
-	"haptic/pkg/introspection"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/introspection"
 )
 
 func TestRegisterVariables(t *testing.T) {

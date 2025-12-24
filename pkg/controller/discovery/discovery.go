@@ -29,10 +29,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	coreconfig "haptic/pkg/core/config"
-	"haptic/pkg/core/logging"
-	"haptic/pkg/dataplane"
-	"haptic/pkg/k8s/types"
+	coreconfig "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/logging"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
 )
 
 // Discovery discovers HAProxy pod endpoints from Kubernetes resources.

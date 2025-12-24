@@ -18,8 +18,8 @@ import (
 	"context"
 	"time"
 
-	"haptic/pkg/controller/events"
-	pkgevents "haptic/pkg/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	pkgevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
 )
 
 // Component is an event-driven metrics collector.

@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	v30 "haptic/pkg/generated/dataplaneapi/v30"
-	v31 "haptic/pkg/generated/dataplaneapi/v31"
-	v32 "haptic/pkg/generated/dataplaneapi/v32"
+	v30 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v30"
+	v31 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v31"
+	v32 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32"
 )
 
 // mockOKResponse creates a mock HTTP 200 OK response with a closeable body.

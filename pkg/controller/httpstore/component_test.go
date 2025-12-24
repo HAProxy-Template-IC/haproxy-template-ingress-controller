@@ -25,9 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haptic/pkg/controller/events"
-	"haptic/pkg/controller/testutil"
-	"haptic/pkg/httpstore"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/testutil"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/httpstore"
 )
 
 func TestNew(t *testing.T) {

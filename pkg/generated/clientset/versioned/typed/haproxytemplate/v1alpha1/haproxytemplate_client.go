@@ -17,10 +17,11 @@
 package v1alpha1
 
 import (
-	haproxytemplatev1alpha1 "haptic/pkg/apis/haproxytemplate/v1alpha1"
-	scheme "haptic/pkg/generated/clientset/versioned/scheme"
-	rest "k8s.io/client-go/rest"
 	http "net/http"
+
+	haproxytemplatev1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
+	scheme "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned/scheme"
+	rest "k8s.io/client-go/rest"
 )
 
 type HaproxyTemplateICV1alpha1Interface interface {

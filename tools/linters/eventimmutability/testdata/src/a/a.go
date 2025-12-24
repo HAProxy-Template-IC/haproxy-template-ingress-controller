@@ -1,8 +1,9 @@
 package a
 
 import (
-	"haptic/pkg/controller/events"
 	"time"
+
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
 )
 
 // Violation: Direct field mutation

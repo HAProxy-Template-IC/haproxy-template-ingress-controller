@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"haptic/pkg/controller/events"
-	busevents "haptic/pkg/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
 )
 
 const (

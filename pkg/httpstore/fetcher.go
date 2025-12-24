@@ -118,7 +118,7 @@ func (s *HTTPStore) doFetch(
 	}
 
 	// Add user agent
-	req.Header.Set("User-Agent", "haptic/1.0")
+	req.Header.Set("User-Agent", "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/1.0")
 
 	// Perform request
 	resp, err := s.httpClient.Do(req)

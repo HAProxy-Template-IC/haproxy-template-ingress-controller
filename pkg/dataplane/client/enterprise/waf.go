@@ -8,10 +8,10 @@ import (
 	"io"
 	"net/http"
 
-	"haptic/pkg/dataplane/client"
-	v30ee "haptic/pkg/generated/dataplaneapi/v30ee"
-	v31ee "haptic/pkg/generated/dataplaneapi/v31ee"
-	v32ee "haptic/pkg/generated/dataplaneapi/v32ee"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
+	v30ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v30ee"
+	v31ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v31ee"
+	v32ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32ee"
 )
 
 // ErrWAFGlobalRequiresV32 is returned when WAF Global operations are attempted

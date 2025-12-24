@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"haptic/pkg/k8s/indexer"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/indexer"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"

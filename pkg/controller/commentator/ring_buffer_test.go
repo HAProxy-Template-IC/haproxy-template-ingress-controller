@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	ctlevents "haptic/pkg/controller/events"
-	busevents "haptic/pkg/events"
+	ctlevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
 )
 
 // mockEvent is a simple test event implementation.

@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"haptic/pkg/controller/events"
-	"haptic/pkg/controller/testutil"
-	k8sleaderelection "haptic/pkg/k8s/leaderelection"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/testutil"
+	k8sleaderelection "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/leaderelection"
 )
 
 func TestNew_NilConfig(t *testing.T) {

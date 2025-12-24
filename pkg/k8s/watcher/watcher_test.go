@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"haptic/pkg/k8s/client"
-	"haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

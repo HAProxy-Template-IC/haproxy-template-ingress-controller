@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"haptic/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
 
 	"github.com/stretchr/testify/assert"
 )

@@ -24,11 +24,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"haptic/pkg/controller/rendercontext"
-	"haptic/pkg/core/config"
-	"haptic/pkg/dataplane"
-	"haptic/pkg/dataplane/auxiliaryfiles"
-	"haptic/pkg/templating"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
 )
 
 // =============================================================================

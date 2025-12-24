@@ -17,7 +17,7 @@ package events
 import (
 	"time"
 
-	"haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
 )
 
 // -----------------------------------------------------------------------------

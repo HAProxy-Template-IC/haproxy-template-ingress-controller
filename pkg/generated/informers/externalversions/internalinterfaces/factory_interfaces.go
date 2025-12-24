@@ -17,8 +17,9 @@
 package internalinterfaces
 
 import (
-	versioned "haptic/pkg/generated/clientset/versioned"
 	time "time"
+
+	versioned "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"

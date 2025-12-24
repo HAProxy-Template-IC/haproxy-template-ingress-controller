@@ -21,9 +21,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"haptic/pkg/core/config"
-	"haptic/pkg/dataplane"
-	"haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/auxiliaryfiles"
 )
 
 // createTestRunner creates a Runner for testing assertions.

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
 )
 
 // calculateSHA256Fingerprint calculates the SHA256 hash of content.

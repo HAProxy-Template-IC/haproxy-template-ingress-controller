@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"haptic/pkg/controller/events"
-	"haptic/pkg/controller/validator"
-	busevents "haptic/pkg/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/validator"
+	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
 )
 
 const (

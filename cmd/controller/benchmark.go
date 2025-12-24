@@ -24,14 +24,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"haptic/pkg/controller/conversion"
-	"haptic/pkg/controller/helpers"
-	"haptic/pkg/controller/rendercontext"
-	"haptic/pkg/controller/testrunner"
-	"haptic/pkg/core/config"
-	"haptic/pkg/dataplane"
-	"haptic/pkg/k8s/types"
-	"haptic/pkg/templating"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/conversion"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/helpers"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/testrunner"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
 )
 
 var (

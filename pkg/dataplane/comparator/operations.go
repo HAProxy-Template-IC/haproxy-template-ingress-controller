@@ -8,8 +8,8 @@ package comparator
 import (
 	"context"
 
-	"haptic/pkg/dataplane/client"
-	"haptic/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections"
 )
 
 // Operation represents a single configuration change operation.

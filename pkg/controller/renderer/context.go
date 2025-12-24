@@ -17,9 +17,9 @@ package renderer
 import (
 	"context"
 
-	"haptic/pkg/controller/httpstore"
-	"haptic/pkg/controller/rendercontext"
-	"haptic/pkg/templating"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/httpstore"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
 )
 
 // buildRenderingContext wraps stores for template access and builds the template context.

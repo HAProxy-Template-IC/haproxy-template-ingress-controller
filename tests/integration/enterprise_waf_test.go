@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haptic/pkg/dataplane/client/enterprise"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client/enterprise"
 )
 
 // TestWAFRulesets tests WAF ruleset CRUD operations.

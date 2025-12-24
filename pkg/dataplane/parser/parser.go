@@ -18,7 +18,7 @@ import (
 	"github.com/haproxytech/client-native/v6/configuration"
 	"github.com/haproxytech/client-native/v6/models"
 
-	"haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser/parserconfig"
 )
 
 // parserMutex protects against concurrent calls to the client-native parser.

@@ -1,4 +1,4 @@
-module haptic
+module gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
 
 go 1.25.5
 

@@ -18,11 +18,12 @@ package versioned
 
 import (
 	fmt "fmt"
-	haproxytemplateicv1alpha1 "haptic/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1"
+	http "net/http"
+
+	haproxytemplateicv1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned/typed/haproxytemplate/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
-	http "net/http"
 )
 
 type Interface interface {

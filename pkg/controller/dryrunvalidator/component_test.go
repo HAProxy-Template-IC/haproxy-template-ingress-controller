@@ -23,15 +23,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"haptic/pkg/controller/events"
-	"haptic/pkg/controller/rendercontext"
-	"haptic/pkg/controller/resourcestore"
-	"haptic/pkg/controller/testrunner"
-	"haptic/pkg/controller/testutil"
-	"haptic/pkg/core/config"
-	"haptic/pkg/dataplane"
-	"haptic/pkg/k8s/types"
-	"haptic/pkg/templating"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/resourcestore"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/testrunner"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/testutil"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
+	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
 )
 
 // =============================================================================
