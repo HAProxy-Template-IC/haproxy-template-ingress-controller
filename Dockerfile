@@ -35,6 +35,7 @@ COPY pkg/ ./pkg/
 # Build arguments for cross-compilation and version info
 ARG TARGETOS
 ARG TARGETARCH
+ARG TARGETPLATFORM
 ARG GIT_COMMIT
 ARG GIT_TAG
 
@@ -48,6 +49,7 @@ ARG GIT_TAG
 #   - -s: strip debug information
 #   - -w: strip DWARF debug information
 #   - -X: inject version variables
+# Output to platform-structured path for compatibility with goreleaser dockers_v2
 RUN CGO_ENABLED=0 \
     GOOS=${TARGETOS} \
     GOARCH=${TARGETARCH} \
@@ -56,25 +58,31 @@ RUN CGO_ENABLED=0 \
     -buildvcs=false \
     -pgo=auto \
     -ldflags="-s -w -X main.version=${GIT_TAG} -X main.commit=${GIT_COMMIT}" \
-    -o /build/haptic-controller \
+    -o /build/${TARGETPLATFORM}/haptic-controller \
     ./cmd/controller
 
 # -----------------------------------------------------------------------------
 # Binary output stage - exports the controller binary
 # This stage can be overridden via --build-context binary=<path> to use a
-# pre-compiled binary instead of building from source (used in GitLab CI)
+# pre-compiled binary instead of building from source (used in GitLab CI).
+# The platform-structured path (e.g., linux/amd64/haptic-controller) ensures
+# compatibility with both CI builds and goreleaser dockers_v2.
 # -----------------------------------------------------------------------------
 FROM scratch AS binary
-COPY --from=builder /build/haptic-controller /haptic-controller
+ARG TARGETPLATFORM
+COPY --from=builder /build/${TARGETPLATFORM}/haptic-controller /${TARGETPLATFORM}/haptic-controller
 
 # -----------------------------------------------------------------------------
 # Runtime stage - minimal image with HAProxy for validation
 # -----------------------------------------------------------------------------
 FROM haproxytech/haproxy-debian:${HAPROXY_VERSION} AS runtime
 
+# TARGETPLATFORM is set automatically by buildx (e.g., linux/amd64)
+ARG TARGETPLATFORM
+
 # Copy the controller binary from the 'binary' stage
 # When using --build-context binary=<path>, this copies from the external context
-COPY --from=binary /haptic-controller /usr/local/bin/haptic-controller
+COPY --from=binary /${TARGETPLATFORM}/haptic-controller /usr/local/bin/haptic-controller
 
 # Ensure binary is executable
 RUN chmod +x /usr/local/bin/haptic-controller

@@ -9,7 +9,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
-## [0.1.0-alpha.1] - 2025-12-23
+## [0.1.0-alpha.1] - 2025-12-25
 
 ### Added
 

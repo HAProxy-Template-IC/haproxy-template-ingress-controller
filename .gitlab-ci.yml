@@ -117,6 +117,21 @@ variables:
     max: 2
     when: runner_system_failure
 
+# Base configuration for goreleaser jobs (snapshot and release)
+# Provides Docker login, buildx setup, and common dependencies
+.goreleaser-base:
+  image: ${CI_IMAGE}
+  extends:
+    - .docker-dind
+  needs:
+    - job: build-ci
+      optional: true
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    # Create named context for TLS-enabled DinD (workaround for docker/buildx#2520)
+    - docker context create builder-context
+    - docker buildx create --use --name multiarch --bootstrap builder-context
+
 # =============================================================================
 # CI Image Builds (.pre stage - runs before all other stages)
 # =============================================================================
@@ -363,11 +378,14 @@ validate-helm-libraries:
 # Build Stage
 # =============================================================================
 
-# Compile Go binary using CI image with cached modules
-# Separate compilation allows using Go module cache effectively
-compile:
+# Build binaries and Docker images for CI testing
+# Uses goreleaser for binary compilation (reuses goreleaser config) and docker buildx for images
+# Note: goreleaser's dockers_v2 doesn't push in snapshot mode, so we build images manually
+# Produces images with tags: ci-<pipeline_id>-haproxy<version>
+build-snapshot:
   stage: build
-  image: ${CI_IMAGE}
+  extends:
+    - .goreleaser-base
   rules:
     - if: $CI_COMMIT_TAG
       when: never
@@ -375,62 +393,34 @@ compile:
   tags:
     - saas-linux-2xlarge-amd64
   interruptible: true
-  needs:
-    - job: build-ci
-      optional: true
   script:
+    # Build binaries using goreleaser (reuses build config, skips Docker)
+    - goreleaser build --snapshot --clean
+    # Prepare binary context with expected directory structure
+    # Dockerfile expects: /${TARGETPLATFORM}/haptic-controller (e.g., /linux/amd64/haptic-controller)
     - |
-      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-        -trimpath \
-        -buildvcs=false \
-        -ldflags="-s -w -X main.version=ci-${CI_PIPELINE_ID} -X main.commit=${CI_COMMIT_SHA}" \
-        -o haptic-controller \
-        ./cmd/controller
-  artifacts:
-    paths:
-      - haptic-controller
-    expire_in: 1 hour
+      mkdir -p binary-context/linux/amd64
+      cp dist/controller_linux_amd64_v1/haptic-controller binary-context/linux/amd64/
+    # Build and push Docker images for each HAProxy version
+    # Uses same Dockerfile as release, ensuring test/release consistency
+    - |
+      CI_VERSION="ci-${CI_PIPELINE_ID}"
 
-# Package pre-built binary into Docker image for each HAProxy version
-# Uses Dockerfile's named build context feature to override the 'binary' stage
-build-test-image:
-  stage: build
-  image:
-    name: moby/buildkit:rootless
-    entrypoint: [""]
-  extends:
-    - .haproxy-version-matrix
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
-    - if: $CI_COMMIT_TAG
-      when: never
-    - !reference [.rules-code, rules]
-  tags:
-    - saas-linux-medium-amd64
-  needs:
-    - compile
-  variables:
-    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
-  before_script:
-    - mkdir -p ~/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > ~/.docker/config.json
-  script:
-    - |
-      TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
-      # Create binary context with pre-compiled controller
-      mkdir -p binary-context
-      cp haptic-controller binary-context/haptic-controller
-      # Build using named context override - 'binary' stage uses our pre-built binary
-      buildctl-daemonless.sh build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=. \
-        --local binary=binary-context \
-        --opt context:binary=local:binary \
-        --opt target=runtime \
-        --opt build-arg:HAPROXY_VERSION=${HAPROXY_VERSION} \
-        --output type=image,name=${TEST_IMAGE},push=true
+      for HAPROXY_VERSION in 3.0 3.1 3.2; do
+        TAG="${CI_REGISTRY_IMAGE}:${CI_VERSION}-haproxy${HAPROXY_VERSION}"
+        echo "Building image: ${TAG}"
+
+        docker buildx build \
+          --platform linux/amd64 \
+          --build-arg HAPROXY_VERSION=${HAPROXY_VERSION} \
+          --build-arg GIT_COMMIT=${CI_COMMIT_SHORT_SHA} \
+          --build-arg GIT_TAG=${CI_VERSION} \
+          --build-context binary=binary-context \
+          --target runtime \
+          --tag "${TAG}" \
+          --push \
+          .
+      done
 
 # =============================================================================
 # Integration Stage
@@ -555,7 +545,7 @@ test-acceptance:
   needs:
     - job: build-ci
       optional: true
-    - job: build-test-image
+    - job: build-snapshot
   variables:
     HAPROXY_VERSION: "3.2"
     KIND_NODE_IMAGE: kindest/node:${KIND_NODE_VERSION}
@@ -649,7 +639,7 @@ test-acceptance:
   needs:
     - job: build-ci
       optional: true
-    - job: build-test-image
+    - job: build-snapshot
   variables:
     # Controller namespace and release name - must match scripts/start-dev-env.sh defaults
     CTRL_NAMESPACE: haptic
@@ -788,7 +778,7 @@ test-helm-defaults:
   needs:
     - job: build-ci
       optional: true
-    - job: build-test-image
+    - job: build-snapshot
   variables:
     # Unique cluster name - different from haproxy-test (integration) and haptic-dev (dev/routes)
     CLUSTER_NAME: helm-defaults
@@ -868,23 +858,27 @@ test-helm-defaults:
 # =============================================================================
 
 # =============================================================================
-# Controller Release (triggered by controller-v* tags)
+# Controller Release (triggered by v* tags)
 # =============================================================================
 
-# Build Go binaries with GoReleaser and create GitLab release
-release-controller-binaries:
+# Build binaries and Docker images with GoReleaser, create GitLab release
+release-controller:
   stage: deploy
-  image: ${CI_IMAGE}
+  extends:
+    - .goreleaser-base
   tags:
     - saas-linux-large-amd64
-  needs:
-    - job: build-ci
-      optional: true
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
   variables:
     GIT_DEPTH: 0
     GITLAB_TOKEN: ${CI_JOB_TOKEN}
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
+  before_script:
+    - !reference [.goreleaser-base, before_script]
+    - source versions.env
   script:
     - export VERSION=${CI_COMMIT_TAG}
     # Extract release notes from CHANGELOG.md
@@ -893,82 +887,26 @@ release-controller-binaries:
       if [ ! -s /tmp/release-notes.md ]; then
         echo "Release ${VERSION}" > /tmp/release-notes.md
       fi
-    # Build binaries and create GitLab release
+    # GoReleaser builds binaries, Docker images, manifests, signs everything, and creates GitLab release
     - goreleaser release --clean --release-notes /tmp/release-notes.md
-
-# Build Docker images for each HAProxy version
-release-controller-images:
-  stage: deploy
-  extends:
-    - .docker-dind
-  image: docker:${DOCKER_VERSION}
-  tags:
-    - saas-linux-large-amd64
-  id_tokens:
-    SIGSTORE_ID_TOKEN:
-      aud: sigstore
-  needs:
-    - release-controller-binaries
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^v.*/
-  variables:
-    DEFAULT_HAPROXY: "3.2"
-  before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker buildx create --use --name multiarch
-    - apk add --no-cache crane cosign curl
-    # Install syft for SBOM generation
-    - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-  script:
-    - export VERSION=${CI_COMMIT_TAG}
-    # Check if this is a stable release (no -alpha, -beta, -rc suffix)
+    # Post-release: SBOM generation (goreleaser can't do this for Docker images)
     - |
-      if echo "$VERSION" | grep -qE '-(alpha|beta|rc)'; then
-        IS_STABLE=false
-      else
-        IS_STABLE=true
-      fi
-    # Build images for each HAProxy version
-    - |
-      for HAPROXY_VERSION in 3.0 3.1 3.2; do
-        echo "Building for HAProxy ${HAPROXY_VERSION}..."
+      for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
         IMAGE_TAG="${CI_REGISTRY_IMAGE}:${VERSION}-haproxy${HAPROXY_VERSION}"
-
-        # Build and push multi-arch image
-        docker buildx build \
-          --platform linux/amd64,linux/arm64,linux/arm/v7 \
-          --build-arg HAPROXY_VERSION=${HAPROXY_VERSION} \
-          --build-arg GIT_COMMIT=${CI_COMMIT_SHA} \
-          --build-arg GIT_TAG=${VERSION} \
-          -t $IMAGE_TAG \
-          --push .
-
-        # Sign image with Cosign (keyless)
-        cosign sign --yes $IMAGE_TAG
-
-        # Generate and attach SBOM as attestation
         echo "Generating SBOM for ${IMAGE_TAG}..."
         syft $IMAGE_TAG -o spdx-json > sbom-haproxy${HAPROXY_VERSION}.spdx.json
         cosign attest --predicate sbom-haproxy${HAPROXY_VERSION}.spdx.json --type spdxjson --yes $IMAGE_TAG
-
-        # Create default tag for latest HAProxy (stable releases only)
-        if [ "$HAPROXY_VERSION" = "$DEFAULT_HAPROXY" ] && [ "$IS_STABLE" = "true" ]; then
-          crane copy $IMAGE_TAG ${CI_REGISTRY_IMAGE}:${VERSION}
-          cosign sign --yes ${CI_REGISTRY_IMAGE}:${VERSION}
-        fi
-
-        # Tag 'latest' only for stable releases
-        if [ "$IS_STABLE" = "true" ]; then
-          crane copy $IMAGE_TAG ${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}
-          cosign sign --yes ${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}
-
-          # Default 'latest' tag for latest HAProxy
-          if [ "$HAPROXY_VERSION" = "$DEFAULT_HAPROXY" ]; then
-            crane copy $IMAGE_TAG ${CI_REGISTRY_IMAGE}:latest
-            cosign sign --yes ${CI_REGISTRY_IMAGE}:latest
-          fi
-        fi
       done
+    # Create latest tags (stable releases only)
+    - |
+      if ! echo "$VERSION" | grep -qE '-(alpha|beta|rc)'; then
+        for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
+          crane copy ${CI_REGISTRY_IMAGE}:${VERSION}-haproxy${HAPROXY_VERSION} ${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}
+          cosign sign --yes ${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}
+        done
+        crane copy ${CI_REGISTRY_IMAGE}:${VERSION} ${CI_REGISTRY_IMAGE}:latest
+        cosign sign --yes ${CI_REGISTRY_IMAGE}:latest
+      fi
 
 # =============================================================================
 # Chart Release (triggered by haptic-chart-v* tags)
@@ -1031,7 +969,7 @@ release-chart:
 trigger-docs-controller-release:
   stage: deploy
   needs:
-    - release-controller-binaries
+    - release-controller
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
   inherit:
