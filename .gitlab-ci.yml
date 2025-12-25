@@ -936,9 +936,10 @@ release-controller:
     # GoReleaser builds binaries, Docker images, manifests, signs everything, and creates GitLab release
     - goreleaser release --clean --release-notes /tmp/release-notes.md
     # Post-release: SBOM generation (goreleaser can't do this for Docker images)
+    # Note: GoReleaser uses .Version (without 'v' prefix), so we strip it from CI_COMMIT_TAG
     - |
       for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
-        IMAGE_TAG="${CI_REGISTRY_IMAGE}:${VERSION}-haproxy${HAPROXY_VERSION}"
+        IMAGE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${HAPROXY_VERSION}"
         echo "Generating SBOM for ${IMAGE_TAG}..."
         syft $IMAGE_TAG -o spdx-json > sbom-haproxy${HAPROXY_VERSION}.spdx.json
         cosign attest --predicate sbom-haproxy${HAPROXY_VERSION}.spdx.json --type spdxjson --yes $IMAGE_TAG
@@ -947,10 +948,10 @@ release-controller:
     - |
       if ! echo "$VERSION" | grep -qE '-(alpha|beta|rc)'; then
         for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
-          crane copy ${CI_REGISTRY_IMAGE}:${VERSION}-haproxy${HAPROXY_VERSION} ${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}
+          crane copy ${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${HAPROXY_VERSION} ${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}
           cosign sign --yes ${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}
         done
-        crane copy ${CI_REGISTRY_IMAGE}:${VERSION} ${CI_REGISTRY_IMAGE}:latest
+        crane copy ${CI_REGISTRY_IMAGE}:${VERSION#v} ${CI_REGISTRY_IMAGE}:latest
         cosign sign --yes ${CI_REGISTRY_IMAGE}:latest
       fi
 
