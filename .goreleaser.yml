@@ -22,6 +22,7 @@ builds:
     flags:
       - -trimpath
       - -buildvcs=false
+      - -pgo=auto
     goos:
       - linux
     goarch:
@@ -147,7 +148,3 @@ release:
   # Release notes extracted from CHANGELOG.md
   header: |
     ## What's Changed
-
-  # Attach binaries and signature bundle to release
-  extra_files:
-    - glob: ./dist/checksums.txt.sigstore.json
