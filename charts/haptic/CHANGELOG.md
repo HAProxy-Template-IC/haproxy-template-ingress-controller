@@ -9,6 +9,8 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.1] - 2025-12-25
+
 ### Added
 
 - Initial Helm chart for HAProxy Template Ingress Controller

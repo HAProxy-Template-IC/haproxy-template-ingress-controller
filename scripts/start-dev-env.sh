@@ -7,6 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ASSETS_DIR="${SCRIPT_DIR}/dev-env-assets"
 
+# Source centralized version configuration
+# shellcheck source=../versions.env
+source "${REPO_ROOT}/versions.env"
+
 # Default configuration
 # Naming conventions - defaults match chart name for clean resource names
 # Override via environment variables if needed
@@ -18,7 +22,7 @@ ECHO_NAMESPACE="echo"
 ECHO_APP_NAME="echo-server"
 ECHO_IMAGE="ealen/echo-server:latest"
 LOCAL_IMAGE="haptic:dev"
-HAPROXY_VERSION="${HAPROXY_VERSION:-3.2}"
+HAPROXY_VERSION="${HAPROXY_VERSION:-$DEFAULT_HAPROXY}"
 HAPROXY_ENTERPRISE="${HAPROXY_ENTERPRISE:-false}"
 TIMEOUT="180"
 SKIP_BUILD=false
@@ -70,11 +74,11 @@ NODEPORT_HOST="$(get_dind_hostname)"
 compute_haproxy_image() {
     if [[ "$HAPROXY_ENTERPRISE" == "true" ]]; then
         HAPROXY_REPO="hapee-registry.haproxy.com/haproxy-enterprise"
-        # Map community version to enterprise version format (X.YrZ)
+        # Map community version to enterprise version format using versions.env mappings
         case "$HAPROXY_VERSION" in
-            3.0*) HAPROXY_TAG="3.0r1"; HAPROXY_ENTERPRISE_VERSION="3.0" ;;
-            3.1*) HAPROXY_TAG="3.1r1"; HAPROXY_ENTERPRISE_VERSION="3.1" ;;
-            3.2*) HAPROXY_TAG="3.2r1"; HAPROXY_ENTERPRISE_VERSION="3.2" ;;
+            3.0*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_30"; HAPROXY_ENTERPRISE_VERSION="3.0" ;;
+            3.1*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_31"; HAPROXY_ENTERPRISE_VERSION="3.1" ;;
+            3.2*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_32"; HAPROXY_ENTERPRISE_VERSION="3.2" ;;
             *)    HAPROXY_TAG="$HAPROXY_VERSION"; HAPROXY_ENTERPRISE_VERSION="$HAPROXY_VERSION" ;;
         esac
         debug "Using HAProxy Enterprise: ${HAPROXY_REPO}:${HAPROXY_TAG}"

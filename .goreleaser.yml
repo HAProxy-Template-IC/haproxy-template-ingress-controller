@@ -2,6 +2,11 @@
 version: 2
 project_name: haptic
 
+# Snapshot configuration for CI builds (goreleaser release --snapshot)
+# Produces images with CI-specific tags: ci-<pipeline_id>-haproxy<version>
+snapshot:
+  version_template: "ci-{{ .Env.CI_PIPELINE_ID }}"
+
 before:
   hooks:
     - go mod tidy
@@ -10,7 +15,7 @@ before:
 builds:
   - id: controller
     main: ./cmd/controller
-    binary: controller
+    binary: haptic-controller
     env:
       - CGO_ENABLED=0
     # Reproducible build flags
@@ -37,7 +42,7 @@ builds:
 archives:
   - formats: [binary]
     name_template: >-
-      {{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+      haptic-controller-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
 
 checksum:
   name_template: checksums.txt
@@ -57,6 +62,75 @@ signs:
       - --output-certificate=${certificate}
       - --output-signature=${signature}
       - ${artifact}
+
+# Multi-arch Docker images using dockers_v2 (simpler than dockers + docker_manifests)
+# Each entry builds a multi-arch manifest directly using docker buildx
+# Note: dockers_v2 does NOT push images in snapshot mode by design (GoReleaser limitation)
+# For CI builds, we use docker buildx directly; dockers_v2 is only used for releases
+dockers_v2:
+  # HAProxy 3.0
+  - id: haproxy30
+    ids: [controller]
+    dockerfile: Dockerfile
+    images:
+      - "registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller"
+    tags:
+      - "{{ .Version }}-haproxy3.0"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+    build_args:
+      HAPROXY_VERSION: "3.0"
+    flags:
+      - "--target=runtime"
+      - "--build-context=binary=."
+
+  # HAProxy 3.1
+  - id: haproxy31
+    ids: [controller]
+    dockerfile: Dockerfile
+    images:
+      - "registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller"
+    tags:
+      - "{{ .Version }}-haproxy3.1"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+    build_args:
+      HAPROXY_VERSION: "3.1"
+    flags:
+      - "--target=runtime"
+      - "--build-context=binary=."
+
+  # HAProxy 3.2 (default)
+  - id: haproxy32
+    ids: [controller]
+    dockerfile: Dockerfile
+    images:
+      - "registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller"
+    tags:
+      - "{{ .Version }}-haproxy3.2"
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+    build_args:
+      HAPROXY_VERSION: "3.2"
+    flags:
+      - "--target=runtime"
+      - "--build-context=binary=."
+
+# Cosign keyless signing for Docker images
+docker_signs:
+  - cmd: cosign
+    artifacts: all
+    args:
+      - sign
+      - --yes
+      - "${artifact}"
 
 # Disable auto-generated changelog - use CHANGELOG.md instead
 changelog:

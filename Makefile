@@ -207,7 +207,7 @@ test-coverage-combined: ## Run unit and integration tests with combined coverage
 
 ## Build targets
 
-build: ## Build the controller binary (with PGO if profile exists)
+build: ## Build the controller binary for local development (with PGO if profile exists)
 	@echo "Building controller..."
 	@echo "  Version: $(VERSION)"
 	@echo "  Git commit: $(GIT_COMMIT)"
@@ -218,6 +218,20 @@ build: ## Build the controller binary (with PGO if profile exists)
 		-ldflags="-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		-o bin/haptic-controller \
 		./cmd/controller
+
+build-for-docker: ## Build binary in platform-structured path for Docker builds with --build-context
+	@echo "Building controller for Docker..."
+	@echo "  Version: $(VERSION)"
+	@echo "  Platform: linux/amd64"
+	@mkdir -p dist/linux/amd64
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build \
+		-trimpath \
+		-buildvcs=false \
+		-ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT)" \
+		-o dist/linux/amd64/haptic-controller \
+		./cmd/controller
+	@echo "✓ Binary built: dist/linux/amd64/haptic-controller"
+	@echo "  Use with: docker buildx build --platform linux/amd64 --build-context binary=dist --target runtime ..."
 
 ## Docker targets
 
