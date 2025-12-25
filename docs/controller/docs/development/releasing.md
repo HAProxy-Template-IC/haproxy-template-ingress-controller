@@ -108,7 +108,7 @@ Review and merge the MR through GitLab.
 After the MR is merged, CI automatically:
 
 1. Detects the VERSION file change on main
-2. Creates and pushes the `haptic-controller-v<version>` tag
+2. Creates and pushes the `v<version>` tag
 3. Triggers the release pipeline (binaries, images, GitLab release)
 
 No manual tagging is required.
@@ -119,13 +119,13 @@ No manual tagging is required.
     ```bash
     git checkout main
     git pull origin main
-    git tag -a haptic-controller-v<version> -m "Controller release v<version>"
-    git push origin haptic-controller-v<version>
+    git tag -a v<version> -m "Controller release <version>"
+    git push origin v<version>
     ```
 
 ### What CI Does Automatically
 
-When a `controller-v*` tag is pushed, CI will:
+When a `v*` tag is pushed, CI will:
 
 1. **Build binaries** for linux/amd64, linux/arm64, linux/arm/v7
 2. **Create GitLab release** with:

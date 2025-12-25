@@ -2,10 +2,6 @@
 version: 2
 project_name: haptic
 
-# Note: Tag prefix stripping (haptic-controller-v1.0.0 -> v1.0.0) is handled
-# in CI via GORELEASER_CURRENT_TAG environment variable, since monorepo
-# support requires GoReleaser Pro.
-
 before:
   hooks:
     - go mod tidy

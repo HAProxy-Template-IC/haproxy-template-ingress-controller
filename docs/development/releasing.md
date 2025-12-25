@@ -19,12 +19,12 @@ vX.Y.Z-beta.N   # Feature complete, needs testing
 vX.Y.Z-rc.N     # Release candidate, final testing
 ```
 
-Git tags use the prefix `haptic-controller-`:
+Git tags use standard semantic version format:
 
 ```
-haptic-controller-v0.1.0
-haptic-controller-v0.2.0-beta.1
-haptic-controller-v1.0.0
+v0.1.0
+v0.2.0-beta.1
+v1.0.0
 ```
 
 ### Chart Versions
@@ -75,7 +75,7 @@ Changes that affect both (e.g., a new CRD field requiring code and chart changes
 
 ### Controller Release
 
-When a `haptic-controller-v*` tag is pushed, CI automatically:
+When a `v*` tag is pushed (e.g., `v0.1.0`), CI automatically:
 
 1. **Builds Go binaries** for multiple architectures:
    - `linux/amd64` - Intel/AMD servers
@@ -139,12 +139,12 @@ The main branch is protected, so releases are made via merge requests. CI automa
    ```bash
    git checkout -b release/controller-v0.1.0-beta.1
    git push -u origin release/controller-v0.1.0-beta.1
-   glab mr create --title "release: haptic-controller v0.1.0-beta.1" --target-branch main
+   glab mr create --title "release: controller v0.1.0-beta.1" --target-branch main
    ```
 
 4. **Merge the MR** through GitLab.
 
-After merge, CI automatically creates the `haptic-controller-v0.1.0-beta.1` tag and triggers the release pipeline.
+After merge, CI automatically creates the `v0.1.0-beta.1` tag and triggers the release pipeline.
 
 ### Releasing a Chart Version
 
@@ -184,8 +184,8 @@ If automatic tagging fails, create tags manually:
 # Controller
 git checkout main
 git pull origin main
-git tag -a haptic-controller-v0.1.0-beta.1 -m "Controller release v0.1.0-beta.1"
-git push origin haptic-controller-v0.1.0-beta.1
+git tag -a v0.1.0-beta.1 -m "Controller release 0.1.0-beta.1"
+git push origin v0.1.0-beta.1
 
 # Chart
 git tag -a haptic-chart-v0.2.0 -m "Chart release v0.2.0"
