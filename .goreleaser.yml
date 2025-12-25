@@ -48,20 +48,16 @@ checksum:
   name_template: checksums.txt
   algorithm: sha256
 
-# Cosign keyless signing for supply chain security
+# Cosign keyless signing for supply chain security (cosign v3 bundle format)
 signs:
   - cmd: cosign
-    env:
-      - COSIGN_EXPERIMENTAL=1
-    certificate: "${artifact}.pem"
-    signature: "${artifact}.sig"
+    signature: "${artifact}.sigstore.json"
     artifacts: checksum
     args:
       - sign-blob
-      - --yes
-      - --output-certificate=${certificate}
-      - --output-signature=${signature}
+      - --bundle=${signature}
       - ${artifact}
+      - --yes
 
 # Multi-arch Docker images using dockers_v2 (simpler than dockers + docker_manifests)
 # Each entry builds a multi-arch manifest directly using docker buildx
@@ -152,7 +148,6 @@ release:
   header: |
     ## What's Changed
 
-  # Attach binaries and signature files to release
+  # Attach binaries and signature bundle to release
   extra_files:
-    - glob: ./dist/checksums.txt.sig
-    - glob: ./dist/checksums.txt.pem
+    - glob: ./dist/checksums.txt.sigstore.json

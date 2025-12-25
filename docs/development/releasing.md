@@ -223,16 +223,12 @@ helm install haproxy-ic \
 ### Verify Binary Signatures
 
 ```bash
-# Download checksums and signatures
+# Download checksums and signature bundle
 curl -LO https://gitlab.com/.../checksums.txt
-curl -LO https://gitlab.com/.../checksums.txt.sig
-curl -LO https://gitlab.com/.../checksums.txt.pem
+curl -LO https://gitlab.com/.../checksums.txt.sigstore.json
 
 # Verify signature
-cosign verify-blob \
-  --signature checksums.txt.sig \
-  --certificate checksums.txt.pem \
-  checksums.txt
+cosign verify-blob --bundle checksums.txt.sigstore.json checksums.txt
 
 # Verify binary checksums
 sha256sum -c checksums.txt
