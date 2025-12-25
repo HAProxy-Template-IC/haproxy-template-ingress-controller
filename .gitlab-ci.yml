@@ -943,7 +943,7 @@ release-controller:
     - |
       for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
         IMAGE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${HAPROXY_VERSION}"
-        IMAGE_DIGEST=$(jq -r --arg img "$IMAGE_TAG" '.[] | select(.type == "Docker Manifest" and .name == $img) | .extra.digest' dist/artifacts.json)
+        IMAGE_DIGEST=$(jq -r --arg img "$IMAGE_TAG" '.[] | select(.type == "Docker Image" and .name == $img) | .extra.digest' dist/artifacts.json)
         if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
           echo "ERROR: Could not find digest for $IMAGE_TAG in dist/artifacts.json"
           echo "Available Docker artifacts:"
@@ -963,13 +963,13 @@ release-controller:
           SOURCE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${HAPROXY_VERSION}"
           LATEST_TAG="${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}"
           docker buildx imagetools create --tag "$LATEST_TAG" "$SOURCE_TAG"
-          IMAGE_DIGEST=$(jq -r --arg img "$SOURCE_TAG" '.[] | select(.type == "Docker Manifest" and .name == $img) | .extra.digest' dist/artifacts.json)
+          IMAGE_DIGEST=$(jq -r --arg img "$SOURCE_TAG" '.[] | select(.type == "Docker Image" and .name == $img) | .extra.digest' dist/artifacts.json)
           cosign sign --yes ${CI_REGISTRY_IMAGE}@${IMAGE_DIGEST}
         done
         # Default latest tag points to latest HAProxy version (3.2)
         SOURCE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}"
         docker buildx imagetools create --tag "${CI_REGISTRY_IMAGE}:latest" "$SOURCE_TAG"
-        IMAGE_DIGEST=$(jq -r --arg img "$SOURCE_TAG" '.[] | select(.type == "Docker Manifest" and .name == $img) | .extra.digest' dist/artifacts.json)
+        IMAGE_DIGEST=$(jq -r --arg img "$SOURCE_TAG" '.[] | select(.type == "Docker Image" and .name == $img) | .extra.digest' dist/artifacts.json)
         cosign sign --yes ${CI_REGISTRY_IMAGE}@${IMAGE_DIGEST}
       fi
 
