@@ -26,6 +26,8 @@ ARG MARKDOWNLINT_VERSION=0.14.0
 ARG GORELEASER_VERSION=2.13.2
 # renovate: datasource=github-releases depName=sigstore/cosign
 ARG COSIGN_VERSION=3.0.3
+# renovate: datasource=github-releases depName=anchore/syft
+ARG SYFT_VERSION=1.20.0
 
 # Install HAProxy from haproxy.debian.net and Docker CLI from Docker's apt repository
 RUN apt-get update \
@@ -98,5 +100,9 @@ RUN curl -fsSL -o /usr/local/bin/cosign \
     "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
     && chmod +x /usr/local/bin/cosign
 
+# Install syft for SBOM generation
+RUN curl -fsSL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+    | tar xzf - -C /usr/local/bin syft
+
 # Verify installations
-RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help | head -1 && kubeconform -v && goreleaser --version && cosign version
+RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help | head -1 && kubeconform -v && goreleaser --version && cosign version && syft version
