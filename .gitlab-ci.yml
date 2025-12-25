@@ -45,9 +45,11 @@ variables:
   GORELEASER_VERSION: "2.13.2"
   # renovate: datasource=github-releases depName=sigstore/cosign
   COSIGN_VERSION: "3.0.3"
-  # CI images - HAProxy 3.2 for single-run jobs, versioned for matrix jobs
-  CI_IMAGE: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy3.2-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}-gr${GORELEASER_VERSION}-cs${COSIGN_VERSION}
-  CI_IMAGE_VERSIONED: ${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}-gr${GORELEASER_VERSION}-cs${COSIGN_VERSION}
+  # renovate: datasource=github-releases depName=anchore/syft
+  SYFT_VERSION: "1.20.0"
+  # CI image base path - tag is computed from Dockerfile content hash (see compute-ci-image-tag job)
+  # Short hash-based tags avoid the 128-char OCI tag limit while maintaining cacheability
+  CI_IMAGE_BASE: ${CI_REGISTRY_IMAGE}/ci
 
 # Reusable rules for path-based filtering
 .rules-code:
@@ -120,10 +122,11 @@ variables:
 # Base configuration for goreleaser jobs (snapshot and release)
 # Provides Docker login, buildx setup, and common dependencies
 .goreleaser-base:
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   extends:
     - .docker-dind
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   before_script:
@@ -135,6 +138,23 @@ variables:
 # =============================================================================
 # CI Image Builds (.pre stage - runs before all other stages)
 # =============================================================================
+
+# Compute CI image tag from Dockerfile content hash
+# This job runs in .pre stage and exports CI_IMAGE_TAG for other jobs via dotenv artifact
+# Using content hash ensures: deterministic tags, short tags (<128 chars), automatic cache invalidation
+compute-ci-image-tag:
+  stage: .pre
+  image: alpine:latest
+  tags:
+    - saas-linux-small-amd64
+  script:
+    - |
+      DOCKERFILE_HASH=$(sha256sum .gitlab/ci/images/ci/Dockerfile | cut -c1-12)
+      echo "CI_IMAGE_TAG=${DOCKERFILE_HASH}" >> ci-image.env
+      echo "Computed CI image tag from Dockerfile hash: ${DOCKERFILE_HASH}"
+  artifacts:
+    reports:
+      dotenv: ci-image.env
 
 .build-ci-image:
   stage: .pre
@@ -161,9 +181,13 @@ build-ci:
   extends:
     - .build-ci-image
     - .haproxy-version-matrix
+  needs:
+    - compute-ci-image-tag
   script:
     - |
-      CI_IMAGE="${CI_REGISTRY_IMAGE}/ci:go${GO_VERSION}-haproxy${HAPROXY_VERSION}-docker${DOCKER_VERSION}-kind${KIND_VERSION}-ct${CT_VERSION}-unittest${HELM_UNITTEST_VERSION}-kubeconform${KUBECONFORM_VERSION}-yamllint${YAMLLINT_VERSION}-mdlint${MARKDOWNLINT_VERSION}-gr${GORELEASER_VERSION}-cs${COSIGN_VERSION}"
+      CI_IMAGE="${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}"
+      echo "Building CI image: ${CI_IMAGE}"
+
       buildctl-daemonless.sh build \
         --frontend dockerfile.v0 \
         --local context=.gitlab/ci/images/ci/ \
@@ -179,6 +203,17 @@ build-ci:
         --opt build-arg:MARKDOWNLINT_VERSION=${MARKDOWNLINT_VERSION} \
         --opt build-arg:GORELEASER_VERSION=${GORELEASER_VERSION} \
         --opt build-arg:COSIGN_VERSION=${COSIGN_VERSION} \
+        --opt build-arg:SYFT_VERSION=${SYFT_VERSION} \
+        --opt label:org.opencontainers.image.source=${CI_PROJECT_URL} \
+        --opt label:org.opencontainers.image.revision=${CI_COMMIT_SHA} \
+        --opt label:haptic.ci.dockerfile-hash=${CI_IMAGE_TAG} \
+        --opt label:haptic.ci.go-version=${GO_VERSION} \
+        --opt label:haptic.ci.haproxy-version=${HAPROXY_VERSION} \
+        --opt label:haptic.ci.docker-version=${DOCKER_VERSION} \
+        --opt label:haptic.ci.kind-version=${KIND_VERSION} \
+        --opt label:haptic.ci.goreleaser-version=${GORELEASER_VERSION} \
+        --opt label:haptic.ci.cosign-version=${COSIGN_VERSION} \
+        --opt label:haptic.ci.syft-version=${SYFT_VERSION} \
         --import-cache type=registry,ref=${CI_IMAGE} \
         --export-cache type=inline \
         --output type=image,name=${CI_IMAGE},push=true
@@ -202,7 +237,7 @@ build-python-docs:
 
 lint:
   stage: lint
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -213,6 +248,7 @@ lint:
     - saas-linux-medium-amd64
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   before_script:
@@ -227,7 +263,7 @@ lint:
 
 audit:
   stage: lint
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -238,6 +274,7 @@ audit:
     - saas-linux-medium-amd64
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   script:
@@ -247,7 +284,7 @@ audit:
 # Uses golang.org/x/exp/cmd/gorelease to validate SemVer compliance
 api-compatibility:
   stage: lint
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -258,6 +295,7 @@ api-compatibility:
     - saas-linux-small-amd64
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   allow_failure: false
@@ -274,7 +312,7 @@ api-compatibility:
 
 chart-test:
   stage: lint
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -285,6 +323,7 @@ chart-test:
     - saas-linux-medium-amd64
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   script:
@@ -301,7 +340,7 @@ chart-test:
 
 test:
   stage: test
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -312,6 +351,7 @@ test:
     - saas-linux-large-amd64
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   before_script:
@@ -337,11 +377,12 @@ test:
 
 .validate-helm-libraries-base:
   stage: test
-  image: ${CI_IMAGE_VERSIONED}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   tags:
     - saas-linux-medium-amd64
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   rules:
@@ -428,7 +469,7 @@ build-snapshot:
 
 .test-integration-base:
   stage: integration
-  image: ${CI_IMAGE_VERSIONED}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
   rules:
@@ -440,6 +481,7 @@ build-snapshot:
   timeout: 30 minutes
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   variables:
@@ -470,7 +512,7 @@ test-integration:
 # Combined unit + integration coverage report (merges all HAProxy version coverage files)
 coverage-combined:
   stage: integration
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -481,6 +523,7 @@ coverage-combined:
     - saas-linux-medium-amd64
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
     - job: test
@@ -531,7 +574,7 @@ coverage-combined:
 
 test-acceptance:
   stage: integration
-  image: ${CI_IMAGE_VERSIONED}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
   rules:
@@ -543,6 +586,7 @@ test-acceptance:
   timeout: 30 minutes
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
     - job: build-snapshot
@@ -631,12 +675,13 @@ test-acceptance:
 
 .test-routes-base:
   stage: integration
-  image: ${CI_IMAGE_VERSIONED}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
   timeout: 25 minutes
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
     - job: build-snapshot
@@ -764,7 +809,7 @@ test-routes:
 # Verifies that the chart works out-of-the-box with default values when cert-manager is installed
 test-helm-defaults:
   stage: integration
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   extends:
     - .docker-dind
   rules:
@@ -776,6 +821,7 @@ test-helm-defaults:
   timeout: 15 minutes
   interruptible: true
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
     - job: build-snapshot
@@ -883,10 +929,7 @@ release-controller:
     - export VERSION=${CI_COMMIT_TAG}
     # Extract release notes from CHANGELOG.md
     - |
-      awk -v ver="${VERSION#v}" '
-        /^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found=1 }
-        found { print }
-      ' CHANGELOG.md > /tmp/release-notes.md
+      awk -v ver="${VERSION#v}" '/^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found=1 } found { print }' CHANGELOG.md > /tmp/release-notes.md
       if [ ! -s /tmp/release-notes.md ]; then
         echo "Release ${VERSION}" > /tmp/release-notes.md
       fi
@@ -917,13 +960,14 @@ release-controller:
 
 release-chart:
   stage: deploy
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   tags:
     - saas-linux-medium-amd64
   id_tokens:
     SIGSTORE_ID_TOKEN:
       aud: sigstore
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   rules:
@@ -937,10 +981,7 @@ release-chart:
     - export VERSION=${CI_COMMIT_TAG#haptic-chart-}
     # Extract release notes from chart CHANGELOG.md
     - |
-      awk -v ver="${VERSION#v}" '
-        /^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found=1 }
-        found { print }
-      ' charts/haptic/CHANGELOG.md > .release-notes.md
+      awk -v ver="${VERSION#v}" '/^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found=1 } found { print }' charts/haptic/CHANGELOG.md > .release-notes.md
       if [ ! -s .release-notes.md ]; then
         echo "Helm Chart Release ${VERSION}" > .release-notes.md
       fi
@@ -1088,10 +1129,11 @@ trigger-pages:
 # Create controller release tag when VERSION file changes on main
 create-controller-release-tag:
   stage: deploy
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   tags:
     - saas-linux-small-amd64
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   rules:
@@ -1123,10 +1165,11 @@ create-controller-release-tag:
 # Create chart release tag when Chart.yaml version changes on main
 create-chart-release-tag:
   stage: deploy
-  image: ${CI_IMAGE}
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   tags:
     - saas-linux-small-amd64
   needs:
+    - compute-ci-image-tag
     - job: build-ci
       optional: true
   rules:
