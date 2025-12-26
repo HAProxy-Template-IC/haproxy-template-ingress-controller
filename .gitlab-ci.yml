@@ -996,16 +996,18 @@ release-chart:
   script:
     # Extract version from tag (haptic-chart-v0.1.0 -> v0.1.0)
     - export VERSION=${CI_COMMIT_TAG#haptic-chart-}
+    # Strip v prefix for chart version (Helm best practice: use pure SemVer)
+    - export CHART_VERSION=${VERSION#v}
     # Extract release notes from chart CHANGELOG.md
     - |
-      awk -v ver="${VERSION#v}" '/^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found=1 } found { print }' charts/haptic/CHANGELOG.md > .release-notes.md
+      awk -v ver="${CHART_VERSION}" '/^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found=1 } found { print }' charts/haptic/CHANGELOG.md > .release-notes.md
       if [ ! -s .release-notes.md ]; then
         echo "Helm Chart Release ${VERSION}" > .release-notes.md
       fi
     # Package and push chart to OCI registry
-    - helm package charts/haptic --version $VERSION
+    - helm package charts/haptic --version $CHART_VERSION
     - |
-      helm push haptic-$VERSION.tgz oci://${CI_REGISTRY}/haproxy-haptic/haptic/charts 2>&1 | tee push-output.txt
+      helm push haptic-$CHART_VERSION.tgz oci://${CI_REGISTRY}/haproxy-haptic/haptic/charts 2>&1 | tee push-output.txt
       CHART_DIGEST=$(grep 'Digest:' push-output.txt | awk '{print $2}')
       # Sign the OCI artifact using digest (cosign doesn't support oci:// prefix)
       cosign sign --yes ${CI_REGISTRY}/haproxy-haptic/haptic/charts/haptic@${CHART_DIGEST}

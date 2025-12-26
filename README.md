@@ -36,7 +36,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 ## Quick Start
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/haptic --version 0.1.0-alpha.1
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0-alpha.1
 ```
 
 For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-haptic.org/controller/latest/getting-started/) guide.
