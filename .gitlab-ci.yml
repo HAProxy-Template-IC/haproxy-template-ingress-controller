@@ -939,15 +939,13 @@ release-controller:
     # GoReleaser builds binaries, Docker images, manifests, signs everything, and creates GitLab release
     - goreleaser release --clean --release-notes /tmp/release-notes.md
     # Post-release: SBOM generation (goreleaser can't do this for Docker images)
-    # Read digests from GoReleaser's artifacts.json to avoid extra registry calls
+    # Query registry for digests using buildx imagetools (dockers_v2 doesn't include digest in artifacts.json)
     - |
       for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
         IMAGE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${HAPROXY_VERSION}"
-        IMAGE_DIGEST=$(jq -r --arg img "$IMAGE_TAG" '.[] | select(.type == "Docker Image" and .name == $img) | .extra.digest' dist/artifacts.json)
-        if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
-          echo "ERROR: Could not find digest for $IMAGE_TAG in dist/artifacts.json"
-          echo "Available Docker artifacts:"
-          jq -r '.[] | select(.type | startswith("Docker")) | "\(.type): \(.name)"' dist/artifacts.json
+        IMAGE_DIGEST=$(docker buildx imagetools inspect "$IMAGE_TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')
+        if [ -z "$IMAGE_DIGEST" ]; then
+          echo "ERROR: Could not get digest for $IMAGE_TAG"
           exit 1
         fi
         IMAGE_REF="${CI_REGISTRY_IMAGE}@${IMAGE_DIGEST}"
@@ -956,20 +954,20 @@ release-controller:
         cosign attest --predicate sbom-haproxy${HAPROXY_VERSION}.spdx.json --type spdxjson --yes $IMAGE_REF
       done
     # Create latest tags (stable releases only)
-    # Use buildx imagetools to create tags (no crane needed), reuse digests from artifacts.json
+    # Use buildx imagetools to create tags and query digests from registry
     - |
       if ! echo "$VERSION" | grep -qE -- '-(alpha|beta|rc)'; then
         for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
           SOURCE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${HAPROXY_VERSION}"
           LATEST_TAG="${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}"
           docker buildx imagetools create --tag "$LATEST_TAG" "$SOURCE_TAG"
-          IMAGE_DIGEST=$(jq -r --arg img "$SOURCE_TAG" '.[] | select(.type == "Docker Image" and .name == $img) | .extra.digest' dist/artifacts.json)
+          IMAGE_DIGEST=$(docker buildx imagetools inspect "$LATEST_TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')
           cosign sign --yes ${CI_REGISTRY_IMAGE}@${IMAGE_DIGEST}
         done
         # Default latest tag points to latest HAProxy version (3.2)
         SOURCE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}"
         docker buildx imagetools create --tag "${CI_REGISTRY_IMAGE}:latest" "$SOURCE_TAG"
-        IMAGE_DIGEST=$(jq -r --arg img "$SOURCE_TAG" '.[] | select(.type == "Docker Image" and .name == $img) | .extra.digest' dist/artifacts.json)
+        IMAGE_DIGEST=$(docker buildx imagetools inspect "${CI_REGISTRY_IMAGE}:latest" --format '{{json .Manifest.Digest}}' | tr -d '"')
         cosign sign --yes ${CI_REGISTRY_IMAGE}@${IMAGE_DIGEST}
       fi
 
