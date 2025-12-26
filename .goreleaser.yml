@@ -129,9 +129,9 @@ docker_signs:
       - --yes
       - "${artifact}"
 
-# Disable auto-generated changelog - use CHANGELOG.md instead
-changelog:
-  disable: true
+# Changelog is provided via --release-notes flag (extracted from CHANGELOG.md)
+# Note: setting disable: true would cause --release-notes to be ignored
+changelog: {}
 
 # GitLab CI settings - use CI_JOB_TOKEN for authentication
 gitlab_urls:
@@ -144,7 +144,3 @@ release:
 
   # Automatically mark alpha/beta/rc versions as pre-release
   prerelease: auto
-
-  # Release notes extracted from CHANGELOG.md
-  header: |
-    ## What's Changed
