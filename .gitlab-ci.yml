@@ -1140,15 +1140,13 @@ pages-preview-cleanup:
     action: stop
 
 # Trigger pages project to build and deploy docs to group-level pages
+# Note: rules:changes doesn't work for multi-project triggers (GitLab issue #263385)
+# so we trigger on every main branch push instead
 trigger-pages:
   stage: deploy
   needs: []
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      changes:
-        - docs/**
-        - charts/**/docs/**
-        - charts/**/mkdocs.yml
   inherit:
     variables: false
   trigger:
