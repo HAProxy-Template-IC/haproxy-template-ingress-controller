@@ -9,7 +9,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
-## [0.1.0-alpha.1] - 2025-12-25
+## [0.1.0-alpha.1] - 2025-12-26
 
 ### Added
 
@@ -22,3 +22,27 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 - Separate controller and HAProxy services
   - Controller Service: ClusterIP for operational endpoints (healthz, metrics)
   - HAProxy Service: Configurable LoadBalancer/ClusterIP for ingress traffic
+- Modular template library system with composable libraries merged at Helm render time
+  - `base.yaml`: Core HAProxy template structure
+  - `ingress.yaml`: Kubernetes Ingress support
+  - `gateway.yaml`: Gateway API support
+  - `haproxytech.yaml`: HAProxy annotation compatibility
+  - `ssl.yaml`: TLS/SSL features
+  - Libraries can be enabled/disabled via `controller.templateLibraries.<name>.enabled`
+- Kubernetes Ingress support via `ingress.yaml` library
+  - Path types: Exact, Prefix, ImplementationSpecific (regex)
+  - TLS termination with Secret references
+  - Default backend configuration
+  - IngressClass filtering (`haproxy-template`)
+- Gateway API support via `gateway.yaml` library
+  - HTTPRoute with path, header, query parameter, and method matching
+  - GRPCRoute for gRPC traffic routing
+  - TLSRoute for SNI-based routing
+  - TCPRoute and UDPRoute for L4 traffic
+  - Traffic splitting and weighted backends
+  - Request/response header modification
+  - URL rewrites and redirects
+- HAProxy annotation compatibility via `haproxytech.yaml` library
+  - `haproxy.org/*` annotations (HAProxyTech ingress controller)
+  - Backend config snippets, server options, load balancing algorithms
+  - SSL passthrough, SSL redirect, CORS, basic auth
