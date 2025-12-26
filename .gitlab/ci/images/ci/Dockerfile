@@ -27,7 +27,7 @@ ARG GORELEASER_VERSION=2.13.2
 # renovate: datasource=github-releases depName=sigstore/cosign
 ARG COSIGN_VERSION=3.0.3
 # renovate: datasource=github-releases depName=anchore/syft
-ARG SYFT_VERSION=1.20.0
+ARG SYFT_VERSION=1.39.0
 
 # Install HAProxy from haproxy.debian.net and Docker CLI from Docker's apt repository
 RUN apt-get update \
