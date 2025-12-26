@@ -6,9 +6,9 @@
 
 </div>
 
-[![License](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/badges/custom.svg?key_text=License&key_width=60&value_text=Apache%202.0&value_width=80&key_color=555&value_color=007ec6)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/pipeline.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/pipelines)
-[![Coverage](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/badges/main/coverage.svg)](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/graphs/main/charts)
+[![License](https://gitlab.com/haproxy-haptic/HAPTIC/-/badges/custom.svg?key_text=License&key_width=60&value_text=Apache%202.0&value_width=80&key_color=555&value_color=007ec6)](https://opensource.org/licenses/Apache-2.0)
+[![Build Status](https://gitlab.com/haproxy-haptic/HAPTIC/badges/main/pipeline.svg)](https://gitlab.com/haproxy-haptic/HAPTIC/-/pipelines)
+[![Coverage](https://gitlab.com/haproxy-haptic/HAPTIC/badges/main/coverage.svg)](https://gitlab.com/haproxy-haptic/HAPTIC/-/graphs/main/charts)
 
 **HAPTIC** (**HA**Proxy **T**emplate **I**ngress **C**ontroller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
@@ -36,9 +36,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 ## Quick Start
 
 ```bash
-helm repo add haptic https://haproxy-haptic.org/haproxy-template-ingress-controller/charts
-helm repo update
-helm install my-controller haptic/haptic
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/haptic --version 0.1.0-alpha.1
 ```
 
 For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-haptic.org/controller/latest/getting-started/) guide.

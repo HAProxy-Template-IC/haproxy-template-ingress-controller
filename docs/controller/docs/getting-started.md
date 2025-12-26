@@ -21,12 +21,10 @@ The entire process takes approximately 15-20 minutes on a local Kubernetes clust
 Install the controller and HAProxy using Helm:
 
 ```bash
-# Add the Helm repository
-helm repo add haptic https://haproxy-haptic.org/haproxy-template-ingress-controller/charts
-helm repo update
-
-# Install (deploys both controller and HAProxy pods)
-helm install haptic haptic/haptic --namespace haptic --create-namespace
+# Install from OCI registry (deploys both controller and HAProxy pods)
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/haptic \
+  --version 0.1.0-alpha.1 \
+  --namespace haptic --create-namespace
 ```
 
 The Helm chart deploys:

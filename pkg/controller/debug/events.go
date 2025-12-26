@@ -18,9 +18,9 @@ import (
 	"context"
 	"time"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
-	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events/ringbuffer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/events/ringbuffer"
 )
 
 // Event represents a debug event with timestamp and details.

@@ -3,8 +3,8 @@ package comparator
 import (
 	"github.com/haproxytech/client-native/v6/models"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
 // compareUserlists compares userlist sections between current and desired configurations.

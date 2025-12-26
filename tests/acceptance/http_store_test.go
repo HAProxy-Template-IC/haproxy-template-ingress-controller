@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/tests/testutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // buildHTTPStoreValidUpdateFeature builds a feature that tests valid HTTP content

@@ -52,7 +52,7 @@ func init() {
 
 // printVersion outputs version information to stdout.
 func printVersion() {
-	fmt.Printf("haproxy-template-ingress-controller\n")
+	fmt.Printf("haptic\n")
 	fmt.Printf("  Version:    %s\n", version)
 	fmt.Printf("  Commit:     %s\n", commit)
 	fmt.Printf("  Built:      %s\n", date)

@@ -1,6 +1,6 @@
 # pkg/k8s
 
-Kubernetes resource watching and indexing package for haproxy-template-ingress-controller.
+Kubernetes resource watching and indexing package for HAPTIC.
 
 ## Overview
 

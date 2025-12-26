@@ -21,17 +21,10 @@ HAPTIC:
 
 ## Installation
 
-### Add the Helm Repository
-
-```bash
-helm repo add haptic https://haproxy-haptic.org/haproxy-template-ingress-controller/charts
-helm repo update
-```
-
 ### Basic Installation
 
 ```bash
-helm install my-controller haptic/haptic
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/haptic --version 0.1.0-alpha.1
 ```
 
 ### With Custom Values
@@ -56,7 +49,7 @@ helm install my-controller haptic/haptic \
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `replicaCount` | Number of controller replicas (2+ recommended for HA) | `2` |
-| `image.repository` | Controller image repository | `registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller` |
+| `image.repository` | Controller image repository | `registry.gitlab.com/haproxy-haptic/haptic` |
 | `image.tag` | Controller image tag | Chart appVersion |
 | `controller.templateLibraries.ingress.enabled` | Enable Ingress resource support | `true` |
 | `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTPRoute, GRPCRoute) | `true` |
@@ -1332,7 +1325,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `replicaCount` | int | `2` | Number of controller replicas (2+ recommended for HA with leader election) |
-| `image.repository` | string | `registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller` | Controller image repository |
+| `image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic` | Controller image repository |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `image.tag` | string | Chart appVersion | Controller image tag |
 | `imagePullSecrets` | list | `[]` | Image pull secrets for private registries |

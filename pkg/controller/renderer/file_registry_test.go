@@ -3,7 +3,7 @@ package renderer
 import (
 	"testing"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

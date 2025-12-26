@@ -29,7 +29,7 @@ Modify this package when:
 
 This is a **pure library** with zero dependencies on other pkg/ packages. It could be extracted and used in any Go project needing templating.
 
-Dependencies: Scriggo fork (from `gitlab.com/haproxy-template-ic/scriggo`) and standard library.
+Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`) and standard library.
 
 ## Package Structure
 
@@ -1112,7 +1112,7 @@ This project uses a forked version of Scriggo. The fork adds:
 The fork is available on GitLab and configured via a replace directive in go.mod:
 
 ```go
-replace github.com/open2b/scriggo => gitlab.com/haproxy-template-ic/scriggo v0.0.0-20251212162249-9274cec0fd7b
+replace github.com/open2b/scriggo => gitlab.com/haproxy-haptic/scriggo v0.0.0-20251212162249-9274cec0fd7b
 ```
 
 ### Include: Static vs Dynamic
@@ -1333,7 +1333,7 @@ Engines must:
 
 - API documentation: `pkg/templating/README.md`
 - Scriggo documentation: <https://scriggo.com/templates>
-- Scriggo fork: `gitlab.com/haproxy-template-ic/scriggo` (fork with `{% include %}` statement)
+- Scriggo fork: `gitlab.com/haproxy-haptic/scriggo` (fork with `{% include %}` statement)
 - Scriggo upstream documentation: <https://scriggo.com/templates>
 - Jinja2 template documentation: <https://jinja.palletsprojects.com/>
 - HAProxy template examples: `/examples/templates/`

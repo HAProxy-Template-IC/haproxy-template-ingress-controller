@@ -19,8 +19,8 @@ package v1alpha1
 import (
 	http "net/http"
 
-	haproxytemplatev1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
-	scheme "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned/scheme"
+	haproxytemplatev1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	scheme "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/scheme"
 	rest "k8s.io/client-go/rest"
 )
 

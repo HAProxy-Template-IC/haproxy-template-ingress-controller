@@ -21,13 +21,13 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/debug"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/resourcewatcher"
-	coreconfig "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/logging"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
-	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // Pipeline status constants.

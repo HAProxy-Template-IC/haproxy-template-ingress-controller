@@ -17,7 +17,7 @@ package metrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	pkgmetrics "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/metrics"
+	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
 )
 
 // Metrics holds all controller-specific Prometheus metrics.

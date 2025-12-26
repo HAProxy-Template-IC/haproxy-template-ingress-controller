@@ -452,7 +452,7 @@ pgo-profile: ## Collect CPU profile from dev environment for PGO
 	@echo ""
 	@echo "Prerequisites:"
 	@echo "  1. Dev environment running: ./scripts/start-dev-env.sh"
-	@echo "  2. Port-forward active: kubectl -n haproxy-template-ic port-forward deploy/haproxy-template-ic-controller 8080:8080"
+	@echo "  2. Port-forward active: kubectl -n haptic port-forward deploy/haptic-controller 8080:8080"
 	@echo ""
 	@echo "Starting profile collection (30 seconds)..."
 	curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30

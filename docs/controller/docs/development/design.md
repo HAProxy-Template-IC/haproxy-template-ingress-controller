@@ -86,7 +86,7 @@ Pure business logic components (templating, k8s, dataplane) have no event depend
 
 ### Package Documentation
 
-- [Controller Package](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/controller/README.md) - Event-driven controller implementation
-- [Template Engine](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/templating/README.md) - Template engine API reference
-- [Kubernetes Integration](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/k8s/README.md) - Resource watching and indexing API
-- [Dataplane Integration](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/dataplane/README.md) - HAProxy configuration synchronization
+- [Controller Package](https://gitlab.com/haproxy-haptic/HAPTIC/blob/main/pkg/controller/README.md) - Event-driven controller implementation
+- [Template Engine](https://gitlab.com/haproxy-haptic/HAPTIC/blob/main/pkg/templating/README.md) - Template engine API reference
+- [Kubernetes Integration](https://gitlab.com/haproxy-haptic/HAPTIC/blob/main/pkg/k8s/README.md) - Resource watching and indexing API
+- [Dataplane Integration](https://gitlab.com/haproxy-haptic/HAPTIC/blob/main/pkg/dataplane/README.md) - HAProxy configuration synchronization

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	v32 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32"
-	v32ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32ee"
+	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
+	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // CrtLoad represents a certificate load configuration within a crt-store.

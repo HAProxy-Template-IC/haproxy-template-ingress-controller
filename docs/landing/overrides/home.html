@@ -52,8 +52,9 @@
 </div>
 
 <div class="quick-start md-typeset">
-  <pre><code>helm repo add haptic https://haproxy-haptic.org/haproxy-template-ingress-controller/charts
-helm install haptic haptic/haptic
+  <pre><code>helm install \
+    haptic oci://registry.gitlab.com/haproxy-haptic/haptic/haptic \
+    --version 0.1.0-alpha.1
 kubectl get haproxytemplateconfig</code></pre>
 </div>
 

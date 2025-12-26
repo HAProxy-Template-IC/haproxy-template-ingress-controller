@@ -11,10 +11,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/client"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/indexer"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/store"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

@@ -6,7 +6,7 @@ import (
 	"context"
 	"time"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/tests/testutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // WaitConfig is an alias for testutil.WaitConfig for backward compatibility.

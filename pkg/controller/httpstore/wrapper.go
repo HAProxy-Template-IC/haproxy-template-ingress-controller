@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"time"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 )
 
 // HTTPStoreWrapper wraps HTTPStore for template access.

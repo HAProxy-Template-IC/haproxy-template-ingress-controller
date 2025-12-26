@@ -485,6 +485,6 @@ haproxyConfig:
 
 ## See Also
 
-- [Template Engine Reference](https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/blob/main/pkg/templating/README.md)
+- [Template Engine Reference](https://gitlab.com/haproxy-haptic/HAPTIC/blob/main/pkg/templating/README.md)
 - [Scriggo Documentation](https://scriggo.com/templates)
 - [HAProxy Configuration Manual](https://docs.haproxy.org/2.9/configuration.html)

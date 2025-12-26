@@ -3,7 +3,7 @@ package dataplane
 import (
 	"time"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
 
 // Endpoint represents HAProxy Dataplane API connection information.

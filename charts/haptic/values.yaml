@@ -19,7 +19,7 @@ commonAnnotations: {}
 replicaCount: 2
 # Controller image configuration
 image:
-  repository: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+  repository: registry.gitlab.com/haproxy-haptic/haptic
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion
   tag: ""

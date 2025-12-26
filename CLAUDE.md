@@ -140,14 +140,14 @@ glab ci lint .gitlab-ci.yml
 
 # Download job artifacts for debugging CI failures
 # Replace <JOB_ID> with the numeric job ID from the GitLab job URL
-glab api --method GET "projects/haproxy-template-ic%2Fhaproxy-template-ingress-controller/jobs/<JOB_ID>/artifacts" > artifacts.zip
+glab api --method GET "projects/haproxy-haptic%2Fhaptic/jobs/<JOB_ID>/artifacts" > artifacts.zip
 unzip artifacts.zip
 
 # View job trace/log
-glab api --method GET "projects/haproxy-template-ic%2Fhaproxy-template-ingress-controller/jobs/<JOB_ID>/trace"
+glab api --method GET "projects/haproxy-haptic%2Fhaptic/jobs/<JOB_ID>/trace"
 
 # Get job details (status, artifacts info, ref, etc)
-glab api projects/haproxy-template-ic%2Fhaproxy-template-ingress-controller/jobs/<JOB_ID>
+glab api projects/haproxy-haptic%2Fhaptic/jobs/<JOB_ID>
 ```
 
 ## Event-Driven Architecture Principles

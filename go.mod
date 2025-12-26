@@ -1,4 +1,4 @@
-module gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+module gitlab.com/haproxy-haptic/haptic
 
 go 1.25.5
 
@@ -32,7 +32,7 @@ require (
 // dynamic include capability, Jinja2-style whitespace control markers ({%- -%}),
 // fixes for variadic method calls, pipe operator with fallback filter, performance optimizations,
 // and parallel template rendering with go render and go render_glob
-replace github.com/open2b/scriggo => gitlab.com/haproxy-template-ic/scriggo v0.0.0-20251219191858-75e04d5e33d7
+replace github.com/open2b/scriggo => gitlab.com/haproxy-haptic/scriggo v0.0.0-20251219191858-75e04d5e33d7
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect

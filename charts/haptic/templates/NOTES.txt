@@ -110,4 +110,4 @@ Next Steps:
 {{- end }}
 
 For more information, visit:
-  https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+  https://gitlab.com/haproxy-haptic/HAPTIC

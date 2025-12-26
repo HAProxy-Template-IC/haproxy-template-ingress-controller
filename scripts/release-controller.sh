@@ -91,7 +91,7 @@ sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/haptic/Chart.yaml
 
 # Update Chart.yaml artifacthub.io/images annotation
 echo "Updating Chart.yaml artifacthub.io/images annotation..."
-sed -i "s|haproxy-template-ingress-controller:[0-9a-z.-]*|haproxy-template-ingress-controller:$VERSION|" charts/haptic/Chart.yaml
+sed -i "s|haptic:[0-9a-z.-]*|haptic:$VERSION|" charts/haptic/Chart.yaml
 
 # Show changes
 echo ""

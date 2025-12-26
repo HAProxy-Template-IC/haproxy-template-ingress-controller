@@ -70,7 +70,7 @@ dockers_v2:
     ids: [controller]
     dockerfile: Dockerfile
     images:
-      - "registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller"
+      - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.0"
     platforms:
@@ -88,7 +88,7 @@ dockers_v2:
     ids: [controller]
     dockerfile: Dockerfile
     images:
-      - "registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller"
+      - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.1"
     platforms:
@@ -106,7 +106,7 @@ dockers_v2:
     ids: [controller]
     dockerfile: Dockerfile
     images:
-      - "registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller"
+      - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.2"
       - "{{ .Version }}"
@@ -139,7 +139,7 @@ gitlab_urls:
 
 release:
   gitlab:
-    owner: haproxy-template-ic
+    owner: haproxy-haptic
     name: haproxy-template-ingress-controller
 
   # Automatically mark alpha/beta/rc versions as pre-release
