@@ -23,7 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
 // Test helper constants for mock server configuration.

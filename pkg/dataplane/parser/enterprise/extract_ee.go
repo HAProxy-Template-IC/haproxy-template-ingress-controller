@@ -12,7 +12,7 @@ import (
 	"github.com/haproxytech/client-native/v6/config-parser/parsers/extra"
 	cptypes "github.com/haproxytech/client-native/v6/config-parser/types"
 
-	v32ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32ee"
+	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // =============================================================================

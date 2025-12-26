@@ -15,7 +15,7 @@
 package main
 
 import (
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/tools/linters/eventimmutability"
+	"gitlab.com/haproxy-haptic/haptic/tools/linters/eventimmutability"
 
 	"golang.org/x/tools/go/analysis/singlechecker"
 )

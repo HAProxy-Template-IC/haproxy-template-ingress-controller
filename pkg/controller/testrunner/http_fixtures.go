@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 )
 
 // FixtureHTTPStoreWrapper wraps an HTTPStore pre-populated with fixtures for test execution.

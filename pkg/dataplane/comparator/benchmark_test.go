@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"testing"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
 // Package-level result sink prevents compiler dead code elimination.

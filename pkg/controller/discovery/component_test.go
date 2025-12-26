@@ -25,13 +25,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/testutil"
-	coreconfig "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
-	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/store"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
 // createTestComponent creates a new Component for testing, skipping if haproxy is not available.

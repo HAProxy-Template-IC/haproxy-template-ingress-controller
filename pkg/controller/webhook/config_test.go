@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
-	webhooklib "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/webhook"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	webhooklib "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
 func TestExtractWebhookRules(t *testing.T) {

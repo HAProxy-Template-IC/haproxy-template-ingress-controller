@@ -25,11 +25,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
-	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
-	crdclientfake "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned/fake"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/configpublisher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"

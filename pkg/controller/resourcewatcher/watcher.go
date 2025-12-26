@@ -34,12 +34,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
-	coreconfig "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
-	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/client"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/watcher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
 )
 
 // ResourceWatcherComponent creates and manages watchers for all configured resources.

@@ -1,6 +1,6 @@
 # pkg/controller
 
-Event-driven controller orchestration for haproxy-template-ingress-controller.
+Event-driven controller orchestration for HAPTIC.
 
 ## Overview
 

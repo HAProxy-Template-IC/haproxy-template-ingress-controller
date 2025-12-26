@@ -17,8 +17,8 @@
 package haproxytemplate
 
 import (
-	v1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/informers/externalversions/haproxytemplate/v1alpha1"
-	internalinterfaces "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/informers/externalversions/internalinterfaces"
+	v1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions/haproxytemplate/v1alpha1"
+	internalinterfaces "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to each of this group's versions.

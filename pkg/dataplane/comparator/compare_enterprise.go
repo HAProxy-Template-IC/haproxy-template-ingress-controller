@@ -11,9 +11,9 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/parser"
-	v32ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32ee"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // compareEnterpriseSections compares all Enterprise Edition sections.

@@ -34,10 +34,10 @@ import (
 	"runtime"
 	"sort"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/core/config"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // Builder constructs template rendering contexts with consistent structure.

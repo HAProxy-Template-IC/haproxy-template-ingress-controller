@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
 
 // testValidationPaths returns validation paths for testing using temporary directories.

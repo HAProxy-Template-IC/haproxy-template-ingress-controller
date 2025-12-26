@@ -24,12 +24,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/conversion"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/helpers"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/testrunner"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/templating"
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"

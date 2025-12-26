@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/client"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"

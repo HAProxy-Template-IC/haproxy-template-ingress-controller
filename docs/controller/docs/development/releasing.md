@@ -210,7 +210,7 @@ No manual tagging is required.
 When a `haptic-chart-v*` tag is pushed, CI will:
 
 1. **Package Helm chart** as OCI artifact
-2. **Push to GitLab registry** at `registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/charts`
+2. **Push to GitLab registry** at `registry.gitlab.com/haproxy-haptic/haptic/charts`
 3. **Sign with Cosign** (keyless)
 4. **Create GitLab release** with release notes from CHANGELOG.md
 5. **Trigger documentation build** with version tag
@@ -291,9 +291,9 @@ All artifacts are signed with [Cosign](https://github.com/sigstore/cosign) using
 
 ```bash
 cosign verify \
-  --certificate-identity-regexp='https://gitlab.com/haproxy-template-ic/.*' \
+  --certificate-identity-regexp='https://gitlab.com/haproxy-haptic/.*' \
   --certificate-oidc-issuer='https://gitlab.com' \
-  registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller:v0.1.0
+  registry.gitlab.com/haproxy-haptic/haptic:v0.1.0
 ```
 
 ### SBOM (Software Bill of Materials)
@@ -305,9 +305,9 @@ Each Docker image includes an SBOM attestation in SPDX format:
 ```bash
 cosign verify-attestation \
   --type spdxjson \
-  --certificate-identity-regexp='https://gitlab.com/haproxy-template-ic/.*' \
+  --certificate-identity-regexp='https://gitlab.com/haproxy-haptic/.*' \
   --certificate-oidc-issuer='https://gitlab.com' \
-  registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller:v0.1.0 \
+  registry.gitlab.com/haproxy-haptic/haptic:v0.1.0 \
   | jq -r '.payload' | base64 -d | jq '.predicate'
 ```
 

@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
-	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 func TestBasicValidatorComponent_New(t *testing.T) {

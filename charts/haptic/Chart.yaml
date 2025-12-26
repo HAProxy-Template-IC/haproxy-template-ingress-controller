@@ -10,16 +10,16 @@ keywords:
   - controller
   - loadbalancer
   - template
-home: https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+home: https://gitlab.com/haproxy-haptic/HAPTIC
 sources:
-  - https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+  - https://gitlab.com/haproxy-haptic/HAPTIC
 maintainers:
   - name: phihos
 annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller:0.1.0-alpha.1
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.1
       platforms:
         - linux/amd64
         - linux/arm64
@@ -52,9 +52,9 @@ annotations:
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller#readme
+      url: https://gitlab.com/haproxy-haptic/HAPTIC#readme
     - name: Issue Tracker
-      url: https://gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/-/issues
+      url: https://gitlab.com/haproxy-haptic/HAPTIC/-/issues
 
   # Recommendations
   artifacthub.io/recommendations: |

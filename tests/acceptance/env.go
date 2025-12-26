@@ -48,7 +48,7 @@ import (
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/tests/testutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // namespaceContextKey is a type-safe key for storing namespace in context.

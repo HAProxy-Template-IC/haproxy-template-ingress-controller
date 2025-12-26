@@ -27,7 +27,7 @@ variables:
   # renovate: datasource=docker depName=kindest/node
   KIND_NODE_VERSION: "v1.35.0"
   # Container registry
-  CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller
+  CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-haptic/haptic
   # Coverage packages (excludes generated code) - keep in sync with Makefile
   COVERAGE_PACKAGES: "./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/..."
   # Chart testing tool versions
@@ -287,7 +287,7 @@ api-compatibility:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   variables:
     # Required for gorelease to fetch the scriggo fork from GitLab
-    GOPRIVATE: gitlab.com/haproxy-template-ic/*
+    GOPRIVATE: gitlab.com/haproxy-haptic/*
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -1005,10 +1005,10 @@ release-chart:
     # Package and push chart to OCI registry
     - helm package charts/haptic --version $VERSION
     - |
-      helm push haptic-$VERSION.tgz oci://${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts 2>&1 | tee push-output.txt
+      helm push haptic-$VERSION.tgz oci://${CI_REGISTRY}/haproxy-haptic/haptic/charts 2>&1 | tee push-output.txt
       CHART_DIGEST=$(grep 'Digest:' push-output.txt | awk '{print $2}')
       # Sign the OCI artifact using digest (cosign doesn't support oci:// prefix)
-      cosign sign --yes ${CI_REGISTRY}/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic@${CHART_DIGEST}
+      cosign sign --yes ${CI_REGISTRY}/haproxy-haptic/haptic/charts/haptic@${CHART_DIGEST}
     # Create GitLab release
     - |
       RELEASE_NAME="Helm Chart ${VERSION}"
@@ -1041,7 +1041,7 @@ trigger-docs-controller-release:
   variables:
     DOC_VERSION: ${CI_COMMIT_TAG}
   trigger:
-    project: haproxy-template-ic/haproxy-template-ic.gitlab.io
+    project: haproxy-haptic/haproxy-haptic.gitlab.io
     branch: main
     strategy: depend
 
@@ -1057,7 +1057,7 @@ trigger-docs-chart-release:
   variables:
     DOC_VERSION: ${CI_COMMIT_TAG#haptic-chart-}
   trigger:
-    project: haproxy-template-ic/haproxy-template-ic.gitlab.io
+    project: haproxy-haptic/haproxy-haptic.gitlab.io
     branch: main
     strategy: depend
 
@@ -1083,11 +1083,29 @@ pages-preview:
         - charts/**/mkdocs.yml
   script:
     - |
-      # Clone pages repo to get deployment script and existing content
-      git clone --depth 1 https://gitlab.com/haproxy-template-ic/haproxy-template-ic.gitlab.io.git pages-repo
-    - |
-      # Use shared deployment script (same as production)
+      # Clone pages repo to get deployment script
+      git clone --depth 1 https://gitlab.com/haproxy-haptic/haproxy-haptic.gitlab.io.git pages-repo
       chmod +x pages-repo/scripts/deploy-docs.sh
+    - |
+      # Download production site from latest pages artifact
+      echo "Downloading production site from pages artifact..."
+      PAGES_PROJECT_ID="haproxy-haptic%2Fhaproxy-haptic.gitlab.io"
+      curl --location --output pages-artifact.zip \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        "https://gitlab.com/api/v4/projects/${PAGES_PROJECT_ID}/jobs/artifacts/main/download?job=pages"
+      unzip -q pages-artifact.zip
+      rm pages-artifact.zip
+    - |
+      # Set up versions backup for deploy script
+      mkdir -p /tmp/versions-backup
+      for prefix in controller helm-chart; do
+        if [ -f "public/${prefix}/versions.json" ]; then
+          cp "public/${prefix}/versions.json" "/tmp/versions-backup/${prefix}-versions.json"
+        fi
+      done
+      export VERSIONS_BACKUP_DIR="/tmp/versions-backup"
+
+      # Build dev docs on top of existing site
       pages-repo/scripts/deploy-docs.sh dev . ./public
     - echo "Preview available at ${CI_PAGES_URL}/"
   pages:
@@ -1132,7 +1150,7 @@ trigger-pages:
   inherit:
     variables: false
   trigger:
-    project: haproxy-template-ic/haproxy-template-ic.gitlab.io
+    project: haproxy-haptic/haproxy-haptic.gitlab.io
     branch: main
     strategy: depend
 

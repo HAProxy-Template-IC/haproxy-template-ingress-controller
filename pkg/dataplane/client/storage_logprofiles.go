@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"net/http"
 
-	v31 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v31"
-	v31ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v31ee"
-	v32 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32"
-	v32ee "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/dataplaneapi/v32ee"
+	v31 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31"
+	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
+	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
+	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // LogProfile represents a HAProxy log profile configuration.

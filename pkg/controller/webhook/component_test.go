@@ -26,9 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
-	busevents "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/events"
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/webhook"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
 // testLogger creates a slog logger for tests that discards output.

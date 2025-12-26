@@ -4,7 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
 // CompareSSLCaFiles compares the current state of SSL CA files in HAProxy storage

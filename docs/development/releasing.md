@@ -214,7 +214,7 @@ Install from OCI registry:
 
 ```bash
 helm install haproxy-ic \
-  oci://registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic \
+  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.1.0
 ```
 
@@ -237,14 +237,14 @@ sha256sum -c checksums.txt
 ### Verify Docker Images
 
 ```bash
-cosign verify registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller:v0.1.0
+cosign verify registry.gitlab.com/haproxy-haptic/haptic:v0.1.0
 ```
 
 ### Verify Helm Chart
 
 ```bash
 cosign verify \
-  oci://registry.gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/charts/haptic:0.1.0
+  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic:0.1.0
 ```
 
 ## Version Compatibility Matrix

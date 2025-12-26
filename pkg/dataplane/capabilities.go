@@ -14,7 +14,7 @@
 
 package dataplane
 
-import "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/client"
+import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 
 // Capabilities defines which features are available for a given HAProxy/DataPlane API version.
 // This type is re-exported from pkg/dataplane/client for convenience.

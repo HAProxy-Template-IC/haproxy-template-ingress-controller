@@ -26,7 +26,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/tests/testutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // DebugClient provides access to the controller's debug HTTP server via Kubernetes API proxy.

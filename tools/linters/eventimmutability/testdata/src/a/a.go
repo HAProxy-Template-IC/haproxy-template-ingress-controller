@@ -3,7 +3,7 @@ package a
 import (
 	"time"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 )
 
 // Violation: Direct field mutation

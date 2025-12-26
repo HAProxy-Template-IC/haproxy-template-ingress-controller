@@ -2,7 +2,7 @@
 
 ## Overview
 
-The haproxy-template-ingress-controller is a Kubernetes operator that manages HAProxy load balancer configurations through template-driven configuration generation. The system continuously monitors Kubernetes resources and translates them into HAProxy configuration files using a powerful templating engine.
+HAPTIC is a Kubernetes operator that manages HAProxy load balancer configurations through template-driven configuration generation. The system continuously monitors Kubernetes resources and translates them into HAProxy configuration files using a powerful templating engine.
 
 **Core Capabilities:**
 

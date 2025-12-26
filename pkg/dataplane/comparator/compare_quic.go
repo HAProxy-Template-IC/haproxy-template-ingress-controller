@@ -3,7 +3,7 @@ package comparator
 import (
 	"github.com/haproxytech/client-native/v6/models"
 
-	"gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 )
 
 // compareQUICInitialRules compares QUIC initial rule configurations within a frontend or defaults.

@@ -5,8 +5,8 @@
 ARG PYTHON_VERSION=3.14
 FROM python:${PYTHON_VERSION}-slim
 
-# Install git and curl (needed for MR previews)
-RUN apt-get update && apt-get install -y --no-install-recommends git curl \
+# Install git, curl, jq, and unzip (needed for MR previews and version management)
+RUN apt-get update && apt-get install -y --no-install-recommends git curl jq unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install MkDocs with Material theme and versioning support

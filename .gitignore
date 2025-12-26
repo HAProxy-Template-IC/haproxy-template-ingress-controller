@@ -77,4 +77,4 @@ tmp/
 
 # Copied shared CSS files (source of truth is docs/shared/colors.css)
 docs/controller/docs/stylesheets/colors.css
-charts/haproxy-template-ic/docs/stylesheets/colors.css
+charts/haptic/docs/stylesheets/colors.css

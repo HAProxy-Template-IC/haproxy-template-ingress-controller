@@ -20,10 +20,10 @@ import (
 	context "context"
 	time "time"
 
-	apishaproxytemplatev1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/apis/haproxytemplate/v1alpha1"
-	versioned "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/clientset/versioned"
-	internalinterfaces "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/informers/externalversions/internalinterfaces"
-	haproxytemplatev1alpha1 "gitlab.com/haproxy-template-ic/haproxy-template-ingress-controller/pkg/generated/listers/haproxytemplate/v1alpha1"
+	apishaproxytemplatev1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	versioned "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
+	internalinterfaces "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions/internalinterfaces"
+	haproxytemplatev1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/generated/listers/haproxytemplate/v1alpha1"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
