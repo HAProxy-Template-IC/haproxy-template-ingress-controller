@@ -140,7 +140,7 @@ gitlab_urls:
 release:
   gitlab:
     owner: haproxy-haptic
-    name: haproxy-template-ingress-controller
+    name: haptic
 
   # Automatically mark alpha/beta/rc versions as pre-release
   prerelease: auto
