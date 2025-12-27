@@ -10,9 +10,9 @@ keywords:
   - controller
   - loadbalancer
   - template
-home: https://gitlab.com/haproxy-haptic/HAPTIC
+home: https://gitlab.com/haproxy-haptic/haptic
 sources:
-  - https://gitlab.com/haproxy-haptic/HAPTIC
+  - https://gitlab.com/haproxy-haptic/haptic
 maintainers:
   - name: phihos
 annotations:
@@ -52,9 +52,9 @@ annotations:
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://gitlab.com/haproxy-haptic/HAPTIC#readme
+      url: https://gitlab.com/haproxy-haptic/haptic#readme
     - name: Issue Tracker
-      url: https://gitlab.com/haproxy-haptic/HAPTIC/-/issues
+      url: https://gitlab.com/haproxy-haptic/haptic/-/issues
 
   # Recommendations
   artifacthub.io/recommendations: |

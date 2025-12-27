@@ -11,11 +11,11 @@ require (
 	github.com/haproxytech/client-native/v6 v6.2.6
 	github.com/oapi-codegen/oapi-codegen/v2 v2.5.1
 	github.com/oapi-codegen/runtime v1.1.2
-	github.com/open2b/scriggo v0.60.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	gitlab.com/haproxy-haptic/scriggo v0.0.0-20251227120533-52b3ee48c41f
 	golang.org/x/sync v0.19.0
 	golang.org/x/vuln v1.1.4
 	gopkg.in/yaml.v3 v3.0.1
@@ -27,12 +27,6 @@ require (
 	sigs.k8s.io/kind v0.31.0
 	sigs.k8s.io/yaml v1.6.0
 )
-
-// Use GitLab fork of Scriggo with Jinja2-compliant {% include %} statement support,
-// dynamic include capability, Jinja2-style whitespace control markers ({%- -%}),
-// fixes for variadic method calls, pipe operator with fallback filter, performance optimizations,
-// and parallel template rendering with go render and go render_glob
-replace github.com/open2b/scriggo => gitlab.com/haproxy-haptic/scriggo v0.0.0-20251219191858-75e04d5e33d7
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect

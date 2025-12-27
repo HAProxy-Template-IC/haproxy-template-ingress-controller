@@ -3,7 +3,7 @@ site_url: https://haproxy-haptic.org/helm-chart/
 site_description: Helm chart for HAPTIC (HAProxy Template Ingress Controller)
 
 repo_name: haproxy-haptic/haptic
-repo_url: https://gitlab.com/haproxy-haptic/HAPTIC
+repo_url: https://gitlab.com/haproxy-haptic/haptic
 
 docs_dir: docs
 

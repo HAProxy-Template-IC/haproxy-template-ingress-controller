@@ -87,7 +87,7 @@ This fix resolves issues where valid HAProxy configurations were rejected during
 
 **Decision**: Use Scriggo, a Go-native template engine with dynamic include support.
 
-**Selected**: Scriggo (github.com/open2b/scriggo)
+**Selected**: Scriggo (gitlab.com/haproxy-haptic/scriggo)
 
 **Rationale**:
 

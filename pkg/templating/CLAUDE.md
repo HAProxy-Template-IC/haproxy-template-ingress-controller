@@ -1112,7 +1112,7 @@ This project uses a forked version of Scriggo. The fork adds:
 The fork is available on GitLab and configured via a replace directive in go.mod:
 
 ```go
-replace github.com/open2b/scriggo => gitlab.com/haproxy-haptic/scriggo v0.0.0-20251212162249-9274cec0fd7b
+replace gitlab.com/haproxy-haptic/scriggo => gitlab.com/haproxy-haptic/scriggo v0.0.0-20251212162249-9274cec0fd7b
 ```
 
 ### Include: Static vs Dynamic

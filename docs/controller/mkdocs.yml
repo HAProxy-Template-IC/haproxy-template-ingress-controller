@@ -3,7 +3,7 @@ site_url: https://haproxy-haptic.org/controller/
 site_description: HAPTIC - Template-driven HAProxy Ingress Controller for Kubernetes
 
 repo_name: haproxy-haptic/haptic
-repo_url: https://gitlab.com/haproxy-haptic/HAPTIC
+repo_url: https://gitlab.com/haproxy-haptic/haptic
 
 docs_dir: docs
 
