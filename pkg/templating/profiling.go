@@ -18,7 +18,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/open2b/scriggo"
+	"gitlab.com/haproxy-haptic/scriggo"
 )
 
 // ProfilingEntry represents timing for a single template include/render.

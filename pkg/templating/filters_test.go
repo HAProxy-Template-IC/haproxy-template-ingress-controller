@@ -22,6 +22,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSanitizeStorageName tests the filename sanitization for Dataplane API storage.
+func TestSanitizeStorageName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "simple domain with extension",
+			input: "example.com.pem",
+			want:  "example_com.pem",
+		},
+		{
+			name:  "subdomain with extension",
+			input: "sub.example.com.pem",
+			want:  "sub_example_com.pem",
+		},
+		{
+			name:  "namespace_secret pattern (no dots in name)",
+			input: "keycloak_keycloak-tls.pem",
+			want:  "keycloak_keycloak-tls.pem",
+		},
+		{
+			name:  "namespace_secret.domain pattern",
+			input: "keycloak_sso.example.com-tls.pem",
+			want:  "keycloak_sso_example_com-tls.pem",
+		},
+		{
+			name:  "multiple dots - last is treated as extension",
+			input: "no.extension.here",
+			want:  "no_extension.here", // .here is the extension, only basename dots replaced
+		},
+		{
+			name:  "no dots - unchanged",
+			input: "nodots.pem",
+			want:  "nodots.pem",
+		},
+		{
+			name:  "crt-list file with domain",
+			input: "example.com.crtlist",
+			want:  "example_com.crtlist",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeStorageName(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestPathResolver_GetPath(t *testing.T) {
 	resolver := &PathResolver{
 		MapsDir:    "/etc/haproxy/maps",
@@ -60,6 +117,52 @@ func TestPathResolver_GetPath(t *testing.T) {
 			filename: "certificate-list.txt",
 			args:     []interface{}{"crt-list"},
 			want:     "/etc/haproxy/ssl/certificate-list.txt",
+		},
+		// Sanitization tests for SSL certificates
+		{
+			name:     "ssl certificate with domain dots - sanitized",
+			filename: "example.com.pem",
+			args:     []interface{}{"cert"},
+			want:     "/etc/haproxy/ssl/example_com.pem",
+		},
+		{
+			name:     "ssl certificate with subdomain - sanitized",
+			filename: "sub.example.com.pem",
+			args:     []interface{}{"cert"},
+			want:     "/etc/haproxy/ssl/sub_example_com.pem",
+		},
+		{
+			name:     "ssl certificate production pattern - sanitized",
+			filename: "keycloak_sso.example.com-tls.pem",
+			args:     []interface{}{"cert"},
+			want:     "/etc/haproxy/ssl/keycloak_sso_example_com-tls.pem",
+		},
+		// Sanitization tests for CRT-list files
+		{
+			name:     "crt-list with domain dots - sanitized",
+			filename: "example.com.crtlist",
+			args:     []interface{}{"crt-list"},
+			want:     "/etc/haproxy/ssl/example_com.crtlist",
+		},
+		// Map files should NOT be sanitized
+		{
+			name:     "map file with dots - NOT sanitized",
+			filename: "domain.map",
+			args:     []interface{}{"map"},
+			want:     "/etc/haproxy/maps/domain.map",
+		},
+		{
+			name:     "map file with multiple dots - NOT sanitized",
+			filename: "sub.domain.com.map",
+			args:     []interface{}{"map"},
+			want:     "/etc/haproxy/maps/sub.domain.com.map",
+		},
+		// General files should NOT be sanitized
+		{
+			name:     "general file with dots - NOT sanitized",
+			filename: "error.page.http",
+			args:     []interface{}{"file"},
+			want:     "/etc/haproxy/general/error.page.http",
 		},
 		{
 			name:     "empty filename returns directory",

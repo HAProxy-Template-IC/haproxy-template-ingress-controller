@@ -23,6 +23,29 @@ import (
 	"strings"
 )
 
+// sanitizeStorageName sanitizes a filename for HAProxy Dataplane API storage.
+// The API replaces dots in the filename (excluding the extension) with underscores.
+// For example: "example.com.pem" becomes "example_com.pem".
+// This applies to SSL certificates and CRT-list files.
+//
+// This duplicates the logic from pkg/dataplane/client/storage_helpers.go to avoid
+// introducing a dependency on the dataplane package (pkg/templating is a pure library).
+func sanitizeStorageName(name string) string {
+	ext := filepath.Ext(name)
+	if ext == "" {
+		// No extension, replace all dots
+		return strings.ReplaceAll(name, ".", "_")
+	}
+
+	// Get the base name without extension
+	base := strings.TrimSuffix(name, ext)
+
+	// Replace dots in the base name with underscores
+	sanitizedBase := strings.ReplaceAll(base, ".", "_")
+
+	return sanitizedBase + ext
+}
+
 // PathResolver resolves auxiliary file names to absolute paths based on file type.
 // This is used via the GetPath method in templates to automatically construct absolute paths
 // for HAProxy auxiliary files (maps, SSL certificates, crt-list files, general files).
@@ -100,6 +123,12 @@ func (pr *PathResolver) GetPath(args ...interface{}) (interface{}, error) {
 	// If filename is empty, return just the base directory
 	if filenameStr == "" {
 		return basePath, nil
+	}
+
+	// For SSL certificates and CRT-list files, sanitize the filename to match
+	// HAProxy Dataplane API behavior (dots replaced with underscores in basename)
+	if fileTypeStr == "cert" || fileTypeStr == "crt-list" {
+		filenameStr = sanitizeStorageName(filenameStr)
 	}
 
 	// Construct absolute path

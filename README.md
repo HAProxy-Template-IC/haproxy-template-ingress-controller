@@ -6,9 +6,9 @@
 
 </div>
 
-[![License](https://gitlab.com/haproxy-haptic/HAPTIC/-/badges/custom.svg?key_text=License&key_width=60&value_text=Apache%202.0&value_width=80&key_color=555&value_color=007ec6)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://gitlab.com/haproxy-haptic/HAPTIC/badges/main/pipeline.svg)](https://gitlab.com/haproxy-haptic/HAPTIC/-/pipelines)
-[![Coverage](https://gitlab.com/haproxy-haptic/HAPTIC/badges/main/coverage.svg)](https://gitlab.com/haproxy-haptic/HAPTIC/-/graphs/main/charts)
+[![License](https://gitlab.com/haproxy-haptic/haptic/-/badges/custom.svg?key_text=License&key_width=60&value_text=Apache%202.0&value_width=80&key_color=555&value_color=007ec6)](https://opensource.org/licenses/Apache-2.0)
+[![Build Status](https://gitlab.com/haproxy-haptic/haptic/badges/main/pipeline.svg)](https://gitlab.com/haproxy-haptic/haptic/-/pipelines)
+[![Coverage](https://gitlab.com/haproxy-haptic/haptic/badges/main/coverage.svg)](https://gitlab.com/haproxy-haptic/haptic/-/graphs/main/charts)
 
 **HAPTIC** (**HA**Proxy **T**emplate **I**ngress **C**ontroller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 

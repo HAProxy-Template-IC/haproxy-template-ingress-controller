@@ -110,4 +110,4 @@ Next Steps:
 {{- end }}
 
 For more information, visit:
-  https://gitlab.com/haproxy-haptic/HAPTIC
+  https://gitlab.com/haproxy-haptic/haptic
