@@ -172,4 +172,11 @@ const (
 	// Used for parallel template rendering where work is split across goroutines.
 	// Syntax: shard_slice(items, shardIndex, totalShards) returns []any.
 	FuncShardSlice = "shard_slice"
+
+	// Path utility functions.
+
+	// funcBasename extracts the filename from a path (like Unix basename command).
+	// Useful for extracting sanitized filenames from paths returned by fileRegistry.Register().
+	// Syntax: basename(path) returns string.
+	funcBasename = "basename"
 )
