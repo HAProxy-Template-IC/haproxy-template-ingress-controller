@@ -54,7 +54,7 @@
 <div class="quick-start md-typeset">
   <pre><code>helm install \
     haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-    --version 0.1.0-alpha.1
+    --version <span id="helm-version">0.1.0-alpha.3</span>
 kubectl get haproxytemplateconfig</code></pre>
 </div>
 
@@ -94,7 +94,21 @@ kubectl get haproxytemplateconfig</code></pre>
       document.getElementById(elementId).innerHTML = '<span style="color:#888">No versions published yet</span>';
     }
   }
+  async function updateQuickStartVersion() {
+    try {
+      const res = await fetch('./helm-chart/versions.json');
+      if (!res.ok) throw new Error('Not found');
+      const versions = await res.json();
+      const latest = versions.find(v => v.aliases && v.aliases.includes('latest')) || versions[0];
+      if (latest) {
+        document.getElementById('helm-version').textContent = latest.version;
+      }
+    } catch (e) {
+      // Keep default version if fetch fails
+    }
+  }
   loadVersions('controller', 'controller-versions');
   loadVersions('helm-chart', 'helm-versions');
+  updateQuickStartVersion();
 </script>
 {% endblock %}
