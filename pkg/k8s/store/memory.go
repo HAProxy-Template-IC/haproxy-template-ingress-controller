@@ -69,6 +69,17 @@ func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
 			// Return copy to prevent external modification
 			result := make([]interface{}, len(items))
 			copy(result, items)
+
+			// Sort for deterministic order (same as List())
+			sort.Slice(result, func(i, j int) bool {
+				nsI, nameI := extractNamespaceName(result[i])
+				nsJ, nameJ := extractNamespaceName(result[j])
+				if nsI != nsJ {
+					return nsI < nsJ
+				}
+				return nameI < nameJ
+			})
+
 			return result, nil
 		}
 		return []interface{}{}, nil
@@ -84,6 +95,16 @@ func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
 			results = append(results, items...)
 		}
 	}
+
+	// Sort for deterministic order (same as List())
+	sort.Slice(results, func(i, j int) bool {
+		nsI, nameI := extractNamespaceName(results[i])
+		nsJ, nameJ := extractNamespaceName(results[j])
+		if nsI != nsJ {
+			return nsI < nsJ
+		}
+		return nameI < nameJ
+	})
 
 	return results, nil
 }

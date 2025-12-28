@@ -826,7 +826,7 @@ func (o *orchestrator) executeConfigOperations(
 	// If there are no config operations, skip sync entirely (no reload needed)
 	// This happens when only auxiliary files changed
 	if len(diff.Operations) == 0 {
-		o.logger.Info("No configuration operations to execute (auxiliary files only)")
+		o.logger.Debug("No configuration operations to execute (auxiliary files only)")
 		return nil, false, "", 0, nil
 	}
 

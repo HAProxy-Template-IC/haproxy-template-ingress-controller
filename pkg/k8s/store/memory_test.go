@@ -716,3 +716,126 @@ func TestMemoryStore_UpdateCreatesIfNotExists(t *testing.T) {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
 }
+
+// TestMemoryStore_GetReturnsSortedResults verifies that Get() returns results
+// sorted by namespace and name for deterministic ordering.
+// This is critical for HAProxy server slot ordering.
+func TestMemoryStore_GetReturnsSortedResults(t *testing.T) {
+	store := NewMemoryStore(1)
+
+	// Add resources in intentionally random order (by name: c, a, b, e, d)
+	// to verify that Get() returns them sorted
+	resources := []map[string]interface{}{
+		{
+			"metadata": map[string]interface{}{
+				"namespace": "default",
+				"name":      "slice-c",
+			},
+		},
+		{
+			"metadata": map[string]interface{}{
+				"namespace": "default",
+				"name":      "slice-a",
+			},
+		},
+		{
+			"metadata": map[string]interface{}{
+				"namespace": "default",
+				"name":      "slice-b",
+			},
+		},
+		{
+			"metadata": map[string]interface{}{
+				"namespace": "default",
+				"name":      "slice-e",
+			},
+		},
+		{
+			"metadata": map[string]interface{}{
+				"namespace": "default",
+				"name":      "slice-d",
+			},
+		},
+	}
+
+	for _, res := range resources {
+		if err := store.Add(res, []string{"nginx"}); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+
+	// Get all resources - should be sorted by name
+	results, err := store.Get("nginx")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+
+	if len(results) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(results))
+	}
+
+	// Verify they are in sorted order (a, b, c, d, e)
+	expectedOrder := []string{"slice-a", "slice-b", "slice-c", "slice-d", "slice-e"}
+	for i, res := range results {
+		r := res.(map[string]interface{})
+		metadata := r["metadata"].(map[string]interface{})
+		name := metadata["name"].(string)
+		if name != expectedOrder[i] {
+			t.Errorf("position %d: expected %q, got %q", i, expectedOrder[i], name)
+		}
+	}
+}
+
+// TestMemoryStore_GetReturnsSortedResultsPartialMatch verifies that partial
+// key matching also returns results in sorted order.
+func TestMemoryStore_GetReturnsSortedResultsPartialMatch(t *testing.T) {
+	store := NewMemoryStore(2)
+
+	// Add resources across namespaces in random order
+	resources := []struct {
+		namespace string
+		name      string
+	}{
+		{"default", "z-last"},
+		{"alpha", "first"},
+		{"beta", "middle"},
+		{"default", "a-first"},
+		{"alpha", "second"},
+	}
+
+	for _, r := range resources {
+		res := map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"namespace": r.namespace,
+				"name":      r.name,
+			},
+		}
+		if err := store.Add(res, []string{r.namespace, r.name}); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+
+	// Get all (partial match with empty returns all via List() behavior, so use namespace)
+	// Test partial match: get all in "default" namespace
+	results, err := store.Get("default")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results for 'default' namespace, got %d", len(results))
+	}
+
+	// Verify sorted order: a-first, z-last
+	r0 := results[0].(map[string]interface{})
+	r1 := results[1].(map[string]interface{})
+	name0 := r0["metadata"].(map[string]interface{})["name"].(string)
+	name1 := r1["metadata"].(map[string]interface{})["name"].(string)
+
+	if name0 != "a-first" {
+		t.Errorf("position 0: expected 'a-first', got %q", name0)
+	}
+	if name1 != "z-last" {
+		t.Errorf("position 1: expected 'z-last', got %q", name1)
+	}
+}

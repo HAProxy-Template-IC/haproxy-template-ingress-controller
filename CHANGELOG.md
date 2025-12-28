@@ -9,6 +9,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Resource store ordering**: Ensure deterministic ordering when querying resources for consistent HAProxy server slot assignment
+
 ## [0.1.0-alpha.2] - 2025-12-28
 
 ### Fixed
