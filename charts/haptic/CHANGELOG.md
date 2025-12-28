@@ -9,6 +9,12 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Service configuration values now rendered in templates (previously defined but unused):
+  - Controller service: `clusterIP`, `loadBalancerIP`, `loadBalancerSourceRanges`, `loadBalancerClass`, `externalTrafficPolicy`, `internalTrafficPolicy`, `sessionAffinity`, `sessionAffinityConfig`, `annotations`
+  - HAProxy service: `loadBalancerIP`, `loadBalancerSourceRanges`, `loadBalancerClass`, `externalTrafficPolicy`, `internalTrafficPolicy`, `healthCheckNodePort`, `publishNotReadyAddresses`
+
 ## [0.1.0-alpha.2] - 2025-12-28
 
 ### Changed

@@ -1,0 +1,170 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: haproxy service
+templates:
+  - haproxy-service.yaml
+tests:
+  - it: should render haproxy service with correct kind
+    asserts:
+      - isKind:
+          of: Service
+        documentIndex: 0
+
+  - it: should create NodePort service by default
+    asserts:
+      - equal:
+          path: spec.type
+          value: NodePort
+        documentIndex: 0
+
+  - it: should expose http port
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: http
+            port: 80
+            targetPort: http
+            protocol: TCP
+            nodePort: 30080
+        documentIndex: 0
+
+  - it: should expose https port
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: https
+            port: 443
+            targetPort: https
+            protocol: TCP
+            nodePort: 30443
+        documentIndex: 0
+
+  - it: should expose stats port
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: stats
+            port: 8404
+            targetPort: stats
+            protocol: TCP
+            nodePort: 30404
+        documentIndex: 0
+
+  - it: should use custom service type when specified
+    set:
+      haproxy.service.type: LoadBalancer
+    asserts:
+      - equal:
+          path: spec.type
+          value: LoadBalancer
+        documentIndex: 0
+
+  - it: should render annotations when specified
+    set:
+      haproxy.service.annotations:
+        service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    asserts:
+      - equal:
+          path: metadata.annotations["service.beta.kubernetes.io/aws-load-balancer-type"]
+          value: "nlb"
+        documentIndex: 0
+
+  - it: should include standard labels
+    asserts:
+      - exists:
+          path: metadata.labels["app.kubernetes.io/name"]
+        documentIndex: 0
+      - exists:
+          path: metadata.labels["app.kubernetes.io/instance"]
+        documentIndex: 0
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: loadbalancer
+        documentIndex: 0
+
+  # Tests for service configuration values that should be rendered
+  - it: should render loadBalancerIP when type is LoadBalancer
+    set:
+      haproxy.service.type: LoadBalancer
+      haproxy.service.loadBalancerIP: "192.168.1.100"
+    asserts:
+      - equal:
+          path: spec.loadBalancerIP
+          value: "192.168.1.100"
+        documentIndex: 0
+
+  - it: should render loadBalancerSourceRanges when type is LoadBalancer
+    set:
+      haproxy.service.type: LoadBalancer
+      haproxy.service.loadBalancerSourceRanges:
+        - "10.0.0.0/8"
+        - "192.168.0.0/16"
+    asserts:
+      - equal:
+          path: spec.loadBalancerSourceRanges
+          value:
+            - "10.0.0.0/8"
+            - "192.168.0.0/16"
+        documentIndex: 0
+
+  - it: should render loadBalancerClass when type is LoadBalancer
+    set:
+      haproxy.service.type: LoadBalancer
+      haproxy.service.loadBalancerClass: "service.k8s.aws/nlb"
+    asserts:
+      - equal:
+          path: spec.loadBalancerClass
+          value: "service.k8s.aws/nlb"
+        documentIndex: 0
+
+  - it: should render externalTrafficPolicy when specified
+    set:
+      haproxy.service.type: LoadBalancer
+      haproxy.service.externalTrafficPolicy: Local
+    asserts:
+      - equal:
+          path: spec.externalTrafficPolicy
+          value: Local
+        documentIndex: 0
+
+  - it: should render internalTrafficPolicy when specified
+    set:
+      haproxy.service.internalTrafficPolicy: Local
+    asserts:
+      - equal:
+          path: spec.internalTrafficPolicy
+          value: Local
+        documentIndex: 0
+
+  - it: should render healthCheckNodePort when specified with Local traffic policy
+    set:
+      haproxy.service.type: LoadBalancer
+      haproxy.service.externalTrafficPolicy: Local
+      haproxy.service.healthCheckNodePort: 32000
+    asserts:
+      - equal:
+          path: spec.healthCheckNodePort
+          value: 32000
+        documentIndex: 0
+
+  - it: should render publishNotReadyAddresses when set to true
+    set:
+      haproxy.service.publishNotReadyAddresses: true
+    asserts:
+      - equal:
+          path: spec.publishNotReadyAddresses
+          value: true
+        documentIndex: 0
+
+  # Test for dataplane service (second document)
+  - it: should render dataplane service
+    asserts:
+      - isKind:
+          of: Service
+        documentIndex: 1
+      - matchRegex:
+          path: metadata.name
+          pattern: ".*-haproxy-dataplane$"
+        documentIndex: 1
