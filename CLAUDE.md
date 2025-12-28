@@ -691,6 +691,8 @@ func (c *Component) Start(ctx context.Context) error {
 
 The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the controller software.
 
+**Every notable change must have a changelog entry.** Keep entries concise - one line per change, focus on what changed, not implementation details.
+
 **Include:**
 
 - New features and capabilities (what the controller can do)
@@ -699,12 +701,14 @@ The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the c
 - Metrics and observability features
 - Security-related changes
 
-**Exclude:**
+**Exclude (not notable):**
 
+- Test additions or fixes
+- Lint fixes
+- CI/CD pipeline fixes
 - Helm chart value names and paths (belong in chart CHANGELOG)
 - Default values and replica counts (belong in chart CHANGELOG)
 - Development scripts and tooling
-- CI/CD pipeline details
 - Internal testing infrastructure
 
 For Helm chart changes, see `charts/haptic/CHANGELOG.md`.

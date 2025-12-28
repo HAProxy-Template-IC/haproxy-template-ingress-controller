@@ -85,11 +85,13 @@ templateSnippets:
       {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) -%}
       {%- for _, tlsCert := range tlsCerts -%}
         {%- var tc map[string]any = tlsCert -%}
-        {%- var certFilename = tc["secret_namespace"] + "_" + tc["secret_name"] + ".pem" -%}
+        {# Use sanitized_filename from the registration (set by ingress.yaml/gateway.yaml) #}
+        {# This ensures the crt-list references the actual filename on disk after HAProxy sanitization #}
+        {%- var certFilename = tc["sanitized_filename"] | fallback(tc["secret_namespace"] + "_" + tc["secret_name"] + ".pem") -%}
         {# Paths in crt-list are relative to crt-base, so just use filename #}
         {%- var sslOptions = "[ocsp-update on]" -%}
         {%- var sniList = tc["sni_patterns"] | toStringSlice() | join(" ") -%}
-        {%- var line = certFilename + " " + sslOptions + " " + sniList -%}
+        {%- var line = tostring(certFilename) + " " + sslOptions + " " + sniList -%}
         {%- crtlistLines = append(crtlistLines, line) -%}
       {%- end -%}
 
@@ -269,13 +271,15 @@ validationTests:
     description: Global SSL test fixtures
     fixtures:
       secrets:
-        # Provide default SSL certificate in both common namespaces for test flexibility
+        # Provide default SSL certificate in the Helm release namespace (haproxy-haptic)
+        # This is required for all tests since the default SSL certificate template
+        # uses .Release.Namespace as the default namespace
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
           metadata:
             name: default-ssl-cert
-            namespace: haptic
+            namespace: haproxy-haptic
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
@@ -339,3 +343,82 @@ validationTests:
         target: crt-list:certificate-list.txt
         pattern: "^\\s*$"
         description: CRT-list must not contain empty lines
+
+  test-ssl-certificate-dots-in-name:
+    description: SSL certificate with dots in secret name must use sanitized filename
+    fixtures:
+      secrets:
+        # Default SSL certificate (required by HTTPS frontend)
+        # Uses haproxy-haptic namespace (Helm default release namespace)
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: default-ssl-cert
+            namespace: haproxy-haptic
+          data:
+            tls.crt: *test_tls_crt
+            tls.key: *test_tls_key
+        # TLS secret with dots in the name - this is valid in Kubernetes
+        # (secret names allow alphanumeric, '-', and '.')
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: api.example.com-tls
+            namespace: default
+          data:
+            tls.crt: *test_tls_crt
+            tls.key: *test_tls_key
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: api-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-service
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: api-ingress
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts:
+                  - api.example.com
+                secretName: api.example.com-tls
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: api-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid (certificate file must be found with sanitized name)
+
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: "default_api_example_com-tls\\.pem"
+        description: CRT-list must reference sanitized filename (underscores replace dots in secret name)

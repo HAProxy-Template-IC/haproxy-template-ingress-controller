@@ -19,29 +19,39 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
+// sanitizeStorageNameRegex matches all characters that are NOT alphanumeric, underscore, or hyphen.
+// This regex mirrors the HAProxy client-native library's misc.SanitizeFilename behavior.
+// See: github.com/haproxytech/client-native/v6/misc/stringutil.go (lines 220-245).
+var sanitizeStorageNameRegex = regexp.MustCompile(`[^a-zA-Z0-9_\-]+`)
+
 // sanitizeStorageName sanitizes a filename for HAProxy Dataplane API storage.
-// The API replaces dots in the filename (excluding the extension) with underscores.
-// For example: "example.com.pem" becomes "example_com.pem".
-// This applies to SSL certificates and CRT-list files.
+// The client-native library replaces ALL non-alphanumeric characters (except underscore and hyphen)
+// with underscores in the basename, preserving the extension.
 //
-// This duplicates the logic from pkg/dataplane/client/storage_helpers.go to avoid
-// introducing a dependency on the dataplane package (pkg/templating is a pure library).
+// Examples:
+//   - "api.example.com.pem" becomes "api_example_com.pem"
+//   - "my-service.pem" becomes "my-service.pem" (hyphen preserved)
+//   - "namespace_name.pem" becomes "namespace_name.pem" (underscore preserved)
+//   - "file with spaces.pem" becomes "file_with_spaces.pem"
+//
+// This replicates the logic from github.com/haproxytech/client-native/v6/misc/stringutil.go
+// to avoid introducing a dependency on the dataplane package (pkg/templating is a pure library).
 func sanitizeStorageName(name string) string {
 	ext := filepath.Ext(name)
-	if ext == "" {
-		// No extension, replace all dots
-		return strings.ReplaceAll(name, ".", "_")
-	}
 
 	// Get the base name without extension
-	base := strings.TrimSuffix(name, ext)
+	base := name
+	if ext != "" {
+		base = strings.TrimSuffix(name, ext)
+	}
 
-	// Replace dots in the base name with underscores
-	sanitizedBase := strings.ReplaceAll(base, ".", "_")
+	// Replace all non-alphanumeric characters (except _ and -) with underscores
+	sanitizedBase := sanitizeStorageNameRegex.ReplaceAllString(base, "_")
 
 	return sanitizedBase + ext
 }
@@ -125,8 +135,11 @@ func (pr *PathResolver) GetPath(args ...interface{}) (interface{}, error) {
 		return basePath, nil
 	}
 
-	// For SSL certificates and CRT-list files, sanitize the filename to match
-	// HAProxy Dataplane API behavior (dots replaced with underscores in basename)
+	// Sanitize filename for SSL certificates and crt-list files only.
+	// The HAProxy client-native library sanitizes filenames when storing SSL certificates
+	// to avoid issues with domain names containing dots (e.g., "api.example.com.pem").
+	// Map files and general files do NOT need sanitization.
+	// See: github.com/haproxytech/client-native/v6/storage/storage.go (lines 198, 270)
 	if fileTypeStr == "cert" || fileTypeStr == "crt-list" {
 		filenameStr = sanitizeStorageName(filenameStr)
 	}

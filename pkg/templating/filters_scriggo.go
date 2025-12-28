@@ -140,6 +140,9 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncToSlice] = scriggoToSlice
 	decl[FuncAppendAny] = scriggoAppendAny
 	decl[FuncShardSlice] = scriggoShardSlice
+
+	// Path utility functions
+	decl[funcBasename] = scriggoBasename
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.
@@ -1459,4 +1462,28 @@ func scriggoShardSlice(items interface{}, shardIndex, totalShards int) []interfa
 	}
 
 	return itemsSlice[start:end]
+}
+
+// =============================================================================
+// Path utility functions
+// =============================================================================
+
+// scriggoBasename extracts the filename from a path (like Unix basename command).
+// Returns the last element of path. Trailing slashes are removed before extracting.
+//
+// This is useful for extracting sanitized filenames from paths returned by
+// fileRegistry.Register(), which returns full paths like:
+//
+//	/etc/haproxy/ssl/default_api_example_com-tls.pem
+//
+// Templates can use basename() to get just the filename for use in crt-list content,
+// which needs relative paths (HAProxy uses crt-base to resolve them).
+//
+// Usage in Scriggo templates:
+//
+//	{%- var certPath, _ = fileRegistry.Register("cert", filename, content) -%}
+//	{%- var certFilename = basename(certPath) -%}
+//	{# certFilename is now "default_api_example_com-tls.pem" #}
+func scriggoBasename(path string) string {
+	return filepath.Base(path)
 }

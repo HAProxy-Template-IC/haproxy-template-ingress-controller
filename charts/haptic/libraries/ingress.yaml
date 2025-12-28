@@ -60,17 +60,24 @@ templateSnippets:
             var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
 
             // Register certificate file dynamically using file_registry
+            // The filename is sanitized by PathResolver (dots replaced with underscores, etc.)
             var certFilename = tostring(namespace) + "_" + tostring(secretName) + ".pem"
-            var _, certRegErr = fileRegistry.Register("cert", certFilename, combinedPem)
+            var certPath, certRegErr = fileRegistry.Register("cert", certFilename, combinedPem)
             if certRegErr != nil {
               fail("failed to register certificate " + certFilename + ": " + tostring(certRegErr))
             }
 
+            // Extract the sanitized filename from the returned path
+            // This is needed because HAProxy client-native sanitizes filenames for storage
+            var sanitizedFilename = basename(certPath)
+
             // Register with SSL infrastructure for crt-list generation
+            // Use sanitized_filename to ensure crt-list matches the actual file on disk
             var tlsCert = map[string]any{
               "secret_namespace": namespace,
               "secret_name": secretName,
               "sni_patterns": tls | dig("hosts") | fallback([]any{}),
+              "sanitized_filename": sanitizedFilename,
             }
             gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), tlsCert)
           %%}
