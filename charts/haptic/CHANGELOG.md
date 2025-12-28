@@ -9,6 +9,12 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2025-12-28
+
+### Changed
+
+- Updated appVersion to 0.1.0-alpha.2 (SSL certificate filename fix)
+
 ## [0.1.0-alpha.1] - 2025-12-26
 
 ### Added

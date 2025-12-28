@@ -9,6 +9,8 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2025-12-28
+
 ### Fixed
 
 - **SSL certificate filenames**: Sanitize certificate filenames with dots to match HAProxy storage format
