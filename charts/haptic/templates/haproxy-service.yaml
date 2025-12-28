@@ -14,6 +14,28 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.haproxy.service.type }}
+  {{- if .Values.haproxy.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.haproxy.service.loadBalancerIP }}
+  {{- end }}
+  {{- if .Values.haproxy.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml .Values.haproxy.service.loadBalancerSourceRanges | nindent 4 }}
+  {{- end }}
+  {{- if .Values.haproxy.service.loadBalancerClass }}
+  loadBalancerClass: {{ .Values.haproxy.service.loadBalancerClass }}
+  {{- end }}
+  {{- if .Values.haproxy.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.haproxy.service.externalTrafficPolicy }}
+  {{- end }}
+  {{- if .Values.haproxy.service.internalTrafficPolicy }}
+  internalTrafficPolicy: {{ .Values.haproxy.service.internalTrafficPolicy }}
+  {{- end }}
+  {{- if .Values.haproxy.service.healthCheckNodePort }}
+  healthCheckNodePort: {{ .Values.haproxy.service.healthCheckNodePort }}
+  {{- end }}
+  {{- if .Values.haproxy.service.publishNotReadyAddresses }}
+  publishNotReadyAddresses: {{ .Values.haproxy.service.publishNotReadyAddresses }}
+  {{- end }}
   selector:
     {{- include "haptic.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: loadbalancer
