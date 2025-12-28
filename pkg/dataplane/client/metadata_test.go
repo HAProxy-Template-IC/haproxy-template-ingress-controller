@@ -37,7 +37,7 @@ func TestConvertClientMetadataToAPI(t *testing.T) {
 			want:  nil,
 		},
 		{
-			name: "single comment",
+			name: "single comment is converted",
 			input: map[string]interface{}{
 				"comment": "Pod: echo-server-v2",
 			},
@@ -46,7 +46,7 @@ func TestConvertClientMetadataToAPI(t *testing.T) {
 			},
 		},
 		{
-			name: "multiple metadata fields",
+			name: "multiple metadata fields including comment",
 			input: map[string]interface{}{
 				"comment":  "server comment",
 				"disabled": true,
@@ -56,6 +56,17 @@ func TestConvertClientMetadataToAPI(t *testing.T) {
 				"comment":  {"value": "server comment"},
 				"disabled": {"value": true},
 				"weight":   {"value": 100},
+			},
+		},
+		{
+			name: "non-comment metadata is preserved",
+			input: map[string]interface{}{
+				"custom_field": "custom value",
+				"number":       42,
+			},
+			want: map[string]map[string]interface{}{
+				"custom_field": {"value": "custom value"},
+				"number":       {"value": 42},
 			},
 		},
 	}
@@ -129,6 +140,19 @@ func TestConvertAPIMetadataToClient(t *testing.T) {
 func TestMetadataRoundTrip(t *testing.T) {
 	// Test that converting to API and back yields original
 	original := map[string]interface{}{
+		"custom_field": "custom value",
+		"weight":       100,
+	}
+
+	api := ConvertClientMetadataToAPI(original)
+	roundTripped := ConvertAPIMetadataToClient(api)
+
+	assert.Equal(t, original, roundTripped)
+}
+
+func TestMetadataRoundTrip_WithComment(t *testing.T) {
+	// Comments are included in the round-trip
+	original := map[string]interface{}{
 		"comment": "Pod: echo-server-v2",
 		"weight":  100,
 	}
@@ -147,24 +171,24 @@ func TestTransformClientMetadataInJSON(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:  "top level metadata is transformed",
+			name:  "comment-only metadata is transformed",
 			input: `{"name":"test","metadata":{"comment":"Pod: test-pod"}}`,
 			want:  `{"metadata":{"comment":{"value":"Pod: test-pod"}},"name":"test"}`,
 		},
 		{
-			name:  "nested server metadata is transformed",
+			name:  "comment in server metadata is transformed",
 			input: `{"name":"backend","servers":{"SRV_1":{"name":"SRV_1","metadata":{"comment":"Pod: test-pod"}}}}`,
 			want:  `{"name":"backend","servers":{"SRV_1":{"metadata":{"comment":{"value":"Pod: test-pod"}},"name":"SRV_1"}}}`,
 		},
 		{
-			name:  "deeply nested metadata is transformed",
+			name:  "non-comment metadata is preserved and transformed",
 			input: `{"level1":{"level2":{"metadata":{"key":"value"}}}}`,
 			want:  `{"level1":{"level2":{"metadata":{"key":{"value":"value"}}}}}`,
 		},
 		{
-			name:  "already transformed metadata is not double-transformed",
-			input: `{"metadata":{"comment":{"value":"already nested"}}}`,
-			want:  `{"metadata":{"comment":{"value":"already nested"}}}`,
+			name:  "already transformed non-comment metadata is not double-transformed",
+			input: `{"metadata":{"custom":{"value":"already nested"}}}`,
+			want:  `{"metadata":{"custom":{"value":"already nested"}}}`,
 		},
 		{
 			name:  "no metadata field unchanged",
@@ -182,14 +206,19 @@ func TestTransformClientMetadataInJSON(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:  "metadata in array elements is transformed",
+			name:  "comment in metadata in array elements is transformed",
 			input: `{"http_request_rule_list":[{"type":"add-header","metadata":{"comment":"rule1"}},{"type":"set-header","metadata":{"comment":"rule2"}}]}`,
 			want:  `{"http_request_rule_list":[{"metadata":{"comment":{"value":"rule1"}},"type":"add-header"},{"metadata":{"comment":{"value":"rule2"}},"type":"set-header"}]}`,
 		},
 		{
-			name:  "deeply nested arrays with metadata",
+			name:  "comment in deeply nested arrays with metadata is transformed",
 			input: `{"backend":{"name":"test","servers":[{"name":"srv1","metadata":{"comment":"server1"}}]}}`,
 			want:  `{"backend":{"name":"test","servers":[{"metadata":{"comment":{"value":"server1"}},"name":"srv1"}]}}`,
+		},
+		{
+			name:  "mixed metadata preserves all fields including comment",
+			input: `{"name":"test","metadata":{"comment":"included","custom":"preserved"}}`,
+			want:  `{"metadata":{"comment":{"value":"included"},"custom":{"value":"preserved"}},"name":"test"}`,
 		},
 	}
 

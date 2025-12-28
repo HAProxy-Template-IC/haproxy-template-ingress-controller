@@ -25,8 +25,8 @@ package parser
 // This format mismatch causes false positive updates during comparison. This function
 // normalizes nested metadata to flat format for consistent comparison.
 //
-// Input (nested):  {"comment": {"value": "Pod: echo-server"}}
-// Output (flat):   {"comment": "Pod: echo-server"}
+// Input (nested):  {"comment": {"value": "Pod: echo-server"}, "custom": {"value": "foo"}}
+// Output (flat):   {"comment": "Pod: echo-server", "custom": "foo"}
 //
 // If the input is already flat, nil, or empty, it returns unchanged (or nil for nil/empty).
 func NormalizeMetadata(m map[string]interface{}) map[string]interface{} {

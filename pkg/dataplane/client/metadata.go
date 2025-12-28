@@ -25,9 +25,6 @@ import "encoding/json"
 // The Dataplane API expects a nested map structure:
 //
 //	map[string]map[string]interface{}{"comment": {"value": "Pod: echo-server-v2"}}
-//
-// This conversion preserves server comments and other metadata throughout the
-// fine-grained sync process, ensuring synced config remains close to the original.
 func ConvertClientMetadataToAPI(clientMetadata map[string]interface{}) map[string]map[string]interface{} {
 	if len(clientMetadata) == 0 {
 		return nil
