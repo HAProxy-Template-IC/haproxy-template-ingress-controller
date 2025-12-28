@@ -983,9 +983,8 @@ haproxy:
   #     Either set allowExternal: true OR provide allowedSources.
   networkPolicy:
     # Enable NetworkPolicy for HAProxy loadbalancer pods
-    # Disabled by default to match common ingress controller practice
     # Enable in production to restrict network access
-    enabled: false
+    enabled: true
     # Allow external traffic (from any source including internet)
     # true: Allow traffic from any source (required for public-facing ingress with NodePort/LoadBalancer)
     # false: Only allow from specific sources defined in allowedSources
