@@ -206,7 +206,7 @@ templateSnippets:
         default-server check
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context }}
-        {{ BackendServers(tostring(svcName), 0, toint(port), serverOpts) }}
+        {{ BackendServers(tostring(svcName), 0, toint(port), serverOpts, nil) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
