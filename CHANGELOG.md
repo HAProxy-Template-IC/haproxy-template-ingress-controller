@@ -9,6 +9,8 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4] - 2025-12-29
+
 ### Fixed
 
 - **Scriggo template engine**: Update fork with fix for `break` statement in nested loops causing premature loop termination
