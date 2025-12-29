@@ -13,6 +13,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 - Create `NetworkPolicy` for HAProxy instances by default
 
+### Fixed
+
+- Backend server generation now resolves Service targetPort to actual pod port
+
 ## [0.1.0-alpha.3] - 2025-12-28
 
 ### Fixed

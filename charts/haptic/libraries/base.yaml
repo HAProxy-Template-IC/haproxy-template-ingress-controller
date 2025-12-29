@@ -112,51 +112,143 @@ templateSnippets:
   # Backend Server Generation
   # ============================================================================
 
+  # ----------------------------------------------------------------------------
+  # Backend Server Generation - Helper Macros
+  # ----------------------------------------------------------------------------
+
+  util-backend-servers-helpers:
+    template: |
+      {#-
+        Helper macros for BackendServers. Import these using:
+          {% import "util-backend-servers-helpers" for BuildServerOptions %}
+      -#}
+
+      {#- Builds the HAProxy server options string (flags, maxconn).
+          Called inline in server line output.
+      -#}
+      {% macro BuildServerOptions(serverOpts map[string]any) %}
+        {%- var opts = "" -%}
+        {%- var flags = serverOpts | dig("flags") | toSlice() -%}
+        {%- if len(flags) > 0 -%}
+          {%- opts = " " + join(toStringSlice(flags), " ") -%}
+        {%- end -%}
+        {%- if maxconn := serverOpts | dig("podMaxconnValue"); maxconn != nil -%}
+          {%- opts = opts + " maxconn " + tostring(maxconn) -%}
+        {%- end -%}
+        {{- opts -}}
+      {% end %}
+
+  # ----------------------------------------------------------------------------
+  # Backend Server Generation - Main Macro
+  # ----------------------------------------------------------------------------
+
   util-backend-servers:
     template: |
       {#-
-        Generates HAProxy server lines from Kubernetes EndpointSlices.
+        BackendServers - Generates HAProxy server lines from Kubernetes EndpointSlices.
+
+        This macro handles the complete flow:
+        1. Resolve server slot count from parameters or defaults
+        2. Look up the Service to find port name (for targetPort resolution)
+        3. Fetch EndpointSlices and resolve actual pod ports
+        4. Generate server lines with proper options
 
         Parameters:
-          - serviceName: Service name to look up endpoints
-          - maxServerSlots: Max slots (0 = use serverOpts.serverSlotsValue or 10)
-          - port: Target port number
-          - serverOpts: Options map { serverSlotsValue, flags[], podMaxconnValue }
+          serviceName    - Service name to look up endpoints
+          maxServerSlots - Max slots (0 = use serverOpts.serverSlotsValue or default 10)
+          port           - Service port number (may differ from pod port via targetPort)
+          serverOpts     - Options map:
+                             .serverSlotsValue - override slot count
+                             .flags[]          - server flags (e.g., "backup", "weight 10")
+                             .podMaxconnValue  - per-server maxconn
+          portName       - Port name for targetPort resolution (nil = auto-lookup)
+
+        Example:
+          {{ BackendServers("my-service", 0, 80, serverOpts, nil) }}
+
+        Output:
+          server SRV_1 10.0.0.1:8080 check  # Pod: my-pod-abc
+          server SRV_2 10.0.0.2:8080 check  # Pod: my-pod-def
+          server SRV_3 127.0.0.1:1 disabled  # Placeholder
+          ...
       -#}
-      {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any) string %}
+      {% import "util-backend-servers-helpers" for BuildServerOptions %}
+      {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any) %}
         {%%
-          // Resolve slot count
+          // ── 1. Resolve server slot count ──────────────────────────────────
+          // Priority: maxServerSlots param > serverOpts.serverSlotsValue > default (10)
           var slots = 10
           if maxServerSlots > 0 {
             slots = maxServerSlots
           } else if v := serverOpts | dig("serverSlotsValue"); v != nil {
-            slots = v
+            slots = toint(v)
           }
 
-          // Collect endpoints
-          var endpoints = []any{}
-          for _, slice := range resources.endpoints.Fetch(serviceName) {
-            for _, ep := range slice | dig("endpoints") | fallback([]any{}) {
-              for _, addr := range ep | dig("addresses") | fallback([]any{}) {
-                var name = ep | dig("targetRef", "name") | fallback(addr)
-                endpoints = append(endpoints, map[string]any{"name": name, "address": addr, "port": port})
+          // ── 2. Get port name for targetPort resolution ────────────────────
+          // If provided as parameter, use it. Otherwise, look it up below.
+          var pn = ""
+          if portName != nil && tostring(portName) != "" {
+            pn = tostring(portName)
+          }
+
+          // ── 3. Fetch EndpointSlices for the service ───────────────────────
+          var allSlices = resources.endpoints.Fetch(serviceName)
+
+          // ── 4. Look up port name from Service if not provided ─────────────
+          // This enables targetPort resolution (service port → pod port)
+          if pn == "" && len(allSlices) > 0 {
+            var ns = allSlices[0] | dig("metadata", "namespace") | fallback("")
+            if ns != "" {
+              var svc = resources.services.GetSingle(tostring(ns), serviceName)
+              if svc != nil {
+                for _, sp := range svc | dig("spec", "ports") | toSlice() {
+                  if toint(sp | dig("port") | fallback(0)) == port {
+                    pn = tostring(sp | dig("name") | fallback(""))
+                    break
+                  }
+                }
               }
             }
           }
 
-          // Build options string
-          var optsStr = ""
-          if flags := serverOpts | dig("flags"); flags != nil && len(flags.([]any)) > 0 {
-            optsStr = " " + join(toStringSlice(flags), " ")
-          }
-          if maxconn := serverOpts | dig("podMaxconnValue"); maxconn != nil {
-            optsStr = optsStr + " maxconn " + maxconn
+          // ── 5. Collect endpoints with resolved ports ──────────────────────
+          var endpoints = []any{}
+          for _, slice := range allSlices {
+            // Resolve pod port from EndpointSlice's ports array
+            var slicePorts = slice | dig("ports") | toSlice()
+            var resolvedPort = port  // Default: use service port
+
+            if pn != "" {
+              // Look up port by name
+              for _, p := range slicePorts {
+                if tostring(p | dig("name") | fallback("")) == pn {
+                  resolvedPort = toint(p | dig("port") | fallback(port))
+                  break
+                }
+              }
+            } else if len(slicePorts) == 1 {
+              // Single port case: use it directly (common scenario)
+              resolvedPort = toint(slicePorts[0] | dig("port") | fallback(port))
+            }
+            // Note: If multiple ports exist but no name available,
+            // we use the service port as fallback.
+
+            // Collect addresses from this slice
+            for _, ep := range slice | dig("endpoints") | toSlice() {
+              for _, addr := range ep | dig("addresses") | toSlice() {
+                var name = ep | dig("targetRef", "name") | fallback(addr)
+                endpoints = append(endpoints, map[string]any{
+                  "name": name, "address": addr, "port": resolvedPort,
+                })
+              }
+            }
           }
         %%}
+      {#- ── 6. Generate server lines ────────────────────────────────────── -#}
       {%- for i := 1; i <= slots; i++ %}
       {%- if i-1 < len(endpoints) %}
       {%- var ep map[string]any = endpoints[i-1] %}
-      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{{ optsStr }} check  # Pod: {{ ep["name"] }}
+      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{{ BuildServerOptions(serverOpts) }} check  # Pod: {{ ep["name"] }}
       {% else %}
       server SRV_{{ i }} 127.0.0.1:1 disabled  # Placeholder
       {% end %}

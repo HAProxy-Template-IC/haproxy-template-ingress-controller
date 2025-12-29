@@ -25,11 +25,56 @@ Modify this package when:
 - HAProxy configuration → Use `pkg/dataplane`
 - Kubernetes resources → Use `pkg/k8s`
 
-## Key Design Principle
+## Key Design Principles
+
+### Pure Library
 
 This is a **pure library** with zero dependencies on other pkg/ packages. It could be extracted and used in any Go project needing templating.
 
 Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`) and standard library.
+
+### Resource-Agnostic Functions
+
+**CRITICAL**: Template functions MUST be resource-agnostic. This is a generic templatable ingress controller where **no Kubernetes resource gets preferential treatment**.
+
+**DO NOT add functions that:**
+
+- Parse or navigate specific K8s resource structures (Service, Ingress, HTTPRoute, etc.)
+- Provide shortcuts for specific resource fields (e.g., `lookup_port_name(service, port)`)
+- Assume knowledge of any particular resource schema
+
+**Instead:**
+
+- Provide generic utilities: `dig()`, `fallback()`, `toSlice()`, `toint()`, etc.
+- Let users write resource-specific logic as **template macros** in their libraries
+- Keep the template engine completely ignorant of Kubernetes semantics
+
+**Example of WRONG approach:**
+
+```go
+// DON'T: Resource-specific function in templating package
+func scriggoLookupPortName(svc interface{}, portNumber int) string {
+    // Navigates Service.spec.ports structure - WRONG!
+    ports := scriggoDig(svc, "spec", "ports")
+    // ...
+}
+```
+
+**Example of CORRECT approach:**
+
+```scriggo
+{#- Users write resource-specific logic as macros in their library files -#}
+{% macro LookupPortName(svc any, port int) string %}
+  {%- var svcPorts = svc | dig("spec", "ports") | toSlice() -%}
+  {%- for _, sp := range svcPorts -%}
+    {%- if toint(sp | dig("port") | fallback(0)) == port -%}
+      {{- sp | dig("name") | fallback("") -}}
+    {%- end -%}
+  {%- end -%}
+{% end %}
+```
+
+This separation ensures the template engine remains generic while users can build any resource-specific functionality they need in their template libraries.
 
 ## Package Structure
 

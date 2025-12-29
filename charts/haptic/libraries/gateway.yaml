@@ -503,7 +503,7 @@ templateSnippets:
       backend {{ BackendNameGateway(route, backend) }}
         balance roundrobin
         default-server check{%- if protoFlag != "" %} proto {{ protoFlag }}{%- end %}
-        {{ BackendServers(backendName, 10, backendPort, nil) | indent(2, true) -}}
+        {{ BackendServers(backendName, 10, backendPort, nil, nil) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
       {%- end -%}
@@ -588,7 +588,7 @@ templateSnippets:
       backend {{ biName }}
           mode tcp
           balance roundrobin
-          {{ BackendServers(refName, 10, refPort, nil) | indent(4, false) }}
+          {{ BackendServers(refName, 10, refPort, nil, nil) | indent(4, false) }}
                     {%- generated = true %}
                   {%- end %}
                 {%- end %}
@@ -1240,13 +1240,19 @@ validationTests:
             namespace: default
             labels:
               kubernetes.io/service-name: api-svc
+          addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.1"]
               targetRef:
+                kind: Pod
                 name: api-pod-1
           ports:
-            - port: 8080
-            - port: 8081
+            - name: http
+              port: 8080
+              protocol: TCP
+            - name: admin
+              port: 8081
+              protocol: TCP
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -1300,6 +1306,16 @@ validationTests:
         pattern: "(?m)^backend gtw_default_multi-port_api-svc_"
         expected: "2"
         description: Must generate exactly 2 backends (deduplication test)
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "10.0.0.1:8080"
+        description: Must include server with resolved targetPort 8080 (from service port 80)
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "10.0.0.1:8081"
+        description: Must include server with resolved targetPort 8081 (from service port 81)
 
   test-grpcroute-duplicate-backend-different-ports:
     description: GRPCRoute with multiple rules to same service but different ports (tests deduplication)

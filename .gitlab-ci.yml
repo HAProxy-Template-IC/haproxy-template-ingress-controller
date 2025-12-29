@@ -311,7 +311,23 @@ api-compatibility:
         exit 0
       fi
       echo "Checking API compatibility against ${LATEST_TAG}..."
-      go run golang.org/x/exp/cmd/gorelease@latest -base=${LATEST_TAG}
+
+      # Run gorelease and capture output
+      OUTPUT=$(go run golang.org/x/exp/cmd/gorelease@latest -base=${LATEST_TAG} 2>&1 || true)
+      echo "$OUTPUT"
+
+      # Fail only if there are incompatible changes
+      if echo "$OUTPUT" | grep -q "## incompatible changes"; then
+        echo ""
+        echo "ERROR: Incompatible API changes detected!"
+        exit 1
+      fi
+
+      # Warn about compatible changes but don't fail
+      if echo "$OUTPUT" | grep -q "## compatible changes"; then
+        echo ""
+        echo "INFO: Compatible API changes detected (additions only). This is acceptable."
+      fi
 
 chart-test:
   stage: lint

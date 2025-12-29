@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1127,4 +1128,395 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 	output, err := engine.Render("haproxy.cfg", context)
 	require.NoError(t, err, "render_glob with inherit_context inside macro should not cause nil pointer dereference with full context")
 	assert.Contains(t, output, "directive-100-a")
+}
+
+// TestNestedLoopWithSharedGetPassedToFunction tests the specific pattern that was breaking:
+// calling shared.Get() with string concatenation and passing result to a function inside nested loops.
+func TestNestedLoopWithSharedGetPassedToFunction(t *testing.T) {
+	templates := map[string]string{
+		"main": `{%- macro UseValue(val any) string -%}{{ val }}{%- end macro -%}
+{%- var count = 0 -%}
+{%- for _, outer := range []string{"a", "b", "c"} -%}
+{%- for _, inner := range []string{"x", "y"} -%}
+{{ UseValue(tostring(shared.Get("port:" + outer + "/" + inner))) }}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+	}
+
+	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	shared := NewSharedContext()
+	context := map[string]interface{}{
+		"shared": shared,
+	}
+
+	output, err := engine.Render("main", context)
+	require.NoError(t, err)
+
+	got := strings.TrimSpace(output)
+	assert.Equal(t, "6", got, "expected 6 iterations (3 outer × 2 inner) but got %s", got)
+}
+
+// TestTripleNestedLoopWithSharedGet tests triple-nested loops with shared.Get()
+// to reproduce the exact pattern from ingress.yaml backends template.
+func TestTripleNestedLoopWithSharedGet(t *testing.T) {
+	templates := map[string]string{
+		"main": `{%- var count = 0 -%}
+{%- var ingresses = []map[string]any{
+	{"name": "ing1", "rules": []map[string]any{
+		{"paths": []string{"p1", "p2"}},
+	}},
+	{"name": "ing2", "rules": []map[string]any{
+		{"paths": []string{"p3"}},
+	}},
+} -%}
+{%- for _, ingress := range ingresses -%}
+{%- for _, rule := range ingress | dig("rules") | toSlice() -%}
+{%- for _, path := range rule | dig("paths") | toSlice() -%}
+{%- var cacheKey = ingress | dig("name") | fallback("") -%}
+{%- var cached = shared.Get(cacheKey) -%}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+	}
+
+	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	shared := NewSharedContext()
+	context := map[string]interface{}{
+		"shared": shared,
+	}
+
+	output, err := engine.Render("main", context)
+	require.NoError(t, err)
+
+	got := strings.TrimSpace(output)
+	// Expected: 3 paths total (2 from ing1, 1 from ing2)
+	assert.Equal(t, "3", got, "expected 3 iterations but got %s", got)
+}
+
+// TestNestedLoopWithRenderGlobModifyingMap tests the exact failing pattern:
+// nested loops with render_glob that modifies a map passed via inherit_context.
+func TestNestedLoopWithRenderGlobModifyingMap(t *testing.T) {
+	templates := map[string]string{
+		"main": `{%- var count = 0 -%}
+{%- var ingresses = []map[string]any{
+	{"name": "ing1", "paths": []string{"p1", "p2"}},
+	{"name": "ing2", "paths": []string{"p3"}},
+} -%}
+{%- for _, ingress := range ingresses -%}
+{%- var ns = ingress | dig("name") | fallback("") -%}
+{%- for _, path := range ingress | dig("paths") | toSlice() -%}
+{%- var serverOpts = map[string]any{"flags": []any{}} -%}
+{{- render_glob "backend-directive-*" inherit_context }}
+Path: {{ path }}, Modified: {{ serverOpts["modified"] | fallback("no") }}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+Count: {{ count }}`,
+		"backend-directive-100-modifier": `{#- Modifies serverOpts -#}
+{%- if serverOpts != nil -%}
+{%- serverOpts["modified"] = "yes" -%}
+{%- end -%}`,
+	}
+
+	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	output, err := engine.Render("main", nil)
+	require.NoError(t, err)
+
+	got := strings.TrimSpace(output)
+	// Expected: 3 paths total (2 from ing1, 1 from ing2)
+	assert.Contains(t, got, "Count: 3", "expected 3 iterations but got: %s", got)
+	// Verify all paths were processed
+	assert.Contains(t, got, "Path: p1", "should process p1")
+	assert.Contains(t, got, "Path: p2", "should process p2")
+	assert.Contains(t, got, "Path: p3", "should process p3")
+}
+
+// TestNestedLoopWithServicePortLookup tests the exact failing pattern:
+// nested loops over ingresses/rules/paths with Service lookup AND iteration over ports.
+func TestNestedLoopWithServicePortLookup(t *testing.T) {
+	// Create a service object with multiple ports
+	svc := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"name":      "svc1",
+			"namespace": "default",
+		},
+		"spec": map[string]interface{}{
+			"ports": []interface{}{
+				map[string]interface{}{
+					"name":       "http",
+					"port":       80,
+					"targetPort": 8080,
+				},
+				map[string]interface{}{
+					"name":       "https",
+					"port":       443,
+					"targetPort": 8443,
+				},
+			},
+		},
+	}
+
+	services := &mockResourceStore{
+		getSingleResult: svc,
+	}
+
+	resources := map[string]ResourceStore{
+		"services": services,
+	}
+
+	// This template mimics the exact pattern from ingress.yaml:
+	// - Triple nested loop over ingresses -> rules -> paths
+	// - Service lookup inside the loop
+	// - Iteration over service ports to find matching port name
+	templates := map[string]string{
+		"main": `{%- var count = 0 -%}
+{%- var ingresses = []map[string]any{
+	{"ns": "default", "name": "ing1", "rules": []map[string]any{
+		{"paths": []map[string]any{
+			{"svc": "svc1", "port": 80},
+			{"svc": "svc1", "port": 443},
+		}},
+	}},
+	{"ns": "default", "name": "ing2", "rules": []map[string]any{
+		{"paths": []map[string]any{
+			{"svc": "svc1", "port": 80},
+		}},
+	}},
+} -%}
+{%- for _, ingress := range ingresses -%}
+{%- var ns = ingress | dig("ns") | fallback("") -%}
+{%- for _, rule := range ingress | dig("rules") | toSlice() -%}
+{%- for _, path := range rule | dig("paths") | toSlice() -%}
+{%- var svcName = path | dig("svc") | fallback("") -%}
+{%- var port = path | dig("port") | fallback(0) -%}
+{%- var svc = resources.services.GetSingle(ns, svcName) -%}
+{%- var portName = "" -%}
+{%- if svc != nil -%}
+{%- for _, p := range svc | dig("spec", "ports") | toSlice() -%}
+{%- if (p | dig("port") | fallback(0)) == port -%}
+{%- portName = p | dig("name") | fallback("") -%}
+{%- end -%}
+{%- end -%}
+{%- end -%}
+Port {{ port }} name: {{ portName }}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{%- end -%}
+Count: {{ count }}`,
+	}
+
+	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	context := map[string]interface{}{
+		"resources": resources,
+	}
+
+	output, err := engine.Render("main", context)
+	require.NoError(t, err)
+
+	got := strings.TrimSpace(output)
+	// Expected: 3 paths total (2 from ing1, 1 from ing2)
+	assert.Contains(t, got, "Count: 3", "expected 3 iterations but got: %s", got)
+	// Verify port names are correctly resolved
+	assert.Contains(t, got, "Port 80 name: http", "port 80 should resolve to 'http'")
+	assert.Contains(t, got, "Port 443 name: https", "port 443 should resolve to 'https'")
+}
+
+// TestNestedLoopWithResourceStoreAccess tests nested loops with ResourceStore.GetSingle()
+// which is the actual pattern that was breaking in ingress.yaml templates.
+func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
+	// Create a service object that will be returned by GetSingle
+	svc := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"name":      "svc1",
+			"namespace": "default",
+		},
+		"spec": map[string]interface{}{
+			"ports": []interface{}{
+				map[string]interface{}{
+					"name":       "http",
+					"port":       80,
+					"targetPort": 8080,
+				},
+			},
+		},
+	}
+
+	services := &mockResourceStore{
+		getSingleResult: svc,
+	}
+
+	resources := map[string]ResourceStore{
+		"services": services,
+	}
+
+	templates := map[string]string{
+		"main": `{%- var count = 0 -%}
+{%- var ingresses = []map[string]any{
+	{"ns": "default", "svc": "svc1", "paths": []string{"p1", "p2"}},
+	{"ns": "default", "svc": "svc2", "paths": []string{"p3"}},
+} -%}
+{%- for _, ing := range ingresses -%}
+{%- var ns = ing | dig("ns") | fallback("") -%}
+{%- var svcName = ing | dig("svc") | fallback("") -%}
+{%- for _, path := range ing | dig("paths") | toSlice() -%}
+{%- var svc = resources.services.GetSingle(ns, svcName) -%}
+{%- if svc != nil -%}
+{%- var portName = svc | dig("spec", "ports") | toSlice() -%}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+	}
+
+	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	context := map[string]interface{}{
+		"resources": resources,
+	}
+
+	output, err := engine.Render("main", context)
+	require.NoError(t, err)
+
+	got := strings.TrimSpace(output)
+	// Expected: 3 paths total (2 from ing with svc1, 1 from ing with svc2)
+	assert.Equal(t, "3", got, "expected 3 iterations but got %s", got)
+}
+
+// TestNestedLoopWithFilters tests that nested loops work correctly when using
+// HAPTIC's custom filter functions. This is a regression test for a bug where
+// the outer loop would terminate prematurely after the first iteration when
+// certain filter functions were used inside nested loops.
+func TestNestedLoopWithFilters(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{
+			name: "plain map index",
+			template: `{%- var cache = map[string]string{"key": "value"} -%}
+{%- var count = 0 -%}
+{%- for _, outer := range []string{"a", "b", "c"} -%}
+{%- for _, inner := range []string{"x", "y"} -%}
+{%- var v = cache["key"] -%}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+			want: "6",
+		},
+		{
+			name: "dig filter only",
+			template: `{%- var cache = map[string]any{"key": "value"} -%}
+{%- var count = 0 -%}
+{%- for _, outer := range []string{"a", "b", "c"} -%}
+{%- for _, inner := range []string{"x", "y"} -%}
+{%- var v = cache | dig("key") -%}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+			want: "6",
+		},
+		{
+			name: "dig with fallback",
+			template: `{%- var cache = map[string]any{"key": "value"} -%}
+{%- var count = 0 -%}
+{%- for _, outer := range []string{"a", "b", "c"} -%}
+{%- for _, inner := range []string{"x", "y"} -%}
+{%- var v = cache | dig("key") | fallback("") -%}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+			want: "6",
+		},
+		{
+			name: "first_seen in nested loop",
+			template: `{%- var count = 0 -%}
+{%- for _, outer := range []string{"a", "b", "c"} -%}
+{%- for _, inner := range []string{"x", "y"} -%}
+{%- if first_seen("test", outer, inner) -%}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+			want: "6",
+		},
+		{
+			name: "nested map with dig",
+			template: `{%- var data = map[string]any{
+	"level1": map[string]any{
+		"level2": "deep_value"
+	}
+} -%}
+{%- var count = 0 -%}
+{%- for _, outer := range []string{"a", "b", "c"} -%}
+{%- for _, inner := range []string{"x", "y"} -%}
+{%- var v = data | dig("level1", "level2") | fallback("") -%}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+			want: "6",
+		},
+		{
+			name: "dig returning map in nested loop",
+			template: `{%- var data = map[string]any{
+	"level1": map[string]any{
+		"level2": "value"
+	}
+} -%}
+{%- var count = 0 -%}
+{%- for _, outer := range []string{"a", "b", "c"} -%}
+{%- for _, inner := range []string{"x", "y"} -%}
+{%- var nested = data | dig("level1") -%}
+{%- if nested != nil -%}
+{%- count++ -%}
+{%- end -%}
+{%- end -%}
+{%- end -%}
+{{ count }}`,
+			want: "6",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			templates := map[string]string{
+				"test": tt.template,
+			}
+
+			engine, err := NewScriggo(templates, []string{"test"}, nil, nil, nil)
+			require.NoError(t, err)
+
+			// Create context with SharedContext for first_seen tests
+			shared := NewSharedContext()
+			context := map[string]interface{}{
+				"shared": shared,
+			}
+
+			output, err := engine.Render("test", context)
+			require.NoError(t, err)
+
+			got := strings.TrimSpace(output)
+			assert.Equal(t, tt.want, got, "expected %s iterations but got %s", tt.want, got)
+		})
+	}
 }
