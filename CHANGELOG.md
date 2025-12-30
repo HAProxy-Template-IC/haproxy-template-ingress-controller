@@ -9,6 +9,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Stall detection**: Components now detect when they're blocked and report unhealthy via `/healthz`, enabling automatic pod restart via Kubernetes liveness probes
+
 ## [0.1.0-alpha.5] - 2025-12-30
 
 ### Fixed

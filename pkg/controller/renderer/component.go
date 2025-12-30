@@ -39,6 +39,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -116,6 +117,9 @@ type Component struct {
 	// Determined from local HAProxy version at construction time via CapabilitiesFromVersion().
 	// When capabilities.SupportsCrtList is false, CRT-list paths resolve to general files directory.
 	capabilities dataplane.Capabilities
+
+	// Health check: stall detection for event-driven component
+	healthTracker *lifecycle.HealthTracker
 }
 
 // cacheRenderOutput stores render output for leadership transition replay.
@@ -192,6 +196,7 @@ func New(
 		haproxyPodStore: haproxyPodStore,
 		logger:          logger.With("component", ComponentName),
 		capabilities:    capabilities,
+		healthTracker:   lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}, nil
 }
 
@@ -408,6 +413,10 @@ func (c *Component) drainReconciliationTriggers() *events.ReconciliationTriggere
 // Propagates correlation ID from the triggering event to the rendered event.
 // This method is called by handleReconciliationTriggered after coalescing logic.
 func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
+	// Track processing for health check stall detection
+	c.healthTracker.StartProcessing()
+	defer c.healthTracker.EndProcessing()
+
 	startTime := time.Now()
 	correlationID := event.CorrelationID()
 	c.logger.Debug("Template rendering triggered",
@@ -734,4 +743,11 @@ func MergeAuxiliaryFiles(static, dynamic *dataplane.AuxiliaryFiles) *dataplane.A
 	merged.CRTListFiles = append(merged.CRTListFiles, dynamic.CRTListFiles...)
 
 	return merged
+}
+
+// HealthCheck implements the lifecycle.HealthChecker interface.
+// Returns an error if the component appears to be stalled (processing for > timeout).
+// Returns nil when idle (not processing) - idle is always healthy for event-driven components.
+func (c *Component) HealthCheck() error {
+	return c.healthTracker.Check()
 }
