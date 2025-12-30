@@ -39,7 +39,7 @@ controller:
   # Initial log level for the controller
   # Values: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
   # This sets the LOG_LEVEL environment variable
-  # Can be overridden at runtime via ConfigMap's logging.level field
+  # Can be overridden at runtime via controller.config.logging.level
   logLevel: INFO
   # Controller container ports
   # These are the ports the controller container listens on
@@ -218,12 +218,10 @@ controller:
       sslCertsDir: /etc/haproxy/ssl
       generalStorageDir: /etc/haproxy/general
       configFile: /etc/haproxy/haproxy.cfg
-    logging:
-      # Log level for the controller (runtime override)
-      # Values: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
-      # Empty string means use controller.logLevel (LOG_LEVEL env var)
-      # Set this to override the environment variable at runtime
-      level: ""
+    # Runtime log level override (optional)
+    # Uncomment to override controller.logLevel at runtime without pod restart
+    # logging:
+    #   level: DEBUG
     # Template rendering settings
     # extraContext provides custom variables available to all templates
     templatingSettings:

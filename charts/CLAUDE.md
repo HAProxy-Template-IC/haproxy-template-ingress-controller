@@ -1864,7 +1864,7 @@ helm template charts/haptic \
 
 ## Changelog Guidelines
 
-The chart CHANGELOG (`charts/haptic/CHANGELOG.md`) documents Helm chart configuration changes.
+The chart CHANGELOG (`charts/haptic/CHANGELOG.md`) documents Helm chart configuration changes. Keep entries concise - one line per change, focus on what changed. Avoid verbose justifications or explanations in parentheses.
 
 **Include:**
 
