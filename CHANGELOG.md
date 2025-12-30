@@ -9,6 +9,8 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] - 2025-12-30
+
 ### Changed
 
 - **Reconciliation debouncing**: Switch from trailing-edge to leading-edge triggering with 100ms refractory period (down from 500ms), reducing latency for isolated changes from 500ms to 0ms
