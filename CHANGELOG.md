@@ -9,6 +9,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **SSL certificate chain comparison**: Parse all certificates in PEM chain to match HAProxy API issuer format, fixing spurious updates for CA-signed certificates
+
 ## [0.1.0-alpha.8] - 2025-12-30
 
 ### Added
