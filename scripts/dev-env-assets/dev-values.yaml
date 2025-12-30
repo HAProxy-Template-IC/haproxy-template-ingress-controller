@@ -1,5 +1,12 @@
 # Development values for HAPTIC Helm chart
 
+# Explicit credentials for dev environment (avoids auto-generation complexity)
+# In production, leave password empty to auto-generate secure random credentials
+credentials:
+  dataplane:
+    username: admin
+    password: adminpass
+
 # IngressClass name must match what the demo ingresses use
 ingressClass:
   name: haptic

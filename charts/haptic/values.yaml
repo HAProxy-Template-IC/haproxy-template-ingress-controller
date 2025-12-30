@@ -390,10 +390,13 @@ gatewayClass:
     # Namespace will default to Release.Namespace if empty
     namespace: ""
 # Dataplane API credentials
+# If password is empty or not provided, a secure random password will be generated
+# and preserved across helm upgrades via lookup of the existing Secret.
+# Set explicit values for dev environments where you need predictable credentials.
 credentials:
   dataplane:
     username: admin
-    password: adminpass
+    password: ""  # Leave empty for auto-generation (recommended for production)
 # ServiceAccount configuration
 serviceAccount:
   # Specifies whether a service account should be created
@@ -785,11 +788,7 @@ haproxy:
     service:
       type: ClusterIP
       # port references haproxy.ports.dataplane (set in template)
-    credentials:
-      # These are referenced by credentialsSecretRef in controller.config
-      # The secret is created by the chart's credentials template
-      username: admin
-      password: adminpass
+    # Credentials are configured via top-level 'credentials.dataplane' section
   # Resource limits and requests for HAProxy containers
   resources:
     limits:

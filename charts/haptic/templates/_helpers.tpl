@@ -312,3 +312,30 @@ Community: 99 (haproxy user)
 99
 {{- end -}}
 {{- end -}}
+
+{{/*
+Dataplane API username
+Uses provided value or defaults to "admin"
+*/}}
+{{- define "haptic.dataplane.username" -}}
+{{- .Values.credentials.dataplane.username | default "admin" -}}
+{{- end -}}
+
+{{/*
+Dataplane API password
+Priority: 1) User-provided value, 2) Existing secret value, 3) Generated random password
+Uses lookup to preserve password across helm upgrades
+*/}}
+{{- define "haptic.dataplane.password" -}}
+{{- if .Values.credentials.dataplane.password -}}
+{{- .Values.credentials.dataplane.password -}}
+{{- else -}}
+{{- $secretName := printf "%s-credentials" (include "haptic.fullname" .) -}}
+{{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $secretName -}}
+{{- if and $existingSecret $existingSecret.data (index $existingSecret.data "dataplane_password") -}}
+{{- index $existingSecret.data "dataplane_password" | b64dec -}}
+{{- else -}}
+{{- randAlphaNum 32 -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
