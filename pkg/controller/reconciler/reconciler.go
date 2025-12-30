@@ -27,20 +27,21 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
 const (
-	// DefaultDebounceInterval is the default time to wait after the last resource
-	// change before triggering reconciliation.
-	DefaultDebounceInterval = 500 * time.Millisecond
-
 	// EventBufferSize is the size of the event subscription buffer.
 	// Size 100: Medium-volume component that receives resource change events from
 	// multiple watchers (Ingress, HTTPRoute, Service, Endpoints, Secrets, ConfigMaps).
 	// Higher than deployer to handle bursts when many resources change simultaneously.
 	EventBufferSize = 100
 )
+
+// DefaultDebounceInterval is re-exported from types for backward compatibility.
+// New code should use types.DefaultDebounceInterval directly.
+var DefaultDebounceInterval = types.DefaultDebounceInterval
 
 // ComponentName is the unique identifier for this component.
 const ComponentName = "reconciler"

@@ -150,7 +150,7 @@ func TestWatcherConfig_SetDefaults(t *testing.T) {
 		cfg := &WatcherConfig{}
 		cfg.SetDefaults()
 
-		assert.Equal(t, 500*time.Millisecond, cfg.DebounceInterval)
+		assert.Equal(t, DefaultDebounceInterval, cfg.DebounceInterval)
 	})
 
 	t.Run("sets default Context", func(t *testing.T) {

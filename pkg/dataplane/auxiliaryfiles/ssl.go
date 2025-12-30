@@ -47,10 +47,11 @@ func calculateCertIdentifier(content string) string {
 		return calculateSHA256Fingerprint(content)
 	}
 
-	// Return format matching API fallback: "cert:serial:XXX:issuers:YYY"
-	// The API returns issuers as just the Common Name (e.g., "example.com"),
-	// not the full Distinguished Name (e.g., "CN=example.com,O=Org,C=US").
-	// We must use CommonName to match the API format for accurate comparison.
+	// Return format matching HAProxy API: "cert:serial:XXX:issuers:YYY"
+	// For self-signed certificates, the API returns issuers as just the CommonName
+	// (e.g., "echo-tls.localdev.me"), not in DN format (e.g., "/CN=echo-tls.localdev.me").
+	// For CA-signed certificates with full DN, the API returns the full issuer string.
+	// We use the CommonName to match the API format for self-signed certs.
 	issuerCN := cert.Issuer.CommonName
 	if issuerCN == "" {
 		// Fallback for self-signed certs where issuer may be empty but subject has CN
@@ -105,13 +106,13 @@ func (o *sslCertificateOps) Delete(ctx context.Context, id string) error {
 // with the desired state, and returns a diff describing what needs to be created,
 // updated, or deleted.
 //
-// This function uses identifier-based comparison. When the HAProxy Dataplane API returns
-// sha256_finger_print, that is used for comparison. Otherwise, it falls back to comparing
-// certificate serial+issuer (a workaround for https://github.com/haproxytech/dataplaneapi/pull/396).
+// This function uses identifier-based comparison using certificate serial+issuer format.
+// Both the API side and controller side use the same format ("cert:serial:XXX:issuers:YYY"),
+// ensuring consistent comparison across all HAProxy DataPlane API versions.
 //
 // Strategy:
 //  1. Fetch current certificate names from the Dataplane API
-//  2. Fetch identifiers for all current certificates (fingerprint or serial+issuer fallback)
+//  2. Fetch identifiers for all current certificates (serial+issuer format)
 //  3. Compare identifiers with desired certificates
 //  4. Return diff with create, update, and delete operations
 //

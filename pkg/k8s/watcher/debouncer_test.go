@@ -184,8 +184,11 @@ func TestDebouncer_DebounceBatching(t *testing.T) {
 	// Wait for final debounce (longer to account for race detector overhead)
 	time.Sleep(300 * time.Millisecond)
 
-	// Should batch into single callback
-	assert.Equal(t, int32(1), callCount.Load())
+	// With leading-edge behavior:
+	// - First change fires immediately
+	// - Subsequent changes during refractory period are batched
+	// - Total: 2 callbacks (first immediate, second after refractory)
+	assert.Equal(t, int32(2), callCount.Load())
 }
 
 func TestDebouncer_Flush(t *testing.T) {
@@ -243,15 +246,23 @@ func TestDebouncer_Stop(t *testing.T) {
 	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
 	debouncer.SetSyncMode(false)
 
+	// First change fires immediately with leading-edge behavior
 	debouncer.RecordCreate()
 
-	// Stop before debounce fires
+	// Wait for the immediate callback to fire
+	time.Sleep(20 * time.Millisecond)
+
+	// Record another change (will be queued for refractory period)
+	debouncer.RecordUpdate()
+
+	// Stop before the queued callback fires
 	debouncer.Stop()
 
 	time.Sleep(100 * time.Millisecond)
 
-	// Callback should not have been invoked
-	assert.Equal(t, int32(0), callCount.Load())
+	// Only the first immediate callback should have been invoked
+	// The second (queued) callback should have been stopped
+	assert.Equal(t, int32(1), callCount.Load())
 }
 
 func TestDebouncer_SyncMode(t *testing.T) {
@@ -448,5 +459,130 @@ func TestDebouncer_ResetAfterCallback(t *testing.T) {
 	assert.Equal(t, 0, received[1].Created)
 	assert.Equal(t, 1, received[1].Modified)
 	assert.Equal(t, 1, received[1].Deleted)
+	mu.Unlock()
+}
+
+func TestDebouncer_LeadingEdge_ImmediateFire(t *testing.T) {
+	// Test that first change fires immediately when no recent activity
+	store := &mockStore{}
+	var mu sync.Mutex
+	var received []time.Time
+
+	callback := func(_ types.Store, _ types.ChangeStats) {
+		mu.Lock()
+		received = append(received, time.Now())
+		mu.Unlock()
+	}
+
+	debouncer := NewDebouncer(200*time.Millisecond, callback, store, false)
+	debouncer.SetSyncMode(false)
+
+	startTime := time.Now()
+	debouncer.RecordCreate()
+
+	// Wait a short time for the immediate callback
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	require.Len(t, received, 1, "should have received one callback")
+	callbackDelay := received[0].Sub(startTime)
+	mu.Unlock()
+
+	// Callback should fire almost immediately (within 50ms), not after 200ms debounce interval
+	assert.Less(t, callbackDelay, 50*time.Millisecond, "first change should fire immediately, not wait for debounce interval")
+}
+
+func TestDebouncer_LeadingEdge_RefractoryPeriod(t *testing.T) {
+	// Test that changes within refractory period are queued and batched
+	store := &mockStore{}
+	var mu sync.Mutex
+	var received []types.ChangeStats
+	var callTimes []time.Time
+
+	callback := func(_ types.Store, stats types.ChangeStats) {
+		mu.Lock()
+		received = append(received, stats)
+		callTimes = append(callTimes, time.Now())
+		mu.Unlock()
+	}
+
+	debouncer := NewDebouncer(100*time.Millisecond, callback, store, false)
+	debouncer.SetSyncMode(false)
+
+	startTime := time.Now()
+
+	// First change fires immediately
+	debouncer.RecordCreate()
+
+	// Wait a tiny bit for the immediate callback to fire
+	time.Sleep(20 * time.Millisecond)
+
+	// These changes are within refractory period - should be queued
+	debouncer.RecordUpdate()
+	debouncer.RecordDelete()
+
+	// Wait for refractory period to expire and queued callback to fire
+	time.Sleep(150 * time.Millisecond)
+
+	mu.Lock()
+	require.Len(t, received, 2, "should have received two callbacks")
+
+	// First callback: immediate (just create)
+	assert.Equal(t, 1, received[0].Created)
+	assert.Equal(t, 0, received[0].Modified)
+	assert.Equal(t, 0, received[0].Deleted)
+
+	// Second callback: batched changes during refractory period
+	assert.Equal(t, 0, received[1].Created)
+	assert.Equal(t, 1, received[1].Modified)
+	assert.Equal(t, 1, received[1].Deleted)
+
+	// First callback should be very fast (immediate)
+	firstCallbackDelay := callTimes[0].Sub(startTime)
+	assert.Less(t, firstCallbackDelay, 50*time.Millisecond, "first callback should be immediate")
+
+	// Second callback should fire after refractory period expires
+	timeBetweenCallbacks := callTimes[1].Sub(callTimes[0])
+	assert.GreaterOrEqual(t, timeBetweenCallbacks, 50*time.Millisecond, "second callback should wait for refractory period")
+	mu.Unlock()
+}
+
+func TestDebouncer_LeadingEdge_NoRecentActivity(t *testing.T) {
+	// Test that after refractory period expires, next change fires immediately again
+	store := &mockStore{}
+	var mu sync.Mutex
+	var callTimes []time.Time
+
+	callback := func(_ types.Store, _ types.ChangeStats) {
+		mu.Lock()
+		callTimes = append(callTimes, time.Now())
+		mu.Unlock()
+	}
+
+	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
+	debouncer.SetSyncMode(false)
+
+	// First change
+	time1 := time.Now()
+	debouncer.RecordCreate()
+
+	// Wait for callback and refractory period to fully expire
+	time.Sleep(100 * time.Millisecond)
+
+	// Second change should also fire immediately
+	time2 := time.Now()
+	debouncer.RecordCreate()
+
+	// Wait for callback
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	require.Len(t, callTimes, 2, "should have two callbacks")
+
+	// Both callbacks should be fast (immediate)
+	delay1 := callTimes[0].Sub(time1)
+	delay2 := callTimes[1].Sub(time2)
+	assert.Less(t, delay1, 50*time.Millisecond, "first callback should be immediate")
+	assert.Less(t, delay2, 50*time.Millisecond, "second callback should also be immediate after refractory expires")
 	mu.Unlock()
 }
