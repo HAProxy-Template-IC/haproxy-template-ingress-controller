@@ -469,17 +469,10 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 	}
 
 	// Simulate Update event before sync completes
-	mockResource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
-				"name":      "test-config",
-				"namespace": "default",
-			},
-		},
-	}
-	w.handleUpdate(mockResource, mockResource)
+	// Use different resourceVersion and generation to simulate a real spec update
+	oldResource := createUnstructuredWithGeneration("100", 1)
+	newResource := createUnstructuredWithGeneration("101", 2)
+	w.handleUpdate(oldResource, newResource)
 
 	// Callback should not have been called (not synced yet)
 	if callbackCount != 0 {
@@ -489,8 +482,10 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 	// Mark as synced
 	w.synced.Store(true)
 
-	// Now Update should trigger callback
-	w.handleUpdate(mockResource, mockResource)
+	// Now Update with spec change (different generation) should trigger callback
+	oldResource2 := createUnstructuredWithGeneration("101", 2)
+	newResource2 := createUnstructuredWithGeneration("102", 3)
+	w.handleUpdate(oldResource2, newResource2)
 	if callbackCount != 1 {
 		t.Errorf("expected 1 callback after sync, got %d", callbackCount)
 	}
@@ -941,6 +936,75 @@ func createUnstructuredConfigMap(name, namespace, resourceVersion string) *unstr
 	return obj
 }
 
+// createUnstructuredWithGeneration creates an unstructured object with generation for testing.
+// Uses fixed name "test-config" and namespace "default" to match common test patterns.
+func createUnstructuredWithGeneration(resourceVersion string, generation int64) *unstructured.Unstructured {
+	obj := createUnstructuredConfigMap("test-config", "default", resourceVersion)
+	obj.SetGeneration(generation)
+	return obj
+}
+
+// TestSingleWatcher_SkipsStatusOnlyUpdates verifies that Update events with unchanged
+// generation (status-only updates) don't trigger callbacks.
+// This is the canonical Kubernetes pattern for resources with status subresources.
+func TestSingleWatcher_SkipsStatusOnlyUpdates(t *testing.T) {
+	k8sClient := createFakeClientForSingleWatcher()
+
+	callbackCount := 0
+	cfg := types.SingleWatcherConfig{
+		GVR: schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "configmaps",
+		},
+		Namespace: "default",
+		Name:      "test-config",
+		OnChange: func(obj interface{}) error {
+			callbackCount++
+			return nil
+		},
+	}
+
+	w, err := NewSingle(&cfg, k8sClient)
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+
+	// Mark as synced
+	w.synced.Store(true)
+
+	// Simulate spec change: generation 1 -> 2 (should trigger callback)
+	oldResource := createUnstructuredWithGeneration("100", 1)
+	newResource := createUnstructuredWithGeneration("101", 2)
+	w.handleUpdate(oldResource, newResource)
+
+	// Callback should have been called for spec change
+	if callbackCount != 1 {
+		t.Errorf("expected 1 callback for spec change, got %d", callbackCount)
+	}
+
+	// Simulate status-only update: same generation, different resourceVersion
+	// This is what happens when StatusUpdater updates the CRD status
+	statusUpdateOld := createUnstructuredWithGeneration("101", 2)
+	statusUpdateNew := createUnstructuredWithGeneration("102", 2) // Same generation!
+	w.handleUpdate(statusUpdateOld, statusUpdateNew)
+
+	// Callback should NOT have been called for status-only update
+	if callbackCount != 1 {
+		t.Errorf("expected still 1 callback (status-only update should be skipped), got %d", callbackCount)
+	}
+
+	// Simulate another spec change: generation 2 -> 3 (should trigger callback)
+	specUpdateOld := createUnstructuredWithGeneration("102", 2)
+	specUpdateNew := createUnstructuredWithGeneration("103", 3)
+	w.handleUpdate(specUpdateOld, specUpdateNew)
+
+	// Callback should have been called for the second spec change
+	if callbackCount != 2 {
+		t.Errorf("expected 2 callbacks after second spec change, got %d", callbackCount)
+	}
+}
+
 // TestSingleWatcher_SkipsResyncCallback verifies that Update events with unchanged
 // resource version (resync events) don't trigger callbacks.
 func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
@@ -969,9 +1033,9 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 	// Mark as synced
 	w.synced.Store(true)
 
-	// Simulate real update: old version "100" -> new version "101"
-	oldResource := createUnstructuredConfigMap("test-config", "default", "100")
-	newResource := createUnstructuredConfigMap("test-config", "default", "101")
+	// Simulate real update: different resourceVersion AND generation (spec change)
+	oldResource := createUnstructuredWithGeneration("100", 1)
+	newResource := createUnstructuredWithGeneration("101", 2)
 	w.handleUpdate(oldResource, newResource)
 
 	// Callback should have been called for real update
@@ -979,7 +1043,7 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 		t.Errorf("expected 1 callback for real update, got %d", callbackCount)
 	}
 
-	// Simulate resync: same version "101" -> "101"
+	// Simulate resync: same resourceVersion "101" -> "101" (also same generation)
 	w.handleUpdate(newResource, newResource)
 
 	// Callback should NOT have been called for resync
@@ -987,8 +1051,8 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 		t.Errorf("expected still 1 callback (resync should be skipped), got %d", callbackCount)
 	}
 
-	// Simulate another real update: version "101" -> "102"
-	newerResource := createUnstructuredConfigMap("test-config", "default", "102")
+	// Simulate another real update: different resourceVersion AND generation (spec change)
+	newerResource := createUnstructuredWithGeneration("102", 3)
 	w.handleUpdate(newResource, newerResource)
 
 	// Callback should have been called again for the second real update

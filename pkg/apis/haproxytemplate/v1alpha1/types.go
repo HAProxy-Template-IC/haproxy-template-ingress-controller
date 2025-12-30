@@ -626,6 +626,11 @@ type HAProxyTemplateConfigStatus struct {
 	// +optional
 	ValidationMessage string `json:"validationMessage,omitempty"`
 
+	// ValidationErrors contains detailed validation error messages.
+	// Each entry includes the template name, error location, and context.
+	// +optional
+	ValidationErrors []string `json:"validationErrors,omitempty"`
+
 	// Conditions represent the latest available observations of the config's state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

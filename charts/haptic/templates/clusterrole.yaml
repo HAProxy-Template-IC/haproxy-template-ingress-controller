@@ -33,4 +33,8 @@ rules:
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxytemplateconfigs"]
     verbs: ["get", "list", "watch"]
+  # HAProxyTemplateConfig status updates
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxytemplateconfigs/status"]
+    verbs: ["update", "patch"]
 {{- end }}

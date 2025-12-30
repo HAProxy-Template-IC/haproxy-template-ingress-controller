@@ -499,6 +499,25 @@ kubectl -n echo exec <haproxy-pod> -- cat /etc/haproxy/haproxy.cfg
 - **Dev cluster**: `kind-haptic-dev` - Use this for development
 - **Test cluster**: `kind-haproxy-test` - Used by integration tests only
 
+### Verifying Dev Environment Code
+
+The dev environment uses source file hashing to verify the running code matches local files:
+
+```bash
+# Check if dev environment is running current code
+./scripts/start-dev-env.sh status
+
+# Output shows IN SYNC or OUT OF SYNC
+# Source Code Sync:
+#   Local source hash:   a1b2c3d4e5f6
+#   Running source hash: a1b2c3d4e5f6
+# ✔ IN SYNC - dev environment is running current code
+```
+
+The source hash is calculated from all `.go` files in `pkg/` and `cmd/`. It changes whenever any source file is modified (committed or not).
+
+**Always run `status` before debugging** to confirm you're testing the right code. If OUT OF SYNC, run `./scripts/start-dev-env.sh restart`.
+
 ## Common Patterns
 
 ### Graceful Shutdown

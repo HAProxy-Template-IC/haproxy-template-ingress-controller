@@ -7,6 +7,7 @@ ARG GO_VERSION=1.25
 ARG HAPROXY_VERSION=3.4
 ARG GIT_COMMIT=unknown
 ARG GIT_TAG=unknown
+ARG SOURCE_HASH=unknown
 
 # -----------------------------------------------------------------------------
 # Builder stage - compile the Go binary
@@ -38,6 +39,7 @@ ARG TARGETARCH
 ARG TARGETPLATFORM
 ARG GIT_COMMIT
 ARG GIT_TAG
+ARG SOURCE_HASH
 
 # Build the controller binary
 # - CGO_ENABLED=0: static binary, no C dependencies
@@ -57,7 +59,7 @@ RUN CGO_ENABLED=0 \
     -trimpath \
     -buildvcs=false \
     -pgo=auto \
-    -ldflags="-s -w -X main.version=${GIT_TAG} -X main.commit=${GIT_COMMIT}" \
+    -ldflags="-s -w -X main.version=${GIT_TAG} -X main.commit=${GIT_COMMIT} -X main.sourceHash=${SOURCE_HASH}" \
     -o /build/${TARGETPLATFORM}/haptic-controller \
     ./cmd/controller
 

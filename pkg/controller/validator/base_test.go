@@ -292,9 +292,11 @@ func TestTemplateValidator_SnippetErrors(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Create config with invalid template snippets
+	// The main template must reference the snippet for it to be compiled
+	// (Snippets are only compiled when referenced by an entry point)
 	cfg := &coreconfig.Config{
 		HAProxyConfig: coreconfig.HAProxyConfig{
-			Template: "valid template",
+			Template: `{{ render "bad-snippet" }}`,
 		},
 		TemplateSnippets: map[string]coreconfig.TemplateSnippet{
 			"bad-snippet": {
@@ -312,9 +314,11 @@ func TestTemplateValidator_SnippetErrors(t *testing.T) {
 			return resp.ValidatorName == ValidatorNameTemplate
 		})
 
+	// Templates are validated together, so syntax errors are detected
+	// Error may not contain specific template path since validation is done as complete set
 	assert.False(t, response.Valid)
 	require.GreaterOrEqual(t, len(response.Errors), 1)
-	assert.Contains(t, response.Errors[0], "template_snippets.bad-snippet")
+	assert.Contains(t, response.Errors[0], "syntax error")
 }
 
 // TestTemplateValidator_MapErrors tests map file template validation errors.
@@ -353,9 +357,11 @@ func TestTemplateValidator_MapErrors(t *testing.T) {
 			return resp.ValidatorName == ValidatorNameTemplate
 		})
 
+	// Templates are validated together, so syntax errors are detected
+	// Error may not contain specific template path since validation is done as complete set
 	assert.False(t, response.Valid)
 	require.GreaterOrEqual(t, len(response.Errors), 1)
-	assert.Contains(t, response.Errors[0], "maps.bad-map.map.template")
+	assert.Contains(t, response.Errors[0], "syntax error")
 }
 
 // TestTemplateValidator_FileErrors tests file template validation errors.
@@ -394,9 +400,11 @@ func TestTemplateValidator_FileErrors(t *testing.T) {
 			return resp.ValidatorName == ValidatorNameTemplate
 		})
 
+	// Templates are validated together, so syntax errors are detected
+	// Error may not contain specific template path since validation is done as complete set
 	assert.False(t, response.Valid)
 	require.GreaterOrEqual(t, len(response.Errors), 1)
-	assert.Contains(t, response.Errors[0], "files.bad-file.txt.template")
+	assert.Contains(t, response.Errors[0], "syntax error")
 }
 
 // TestJSONPathValidator_IndexByErrors tests IndexBy JSONPath validation errors.

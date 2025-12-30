@@ -247,6 +247,22 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
 		return
 	}
 
+	// Skip callback if generation hasn't changed (status-only update).
+	// This is the canonical Kubernetes pattern for resources with status subresources.
+	// Generation only increments on spec changes, not status changes.
+	// See: https://book-v1.book.kubebuilder.io/basics/status_subresource.html
+	if oldResource != nil {
+		oldGen := oldResource.GetGeneration()
+		newGen := resource.GetGeneration()
+		if oldGen == newGen {
+			slog.Debug("SingleWatcher skipping update callback - generation unchanged (status-only update)",
+				"resource_name", resource.GetName(),
+				"generation", newGen,
+				"resource_version", resource.GetResourceVersion())
+			return
+		}
+	}
+
 	slog.Debug("SingleWatcher processing update",
 		"resource_name", resource.GetName(),
 		"resource_namespace", resource.GetNamespace(),

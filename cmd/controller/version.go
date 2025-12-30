@@ -34,6 +34,11 @@ var (
 	// date is the build date.
 	// Set via -ldflags "-X main.date=...".
 	date = "unknown"
+
+	// sourceHash is a hash of the source files used to build the binary.
+	// Used to verify dev environment is running current code.
+	// Set via -ldflags "-X main.sourceHash=...".
+	sourceHash = "unknown"
 )
 
 // versionCmd represents the version command.
@@ -53,14 +58,20 @@ func init() {
 // printVersion outputs version information to stdout.
 func printVersion() {
 	fmt.Printf("haptic\n")
-	fmt.Printf("  Version:    %s\n", version)
-	fmt.Printf("  Commit:     %s\n", commit)
-	fmt.Printf("  Built:      %s\n", date)
-	fmt.Printf("  Go version: %s\n", runtime.Version())
-	fmt.Printf("  OS/Arch:    %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("  Version:     %s\n", version)
+	fmt.Printf("  Commit:      %s\n", commit)
+	fmt.Printf("  Source Hash: %s\n", sourceHash)
+	fmt.Printf("  Built:       %s\n", date)
+	fmt.Printf("  Go version:  %s\n", runtime.Version())
+	fmt.Printf("  OS/Arch:     %s/%s\n", runtime.GOOS, runtime.GOARCH)
 }
 
 // GetVersion returns the version string.
 func GetVersion() string {
 	return version
+}
+
+// GetSourceHash returns the source hash string.
+func GetSourceHash() string {
+	return sourceHash
 }

@@ -241,18 +241,18 @@ func (ec *EventCommentator) appendCorrelation(event busevents.Event, attrs []any
 // determineLogLevel maps event types to appropriate log levels.
 func (ec *EventCommentator) determineLogLevel(eventType string) slog.Level {
 	switch eventType {
-	// Error level - failures
+	// Error level - failures and invalid config (user needs to fix)
 	case events.EventTypeReconciliationFailed,
 		events.EventTypeTemplateRenderFailed,
 		events.EventTypeValidationFailed,
 		events.EventTypeInstanceDeploymentFailed,
 		events.EventTypeStorageSyncFailed,
-		events.EventTypeWebhookValidationError:
+		events.EventTypeWebhookValidationError,
+		events.EventTypeConfigInvalid:
 		return slog.LevelError
 
-	// Warn level - invalid states and leadership loss
-	case events.EventTypeConfigInvalid,
-		events.EventTypeCredentialsInvalid,
+	// Warn level - recoverable states and leadership loss
+	case events.EventTypeCredentialsInvalid,
 		events.EventTypeWebhookValidationDenied,
 		events.EventTypeLostLeadership:
 		return slog.LevelWarn
@@ -354,13 +354,13 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 			append(attrs, "version", e.Version, "secret_version", e.SecretVersion)
 
 	case *events.ConfigInvalidEvent:
-		// Build detailed breakdown per validator
+		// Build detailed breakdown per validator for the summary message
 		errorCount := 0
 		var validatorBreakdown []string
 		for validatorName, errs := range e.ValidationErrors {
 			errorCount += len(errs)
 			if len(errs) > 0 {
-				// Show first error as example
+				// Show first error as example (truncated for message readability)
 				firstError := errs[0]
 				if len(firstError) > maxErrorPreviewLength {
 					firstError = firstError[:maxErrorPreviewLength-3] + "..."
@@ -375,9 +375,10 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 			detailMsg = fmt.Sprintf(": %s", strings.Join(validatorBreakdown, "; "))
 		}
 
+		// Include full untruncated validation errors as structured attribute for debugging
 		return fmt.Sprintf("Configuration validation failed with %d errors across %d validators%s",
 				errorCount, len(e.ValidationErrors), detailMsg),
-			append(attrs, "version", e.Version, "validator_count", len(e.ValidationErrors), "error_count", errorCount)
+			append(attrs, "version", e.Version, "validator_count", len(e.ValidationErrors), "error_count", errorCount, "validation_errors", e.ValidationErrors)
 
 	// Webhook Certificate Events
 	case *events.CertResourceChangedEvent:

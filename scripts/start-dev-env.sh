@@ -552,12 +552,20 @@ setup_webhook_certificates() {
 }
 
 build_and_load_local_image() {
+    # Calculate source hash for reproducible builds and verification
+    local source_hash
+    source_hash=$("${SCRIPT_DIR}/source-hash.sh")
+    debug "Source hash: ${source_hash}"
+
     # Build image unless --skip-build is set
     if [[ "$SKIP_BUILD" != "true" ]]; then
         local build_args=("-t" "${LOCAL_IMAGE}")
 
         # Pass HAProxy version to use matching base image
         build_args+=("--build-arg" "HAPROXY_VERSION=${HAPROXY_VERSION}")
+
+        # Pass source hash to embed in binary
+        build_args+=("--build-arg" "SOURCE_HASH=${source_hash}")
 
         if [[ "$FORCE_REBUILD" == "true" ]]; then
             build_args+=("--no-cache")
@@ -580,20 +588,12 @@ build_and_load_local_image() {
         return 1
     fi
 
-    # Get image SHA and create unique tag
-    local image_sha
-    image_sha=$(docker inspect --format='{{.Id}}' "${LOCAL_IMAGE}" | cut -d: -f2 | head -c 12)
-
-    if [[ -z "$image_sha" ]]; then
-        err "Failed to extract image SHA"
-        return 1
-    fi
-
-    # Create unique image tag with SHA
-    local unique_tag="dev-${image_sha}"
+    # Use source hash as the unique tag (instead of Docker image SHA)
+    # This makes it easy to verify if running image matches local source
+    local unique_tag="dev-${source_hash}"
     local image_with_sha="${LOCAL_IMAGE%%:*}:${unique_tag}"
 
-    debug "Tagging image with SHA: ${unique_tag}"
+    debug "Tagging image with source hash: ${unique_tag}"
     docker tag "${LOCAL_IMAGE}" "${image_with_sha}"
 
     # Load uniquely-tagged image into kind cluster
@@ -1067,6 +1067,32 @@ dev_status() {
     verify_cluster_context
     print_section "📊 Development Environment Status"
 
+    # Source hash verification (most important - show first)
+    echo "Source Code Sync:"
+    local local_hash running_hash
+    local_hash=$("${SCRIPT_DIR}/source-hash.sh" 2>/dev/null || echo "error")
+
+    # Get running source hash from controller startup logs (appears in first few lines)
+    # Use deployment/ instead of -l selector to avoid interleaved multi-pod logs
+    running_hash=$(kubectl -n "$CTRL_NAMESPACE" logs "deployment/${HELM_RELEASE_NAME}-controller" 2>/dev/null | \
+        head -20 | grep "source_hash=" | head -1 | sed 's/.*source_hash=\([a-f0-9]*\).*/\1/' || echo "")
+
+    if [[ -z "$running_hash" ]]; then
+        running_hash="unknown"
+    fi
+
+    echo "  Local source hash:   ${local_hash}"
+    echo "  Running source hash: ${running_hash}"
+
+    if [[ "$local_hash" == "$running_hash" ]]; then
+        ok "IN SYNC - dev environment is running current code"
+    elif [[ "$running_hash" == "unknown" ]]; then
+        warn "UNKNOWN - could not determine running source hash (check controller logs)"
+    else
+        err "OUT OF SYNC - run './scripts/start-dev-env.sh restart' to update"
+    fi
+
+    echo
     echo "Cluster:"
     if kind get clusters 2>/dev/null | grep -q "$CLUSTER_NAME"; then
         ok "Cluster '$CLUSTER_NAME' exists"

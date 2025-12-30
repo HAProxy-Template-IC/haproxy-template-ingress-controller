@@ -231,7 +231,8 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_HandleValidationFailed tests validation failure handling for drift prevention fallback.
+// TestDeploymentScheduler_HandleValidationFailed tests validation failure handling.
+// When validation fails for any reason, the scheduler should deploy the last known good config.
 func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe(50)
@@ -242,7 +243,7 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	ctx := context.Background()
 	scheduler.ctx = ctx
 
-	t.Run("ignores non-drift-prevention failures", func(t *testing.T) {
+	t.Run("deploys cached config on any validation failure", func(t *testing.T) {
 		scheduler.mu.Lock()
 		scheduler.hasValidConfig = true
 		scheduler.lastValidatedConfig = "global\n  daemon\n"
@@ -252,19 +253,24 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 		}
 		scheduler.mu.Unlock()
 
-		// Non-drift-prevention failure (empty trigger reason)
-		event := events.NewValidationFailedEvent([]string{"error"}, 100, "")
+		// Any trigger reason should trigger fallback deployment
+		event := events.NewValidationFailedEvent([]string{"error"}, 100, "config_change")
 
 		scheduler.handleValidationFailed(ctx, event)
 
-		// Should not schedule deployment
-		select {
-		case e := <-eventChan:
-			if _, ok := e.(*events.DeploymentScheduledEvent); ok {
-				t.Fatal("should not schedule deployment for non-drift-prevention failure")
+		// Wait for deployment scheduled event
+		timeout := time.After(500 * time.Millisecond)
+	waitLoop:
+		for {
+			select {
+			case e := <-eventChan:
+				if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
+					assert.Equal(t, "validation_fallback", scheduled.Reason)
+					break waitLoop
+				}
+			case <-timeout:
+				t.Fatal("timeout waiting for DeploymentScheduledEvent")
 			}
-		case <-time.After(50 * time.Millisecond):
-			// Expected
 		}
 	})
 
@@ -273,7 +279,7 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationFailedEvent([]string{"error"}, 100, "drift_prevention")
+		event := events.NewValidationFailedEvent([]string{"error"}, 100, "config_change")
 
 		scheduler.handleValidationFailed(ctx, event)
 
@@ -288,33 +294,26 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 		}
 	})
 
-	t.Run("deploys cached config on drift prevention validation failure", func(t *testing.T) {
+	t.Run("skips fallback without endpoints", func(t *testing.T) {
 		scheduler.mu.Lock()
 		scheduler.hasValidConfig = true
 		scheduler.lastValidatedConfig = "global\n  daemon\n"
 		scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
-		scheduler.currentEndpoints = []interface{}{
-			dataplane.Endpoint{URL: "http://localhost:5555"},
-		}
+		scheduler.currentEndpoints = []interface{}{} // No endpoints
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationFailedEvent([]string{"error"}, 100, "drift_prevention")
+		event := events.NewValidationFailedEvent([]string{"error"}, 100, "config_change")
 
 		scheduler.handleValidationFailed(ctx, event)
 
-		// Wait for deployment scheduled event
-		timeout := time.After(500 * time.Millisecond)
-	waitLoop:
-		for {
-			select {
-			case e := <-eventChan:
-				if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
-					assert.Equal(t, "drift_prevention_fallback", scheduled.Reason)
-					break waitLoop
-				}
-			case <-timeout:
-				t.Fatal("timeout waiting for DeploymentScheduledEvent")
+		// Should not schedule deployment
+		select {
+		case e := <-eventChan:
+			if _, ok := e.(*events.DeploymentScheduledEvent); ok {
+				t.Fatal("should not schedule deployment without endpoints")
 			}
+		case <-time.After(50 * time.Millisecond):
+			// Expected
 		}
 	})
 }

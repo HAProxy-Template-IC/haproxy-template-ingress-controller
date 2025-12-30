@@ -175,6 +175,11 @@ func (e *ConfigValidatedEvent) Timestamp() time.Time { return e.timestamp }
 type ConfigInvalidEvent struct {
 	Version string
 
+	// TemplateConfig is the original HAProxyTemplateConfig CRD.
+	// Type: interface{} to avoid circular dependencies.
+	// Used by status updater to set validation errors on the CRD status.
+	TemplateConfig interface{}
+
 	// ValidationErrors maps validator names to their error messages.
 	ValidationErrors map[string][]string
 
@@ -183,7 +188,7 @@ type ConfigInvalidEvent struct {
 
 // NewConfigInvalidEvent creates a new ConfigInvalidEvent.
 // Performs defensive copy of the validation errors map and its slice values.
-func NewConfigInvalidEvent(version string, validationErrors map[string][]string) *ConfigInvalidEvent {
+func NewConfigInvalidEvent(version string, templateConfig interface{}, validationErrors map[string][]string) *ConfigInvalidEvent {
 	// Defensive copy of map with slice values
 	errorsCopy := make(map[string][]string, len(validationErrors))
 	for k, v := range validationErrors {
@@ -198,6 +203,7 @@ func NewConfigInvalidEvent(version string, validationErrors map[string][]string)
 
 	return &ConfigInvalidEvent{
 		Version:          version,
+		TemplateConfig:   templateConfig,
 		ValidationErrors: errorsCopy,
 		timestamp:        time.Now(),
 	}

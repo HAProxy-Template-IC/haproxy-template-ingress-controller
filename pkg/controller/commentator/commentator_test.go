@@ -84,13 +84,13 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 			eventType: events.EventTypeWebhookValidationError,
 			want:      slog.LevelError,
 		},
+		{
+			name:      "config invalid is error",
+			eventType: events.EventTypeConfigInvalid,
+			want:      slog.LevelError,
+		},
 
 		// Warn level events
-		{
-			name:      "config invalid is warn",
-			eventType: events.EventTypeConfigInvalid,
-			want:      slog.LevelWarn,
-		},
 		{
 			name:      "credentials invalid is warn",
 			eventType: events.EventTypeCredentialsInvalid,
@@ -246,7 +246,7 @@ func TestEventCommentator_GenerateInsight_ConfigurationEvents(t *testing.T) {
 			"basic":    {"field required", "invalid format"},
 			"template": {"syntax error in template"},
 		}
-		event := events.NewConfigInvalidEvent("v4.0.0", validationErrors)
+		event := events.NewConfigInvalidEvent("v4.0.0", nil, validationErrors)
 
 		insight, attrs := ec.generateInsight(event)
 

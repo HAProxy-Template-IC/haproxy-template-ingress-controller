@@ -288,23 +288,15 @@ func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *e
 
 // handleValidationFailed handles validation failure events.
 //
-// For drift prevention reconciliations, if validation fails, we deploy the cached
-// last known good config as a fallback. This ensures HAProxy pods stay in sync
-// even when the latest config is invalid (e.g., due to temporary HTTP fetch failures).
+// When validation fails for any reason, we deploy the cached last known good config
+// as a fallback. This ensures HAProxy pods stay in sync with a valid configuration
+// even when the latest config is invalid (e.g., due to template syntax errors,
+// HTTP fetch failures, or invalid HAProxy configuration).
 //
-// For other reconciliation reasons (config_change, resource_change, etc.), validation
-// failures are logged but no fallback deployment is triggered.
+// This is critical for resilience: the controller must NOT accept a broken config
+// and must continue using the last known good config until a valid one is provided.
 func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event *events.ValidationFailedEvent) {
 	correlationID := event.CorrelationID()
-
-	// Only trigger fallback deployment for drift prevention
-	if event.TriggerReason != "drift_prevention" {
-		s.logger.Debug("validation failed, no fallback deployment (not drift prevention)",
-			"trigger_reason", event.TriggerReason,
-			"errors", event.Errors,
-			"correlation_id", correlationID)
-		return
-	}
 
 	s.mu.RLock()
 	config := s.lastValidatedConfig
@@ -313,24 +305,25 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
 
-	s.logger.Warn("drift prevention validation failed, deploying cached config as fallback",
+	s.logger.Warn("validation failed, deploying cached config as fallback",
+		"trigger_reason", event.TriggerReason,
 		"errors", event.Errors,
 		"correlation_id", correlationID)
 
 	if !hasValidConfig {
-		s.logger.Error("drift prevention fallback failed: no cached config available",
+		s.logger.Error("validation fallback failed: no cached config available",
 			"correlation_id", correlationID)
 		return
 	}
 
 	if len(endpoints) == 0 {
-		s.logger.Debug("drift prevention fallback skipped: no endpoints available",
+		s.logger.Debug("validation fallback skipped: no endpoints available",
 			"correlation_id", correlationID)
 		return
 	}
 
-	// Schedule drift prevention fallback deployment with cached config
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "drift_prevention_fallback", correlationID)
+	// Schedule fallback deployment with last known good config
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "validation_fallback", correlationID)
 }
 
 // handleDeploymentCompleted handles deployment completion events.

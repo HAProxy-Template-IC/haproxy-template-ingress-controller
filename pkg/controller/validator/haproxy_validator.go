@@ -21,6 +21,8 @@ package validator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"sync"
 	"time"
@@ -49,14 +51,15 @@ const (
 //  1. Syntax validation using client-native parser
 //  2. Semantic validation using haproxy binary (-c flag)
 //
-// The component caches the last validation result to support state replay during
-// leadership transitions (when new leader-only components start subscribing).
+// The component caches the last validation result to support:
+// - State replay during leadership transitions (when new leader-only components start subscribing).
+// - Skipping re-validation of identical failed configs (reduces log spam).
 type HAProxyValidatorComponent struct {
 	eventBus  *busevents.EventBus
 	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger    *slog.Logger
 
-	// State protected by mutex (for leadership transition replay)
+	// State protected by mutex (for leadership transition replay and config caching)
 	mu                       sync.RWMutex
 	lastValidationSucceeded  bool
 	lastValidationWarnings   []string
@@ -64,6 +67,11 @@ type HAProxyValidatorComponent struct {
 	lastCorrelationID        string // Correlation ID from triggering event
 	lastTriggerReason        string // Reason from ReconciliationTriggeredEvent (e.g., "drift_prevention")
 	hasValidationResult      bool
+
+	// Config hash cache to skip re-validating identical failed configs
+	// This prevents log spam when the same broken config is re-rendered repeatedly
+	lastConfigHash       string
+	lastValidationErrors []string
 }
 
 // NewHAProxyValidator creates a new HAProxy validator component.
@@ -148,6 +156,37 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	correlationID := event.CorrelationID()
 	triggerReason := event.TriggerReason
 
+	// Compute config hash to detect identical configs
+	configHash := v.computeConfigHash(event.HAProxyConfig)
+
+	// Check if this is the same config that already failed validation
+	// If so, skip re-validation to reduce log spam and publish cached failure
+	v.mu.RLock()
+	if configHash == v.lastConfigHash && !v.lastValidationSucceeded && v.hasValidationResult {
+		cachedErrors := v.lastValidationErrors
+		v.mu.RUnlock()
+
+		v.logger.Debug("Skipping validation for unchanged failed config",
+			"config_hash", configHash[:16],
+			"correlation_id", correlationID)
+
+		// Publish validation started event (for consistency)
+		v.eventBus.Publish(events.NewValidationStartedEvent(
+			events.PropagateCorrelation(event),
+		))
+
+		// Publish cached failure with current trigger context
+		v.publishValidationFailure(
+			cachedErrors,
+			0, // Duration is 0 since we skipped validation
+			correlationID,
+			triggerReason,
+			"", // Don't re-cache the same hash
+		)
+		return
+	}
+	v.mu.RUnlock()
+
 	// Publish validation started event with correlation
 	v.eventBus.Publish(events.NewValidationStartedEvent(
 		events.PropagateCorrelation(event),
@@ -163,6 +202,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 			time.Since(startTime).Milliseconds(),
 			correlationID,
 			triggerReason,
+			"", // Don't cache infrastructure errors
 		)
 		return
 	}
@@ -176,6 +216,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 			time.Since(startTime).Milliseconds(),
 			correlationID,
 			triggerReason,
+			"", // Don't cache infrastructure errors
 		)
 		return
 	}
@@ -199,6 +240,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 			time.Since(startTime).Milliseconds(),
 			correlationID,
 			triggerReason,
+			configHash, // Cache this config hash to skip re-validation
 		)
 		return
 	}
@@ -207,6 +249,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	durationMs := time.Since(startTime).Milliseconds()
 
 	// Cache validation result for leadership transition replay
+	// Clear config hash cache since validation succeeded (new successful config)
 	v.mu.Lock()
 	v.lastValidationSucceeded = true
 	v.lastValidationWarnings = []string{} // No warnings
@@ -214,6 +257,8 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	v.lastCorrelationID = correlationID
 	v.lastTriggerReason = triggerReason
 	v.hasValidationResult = true
+	v.lastConfigHash = ""        // Clear cache - new valid config
+	v.lastValidationErrors = nil // Clear cached errors
 	v.mu.Unlock()
 
 	v.eventBus.Publish(events.NewValidationCompletedEvent(
@@ -269,7 +314,9 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 }
 
 // publishValidationFailure publishes a validation failure event and caches the failure state.
-func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, durationMs int64, correlationID, triggerReason string) {
+// If configHash is provided (non-empty), the hash and errors are cached to skip re-validation
+// of identical failed configs (reduces log spam).
+func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, durationMs int64, correlationID, triggerReason, configHash string) {
 	// Cache validation failure for leadership transition state
 	v.mu.Lock()
 	v.lastValidationSucceeded = false
@@ -277,6 +324,11 @@ func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, du
 	v.lastCorrelationID = correlationID
 	v.lastTriggerReason = triggerReason
 	v.hasValidationResult = true
+	// Cache config hash and errors to skip re-validation of identical failed configs
+	if configHash != "" {
+		v.lastConfigHash = configHash
+		v.lastValidationErrors = errors
+	}
 	v.mu.Unlock()
 
 	v.eventBus.Publish(events.NewValidationFailedEvent(
@@ -285,4 +337,11 @@ func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, du
 		triggerReason,
 		events.WithCorrelation(correlationID, correlationID),
 	))
+}
+
+// computeConfigHash computes a SHA256 hash of the HAProxy config content.
+// Used to detect identical configs for caching purposes.
+func (v *HAProxyValidatorComponent) computeConfigHash(config string) string {
+	hash := sha256.Sum256([]byte(config))
+	return hex.EncodeToString(hash[:])
 }

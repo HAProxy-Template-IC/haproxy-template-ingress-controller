@@ -119,9 +119,10 @@ func TestConfigEvents(t *testing.T) {
 			"basic":    {"error1"},
 			"template": {"error2", "error3"},
 		}
-		event := NewConfigInvalidEvent("v1", validationErrors)
+		event := NewConfigInvalidEvent("v1", nil, validationErrors)
 		require.NotNil(t, event)
 		assert.Equal(t, "v1", event.Version)
+		assert.Nil(t, event.TemplateConfig)
 		assert.Equal(t, validationErrors, event.ValidationErrors)
 		assert.Equal(t, EventTypeConfigInvalid, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
@@ -131,7 +132,7 @@ func TestConfigEvents(t *testing.T) {
 		validationErrors := map[string][]string{
 			"basic": {"error1"},
 		}
-		event := NewConfigInvalidEvent("v1", validationErrors)
+		event := NewConfigInvalidEvent("v1", nil, validationErrors)
 
 		// Modify original map
 		validationErrors["basic"][0] = "modified"
@@ -1129,7 +1130,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"ConfigValidationRequest", NewConfigValidationRequest(nil, "v1")},
 		{"ConfigValidationResponse", NewConfigValidationResponse("req", "validator", true, nil)},
 		{"ConfigValidated", NewConfigValidatedEvent(nil, nil, "v1", "v2")},
-		{"ConfigInvalid", NewConfigInvalidEvent("v1", nil)},
+		{"ConfigInvalid", NewConfigInvalidEvent("v1", nil, nil)},
 		{"ConfigResourceChanged", NewConfigResourceChangedEvent(nil)},
 		{"ResourceIndexUpdated", NewResourceIndexUpdatedEvent("type", types.ChangeStats{})},
 		{"ResourceSyncComplete", NewResourceSyncCompleteEvent("type", 0)},

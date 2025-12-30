@@ -28,6 +28,10 @@ var (
 	// Pattern: "unable to execute template: ..." or "Unable to execute controlStructure at line X:".
 	locationPattern = regexp.MustCompile(`at line (\d+)`)
 
+	// Pattern for Scriggo compilation errors: "validation:1:5: expected '}'" or "template:3:10: syntax error".
+	// Format: "name:line:col: message".
+	scriggoCompilePattern = regexp.MustCompile(`:(\d+):(\d+):\s*(.*)$`)
+
 	// Pattern: "unknown method 'X'".
 	unknownMethodPattern = regexp.MustCompile(`unknown method '([^']+)'`)
 
@@ -112,6 +116,152 @@ func FormatRenderError(err error, templateName, templateContent string) string {
 	}
 
 	return builder.String()
+}
+
+// FormatCompilationError formats a template compilation error into a human-readable multi-line string.
+//
+// This function is similar to FormatRenderError but optimized for compilation/syntax errors.
+// It parses template error messages to extract:
+//   - Line and column numbers
+//   - The actual problem (syntax error, unexpected token, etc.)
+//   - Contextual information from the template source
+//
+// And returns a nicely formatted multi-line error message with:
+//   - Clear section headers
+//   - Template snippet showing the error location with surrounding lines
+//   - A caret (^) pointing to the exact column
+//   - Actionable hints for fixing the error
+//
+// Parameters:
+//   - err: The error from template compilation (typically a *CompilationError)
+//   - templateName: Name of the template that failed
+//   - templateContent: Full template content for extracting context
+//
+// Returns:
+//   - Formatted multi-line error string
+func FormatCompilationError(err error, templateName, templateContent string) string {
+	if err == nil {
+		return ""
+	}
+
+	// Parse the error to extract structured information
+	parsed := parseCompilationError(err.Error())
+
+	var builder strings.Builder
+
+	// Header
+	builder.WriteString(fmt.Sprintf("Template Compilation Error: %s\n", templateName))
+	builder.WriteString(strings.Repeat("─", 60))
+	builder.WriteString("\n")
+
+	// Location
+	if parsed.Location != nil {
+		if parsed.Location.Column > 0 {
+			builder.WriteString(fmt.Sprintf("Location: Line %d, Column %d\n",
+				parsed.Location.Line, parsed.Location.Column))
+		} else {
+			builder.WriteString(fmt.Sprintf("Location: Line %d\n", parsed.Location.Line))
+		}
+	}
+
+	// Problem
+	if parsed.Problem != "" {
+		builder.WriteString(fmt.Sprintf("Problem:  %s\n", parsed.Problem))
+	} else {
+		// Fallback: show truncated original error
+		problem := err.Error()
+		if len(problem) > 100 {
+			problem = problem[:97] + "..."
+		}
+		builder.WriteString(fmt.Sprintf("Problem:  %s\n", problem))
+	}
+
+	// Template context (show the line with the error and surrounding lines)
+	if parsed.Location != nil && templateContent != "" {
+		context := extractTemplateContext(templateContent, parsed.Location.Line, parsed.Location.Column)
+		if context != "" {
+			builder.WriteString("\nTemplate Context:\n")
+			builder.WriteString(context)
+		}
+	}
+
+	// Hints
+	if len(parsed.Hints) > 0 {
+		builder.WriteString("\nHint: ")
+		builder.WriteString(strings.Join(parsed.Hints, "\n      "))
+		builder.WriteString("\n")
+	}
+
+	return builder.String()
+}
+
+// parseCompilationError parses a compilation error string to extract structured information.
+// It handles Scriggo-style errors like "validation:1:5: expected '}'".
+func parseCompilationError(errorStr string) parsedError {
+	parsed := parsedError{}
+
+	// Try Scriggo compile error pattern first: "validation:1:5: expected '}'"
+	if matches := scriggoCompilePattern.FindStringSubmatch(errorStr); len(matches) == 4 {
+		var line, col int
+		_, _ = fmt.Sscanf(matches[1], "%d", &line)
+		_, _ = fmt.Sscanf(matches[2], "%d", &col)
+		parsed.Location = &errorLocation{Line: line, Column: col}
+		parsed.Problem = strings.TrimSpace(matches[3])
+	} else {
+		// Fallback to runtime error parsing
+		parsed.Location = extractLocation(errorStr)
+		parsed.Problem = extractProblem(errorStr)
+	}
+
+	// Generate hints based on error patterns
+	parsed.Hints = generateCompilationHints(errorStr)
+
+	return parsed
+}
+
+// generateCompilationHints generates actionable hints for compilation errors.
+func generateCompilationHints(errorStr string) []string {
+	var hints []string
+
+	// Syntax error patterns
+	if strings.Contains(errorStr, "expected") {
+		if strings.Contains(errorStr, "expected '}'") || strings.Contains(errorStr, "expected '{'") {
+			hints = append(hints,
+				"Check for missing or mismatched braces in your template.",
+				"Ensure {% %} blocks are properly closed with {% end %}.")
+		} else if strings.Contains(errorStr, "expected '%}'") || strings.Contains(errorStr, "expected '}}'") {
+			hints = append(hints,
+				"Check for unclosed template tags.",
+				"Ensure {{ }} and {% %} are properly closed.")
+		} else {
+			hints = append(hints,
+				"The template syntax is incomplete or malformed.",
+				"Check for missing operators, parentheses, or keywords.")
+		}
+	}
+
+	// Unexpected token patterns
+	if strings.Contains(errorStr, "unexpected") {
+		hints = append(hints,
+			"The template contains an unexpected token at this location.",
+			"Check for typos or misplaced syntax elements.")
+	}
+
+	// Undefined identifier
+	if strings.Contains(errorStr, "undefined") || strings.Contains(errorStr, "not declared") {
+		hints = append(hints,
+			"The variable or function is not defined.",
+			"Check spelling and ensure it's declared in the template context.")
+	}
+
+	// Generic hint if no specific hint matched
+	if len(hints) == 0 {
+		hints = append(hints,
+			"Check your template syntax for errors.",
+			"See Scriggo template documentation for syntax help.")
+	}
+
+	return hints
 }
 
 // parseTemplateError parses a template error string to extract structured information.
@@ -246,6 +396,7 @@ func generateHints(errorStr string) []string {
 }
 
 // extractTemplateContext extracts a few lines of template around the error location.
+// Shows the error line plus one line of context above and below.
 func extractTemplateContext(templateContent string, line, column int) string {
 	lines := strings.Split(templateContent, "\n")
 
@@ -255,20 +406,37 @@ func extractTemplateContext(templateContent string, line, column int) string {
 
 	var builder strings.Builder
 
-	// Show the error line (1-indexed)
 	lineIndex := line - 1
-	errorLine := lines[lineIndex]
 
-	// Format: line number | content
-	builder.WriteString(fmt.Sprintf("%d | %s\n", line, errorLine))
+	// Calculate the width needed for line numbers (for alignment)
+	maxLineNum := line + 1
+	if maxLineNum > len(lines) {
+		maxLineNum = len(lines)
+	}
+	lineNumWidth := len(fmt.Sprintf("%d", maxLineNum))
+
+	// Show line above (if it exists)
+	if lineIndex > 0 {
+		prevLine := lines[lineIndex-1]
+		builder.WriteString(fmt.Sprintf("%*d | %s\n", lineNumWidth, line-1, prevLine))
+	}
+
+	// Show the error line
+	errorLine := lines[lineIndex]
+	builder.WriteString(fmt.Sprintf("%*d | %s\n", lineNumWidth, line, errorLine))
 
 	// Add caret pointing to the column if we have it
 	if column > 0 && column <= len(errorLine)+1 {
-		// Calculate padding: line number + " | " + spaces to column
-		lineNumWidth := len(fmt.Sprintf("%d", line))
+		// Calculate padding: line number width + " | " + spaces to column
 		padding := lineNumWidth + 3 + column - 1
 		builder.WriteString(strings.Repeat(" ", padding))
 		builder.WriteString("^\n")
+	}
+
+	// Show line below (if it exists)
+	if lineIndex < len(lines)-1 {
+		nextLine := lines[lineIndex+1]
+		builder.WriteString(fmt.Sprintf("%*d | %s\n", lineNumWidth, line+1, nextLine))
 	}
 
 	return builder.String()
