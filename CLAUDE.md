@@ -710,7 +710,7 @@ func (c *Component) Start(ctx context.Context) error {
 
 The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the controller software.
 
-**Every notable change must have a changelog entry.** Keep entries concise - one line per change, focus on what changed, not implementation details.
+**Every notable change must have a changelog entry.** Keep entries concise - one line per change, focus on what changed, not implementation details. Avoid verbose justifications or explanations in parentheses.
 
 **Include:**
 
