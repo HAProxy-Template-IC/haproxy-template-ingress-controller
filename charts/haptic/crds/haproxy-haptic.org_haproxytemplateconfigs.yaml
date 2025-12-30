@@ -822,6 +822,13 @@ spec:
                   observed by the controller.
                 format: int64
                 type: integer
+              validationErrors:
+                description: |-
+                  ValidationErrors contains detailed validation error messages.
+                  Each entry includes the template name, error location, and context.
+                items:
+                  type: string
+                type: array
               validationMessage:
                 description: ValidationMessage contains human-readable validation
                   details.

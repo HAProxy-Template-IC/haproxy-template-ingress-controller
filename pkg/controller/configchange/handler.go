@@ -71,6 +71,15 @@ type ConfigChangeHandler struct {
 	// Without tracking this version, ConfigChangeHandler would trigger reinitialization
 	// for the bootstrap event, creating an infinite loop.
 	initialConfigVersion string
+
+	// reinitializationEnabled controls whether ConfigValidatedEvents trigger reinitialization.
+	// During startup, multiple ConfigValidatedEvents can occur:
+	// 1. Synthetic event (version="initial") - always skipped
+	// 2. Watcher event from OnSyncComplete - skipped during bootstrap
+	// All events are skipped until EnableReinitialization() is called after startup completes.
+	// Note: CRDWatcher uses generation-based filtering, so status-only updates don't
+	// trigger ConfigValidatedEvents in the first place.
+	reinitializationEnabled bool
 }
 
 // NewConfigChangeHandler creates a new ConfigChangeHandler.
@@ -129,6 +138,22 @@ func (h *ConfigChangeHandler) SetInitialConfigVersion(version string) {
 	h.initialConfigVersion = version
 	h.logger.Debug("Set initial config version for bootstrap skip",
 		"version", version)
+}
+
+// EnableReinitialization enables the reinitialization signaling mechanism.
+//
+// This must be called after controller startup is complete to allow config changes
+// to trigger reinitialization. During startup, ConfigValidatedEvents occur that
+// should NOT trigger reinitialization. Calling this method signals that the startup
+// phase is complete and future config changes should trigger reinitialization.
+//
+// Note: CRDWatcher uses generation-based filtering, so status-only updates (which
+// don't increment generation) never trigger ConfigValidatedEvents in the first place.
+func (h *ConfigChangeHandler) EnableReinitialization() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reinitializationEnabled = true
+	h.logger.Debug("Reinitialization signaling enabled (startup complete)")
 }
 
 // Start begins processing events from the EventBus.
@@ -225,8 +250,8 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 		h.logger.Error("Config validation request failed",
 			"error", err,
 			"version", event.Version)
-		// Publish invalid event
-		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, map[string][]string{
+		// Publish invalid event with TemplateConfig reference for status updates
+		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, map[string][]string{
 			"coordinator": {err.Error()},
 		}))
 		return
@@ -275,11 +300,12 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 		// Publish validated event
 		h.eventBus.Publish(validatedEvent)
 	} else {
-		h.logger.Warn("Config validation failed",
+		h.logger.Error("Config validation failed",
 			"version", event.Version,
-			"error_count", len(validationErrors))
-		// Publish invalid event
-		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, validationErrors))
+			"error_count", len(validationErrors),
+			"validation_errors", validationErrors)
+		// Publish invalid event with TemplateConfig reference for status updates
+		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, validationErrors))
 	}
 }
 
@@ -289,25 +315,39 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 // This prevents the race condition where reinitialization interrupts in-progress renders,
 // ensuring all config changes are fully rendered before reinitialization starts.
 func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidatedEvent) {
-	// Cache the event for leadership transition replay
-	// Read initialConfigVersion while holding the lock
-	h.mu.Lock()
-	h.lastConfigValidatedEvent = event
-	h.hasValidatedConfig = true
-	initialVersion := h.initialConfigVersion
-	h.mu.Unlock()
-
-	// Ignore initial bootstrap events:
-	// 1. Version "initial" - synthetic bootstrap events
-	// 2. Version matches initialConfigVersion - CRDWatcher.onAdd for existing CRD at iteration start
-	// Without this check, the CRDWatcher bootstrap event would trigger reinitialization,
-	// creating an infinite loop: start → onAdd → ConfigValidatedEvent → reinit → start → ...
+	// Skip synthetic bootstrap events (version="initial") - these don't trigger reinitialization
 	if event.Version == "initial" {
+		// Still cache the event for leadership transition replay
+		h.mu.Lock()
+		h.lastConfigValidatedEvent = event
+		h.hasValidatedConfig = true
+		h.mu.Unlock()
+
 		h.logger.Debug("Ignoring synthetic bootstrap ConfigValidatedEvent (version='initial')")
 		return
 	}
+
+	// Cache the event and read state atomically.
+	h.mu.Lock()
+	h.lastConfigValidatedEvent = event
+	h.hasValidatedConfig = true
+	reinitEnabled := h.reinitializationEnabled
+	initialVersion := h.initialConfigVersion
+	h.mu.Unlock()
+
+	// During startup (before EnableReinitialization is called), skip all events.
+	// Multiple events occur during startup (watcher sync) that should not trigger
+	// reinitialization. Note: CRDWatcher uses generation-based filtering, so status-only
+	// updates never trigger ConfigValidatedEvents in the first place.
+	if !reinitEnabled {
+		h.logger.Debug("Ignoring ConfigValidatedEvent (reinitialization disabled during startup)",
+			"version", event.Version)
+		return
+	}
+
+	// Version-based check as safety fallback (e.g., if SetInitialConfigVersion was called)
 	if initialVersion != "" && event.Version == initialVersion {
-		h.logger.Debug("Ignoring bootstrap ConfigValidatedEvent (matches initial config version)",
+		h.logger.Debug("Ignoring ConfigValidatedEvent (matches initial config version)",
 			"version", event.Version)
 		return
 	}

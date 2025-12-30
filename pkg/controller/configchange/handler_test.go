@@ -148,9 +148,15 @@ func TestConfigChangeHandler_HandleConfigValidated_SignalController(t *testing.T
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish ConfigValidatedEvent (not initial)
+	// Enable reinitialization (simulating startup complete)
+	handler.EnableReinitialization()
+
+	// Publish ConfigValidatedEvent (actual config change)
 	testConfig := &coreconfig.Config{}
 	bus.Publish(events.NewConfigValidatedEvent(testConfig, nil, "v2", "sv2"))
+
+	// Wait for debounce
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
 
 	// Should signal controller reinitialization
 	select {
@@ -548,6 +554,9 @@ func TestConfigChangeHandler_RapidConfigChangesDebounced(t *testing.T) {
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
+	// Enable reinitialization (simulating startup complete)
+	handler.EnableReinitialization()
+
 	// Publish 5 rapid config changes, each faster than the debounce interval
 	for i := 1; i <= 5; i++ {
 		cfg := &coreconfig.Config{}
@@ -589,6 +598,9 @@ func TestConfigChangeHandler_DebounceTimerResetOnEachChange(t *testing.T) {
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
+
+	// Enable reinitialization (simulating startup complete)
+	handler.EnableReinitialization()
 
 	// Publish first config change
 	cfg1 := &coreconfig.Config{}
@@ -650,6 +662,9 @@ func TestConfigChangeHandler_CleanupWithPendingDebounce(t *testing.T) {
 	}()
 	time.Sleep(testutil.StartupDelay)
 
+	// Enable reinitialization (simulating startup complete)
+	handler.EnableReinitialization()
+
 	// Publish config change to start debounce timer
 	cfg := &coreconfig.Config{}
 	bus.Publish(events.NewConfigValidatedEvent(cfg, nil, "v1", ""))
@@ -708,4 +723,113 @@ func TestConfigChangeHandler_NegativeDebounceInterval(t *testing.T) {
 
 	assert.Equal(t, DefaultReinitDebounceInterval, handler.debounceInterval,
 		"negative debounce interval should use default")
+}
+
+func TestConfigChangeHandler_EventsSkippedDuringBootstrap(t *testing.T) {
+	// This test verifies that ALL ConfigValidatedEvents are skipped during bootstrap
+	// (before EnableReinitialization is called), preventing the infinite reinitialization loop.
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go handler.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish multiple ConfigValidatedEvents during bootstrap
+	// All should be skipped since EnableReinitialization hasn't been called
+	for i := 1; i <= 3; i++ {
+		testConfig := &coreconfig.Config{}
+		bus.Publish(events.NewConfigValidatedEvent(testConfig, nil, fmt.Sprintf("v%d", i), ""))
+		time.Sleep(testDebounceInterval + 50*time.Millisecond)
+
+		select {
+		case <-configCh:
+			t.Fatalf("unexpected config signal for bootstrap event %d", i)
+		case <-time.After(testutil.NoEventTimeout):
+			// Expected - all events skipped during bootstrap
+		}
+	}
+
+	// Enable reinitialization (simulating startup complete)
+	handler.EnableReinitialization()
+
+	// Publish a new ConfigValidatedEvent
+	testConfig := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(testConfig, nil, "v4", "sv4"))
+
+	// Wait for debounce
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+
+	// Should signal controller now that reinitialization is enabled
+	select {
+	case cfg := <-configCh:
+		assert.Equal(t, testConfig, cfg)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("timeout waiting for config signal after EnableReinitialization")
+	}
+}
+
+func TestConfigChangeHandler_BootstrapEventOrderingSyntheticThenReal(t *testing.T) {
+	// Tests the expected bootstrap sequence:
+	// 1. Synthetic event (version="initial") - skipped by version check
+	// 2. Watcher event (version=actual) - skipped (reinitialization disabled)
+	// 3. EnableReinitialization() called - marks startup complete
+	// 4. Real change event - NOT skipped
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go handler.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Step 1: Synthetic bootstrap event (version="initial")
+	testConfig1 := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(testConfig1, nil, "initial", ""))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+
+	select {
+	case <-configCh:
+		t.Fatal("unexpected signal for synthetic bootstrap event")
+	case <-time.After(testutil.NoEventTimeout):
+		// Expected - synthetic event skipped
+	}
+
+	// Step 2: Watcher bootstrap event (during startup)
+	testConfig2 := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(testConfig2, nil, "4026", "sv1"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+
+	select {
+	case <-configCh:
+		t.Fatal("unexpected signal for watcher bootstrap event")
+	case <-time.After(testutil.NoEventTimeout):
+		// Expected - event skipped (reinitialization disabled during startup)
+	}
+
+	// Step 3: Enable reinitialization (marks startup complete)
+	handler.EnableReinitialization()
+
+	// Step 4: Real config change (should NOT be skipped)
+	testConfig3 := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(testConfig3, nil, "4027", "sv2"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+
+	select {
+	case cfg := <-configCh:
+		assert.Equal(t, testConfig3, cfg)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("timeout waiting for config signal on real change")
+	}
 }

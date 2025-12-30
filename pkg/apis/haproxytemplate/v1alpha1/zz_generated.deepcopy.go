@@ -19,7 +19,7 @@
 package v1alpha1
 
 import (
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -496,6 +496,11 @@ func (in *HAProxyTemplateConfigStatus) DeepCopyInto(out *HAProxyTemplateConfigSt
 	if in.LastValidated != nil {
 		in, out := &in.LastValidated, &out.LastValidated
 		*out = (*in).DeepCopy()
+	}
+	if in.ValidationErrors != nil {
+		in, out := &in.ValidationErrors, &out.ValidationErrors
+		*out = make([]string, len(*in))
+		copy(*out, *in)
 	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions

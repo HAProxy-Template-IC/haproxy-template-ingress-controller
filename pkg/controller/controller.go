@@ -876,8 +876,9 @@ type reconciliationComponents struct {
 	deploymentScheduler *deployer.DeploymentScheduler
 	driftMonitor        *deployer.DriftPreventionMonitor
 	configPublisher     *ctrlconfigpublisher.Component
-	httpStore           *httpstore.Component   // HTTP resource fetcher for dynamic content
-	capabilities        dataplane.Capabilities // HAProxy/DataPlane API capabilities
+	statusUpdater       *configchange.StatusUpdater // Updates CRD status with validation results
+	httpStore           *httpstore.Component        // HTTP resource fetcher for dynamic content
+	capabilities        dataplane.Capabilities      // HAProxy/DataPlane API capabilities
 }
 
 // leaderOnlyComponents holds components that only the leader should run.
@@ -976,9 +977,14 @@ func createReconciliationComponents(
 	purePublisher := configpublisher.New(k8sClient.Clientset(), crdClientset, logger)
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, bus, logger)
 
+	// Create Status Updater (updates HAProxyTemplateConfig CRD status with validation results)
+	// This allows users to see validation errors via `kubectl describe haproxytemplateconfig`
+	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, bus, logger)
+
 	// Register components with the lifecycle registry using builder pattern
 	// DriftMonitor runs on all replicas to keep HTTP Store caches warm.
 	// Only leader's DeploymentScheduler will actually deploy.
+	// StatusUpdater is leader-only to avoid API conflicts from concurrent updates.
 	registry.Build().
 		AllReplica(
 			reconcilerComponent,
@@ -993,6 +999,7 @@ func createReconciliationComponents(
 			deployerComponent,
 			deploymentSchedulerComponent,
 			configPublisherComponent,
+			statusUpdaterComponent,
 		).
 		Done()
 
@@ -1006,6 +1013,7 @@ func createReconciliationComponents(
 		deploymentScheduler: deploymentSchedulerComponent,
 		driftMonitor:        driftMonitorComponent,
 		configPublisher:     configPublisherComponent,
+		statusUpdater:       statusUpdaterComponent,
 		httpStore:           httpStoreComponent,
 		capabilities:        capabilities,
 	}, nil
@@ -1544,6 +1552,12 @@ func runIteration(
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
 	// This call registers debug variables and updates the health checker
 	setupInfrastructureServers(setup.IterCtx, setup, stateCache, eventBuffer, logger)
+
+	// 10. Enable reinitialization signaling now that startup is complete
+	// This allows future ConfigValidatedEvents to trigger controller reinitialization.
+	// During startup, multiple events occur (watcher sync, status updates) that should
+	// NOT trigger reinitialization - those were skipped while this was disabled.
+	setup.ConfigChangeHandler.EnableReinitialization()
 
 	logger.Info("Controller iteration initialized successfully - entering event loop")
 
