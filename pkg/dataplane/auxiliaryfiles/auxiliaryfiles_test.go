@@ -777,6 +777,42 @@ bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
 		// NOT: "cert:serial:123456:issuers:/CN=test.example.com"
 		assert.Contains(t, result, ":issuers:test.example.com")
 	})
+
+	t.Run("certificate chain returns comma-separated issuers", func(t *testing.T) {
+		// Create a certificate chain (leaf cert + intermediate cert)
+		// Each cert's issuer CN should be collected and joined with ", "
+		// This matches HAProxy API format: "issuers": "R12, ISRG Root X1"
+		leafCert := `-----BEGIN CERTIFICATE-----
+MIIDFzCCAf+gAwIBAgIUGLGWKDJjVLH8Sq6F3ueIbrzGWfMwDQYJKoZIhvcNAQEL
+BQAwGzEZMBcGA1UEAwwQdGVzdC5leGFtcGxlLmNvbTAeFw0yNTEyMTAyMTI2NTla
+Fw0yNTEyMTEyMTI2NTlaMBsxGTAXBgNVBAMMEHRlc3QuZXhhbXBsZS5jb20wggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDPHl2u1cXp/Wt58BQI9P7Ed5ed
+GY6bU+EfyrUnNr1lTe+YgFb/OnRgP3mKFDmuzLE6QfgTsnNlwuWjlIa4oR80u2hW
+qwPP9h4EWmKKHR+IFWnekgGe4tQ7x+9TlocUL1IcVUN7hl7DO24VxekpJ225jcyI
+4FGWugwaTWahVOCc1gglS2N8iCOdK7E3PFnGN5EIu0671QRWGcEQ56XMQo6C6VSB
+0KSMALcLihT94Lfs9jyoAHFzU06mF/Vq7igcX9mgbWlVKst5JUtG9tvf3I2V4luy
+6V0w6O+OijFsDpy2iDQkOmH213/d2h7SFdNVbxVQwOLo9gbFV4Vy6mwC8ADzAgMB
+AAGjUzBRMB0GA1UdDgQWBBSK/1+6h97tZgdcv69To/NWQX/a3TAfBgNVHSMEGDAW
+gBSK/1+6h97tZgdcv69To/NWQX/a3TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3
+DQEBCwUAA4IBAQCPtd0+M99AvTHrTkQF77r1TmtAQESOyqGOAvLjhC3A5m7nm9mZ
+CBMPK5wfK0JtAJj4AAKl+5ZMAkaEZ3xDZ0TGcUCzoaXhejhL6TdLGoY29vqNn9Oe
+cufJDxtcMRiLEIHMoGkrXDakZhLmJSYkgwwZu92De6ryc3t3pM8FrtLvFok3Y3jD
+hZXwDvkhmTvkhl76lMyqZY004rUclu4+yFWtqEvcUcusWZwabWYzYMmWfOfgRi2v
+9+HqFPD8HE2IqA7XFqAZbTnBXiJf1rIvPE293RkHAeVUSVF/JnpEthyFECvnDREC
+bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
+-----END CERTIFICATE-----`
+		// Add another cert (using same cert structure but pretending it's an intermediate)
+		// In a real chain, this would be a different cert with different issuer
+		chainPEM := leafCert + "\n" + leafCert
+
+		result := calculateCertIdentifier(chainPEM)
+		// Both certs have same issuer (test.example.com), so should appear twice
+		// Format: "cert:serial:XXX:issuers:test.example.com, test.example.com"
+		assert.Contains(t, result, "cert:serial:")
+		assert.Contains(t, result, ":issuers:")
+		// Should have comma-separated issuers from both certs
+		assert.Contains(t, result, "test.example.com, test.example.com")
+	})
 }
 
 // TestConvertCRTListsToGeneralFiles tests conversion of CRT-list files to general files.

@@ -24,40 +24,60 @@ func calculateSHA256Fingerprint(content string) string {
 // format to match the API response fallback (used when sha256_finger_print is unavailable).
 // For non-certificate content (keys, combined files), it falls back to SHA256 fingerprint.
 //
+// The HAProxy DataPlane API returns "issuers" as a comma-separated list of issuer CNs
+// from ALL certificates in the PEM chain (e.g., "R12, ISRG Root X1" for Let's Encrypt certs).
+// This function parses all certificates in the chain to match that format exactly.
+//
 // This is a workaround for https://github.com/haproxytech/dataplaneapi/pull/396
 // Once the upstream fix is released, the API will return sha256_finger_print and
 // this fallback format won't be used (both sides will use fingerprint directly).
 func calculateCertIdentifier(content string) string {
-	block, _ := pem.Decode([]byte(content))
-	if block == nil {
-		// Not valid PEM - use SHA256 fingerprint
-		return calculateSHA256Fingerprint(content)
+	// Parse all certificates in the PEM content
+	var leafCert *x509.Certificate
+	var issuerCNs []string
+
+	data := []byte(content)
+	for {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			break
+		}
+
+		if block.Type == "CERTIFICATE" {
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				// Invalid certificate - use SHA256 fingerprint
+				return calculateSHA256Fingerprint(content)
+			}
+
+			// First certificate is the leaf (used for serial number)
+			if leafCert == nil {
+				leafCert = cert
+			}
+
+			// Collect issuer CN from each certificate
+			issuerCN := cert.Issuer.CommonName
+			if issuerCN == "" {
+				// Fallback for self-signed certs where issuer may be empty but subject has CN
+				issuerCN = cert.Subject.CommonName
+			}
+			if issuerCN != "" {
+				issuerCNs = append(issuerCNs, issuerCN)
+			}
+		}
+
+		data = rest
 	}
 
-	// Only process CERTIFICATE blocks, not keys
-	if block.Type != "CERTIFICATE" {
-		// Might be a key or combined cert+key file
-		// Use SHA256 fingerprint for these
-		return calculateSHA256Fingerprint(content)
-	}
-
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		// Invalid certificate - use SHA256 fingerprint
+	// No valid certificates found - use SHA256 fingerprint
+	if leafCert == nil {
 		return calculateSHA256Fingerprint(content)
 	}
 
 	// Return format matching HAProxy API: "cert:serial:XXX:issuers:YYY"
-	// For self-signed certificates, the API returns issuers as just the CommonName
-	// (e.g., "echo-tls.localdev.me"), not in DN format (e.g., "/CN=echo-tls.localdev.me").
-	// For CA-signed certificates with full DN, the API returns the full issuer string.
-	// We use the CommonName to match the API format for self-signed certs.
-	issuerCN := cert.Issuer.CommonName
-	if issuerCN == "" {
-		// Fallback for self-signed certs where issuer may be empty but subject has CN
-		issuerCN = cert.Subject.CommonName
-	}
-	return fmt.Sprintf("cert:serial:%s:issuers:%s", cert.SerialNumber.String(), issuerCN)
+	// API returns issuers as comma-separated list from all certs in chain
+	issuersStr := strings.Join(issuerCNs, ", ")
+	return fmt.Sprintf("cert:serial:%s:issuers:%s", leafCert.SerialNumber.String(), issuersStr)
 }
 
 // sslCertificateOps implements FileOperations for SSLCertificate.
