@@ -61,13 +61,22 @@ func New(
 	// Wrap callbacks to publish events for observability
 	wrappedCallbacks := k8sleaderelection.Callbacks{
 		OnStartedLeading: func(ctx context.Context) {
-			// Publish event BEFORE executing callback
+			// PAUSE - temporarily buffer events during leadership transition
+			// This prevents race conditions where leader-only components miss
+			// events published before they finish subscribing.
+			c.eventBus.Pause()
+
+			// Publish event (buffered while paused)
 			c.eventBus.Publish(events.NewBecameLeaderEvent(config.Identity))
 
-			// Execute user callback
+			// Execute user callback (starts leader-only components)
 			if callbacks.OnStartedLeading != nil {
 				callbacks.OnStartedLeading(ctx)
 			}
+
+			// RESUME - replay buffered events to all subscribers including
+			// the newly started leader-only components
+			c.eventBus.Start()
 		},
 		OnStoppedLeading: func() {
 			// Publish event BEFORE executing callback

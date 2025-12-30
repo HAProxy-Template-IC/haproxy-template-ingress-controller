@@ -220,6 +220,13 @@ type DataplaneConfig struct {
 	// Default: 60s
 	DriftPreventionInterval string `yaml:"drift_prevention_interval"`
 
+	// DeploymentTimeout is the maximum time to wait for a deployment to complete.
+	// If exceeded, the scheduler assumes the deployment was lost and retries.
+	// This is a safety net for race conditions during leadership transitions.
+	// Format: Go duration string (e.g., "30s", "1m")
+	// Default: 30s
+	DeploymentTimeout string `yaml:"deployment_timeout"`
+
 	// MapsDir is the directory for HAProxy map files.
 	// Used for both validation and deployment.
 	// Default: /etc/haproxy/maps

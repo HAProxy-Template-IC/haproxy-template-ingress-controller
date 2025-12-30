@@ -283,6 +283,14 @@ type DataplaneConfig struct {
 	// Default: /etc/haproxy/haproxy.cfg
 	// +optional
 	ConfigFile string `json:"configFile,omitempty"`
+
+	// DeploymentTimeout is the maximum time to wait for a deployment to complete.
+	// If exceeded, the scheduler assumes the deployment was lost and retries.
+	// This is a safety net for race conditions during leadership transitions.
+	// Format: Go duration string (e.g., "30s", "1m")
+	// Default: 30s
+	// +optional
+	DeploymentTimeout string `json:"deploymentTimeout,omitempty"`
 }
 
 // TemplatingSettings configures template rendering behavior.

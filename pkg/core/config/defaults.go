@@ -20,6 +20,10 @@ const (
 	// DefaultDriftPreventionInterval is the default interval for periodic drift prevention deployments.
 	DefaultDriftPreventionInterval = 60 * time.Second
 
+	// DefaultDeploymentTimeout is the maximum time to wait for a deployment to complete.
+	// If exceeded, the scheduler assumes the deployment was lost and retries.
+	DefaultDeploymentTimeout = 30 * time.Second
+
 	// DefaultDataplaneMapsDir is the default directory for HAProxy map files.
 	DefaultDataplaneMapsDir = "/etc/haproxy/maps"
 
@@ -125,6 +129,17 @@ func (d *DataplaneConfig) GetDriftPreventionInterval() time.Duration {
 		}
 	}
 	return DefaultDriftPreventionInterval
+}
+
+// GetDeploymentTimeout returns the configured deployment timeout
+// or the default if not specified or invalid.
+func (d *DataplaneConfig) GetDeploymentTimeout() time.Duration {
+	if d.DeploymentTimeout != "" {
+		if duration, err := time.ParseDuration(d.DeploymentTimeout); err == nil {
+			return duration
+		}
+	}
+	return DefaultDeploymentTimeout
 }
 
 // GetLeaseDuration returns the configured lease duration

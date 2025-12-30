@@ -79,6 +79,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		Port:                    spec.Dataplane.Port,
 		MinDeploymentInterval:   spec.Dataplane.MinDeploymentInterval,
 		DriftPreventionInterval: spec.Dataplane.DriftPreventionInterval,
+		DeploymentTimeout:       spec.Dataplane.DeploymentTimeout,
 		MapsDir:                 spec.Dataplane.MapsDir,
 		SSLCertsDir:             spec.Dataplane.SSLCertsDir,
 		GeneralStorageDir:       spec.Dataplane.GeneralStorageDir,

@@ -947,9 +947,10 @@ func createReconciliationComponents(
 	// Create Deployer
 	deployerComponent := deployer.New(bus, logger)
 
-	// Create DeploymentScheduler with rate limiting
+	// Create DeploymentScheduler with rate limiting and timeout
 	minDeploymentInterval := cfg.Dataplane.GetMinDeploymentInterval()
-	deploymentSchedulerComponent := deployer.NewDeploymentScheduler(bus, logger, minDeploymentInterval)
+	deploymentTimeout := cfg.Dataplane.GetDeploymentTimeout()
+	deploymentSchedulerComponent := deployer.NewDeploymentScheduler(bus, logger, minDeploymentInterval, deploymentTimeout)
 
 	// Create DriftPreventionMonitor
 	driftPreventionInterval := cfg.Dataplane.GetDriftPreventionInterval()
