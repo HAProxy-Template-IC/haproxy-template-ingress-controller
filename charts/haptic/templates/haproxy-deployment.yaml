@@ -161,6 +161,17 @@ spec:
             runAsUser: {{ include "haptic.haproxy.dataplaneRunAsUser" . }}
           image: {{ include "haptic.haproxy.image" . }}
           imagePullPolicy: {{ .Values.haproxy.image.pullPolicy }}
+          env:
+            - name: DATAPLANE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "haptic.fullname" . }}-credentials
+                  key: dataplane_username
+            - name: DATAPLANE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "haptic.fullname" . }}-credentials
+                  key: dataplane_password
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -175,8 +186,8 @@ spec:
               mkdir -p /var/lib/dataplaneapi/transactions /var/lib/dataplaneapi/backups
               mkdir -p /etc/haproxy/maps /etc/haproxy/certs /etc/haproxy/general
 
-              # Create Dataplane API config
-              cat > /etc/haproxy/dataplaneapi.yaml <<'EOF'
+              # Create Dataplane API config using credentials from Secret
+              cat > /etc/haproxy/dataplaneapi.yaml <<EOF
               config_version: 2
               name: haproxy-dataplaneapi
               dataplaneapi:
@@ -184,8 +195,8 @@ spec:
                 port: {{ .Values.haproxy.ports.dataplane }}
                 disable_inotify: true
                 user:
-                  - name: {{ .Values.haproxy.dataplane.credentials.username }}
-                    password: {{ .Values.haproxy.dataplane.credentials.password }}
+                  - name: ${DATAPLANE_USERNAME}
+                    password: ${DATAPLANE_PASSWORD}
                     insecure: true
                 userlist:
                   userlist: ""
@@ -233,21 +244,13 @@ spec:
             - name: dataplane-tmp
               mountPath: /tmp
           livenessProbe:
-            httpGet:
-              path: /v3/info
+            tcpSocket:
               port: dataplane
-              httpHeaders:
-                - name: Authorization
-                  value: "Basic {{ printf "%s:%s" .Values.haproxy.dataplane.credentials.username .Values.haproxy.dataplane.credentials.password | b64enc }}"
             initialDelaySeconds: 15
             periodSeconds: 10
           readinessProbe:
-            httpGet:
-              path: /v3/info
+            tcpSocket:
               port: dataplane
-              httpHeaders:
-                - name: Authorization
-                  value: "Basic {{ printf "%s:%s" .Values.haproxy.dataplane.credentials.username .Values.haproxy.dataplane.credentials.password | b64enc }}"
             initialDelaySeconds: 10
             periodSeconds: 5
 
