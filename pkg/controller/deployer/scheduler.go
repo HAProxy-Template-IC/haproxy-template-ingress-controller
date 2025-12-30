@@ -84,8 +84,10 @@ type DeploymentScheduler struct {
 	// Deployment scheduling and rate limiting
 	schedulerMutex        sync.Mutex
 	deploymentInProgress  bool
+	deploymentStartTime   time.Time // When the current deployment started
 	pendingDeployment     *scheduledDeployment
 	lastDeploymentEndTime time.Time // When the last deployment completed
+	deploymentTimeout     time.Duration
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
@@ -97,10 +99,11 @@ type DeploymentScheduler struct {
 //   - eventBus: The EventBus for subscribing to events and publishing scheduled deployments
 //   - logger: Structured logger for component logging
 //   - minDeploymentInterval: Minimum time between consecutive deployments (rate limiting)
+//   - deploymentTimeout: Maximum time to wait for a deployment to complete before retrying
 //
 // Returns:
 //   - A new DeploymentScheduler instance ready to be started
-func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, minDeploymentInterval time.Duration) *DeploymentScheduler {
+func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, minDeploymentInterval, deploymentTimeout time.Duration) *DeploymentScheduler {
 	// Use SubscribeLeaderOnly because this component only runs on the leader.
 	// It subscribes after EventBus.Start() when leadership is acquired.
 	// All-replica components replay their state on BecameLeaderEvent to ensure
@@ -110,6 +113,7 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 		eventChan:             eventBus.SubscribeLeaderOnly(SchedulerEventBufferSize),
 		logger:                logger.With("component", SchedulerComponentName),
 		minDeploymentInterval: minDeploymentInterval,
+		deploymentTimeout:     deploymentTimeout,
 		healthTracker:         lifecycle.NewProcessingTracker(SchedulerComponentName, lifecycle.DefaultProcessingTimeout),
 	}
 }
@@ -135,12 +139,20 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.ctx = ctx // Save context for scheduling operations
 
 	s.logger.Debug("deployment scheduler starting",
-		"min_deployment_interval_ms", s.minDeploymentInterval.Milliseconds())
+		"min_deployment_interval_ms", s.minDeploymentInterval.Milliseconds(),
+		"deployment_timeout_ms", s.deploymentTimeout.Milliseconds())
+
+	// Ticker to check for deployment timeouts
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case event := <-s.eventChan:
 			s.handleEvent(ctx, event)
+
+		case <-ticker.C:
+			s.checkDeploymentTimeout(ctx)
 
 		case <-ctx.Done():
 			s.logger.Info("DeploymentScheduler shutting down", "reason", ctx.Err())
@@ -342,8 +354,9 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentCompletedEvent) {
 	s.schedulerMutex.Lock()
 
-	// Mark deployment as complete
+	// Mark deployment as complete and clear start time
 	s.deploymentInProgress = false
+	s.deploymentStartTime = time.Time{}
 	s.lastDeploymentEndTime = time.Now()
 
 	// Check if there's a pending deployment to process
@@ -397,8 +410,9 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 		return
 	}
 
-	// Mark as in-progress and unlock before scheduling
+	// Mark as in-progress, track start time, and unlock before scheduling
 	s.deploymentInProgress = true
+	s.deploymentStartTime = time.Now()
 	s.schedulerMutex.Unlock()
 
 	// Schedule deployment asynchronously to avoid blocking event loop
@@ -560,10 +574,59 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 
 	// Clear deployment state to prevent stale deployments
 	s.deploymentInProgress = false
+	s.deploymentStartTime = time.Time{}
 	s.pendingDeployment = nil
 
 	// Note: lastDeploymentEndTime is NOT cleared - this historical data is safe to keep
 	// and helps prevent rapid deployments if leadership is quickly reacquired
+}
+
+// checkDeploymentTimeout checks if the current deployment has exceeded the timeout.
+//
+// If a deployment is in progress and has exceeded the configured timeout, this method
+// resets the stuck state and triggers a new reconciliation. This is a safety net for
+// race conditions during leadership transitions where DeploymentCompletedEvent may be lost.
+func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
+	s.schedulerMutex.Lock()
+	if !s.deploymentInProgress {
+		s.schedulerMutex.Unlock()
+		return
+	}
+	startTime := s.deploymentStartTime
+	pending := s.pendingDeployment
+	s.schedulerMutex.Unlock()
+
+	// Skip if deployment hasn't started yet (startTime is zero)
+	if startTime.IsZero() {
+		return
+	}
+
+	elapsed := time.Since(startTime)
+	if elapsed <= s.deploymentTimeout {
+		return
+	}
+
+	s.logger.Warn("Deployment timeout - resetting stuck state",
+		"duration_ms", elapsed.Milliseconds(),
+		"timeout_ms", s.deploymentTimeout.Milliseconds())
+
+	s.schedulerMutex.Lock()
+	s.deploymentInProgress = false
+	s.deploymentStartTime = time.Time{}
+	s.pendingDeployment = nil
+	s.schedulerMutex.Unlock()
+
+	// If there was a pending deployment, process it now
+	if pending != nil {
+		s.logger.Info("Processing pending deployment after timeout recovery",
+			"reason", pending.reason+"_timeout_retry",
+			"correlation_id", pending.correlationID)
+		s.scheduleOrQueue(ctx, pending.config, pending.auxFiles,
+			pending.endpoints, pending.reason+"_timeout_retry", pending.correlationID)
+	}
+
+	// Trigger a new reconciliation to recover from the stuck state
+	s.eventBus.Publish(events.NewReconciliationTriggeredEvent("deployment_timeout_recovery"))
 }
 
 // HealthCheck implements the lifecycle.HealthChecker interface.

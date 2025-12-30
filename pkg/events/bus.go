@@ -312,6 +312,43 @@ func (b *EventBus) Start() {
 	b.replayBufferedEvents()
 }
 
+// Pause temporarily suspends event delivery, buffering events for later replay.
+//
+// This reuses the existing preStartBuffer infrastructure used during startup.
+// Events published while paused are buffered and will be replayed when Start()
+// is called again.
+//
+// Use cases:
+//   - Leadership transition (pause while starting leader-only components)
+//   - Hot reload scenarios
+//   - Testing
+//
+// This method is idempotent - calling it when already paused has no effect.
+// Thread-safe and can be called concurrently with Publish() and Subscribe().
+//
+// Example:
+//
+//	// During leadership transition
+//	bus.Pause()                                    // Buffer events
+//	bus.Publish(BecameLeaderEvent{})               // Buffered
+//	startLeaderOnlyComponents()                    // Components subscribe
+//	bus.Start()                                    // Replay buffered events
+func (b *EventBus) Pause() {
+	b.startMu.Lock()
+	defer b.startMu.Unlock()
+
+	// Idempotent - return if already paused
+	if !b.started {
+		return
+	}
+
+	// Return to buffering mode
+	b.started = false
+	b.preStartBuffer = make([]Event, 0, 100)
+
+	slog.Debug("EventBus paused, entering buffering mode")
+}
+
 // replayBufferedEvents sends all buffered events to subscribers.
 // Must be called while holding startMu lock.
 func (b *EventBus) replayBufferedEvents() {

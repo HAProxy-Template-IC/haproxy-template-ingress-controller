@@ -33,18 +33,20 @@ import (
 func TestNewDeploymentScheduler(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	minInterval := 100 * time.Millisecond
+	timeout := 30 * time.Second
 
-	scheduler := NewDeploymentScheduler(bus, logger, minInterval)
+	scheduler := NewDeploymentScheduler(bus, logger, minInterval, timeout)
 
 	require.NotNil(t, scheduler)
 	assert.Equal(t, minInterval, scheduler.minDeploymentInterval)
+	assert.Equal(t, timeout, scheduler.deploymentTimeout)
 	assert.NotNil(t, scheduler.eventChan)
 }
 
 // TestDeploymentScheduler_Start tests scheduler startup and shutdown.
 func TestDeploymentScheduler_Start(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -58,7 +60,7 @@ func TestDeploymentScheduler_Start(t *testing.T) {
 // TestDeploymentScheduler_HandleTemplateRendered tests template rendered event handling.
 func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
 
 	event := events.NewTemplateRenderedEvent(
 		"global\n  daemon\n",        // haproxyConfig
@@ -86,7 +88,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -159,7 +161,7 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -238,7 +240,7 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -321,7 +323,7 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 // TestDeploymentScheduler_HandleDeploymentCompleted tests deployment completion handling.
 func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	scheduler.schedulerMutex.Lock()
 	scheduler.deploymentInProgress = true
@@ -345,7 +347,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 // TestDeploymentScheduler_HandleConfigPublished tests config published handling.
 func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	event := events.NewConfigPublishedEvent(
 		"test-config",
@@ -366,7 +368,7 @@ func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {
 // TestDeploymentScheduler_HandleLostLeadership tests leadership loss handling.
 func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	// Set up state that should be cleared
 	scheduler.schedulerMutex.Lock()
@@ -393,7 +395,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx := context.Background()
 	scheduler.ctx = ctx
 
@@ -433,7 +435,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 // TestDeploymentScheduler_HandleEvent tests event type routing.
 func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
@@ -575,7 +577,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 // TestDeploymentScheduler_Name tests the Name method.
 func TestDeploymentScheduler_Name(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
 
 	assert.Equal(t, SchedulerComponentName, scheduler.Name())
 }
@@ -583,7 +585,7 @@ func TestDeploymentScheduler_Name(t *testing.T) {
 // TestDeploymentScheduler_HandleConfigValidated tests config validated event handling.
 func TestDeploymentScheduler_HandleConfigValidated(t *testing.T) {
 	bus := testutil.NewTestBus()
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	t.Run("caches template config metadata", func(t *testing.T) {
 		templateConfig := &v1alpha1.HAProxyTemplateConfig{
@@ -631,7 +633,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	scheduler.ctx = context.Background()
 
 	// Set up state with deployment in progress and pending
@@ -678,7 +680,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 	bus.Start()
 
 	// Use longer rate limit to test the path
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond, 30*time.Second)
 	scheduler.ctx = context.Background()
 
 	// Set last deployment time to recent past
@@ -722,7 +724,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 	bus.Start()
 
 	// Use long rate limit
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 5*time.Second)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
 
 	// Set last deployment time to recent past
 	scheduler.schedulerMutex.Lock()
@@ -769,7 +771,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	scheduler.ctx = context.Background()
 
 	// Set template config name but not runtime config name
@@ -812,7 +814,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 	eventChan := bus.Subscribe(50)
 	bus.Start()
 
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond)
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond, 30*time.Second)
 	scheduler.ctx = context.Background()
 
 	// Set last deployment time to trigger rate limiting
