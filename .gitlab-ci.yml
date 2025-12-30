@@ -532,7 +532,7 @@ coverage-combined:
       go tool cover -func=coverage/combined.out | tail -1
     # Convert combined coverage to Cobertura for GitLab diff visualization
     - gocover-cobertura < coverage/combined.out > coverage/combined.xml
-  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+  coverage: '/total:.*\(statements\).*(\d+\.\d+)%/'
   artifacts:
     paths:
       - coverage/
