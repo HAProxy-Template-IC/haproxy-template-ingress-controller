@@ -244,8 +244,13 @@ func (w *Watcher) handleAdd(obj interface{}) {
 
 // handleUpdate handles resource update events.
 func (w *Watcher) handleUpdate(oldObj, newObj interface{}) {
+	oldResource := w.convertToUnstructured(oldObj)
 	resource := w.convertToUnstructured(newObj)
 	if resource == nil {
+		return
+	}
+
+	if w.shouldSkipUpdate(oldResource, resource) {
 		return
 	}
 
@@ -314,6 +319,38 @@ func (w *Watcher) handleDelete(obj interface{}) {
 	w.debouncer.RecordDelete()
 }
 
+// shouldSkipUpdate checks if an update event should be skipped.
+// Returns true for resync events (resourceVersion unchanged).
+func (w *Watcher) shouldSkipUpdate(oldResource, newResource *unstructured.Unstructured) bool {
+	if oldResource == nil {
+		return false
+	}
+
+	// Skip resync events (resource version unchanged).
+	// This happens when the informer re-lists resources and triggers Update events
+	// even when nothing has changed.
+	oldVersion := oldResource.GetResourceVersion()
+	newVersion := newResource.GetResourceVersion()
+	if oldVersion != "" && newVersion != "" && oldVersion == newVersion {
+		w.logger.Debug("skipping update - resource version unchanged (resync)",
+			"gvr", w.config.GVR.String(),
+			"name", newResource.GetName(),
+			"namespace", newResource.GetNamespace(),
+			"resource_version", newVersion)
+		return true
+	}
+
+	// Note: We intentionally do NOT skip status-only updates based on generation.
+	// The generation-based check doesn't work reliably for all resources:
+	// - Pods: immutable spec, generation=1 always, but status changes matter
+	// - EndpointSlices: generation=0
+	// The debouncer already batches rapid updates, so processing status
+	// updates is acceptable and avoids missing critical events like
+	// Pod containers becoming ready.
+
+	return false
+}
+
 // convertToUnstructured converts a resource to *unstructured.Unstructured.
 func (w *Watcher) convertToUnstructured(obj interface{}) *unstructured.Unstructured {
 	switch v := obj.(type) {
@@ -342,14 +379,8 @@ func (w *Watcher) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to sync cache")
 	}
 
-	// Mark sync as complete
-	w.syncMu.Lock()
-	w.synced = true
-	w.initialCount = w.debouncer.GetInitialCount()
-	w.syncMu.Unlock()
-
-	// Disable sync mode in debouncer (future changes are real-time)
-	w.debouncer.SetSyncMode(false)
+	// Mark sync as complete and disable sync mode
+	w.markSyncComplete()
 
 	// Call OnSyncComplete if configured
 	if w.config.OnSyncComplete != nil {
@@ -404,16 +435,8 @@ func (w *Watcher) WaitForSync(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("failed to sync cache")
 	}
 
-	// Mark sync as complete if not already done by Start()
-	// This prevents race conditions when WaitForSync completes before Start()
-	// has finished its post-sync work
-	w.syncMu.Lock()
-	if !w.synced {
-		w.synced = true
-		w.initialCount = w.debouncer.GetInitialCount()
-	}
-	count := w.initialCount
-	w.syncMu.Unlock()
+	// Mark sync as complete (idempotent - safe if Start() already did this)
+	count := w.markSyncComplete()
 
 	return count, nil
 }
@@ -426,6 +449,24 @@ func (w *Watcher) IsSynced() bool {
 	defer w.syncMu.RUnlock()
 
 	return w.synced
+}
+
+// markSyncComplete transitions the watcher from syncing to synced state.
+// It is safe to call multiple times - only the first call takes effect.
+// Returns the number of resources loaded during initial sync.
+func (w *Watcher) markSyncComplete() int {
+	w.syncMu.Lock()
+	defer w.syncMu.Unlock()
+
+	if w.synced {
+		return w.initialCount
+	}
+
+	w.synced = true
+	w.initialCount = w.debouncer.GetInitialCount()
+	w.debouncer.SetSyncMode(false)
+
+	return w.initialCount
 }
 
 // ForceSync forces an immediate callback with current statistics.

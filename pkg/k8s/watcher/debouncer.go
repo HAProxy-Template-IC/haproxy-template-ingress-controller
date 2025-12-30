@@ -112,20 +112,28 @@ func (d *Debouncer) scheduleCallback() {
 func (d *Debouncer) fireCallback() {
 	d.mu.Lock()
 
+	// Check if we should suppress during sync
+	suppress := d.syncMode && d.suppressDuringSync
+
+	if suppress {
+		// Don't fire, don't clear stats (they'll be flushed when sync ends).
+		// Reset pending so new events can schedule callbacks.
+		d.pending = false
+		d.mu.Unlock()
+		return
+	}
+
 	// Get stats and reset
 	stats := d.stats
-	stats.IsInitialSync = d.syncMode // Set sync context
+	stats.IsInitialSync = d.syncMode
 	d.stats = types.ChangeStats{}
 	d.pending = false
 	d.lastFired = time.Now() // Record fire time for refractory period
 
-	// Check if we should suppress during sync
-	suppress := d.syncMode && d.suppressDuringSync
-
 	d.mu.Unlock()
 
-	// Invoke callback outside lock (unless suppressed)
-	if d.callback != nil && !stats.IsEmpty() && !suppress {
+	// Invoke callback outside lock
+	if d.callback != nil && !stats.IsEmpty() {
 		d.callback(d.store, stats)
 	}
 }
@@ -174,11 +182,26 @@ func (d *Debouncer) Stop() {
 //
 // When sync mode is enabled, callbacks receive IsInitialSync=true.
 // When disabled, callbacks receive IsInitialSync=false (real-time changes).
+//
+// When transitioning from sync mode to normal mode, any pending changes
+// are flushed to ensure ADD events accumulated during sync are delivered.
 func (d *Debouncer) SetSyncMode(enabled bool) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
+	wasSyncMode := d.syncMode
 	d.syncMode = enabled
+	hasPending := !d.stats.IsEmpty()
+	d.mu.Unlock()
+
+	// When exiting sync mode with pending changes, flush them.
+	// This ensures ADD events accumulated during sync are delivered,
+	// even if earlier fireCallback() calls were suppressed.
+	//
+	// Calling Flush() outside the lock is safe: Flush() takes its own lock,
+	// and any events arriving between unlock and Flush will either be
+	// included in this flush or start a new debounce cycle.
+	if wasSyncMode && !enabled && hasPending {
+		d.Flush()
+	}
 }
 
 // GetInitialCount returns the number of resources created during initial sync.
