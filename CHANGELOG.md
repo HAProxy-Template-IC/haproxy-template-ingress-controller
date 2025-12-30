@@ -9,6 +9,8 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.8] - 2025-12-30
+
 ### Added
 
 - **Configurable deployment timeout**: New `deploymentTimeout` field in dataplane config (default: 30s) to recover from stuck deployments

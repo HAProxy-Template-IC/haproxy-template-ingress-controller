@@ -2,8 +2,8 @@ apiVersion: v2
 name: haptic
 description: HAPTIC - HAProxy Template Ingress Controller
 type: application
-version: 0.1.0-alpha.7
-appVersion: "0.1.0-alpha.7"
+version: 0.1.0-alpha.8
+appVersion: "0.1.0-alpha.8"
 keywords:
   - haproxy
   - ingress
@@ -19,7 +19,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.7
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.8
       platforms:
         - linux/amd64
         - linux/arm64
@@ -35,19 +35,9 @@ annotations:
   # Changelog
   artifacthub.io/changes: |
     - kind: added
-      description: Security hardening with Pod Security Standards compliance
-    - kind: added
-      description: Health probes for controller and HAProxy pods
-    - kind: added
-      description: Support for priorityClassName and topologySpreadConstraints
-    - kind: added
-      description: PodDisruptionBudget enabled by default for high availability
-    - kind: changed
-      description: DRY principle for port configuration across all components
-    - kind: security
-      description: readOnlyRootFilesystem enabled for all containers
-    - kind: security
-      description: All capabilities dropped (no NET_BIND_SERVICE required)
+      description: Configurable deployment timeout for stuck deployment recovery
+    - kind: fixed
+      description: Deployment deadlock after leader transition
 
   # Links
   artifacthub.io/links: |
