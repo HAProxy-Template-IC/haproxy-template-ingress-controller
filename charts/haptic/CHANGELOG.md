@@ -9,12 +9,15 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.9] - 2025-12-30
+
 ### Changed
 
 - Dataplane API credentials are now auto-generated if not provided (32-char random password)
-- Consolidated duplicate credential configs (`credentials.dataplane` and `haproxy.dataplane.credentials`) into single `credentials.dataplane` section
-- HAProxy deployment now reads credentials from Secret via environment variables (ensures consistency)
-- Changed dataplane API probes from `httpGet` to `tcpSocket` (simpler, no auth required)
+- Consolidated credential configs into single `credentials.dataplane` section
+- HAProxy deployment now reads credentials from Secret via environment variables
+- Changed dataplane API probes from `httpGet` to `tcpSocket`
+- Updated appVersion to 0.1.0-alpha.9 (SSL certificate chain fix, spurious update events fix)
 
 ### Removed
 
