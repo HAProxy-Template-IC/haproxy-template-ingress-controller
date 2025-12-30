@@ -9,9 +9,13 @@ import (
 
 // Debouncer batches rapid resource changes into a single callback invocation.
 //
-// This prevents overwhelming downstream consumers with rapid successive callbacks
-// when many resources change in a short time (e.g., during initial sync or
-// cluster restarts).
+// Uses leading-edge triggering with a refractory period: if no callback has fired
+// recently (within interval), the first change triggers an immediate callback.
+// Subsequent changes within the refractory period are batched until the interval
+// expires.
+//
+// This ensures fast response to isolated changes while still batching rapid
+// successive changes (e.g., during initial sync or cluster restarts).
 //
 // Thread-safe for concurrent access.
 type Debouncer struct {
@@ -22,8 +26,9 @@ type Debouncer struct {
 	callback           types.OnChangeCallback
 	store              types.Store
 	pending            bool
-	syncMode           bool // True during initial synchronization
-	suppressDuringSync bool // True to suppress callbacks during sync
+	lastFired          time.Time // Track when callback last fired for refractory period
+	syncMode           bool      // True during initial synchronization
+	suppressDuringSync bool      // True to suppress callbacks during sync
 }
 
 // NewDebouncer creates a new debouncer with the specified interval and callback.
@@ -75,19 +80,32 @@ func (d *Debouncer) RecordDelete() {
 	d.scheduleCallback()
 }
 
-// scheduleCallback schedules a callback if not already pending.
+// scheduleCallback schedules a callback using leading-edge triggering.
+//
+// If no callback has fired recently (outside refractory period), fires immediately.
+// If within refractory period, schedules callback for when interval expires.
 // Must be called with lock held.
 func (d *Debouncer) scheduleCallback() {
 	if d.pending {
-		// Timer already running, just update stats
+		// Already pending, just accumulate stats
 		return
 	}
 
-	// Start new timer
 	d.pending = true
-	d.timer = time.AfterFunc(d.interval, func() {
-		d.fireCallback()
-	})
+
+	// Check if enough time has passed since last fire (refractory period)
+	timeSinceLastFire := time.Since(d.lastFired)
+
+	if timeSinceLastFire >= d.interval {
+		// No recent activity - fire immediately (leading edge)
+		go d.fireCallback()
+	} else {
+		// In refractory period - schedule for when interval expires
+		remaining := d.interval - timeSinceLastFire
+		d.timer = time.AfterFunc(remaining, func() {
+			d.fireCallback()
+		})
+	}
 }
 
 // fireCallback invokes the callback with aggregated statistics.
@@ -99,6 +117,7 @@ func (d *Debouncer) fireCallback() {
 	stats.IsInitialSync = d.syncMode // Set sync context
 	d.stats = types.ChangeStats{}
 	d.pending = false
+	d.lastFired = time.Now() // Record fire time for refractory period
 
 	// Check if we should suppress during sync
 	suppress := d.syncMode && d.suppressDuringSync
@@ -128,6 +147,7 @@ func (d *Debouncer) Flush() {
 	stats.IsInitialSync = d.syncMode // Set sync context
 	d.stats = types.ChangeStats{}
 	d.pending = false
+	d.lastFired = time.Now() // Record fire time for refractory period
 
 	d.mu.Unlock()
 

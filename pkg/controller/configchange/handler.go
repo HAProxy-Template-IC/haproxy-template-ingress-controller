@@ -10,6 +10,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
 const (
@@ -19,12 +20,13 @@ const (
 	// EventBufferSize is the size of the event subscription buffer.
 	// Size 50: Moderate-volume component handling config and validation events.
 	EventBufferSize = 50
-
-	// DefaultReinitDebounceInterval is the default time to wait after the last config
-	// change before signaling controller reinitialization. This allows rapid CRD updates
-	// to be coalesced, ensuring templates are fully rendered before reinitialization starts.
-	DefaultReinitDebounceInterval = 500 * time.Millisecond
 )
+
+// DefaultReinitDebounceInterval is the default time to wait after the last config
+// change before signaling controller reinitialization. This allows rapid CRD updates
+// to be coalesced, ensuring templates are fully rendered before reinitialization starts.
+// Uses the centralized debounce interval from types package.
+var DefaultReinitDebounceInterval = types.DefaultDebounceInterval
 
 // ConfigChangeHandler coordinates configuration validation and detects config changes.
 //

@@ -95,12 +95,15 @@ func TestGetAllSSLCertificates_ServerError(t *testing.T) {
 }
 
 func TestGetSSLCertificateContent_Success(t *testing.T) {
+	// Test that serial+issuers format is always used (even when sha256_finger_print is available)
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
 			"/services/haproxy/storage/ssl_certificates/example_com.pem": jsonResponse(`{
 				"storage_name": "example_com.pem",
 				"file": "/etc/haproxy/ssl/example_com.pem",
-				"sha256_finger_print": "abc123def456"
+				"sha256_finger_print": "abc123def456",
+				"serial": "123456789",
+				"issuers": "/CN=example.com"
 			}`),
 		},
 	})
@@ -108,9 +111,10 @@ func TestGetSSLCertificateContent_Success(t *testing.T) {
 
 	client := newTestClient(t, server)
 
-	fingerprint, err := client.GetSSLCertificateContent(context.Background(), "example.com.pem")
+	// Should return serial+issuers format, not sha256_finger_print
+	identifier, err := client.GetSSLCertificateContent(context.Background(), "example.com.pem")
 	require.NoError(t, err)
-	assert.Equal(t, "abc123def456", fingerprint)
+	assert.Equal(t, "cert:serial:123456789:issuers:/CN=example.com", identifier)
 }
 
 func TestGetSSLCertificateContent_NotFound(t *testing.T) {

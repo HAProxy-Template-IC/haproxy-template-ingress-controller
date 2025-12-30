@@ -155,21 +155,12 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 		return "", fmt.Errorf("failed to decode SSL certificate response (body: %s): %w", bodySnippet, err)
 	}
 
-	// Use whichever fingerprint field is populated
-	var fingerprint *string
-	if apiCert.SHA256Fingerprint != nil && *apiCert.SHA256Fingerprint != "" {
-		fingerprint = apiCert.SHA256Fingerprint
-	} else if apiCert.SHA256Fingerprint2 != nil && *apiCert.SHA256Fingerprint2 != "" {
-		fingerprint = apiCert.SHA256Fingerprint2
-	}
-
-	if fingerprint != nil {
-		// Return SHA256 fingerprint for content-based comparison
-		return *fingerprint, nil
-	}
-
-	// Fallback: construct identifier from serial+issuers when fingerprint unavailable.
-	// This is a workaround for https://github.com/haproxytech/dataplaneapi/pull/396
+	// Always use serial+issuers format for certificate identification.
+	// This is more reliable than sha256_finger_print because:
+	// 1. Serial and issuers are always populated by the API (all versions)
+	// 2. Our controller calculates the same format, ensuring consistent comparison
+	// 3. Avoids format detection complexity between API versions
+	//
 	// A certificate is uniquely identified by its serial number within a CA (issuer).
 	if apiCert.Serial != nil && *apiCert.Serial != "" {
 		issuersStr := ""
@@ -179,7 +170,7 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 		return fmt.Sprintf("cert:serial:%s:issuers:%s", *apiCert.Serial, issuersStr), nil
 	}
 
-	// Neither fingerprint nor serial available - this should not happen in practice.
+	// Serial not available - this should not happen in practice for valid certificates.
 	// Return placeholder that will trigger UPDATE operations.
 	return "__NO_FINGERPRINT__", nil
 }

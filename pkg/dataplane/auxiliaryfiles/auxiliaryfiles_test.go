@@ -767,6 +767,16 @@ bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
 		result2 := calculateCertIdentifier(validCert)
 		assert.Equal(t, result1, result2)
 	})
+
+	t.Run("issuer format matches HAProxy API CommonName format", func(t *testing.T) {
+		result := calculateCertIdentifier(validCert)
+		// HAProxy DataPlane API returns issuers as just the CommonName for self-signed certs.
+		// Example: "issuers": "echo-tls.localdev.me" (NOT "/CN=echo-tls.localdev.me")
+		// We must match this format for accurate comparison.
+		// Example expected: "cert:serial:123456:issuers:test.example.com"
+		// NOT: "cert:serial:123456:issuers:/CN=test.example.com"
+		assert.Contains(t, result, ":issuers:test.example.com")
+	})
 }
 
 // TestConvertCRTListsToGeneralFiles tests conversion of CRT-list files to general files.

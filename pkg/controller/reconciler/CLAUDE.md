@@ -19,14 +19,14 @@ Work in this package when:
 
 ## Package Purpose
 
-Stage 5 component that debounces resource changes and triggers reconciliation events. Prevents excessive reconciliations by waiting for quiet periods.
+Stage 5 component that debounces resource changes and triggers reconciliation events. Uses leading-edge triggering with refractory period for fast response to isolated changes while still batching rapid successive changes.
 
 ## Architecture
 
 ```
-ResourceIndexUpdatedEvent → Debounce Timer (500ms default)
+ResourceIndexUpdatedEvent → Debounce (100ms default, leading-edge)
 IndexSynchronizedEvent → Immediate Trigger (initial reconciliation)
-HTTPResourceUpdatedEvent → Debounce Timer (500ms default)
+HTTPResourceUpdatedEvent → Debounce (100ms default, leading-edge)
 HTTPResourceAcceptedEvent → Immediate Trigger
 DriftPreventionTriggeredEvent → Immediate Trigger
 
@@ -36,16 +36,30 @@ ReconciliationTriggeredEvent → Executor
 
 ## Debounce Behavior
 
-### Resource Changes (Debounced)
+### Leading-Edge Triggering with Refractory Period
+
+The debouncer uses leading-edge triggering: the first change fires immediately if no callback has fired recently. Subsequent changes within the refractory period are batched.
 
 ```
-t=0:    Resource change → Reset timer to 500ms
-t=100:  Resource change → Reset timer to 500ms
-t=300:  Resource change → Reset timer to 500ms
-t=800:  Timer expires → Trigger reconciliation
+t=0:    Resource change → Immediate callback (no recent activity)
+t=10:   Resource change → Queued (refractory period active)
+t=50:   Resource change → Queued (refractory period active)
+t=100:  Refractory expires → Callback with batched changes
 ```
 
-Multiple rapid changes batched into single reconciliation.
+This ensures fast response (0ms delay) when changes are isolated, while still batching rapid successive changes during busy periods.
+
+### Old Behavior (for reference)
+
+Previously used trailing-edge triggering where every change reset the timer:
+
+```
+t=0:    Resource change → Start timer (500ms)
+t=100:  Resource change → Reset timer (another 500ms)
+t=600:  Timer expires → Trigger reconciliation
+```
+
+The new leading-edge behavior significantly reduces latency for rolling deployments.
 
 ### Index Synchronized (Immediate)
 
@@ -69,16 +83,18 @@ trigger immediate reconciliation to deploy the new content.
 
 ```go
 reconciler := reconciler.New(bus, logger, &reconciler.Config{
-    DebounceInterval: 500 * time.Millisecond,  // Customizable
+    DebounceInterval: 100 * time.Millisecond,  // Customizable
 })
 ```
+
+The default interval is defined in `pkg/k8s/types.DefaultDebounceInterval` (100ms) and shared across all debouncing components.
 
 ## Common Patterns
 
 ### Default Configuration
 
 ```go
-// Uses DefaultDebounceInterval (500ms)
+// Uses types.DefaultDebounceInterval (100ms)
 reconciler := reconciler.New(bus, logger, nil)
 go reconciler.Start(ctx)
 ```
@@ -88,7 +104,7 @@ go reconciler.Start(ctx)
 ```go
 // Longer debounce for high-volume environments
 reconciler := reconciler.New(bus, logger, &reconciler.Config{
-    DebounceInterval: 2 * time.Second,
+    DebounceInterval: 500 * time.Millisecond,
 })
 ```
 
@@ -96,15 +112,15 @@ reconciler := reconciler.New(bus, logger, &reconciler.Config{
 
 ### Too Short Debounce
 
-**Problem**: Reconciliation triggered too frequently, wasting resources.
+**Problem**: Reconciliation triggered too frequently during bulk operations.
 
-**Solution**: Increase debounce interval (default 500ms is usually good).
+**Solution**: Increase debounce interval for high-volume environments.
 
 ### Too Long Debounce
 
-**Problem**: Slow to react to changes.
+**Problem**: Slow to react to changes, causing 503 errors during rolling deployments.
 
-**Solution**: Decrease debounce interval or handle critical changes immediately.
+**Solution**: Use leading-edge triggering (now default) which fires immediately for isolated changes while still batching rapid successive changes.
 
 ## Integration
 

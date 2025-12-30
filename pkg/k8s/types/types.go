@@ -16,6 +16,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+// Default values for watcher configuration.
+const (
+	// DefaultDebounceInterval is the default minimum time between callback invocations.
+	// This value is shared across all components that use debouncing.
+	DefaultDebounceInterval = 100 * time.Millisecond
+)
+
 // Store defines the interface for storing and retrieving indexed Kubernetes resources.
 //
 // Implementations must be thread-safe for concurrent access.
@@ -292,7 +299,7 @@ func (c *WatcherConfig) SetDefaults() {
 		c.CacheTTL = 2*time.Minute + 10*time.Second
 	}
 	if c.DebounceInterval == 0 {
-		c.DebounceInterval = 500 * time.Millisecond
+		c.DebounceInterval = DefaultDebounceInterval
 	}
 	if c.Context == nil {
 		c.Context = context.Background()
