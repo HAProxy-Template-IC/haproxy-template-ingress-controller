@@ -2,8 +2,8 @@ apiVersion: v2
 name: haptic
 description: HAPTIC - HAProxy Template Ingress Controller
 type: application
-version: 0.1.0-alpha.8
-appVersion: "0.1.0-alpha.8"
+version: 0.1.0-alpha.9
+appVersion: "0.1.0-alpha.9"
 keywords:
   - haproxy
   - ingress
@@ -19,7 +19,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.8
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.9
       platforms:
         - linux/amd64
         - linux/arm64
@@ -34,10 +34,12 @@ annotations:
 
   # Changelog
   artifacthub.io/changes: |
-    - kind: added
-      description: Configurable deployment timeout for stuck deployment recovery
+    - kind: changed
+      description: Auto-generate dataplane API credentials if not provided
+    - kind: changed
+      description: Consolidate credential configs into single section
     - kind: fixed
-      description: Deployment deadlock after leader transition
+      description: SSL certificate chain comparison for CA-signed certificates
 
   # Links
   artifacthub.io/links: |
