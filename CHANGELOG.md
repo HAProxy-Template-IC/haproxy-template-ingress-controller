@@ -9,6 +9,8 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5] - 2025-12-30
+
 ### Fixed
 
 - **Template validation errors**: Improved error messages with line/column location and template context; errors now logged at ERROR level and visible in CRD status
