@@ -513,6 +513,196 @@ func TestWatcher_ConvertToUnstructured_Unstructured(t *testing.T) {
 	assert.Equal(t, "test", result.GetName())
 }
 
+func TestWatcher_HandleUpdate_SkipsResyncEvent(t *testing.T) {
+	// When resourceVersion is unchanged, the update should be skipped (resync event)
+	k8sClient := newTestClient(t)
+
+	var updateCount atomic.Int32
+
+	cfg := validWatcherConfig()
+	cfg.CallOnChangeDuringSync = true
+	cfg.OnChange = func(_ types.Store, stats types.ChangeStats) {
+		updateCount.Add(int32(stats.Modified))
+	}
+
+	watcher, err := New(cfg, k8sClient, slog.Default())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = watcher.Start(ctx)
+	}()
+
+	// Wait for sync
+	_, err = watcher.WaitForSync(ctx)
+	require.NoError(t, err)
+
+	// Create old and new objects with SAME resourceVersion (simulates resync)
+	oldObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name":            "test-config",
+				"namespace":       "default",
+				"resourceVersion": "12345",
+			},
+		},
+	}
+	newObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name":            "test-config",
+				"namespace":       "default",
+				"resourceVersion": "12345", // Same version - resync event
+			},
+		},
+	}
+
+	// Call handleUpdate directly (simulate informer event)
+	initialCount := updateCount.Load()
+	watcher.handleUpdate(oldObj, newObj)
+
+	// Give debouncer time to fire
+	time.Sleep(100 * time.Millisecond)
+
+	// Update count should NOT have increased (resync skipped)
+	assert.Equal(t, initialCount, updateCount.Load(), "resync event should be skipped")
+}
+
+func TestWatcher_HandleUpdate_ProcessesRealUpdate(t *testing.T) {
+	// When both resourceVersion and generation change, process the update
+	k8sClient := newTestClient(t)
+
+	var updateCount atomic.Int32
+
+	cfg := validWatcherConfig()
+	cfg.CallOnChangeDuringSync = true
+	cfg.DebounceInterval = 10 * time.Millisecond // Short debounce for test
+	cfg.OnChange = func(_ types.Store, stats types.ChangeStats) {
+		updateCount.Add(int32(stats.Modified))
+	}
+
+	watcher, err := New(cfg, k8sClient, slog.Default())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = watcher.Start(ctx)
+	}()
+
+	// Wait for sync
+	_, err = watcher.WaitForSync(ctx)
+	require.NoError(t, err)
+
+	// Create old and new objects with different resourceVersion AND generation
+	oldObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name":            "test-config",
+				"namespace":       "default",
+				"resourceVersion": "12345",
+				"generation":      int64(1),
+			},
+		},
+	}
+	newObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name":            "test-config",
+				"namespace":       "default",
+				"resourceVersion": "12346",
+				"generation":      int64(2), // Different generation - real update
+			},
+		},
+	}
+
+	// Call handleUpdate directly
+	initialCount := updateCount.Load()
+	watcher.handleUpdate(oldObj, newObj)
+
+	// Give debouncer time to fire
+	time.Sleep(100 * time.Millisecond)
+
+	// Update count SHOULD have increased (real update)
+	assert.Greater(t, updateCount.Load(), initialCount, "real update should be processed")
+}
+
+func TestWatcher_HandleUpdate_ProcessesZeroGeneration(t *testing.T) {
+	// When generation is 0 (resource doesn't use generation), process the update
+	// This covers EndpointSlices and other resources without status subresource
+	k8sClient := newTestClient(t)
+
+	var updateCount atomic.Int32
+
+	cfg := validWatcherConfig()
+	cfg.CallOnChangeDuringSync = true
+	cfg.DebounceInterval = 10 * time.Millisecond
+	cfg.OnChange = func(_ types.Store, stats types.ChangeStats) {
+		updateCount.Add(int32(stats.Modified))
+	}
+
+	watcher, err := New(cfg, k8sClient, slog.Default())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = watcher.Start(ctx)
+	}()
+
+	// Wait for sync
+	_, err = watcher.WaitForSync(ctx)
+	require.NoError(t, err)
+
+	// Create objects with generation=0 (like EndpointSlices)
+	oldObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "discovery.k8s.io/v1",
+			"kind":       "EndpointSlice",
+			"metadata": map[string]interface{}{
+				"name":            "test-endpoints",
+				"namespace":       "default",
+				"resourceVersion": "12345",
+				// No generation field (defaults to 0)
+			},
+		},
+	}
+	newObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "discovery.k8s.io/v1",
+			"kind":       "EndpointSlice",
+			"metadata": map[string]interface{}{
+				"name":            "test-endpoints",
+				"namespace":       "default",
+				"resourceVersion": "12346", // Different version
+				// No generation field (defaults to 0)
+			},
+		},
+	}
+
+	// Call handleUpdate directly
+	initialCount := updateCount.Load()
+	watcher.handleUpdate(oldObj, newObj)
+
+	// Give debouncer time to fire
+	time.Sleep(100 * time.Millisecond)
+
+	// Update count SHOULD have increased (generation=0 means we don't skip)
+	assert.Greater(t, updateCount.Load(), initialCount, "update with generation=0 should be processed")
+}
+
 // =============================================================================
 // Callback Configuration Tests
 // =============================================================================

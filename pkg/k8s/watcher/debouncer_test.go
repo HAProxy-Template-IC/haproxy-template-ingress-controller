@@ -317,20 +317,28 @@ func TestDebouncer_SuppressDuringSync(t *testing.T) {
 
 	debouncer := NewDebouncer(50*time.Millisecond, callback, store, true) // suppress during sync
 
-	// In sync mode, callbacks should be suppressed
+	// In sync mode, callbacks should be suppressed but stats preserved
 	debouncer.RecordCreate()
 
 	time.Sleep(100 * time.Millisecond)
 
 	assert.Equal(t, int32(0), callCount.Load())
 
-	// After sync completes, callbacks should work
+	// After sync completes, SetSyncMode(false) flushes accumulated stats
 	debouncer.SetSyncMode(false)
+
+	// Give time for the flush to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// The suppressed event from sync should now be delivered
+	assert.Equal(t, int32(1), callCount.Load())
+
+	// New events after sync should also trigger callbacks
 	debouncer.RecordCreate()
 
 	time.Sleep(100 * time.Millisecond)
 
-	assert.Equal(t, int32(1), callCount.Load())
+	assert.Equal(t, int32(2), callCount.Load())
 }
 
 func TestDebouncer_FlushBypassesSuppression(t *testing.T) {
