@@ -23,6 +23,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
 const (
@@ -61,6 +62,9 @@ type DriftPreventionMonitor struct {
 	driftTimerChan     <-chan time.Time
 	lastDeploymentTime time.Time
 	timerActive        bool
+
+	// Health check: stall detection for timer-based component
+	healthTracker *lifecycle.HealthTracker
 }
 
 // NewDriftPreventionMonitor creates a new DriftPreventionMonitor component.
@@ -82,11 +86,19 @@ func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger
 	// Only the leader's DeploymentScheduler will act on the resulting events.
 	eventChan := eventBus.Subscribe(DriftMonitorEventBufferSize)
 
+	// Create health tracker with stall timeout = interval × 1.5 to allow for jitter
+	// For default 60s interval, this gives 90s stall timeout
+	healthTracker := lifecycle.NewActivityTracker(
+		DriftMonitorComponentName,
+		lifecycle.ActivityStallTimeout(driftPreventionInterval),
+	)
+
 	return &DriftPreventionMonitor{
 		eventBus:                eventBus,
 		eventChan:               eventChan,
 		logger:                  logger.With("component", DriftMonitorComponentName),
 		driftPreventionInterval: driftPreventionInterval,
+		healthTracker:           healthTracker,
 	}
 }
 
@@ -147,6 +159,9 @@ func (m *DriftPreventionMonitor) handleEvent(event busevents.Event) {
 //
 // This resets the drift prevention timer since a deployment has occurred.
 func (m *DriftPreventionMonitor) handleDeploymentCompleted() {
+	// Record activity for health check - handling events counts as activity
+	m.healthTracker.RecordActivity()
+
 	m.logger.Debug("deployment completed, resetting drift prevention timer")
 	m.resetDriftTimer()
 }
@@ -155,6 +170,9 @@ func (m *DriftPreventionMonitor) handleDeploymentCompleted() {
 //
 // This publishes a DriftPreventionTriggeredEvent to trigger a deployment.
 func (m *DriftPreventionMonitor) handleDriftTimerExpired() {
+	// Record activity for health check stall detection
+	m.healthTracker.RecordActivity()
+
 	m.mu.Lock()
 	timeSinceLastDeployment := time.Since(m.lastDeploymentTime)
 	m.mu.Unlock()
@@ -223,4 +241,12 @@ func (m *DriftPreventionMonitor) getDriftTimerChan() <-chan time.Time {
 	closed := make(chan time.Time)
 	close(closed)
 	return closed
+}
+
+// HealthCheck implements the lifecycle.HealthChecker interface.
+// Returns an error if the component appears to be stalled (no timer tick for > stallTimeout).
+// For a timer-based component like DriftPreventionMonitor, a healthy state means
+// the timer is firing at the expected interval.
+func (m *DriftPreventionMonitor) HealthCheck() error {
+	return m.healthTracker.Check()
 }

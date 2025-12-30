@@ -27,6 +27,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
 const (
@@ -64,6 +65,9 @@ type Reconciler struct {
 	debounceTimer     *time.Timer
 	pendingTrigger    bool
 	lastTriggerReason string
+
+	// Health check: stall detection for event-driven component
+	healthTracker *lifecycle.HealthTracker
 }
 
 // Config configures the Reconciler component.
@@ -101,6 +105,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config) *Rec
 		debounceTimer:     nil,
 		pendingTrigger:    false,
 		lastTriggerReason: "",
+		healthTracker:     lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}
 }
 
@@ -151,6 +156,10 @@ func (r *Reconciler) Start(ctx context.Context) error {
 
 // handleEvent processes events from the EventBus.
 func (r *Reconciler) handleEvent(event busevents.Event) {
+	// Track processing for health check stall detection
+	r.healthTracker.StartProcessing()
+	defer r.healthTracker.EndProcessing()
+
 	switch e := event.(type) {
 	case *events.ResourceIndexUpdatedEvent:
 		r.handleResourceChange(e)
@@ -347,4 +356,11 @@ func (r *Reconciler) cleanup() {
 		r.logger.Debug("Reconciler shutting down with pending trigger",
 			"last_reason", r.lastTriggerReason)
 	}
+}
+
+// HealthCheck implements the lifecycle.HealthChecker interface.
+// Returns an error if the component appears to be stalled (processing for > timeout).
+// Returns nil when idle (not processing) - idle is always healthy for event-driven components.
+func (r *Reconciler) HealthCheck() error {
+	return r.healthTracker.Check()
 }

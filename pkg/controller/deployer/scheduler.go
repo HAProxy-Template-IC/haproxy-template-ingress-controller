@@ -25,6 +25,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
 const (
@@ -85,6 +86,9 @@ type DeploymentScheduler struct {
 	deploymentInProgress  bool
 	pendingDeployment     *scheduledDeployment
 	lastDeploymentEndTime time.Time // When the last deployment completed
+
+	// Health check: stall detection for event-driven component
+	healthTracker *lifecycle.HealthTracker
 }
 
 // NewDeploymentScheduler creates a new DeploymentScheduler component.
@@ -106,6 +110,7 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 		eventChan:             eventBus.SubscribeLeaderOnly(SchedulerEventBufferSize),
 		logger:                logger.With("component", SchedulerComponentName),
 		minDeploymentInterval: minDeploymentInterval,
+		healthTracker:         lifecycle.NewProcessingTracker(SchedulerComponentName, lifecycle.DefaultProcessingTimeout),
 	}
 }
 
@@ -146,6 +151,10 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 
 // handleEvent processes events from the EventBus.
 func (s *DeploymentScheduler) handleEvent(ctx context.Context, event busevents.Event) {
+	// Track processing for health check stall detection
+	s.healthTracker.StartProcessing()
+	defer s.healthTracker.EndProcessing()
+
 	switch e := event.(type) {
 	case *events.TemplateRenderedEvent:
 		s.handleTemplateRendered(e)
@@ -555,4 +564,11 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 
 	// Note: lastDeploymentEndTime is NOT cleared - this historical data is safe to keep
 	// and helps prevent rapid deployments if leadership is quickly reacquired
+}
+
+// HealthCheck implements the lifecycle.HealthChecker interface.
+// Returns an error if the component appears to be stalled (processing for > timeout).
+// Returns nil when idle (not processing) - idle is always healthy for event-driven components.
+func (s *DeploymentScheduler) HealthCheck() error {
+	return s.healthTracker.Check()
 }

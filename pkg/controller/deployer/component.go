@@ -34,6 +34,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
 const (
@@ -61,6 +62,9 @@ type Component struct {
 	eventChan            <-chan busevents.Event // Event subscription channel (subscribed in constructor)
 	logger               *slog.Logger
 	deploymentInProgress atomic.Bool // Defensive: prevents concurrent deployments if scheduler has bugs
+
+	// Health check: stall detection for event-driven component
+	healthTracker *lifecycle.HealthTracker
 }
 
 // New creates a new Deployer component.
@@ -77,9 +81,10 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 	// All-replica components replay their state on BecameLeaderEvent to ensure
 	// leader-only components don't miss critical state.
 	return &Component{
-		eventBus:  eventBus,
-		eventChan: eventBus.SubscribeLeaderOnly(EventBufferSize),
-		logger:    logger.With("component", ComponentName),
+		eventBus:      eventBus,
+		eventChan:     eventBus.SubscribeLeaderOnly(EventBufferSize),
+		logger:        logger.With("component", ComponentName),
+		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}
 }
 
@@ -127,6 +132,10 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 // This executes the deployment to all specified endpoints in parallel.
 // Defensive: drops duplicate events if a deployment is already in progress.
 func (c *Component) handleDeploymentScheduled(ctx context.Context, event *events.DeploymentScheduledEvent) {
+	// Track processing for health check stall detection
+	c.healthTracker.StartProcessing()
+	defer c.healthTracker.EndProcessing()
+
 	correlationID := event.CorrelationID()
 
 	// Defensive check: atomically set deploymentInProgress from false to true
@@ -444,4 +453,11 @@ func (c *Component) convertSyncResultToMetadata(result *dataplane.SyncResult) *e
 		},
 		Error: "", // Empty on success
 	}
+}
+
+// HealthCheck implements the lifecycle.HealthChecker interface.
+// Returns an error if the component appears to be stalled (processing for > timeout).
+// Returns nil when idle (not processing) - idle is always healthy for event-driven components.
+func (c *Component) HealthCheck() error {
+	return c.healthTracker.Check()
 }
