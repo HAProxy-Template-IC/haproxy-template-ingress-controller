@@ -732,6 +732,15 @@ The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the c
 
 For Helm chart changes, see `charts/haptic/CHANGELOG.md`.
 
+## Release Process
+
+To prepare a new release for controller and chart:
+
+1. **Update VERSION file** - Contains the controller version (e.g., `0.1.0-alpha.6`)
+2. **Update Chart.yaml** - Bump both `version` and `appVersion` in `charts/haptic/Chart.yaml`
+3. **Update CHANGELOG.md** - Move [Unreleased] entries to new version section with date
+4. **Update charts/haptic/CHANGELOG.md** - Move [Unreleased] entries to new version section
+
 ## Package-Specific Context
 
 For detailed development context on specific packages, see:
