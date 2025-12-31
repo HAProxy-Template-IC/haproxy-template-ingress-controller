@@ -52,9 +52,14 @@ const ComponentName = "reconciler"
 // applies debouncing logic to prevent excessive reconciliations, and triggers
 // reconciliation when appropriate.
 //
-// Debouncing behavior:
-//   - Resource changes: Wait for quiet period (debounce interval) before triggering
+// Debouncing behavior (leading-edge with refractory period):
+//   - First change after refractory: Trigger immediately (0ms delay)
+//   - Changes during refractory: Queued (timer NOT reset, fires at refractory end)
 //   - Index synchronized: Trigger immediately (initial reconciliation after all resources synced)
+//
+// This guarantees:
+//   - Minimum interval: At least debounceInterval between any two triggers
+//   - Maximum latency: Every change synced within debounceInterval
 //
 // The component publishes ReconciliationTriggeredEvent to signal the Executor
 // to begin a reconciliation cycle.
@@ -66,6 +71,7 @@ type Reconciler struct {
 	debounceTimer     *time.Timer
 	pendingTrigger    bool
 	lastTriggerReason string
+	lastTriggerTime   time.Time // Tracks when we last triggered for refractory period
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
@@ -73,8 +79,9 @@ type Reconciler struct {
 
 // Config configures the Reconciler component.
 type Config struct {
-	// DebounceInterval is the time to wait after the last resource change
-	// before triggering reconciliation. If not set, DefaultDebounceInterval is used.
+	// DebounceInterval is the minimum time between reconciliation triggers (refractory period).
+	// The first change triggers immediately, subsequent changes within this interval are batched.
+	// If not set, DefaultDebounceInterval is used.
 	DebounceInterval time.Duration
 }
 
@@ -121,9 +128,9 @@ func (r *Reconciler) Name() string {
 // This method blocks until the context is cancelled or an error occurs.
 // The component is already subscribed to the EventBus (subscription happens in New()),
 // so this method only processes events:
-//   - ResourceIndexUpdatedEvent: Starts/resets debounce timer
+//   - ResourceIndexUpdatedEvent: Leading-edge trigger or queue for refractory timer
 //   - IndexSynchronizedEvent: Triggers initial reconciliation when all resources synced
-//   - Debounce timer expiration: Publishes ReconciliationTriggeredEvent
+//   - Refractory timer expiration: Publishes ReconciliationTriggeredEvent if pending changes
 //
 // The component runs until the context is cancelled, at which point it
 // performs cleanup and returns.
@@ -144,8 +151,13 @@ func (r *Reconciler) Start(ctx context.Context) error {
 			r.handleEvent(event)
 
 		case <-r.getDebounceTimerChan():
-			// Debounce timer expired - trigger reconciliation
-			r.triggerReconciliation("debounce_timer")
+			// Timer fired - clear reference so new timer can be created if needed
+			r.debounceTimer = nil
+
+			// Only trigger if there are pending changes
+			if r.pendingTrigger {
+				r.triggerReconciliation("debounce_timer")
+			}
 
 		case <-ctx.Done():
 			r.logger.Info("Reconciler shutting down", "reason", ctx.Err())
@@ -181,9 +193,9 @@ func (r *Reconciler) handleEvent(event busevents.Event) {
 
 // handleResourceChange processes resource index update events.
 //
-// Resource changes are debounced to batch rapid successive changes.
-// The debounce timer is reset on each change, and reconciliation is
-// only triggered after a quiet period.
+// Uses leading-edge debouncing: the first change triggers immediately if outside
+// the refractory period, subsequent changes are batched until refractory expires.
+// This guarantees both minimum interval between triggers and maximum latency for changes.
 //
 // HAProxy pods are filtered out since they are deployment targets, not configuration sources.
 // Changes to HAProxy pods trigger deployment-only reconciliation via the Deployer component.
@@ -209,16 +221,32 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 		return
 	}
 
-	r.logger.Debug("Resource change detected, resetting debounce timer",
-		"resource_type", event.ResourceTypeName,
-		"created", event.ChangeStats.Created,
-		"modified", event.ChangeStats.Modified,
-		"deleted", event.ChangeStats.Deleted,
-		"debounce_interval", r.debounceInterval)
+	now := time.Now()
+	timeSinceLastTrigger := now.Sub(r.lastTriggerTime)
 
-	r.pendingTrigger = true
-	r.lastTriggerReason = "resource_change"
-	r.resetDebounceTimer()
+	if timeSinceLastTrigger >= r.debounceInterval {
+		// Outside refractory period - trigger immediately (leading edge)
+		r.logger.Debug("Resource change detected, triggering immediately (outside refractory)",
+			"resource_type", event.ResourceTypeName,
+			"created", event.ChangeStats.Created,
+			"modified", event.ChangeStats.Modified,
+			"deleted", event.ChangeStats.Deleted,
+			"time_since_last_trigger", timeSinceLastTrigger)
+		r.triggerReconciliation("resource_change")
+	} else {
+		// Inside refractory period - queue for later, DO NOT reset timer
+		r.logger.Debug("Resource change detected, queuing (inside refractory)",
+			"resource_type", event.ResourceTypeName,
+			"created", event.ChangeStats.Created,
+			"modified", event.ChangeStats.Modified,
+			"deleted", event.ChangeStats.Deleted,
+			"remaining_refractory", r.debounceInterval-timeSinceLastTrigger,
+			"debounce_interval", r.debounceInterval)
+		r.pendingTrigger = true
+		r.lastTriggerReason = "resource_change"
+		// Only start timer if not already running (key difference from old behavior!)
+		r.ensureRefractoryTimer(now)
+	}
 }
 
 // handleIndexSynchronized processes index synchronized events.
@@ -239,18 +267,31 @@ func (r *Reconciler) handleIndexSynchronized(event *events.IndexSynchronizedEven
 
 // handleHTTPResourceChange processes HTTP resource update events.
 //
-// HTTP resource changes are debounced like other resource changes.
+// HTTP resource changes use the same leading-edge debouncing as other resource changes.
 // When external HTTP content changes (e.g., IP blocklists, API responses),
 // this triggers a re-render to incorporate the new content.
 func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedEvent) {
-	r.logger.Debug("HTTP resource change detected, resetting debounce timer",
-		"url", event.URL,
-		"content_size", event.ContentSize,
-		"debounce_interval", r.debounceInterval)
+	now := time.Now()
+	timeSinceLastTrigger := now.Sub(r.lastTriggerTime)
 
-	r.pendingTrigger = true
-	r.lastTriggerReason = "http_resource_change"
-	r.resetDebounceTimer()
+	if timeSinceLastTrigger >= r.debounceInterval {
+		// Outside refractory period - trigger immediately (leading edge)
+		r.logger.Debug("HTTP resource change detected, triggering immediately (outside refractory)",
+			"url", event.URL,
+			"content_size", event.ContentSize,
+			"time_since_last_trigger", timeSinceLastTrigger)
+		r.triggerReconciliation("http_resource_change")
+	} else {
+		// Inside refractory period - queue for later
+		r.logger.Debug("HTTP resource change detected, queuing (inside refractory)",
+			"url", event.URL,
+			"content_size", event.ContentSize,
+			"remaining_refractory", r.debounceInterval-timeSinceLastTrigger,
+			"debounce_interval", r.debounceInterval)
+		r.pendingTrigger = true
+		r.lastTriggerReason = "http_resource_change"
+		r.ensureRefractoryTimer(now)
+	}
 }
 
 // handleHTTPResourceAccepted processes HTTP resource accepted events.
@@ -287,25 +328,26 @@ func (r *Reconciler) handleDriftPrevention(_ *events.DriftPreventionTriggeredEve
 	r.triggerReconciliation("drift_prevention")
 }
 
-// resetDebounceTimer resets the debounce timer to the configured interval.
-func (r *Reconciler) resetDebounceTimer() {
-	if r.debounceTimer == nil {
-		// Create timer on first use
-		r.debounceTimer = time.NewTimer(r.debounceInterval)
-	} else {
-		// Stop and drain existing timer before resetting
-		if !r.debounceTimer.Stop() {
-			// Timer already fired, drain the channel
-			select {
-			case <-r.debounceTimer.C:
-			default:
-			}
-		}
-		r.debounceTimer.Reset(r.debounceInterval)
+// ensureRefractoryTimer ensures a timer is running for the remainder of the refractory period.
+// Unlike the old resetDebounceTimer, this does NOT reset an existing timer - it only
+// starts one if none exists. This is critical for the leading-edge debounce behavior.
+func (r *Reconciler) ensureRefractoryTimer(now time.Time) {
+	if r.debounceTimer != nil {
+		// Timer already running - do not reset (critical for leading-edge behavior)
+		return
 	}
+
+	// Calculate remaining time until refractory period ends
+	remaining := r.debounceInterval - now.Sub(r.lastTriggerTime)
+	if remaining <= 0 {
+		// Refractory already expired - should not happen, but handle gracefully
+		remaining = r.debounceInterval
+	}
+
+	r.debounceTimer = time.NewTimer(remaining)
 }
 
-// stopDebounceTimer stops the debounce timer if it's running.
+// stopDebounceTimer stops the debounce timer if it's running and clears the reference.
 func (r *Reconciler) stopDebounceTimer() {
 	if r.debounceTimer != nil {
 		if !r.debounceTimer.Stop() {
@@ -315,6 +357,7 @@ func (r *Reconciler) stopDebounceTimer() {
 			default:
 			}
 		}
+		r.debounceTimer = nil
 	}
 	r.pendingTrigger = false
 }
@@ -336,7 +379,12 @@ func (r *Reconciler) getDebounceTimerChan() <-chan time.Time {
 // The correlation ID is generated here and will be propagated through the entire
 // reconciliation pipeline (Renderer → Validator → Scheduler → Deployer) enabling
 // end-to-end tracing of all events in a single reconciliation cycle.
+//
+// This also updates lastTriggerTime to start a new refractory period.
 func (r *Reconciler) triggerReconciliation(reason string) {
+	// Update last trigger time for refractory period tracking
+	r.lastTriggerTime = time.Now()
+
 	// Create event with new correlation ID to trace this reconciliation cycle
 	event := events.NewReconciliationTriggeredEvent(reason, events.WithNewCorrelation())
 

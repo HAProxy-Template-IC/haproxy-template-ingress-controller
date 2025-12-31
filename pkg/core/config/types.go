@@ -101,6 +101,12 @@ type ValidationTest struct {
 	// the fixture content is returned instead of making an actual HTTP request.
 	HTTPFixtures []HTTPResourceFixture `yaml:"httpResources,omitempty"`
 
+	// CurrentConfig contains the raw HAProxy configuration from a previous deployment.
+	// This is used for testing slot-aware server assignment during rolling deployments.
+	// When provided, templates can access currentConfig to preserve server slot ordering.
+	// The content is parsed using the HAProxy config parser before being passed to templates.
+	CurrentConfig string `yaml:"currentConfig,omitempty"`
+
 	// Assertions contains validation checks to run against the rendered config.
 	Assertions []ValidationAssertion `yaml:"assertions"`
 }

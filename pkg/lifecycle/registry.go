@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
@@ -318,14 +319,19 @@ func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent
 	errChan := make(chan error, 1)
 
 	go func() {
-		// Signal that Start() has been entered
+		// Signal that Start() is about to be called
 		close(startEntered)
 		// Run the component (blocks until context cancelled or error)
 		errChan <- comp.component.Start(ctx)
 	}()
 
-	// Wait for Start() to be entered before signaling ready to dependents
+	// Wait for goroutine to reach the point where Start() is about to be called
 	<-startEntered
+
+	// Yield to scheduler to give the Start() call a chance to actually begin.
+	// This reduces race conditions where dependent components start before
+	// their dependency's Start() has actually begun executing code.
+	runtime.Gosched()
 
 	// Signal that this component is ready for dependents
 	close(comp.ready)

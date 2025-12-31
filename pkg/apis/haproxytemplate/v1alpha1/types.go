@@ -541,6 +541,20 @@ type ValidationTest struct {
 	// +optional
 	HTTPResources []HTTPResourceFixture `json:"httpResources,omitempty"`
 
+	// CurrentConfig contains the raw HAProxy configuration from a previous deployment.
+	//
+	// This is used for testing slot-aware server assignment during rolling deployments.
+	// When provided, templates can access currentConfig to preserve server slot ordering.
+	// The content is parsed using the HAProxy config parser before being passed to templates.
+	//
+	// Example:
+	//   currentConfig: |
+	//     backend my-backend
+	//         server srv1 10.0.0.1:8080
+	//         server srv2 10.0.0.2:8080
+	// +optional
+	CurrentConfig string `json:"currentConfig,omitempty"`
+
 	// Assertions defines the validation checks to perform.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1

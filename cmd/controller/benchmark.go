@@ -232,7 +232,8 @@ func compileTemplatesForBenchmark(cfg *config.Config) (templating.Engine, error)
 	options := helpers.EngineOptions{
 		EnableProfiling: benchmarkProfileIncludes,
 	}
-	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, options)
+	// Benchmark doesn't need currentConfig type registration
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, nil, options)
 	if err != nil {
 		return nil, err
 	}

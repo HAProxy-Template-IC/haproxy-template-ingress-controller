@@ -164,10 +164,11 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	validationTests := make(map[string]config.ValidationTest, len(spec.ValidationTests))
 	for testName, test := range spec.ValidationTests {
 		validationTests[testName] = config.ValidationTest{
-			Description:  test.Description,
-			Fixtures:     convertFixtures(test.Fixtures),
-			HTTPFixtures: convertHTTPFixtures(test.HTTPResources),
-			Assertions:   convertAssertions(test.Assertions),
+			Description:   test.Description,
+			Fixtures:      convertFixtures(test.Fixtures),
+			HTTPFixtures:  convertHTTPFixtures(test.HTTPResources),
+			CurrentConfig: test.CurrentConfig,
+			Assertions:    convertAssertions(test.Assertions),
 		}
 	}
 

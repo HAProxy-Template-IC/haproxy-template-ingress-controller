@@ -27,13 +27,13 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
-// TestReconciler_DebounceResourceChanges tests that resource changes are properly debounced.
-func TestReconciler_DebounceResourceChanges(t *testing.T) {
+// TestReconciler_LeadingEdgeTrigger tests that the first change triggers immediately (leading-edge).
+func TestReconciler_LeadingEdgeTrigger(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	// Use short debounce interval for faster tests
+	// Use longer debounce interval to verify immediate trigger
 	config := &Config{
-		DebounceInterval: testutil.DebounceWait,
+		DebounceInterval: 500 * time.Millisecond,
 	}
 
 	reconciler := New(bus, logger, config)
@@ -51,6 +51,8 @@ func TestReconciler_DebounceResourceChanges(t *testing.T) {
 	// Give the reconciler time to start listening
 	time.Sleep(testutil.StartupDelay)
 
+	startTime := time.Now()
+
 	// Publish a resource change event (not initial sync)
 	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
 		Created:       1,
@@ -59,15 +61,20 @@ func TestReconciler_DebounceResourceChanges(t *testing.T) {
 		IsInitialSync: false,
 	}))
 
-	// Wait for debounce timer to expire and reconciliation to trigger
-	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.EventTimeout)
+	// Should trigger immediately (leading-edge), not after debounce timer
+	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+
+	elapsed := time.Since(startTime)
 
 	require.NotNil(t, receivedEvent, "Should receive ReconciliationTriggeredEvent")
-	assert.Equal(t, "debounce_timer", receivedEvent.Reason)
+	assert.Equal(t, "resource_change", receivedEvent.Reason)
+	assert.Less(t, elapsed, 100*time.Millisecond,
+		"First change should trigger immediately, not wait for debounce timer")
 }
 
-// TestReconciler_MultipleChangesResetDebounce tests that multiple changes reset the debounce timer.
-func TestReconciler_MultipleChangesResetDebounce(t *testing.T) {
+// TestReconciler_RefractoryBatching tests that changes during refractory period are batched
+// and trigger when refractory ends (timer does NOT reset, unlike old trailing-edge behavior).
+func TestReconciler_RefractoryBatching(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	config := &Config{
@@ -87,36 +94,149 @@ func TestReconciler_MultipleChangesResetDebounce(t *testing.T) {
 	// Give the reconciler time to start listening
 	time.Sleep(testutil.StartupDelay)
 
-	// Start timing from here to measure total delay
-	startTime := time.Now()
-
-	// Publish first change
+	// Publish first change - should trigger immediately (leading-edge)
 	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
 		Created:       1,
 		IsInitialSync: false,
 	}))
 
-	// Wait 100ms (half of debounce interval)
-	time.Sleep(testutil.DebounceWait)
+	// Wait for first (immediate) trigger
+	firstEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+	require.NotNil(t, firstEvent)
+	assert.Equal(t, "resource_change", firstEvent.Reason)
 
-	// Publish second change - this should reset the timer
+	firstTriggerTime := time.Now()
+
+	// Wait 50ms (inside refractory period)
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish second change during refractory - should be queued, NOT reset timer
 	bus.Publish(events.NewResourceIndexUpdatedEvent("services", types.ChangeStats{
 		Modified:      1,
 		IsInitialSync: false,
 	}))
 
-	// Now wait for debounce to complete (200ms from second event)
-	// Total time: 100ms + 200ms = 300ms
-	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, 400*time.Millisecond)
+	// Wait for second trigger (should come at ~200ms from first trigger, NOT ~250ms)
+	secondEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, 300*time.Millisecond)
 
+	elapsed := time.Since(firstTriggerTime)
+
+	require.NotNil(t, secondEvent)
+	assert.Equal(t, "debounce_timer", secondEvent.Reason)
+
+	// Timer should NOT have been reset by second change
+	// Should trigger around 200ms (refractory) from first trigger, not 200ms + 50ms = 250ms
+	assert.Less(t, elapsed, 220*time.Millisecond,
+		"Second trigger should happen at refractory end, timer should NOT reset")
+	assert.Greater(t, elapsed, 140*time.Millisecond,
+		"Second trigger should wait for remaining refractory period")
+}
+
+// TestReconciler_MaxLatencyGuarantee tests that every change is synced within debounceInterval.
+// This is the key property of leading-edge debouncing - changes are never delayed longer than the interval.
+func TestReconciler_MaxLatencyGuarantee(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	debounceInterval := 200 * time.Millisecond
+	config := &Config{
+		DebounceInterval: debounceInterval,
+	}
+
+	reconciler := New(bus, logger, config)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go reconciler.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Simulate rapid changes like a rolling deployment
+	// Change at t=0: triggers immediately
+	changeTime := time.Now()
+	bus.Publish(events.NewResourceIndexUpdatedEvent("endpoints", types.ChangeStats{
+		Modified:      1,
+		IsInitialSync: false,
+	}))
+
+	// Wait for immediate trigger
+	testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+
+	// Change at t=50ms: queued
+	time.Sleep(50 * time.Millisecond)
+	bus.Publish(events.NewResourceIndexUpdatedEvent("endpoints", types.ChangeStats{
+		Modified:      1,
+		IsInitialSync: false,
+	}))
+
+	// Change at t=100ms: still queued (timer not reset)
+	time.Sleep(50 * time.Millisecond)
+	bus.Publish(events.NewResourceIndexUpdatedEvent("endpoints", types.ChangeStats{
+		Modified:      1,
+		IsInitialSync: false,
+	}))
+
+	// Wait for second trigger
+	secondEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, 200*time.Millisecond)
+	require.NotNil(t, secondEvent)
+
+	// The change at t=100ms should be synced by ~t=200ms (debounce interval from first trigger)
+	// Total latency for last change: 200ms - 100ms = 100ms < debounceInterval (200ms)
+	elapsed := time.Since(changeTime)
+	assert.Less(t, elapsed, debounceInterval+50*time.Millisecond,
+		"All changes should be synced within debounceInterval from first trigger")
+}
+
+// TestReconciler_ImmediateTriggerAfterRefractoryEnds tests that changes after refractory ends
+// trigger immediately again (not queued).
+func TestReconciler_ImmediateTriggerAfterRefractoryEnds(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	debounceInterval := 100 * time.Millisecond
+	config := &Config{
+		DebounceInterval: debounceInterval,
+	}
+
+	reconciler := New(bus, logger, config)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go reconciler.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// First change: triggers immediately
+	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
+		Created:       1,
+		IsInitialSync: false,
+	}))
+
+	firstEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+	require.NotNil(t, firstEvent)
+	assert.Equal(t, "resource_change", firstEvent.Reason)
+
+	// Wait for refractory period to fully expire
+	time.Sleep(debounceInterval + 50*time.Millisecond)
+
+	// Second change (after refractory): should trigger immediately again
+	startTime := time.Now()
+	bus.Publish(events.NewResourceIndexUpdatedEvent("services", types.ChangeStats{
+		Modified:      1,
+		IsInitialSync: false,
+	}))
+
+	secondEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 	elapsed := time.Since(startTime)
 
-	require.NotNil(t, receivedEvent)
-	assert.Equal(t, "debounce_timer", receivedEvent.Reason)
-
-	// Should take at least 250ms (100ms wait + 200ms debounce, with some tolerance)
-	assert.Greater(t, elapsed, 250*time.Millisecond,
-		"Reconciliation should be delayed by the full debounce interval after the second change")
+	require.NotNil(t, secondEvent)
+	assert.Equal(t, "resource_change", secondEvent.Reason)
+	assert.Less(t, elapsed, 50*time.Millisecond,
+		"Change after refractory should trigger immediately")
 }
 
 // TestReconciler_IndexSynchronizedTriggersImmediate tests that IndexSynchronizedEvent triggers immediately.
@@ -190,7 +310,10 @@ func TestReconciler_SkipInitialSyncEvents(t *testing.T) {
 	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, 300*time.Millisecond)
 }
 
-// TestReconciler_IndexSynchronizedCancelsDebounce tests that IndexSynchronizedEvent cancels pending debounce.
+// TestReconciler_IndexSynchronizedCancelsDebounce tests that IndexSynchronizedEvent
+// triggers immediately and cancels any pending debounce.
+// With leading-edge behavior, the first resource change also triggers immediately,
+// so we expect two events: resource_change (immediate) and index_synchronized.
 func TestReconciler_IndexSynchronizedCancelsDebounce(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -211,44 +334,44 @@ func TestReconciler_IndexSynchronizedCancelsDebounce(t *testing.T) {
 	// Give the reconciler time to start listening
 	time.Sleep(testutil.StartupDelay)
 
-	// Publish resource change (starts debounce timer)
+	// Publish first resource change - triggers immediately (leading-edge)
 	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
 		Created:       1,
 		IsInitialSync: false,
 	}))
 
-	// Wait a bit but not long enough for debounce
-	time.Sleep(testutil.DebounceWait)
+	// Wait for immediate trigger
+	firstEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+	require.NotNil(t, firstEvent)
+	assert.Equal(t, "resource_change", firstEvent.Reason)
 
-	// Publish index synchronized event (should trigger immediately and cancel debounce)
+	// Publish second resource change during refractory (queued, not immediate)
+	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
+		Modified:      1,
+		IsInitialSync: false,
+	}))
+
+	// Publish index synchronized event (should trigger immediately and cancel pending)
 	bus.Publish(events.NewIndexSynchronizedEvent(map[string]int{"ingresses": 10}))
 
-	// Collect events for a short window
-	timeout := time.After(testutil.NoEventTimeout)
-	var receivedEvents []*events.ReconciliationTriggeredEvent
+	// Wait for index_synchronized event
+	secondEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+	require.NotNil(t, secondEvent)
+	assert.Equal(t, "index_synchronized", secondEvent.Reason)
 
-Loop:
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.ReconciliationTriggeredEvent); ok {
-				receivedEvents = append(receivedEvents, e)
-			}
-		case <-timeout:
-			break Loop
-		}
-	}
-
-	// Should only receive one event (index_synchronized), not the debounced resource_change
-	require.Len(t, receivedEvents, 1, "Should only receive one reconciliation trigger")
-	assert.Equal(t, "index_synchronized", receivedEvents[0].Reason)
+	// Verify no more events (the queued resource_change was cancelled)
+	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
 // TestReconciler_ContextCancellation tests graceful shutdown on context cancellation.
+// Verifies that pending refractory timers are properly cleaned up on shutdown.
 func TestReconciler_ContextCancellation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	reconciler := New(bus, logger, nil)
+	config := &Config{
+		DebounceInterval: 300 * time.Millisecond,
+	}
+	reconciler := New(bus, logger, config)
 
 	eventChan := bus.Subscribe(50)
 	bus.Start()
@@ -261,14 +384,27 @@ func TestReconciler_ContextCancellation(t *testing.T) {
 		done <- reconciler.Start(ctx)
 	}()
 
-	// Publish a resource change to start debounce
+	// Give the reconciler time to start listening
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish first resource change - triggers immediately (leading-edge)
 	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
 		Created:       1,
 		IsInitialSync: false,
 	}))
 
-	// Cancel context before debounce expires
-	time.Sleep(testutil.StartupDelay)
+	// Wait for the immediate trigger
+	firstEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+	require.NotNil(t, firstEvent)
+	assert.Equal(t, "resource_change", firstEvent.Reason)
+
+	// Publish second resource change during refractory (starts pending timer)
+	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
+		Modified:      1,
+		IsInitialSync: false,
+	}))
+
+	// Cancel context before refractory expires
 	cancel()
 
 	// Should return quickly
@@ -279,11 +415,11 @@ func TestReconciler_ContextCancellation(t *testing.T) {
 		t.Fatal("Reconciler did not shut down within timeout")
 	}
 
-	// Should not have triggered reconciliation
+	// The pending refractory trigger should NOT have fired after shutdown
 	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
-// TestReconciler_CustomDebounceInterval tests using a custom debounce interval.
+// TestReconciler_CustomDebounceInterval tests using a custom debounce interval as refractory period.
 func TestReconciler_CustomDebounceInterval(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -305,27 +441,38 @@ func TestReconciler_CustomDebounceInterval(t *testing.T) {
 	// Give the reconciler time to start listening
 	time.Sleep(testutil.StartupDelay)
 
-	startTime := time.Now()
-
-	// Publish resource change
+	// Publish first resource change - should trigger immediately
 	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
 		Created:       1,
 		IsInitialSync: false,
 	}))
 
-	// Wait for reconciliation
-	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.EventTimeout)
+	// Wait for immediate trigger
+	firstEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+	require.NotNil(t, firstEvent)
+	assert.Equal(t, "resource_change", firstEvent.Reason)
 
-	elapsed := time.Since(startTime)
+	firstTriggerTime := time.Now()
 
-	require.NotNil(t, receivedEvent)
-	assert.Equal(t, "debounce_timer", receivedEvent.Reason)
+	// Wait 50ms, then publish second change (during refractory)
+	time.Sleep(50 * time.Millisecond)
+	bus.Publish(events.NewResourceIndexUpdatedEvent("services", types.ChangeStats{
+		Modified:      1,
+		IsInitialSync: false,
+	}))
 
-	// Verify timing is approximately correct (with tolerance)
-	assert.Greater(t, elapsed, customInterval-10*time.Millisecond,
-		"Should wait at least the custom debounce interval")
-	assert.Less(t, elapsed, customInterval+testutil.DebounceWait,
-		"Should not wait significantly longer than the custom debounce interval")
+	// Wait for second trigger (should come at custom interval from first trigger)
+	secondEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, 200*time.Millisecond)
+	elapsed := time.Since(firstTriggerTime)
+
+	require.NotNil(t, secondEvent)
+	assert.Equal(t, "debounce_timer", secondEvent.Reason)
+
+	// Verify refractory timing uses custom interval
+	assert.Greater(t, elapsed, customInterval-30*time.Millisecond,
+		"Should wait for custom refractory period")
+	assert.Less(t, elapsed, customInterval+50*time.Millisecond,
+		"Should not wait significantly longer than custom refractory period")
 }
 
 // TestReconciler_DefaultConfig tests using default configuration.
@@ -421,11 +568,11 @@ func TestReconciler_NonHAProxyPodChangesStillTrigger(t *testing.T) {
 		IsInitialSync: false,
 	}))
 
-	// Wait for debounce timer to expire and reconciliation to trigger
-	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.EventTimeout)
+	// Should trigger immediately (leading-edge)
+	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 
 	require.NotNil(t, receivedEvent, "Should receive ReconciliationTriggeredEvent for non-HAProxy pod resources")
-	assert.Equal(t, "debounce_timer", receivedEvent.Reason)
+	assert.Equal(t, "resource_change", receivedEvent.Reason)
 }
 
 // TestReconciler_Name tests the Name method.
@@ -461,14 +608,11 @@ func TestReconciler_HandleHTTPResourceChange(t *testing.T) {
 	// Publish HTTP resource updated event
 	bus.Publish(events.NewHTTPResourceUpdatedEvent("http://example.com/blocklist.txt", "abc123", 1024))
 
-	// Wait for debounce timer to expire and reconciliation to trigger
-	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.EventTimeout)
+	// Should trigger immediately (leading-edge)
+	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 
 	require.NotNil(t, receivedEvent)
-	// Note: The reason is "debounce_timer" because the timer fires with that reason
-	// The HTTP resource change sets pendingTrigger and lastTriggerReason but
-	// the actual event reason comes from triggerReconciliation("debounce_timer")
-	assert.Equal(t, "debounce_timer", receivedEvent.Reason)
+	assert.Equal(t, "http_resource_change", receivedEvent.Reason)
 }
 
 // TestReconciler_HandleHTTPResourceAccepted tests HTTP resource accepted handling.

@@ -151,7 +151,15 @@ templateSnippets:
         1. Resolve server slot count from parameters or defaults
         2. Look up the Service to find port name (for targetPort resolution)
         3. Fetch EndpointSlices and resolve actual pod ports
-        4. Generate server lines with proper options
+        4. Build slot assignment map from current config (if available)
+        5. Assign endpoints to slots, preserving existing assignments
+        6. Generate server lines with proper options
+
+        Slot Preservation (Zero-Reload Updates):
+        When currentConfig is available, the macro looks up the existing backend
+        and preserves server slot assignments during rolling deployments. This
+        enables zero-reload updates via HAProxy runtime API by keeping the same
+        SRV_N slot for each pod IP:port combination across config changes.
 
         Parameters:
           serviceName    - Service name to look up endpoints
@@ -162,9 +170,10 @@ templateSnippets:
                              .flags[]          - server flags (e.g., "backup", "weight 10")
                              .podMaxconnValue  - per-server maxconn
           portName       - Port name for targetPort resolution (nil = auto-lookup)
+          backendName    - HAProxy backend name for slot preservation (nil = disabled)
 
         Example:
-          {{ BackendServers("my-service", 0, 80, serverOpts, nil) }}
+          {{ BackendServers("my-service", 0, 80, serverOpts, nil, "ing_default_my-ingress_my-service_80") }}
 
         Output:
           server SRV_1 10.0.0.1:8080 check  # Pod: my-pod-abc
@@ -173,7 +182,7 @@ templateSnippets:
           ...
       -#}
       {% import "util-backend-servers-helpers" for BuildServerOptions %}
-      {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any) %}
+      {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any) %}
         {%%
           // ── 1. Resolve server slot count ──────────────────────────────────
           // Priority: maxServerSlots param > serverOpts.serverSlotsValue > default (10)
@@ -243,11 +252,73 @@ templateSnippets:
               }
             }
           }
+
+          // ── 6. Build slot assignment map from current config ──────────────
+          // Maps address:port → slot number (1-based) from existing config.
+          // Enables slot preservation during rolling deployments for zero-reload updates.
+          var existingSlots = map[string]int{}
+          var usedSlots = map[int]bool{}
+          var bkName = ""
+          if backendName != nil {
+            bkName = tostring(backendName)
+          }
+          if bkName != "" && !isNil(currentConfig) {
+            for _, backend := range currentConfig.Backends {
+              if backend.Name == bkName {
+                // Found the backend - extract server slot assignments
+                for serverName, server := range backend.Servers {
+                  // Extract slot number from server name (e.g., "SRV_1" → 1)
+                  if hasPrefix(serverName, "SRV_") {
+                    var slotStr = serverName[4:]
+                    var slotNum = toint(slotStr)
+                    if slotNum > 0 && slotNum <= slots {
+                      // Skip placeholders (127.0.0.1:1)
+                      if server.Address != "127.0.0.1" || (server.Port != nil && *server.Port != 1) {
+                        var key = server.Address + ":" + tostring(*server.Port)
+                        existingSlots[key] = slotNum
+                        usedSlots[slotNum] = true
+                      }
+                    }
+                  }
+                }
+                break
+              }
+            }
+          }
+
+          // ── 7. Assign endpoints to slots with preservation ────────────────
+          // First pass: assign endpoints that have existing slots
+          // Second pass: assign remaining endpoints to free slots
+          var slotAssignments = map[int]map[string]any{}  // slot → endpoint
+          var unassignedEndpoints = []any{}
+
+          // First pass: preserve existing slot assignments
+          for _, ep := range endpoints {
+            var epMap = ep.(map[string]any)
+            var key = tostring(epMap["address"]) + ":" + tostring(epMap["port"])
+            if slot, ok := existingSlots[key]; ok {
+              slotAssignments[slot] = epMap
+            } else {
+              unassignedEndpoints = append(unassignedEndpoints, ep)
+            }
+          }
+
+          // Second pass: assign unassigned endpoints to free slots
+          var nextFreeSlot = 1
+          for _, ep := range unassignedEndpoints {
+            // Find next free slot
+            for nextFreeSlot <= slots && slotAssignments[nextFreeSlot] != nil {
+              nextFreeSlot++
+            }
+            if nextFreeSlot <= slots {
+              slotAssignments[nextFreeSlot] = ep.(map[string]any)
+              nextFreeSlot++
+            }
+          }
         %%}
-      {#- ── 6. Generate server lines ────────────────────────────────────── -#}
+      {#- ── 8. Generate server lines ────────────────────────────────────── -#}
       {%- for i := 1; i <= slots; i++ %}
-      {%- if i-1 < len(endpoints) %}
-      {%- var ep map[string]any = endpoints[i-1] %}
+      {%- if ep := slotAssignments[i]; ep != nil %}
       server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{{ BuildServerOptions(serverOpts) }} check  # Pod: {{ ep["name"] }}
       {% else %}
       server SRV_{{ i }} 127.0.0.1:1 disabled  # Placeholder

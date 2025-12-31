@@ -19,6 +19,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -47,6 +48,10 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 		c.logger.Warn("HAProxy pods store is nil, controller.haproxy_pods will not be available")
 	}
 
+	// Get current config from store (nil-safe)
+	// This provides templates access to the current deployed HAProxy config for slot preservation
+	var currentConfig = c.getCurrentConfig()
+
 	// Build context using centralized builder
 	builder := rendercontext.NewBuilder(
 		c.config,
@@ -56,7 +61,17 @@ func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *tem
 		rendercontext.WithHAProxyPodStore(c.haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpFetcher),
 		rendercontext.WithCapabilities(&c.capabilities),
+		rendercontext.WithCurrentConfig(currentConfig),
 	)
 
 	return builder.Build()
+}
+
+// getCurrentConfig retrieves the current deployed HAProxy configuration.
+// Returns nil if the store is not set or no config is available (first deployment).
+func (c *Component) getCurrentConfig() *parserconfig.StructuredConfig {
+	if c.currentConfigStore == nil {
+		return nil
+	}
+	return c.currentConfigStore.Get()
 }

@@ -49,6 +49,7 @@ import (
 	ctrlconfigpublisher "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/credentialsloader"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/deployer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/discovery"
@@ -68,6 +69,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
@@ -92,6 +94,28 @@ const (
 // errNoWebhookRules indicates that no webhook rules are configured.
 // This is used to signal that DryRunValidator should not be created.
 var errNoWebhookRules = errors.New("no webhook rules configured")
+
+// GVRs for Kubernetes resources used by the controller.
+var (
+	// crdGVR is the GVR for HAProxyTemplateConfig custom resource.
+	crdGVR = schema.GroupVersionResource{
+		Group:    "haproxy-haptic.org",
+		Version:  "v1alpha1",
+		Resource: "haproxytemplateconfigs",
+	}
+	// secretGVR is the GVR for Kubernetes Secrets.
+	secretGVR = schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "secrets",
+	}
+	// haproxyCfgGVR is the GVR for HAProxyCfg custom resource.
+	haproxyCfgGVR = schema.GroupVersionResource{
+		Group:    "haproxy-haptic.org",
+		Version:  "v1alpha1",
+		Resource: "haproxycfgs",
+	}
+)
 
 // configState tracks initialization state for health checks.
 // It allows the health endpoint to report unhealthy status until
@@ -865,6 +889,79 @@ func setupConfigWatchers(
 	return nil
 }
 
+// setupCurrentConfigStore creates and initializes the CurrentConfigStore for slot-aware
+// server assignment during rolling deployments.
+//
+// This function:
+//  1. Creates a CurrentConfigStore to cache parsed HAProxy config
+//  2. Sync fetches existing HAProxyCfg (if any) to populate the store BEFORE first render
+//  3. Creates an async watcher for silent updates (no events published)
+//
+// The sync fetch is critical: if first render happens before HAProxyCfg is loaded,
+// currentConfig would be nil and we'd scramble existing server slots.
+//
+// The async watcher only updates the store - it does NOT trigger reconciliation.
+// HAProxyCfg changes are passive state used only when rendering for other reasons.
+func setupCurrentConfigStore(
+	iterCtx context.Context,
+	k8sClient *client.Client,
+	crdName string,
+	haproxyCfgGVR schema.GroupVersionResource,
+	logger *slog.Logger,
+) (*currentconfigstore.Store, error) {
+	// Create CurrentConfigStore to cache parsed HAProxy config
+	store, err := currentconfigstore.New(logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create current config store: %w", err)
+	}
+
+	// Sync fetch existing HAProxyCfg (if any)
+	// This is critical for slot preservation on controller restart
+	haproxyCfgName := configpublisher.GenerateRuntimeConfigName(crdName)
+	haproxyCfgResource, err := k8sClient.GetResource(iterCtx, haproxyCfgGVR, haproxyCfgName)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to fetch HAProxyCfg: %w", err)
+		}
+		logger.Info("No existing HAProxyCfg found (first deployment)")
+	} else {
+		// Populate store with existing config BEFORE first render
+		store.Update(haproxyCfgResource)
+		logger.Info("Loaded existing HAProxyCfg into current config store")
+	}
+
+	// Create async watcher for HAProxyCfg updates (silent updates, NO events)
+	haproxyCfgWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
+		GVR:       haproxyCfgGVR,
+		Namespace: k8sClient.Namespace(),
+		Name:      haproxyCfgName,
+		OnSyncComplete: func(obj interface{}) error {
+			// Silent update - NO events published
+			store.Update(obj)
+			return nil
+		},
+		OnChange: func(obj interface{}) error {
+			// Silent update - NO events published
+			// This does NOT trigger reconciliation
+			store.Update(obj)
+			return nil
+		},
+	}, k8sClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HAProxyCfg watcher: %w", err)
+	}
+
+	// Start HAProxyCfg watcher in background (for updates after deployment)
+	go func() {
+		if err := haproxyCfgWatcher.Start(iterCtx); err != nil {
+			logger.Error("HAProxyCfg watcher failed", "error", err)
+		}
+	}()
+	logger.Debug("HAProxyCfg watcher started for current config updates")
+
+	return store, nil
+}
+
 // reconciliationComponents holds all reconciliation-related components.
 type reconciliationComponents struct {
 	reconciler          *reconciler.Reconciler
@@ -895,6 +992,7 @@ func createReconciliationComponents(
 	cfg *coreconfig.Config,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
+	currentConfigStore *currentconfigstore.Store,
 	bus *busevents.EventBus,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
@@ -924,7 +1022,7 @@ func createReconciliationComponents(
 		return nil, fmt.Errorf("haproxy-pods store not found (should be auto-injected)")
 	}
 
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, currentConfigStore, capabilities, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create renderer: %w", err)
 	}
@@ -1245,7 +1343,12 @@ func createDryRunValidator(
 	logger.Debug("Creating DryRunValidator for webhook validation")
 
 	// Create template engine using helper (handles template extraction, filters, engine type parsing)
-	engine, err := helpers.NewEngineFromConfig(cfg, nil, nil)
+	// Note: DryRunValidator does NOT use currentConfig at runtime - it validates hypothetical future state.
+	// However, the templates still need the type declaration to compile successfully.
+	additionalDeclarations := map[string]any{
+		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	}
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create template engine for dry-run validation: %w", err)
 	}
@@ -1281,13 +1384,14 @@ func setupReconciliation(
 	creds *coreconfig.Credentials,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
+	currentConfigStore *currentconfigstore.Store,
 	bus *busevents.EventBus,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	cancel context.CancelFunc,
 ) (*reconciliationComponents, error) {
 	// Create all components
-	components, err := createReconciliationComponents(cfg, k8sClient, resourceWatcher, bus, registry, logger)
+	components, err := createReconciliationComponents(cfg, k8sClient, resourceWatcher, currentConfigStore, bus, registry, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -1432,19 +1536,6 @@ func runIteration(
 	// The registry persists across iterations to avoid port rebinding issues
 	infra.IntrospectionRegistry.Clear()
 
-	// Define GVRs for HAProxyTemplateConfig CRD and Secret
-	crdGVR := schema.GroupVersionResource{
-		Group:    "haproxy-haptic.org",
-		Version:  "v1alpha1",
-		Resource: "haproxytemplateconfigs",
-	}
-
-	secretGVR := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "secrets",
-	}
-
 	// Create config state tracker for health checks
 	// This allows the health endpoint to report unhealthy status until config is loaded
 	state := &configState{}
@@ -1502,6 +1593,12 @@ func runIteration(
 		return err
 	}
 
+	// 4.5. Setup CurrentConfigStore for slot-aware server assignment
+	currentConfigStore, err := setupCurrentConfigStore(setup.IterCtx, k8sClient, crdName, haproxyCfgGVR, logger)
+	if err != nil {
+		return err
+	}
+
 	// 5. Initialize StateCache and start background components
 	stateCache := NewStateCache(setup.Bus, resourceWatcher, logger)
 	startBackgroundComponents(setup.IterCtx, stateCache, setup.MetricsComponent, logger)
@@ -1509,7 +1606,7 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, setup.Bus, setup.Registry, logger, setup.Cancel)
+	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, setup.Bus, setup.Registry, logger, setup.Cancel)
 	if err != nil {
 		return err
 	}

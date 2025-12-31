@@ -44,6 +44,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -420,7 +422,7 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 			testEngine := r.engineTemplate
 
 			// Run test with isolated paths and engine
-			result := r.runSingleTest(ctx, entry.name, entry.test, testEngine, testPaths)
+			result := r.runSingleTest(ctx, entry.name, &entry.test, testEngine, testPaths)
 
 			testDuration := time.Since(testStartTime)
 			r.logger.Log(context.Background(), logging.LevelTrace, "Test completed",
@@ -452,7 +454,7 @@ func (r *Runner) filterTests(tests map[string]config.ValidationTest, name string
 }
 
 // runSingleTest executes a single validation test using worker-specific engine and validation paths.
-func (r *Runner) runSingleTest(ctx context.Context, testName string, test config.ValidationTest, engine templating.Engine, validationPaths *dataplane.ValidationPaths) TestResult {
+func (r *Runner) runSingleTest(ctx context.Context, testName string, test *config.ValidationTest, engine templating.Engine, validationPaths *dataplane.ValidationPaths) TestResult {
 	startTime := time.Now()
 
 	result := TestResult{
@@ -501,8 +503,30 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 		"test", testName,
 		"fixture_count", len(httpFixtures))
 
-	// 4. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	haproxyConfig, auxiliaryFiles, includeStats, err := r.renderWithStores(engine, stores, validationPaths, httpStore)
+	// 4. Parse current config if provided (for slot-aware server assignment testing)
+	var currentConfig *parserconfig.StructuredConfig
+	if test.CurrentConfig != "" {
+		p, err := parser.New()
+		if err != nil {
+			result.Passed = false
+			result.RenderError = fmt.Sprintf("failed to create parser for currentConfig: %v", err)
+			result.Duration = time.Since(startTime)
+			return result
+		}
+		currentConfig, err = p.ParseFromString(test.CurrentConfig)
+		if err != nil {
+			result.Passed = false
+			result.RenderError = fmt.Sprintf("failed to parse currentConfig: %v", err)
+			result.Duration = time.Since(startTime)
+			return result
+		}
+		r.logger.Log(context.Background(), logging.LevelTrace, "Parsed currentConfig for test",
+			"test", testName,
+			"backends", len(currentConfig.Backends))
+	}
+
+	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
+	haproxyConfig, auxiliaryFiles, includeStats, err := r.renderWithStores(engine, stores, validationPaths, httpStore, currentConfig)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -523,11 +547,11 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test config
 		result.IncludeStats = includeStats
 	}
 
-	// 5. Build template context for JSONPath assertions
-	templateContext := r.buildRenderingContext(stores, validationPaths, httpStore)
+	// 6. Build template context for JSONPath assertions
+	templateContext := r.buildRenderingContext(stores, validationPaths, httpStore, currentConfig)
 
-	// 6. Run all assertions (whether rendering succeeded or failed)
-	r.executeAssertions(ctx, &result, &test, haproxyConfig, auxiliaryFiles, templateContext, validationPaths)
+	// 7. Run all assertions (whether rendering succeeded or failed)
+	r.executeAssertions(ctx, &result, test, haproxyConfig, auxiliaryFiles, templateContext, validationPaths)
 
 	// Test passes if either:
 	// - Rendering succeeded AND all assertions passed
@@ -606,9 +630,10 @@ func hasRenderingErrorAssertions(assertions []config.ValidationAssertion) bool {
 //
 // This follows the same pattern as DryRunValidator.renderWithOverlayStores.
 // When profileIncludes is enabled, it returns timing statistics for included templates.
-func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
+// The currentConfig parameter enables slot-aware server assignment testing (nil for first deployment).
+func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
 	// Build rendering context with fixture stores
-	renderCtx := r.buildRenderingContext(stores, validationPaths, httpStore)
+	renderCtx := r.buildRenderingContext(stores, validationPaths, httpStore, currentConfig)
 
 	// Render main HAProxy configuration using worker-specific engine
 	var haproxyConfig string
@@ -657,7 +682,8 @@ func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]ty
 // Special handling for TestRunner:
 //   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
 //   - Separates haproxy-pods store from resource stores
-func (r *Runner) buildRenderingContext(stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper) map[string]interface{} {
+//   - Accepts optional currentConfig for slot-aware server assignment testing
+func (r *Runner) buildRenderingContext(stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig) map[string]interface{} {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -675,6 +701,7 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 		rendercontext.WithStores(resourceStores),
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpStore),
+		rendercontext.WithCurrentConfig(currentConfig),
 	)
 
 	renderCtx, _ := builder.Build()

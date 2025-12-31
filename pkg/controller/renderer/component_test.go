@@ -91,7 +91,7 @@ func TestNew_Success(t *testing.T) {
 
 	haproxyPodStore := &mockStore{}
 
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, haproxyPodStore, nil, defaultCapabilities(), logger)
 
 	require.NoError(t, err)
 	assert.NotNil(t, renderer)
@@ -116,7 +116,7 @@ func TestNew_InvalidTemplate(t *testing.T) {
 
 	haproxyPodStore := &mockStore{}
 
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, haproxyPodStore, nil, defaultCapabilities(), logger)
 
 	assert.Error(t, err)
 	assert.Nil(t, renderer)
@@ -157,7 +157,7 @@ defaults
 		"ingresses": ingressStore,
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Subscribe to events
@@ -224,7 +224,7 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -272,7 +272,7 @@ func TestRenderer_RenderFailure(t *testing.T) {
 	haproxyPodStore := &mockStore{}
 
 	// With Scriggo, undefined functions are caught at compile time, so renderer creation fails
-	_, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
+	_, err := New(bus, cfg, stores, haproxyPodStore, nil, defaultCapabilities(), logger)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "undefined")
 }
@@ -298,7 +298,7 @@ func TestRenderer_EmptyStores(t *testing.T) {
 		"ingresses": &mockStore{items: []interface{}{}}, // Empty store
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -356,7 +356,7 @@ func TestRenderer_MultipleStores(t *testing.T) {
 		},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -394,7 +394,7 @@ func TestRenderer_ContextCancellation(t *testing.T) {
 
 	haproxyPodStore := &mockStore{}
 
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, haproxyPodStore, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	bus.Start()
@@ -441,7 +441,7 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -496,7 +496,7 @@ func TestBuildRenderingContext(t *testing.T) {
 		},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Build context
@@ -600,7 +600,7 @@ frontend test
 			assert.Equal(t, tt.expectCrtListSupported, capabilities.SupportsCrtList, "SupportsCrtList mismatch")
 			assert.Equal(t, tt.expectMapSupported, capabilities.SupportsMapStorage, "SupportsMapStorage mismatch")
 
-			renderer, err := New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+			renderer, err := New(bus, cfg, stores, &mockStore{}, nil, capabilities, logger)
 			require.NoError(t, err)
 
 			eventChan := bus.Subscribe(50)
@@ -659,7 +659,7 @@ frontend test
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Get the path resolver from the engine
@@ -705,7 +705,7 @@ func TestRenderer_Name(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	assert.Equal(t, ComponentName, renderer.Name())
@@ -726,7 +726,7 @@ func TestRenderer_SetHTTPStoreComponent(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Initially nil
@@ -751,7 +751,7 @@ func TestRenderer_HandleBecameLeader_NoState(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -802,7 +802,7 @@ func TestRenderer_HandleBecameLeader_WithState(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(100)
@@ -856,7 +856,7 @@ func TestRenderer_WithPostProcessors(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -909,7 +909,7 @@ frontend fe1
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -1141,7 +1141,7 @@ func TestRenderer_ReconciliationCoalescing_LatestWins(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(100)
@@ -1183,7 +1183,7 @@ func TestRenderer_TriggerReasonPropagation(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(50)
@@ -1223,7 +1223,7 @@ func TestRenderer_HandleBecameLeader_WithTriggerReason(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(100)
@@ -1273,7 +1273,7 @@ func TestRenderer_StateReplay_PreservesAllFields(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe(100)
@@ -1339,7 +1339,7 @@ func TestRenderer_WithHTTPStoreComponent(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Create and set HTTP store component
@@ -1383,7 +1383,7 @@ func TestRenderer_WithoutHTTPStoreComponent(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Do NOT set HTTP store component - it should remain nil
@@ -1439,7 +1439,7 @@ func TestRenderer_HTTPStoreContextAvailability(t *testing.T) {
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Set HTTP store component
