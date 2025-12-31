@@ -38,7 +38,18 @@ import (
 //	{% for item := range sort_by(items, []string{"$.name"}) %}
 //	{{ strip(item.value) }}
 //	{% end %}
-func buildScriggoGlobals(customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc) native.Declarations {
+//
+// The additionalDeclarations parameter allows callers to inject domain-specific type
+// declarations without the templating package needing to know about those types.
+// This maintains clean architecture by keeping templating independent of domain packages.
+//
+// Example:
+//
+//	additionalDecls := map[string]any{
+//	    "currentConfig": (*parserconfig.StructuredConfig)(nil),
+//	}
+//	globals := buildScriggoGlobals(filters, funcs, additionalDecls)
+func buildScriggoGlobals(customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, additionalDeclarations map[string]any) native.Declarations {
 	decl := native.Declarations{}
 
 	// Register runtime context variables, custom functions, and builtins
@@ -60,6 +71,12 @@ func buildScriggoGlobals(customFilters map[string]FilterFunc, customFunctions ma
 		decl[name] = wrapFunctionForScriggo(fn)
 	}
 
+	// Register additional declarations from caller (domain-specific types)
+	// These are typically nil pointers for Scriggo type registration
+	for name, value := range additionalDeclarations {
+		decl[name] = value
+	}
+
 	return decl
 }
 
@@ -78,6 +95,8 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 	decl["extraContext"] = (*map[string]interface{})(nil)
 	decl["http"] = (*HTTPFetcher)(nil)                      // HTTP store for fetching remote content
 	decl["runtimeEnvironment"] = (*RuntimeEnvironment)(nil) // Runtime environment info (GOMAXPROCS, etc.)
+	// Note: Domain-specific types like currentConfig are registered via additionalDeclarations
+	// parameter in buildScriggoGlobals() to maintain clean architecture boundaries
 }
 
 // registerScriggoCustomFunctions registers all custom functions for Scriggo templates.
@@ -127,6 +146,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncSanitizeRegex] = scriggoSanitizeRegex
 	decl[FuncTitle] = scriggoTitle
 	decl[FuncDig] = scriggoDig
+	decl[FuncIsNil] = scriggoIsNil
 	decl[FuncToStringSlice] = scriggoToStringSlice
 	decl[FuncJoin] = scriggoJoin
 	decl[FuncReplace] = scriggoStringsReplace
@@ -754,6 +774,22 @@ func isNilValue(value interface{}) bool {
 		return rv.IsNil()
 	}
 	return false
+}
+
+// scriggoIsNil is the template-exposed version of isNilValue.
+// It checks if a value is nil, including typed nil pointers like (*T)(nil).
+//
+// In Scriggo templates, comparing a typed nil pointer to nil doesn't work:
+//
+//	{%- if currentConfig != nil %}  // This fails with typed nil pointers!
+//
+// Instead, use isNil:
+//
+//	{%- if !isNil(currentConfig) %}  // This works correctly
+//
+// Returns true if the value is nil (including nil pointers, maps, slices, channels, funcs).
+func scriggoIsNil(value interface{}) bool {
+	return isNilValue(value)
 }
 
 // toSlice converts an interface{} to []interface{}.

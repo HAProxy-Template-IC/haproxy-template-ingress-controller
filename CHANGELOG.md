@@ -9,6 +9,14 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Server slot preservation**: Preserve HAProxy server slots during rolling deployments to enable zero-reload runtime API updates via `currentConfig` template context
+
+### Fixed
+
+- **Reconciliation debounce during rolling deployments**: Fix timer reset on each resource change that violated maximum latency guarantee, causing 3-4+ second delays during rapid endpoint updates
+
 ## [0.1.0-alpha.9] - 2025-12-30
 
 ### Fixed

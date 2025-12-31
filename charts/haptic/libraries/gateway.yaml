@@ -499,11 +499,12 @@ templateSnippets:
       {%- if first_seen(dedupCategory, backendKey) -%}
       {%- var routeTypeLabel = "GRPCRoute" -%}
       {%- if protoFlag == "" -%}{%- routeTypeLabel = "HTTPRoute" -%}{%- end -%}
+      {%- var beKey = BackendNameGateway(route, backend) -%}
       # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
-      backend {{ BackendNameGateway(route, backend) }}
+      backend {{ beKey }}
         balance roundrobin
         default-server check{%- if protoFlag != "" %} proto {{ protoFlag }}{%- end %}
-        {{ BackendServers(backendName, 10, backendPort, nil, nil) | indent(2, true) -}}
+        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
       {%- end -%}
@@ -588,7 +589,7 @@ templateSnippets:
       backend {{ biName }}
           mode tcp
           balance roundrobin
-          {{ BackendServers(refName, 10, refPort, nil, nil) | indent(4, false) }}
+          {{ BackendServers(refName, 10, refPort, nil, nil, biName) | indent(4, false) }}
                     {%- generated = true %}
                   {%- end %}
                 {%- end %}
@@ -3563,3 +3564,182 @@ validationTests:
         target: haproxy.cfg
         pattern: '"/api/v2'
         description: Must rewrite to new path prefix
+
+  test-gateway-slot-preservation:
+    description: Server slots should be preserved during rolling deployments when currentConfig is available
+    currentConfig: |
+      # Previous HAProxy configuration with gateway backend and server assignments
+      backend gtw_default_slot-route_slot-svc_80
+          server SRV_1 10.0.0.1:8080 check
+          server SRV_2 10.0.0.2:8080 check
+          server SRV_3 127.0.0.1:1 disabled
+          server SRV_4 127.0.0.1:1 disabled
+          server SRV_5 127.0.0.1:1 disabled
+          server SRV_6 127.0.0.1:1 disabled
+          server SRV_7 127.0.0.1:1 disabled
+          server SRV_8 127.0.0.1:1 disabled
+          server SRV_9 127.0.0.1:1 disabled
+          server SRV_10 127.0.0.1:1 disabled
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: slot-svc
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: slot-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: slot-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+              targetRef:
+                kind: Pod
+                name: slot-pod-1
+            - addresses: ["10.0.0.3"]
+              targetRef:
+                kind: Pod
+                name: slot-pod-3
+          ports:
+            - port: 8080
+              protocol: TCP
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: slot-route
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - slot-test.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                backendRefs:
+                  - name: slot-svc
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with slot preservation
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_default_slot-route_slot-svc_80"
+        description: Gateway backend must be generated
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10\\.0\\.0\\.1:8080.* check"
+        description: Existing pod 10.0.0.1 must preserve its slot (SRV_1)
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_2 10\\.0\\.0\\.3:8080.* check"
+        description: New pod 10.0.0.3 should take the freed slot (SRV_2) from removed pod
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_3 127\\.0\\.0\\.1:1 disabled"
+        description: Unused slots should remain as placeholders
+
+  test-gateway-slot-preservation-lower-ip:
+    description: Slot preservation must work regardless of IP ordering (new pod has lower IP)
+    currentConfig: |
+      # Previous config: SRV_1=10.0.0.5, SRV_2=10.0.0.6
+      # After rolling: 10.0.0.6 removed, 10.0.0.2 added (lower IP than existing)
+      # Expected: SRV_1 keeps 10.0.0.5, SRV_2 gets 10.0.0.2 (takes freed slot)
+      backend gtw_default_slot-lower_slot-svc_80
+          server SRV_1 10.0.0.5:8080 check
+          server SRV_2 10.0.0.6:8080 check
+          server SRV_3 127.0.0.1:1 disabled
+          server SRV_4 127.0.0.1:1 disabled
+          server SRV_5 127.0.0.1:1 disabled
+          server SRV_6 127.0.0.1:1 disabled
+          server SRV_7 127.0.0.1:1 disabled
+          server SRV_8 127.0.0.1:1 disabled
+          server SRV_9 127.0.0.1:1 disabled
+          server SRV_10 127.0.0.1:1 disabled
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: slot-svc
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: slot-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: slot-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.5"]
+              targetRef:
+                kind: Pod
+                name: slot-pod-5
+            - addresses: ["10.0.0.2"]
+              targetRef:
+                kind: Pod
+                name: slot-pod-2
+          ports:
+            - port: 8080
+              protocol: TCP
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: slot-lower
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - slot-lower.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                backendRefs:
+                  - name: slot-svc
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10\\.0\\.0\\.5:8080.* check"
+        description: Existing pod 10.0.0.5 must preserve its slot (SRV_1)
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_2 10\\.0\\.0\\.2:8080.* check"
+        description: New pod 10.0.0.2 (lower IP) must take freed slot (SRV_2), not be sorted first
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_3 127\\.0\\.0\\.1:1 disabled"
+        description: Unused slots should remain as placeholders

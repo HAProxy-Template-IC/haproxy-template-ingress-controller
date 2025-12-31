@@ -749,7 +749,7 @@ templateSnippets:
       backend {{ beName }}
           mode tcp
           balance roundrobin
-          {{ BackendServers(svcName, 10, svcPort, nil, nil) | indent(4) }}
+          {{ BackendServers(svcName, 10, svcPort, nil, nil, beName) | indent(4) }}
                     {%- generated = true %}
                   {%- end %}
                 {%- end %}

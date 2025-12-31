@@ -100,7 +100,7 @@ backend servers
 	// Create renderer
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	// Create validator
@@ -190,7 +190,7 @@ backend servers
 
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
@@ -275,7 +275,7 @@ backend servers
 
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
@@ -353,7 +353,7 @@ backend servers
 
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
@@ -529,7 +529,7 @@ backend servers
 	}
 
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, stores, &mockStore{}, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
@@ -615,7 +615,7 @@ backend servers
 	}
 
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, &mockStore{}, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, stores, &mockStore{}, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)

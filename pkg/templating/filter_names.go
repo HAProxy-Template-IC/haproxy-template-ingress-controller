@@ -106,6 +106,12 @@ const (
 	// FuncTitle converts a string to title case.
 	FuncTitle = "title"
 
+	// FuncIsNil checks if a value is nil, including typed nil pointers.
+	// In Go, a typed nil pointer stored in an interface{} is not equal to nil.
+	// This function uses reflection to properly check for nil pointers.
+	// Syntax: isNil(value) returns bool.
+	FuncIsNil = "isNil"
+
 	// FuncDig navigates nested maps/structures using a sequence of keys.
 	// Returns nil if any key along the path is missing.
 	// Ruby-style dig: obj | dig("metadata", "namespace") | fallback("")

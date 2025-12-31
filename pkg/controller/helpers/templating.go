@@ -61,12 +61,14 @@ type TemplateExtraction struct {
 //   - postProcessorConfigs: Optional post-processor configurations. Can be nil
 //
 // Returns the initialized Engine or an error if initialization fails.
+//
+// For domain-specific type declarations (e.g., currentConfig), use NewEngineFromConfigWithOptions.
 func NewEngineFromConfig(
 	cfg *config.Config,
 	globalFunctions map[string]templating.GlobalFunc,
 	postProcessorConfigs map[string][]templating.PostProcessorConfig,
 ) (templating.Engine, error) {
-	return NewEngineFromConfigWithOptions(cfg, globalFunctions, postProcessorConfigs, EngineOptions{})
+	return NewEngineFromConfigWithOptions(cfg, globalFunctions, postProcessorConfigs, nil, EngineOptions{})
 }
 
 // NewEngineFromConfigWithOptions creates a template engine with additional options.
@@ -80,10 +82,15 @@ func NewEngineFromConfig(
 // For Scriggo engines: Only entry points are compiled explicitly. Template snippets
 // are discovered and compiled automatically when referenced via render/render_glob
 // with inherit_context.
+//
+// The additionalDeclarations parameter allows callers to inject domain-specific type
+// declarations for Scriggo templates without the templating package needing to know
+// about those types. This maintains clean architecture boundaries.
 func NewEngineFromConfigWithOptions(
 	cfg *config.Config,
 	globalFunctions map[string]templating.GlobalFunc,
 	postProcessorConfigs map[string][]templating.PostProcessorConfig,
+	additionalDeclarations map[string]any,
 	options EngineOptions,
 ) (templating.Engine, error) {
 	// Extract templates and entry points from config
@@ -103,22 +110,25 @@ func NewEngineFromConfigWithOptions(
 	// Create engine with all components
 	// Note: All standard filters and the fail() function are registered internally.
 	// We pass nil for filters since none are needed beyond the engine's built-in set.
+	// The *WithDeclarations constructors handle nil additionalDeclarations gracefully.
 	var engine templating.Engine
 	if options.EnableProfiling {
-		engine, err = templating.NewScriggoWithProfiling(
+		engine, err = templating.NewScriggoWithProfilingAndDeclarations(
 			extraction.AllTemplates,
 			extraction.EntryPoints,
 			nil,
 			globalFunctions,
 			postProcessorConfigs,
+			additionalDeclarations,
 		)
 	} else {
-		engine, err = templating.NewScriggo(
+		engine, err = templating.NewScriggoWithDeclarations(
 			extraction.AllTemplates,
 			extraction.EntryPoints,
 			nil,
 			globalFunctions,
 			postProcessorConfigs,
+			additionalDeclarations,
 		)
 	}
 	if err != nil {

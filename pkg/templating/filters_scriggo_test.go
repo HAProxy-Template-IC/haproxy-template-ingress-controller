@@ -541,7 +541,7 @@ func TestBuildScriggoGlobals(t *testing.T) {
 		},
 	}
 
-	globals := buildScriggoGlobals(customFilters, customFunctions)
+	globals := buildScriggoGlobals(customFilters, customFunctions, nil)
 
 	// Check that built-in filters are registered
 	assert.Contains(t, globals, FilterSortBy)
@@ -557,7 +557,7 @@ func TestBuildScriggoGlobals(t *testing.T) {
 }
 
 func TestBuildScriggoGlobals_NilInputs(t *testing.T) {
-	globals := buildScriggoGlobals(nil, nil)
+	globals := buildScriggoGlobals(nil, nil, nil)
 
 	// Should still have built-in filters
 	assert.Contains(t, globals, FilterSortBy)

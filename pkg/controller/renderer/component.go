@@ -31,12 +31,14 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -95,8 +97,9 @@ type Component struct {
 	engine             templating.Engine
 	config             *config.Config
 	stores             map[string]types.Store
-	haproxyPodStore    types.Store          // HAProxy controller pods store for pod-maxconn calculations
-	httpStoreComponent *httpstore.Component // HTTP resource store for dynamic HTTP content fetching
+	haproxyPodStore    types.Store               // HAProxy controller pods store for pod-maxconn calculations
+	httpStoreComponent *httpstore.Component      // HTTP resource store for dynamic HTTP content fetching
+	currentConfigStore *currentconfigstore.Store // Current deployed HAProxy config for slot preservation
 	logger             *slog.Logger
 	ctx                context.Context // Context from Start() for HTTP requests
 
@@ -148,6 +151,7 @@ func (c *Component) cacheRenderOutput(out *renderOutput) {
 //   - config: Controller configuration containing templates
 //   - stores: Map of resource type names to their stores (e.g., "ingresses" -> Store)
 //   - haproxyPodStore: Store containing HAProxy controller pods for pod-maxconn calculations
+//   - currentConfigStore: Store containing the current deployed HAProxy config (for slot preservation)
 //   - capabilities: HAProxy capabilities determined from local version
 //   - logger: Structured logger for component logging
 //
@@ -159,6 +163,7 @@ func New(
 	cfg *config.Config,
 	stores map[string]types.Store,
 	haproxyPodStore types.Store,
+	currentConfigStore *currentconfigstore.Store,
 	capabilities dataplane.Capabilities,
 	logger *slog.Logger,
 ) (*Component, error) {
@@ -173,7 +178,13 @@ func New(
 	// Create template engine using helper (handles template extraction, filters, engine type parsing)
 	// Note: The fail() function is auto-registered by the Scriggo engine.
 	// Post-processor configs are automatically extracted from cfg when nil is passed.
-	engine, err := helpers.NewEngineFromConfig(cfg, nil, nil)
+	//
+	// Register domain-specific types for Scriggo templates:
+	// - currentConfig: The parsed HAProxy config from HAProxyCfg CRD for slot-aware server assignment
+	additionalDeclarations := map[string]any{
+		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	}
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create template engine: %w", err)
 	}
@@ -188,15 +199,16 @@ func New(
 		"supports_general_storage", capabilities.SupportsGeneralStorage)
 
 	return &Component{
-		eventBus:        eventBus,
-		eventChan:       eventChan,
-		engine:          engine,
-		config:          cfg,
-		stores:          stores,
-		haproxyPodStore: haproxyPodStore,
-		logger:          logger.With("component", ComponentName),
-		capabilities:    capabilities,
-		healthTracker:   lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
+		eventBus:           eventBus,
+		eventChan:          eventChan,
+		engine:             engine,
+		config:             cfg,
+		stores:             stores,
+		haproxyPodStore:    haproxyPodStore,
+		currentConfigStore: currentConfigStore,
+		logger:             logger.With("component", ComponentName),
+		capabilities:       capabilities,
+		healthTracker:      lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}, nil
 }
 

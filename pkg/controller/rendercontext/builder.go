@@ -36,6 +36,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -53,6 +54,7 @@ type Builder struct {
 	haproxyPodStore types.Store
 	httpFetcher     templating.HTTPFetcher
 	capabilities    *dataplane.Capabilities
+	currentConfig   *parserconfig.StructuredConfig
 }
 
 // Option configures a Builder.
@@ -90,6 +92,16 @@ func WithCapabilities(caps *dataplane.Capabilities) Option {
 	}
 }
 
+// WithCurrentConfig sets the current deployed HAProxy config for templates.
+// This enables slot-aware server assignment and other config-aware features.
+// The config is parsed from the HAProxyCfg CRD's spec.content field.
+// If nil, templates receive nil currentConfig (first deployment case).
+func WithCurrentConfig(cfg *parserconfig.StructuredConfig) Option {
+	return func(b *Builder) {
+		b.currentConfig = cfg
+	}
+}
+
 // NewBuilder creates a new context builder with required dependencies.
 //
 // Parameters:
@@ -123,6 +135,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "pathResolver": PathResolver,
 //	  "dataplane": Config.Dataplane,
 //	  "capabilities": map[string]bool (if set),
+//	  "currentConfig": *StructuredConfig (nil on first deployment),
 //	  "shared": map[string]interface{},
 //	  "runtimeEnvironment": RuntimeEnvironment,
 //	  "http": HTTPFetcher (if set),
@@ -182,6 +195,13 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 	// Add capabilities if provided
 	if b.capabilities != nil {
 		templateContext["capabilities"] = capabilitiesToMap(b.capabilities)
+	}
+
+	// Add current config if provided (NOT added when nil - Scriggo panics with nil pointer initializers)
+	// This enables slot-aware server assignment during rolling deployments
+	// Templates should use isNil(currentConfig) to check if it's available
+	if b.currentConfig != nil {
+		templateContext["currentConfig"] = b.currentConfig
 	}
 
 	// Add HTTP fetcher if provided

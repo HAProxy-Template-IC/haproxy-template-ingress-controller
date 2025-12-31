@@ -28,6 +28,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -721,4 +722,224 @@ global
 	testResult := results.TestResults[0]
 	assert.False(t, testResult.Passed, "test should fail")
 	assert.Contains(t, testResult.RenderError, "no fixture defined for URL")
+}
+
+// TestRunner_RunTests_WithCurrentConfig tests that the currentConfig fixture
+// is parsed and made available to templates for slot-aware server assignment.
+func TestRunner_RunTests_WithCurrentConfig(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Test template that accesses currentConfig to read previous backend state
+	config := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplatingSettings: v1alpha1.TemplatingSettings{
+			Engine: "scriggo",
+		},
+		HAProxyConfig: v1alpha1.HAProxyConfig{
+			// Template checks len(currentConfig.Backends) > 0 to detect if config is available
+			// Note: Scriggo converts (*T)(nil) declaration to a zero-value struct, so isNil() doesn't work
+			Template: `global
+  maxconn 1000
+
+# Previous backends from currentConfig:
+{%- if len(currentConfig.Backends) > 0 %}
+{%- for _, backend := range currentConfig.Backends %}
+# Previous backend: {{ backend.Name }}
+{%- end %}
+{%- else %}
+# No currentConfig available (first deployment)
+{%- end %}
+`,
+		},
+		WatchedResources: map[string]v1alpha1.WatchedResource{
+			"services": {
+				APIVersion: "v1",
+				Resources:  "services",
+				IndexBy:    []string{"metadata.namespace", "metadata.name"},
+			},
+		},
+		ValidationTests: map[string]v1alpha1.ValidationTest{
+			"test-currentconfig": {
+				Description: "Test that currentConfig is available in templates",
+				Fixtures: map[string][]runtime.RawExtension{
+					"services": {},
+				},
+				// Provide a currentConfig with backends for the template to read
+				CurrentConfig: `
+backend my-backend-1
+    server srv1 10.0.0.1:8080
+
+backend my-backend-2
+    server srv2 10.0.0.2:8080
+    server srv3 10.0.0.3:8080
+`,
+				Assertions: []v1alpha1.ValidationAssertion{
+					{
+						Type:        "contains",
+						Target:      "haproxy.cfg",
+						Pattern:     "Previous backend: my-backend-1",
+						Description: "Template should access first backend from currentConfig",
+					},
+					{
+						Type:        "contains",
+						Target:      "haproxy.cfg",
+						Pattern:     "Previous backend: my-backend-2",
+						Description: "Template should access second backend from currentConfig",
+					},
+				},
+			},
+		},
+	}
+
+	// Create template engine with currentConfig type declaration
+	templates := map[string]string{
+		"haproxy.cfg": config.HAProxyConfig.Template,
+	}
+
+	// Need to provide the currentConfig type declaration for Scriggo
+	additionalDeclarations := map[string]any{
+		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	}
+	engine, err := templating.NewScriggoWithDeclarations(
+		templates,
+		[]string{"haproxy.cfg"},
+		nil,
+		nil,
+		nil,
+		additionalDeclarations,
+	)
+	require.NoError(t, err)
+
+	// Convert CRD spec to internal config format
+	cfg, err := conversion.ConvertSpec(config)
+	require.NoError(t, err)
+
+	// Create test runner
+	runner := New(
+		cfg,
+		engine,
+		&dataplane.ValidationPaths{}, // Empty paths for unit tests
+		Options{
+			Logger: logger,
+		},
+	)
+
+	// Run tests
+	ctx := context.Background()
+	results, err := runner.RunTests(ctx, "")
+	require.NoError(t, err)
+
+	// Verify test passed
+	assert.Equal(t, 1, results.TotalTests, "should have 1 test")
+	assert.Equal(t, 1, results.PassedTests, "test should pass")
+	assert.Equal(t, 0, results.FailedTests, "no tests should fail")
+
+	require.Len(t, results.TestResults, 1)
+	testResult := results.TestResults[0]
+	assert.True(t, testResult.Passed, "test should pass: %s", testResult.RenderError)
+
+	// Verify the rendered config contains the expected content
+	assert.Contains(t, testResult.RenderedConfig, "Previous backend: my-backend-1")
+	assert.Contains(t, testResult.RenderedConfig, "Previous backend: my-backend-2")
+}
+
+// TestRunner_RunTests_WithoutCurrentConfig tests that templates handle
+// the case when currentConfig is nil (first deployment).
+func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Test template that handles nil currentConfig gracefully
+	config := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplatingSettings: v1alpha1.TemplatingSettings{
+			Engine: "scriggo",
+		},
+		HAProxyConfig: v1alpha1.HAProxyConfig{
+			// Template checks len(currentConfig.Backends) > 0 to detect if config is available
+			// Note: Scriggo converts (*T)(nil) declaration to a zero-value struct, so isNil() doesn't work
+			Template: `global
+  maxconn 1000
+
+{%- if len(currentConfig.Backends) > 0 %}
+# Has previous config
+{%- else %}
+# First deployment - no previous config
+{%- end %}
+`,
+		},
+		WatchedResources: map[string]v1alpha1.WatchedResource{
+			"services": {
+				APIVersion: "v1",
+				Resources:  "services",
+				IndexBy:    []string{"metadata.namespace", "metadata.name"},
+			},
+		},
+		ValidationTests: map[string]v1alpha1.ValidationTest{
+			"test-no-currentconfig": {
+				Description: "Test that template handles empty currentConfig (first deployment)",
+				Fixtures: map[string][]runtime.RawExtension{
+					"services": {},
+				},
+				// No CurrentConfig provided - simulates first deployment
+				Assertions: []v1alpha1.ValidationAssertion{
+					{
+						Type:        "contains",
+						Target:      "haproxy.cfg",
+						Pattern:     "First deployment - no previous config",
+						Description: "Template should detect missing currentConfig",
+					},
+					{
+						Type:        "not_contains",
+						Target:      "haproxy.cfg",
+						Pattern:     "Has previous config",
+						Description: "Template should not show previous config message",
+					},
+				},
+			},
+		},
+	}
+
+	// Create template engine with currentConfig type declaration
+	templates := map[string]string{
+		"haproxy.cfg": config.HAProxyConfig.Template,
+	}
+
+	additionalDeclarations := map[string]any{
+		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	}
+	engine, err := templating.NewScriggoWithDeclarations(
+		templates,
+		[]string{"haproxy.cfg"},
+		nil,
+		nil,
+		nil,
+		additionalDeclarations,
+	)
+	require.NoError(t, err)
+
+	// Convert CRD spec to internal config format
+	cfg, err := conversion.ConvertSpec(config)
+	require.NoError(t, err)
+
+	// Create test runner
+	runner := New(
+		cfg,
+		engine,
+		&dataplane.ValidationPaths{},
+		Options{
+			Logger: logger,
+		},
+	)
+
+	// Run tests
+	ctx := context.Background()
+	results, err := runner.RunTests(ctx, "")
+	require.NoError(t, err)
+
+	// Verify test passed
+	assert.Equal(t, 1, results.TotalTests, "should have 1 test")
+	assert.Equal(t, 1, results.PassedTests, "test should pass")
+	assert.Equal(t, 0, results.FailedTests, "no tests should fail")
+
+	require.Len(t, results.TestResults, 1)
+	testResult := results.TestResults[0]
+	assert.True(t, testResult.Passed, "test should pass: %s", testResult.RenderError)
 }

@@ -433,6 +433,53 @@ build-snapshot:
           .
       done
 
+# Publish snapshot images from main branch
+# Produces multi-arch images with tags: main-<short-sha>-haproxy<version>
+# Unlike build-snapshot (for CI testing), these are meant for users who want bleeding-edge builds
+publish-main-snapshot:
+  stage: build
+  extends:
+    - .goreleaser-base
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  tags:
+    - saas-linux-2xlarge-amd64
+  script:
+    # Build binaries using goreleaser (reuses build config, skips Docker)
+    - goreleaser build --snapshot --clean
+    # Prepare binary context for multi-arch build
+    - |
+      mkdir -p binary-context/linux/amd64 binary-context/linux/arm64 binary-context/linux/arm/v7
+      cp dist/controller_linux_amd64_v1/haptic-controller binary-context/linux/amd64/
+      cp dist/controller_linux_arm64/haptic-controller binary-context/linux/arm64/
+      cp dist/controller_linux_arm_7/haptic-controller binary-context/linux/arm/v7/
+    # Build and push multi-arch Docker images for each HAProxy version
+    - |
+      SNAPSHOT_TAG="main-${CI_COMMIT_SHORT_SHA}"
+
+      for HAPROXY_VERSION in 3.0 3.1 3.2; do
+        TAG="${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy${HAPROXY_VERSION}"
+        echo "Building multi-arch image: ${TAG}"
+
+        docker buildx build \
+          --platform linux/amd64,linux/arm64,linux/arm/v7 \
+          --build-arg HAPROXY_VERSION=${HAPROXY_VERSION} \
+          --build-arg GIT_COMMIT=${CI_COMMIT_SHORT_SHA} \
+          --build-arg GIT_TAG=${SNAPSHOT_TAG} \
+          --build-context binary=binary-context \
+          --target runtime \
+          --tag "${TAG}" \
+          --push \
+          .
+      done
+
+      # Also push default tag (latest HAProxy version without suffix)
+      docker buildx imagetools create \
+        --tag "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}" \
+        "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy3.2"
+
 # =============================================================================
 # Integration Stage
 # =============================================================================

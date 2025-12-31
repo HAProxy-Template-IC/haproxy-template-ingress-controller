@@ -29,6 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -467,7 +468,14 @@ func createTemplateEngine(configSpec *v1alpha1.HAProxyTemplateConfigSpec, logger
 	options := helpers.EngineOptions{
 		EnableProfiling: validateProfileIncludes,
 	}
-	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, options)
+
+	// Provide currentConfig type declaration for templates that access slot preservation state.
+	// This enables BackendServers macro to look up existing server assignments from previous config.
+	additionalDeclarations := map[string]any{
+		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	}
+
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile templates: %w", err)
 	}
