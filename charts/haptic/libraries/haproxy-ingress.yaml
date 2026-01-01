@@ -2,12 +2,56 @@
 # Provides support for haproxy-ingress.github.io annotation compatibility
 # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
 #
-# Supported annotations:
-# - haproxy-ingress.github.io/path-type: "regex"
+# This library is self-contained and works independently of haproxytech.yaml.
+# All annotations use the haproxy-ingress.github.io/* prefix.
 #
-# Note: This library only implements regex path matching. Other path-type values
-# (exact, prefix, begin) are handled by the standard Ingress pathType field or
-# require additional implementation.
+# Supported annotations (see each section for details):
+#
+# Path Matching:
+#   - path-type: regex, exact, prefix, begin
+#
+# Backend Configuration:
+#   - timeout-connect, timeout-server, timeout-queue, timeout-tunnel
+#   - timeout-http-request, timeout-keep-alive
+#   - balance-algorithm
+#   - maxconn-server, maxqueue-server
+#   - backend-check-interval, health-check-uri, health-check-port
+#   - health-check-fall-count, health-check-rise-count
+#   - proxy-protocol
+#   - secure-backends, secure-sni, secure-verify-ca-secret
+#   - secure-crt-secret, secure-verify-hostname
+#   - config-backend
+#   - initial-weight, limit-connections, backend-protocol
+#
+# Frontend Filters:
+#   - allowlist-source-range, denylist-source-range
+#   - ssl-redirect, ssl-redirect-code
+#   - forwardfor
+#   - hsts, hsts-max-age, hsts-include-subdomains, hsts-preload
+#   - app-root
+#   - redirect-to, redirect-to-code
+#   - cors-enable, cors-allow-origin, cors-allow-methods
+#   - cors-allow-headers, cors-allow-credentials, cors-max-age
+#
+# Session Affinity:
+#   - affinity: cookie
+#   - session-cookie-name, session-cookie-strategy, session-cookie-dynamic
+#   - session-cookie-keywords, session-cookie-domain, session-cookie-same-site
+#
+# SSL Features:
+#   - ssl-passthrough, ssl-passthrough-http-port
+#
+# Authentication:
+#   - auth-secret, auth-realm
+#
+# Advanced:
+#   - limit-rps, limit-whitelist
+
+watchedResources:
+  secrets:
+    apiVersion: v1
+    resources: secrets
+    indexBy: ["metadata.namespace", "metadata.name"]
 
 templateSnippets:
   map-path-regex-600-haproxy-ingress:
@@ -42,7 +86,7 @@ templateSnippets:
       {%- if http != nil %}
         {%- var paths = http | dig("paths") | fallback([]any{}) %}
         {%- for _, path := range paths %}
-        {%- if path | dig("pathType") == "ImplementationSpecific" %}
+        {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
           {%- allPaths = append(allPaths, path) %}
         {%- end %}
         {%- end %}
@@ -55,7 +99,7 @@ templateSnippets:
         {%- if http != nil %}
           {%- var paths = http | dig("paths") | fallback([]any{}) %}
           {%- for _, path := range paths %}
-          {%- if path | dig("pathType") == "ImplementationSpecific" %}
+          {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
       {{ rule | dig("host") | fallback("") }}{{ path | dig("path") | fallback("") }} {{ render "util-backend-name-ingress" -}}
           {%- end %}
           {%- end %}
@@ -64,3 +108,2262 @@ templateSnippets:
       {%- end %}
       {%- end %}
       {%- end %}
+
+  # ============================================================================
+  # Phase 3: Path Type Matching - Exact
+  # ============================================================================
+
+  map-path-exact-600-haproxy-ingress:
+    template: |
+      {#-
+        HAProxy Ingress Exact Path Map Entries
+
+        Purpose: Generates path-exact.map entries for Ingress resources with
+                 haproxy-ingress.github.io/path-type: "exact" annotation.
+
+        Extension Point: map-path-exact-* (priority 600 - compatibility layer)
+
+        Matches: Ingress paths with:
+          - pathType: ImplementationSpecific
+          - Annotation: haproxy-ingress.github.io/path-type: "exact"
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
+      {%- if pathTypeAnnotation == "exact" -%}
+      {%- if isFirst %}
+      # haproxy-ingress/map-path-exact-haproxy-ingress
+      {%- isFirst = false %}
+      {%- end %}
+        {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+        {%- for _, rule := range rules %}
+        {%- var http = rule | dig("http") %}
+        {%- if http != nil %}
+          {%- var paths = http | dig("paths") | fallback([]any{}) %}
+          {%- for _, path := range paths %}
+          {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
+      {{ rule | dig("host") | fallback("") }}{{ path | dig("path") | fallback("") }} {{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  # ============================================================================
+  # Phase 3: Path Type Matching - Prefix
+  # ============================================================================
+
+  map-path-prefix-600-haproxy-ingress:
+    template: |
+      {#-
+        HAProxy Ingress Prefix Path Map Entries
+
+        Purpose: Generates path-prefix.map entries for Ingress resources with
+                 haproxy-ingress.github.io/path-type: "prefix" annotation.
+
+        Extension Point: map-path-prefix-* (priority 600 - compatibility layer)
+
+        Matches: Ingress paths with:
+          - pathType: ImplementationSpecific
+          - Annotation: haproxy-ingress.github.io/path-type: "prefix"
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
+      {%- if pathTypeAnnotation == "prefix" -%}
+      {%- if isFirst %}
+      # haproxy-ingress/map-path-prefix-haproxy-ingress
+      {%- isFirst = false %}
+      {%- end %}
+        {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+        {%- for _, rule := range rules %}
+        {%- var http = rule | dig("http") %}
+        {%- if http != nil %}
+          {%- var paths = http | dig("paths") | fallback([]any{}) %}
+          {%- for _, path := range paths %}
+          {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
+            {%- var pathValue = path | dig("path") | fallback("") | tostring() %}
+            {#- Ensure path ends with / for prefix matching -#}
+            {%- if pathValue != "" && !hasSuffix(pathValue, "/") %}
+              {%- pathValue = pathValue + "/" %}
+            {%- end %}
+      {{ rule | dig("host") | fallback("") }}{{ pathValue }} {{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  # ============================================================================
+  # Phase 3: Path Type Matching - Begin (Legacy)
+  # ============================================================================
+
+  map-path-prefix-exact-600-haproxy-ingress:
+    template: |
+      {#-
+        HAProxy Ingress Begin Path Map Entries
+
+        Purpose: Generates path-prefix-exact.map entries for Ingress resources with
+                 haproxy-ingress.github.io/path-type: "begin" annotation.
+
+        Extension Point: map-path-prefix-exact-* (priority 600 - compatibility layer)
+
+        The "begin" path type in haproxy-ingress is a legacy type that matches
+        if the path begins with the specified prefix (no trailing slash normalization).
+
+        Matches: Ingress paths with:
+          - pathType: ImplementationSpecific
+          - Annotation: haproxy-ingress.github.io/path-type: "begin"
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
+      {%- if pathTypeAnnotation == "begin" -%}
+      {%- if isFirst %}
+      # haproxy-ingress/map-path-prefix-exact-haproxy-ingress (begin)
+      {%- isFirst = false %}
+      {%- end %}
+        {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+        {%- for _, rule := range rules %}
+        {%- var http = rule | dig("http") %}
+        {%- if http != nil %}
+          {%- var paths = http | dig("paths") | fallback([]any{}) %}
+          {%- for _, path := range paths %}
+          {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
+      {{ rule | dig("host") | fallback("") }}{{ path | dig("path") | fallback("") }} {{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  # ============================================================================
+  # Annotation Helpers
+  # ============================================================================
+
+  util-haproxy-ingress-helpers:
+    template: |
+      {#- HAProxy-Ingress annotation processing helpers -#}
+
+      {#- Gets haproxy-ingress.github.io/<name> annotation with default -#}
+      {% macro HIAnn(ingress any, name string, def string) string %}
+        {%% show ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/" + name) | fallback(def) | tostring() %%}
+      {% end %}
+
+      {#- Gets Ingress key as ns/name -#}
+      {% macro HIKey(ingress any) string %}
+        {%% show (ingress | dig("metadata", "namespace") | fallback("")) + "/" + (ingress | dig("metadata", "name") | fallback("")) %%}
+      {% end %}
+
+      {#- Extracts hosts from Ingress rules -#}
+      {% macro HIHosts(ingress any) []any %}
+        {%%
+          var hosts = []any{}
+          for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) {
+            if h := rule | dig("host"); h != nil {
+              hosts = append(hosts, h)
+            }
+          }
+          show hosts
+        %%}
+      {% end %}
+
+  # ============================================================================
+  # Backend Directives - Phase 1: Timeouts, Load Balancing, Health Checks
+  # ============================================================================
+
+  backend-directives-600-haproxy-ingress-timeouts:
+    template: |
+      {#-
+        HAProxy-Ingress Backend Timeouts
+
+        Annotations:
+          - timeout-connect: Backend connection timeout
+          - timeout-server: Server response timeout
+          - timeout-queue: Queue timeout
+          - timeout-tunnel: Tunnel timeout (websockets, etc.)
+          - timeout-http-request: HTTP request timeout
+          - timeout-keep-alive: HTTP keep-alive timeout
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#timeout
+      -#}
+      {%- if ingress != nil %}
+        {%- var tConnect = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/timeout-connect") | fallback("") | tostring() %}
+        {%- var tServer = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/timeout-server") | fallback("") | tostring() %}
+        {%- var tQueue = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/timeout-queue") | fallback("") | tostring() %}
+        {%- var tTunnel = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/timeout-tunnel") | fallback("") | tostring() %}
+        {%- var tHttpReq = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/timeout-http-request") | fallback("") | tostring() %}
+        {%- var tKeepAlive = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/timeout-keep-alive") | fallback("") | tostring() %}
+        {%- var hasTimeout = tConnect != "" || tServer != "" || tQueue != "" || tTunnel != "" || tHttpReq != "" || tKeepAlive != "" %}
+        {%- if hasTimeout %}
+      # haproxy-ingress/backend-directives-timeouts
+        {%- end %}
+        {%- if tConnect != "" %}
+      timeout connect {{ tConnect }}
+        {% end %}
+        {%- if tServer != "" %}
+      timeout server {{ tServer }}
+        {% end %}
+        {%- if tQueue != "" %}
+      timeout queue {{ tQueue }}
+        {% end %}
+        {%- if tTunnel != "" %}
+      timeout tunnel {{ tTunnel }}
+        {% end %}
+        {%- if tHttpReq != "" %}
+      timeout http-request {{ tHttpReq }}
+        {% end %}
+        {%- if tKeepAlive != "" %}
+      timeout http-keep-alive {{ tKeepAlive }}
+        {% end %}
+      {%- end -%}
+
+  backend-directives-610-haproxy-ingress-load-balance:
+    template: |
+      {#-
+        HAProxy-Ingress Load Balancing Algorithm
+
+        Annotation: balance-algorithm
+        Values: roundrobin, leastconn, source, uri, hdr, random, rdp-cookie
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#balance-algorithm
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var lb = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/balance-algorithm") | fallback("") | tostring() %}
+        {%- if lb != "" %}
+          {%- var valid = []string{"roundrobin", "leastconn", "source", "uri", "hdr", "random", "rdp-cookie"} %}
+          {%- var isValid = false %}
+          {%- for _, v := range valid %}{%- if lb == v %}{%- isValid = true %}{%- end %}{%- end %}
+          {%- if !isValid %}
+            {{- fail("Invalid value '" + lb + "' for annotation 'haproxy-ingress.github.io/balance-algorithm' on Ingress '" + key + "'. Valid values: " + (valid | join(", "))) -}}
+          {%- end %}
+      # haproxy-ingress/backend-directives-load-balance
+      balance {{ lb }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-620-haproxy-ingress-maxconn:
+    template: |
+      {#-
+        HAProxy-Ingress Server Connection Limits
+
+        Annotations:
+          - maxconn-server: Max connections per server
+          - maxqueue-server: Max queued connections per server
+          - limit-connections: Max concurrent connections to backend
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#maxconn-server
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var maxconn = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/maxconn-server") | fallback("") | tostring() %}
+        {%- var maxqueue = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/maxqueue-server") | fallback("") | tostring() %}
+        {%- var limitConn = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/limit-connections") | fallback("") | tostring() %}
+        {%- if maxconn != "" %}
+          {%- var val = toint(maxconn) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + maxconn + "' for annotation 'haproxy-ingress.github.io/maxconn-server' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["maxconnValue"] = val %}
+        {%- end %}
+        {%- if maxqueue != "" %}
+          {%- var val = toint(maxqueue) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + maxqueue + "' for annotation 'haproxy-ingress.github.io/maxqueue-server' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["maxqueueValue"] = val %}
+        {%- end %}
+        {%- if limitConn != "" %}
+          {%- var val = toint(limitConn) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + limitConn + "' for annotation 'haproxy-ingress.github.io/limit-connections' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+      # haproxy-ingress/backend-directives-maxconn (limit-connections)
+      fullconn {{ val }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-630-haproxy-ingress-health-checks:
+    template: |
+      {#-
+        HAProxy-Ingress Health Check Configuration
+
+        Annotations:
+          - backend-check-interval: Interval between health checks (e.g., "2s")
+          - health-check-uri: HTTP health check URI (e.g., "/health")
+          - health-check-port: Port for health checks
+          - health-check-fall-count: Consecutive failures to mark down
+          - health-check-rise-count: Consecutive successes to mark up
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#health-check
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var checkInterval = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/backend-check-interval") | fallback("") | tostring() %}
+        {%- var checkUri = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/health-check-uri") | fallback("") | tostring() %}
+        {%- var checkPort = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/health-check-port") | fallback("") | tostring() %}
+        {%- var fallCount = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/health-check-fall-count") | fallback("") | tostring() %}
+        {%- var riseCount = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/health-check-rise-count") | fallback("") | tostring() %}
+        {%- var hasHealthCheck = checkUri != "" || checkInterval != "" || checkPort != "" || fallCount != "" || riseCount != "" %}
+        {%- if hasHealthCheck %}
+      # haproxy-ingress/backend-directives-health-checks
+        {%- end %}
+        {%- if checkUri != "" %}
+      option httpchk GET {{ checkUri }}
+        {%- end %}
+        {%- if checkInterval != "" %}
+          {%- serverOpts["checkIntervalValue"] = checkInterval %}
+        {%- end %}
+        {%- if checkPort != "" %}
+          {%- var val = toint(checkPort) %}
+          {%- if val <= 0 || val > 65535 %}
+            {{- fail("Invalid value '" + checkPort + "' for annotation 'haproxy-ingress.github.io/health-check-port' on Ingress '" + key + "'. Must be 1-65535.") -}}
+          {%- end %}
+          {%- serverOpts["checkPortValue"] = val %}
+        {%- end %}
+        {%- if fallCount != "" %}
+          {%- var val = toint(fallCount) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + fallCount + "' for annotation 'haproxy-ingress.github.io/health-check-fall-count' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["fallCountValue"] = val %}
+        {%- end %}
+        {%- if riseCount != "" %}
+          {%- var val = toint(riseCount) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + riseCount + "' for annotation 'haproxy-ingress.github.io/health-check-rise-count' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["riseCountValue"] = val %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-640-haproxy-ingress-proxy-protocol:
+    template: |
+      {#-
+        HAProxy-Ingress Proxy Protocol
+
+        Annotation: proxy-protocol
+        Values: v1, v2, v2-ssl, v2-ssl-cn
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#proxy-protocol
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var pp = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/proxy-protocol") | fallback("") | tostring() %}
+        {%- if pp != "" %}
+          {%- if pp == "v1" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy") %}
+          {%- else if pp == "v2" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2") %}
+          {%- else if pp == "v2-ssl" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2-ssl") %}
+          {%- else if pp == "v2-ssl-cn" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2-ssl-cn") %}
+          {%- else %}
+            {{- fail("Invalid value '" + pp + "' for annotation 'haproxy-ingress.github.io/proxy-protocol' on Ingress '" + key + "'. Valid values: v1, v2, v2-ssl, v2-ssl-cn") -}}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-650-haproxy-ingress-ssl-backend:
+    template: |
+      {#-
+        HAProxy-Ingress SSL Backend Configuration
+
+        Annotations:
+          - secure-backends: Enable SSL to backend (true/false)
+          - secure-sni: SNI value for backend (sni, host, or hostname)
+          - secure-verify-ca-secret: Secret containing CA for backend verification
+          - secure-crt-secret: Secret containing client cert for mTLS
+          - secure-verify-hostname: Hostname for backend cert verification
+          - backend-protocol: Backend protocol (h1, h2, h1-ssl, h2-ssl)
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#secure-backends
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+
+        {#- secure-backends -#}
+        {%- var secureBackends = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/secure-backends") | fallback("") | tostring() %}
+        {%- if secureBackends == "true" %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+        {%- end %}
+
+        {#- backend-protocol -#}
+        {%- var backendProto = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/backend-protocol") | fallback("") | tostring() %}
+        {%- if backendProto != "" %}
+          {%- if backendProto == "h1" %}
+            {#- HTTP/1.1 is default, no flag needed -#}
+          {%- else if backendProto == "h2" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto h2") %}
+          {%- else if backendProto == "h1-ssl" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+          {%- else if backendProto == "h2-ssl" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none proto h2") %}
+          {%- else %}
+            {{- fail("Invalid value '" + backendProto + "' for annotation 'haproxy-ingress.github.io/backend-protocol' on Ingress '" + key + "'. Valid values: h1, h2, h1-ssl, h2-ssl") -}}
+          {%- end %}
+        {%- end %}
+
+        {#- secure-sni -#}
+        {%- var secureSni = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/secure-sni") | fallback("") | tostring() %}
+        {%- if secureSni != "" %}
+          {%- if secureSni == "sni" || secureSni == "host" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni req.hdr(host)") %}
+          {%- else %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni str(" + secureSni + ")") %}
+          {%- end %}
+        {%- end %}
+
+        {#- secure-verify-hostname -#}
+        {%- var verifyHostname = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/secure-verify-hostname") | fallback("") | tostring() %}
+        {%- if verifyHostname != "" %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verifyhost " + verifyHostname) %}
+        {%- end %}
+
+        {#- secure-verify-ca-secret -#}
+        {%- var caSec = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/secure-verify-ca-secret") | fallback("") | tostring() %}
+        {%- if caSec != "" %}
+          {%- var caNs = ns %}
+          {%- var caName = caSec %}
+          {%- if strings_contains(caSec, "/") %}
+            {%- var parts = split(caSec, "/") %}
+            {%- caNs = parts[0] %}
+            {%- caName = parts[1] %}
+          {%- end %}
+          {%- var caSecret = resources.secrets.GetSingle(caNs, caName) %}
+          {%- if caSecret != nil %}
+            {%- var caContent = caSecret | dig("data", "ca.crt") | fallback("") | b64decode() %}
+            {%- if caContent != "" %}
+              {%- var caFilename = caNs + "-" + caName + "-ca.pem" %}
+              {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+              {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify required ca-file " + caPath) %}
+            {%- else %}
+            # Warning: Secret {{ caNs }}/{{ caName }} missing 'ca.crt' key
+            {%- end %}
+          {%- else %}
+            # Warning: Secret {{ caNs }}/{{ caName }} referenced by haproxy-ingress.github.io/secure-verify-ca-secret not found
+          {%- end %}
+        {%- end %}
+
+        {#- secure-crt-secret -#}
+        {%- var crtSec = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/secure-crt-secret") | fallback("") | tostring() %}
+        {%- if crtSec != "" %}
+          {%- var crtNs = ns %}
+          {%- var crtName = crtSec %}
+          {%- if strings_contains(crtSec, "/") %}
+            {%- var parts = split(crtSec, "/") %}
+            {%- crtNs = parts[0] %}
+            {%- crtName = parts[1] %}
+          {%- end %}
+          {%- var crtSecret = resources.secrets.GetSingle(crtNs, crtName) %}
+          {%- if crtSecret != nil %}
+            {%- var tlsCrt = crtSecret | dig("data", "tls.crt") | fallback("") | b64decode() %}
+            {%- var tlsKey = crtSecret | dig("data", "tls.key") | fallback("") | b64decode() %}
+            {%- if tlsCrt != "" && tlsKey != "" %}
+              {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
+              {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
+              {%- var crtPath, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+              {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtPath) %}
+            {%- else %}
+            # Warning: Secret {{ crtNs }}/{{ crtName }} missing 'tls.crt' or 'tls.key' keys
+            {%- end %}
+          {%- else %}
+            # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy-ingress.github.io/secure-crt-secret not found
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-660-haproxy-ingress-server-options:
+    template: |
+      {#-
+        HAProxy-Ingress Server Options
+
+        Annotations:
+          - initial-weight: Initial server weight (default 1)
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#initial-weight
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var weight = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/initial-weight") | fallback("") | tostring() %}
+        {%- if weight != "" %}
+          {%- var val = toint(weight) %}
+          {%- if val < 0 || val > 256 %}
+            {{- fail("Invalid value '" + weight + "' for annotation 'haproxy-ingress.github.io/initial-weight' on Ingress '" + key + "'. Must be 0-256.") -}}
+          {%- end %}
+          {%- serverOpts["weightValue"] = val %}
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # Phase 4: Session Affinity (Cookie Persistence)
+  # ============================================================================
+
+  backend-directives-670-haproxy-ingress-session-affinity:
+    template: |
+      {#-
+        HAProxy-Ingress Session Affinity Annotations
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#affinity
+
+        Annotations:
+          - haproxy-ingress.github.io/affinity: "cookie" (required to enable)
+          - haproxy-ingress.github.io/session-cookie-name: "<name>" (default: INGRESSCOOKIE)
+          - haproxy-ingress.github.io/session-cookie-strategy: "insert|rewrite|prefix" (default: insert)
+          - haproxy-ingress.github.io/session-cookie-dynamic: "true|false" (default: true)
+          - haproxy-ingress.github.io/session-cookie-keywords: "indirect nocache httponly" (optional)
+          - haproxy-ingress.github.io/session-cookie-domain: ".example.com" (optional)
+          - haproxy-ingress.github.io/session-cookie-same-site: "None|Lax|Strict" (optional)
+          - haproxy-ingress.github.io/session-cookie-preserve: "true|false" (optional)
+
+        Generated HAProxy Config:
+          cookie <name> <strategy> [indirect] [nocache] [dynamic] [domain <domain>] [attr "SameSite=<value>"]
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var affinity = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/affinity") | fallback("") | tostring() %}
+        {%- if affinity == "cookie" %}
+          {%- var cookieName = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/session-cookie-name") | fallback("INGRESSCOOKIE") | tostring() %}
+          {%- var strategy = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/session-cookie-strategy") | fallback("insert") | tostring() %}
+          {%- var dynamic = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/session-cookie-dynamic") | fallback("true") | tostring() %}
+          {%- var keywords = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/session-cookie-keywords") | fallback("") | tostring() %}
+          {%- var domain = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/session-cookie-domain") | fallback("") | tostring() %}
+          {%- var sameSite = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/session-cookie-same-site") | fallback("") | tostring() %}
+          {%- var preserve = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/session-cookie-preserve") | fallback("") | tostring() %}
+
+          {#- Validate strategy -#}
+          {%- if strategy != "insert" && strategy != "rewrite" && strategy != "prefix" %}
+            {{- fail("Invalid value '" + strategy + "' for annotation 'haproxy-ingress.github.io/session-cookie-strategy' on Ingress '" + key + "'. Valid values: insert, rewrite, prefix") -}}
+          {%- end %}
+
+          {#- Build cookie directive -#}
+          {%- var cookieDir = "cookie " + cookieName + " " + strategy %}
+
+          {#- Add indirect and nocache by default for insert/prefix strategy -#}
+          {%- if strategy == "insert" || strategy == "prefix" %}
+            {%- cookieDir = cookieDir + " indirect nocache" %}
+          {%- end %}
+
+          {#- Add dynamic if enabled -#}
+          {%- if dynamic == "true" %}
+            {%- cookieDir = cookieDir + " dynamic" %}
+          {%- end %}
+
+          {#- Add preserve if enabled -#}
+          {%- if preserve == "true" %}
+            {%- cookieDir = cookieDir + " preserve" %}
+          {%- end %}
+
+          {#- Add custom keywords -#}
+          {%- if keywords != "" %}
+            {%- cookieDir = cookieDir + " " + keywords %}
+          {%- end %}
+
+          {#- Add domain -#}
+          {%- if domain != "" %}
+            {%- cookieDir = cookieDir + " domain " + domain %}
+          {%- end %}
+
+          {#- Add SameSite attribute -#}
+          {%- if sameSite != "" %}
+            {%- if sameSite != "None" && sameSite != "Lax" && sameSite != "Strict" %}
+              {{- fail("Invalid value '" + sameSite + "' for annotation 'haproxy-ingress.github.io/session-cookie-same-site' on Ingress '" + key + "'. Valid values: None, Lax, Strict") -}}
+            {%- end %}
+            {%- cookieDir = cookieDir + " attr \"SameSite=" + sameSite + "\"" %}
+          {%- end %}
+      # haproxy-ingress/session-affinity ({{ key }})
+      {{ cookieDir }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-900-haproxy-ingress-config-backend:
+    template: |
+      {#-
+        HAProxy-Ingress Backend Config Snippet
+
+        Annotation: config-backend
+        Allows injecting raw HAProxy directives into the backend.
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#config-backend
+      -#}
+      {%- if ingress != nil %}
+        {%- var snippet = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/config-backend") | fallback("") %}
+        {%- if snippet != "" %}
+      # haproxy-ingress/config-backend
+      {{ snippet }}
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # Phase 2: Frontend Filters
+  # ============================================================================
+
+  frontend-filters-600-haproxy-ingress-forwardfor:
+    template: |
+      {#-
+        HAProxy-Ingress forwardfor Annotation
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#forwardfor
+
+        Annotations:
+          - haproxy-ingress.github.io/forwardfor: "add|update|ignore|ifmissing" (optional)
+
+        Generated HAProxy Config:
+          option forwardfor [header <name>] [if-none]
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_forwardfor", key) %}
+          {%- var forwardfor = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/forwardfor") | fallback("") | tostring() %}
+          {%- if forwardfor != "" && forwardfor != "ignore" %}
+            {%- var hosts = []any{} %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var h = rule | dig("host") %}
+              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxy-ingress/forwardfor ({{ key }})
+              {%- if forwardfor == "ifmissing" %}
+      http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ HostMatchCondition(hosts) }}
+              {%- else if forwardfor == "update" %}
+      http-request set-header X-Forwarded-For %[src] if {{ HostMatchCondition(hosts) }}
+              {%- else %}
+                {#- "add" is the default behavior #}
+      http-request add-header X-Forwarded-For %[src] if {{ HostMatchCondition(hosts) }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-610-haproxy-ingress-access-control:
+    template: |
+      {#-
+        HAProxy-Ingress Access Control Annotations
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#allowlist-source-range
+
+        Annotations:
+          - haproxy-ingress.github.io/allowlist-source-range: "CIDR,CIDR,..." (optional)
+          - haproxy-ingress.github.io/denylist-source-range: "CIDR,CIDR,..." (optional)
+
+        Generated HAProxy Config:
+          acl <name> src <cidrs>
+          http-request deny if <host-match> !<acl>    (for allowlist)
+          http-request deny if <host-match> <acl>     (for denylist)
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_access_control", key) %}
+          {%- var hosts = []any{} %}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- var h = rule | dig("host") %}
+            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- end %}
+          {%- var allowlist = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/allowlist-source-range") | fallback("") | tostring() %}
+          {%- var denylist = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/denylist-source-range") | fallback("") | tostring() %}
+          {%- if allowlist != "" && len(hosts) > 0 %}
+            {%- var aclName = "hi_allowlist_" + ns + "_" + name %}
+      # haproxy-ingress/allowlist-source-range ({{ key }})
+      acl {{ aclName }} src{% for _, ip := range split(allowlist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
+
+      http-request deny if {{ HostMatchCondition(hosts) }} !{{ aclName }}
+          {%- end %}
+          {%- if denylist != "" && len(hosts) > 0 %}
+            {%- var aclName = "hi_denylist_" + ns + "_" + name %}
+      # haproxy-ingress/denylist-source-range ({{ key }})
+      acl {{ aclName }} src{% for _, ip := range split(denylist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
+
+      http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-620-haproxy-ingress-ssl-redirect:
+    template: |
+      {#-
+        HAProxy-Ingress SSL Redirect Annotations
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-redirect
+
+        Annotations:
+          - haproxy-ingress.github.io/ssl-redirect: "true|false" (optional)
+          - haproxy-ingress.github.io/ssl-redirect-code: "301|302|303|307|308" (optional, default: 302)
+
+        Generated HAProxy Config:
+          http-request redirect scheme https code <code> if !{ ssl_fc } <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_ssl_redirect", key) %}
+          {%- var sslRedirect = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect") | fallback("") | tostring() %}
+          {%- if sslRedirect == "true" %}
+            {%- var hosts = []any{} %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var h = rule | dig("host") %}
+              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- end %}
+            {%- var code = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect-code") | fallback("302") | tostring() %}
+            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
+            {%- var codeValid = false %}
+            {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
+            {%- if !codeValid %}{%- code = "302" %}{%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxy-ingress/ssl-redirect ({{ key }})
+      http-request redirect scheme https code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-630-haproxy-ingress-hsts:
+    template: |
+      {#-
+        HAProxy-Ingress HSTS Annotations
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#hsts
+
+        Annotations:
+          - haproxy-ingress.github.io/hsts: "true|false" (optional)
+          - haproxy-ingress.github.io/hsts-max-age: "<seconds>" (optional, default: 15768000)
+          - haproxy-ingress.github.io/hsts-include-subdomains: "true|false" (optional)
+          - haproxy-ingress.github.io/hsts-preload: "true|false" (optional)
+
+        Generated HAProxy Config:
+          http-response set-header Strict-Transport-Security "max-age=<age>[; includeSubDomains][; preload]" if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_hsts", key) %}
+          {%- var hstsEnabled = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts") | fallback("") | tostring() %}
+          {%- if hstsEnabled == "true" %}
+            {%- var hosts = []any{} %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var h = rule | dig("host") %}
+              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+              {%- var maxAge = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts-max-age") | fallback("15768000") | tostring() %}
+              {%- var includeSubdomains = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts-include-subdomains") | fallback("") | tostring() %}
+              {%- var preload = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts-preload") | fallback("") | tostring() %}
+              {%- var hstsValue = "max-age=" + maxAge %}
+              {%- if includeSubdomains == "true" %}{%- hstsValue = hstsValue + "; includeSubDomains" %}{%- end %}
+              {%- if preload == "true" %}{%- hstsValue = hstsValue + "; preload" %}{%- end %}
+      # haproxy-ingress/hsts ({{ key }})
+      http-response set-header Strict-Transport-Security "{{ hstsValue }}" if { ssl_fc } {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-640-haproxy-ingress-app-root:
+    template: |
+      {#-
+        HAProxy-Ingress App Root Annotation
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#app-root
+
+        Annotations:
+          - haproxy-ingress.github.io/app-root: "/path" (optional)
+
+        Generated HAProxy Config:
+          http-request redirect location <path> if { path / } <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_app_root", key) %}
+          {%- var appRoot = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/app-root") | fallback("") | tostring() %}
+          {%- if appRoot != "" %}
+            {%- var hosts = []any{} %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var h = rule | dig("host") %}
+              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxy-ingress/app-root ({{ key }})
+      http-request redirect location {{ appRoot }} if { path / } {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-650-haproxy-ingress-redirects:
+    template: |
+      {#-
+        HAProxy-Ingress Redirect Annotations
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#redirect-to
+
+        Annotations:
+          - haproxy-ingress.github.io/redirect-to: "URL" (optional)
+          - haproxy-ingress.github.io/redirect-to-code: "301|302|303|307|308" (optional, default: 302)
+
+        Generated HAProxy Config:
+          http-request redirect location <url> code <code> if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_redirects", key) %}
+          {%- var redirectTo = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/redirect-to") | fallback("") | tostring() %}
+          {%- if redirectTo != "" %}
+            {%- var hosts = []any{} %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var h = rule | dig("host") %}
+              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- end %}
+            {%- var code = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/redirect-to-code") | fallback("302") | tostring() %}
+            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
+            {%- var codeValid = false %}
+            {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
+            {%- if !codeValid %}{%- code = "302" %}{%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxy-ingress/redirect-to ({{ key }})
+      http-request redirect location {{ redirectTo }} code {{ code }} if {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-660-haproxy-ingress-cors:
+    template: |
+      {#-
+        HAProxy-Ingress CORS Annotations
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#cors-enable
+
+        Annotations:
+          - haproxy-ingress.github.io/cors-enable: "true|false" (required to enable)
+          - haproxy-ingress.github.io/cors-allow-origin: "*" (optional, default: *)
+          - haproxy-ingress.github.io/cors-allow-methods: "GET,POST,..." (optional, default: GET, PUT, POST, DELETE, PATCH, OPTIONS)
+          - haproxy-ingress.github.io/cors-allow-headers: "header,..." (optional, default: DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization)
+          - haproxy-ingress.github.io/cors-allow-credentials: "true|false" (optional)
+          - haproxy-ingress.github.io/cors-expose-headers: "header,..." (optional)
+          - haproxy-ingress.github.io/cors-max-age: "<seconds>" (optional, default: 86400)
+
+        Generated HAProxy Config:
+          http-response add-header Access-Control-Allow-Origin <origin> if <host-match>
+          http-response add-header Access-Control-Allow-Methods <methods> if <host-match> METH_OPTIONS
+          ... (other CORS headers)
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_cors", key) %}
+          {%- var corsEnabled = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-enable") | fallback("") | tostring() %}
+          {%- if corsEnabled == "true" %}
+            {%- var hosts = []any{} %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var h = rule | dig("host") %}
+              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+              {%- var origin = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-allow-origin") | fallback("*") | tostring() %}
+              {%- var methods = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-allow-methods") | fallback("GET, PUT, POST, DELETE, PATCH, OPTIONS") | tostring() %}
+              {%- var headers = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-allow-headers") | fallback("DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization") | tostring() %}
+              {%- var credentials = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-allow-credentials") | fallback("") | tostring() %}
+              {%- var exposeHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-expose-headers") | fallback("") | tostring() %}
+              {%- var maxAge = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-max-age") | fallback("86400") | tostring() %}
+              {%- var cond = HostMatchCondition(hosts) %}
+      # haproxy-ingress/cors ({{ key }})
+      http-response add-header Access-Control-Allow-Origin "{{ origin }}" if {{ cond }}
+      http-response add-header Access-Control-Allow-Methods "{{ methods }}" if {{ cond }} METH_OPTIONS
+      http-response add-header Access-Control-Allow-Headers "{{ headers }}" if {{ cond }} METH_OPTIONS
+      http-response add-header Access-Control-Max-Age "{{ maxAge }}" if {{ cond }} METH_OPTIONS
+              {% if credentials == "true" %}
+      http-response add-header Access-Control-Allow-Credentials "true" if {{ cond }}
+              {% end %}
+              {% if exposeHeaders != "" %}
+      http-response add-header Access-Control-Expose-Headers "{{ exposeHeaders }}" if {{ cond }}
+              {% end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-670-haproxy-ingress-headers:
+    template: |
+      {#-
+        HAProxy-Ingress Headers Annotation
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#headers
+
+        Annotations:
+          - haproxy-ingress.github.io/headers: "name:value|name:value|..." (optional)
+
+        Format: Pipe-separated list of header:value pairs
+
+        Generated HAProxy Config:
+          http-request set-header <name> <value> if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_headers", key) %}
+          {%- var headersStr = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/headers") | fallback("") | tostring() %}
+          {%- if headersStr != "" %}
+            {%- var hosts = []any{} %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var h = rule | dig("host") %}
+              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxy-ingress/headers ({{ key }})
+              {%- for _, header := range split(headersStr, "|") %}
+                {%- var headerTrimmed = trimSpace(header) %}
+                {%- if headerTrimmed != "" %}
+                  {%- var parts = split(headerTrimmed, ":") %}
+                  {%- if len(parts) >= 2 %}
+                    {%- var headerName = trimSpace(parts[0]) %}
+                    {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
+      http-request set-header {{ headerName }} "{{ headerValue }}" if {{ HostMatchCondition(hosts) }}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # Phase 5: SSL Features
+  # ============================================================================
+
+  util-haproxy-ingress-ssl-passthrough:
+    template: |
+      {#- Caches SSL passthrough backends from haproxy-ingress.github.io/ssl-passthrough annotations.
+          Uses ComputeIfAbsent for race-free caching across parallel template renders.
+          The compute function runs exactly once, even with concurrent access. -#}
+      {%- import "util-build-haproxy-ingress-ssl-passthrough" for BuildHISSLPassthrough %}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("hi_sslPassthrough", func() any {
+          var sslData = map[string]any{"backends": []any{}}
+          BuildHISSLPassthrough(sslData)
+          return sslData
+        })
+      %%}
+
+  util-build-haproxy-ingress-ssl-passthrough:
+    template: |
+      {#- Macro to populate SSL passthrough data from haproxy-ingress.github.io/ssl-passthrough annotations.
+          Called from ComputeIfAbsent to enable use of template functions. -#}
+      {%- macro BuildHISSLPassthrough(sslData map[string]any) %}
+        {%- for _, ingress := range resources.ingresses.List() %}
+          {%- var passthrough = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-passthrough") | fallback("") | tostring() %}
+          {%- if passthrough == "true" %}
+            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var host = rule | dig("host") %}
+              {%- if host != nil && first_seen("hi_sslPassthrough_host", tostring(host)) %}
+                {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
+                  "name": "ssl-passthrough-hi-" + ns + "-" + name,
+                  "sni": host, "namespace": ns, "ingress": name,
+                }) %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end macro %}
+
+  features-100-haproxy-ingress-ssl-passthrough:
+    template: |
+      {#-
+        HAProxy-Ingress SSL Passthrough Registration
+
+        Annotation: haproxy-ingress.github.io/ssl-passthrough: "true"
+
+        Registers SSL passthrough backends with global feature registry.
+        The ssl.yaml library consumes these to generate:
+          - TCP frontend for SNI-based routing
+          - SSL passthrough backends
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-passthrough
+      -#}
+      {{ render "util-haproxy-ingress-ssl-passthrough" }}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
+      {%- if sslBackends != nil %}
+        {%- var hiVal, _ = shared.ComputeIfAbsent("hi_sslPassthrough", func() any { return nil }) %}
+        {%- if hiVal != nil %}
+          {%- var hiBackends = hiVal.(map[string]any)["backends"].([]any) %}
+          {%- for _, backend := range hiBackends %}
+            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  backends-501-haproxy-ingress-ssl-passthrough:
+    template: |
+      {#-
+        HAProxy-Ingress SSL Passthrough Backends
+
+        Generates TCP mode backends for Ingress resources with
+        haproxy-ingress.github.io/ssl-passthrough: "true" annotation.
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-passthrough
+      -#}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {{ render "util-haproxy-ingress-ssl-passthrough" }}
+      {%- var hiVal, _ = shared.ComputeIfAbsent("hi_sslPassthrough", func() any { return nil }) %}
+      {%- if hiVal == nil %}{% return %}{% end %}
+      {%- var sslData = hiVal.(map[string]any) %}
+      {%- var backends = sslData["backends"].([]any) %}
+      {%- for _, backendInfo := range backends %}
+        {%- var info = backendInfo.(map[string]any) %}
+        {%- var beNs = info["namespace"] | tostring() %}
+        {%- var beIngress = info["ingress"] | tostring() %}
+        {%- var beName = info["name"] | tostring() %}
+        {%- if first_seen("hi_sslPassthrough_backend", beNs + "/" + beIngress) %}
+          {%- var ingress = resources.ingresses.GetSingle(beNs, beIngress) %}
+          {%- var generated = false %}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- if !generated %}
+              {%- var http = rule | dig("http") %}
+              {%- if http != nil %}
+                {%- for _, path := range http | dig("paths") | fallback([]any{}) %}
+                  {%- if !generated %}
+                    {%- var svcName = path | dig("backend", "service", "name") | fallback("") | tostring() %}
+                    {%- var svcPort = path | dig("backend", "service", "port", "number") | fallback(path | dig("backend", "service", "port", "name")) | toint() %}
+      # haproxy-ingress/backends-ssl-passthrough
+
+      backend {{ beName }}
+          mode tcp
+          balance roundrobin
+          {{ BackendServers(svcName, 10, svcPort, nil, nil, beName) | indent(4) }}
+                    {%- generated = true %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  # ============================================================================
+  # Phase 7: Basic Auth
+  # ============================================================================
+
+  global-top-600-haproxy-ingress-auth:
+    template: |
+      {#-
+        HAProxy-Ingress Basic Auth Userlist Generation
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-secret
+
+        Annotations:
+          - haproxy-ingress.github.io/auth-secret: "<ns/name>" or "<name>" (required)
+
+        Generates userlist from htpasswd-format Secret:
+          userlist auth_<ns>_<name>
+            user <username> password <hash>
+
+        Secret format:
+          Each key is a username, value is base64-encoded bcrypt/apr1 hash
+          Example: admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei4...
+      -#}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var authSecret = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-secret") | fallback("") | tostring() %}
+        {%- if authSecret != "" %}
+          {#- Parse secret reference (supports "ns/name" or just "name") -#}
+          {%- var secretNs = ns %}
+          {%- var secretName = authSecret %}
+          {%- if strings_contains(authSecret, "/") %}
+            {%- var parts = split(authSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var userlistName = "hi_auth_" + secretNs + "_" + secretName %}
+          {%- if first_seen("hi_userlist", userlistName) %}
+            {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+            {%- if secret != nil %}
+      # haproxy-ingress/global-top-auth ({{ key }})
+      userlist {{ userlistName }}
+              {% var secretData = secret | dig("data") | fallback(map[string]any{}) -%}
+              {%- for username, hash := range secretData %}
+        user {{ username }} password {{ hash | b64decode() }}
+              {% end -%}
+            {%- else %}
+              {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy-ingress.github.io/auth-secret' on Ingress '" + key + "' does not exist.") -}}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-680-haproxy-ingress-auth:
+    template: |
+      {#-
+        HAProxy-Ingress Basic Auth Backend Directive
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-secret
+
+        Annotations:
+          - haproxy-ingress.github.io/auth-secret: "<ns/name>" or "<name>" (required)
+          - haproxy-ingress.github.io/auth-realm: "<realm>" (optional, default: "Restricted")
+
+        Generates:
+          http-request auth realm "<realm>" unless { http_auth(<userlist>) }
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var authSecret = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-secret") | fallback("") | tostring() %}
+        {%- if authSecret != "" %}
+          {%- var authRealm = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-realm") | fallback("Restricted") | tostring() %}
+          {#- Parse secret reference (supports "ns/name" or just "name") -#}
+          {%- var secretNs = ns %}
+          {%- var secretName = authSecret %}
+          {%- if strings_contains(authSecret, "/") %}
+            {%- var parts = split(authSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var userlistName = "hi_auth_" + secretNs + "_" + secretName %}
+      # haproxy-ingress/backend-directives-auth ({{ key }})
+      http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+        {%- end %}
+      {%- end -%}
+
+# ============================================================================
+# Validation Tests
+# ============================================================================
+
+validationTests:
+  # ==========================================================================
+  # Phase 1: Backend Directive Tests
+  # ==========================================================================
+
+  test-haproxy-ingress-timeouts:
+    description: HAProxy-Ingress timeout annotations generate correct config
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: timeout-service
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: timeout-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: timeout-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: timeout-ingress
+            annotations:
+              haproxy-ingress.github.io/timeout-server: "60s"
+              haproxy-ingress.github.io/timeout-connect: "10s"
+              haproxy-ingress.github.io/timeout-queue: "30s"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: timeout.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: timeout-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout server 60s"
+        description: Must set timeout server
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout connect 10s"
+        description: Must set timeout connect
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout queue 30s"
+        description: Must set timeout queue
+
+  test-haproxy-ingress-balance-algorithm:
+    description: HAProxy-Ingress balance-algorithm annotation works
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: lb-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: lb-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: lb-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lb-ingress
+            annotations:
+              haproxy-ingress.github.io/balance-algorithm: "leastconn"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lb.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: lb-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "balance leastconn"
+        description: Must set balance algorithm
+
+  test-haproxy-ingress-health-check:
+    description: HAProxy-Ingress health check annotations work
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: health-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: health-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: health-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: health-ingress
+            annotations:
+              haproxy-ingress.github.io/health-check-uri: "/healthz"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: health.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: health-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "option httpchk GET /healthz"
+        description: Must set HTTP health check
+
+  test-haproxy-ingress-secure-backends:
+    description: HAProxy-Ingress secure-backends annotation enables SSL
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: secure-service
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: secure-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: secure-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8443
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: secure-ingress
+            annotations:
+              haproxy-ingress.github.io/secure-backends: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: secure.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: secure-service
+                          port:
+                            number: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl verify none"
+        description: Must enable SSL to backend
+
+  test-haproxy-ingress-backend-protocol-h2:
+    description: HAProxy-Ingress backend-protocol h2 annotation works
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: h2-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: h2-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: h2-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: h2-ingress
+            annotations:
+              haproxy-ingress.github.io/backend-protocol: "h2"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: h2.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: h2-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "proto h2"
+        description: Must set HTTP/2 protocol
+
+  test-haproxy-ingress-config-backend-snippet:
+    description: HAProxy-Ingress config-backend annotation injects directives
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: snippet-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: snippet-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: snippet-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: snippet-ingress
+            annotations:
+              haproxy-ingress.github.io/config-backend: |
+                http-request set-header X-Custom-Header "custom-value"
+                option httplog
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: snippet.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: snippet-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "X-Custom-Header"
+        description: Must inject custom header from snippet
+      - type: contains
+        target: haproxy.cfg
+        pattern: "option httplog"
+        description: Must inject httplog option from snippet
+
+  # ==========================================================================
+  # Phase 2: Frontend Filter Tests
+  # ==========================================================================
+
+  test-haproxy-ingress-ssl-redirect:
+    description: HAProxy-Ingress ssl-redirect annotation generates redirect
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: redirect-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: redirect-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: redirect-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: redirect-ingress
+            annotations:
+              haproxy-ingress.github.io/ssl-redirect: "true"
+              haproxy-ingress.github.io/ssl-redirect-code: "301"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: redirect.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: redirect-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect scheme https code 301"
+        description: Must generate SSL redirect with code 301
+
+  test-haproxy-ingress-hsts:
+    description: HAProxy-Ingress HSTS annotations generate correct headers
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: hsts-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: hsts-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: hsts-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hsts-ingress
+            annotations:
+              haproxy-ingress.github.io/hsts: "true"
+              haproxy-ingress.github.io/hsts-max-age: "31536000"
+              haproxy-ingress.github.io/hsts-include-subdomains: "true"
+              haproxy-ingress.github.io/hsts-preload: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hsts.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: hsts-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "Strict-Transport-Security"
+        description: Must set HSTS header
+      - type: contains
+        target: haproxy.cfg
+        pattern: "max-age=31536000"
+        description: Must include max-age
+      - type: contains
+        target: haproxy.cfg
+        pattern: "includeSubDomains"
+        description: Must include subdomains flag
+      - type: contains
+        target: haproxy.cfg
+        pattern: "preload"
+        description: Must include preload flag
+
+  test-haproxy-ingress-allowlist:
+    description: HAProxy-Ingress allowlist-source-range creates ACL
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: allow-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: allow-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: allow-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: allow-ingress
+            annotations:
+              haproxy-ingress.github.io/allowlist-source-range: "10.0.0.0/8, 192.168.0.0/16"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: allow.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: allow-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl hi_allowlist_default_allow-ingress src"
+        description: Must create allowlist ACL
+      - type: contains
+        target: haproxy.cfg
+        pattern: "10.0.0.0/8"
+        description: Must include first CIDR
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny"
+        description: Must deny non-matching requests
+
+  test-haproxy-ingress-cors:
+    description: HAProxy-Ingress CORS annotations generate correct headers
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cors-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: cors-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: cors-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-ingress
+            annotations:
+              haproxy-ingress.github.io/cors-enable: "true"
+              haproxy-ingress.github.io/cors-allow-origin: "https://example.com"
+              haproxy-ingress.github.io/cors-allow-credentials: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cors.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cors-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "Access-Control-Allow-Origin"
+        description: Must set CORS origin header
+      - type: contains
+        target: haproxy.cfg
+        pattern: "https://example.com"
+        description: Must use specified origin
+      - type: contains
+        target: haproxy.cfg
+        pattern: "Access-Control-Allow-Credentials"
+        description: Must set credentials header
+
+  test-haproxy-ingress-app-root:
+    description: HAProxy-Ingress app-root annotation generates redirect
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: approot-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: approot-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: approot-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: approot-ingress
+            annotations:
+              haproxy-ingress.github.io/app-root: "/dashboard"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: approot.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: approot-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect location /dashboard"
+        description: Must redirect root to app-root path
+
+  # ============================================================================
+  # Phase 3: Path Type Tests
+  # ============================================================================
+
+  test-haproxy-ingress-path-type-exact:
+    description: HAProxy-Ingress path-type exact annotation uses exact match map
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: exact-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: exact-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: exact-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: exact-ingress
+            annotations:
+              haproxy-ingress.github.io/path-type: "exact"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: exact.example.com
+                http:
+                  paths:
+                    - path: /api/users
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: exact-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: "map:path-exact.map"
+        pattern: "exact.example.com/api/users"
+        description: Must generate exact map entry
+
+  test-haproxy-ingress-path-type-prefix:
+    description: HAProxy-Ingress path-type prefix annotation uses prefix map
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: prefix-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: prefix-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: prefix-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: prefix-ingress
+            annotations:
+              haproxy-ingress.github.io/path-type: "prefix"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: prefix.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: prefix-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: "map:path-prefix.map"
+        pattern: "prefix.example.com/api/"
+        description: Must generate prefix map entry with trailing slash
+
+  test-haproxy-ingress-path-type-begin:
+    description: HAProxy-Ingress path-type begin annotation uses prefix-exact map
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: begin-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: begin-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: begin-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: begin-ingress
+            annotations:
+              haproxy-ingress.github.io/path-type: "begin"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: begin.example.com
+                http:
+                  paths:
+                    - path: /static
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: begin-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: "map:path-prefix-exact.map"
+        pattern: "begin.example.com/static"
+        description: Must generate prefix-exact map entry (no trailing slash)
+
+  # ============================================================================
+  # Phase 4: Session Affinity Tests
+  # ============================================================================
+
+  test-haproxy-ingress-session-affinity-basic:
+    description: HAProxy-Ingress cookie affinity generates cookie directive
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: affinity-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: affinity-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: affinity-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: affinity-ingress
+            annotations:
+              haproxy-ingress.github.io/affinity: "cookie"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: affinity.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: affinity-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie INGRESSCOOKIE insert indirect nocache dynamic"
+        description: Must generate default cookie directive with dynamic
+
+  test-haproxy-ingress-session-affinity-custom:
+    description: HAProxy-Ingress cookie affinity with custom options
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: affinity-custom-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: affinity-custom-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: affinity-custom-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: affinity-custom-ingress
+            annotations:
+              haproxy-ingress.github.io/affinity: "cookie"
+              haproxy-ingress.github.io/session-cookie-name: "MYSESSION"
+              haproxy-ingress.github.io/session-cookie-same-site: "Strict"
+              haproxy-ingress.github.io/session-cookie-domain: ".example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: affinity-custom.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: affinity-custom-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie MYSESSION insert"
+        description: Must use custom cookie name
+      - type: contains
+        target: haproxy.cfg
+        pattern: "domain .example.com"
+        description: Must set cookie domain
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'attr "SameSite=Strict"'
+        description: Must set SameSite attribute
+
+  # ============================================================================
+  # Phase 5: SSL Features Tests
+  # ============================================================================
+
+  test-haproxy-ingress-ssl-passthrough:
+    description: HAProxy-Ingress ssl-passthrough creates TCP backend and frontend routing
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: passthrough-service
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: passthrough-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: passthrough-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8443
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: passthrough-ingress
+            annotations:
+              haproxy-ingress.github.io/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: passthrough.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: passthrough-service
+                          port:
+                            number: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend ssl-passthrough-hi-default-passthrough-ingress"
+        description: Must generate SSL passthrough backend
+      - type: contains
+        target: haproxy.cfg
+        pattern: "mode tcp"
+        description: Backend must be in TCP mode
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend ssl-passthrough-hi-default-passthrough-ingress if { req_ssl_sni -m str passthrough.example.com }"
+        description: TCP frontend must route by SNI
+
+  # ============================================================================
+  # Phase 7: Basic Auth Tests
+  # ============================================================================
+
+  test-haproxy-ingress-basic-auth:
+    description: HAProxy-Ingress auth-secret generates userlist and auth directive
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: hi-auth-secret
+          type: Opaque
+          data:
+            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: auth-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: auth-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: auth-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-ingress
+            annotations:
+              haproxy-ingress.github.io/auth-secret: "hi-auth-secret"
+              haproxy-ingress.github.io/auth-realm: "ProtectedArea"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: auth.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: auth-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "userlist hi_auth_default_hi-auth-secret"
+        description: Must generate userlist from secret
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user admin password"
+        description: Userlist must contain credentials
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request auth realm "ProtectedArea"'
+        description: Must require auth with custom realm

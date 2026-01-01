@@ -11,9 +11,14 @@ spec:
   {{- if and $config.credentialsSecretRef (not $config.credentialsSecretRef.name) }}
     {{- $_ := set $config.credentialsSecretRef "name" (printf "%s-credentials" (include "haptic.fullname" .)) }}
   {{- end }}
-  {{- if and $config.controller $config.controller.leaderElection }}
-    {{- if not $config.controller.leaderElection.leaseName }}
-      {{- $_ := set $config.controller.leaderElection "leaseName" (include "haptic.fullname" .) }}
+  {{- if $config.controller }}
+    {{- /* Remove fields that are not part of the CRD (configured via env vars instead) */ -}}
+    {{- $_ := unset $config.controller "healthzPort" }}
+    {{- $_ := unset $config.controller "metricsPort" }}
+    {{- if $config.controller.leaderElection }}
+      {{- if not $config.controller.leaderElection.leaseName }}
+        {{- $_ := set $config.controller.leaderElection "leaseName" (include "haptic.fullname" .) }}
+      {{- end }}
     {{- end }}
   {{- end }}
   {{- /* Add default SSL certificate configuration to extraContext */ -}}
