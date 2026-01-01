@@ -389,82 +389,39 @@ validate-helm-libraries:
 # Build Stage
 # =============================================================================
 
-# Build binaries and Docker images for CI testing
-# Uses goreleaser for binary compilation (reuses goreleaser config) and docker buildx for images
+# Base template for snapshot builds (CI and main branch)
+# Uses goreleaser for binary compilation and docker buildx for images
 # Note: goreleaser's dockers_v2 doesn't push in snapshot mode, so we build images manually
-# Produces images with tags: ci-<pipeline_id>-haproxy<version>
-build-snapshot:
+#
+# Variables that control behavior:
+#   PLATFORMS: Docker build platforms (e.g., "linux/amd64" or "linux/amd64,linux/arm64,linux/arm/v7")
+#   SNAPSHOT_TAG: Image tag prefix (e.g., "ci-${CI_PIPELINE_ID}" or "main-${CI_COMMIT_SHORT_SHA}")
+#   CREATE_DEFAULT_TAG: If "true", creates a default tag pointing to haproxy3.2
+.snapshot-build-base:
   stage: build
   extends:
     - .goreleaser-base
-  rules:
-    - if: $CI_COMMIT_TAG
-      when: never
-    - !reference [.rules-code, rules]
   tags:
     - saas-linux-2xlarge-amd64
-  interruptible: true
   script:
-    # Build binaries using goreleaser (reuses build config, skips Docker)
     - goreleaser build --snapshot --clean
     # Prepare binary context with expected directory structure
     # Dockerfile expects: /${TARGETPLATFORM}/haptic-controller (e.g., /linux/amd64/haptic-controller)
     - |
       mkdir -p binary-context/linux/amd64
       cp dist/controller_linux_amd64_v1/haptic-controller binary-context/linux/amd64/
+      if [[ "$PLATFORMS" == *"arm64"* ]]; then
+        mkdir -p binary-context/linux/arm64 binary-context/linux/arm/v7
+        cp dist/controller_linux_arm64_v8.0/haptic-controller binary-context/linux/arm64/
+        cp dist/controller_linux_arm_7/haptic-controller binary-context/linux/arm/v7/
+      fi
     # Build and push Docker images for each HAProxy version
-    # Uses same Dockerfile as release, ensuring test/release consistency
     - |
-      CI_VERSION="ci-${CI_PIPELINE_ID}"
-
-      for HAPROXY_VERSION in 3.0 3.1 3.2; do
-        TAG="${CI_REGISTRY_IMAGE}:${CI_VERSION}-haproxy${HAPROXY_VERSION}"
-        echo "Building image: ${TAG}"
-
-        docker buildx build \
-          --platform linux/amd64 \
-          --build-arg HAPROXY_VERSION=${HAPROXY_VERSION} \
-          --build-arg GIT_COMMIT=${CI_COMMIT_SHORT_SHA} \
-          --build-arg GIT_TAG=${CI_VERSION} \
-          --build-context binary=binary-context \
-          --target runtime \
-          --tag "${TAG}" \
-          --push \
-          .
-      done
-
-# Publish snapshot images from main branch
-# Produces multi-arch images with tags: main-<short-sha>-haproxy<version>
-# Unlike build-snapshot (for CI testing), these are meant for users who want bleeding-edge builds
-publish-main-snapshot:
-  stage: build
-  extends:
-    - .goreleaser-base
-  rules:
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-  tags:
-    - saas-linux-2xlarge-amd64
-  script:
-    # Build binaries using goreleaser (reuses build config, skips Docker)
-    - goreleaser build --snapshot --clean
-    # Prepare binary context for multi-arch build
-    - |
-      mkdir -p binary-context/linux/amd64 binary-context/linux/arm64 binary-context/linux/arm/v7
-      cp dist/controller_linux_amd64_v1/haptic-controller binary-context/linux/amd64/
-      cp dist/controller_linux_arm64/haptic-controller binary-context/linux/arm64/
-      cp dist/controller_linux_arm_7/haptic-controller binary-context/linux/arm/v7/
-    # Build and push multi-arch Docker images for each HAProxy version
-    - |
-      SNAPSHOT_TAG="main-${CI_COMMIT_SHORT_SHA}"
-
       for HAPROXY_VERSION in 3.0 3.1 3.2; do
         TAG="${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy${HAPROXY_VERSION}"
-        echo "Building multi-arch image: ${TAG}"
-
+        echo "Building image: ${TAG}"
         docker buildx build \
-          --platform linux/amd64,linux/arm64,linux/arm/v7 \
+          --platform ${PLATFORMS} \
           --build-arg HAPROXY_VERSION=${HAPROXY_VERSION} \
           --build-arg GIT_COMMIT=${CI_COMMIT_SHORT_SHA} \
           --build-arg GIT_TAG=${SNAPSHOT_TAG} \
@@ -474,11 +431,40 @@ publish-main-snapshot:
           --push \
           .
       done
+    # Create default tag if requested (points to haproxy3.2)
+    - |
+      if [ "${CREATE_DEFAULT_TAG}" = "true" ]; then
+        docker buildx imagetools create \
+          --tag "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}" \
+          "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy3.2"
+      fi
 
-      # Also push default tag (latest HAProxy version without suffix)
-      docker buildx imagetools create \
-        --tag "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}" \
-        "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy3.2"
+# Build snapshot images for CI testing (single-arch, fast)
+# Produces images with tags: ci-<pipeline_id>-haproxy<version>
+build-snapshot:
+  extends: .snapshot-build-base
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-code, rules]
+  interruptible: true
+  variables:
+    PLATFORMS: "linux/amd64"
+    SNAPSHOT_TAG: "ci-${CI_PIPELINE_ID}"
+    CREATE_DEFAULT_TAG: "false"
+
+# Publish snapshot images from main branch (multi-arch, for users)
+# Produces images with tags: main-<short-sha>-haproxy<version>
+publish-main-snapshot:
+  extends: .snapshot-build-base
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  variables:
+    PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
+    SNAPSHOT_TAG: "main-${CI_COMMIT_SHORT_SHA}"
+    CREATE_DEFAULT_TAG: "true"
 
 # =============================================================================
 # Integration Stage

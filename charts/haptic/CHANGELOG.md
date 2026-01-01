@@ -9,6 +9,12 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.10] - 2026-01-01
+
+### Changed
+
+- Updated appVersion to 0.1.0-alpha.10 (server slot preservation, reconciliation debounce fix)
+
 ## [0.1.0-alpha.9] - 2025-12-30
 
 ### Changed
