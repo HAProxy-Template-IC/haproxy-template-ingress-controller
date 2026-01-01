@@ -9,6 +9,18 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Expanded HAProxy Ingress library with 47 annotations for haproxy-ingress.github.io compatibility:
+  - Path matching: `path-type` with regex, exact, prefix, and begin modes
+  - Backend configuration: timeouts, load balancing, connection limits, health checks
+  - Session affinity: cookie-based persistence with full configuration options
+  - Access control: allowlist and denylist source ranges
+  - SSL features: ssl-passthrough, backend SSL/mTLS, PROXY protocol
+  - Redirects: ssl-redirect, app-root, redirect-to
+  - Security headers: HSTS with full options, CORS
+  - Authentication: basic auth with secret reference
+
 ## [0.1.0-alpha.1] - 2025-12-26
 
 ### Added

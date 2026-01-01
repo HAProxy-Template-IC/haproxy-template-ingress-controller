@@ -140,6 +140,14 @@ spec:
                       Used for validation.
                       Default: /etc/haproxy/haproxy.cfg
                     type: string
+                  deploymentTimeout:
+                    description: |-
+                      DeploymentTimeout is the maximum time to wait for a deployment to complete.
+                      If exceeded, the scheduler assumes the deployment was lost and retries.
+                      This is a safety net for race conditions during leadership transitions.
+                      Format: Go duration string (e.g., "30s", "1m")
+                      Default: 30s
+                    type: string
                   driftPreventionInterval:
                     description: |-
                       DriftPreventionInterval triggers periodic deployments to prevent configuration drift.
@@ -574,6 +582,20 @@ spec:
                         type: object
                       minItems: 1
                       type: array
+                    currentConfig:
+                      description: |-
+                        CurrentConfig contains the raw HAProxy configuration from a previous deployment.
+
+                        This is used for testing slot-aware server assignment during rolling deployments.
+                        When provided, templates can access currentConfig to preserve server slot ordering.
+                        The content is parsed using the HAProxy config parser before being passed to templates.
+
+                        Example:
+                          currentConfig: |
+                            backend my-backend
+                                server srv1 10.0.0.1:8080
+                                server srv2 10.0.0.2:8080
+                      type: string
                     description:
                       description: Description explains what this test validates.
                       type: string
