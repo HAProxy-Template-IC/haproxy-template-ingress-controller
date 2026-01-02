@@ -8,6 +8,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -82,10 +83,18 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 
 	// Validate by creating engine with complete template set
 	// This ensures snippets that reference each other (via render, import, inherit_context) work correctly
-	_, err := templating.NewScriggo(
+	//
+	// Provide currentConfig type declaration for templates that access slot preservation state.
+	// This enables BackendServers macro to compile even though currentConfig is only
+	// available at runtime (during actual rendering, not validation).
+	additionalDeclarations := map[string]any{
+		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	}
+	_, err := templating.NewScriggoWithDeclarations(
 		extraction.AllTemplates,
 		extraction.EntryPoints,
 		nil, nil, nil,
+		additionalDeclarations,
 	)
 	if err != nil {
 		formattedErr := templating.FormatCompilationError(err, "templates", "")
