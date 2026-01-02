@@ -819,6 +819,7 @@ func (in *ValidationTest) DeepCopyInto(out *ValidationTest) {
 		*out = make([]HTTPResourceFixture, len(*in))
 		copy(*out, *in)
 	}
+	in.ExtraContext.DeepCopyInto(&out.ExtraContext)
 	if in.Assertions != nil {
 		in, out := &in.Assertions, &out.Assertions
 		*out = make([]ValidationAssertion, len(*in))

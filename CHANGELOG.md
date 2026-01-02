@@ -9,6 +9,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Test-specific `extraContext` overrides for validation tests
+
 ## [0.1.0-alpha.11] - 2026-01-02
 
 ### Added

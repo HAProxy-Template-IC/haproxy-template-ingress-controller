@@ -128,8 +128,11 @@ TEMP_CONFIG=$(mktemp)
 trap 'rm -f "$TEMP_CONFIG"' EXIT
 
 # Render Helm chart with Gateway API support and extract HAProxyTemplateConfig
+# Use --namespace default for consistent behavior regardless of HELM_NAMESPACE env var
+# This matches the _global fixtures which provide SSL certs in 'default' namespace
 echo -e "${YELLOW}Rendering Helm chart...${NC}" >&2
 if ! helm template "$CHART_DIR" \
+    --namespace default \
     --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
     --set controller.templateLibraries.gateway.enabled=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \

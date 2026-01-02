@@ -236,6 +236,10 @@ controller:
         # Override by setting shardCountOverride to a specific value:
         # shardCountOverride: 8
         # HAProxy bind ports are defined in haproxy.ports (referenced by templates)
+        # Auth realm sanitization: auto-replace spaces with dashes in haproxy.org/auth-realm
+        # The DataPlane API forbids spaces in realm names. By default (false), the controller
+        # fails with a clear error. Set to true to auto-sanitize realm names.
+        # sanitize_auth_realm: false
     watchedResourcesIgnoreFields:
       - metadata.managedFields
     watchedResources:

@@ -107,6 +107,10 @@ type ValidationTest struct {
 	// The content is parsed using the HAProxy config parser before being passed to templates.
 	CurrentConfig string `yaml:"currentConfig,omitempty"`
 
+	// ExtraContext provides custom variables that override the global extraContext for this test.
+	// This allows testing template behavior with different extraContext values.
+	ExtraContext map[string]interface{} `yaml:"extraContext,omitempty" json:"extraContext,omitempty"`
+
 	// Assertions contains validation checks to run against the rendered config.
 	Assertions []ValidationAssertion `yaml:"assertions"`
 }

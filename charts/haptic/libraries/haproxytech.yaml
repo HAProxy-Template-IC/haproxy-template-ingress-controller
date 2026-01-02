@@ -414,11 +414,19 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
         {%- var lb = ingress | dig("metadata", "annotations", "haproxy.org/load-balance") | fallback("") | tostring() %}
         {%- if lb != "" %}
-          {%- var valid = []string{"roundrobin", "leastconn", "source", "uri", "hdr", "random", "rdp-cookie"} %}
+          {#- Exact match algorithms -#}
+          {%- var exactValid = []string{"roundrobin", "static-rr", "leastconn", "first", "source", "random"} %}
+          {#- Prefix match algorithms (support parameters like hdr(name), uri whole, url_param(name), rdp-cookie(name)) -#}
+          {%- var prefixValid = []string{"uri", "url_param", "hdr", "rdp-cookie"} %}
           {%- var isValid = false %}
-          {%- for _, v := range valid %}{%- if lb == v %}{%- isValid = true %}{%- end %}{%- end %}
+          {%- for _, v := range exactValid %}{%- if lb == v %}{%- isValid = true %}{%- end %}{%- end %}
           {%- if !isValid %}
-            {{- fail("Invalid value '" + lb + "' for annotation 'haproxy.org/load-balance' on Ingress '" + key + "'. Valid values: " + (valid | join(", "))) -}}
+            {%- for _, v := range prefixValid %}
+              {%- if lb | hasPrefix(v) %}{%- isValid = true %}{%- end %}
+            {%- end %}
+          {%- end %}
+          {%- if !isValid %}
+            {{- fail("Invalid value '" + lb + "' for annotation 'haproxy.org/load-balance' on Ingress '" + key + "'. Valid algorithms: " + (exactValid | join(", ")) + ", or parameterized: " + (prefixValid | join("(...), ")) + "(...)") -}}
           {%- end %}
       # haproxytech/backend-directives-haproxytech-load-balance
       balance {{ lb }}
@@ -577,6 +585,16 @@ templateSnippets:
         {%- if authType == "basic-auth" %}
           {%- var authSecret = ingress | dig("metadata", "annotations", "haproxy.org/auth-secret") | fallback("") | tostring() %}
           {%- var authRealm = ingress | dig("metadata", "annotations", "haproxy.org/auth-realm") | fallback("RestrictedArea") | tostring() %}
+          {#- Validate auth realm: DataPlane API pattern ^[^\s]+$ forbids spaces -#}
+          {%- if strings_contains(authRealm, " ") %}
+            {%- var sanitize = extraContext | dig("sanitize_auth_realm") | fallback(false) %}
+            {%- if sanitize %}
+              {#- Auto-sanitize: replace spaces with dashes -#}
+              {%- authRealm = replace(authRealm, " ", "-") %}
+            {%- else %}
+              {{- fail("Invalid auth-realm '" + authRealm + "' on Ingress '" + key + "': realm cannot contain spaces (DataPlane API limitation). Use hyphens or underscores, or set extraContext.sanitize_auth_realm=true to auto-replace spaces with dashes.") -}}
+            {%- end %}
+          {%- end %}
           {%- if authSecret != "" %}
             {#- Parse secret reference (supports "ns/name" or just "name") -#}
             {%- var secretNs = ns %}
@@ -912,6 +930,134 @@ validationTests:
         pattern: 'realm "RestrictedArea"'
         description: Must not use default realm when custom realm specified
 
+  test-auth-realm-with-spaces-strict:
+    description: Auth realm with spaces fails in strict mode (default)
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: api-auth
+          type: Opaque
+          data:
+            user1: JDJ5JDA1JDJlV1VoQVU5Z0VlZ2FDZkY4Uk4xZHV1WUNrdlhoUGtpS1BDL3pkTFBvN2xNYlkxcWlUQXRP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: space-realm-ingress
+            annotations:
+              haproxy.org/auth-type: basic-auth
+              haproxy.org/auth-secret: api-auth
+              haproxy.org/auth-realm: "DeepL demo"
+          spec:
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: api-service
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: api-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "realm cannot contain spaces"
+        description: Must fail with clear error about spaces in realm
+
+  test-auth-realm-with-spaces-sanitize:
+    description: Auth realm with spaces auto-sanitized when sanitize_auth_realm=true
+    extraContext:
+      sanitize_auth_realm: true
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: api-auth
+          type: Opaque
+          data:
+            user1: JDJ5JDA1JDJlV1VoQVU5Z0VlZ2FDZkY4Uk4xZHV1WUNrdlhoUGtpS1BDL3pkTFBvN2xNYlkxcWlUQXRP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: space-realm-ingress
+            annotations:
+              haproxy.org/auth-type: basic-auth
+              haproxy.org/auth-secret: api-auth
+              haproxy.org/auth-realm: "DeepL demo"
+          spec:
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: api-service
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: api-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request auth realm "DeepL-demo"'
+        description: Realm must have spaces replaced with dashes
+
   test-auth-shared-userlist-deduplication:
     description: Multiple ingresses sharing same secret generate single userlist
     fixtures:
@@ -1026,3 +1172,63 @@ validationTests:
         target: haproxy.cfg
         pattern: "userlist auth_default_shared-credentials.*userlist auth_default_shared-credentials"
         description: Must not duplicate userlist for same secret
+
+  test-load-balance-hdr-parameter:
+    description: Load balance with hdr(header-name) parameter for header-based routing
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sticky-ingress
+            annotations:
+              haproxy.org/load-balance: "hdr(x-session-id)"
+          spec:
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: api-service
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: api-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-service-abc123
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-service
+          addressType: IPv4
+          endpoints:
+            - addresses:
+                - 10.0.0.1
+              conditions:
+                ready: true
+              targetRef:
+                kind: Pod
+                name: api-pod-1
+          ports:
+            - port: 8080
+              protocol: TCP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "balance hdr\\(x-session-id\\)"
+        description: Must use hdr() balance algorithm with header name
