@@ -498,16 +498,14 @@ readinessProbe:
 # The AUTOMEMLIMIT environment variable can be used to adjust the memory limit ratio (default: 0.9)
 # Example: AUTOMEMLIMIT=0.8 sets GOMEMLIMIT to 80% of the container memory limit
 #
-# Default requests ensure proper scheduling and QoS (Burstable class)
-# Limits can be set based on workload requirements
+# Default configuration uses Guaranteed QoS for memory (requests = limits) for eviction protection.
+# No CPU limit is set to avoid throttling. See: https://home.robusta.dev/blog/kubernetes-memory-limit
 resources:
   requests:
     cpu: 100m
-    memory: 128Mi
-    # Optional limits - comment out if you prefer unbounded limits
-    # limits:
-    #   cpu: 500m
-    #   memory: 512Mi
+    memory: 512Mi
+  limits:
+    memory: 512Mi
 # Node selector
 nodeSelector: {}
 # Tolerations
@@ -789,14 +787,25 @@ haproxy:
       type: ClusterIP
       # port references haproxy.ports.dataplane (set in template)
     # Credentials are configured via top-level 'credentials.dataplane' section
+    # Resource limits and requests for Dataplane API sidecar
+    # Default configuration uses Guaranteed QoS for memory (requests = limits).
+    # No CPU limit is set to avoid throttling.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        memory: 256Mi
   # Resource limits and requests for HAProxy containers
+  # Default configuration uses Guaranteed QoS for memory (requests = limits) for eviction protection.
+  # No CPU limit is set to avoid throttling during traffic spikes.
+  # HAProxy uses ~32KB per connection (16KB each direction).
   resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 1Gi
   # Priority class for pod scheduling
   # Used to mark critical workloads for preferential scheduling and preemption
   # Common values:

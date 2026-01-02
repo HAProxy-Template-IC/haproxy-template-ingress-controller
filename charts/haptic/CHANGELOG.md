@@ -9,6 +9,14 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Set production-ready default resource requests and limits for all containers:
+  - Controller: 100m CPU / 512Mi memory (Guaranteed QoS)
+  - HAProxy: 250m CPU / 1Gi memory (Guaranteed QoS)
+  - Dataplane API sidecar: 50m CPU / 256Mi memory (Guaranteed QoS)
+- No CPU limits to avoid throttling; memory requests equal limits for eviction protection
+
 ## [0.1.0-alpha.11] - 2026-01-02
 
 ### Added

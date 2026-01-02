@@ -253,6 +253,8 @@ spec:
               port: dataplane
             initialDelaySeconds: 10
             periodSeconds: 5
+          resources:
+            {{- toYaml .Values.haproxy.dataplane.resources | nindent 12 }}
 
         {{- with .Values.haproxy.sidecars }}
         {{- toYaml . | nindent 8 }}
