@@ -407,6 +407,49 @@ func TestTemplateValidator_FileErrors(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "syntax error")
 }
 
+// TestTemplateValidator_CurrentConfigDeclaration tests that templates using
+// currentConfig compile successfully. This ensures the TemplateValidator
+// provides the currentConfig type declaration like other code paths do.
+func TestTemplateValidator_CurrentConfigDeclaration(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	validator := NewTemplateValidator(bus, logger)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go validator.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	// Template that uses currentConfig - this is the pattern used in base.yaml
+	// for slot preservation in BackendServers macro
+	cfg := &coreconfig.Config{
+		HAProxyConfig: coreconfig.HAProxyConfig{
+			Template: `{%- if !isNil(currentConfig) %}
+{%- for _, backend := range currentConfig.Backends %}
+# Backend: {{ backend.Name }}
+{%- end %}
+{%- end %}
+valid config`,
+		},
+	}
+
+	req := events.NewConfigValidationRequest(cfg, "test-version")
+	bus.Publish(req)
+
+	response := testutil.WaitForEventWithPredicate(t, eventChan, 2*time.Second,
+		func(resp *events.ConfigValidationResponse) bool {
+			return resp.ValidatorName == ValidatorNameTemplate
+		})
+
+	// Should pass - currentConfig should be available as a type declaration
+	assert.True(t, response.Valid, "Template using currentConfig should compile successfully. Errors: %v", response.Errors)
+	assert.Empty(t, response.Errors)
+}
+
 // TestJSONPathValidator_IndexByErrors tests IndexBy JSONPath validation errors.
 func TestJSONPathValidator_IndexByErrors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
