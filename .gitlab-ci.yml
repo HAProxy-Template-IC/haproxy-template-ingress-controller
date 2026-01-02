@@ -46,7 +46,7 @@ variables:
   # renovate: datasource=github-releases depName=sigstore/cosign
   COSIGN_VERSION: "3.0.3"
   # renovate: datasource=github-releases depName=anchore/syft
-  SYFT_VERSION: "1.20.0"
+  SYFT_VERSION: "1.39.0"
   # CI image base path - tag is computed from Dockerfile content hash (see compute-ci-image-tag job)
   # Short hash-based tags avoid the 128-char OCI tag limit while maintaining cacheability
   CI_IMAGE_BASE: ${CI_REGISTRY_IMAGE}/ci
