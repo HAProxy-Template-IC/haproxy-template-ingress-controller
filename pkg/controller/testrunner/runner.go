@@ -526,7 +526,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	haproxyConfig, auxiliaryFiles, includeStats, err := r.renderWithStores(engine, stores, validationPaths, httpStore, currentConfig)
+	haproxyConfig, auxiliaryFiles, includeStats, err := r.renderWithStores(engine, stores, validationPaths, httpStore, currentConfig, test.ExtraContext)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -631,9 +631,27 @@ func hasRenderingErrorAssertions(assertions []config.ValidationAssertion) bool {
 // This follows the same pattern as DryRunValidator.renderWithOverlayStores.
 // When profileIncludes is enabled, it returns timing statistics for included templates.
 // The currentConfig parameter enables slot-aware server assignment testing (nil for first deployment).
-func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
+// The testExtraContext parameter allows test-specific extraContext values to override global ones.
+func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]interface{}) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
 	// Build rendering context with fixture stores
 	renderCtx := r.buildRenderingContext(stores, validationPaths, httpStore, currentConfig)
+
+	// Merge test-specific extraContext (overrides global extraContext values)
+	// IMPORTANT: Make a copy to avoid modifying the shared config map which would
+	// cause state leakage between parallel test runs.
+	if testExtraContext != nil {
+		globalExtraContext := renderCtx["extraContext"].(map[string]interface{})
+		mergedExtraContext := make(map[string]interface{}, len(globalExtraContext)+len(testExtraContext))
+		for key, value := range globalExtraContext {
+			mergedExtraContext[key] = value
+		}
+		for key, value := range testExtraContext {
+			mergedExtraContext[key] = value
+			// Also merge into top-level context for direct access
+			renderCtx[key] = value
+		}
+		renderCtx["extraContext"] = mergedExtraContext
+	}
 
 	// Render main HAProxy configuration using worker-specific engine
 	var haproxyConfig string

@@ -555,6 +555,20 @@ type ValidationTest struct {
 	// +optional
 	CurrentConfig string `json:"currentConfig,omitempty"`
 
+	// ExtraContext provides custom variables that override the global extraContext for this test.
+	//
+	// This allows testing template behavior with different extraContext values without
+	// modifying the global configuration.
+	//
+	// Example:
+	//   extraContext:
+	//     sanitize_auth_realm: true
+	//     debug: true
+	// +optional
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ExtraContext runtime.RawExtension `json:"extraContext,omitempty"`
+
 	// Assertions defines the validation checks to perform.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1

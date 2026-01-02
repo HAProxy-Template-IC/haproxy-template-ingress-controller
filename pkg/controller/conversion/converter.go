@@ -161,15 +161,11 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 
 	// Convert validation tests
-	validationTests := make(map[string]config.ValidationTest, len(spec.ValidationTests))
-	for testName, test := range spec.ValidationTests {
-		validationTests[testName] = config.ValidationTest{
-			Description:   test.Description,
-			Fixtures:      convertFixtures(test.Fixtures),
-			HTTPFixtures:  convertHTTPFixtures(test.HTTPResources),
-			CurrentConfig: test.CurrentConfig,
-			Assertions:    convertAssertions(test.Assertions),
-		}
+	// Note: Using convertValidationTests helper to avoid linter warning about
+	// copying large struct (128 bytes) per iteration in range loop
+	validationTests, err := convertValidationTests(spec.ValidationTests)
+	if err != nil {
+		return nil, err
 	}
 
 	// Construct final config
@@ -190,6 +186,41 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 
 	return cfg, nil
+}
+
+// convertValidationTests converts CRD validation tests to internal config format.
+// This function exists to properly handle the map iteration without triggering
+// the rangeValCopy linter warning.
+func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[string]config.ValidationTest, error) {
+	validationTests := make(map[string]config.ValidationTest, len(crdTests))
+
+	// Get sorted keys to ensure deterministic ordering
+	testNames := make([]string, 0, len(crdTests))
+	for testName := range crdTests {
+		testNames = append(testNames, testName)
+	}
+
+	for _, testName := range testNames {
+		crdTest := crdTests[testName]
+		testConfig := config.ValidationTest{
+			Description:   crdTest.Description,
+			Fixtures:      convertFixtures(crdTest.Fixtures),
+			HTTPFixtures:  convertHTTPFixtures(crdTest.HTTPResources),
+			CurrentConfig: crdTest.CurrentConfig,
+			Assertions:    convertAssertions(crdTest.Assertions),
+		}
+		// Parse test-specific extraContext if present
+		if len(crdTest.ExtraContext.Raw) > 0 {
+			var testExtraContext map[string]interface{}
+			if err := json.Unmarshal(crdTest.ExtraContext.Raw, &testExtraContext); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal validation_tests[%s].extra_context: %w", testName, err)
+			}
+			testConfig.ExtraContext = testExtraContext
+		}
+		validationTests[testName] = testConfig
+	}
+
+	return validationTests, nil
 }
 
 // convertFixtures converts CRD fixtures to internal config format.

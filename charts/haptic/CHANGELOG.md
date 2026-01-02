@@ -9,6 +9,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Auth realm validation for `haproxy.org/auth-realm` annotation with configurable sanitization via `extraContext.sanitize_auth_realm`
+
 ### Changed
 
 - Set production-ready default resource requests and limits for all containers:
