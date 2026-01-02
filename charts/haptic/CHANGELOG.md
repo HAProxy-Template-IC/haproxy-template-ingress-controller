@@ -21,6 +21,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
   - Dataplane API sidecar: 50m CPU / 256Mi memory (Guaranteed QoS)
 - No CPU limits to avoid throttling; memory requests equal limits for eviction protection
 
+### Fixed
+
+- CRD now includes `extraContext` field in validation tests for per-test context overrides
+
 ## [0.1.0-alpha.11] - 2026-01-02
 
 ### Added

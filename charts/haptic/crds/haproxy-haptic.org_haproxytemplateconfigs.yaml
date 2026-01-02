@@ -599,6 +599,19 @@ spec:
                     description:
                       description: Description explains what this test validates.
                       type: string
+                    extraContext:
+                      description: |-
+                        ExtraContext provides custom variables that override the global extraContext for this test.
+
+                        This allows testing template behavior with different extraContext values without
+                        modifying the global configuration.
+
+                        Example:
+                          extraContext:
+                            sanitize_auth_realm: true
+                            debug: true
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     fixtures:
                       additionalProperties:
                         items:
