@@ -88,7 +88,7 @@ controller:
     # Supports: "regex" path type for Ingress resources with pathType: ImplementationSpecific
     # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
     haproxyIngress:
-      enabled: false
+      enabled: true
     # Path Regex Last library: Performance-first path matching order
     # Overrides default ordering to: Exact > Prefix > Regex (regex moved to last)
     # Default (de facto standard): Exact > Regex > Prefix
