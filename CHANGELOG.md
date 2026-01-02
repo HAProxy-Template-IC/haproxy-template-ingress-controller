@@ -9,6 +9,16 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.11] - 2026-01-02
+
+### Added
+
+- **HAProxy Ingress annotation compatibility**: Support for 47 haproxy-ingress annotations via the haproxy-ingress template library
+
+### Fixed
+
+- **Template validator currentConfig**: Add missing type declaration for `currentConfig` in TemplateValidator context
+
 ## [0.1.0-alpha.10] - 2026-01-01
 
 ### Added

@@ -9,6 +9,17 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.11] - 2026-01-02
+
+### Added
+
+- HAProxy Ingress template library (`haproxy-ingress.yaml`) with 47 annotation compatibility
+
+### Changed
+
+- HAProxy Ingress library now enabled by default (`controller.templateLibraries.haproxy-ingress.enabled=true`)
+- Updated appVersion to 0.1.0-alpha.11
+
 ## [0.1.0-alpha.10] - 2026-01-01
 
 ### Changed
