@@ -37,4 +37,8 @@ rules:
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxytemplateconfigs/status"]
     verbs: ["update", "patch"]
+  # Auxiliary file CRDs for config publishing
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxycfgs", "haproxygeneralfiles", "haproxycrtlistfiles", "haproxymapfiles"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 {{- end }}
