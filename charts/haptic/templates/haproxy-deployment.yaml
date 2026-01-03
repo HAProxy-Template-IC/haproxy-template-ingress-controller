@@ -30,6 +30,8 @@ spec:
       app.kubernetes.io/component: loadbalancer
   template:
     metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         {{- include "haptic.selectorLabels" . | nindent 8 }}
         {{- include "haptic.componentLabels" "loadbalancer" | nindent 8 }}
