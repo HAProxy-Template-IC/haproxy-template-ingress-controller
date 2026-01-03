@@ -100,6 +100,11 @@ RUN mkdir -p /usr/local/etc/haproxy/maps \
 # The haproxy user is pre-created by the haproxytech base image
 USER haproxy
 
+# Override STOPSIGNAL from base image (SIGUSR1) to SIGTERM
+# The haproxy base image uses SIGUSR1 for HAProxy's graceful shutdown,
+# but our Go controller expects SIGTERM for graceful shutdown
+STOPSIGNAL SIGTERM
+
 # Set the entrypoint to the controller
 ENTRYPOINT ["/usr/local/bin/haptic-controller"]
 
