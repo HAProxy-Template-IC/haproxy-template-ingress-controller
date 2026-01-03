@@ -668,7 +668,7 @@ func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]ty
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
-	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx)
+	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("failed to render auxiliary files: %w", err)
 	}
@@ -727,7 +727,7 @@ func (r *Runner) buildRenderingContext(stores map[string]types.Store, validation
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.
-func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[string]interface{}, validationPaths *dataplane.ValidationPaths) (*dataplane.AuxiliaryFiles, error) {
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
 	// Render map files using worker-specific engine
@@ -752,6 +752,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 
 		auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
 			Filename: name,
+			Path:     filepath.Join(validationPaths.GeneralStorageDir, name),
 			Content:  rendered,
 		})
 	}

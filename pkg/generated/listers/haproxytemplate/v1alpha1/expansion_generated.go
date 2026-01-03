@@ -24,6 +24,22 @@ type HAProxyCfgListerExpansion interface{}
 // HAProxyCfgNamespaceLister.
 type HAProxyCfgNamespaceListerExpansion interface{}
 
+// HAProxyCRTListFileListerExpansion allows custom methods to be added to
+// HAProxyCRTListFileLister.
+type HAProxyCRTListFileListerExpansion interface{}
+
+// HAProxyCRTListFileNamespaceListerExpansion allows custom methods to be added to
+// HAProxyCRTListFileNamespaceLister.
+type HAProxyCRTListFileNamespaceListerExpansion interface{}
+
+// HAProxyGeneralFileListerExpansion allows custom methods to be added to
+// HAProxyGeneralFileLister.
+type HAProxyGeneralFileListerExpansion interface{}
+
+// HAProxyGeneralFileNamespaceListerExpansion allows custom methods to be added to
+// HAProxyGeneralFileNamespaceLister.
+type HAProxyGeneralFileNamespaceListerExpansion interface{}
+
 // HAProxyMapFileListerExpansion allows custom methods to be added to
 // HAProxyMapFileLister.
 type HAProxyMapFileListerExpansion interface{}

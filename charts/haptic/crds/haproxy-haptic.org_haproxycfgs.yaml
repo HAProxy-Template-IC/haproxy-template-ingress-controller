@@ -58,12 +58,18 @@ spec:
             properties:
               checksum:
                 description: |-
-                  Checksum is the SHA-256 hash of the configuration content.
+                  Checksum is the SHA-256 hash of the original (uncompressed) configuration content.
 
                   Used to detect configuration changes and verify consistency across pods.
                   Format: sha256:<hex-digest>
                 minLength: 1
                 type: string
+              compressed:
+                description: |-
+                  Compressed indicates the content is zstd+base64 encoded.
+
+                  When true, consumers must decompress before use.
+                type: boolean
               content:
                 description: |-
                   Content is the rendered HAProxy configuration file content.
@@ -91,6 +97,54 @@ spec:
                 description: AuxiliaryFiles references the associated map files and
                   certificates.
                 properties:
+                  crtListFiles:
+                    description: CRTListFiles lists the HAProxyCRTListFile resources
+                      associated with this config.
+                    items:
+                      description: ResourceReference identifies a related Kubernetes
+                        resource.
+                      properties:
+                        kind:
+                          description: Kind is the resource type (e.g., HAProxyMapFile,
+                            Secret).
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name is the resource name.
+                          minLength: 1
+                          type: string
+                        namespace:
+                          description: Namespace is the resource namespace.
+                          type: string
+                      required:
+                      - kind
+                      - name
+                      type: object
+                    type: array
+                  generalFiles:
+                    description: GeneralFiles lists the HAProxyGeneralFile resources
+                      associated with this config.
+                    items:
+                      description: ResourceReference identifies a related Kubernetes
+                        resource.
+                      properties:
+                        kind:
+                          description: Kind is the resource type (e.g., HAProxyMapFile,
+                            Secret).
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name is the resource name.
+                          minLength: 1
+                          type: string
+                        namespace:
+                          description: Namespace is the resource namespace.
+                          type: string
+                      required:
+                      - kind
+                      - name
+                      type: object
+                    type: array
                   mapFiles:
                     description: MapFiles lists the HAProxyMapFile resources associated
                       with this config.

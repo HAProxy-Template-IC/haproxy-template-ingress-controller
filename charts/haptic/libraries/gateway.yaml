@@ -468,7 +468,7 @@ templateSnippets:
 
         Usage:
           {%- import "util-route-condition" for RouteIdCondition -%}
-          http-request set-header X-Custom "value" if {{ RouteIdCondition(routeInfo | dig("routeId")) }}
+          http-request set-header X-Custom 'value' if {{ RouteIdCondition(routeInfo | dig("routeId")) }}
       -#}
       {%- macro RouteIdCondition(routeId string) string -%}
       { var(req.gw_rule_id) -m str "{{ routeId }}" }
@@ -1063,10 +1063,10 @@ templateSnippets:
             {%- var mod = filter | dig("requestHeaderModifier") %}
             {%- if mod != nil %}
               {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
-      http-request set-header {{ h | dig("name") }} "{{ h | dig("value") }}" if {{ cond }}
+      http-request set-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
               {%- end %}
               {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
-      http-request add-header {{ h | dig("name") }} "{{ h | dig("value") }}" if {{ cond }}
+      http-request add-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
               {%- end %}
               {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
       http-request del-header {{ name }} if {{ cond }}
@@ -1101,10 +1101,10 @@ templateSnippets:
       http-request set-var(txn.filters_applied) str(ResponseHeaderModifier) if {{ cond }} !{ var(txn.filters_applied) -m found }
               {%- end %}
               {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
-      http-response set-header {{ h | dig("name") }} "{{ h | dig("value") }}" if {{ cond }}
+      http-response set-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
               {%- end %}
               {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
-      http-response add-header {{ h | dig("name") }} "{{ h | dig("value") }}" if {{ cond }}
+      http-response add-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
               {%- end %}
               {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
       http-response del-header {{ name }} if {{ cond }}
@@ -1196,7 +1196,7 @@ templateSnippets:
               {%- end %}
               {%- var hostname = rw | dig("hostname") | fallback("") %}
               {%- if hostname != "" %}
-      http-request set-header Host "{{ hostname }}" if {{ cond }}
+      http-request set-header Host '{{ hostname }}' if {{ cond }}
               {%- end %}
               {%- var pathMod = rw | dig("path") %}
               {%- if pathMod != nil %}
@@ -3355,12 +3355,12 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request add-header X-Custom-Header "custom-value" if'
+        pattern: "http-request add-header X-Custom-Header 'custom-value' if"
         description: Must generate add-header directive for RequestHeaderModifier filter
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-header X-Replace-Header "new-value" if'
+        pattern: "http-request set-header X-Replace-Header 'new-value' if"
         description: Must generate set-header directive for RequestHeaderModifier filter
 
       - type: contains
@@ -3426,12 +3426,12 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-response add-header X-Response-Header "response-value" if'
+        pattern: "http-response add-header X-Response-Header 'response-value' if"
         description: Must generate add-header directive for ResponseHeaderModifier filter
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-response set-header X-Replace-Response "new-response" if'
+        pattern: "http-response set-header X-Replace-Response 'new-response' if"
         description: Must generate set-header directive for ResponseHeaderModifier filter
 
       - type: contains
@@ -3552,7 +3552,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-header Host "internal.example.com" if'
+        pattern: "http-request set-header Host 'internal.example.com' if"
         description: Must generate hostname rewrite directive
 
       - type: contains

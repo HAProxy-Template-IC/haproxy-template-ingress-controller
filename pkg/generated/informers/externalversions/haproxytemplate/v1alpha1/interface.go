@@ -24,6 +24,10 @@ import (
 type Interface interface {
 	// HAProxyCfgs returns a HAProxyCfgInformer.
 	HAProxyCfgs() HAProxyCfgInformer
+	// HAProxyCRTListFiles returns a HAProxyCRTListFileInformer.
+	HAProxyCRTListFiles() HAProxyCRTListFileInformer
+	// HAProxyGeneralFiles returns a HAProxyGeneralFileInformer.
+	HAProxyGeneralFiles() HAProxyGeneralFileInformer
 	// HAProxyMapFiles returns a HAProxyMapFileInformer.
 	HAProxyMapFiles() HAProxyMapFileInformer
 	// HAProxyTemplateConfigs returns a HAProxyTemplateConfigInformer.
@@ -44,6 +48,16 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // HAProxyCfgs returns a HAProxyCfgInformer.
 func (v *version) HAProxyCfgs() HAProxyCfgInformer {
 	return &hAProxyCfgInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// HAProxyCRTListFiles returns a HAProxyCRTListFileInformer.
+func (v *version) HAProxyCRTListFiles() HAProxyCRTListFileInformer {
+	return &hAProxyCRTListFileInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// HAProxyGeneralFiles returns a HAProxyGeneralFileInformer.
+func (v *version) HAProxyGeneralFiles() HAProxyGeneralFileInformer {
+	return &hAProxyGeneralFileInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // HAProxyMapFiles returns a HAProxyMapFileInformer.

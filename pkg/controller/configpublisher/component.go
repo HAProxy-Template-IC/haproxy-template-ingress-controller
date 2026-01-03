@@ -245,6 +245,7 @@ func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent
 		RenderedAt:              renderedAt,
 		ValidatedAt:             time.Now(),
 		Checksum:                checksum,
+		CompressionThreshold:    templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold,
 	}
 
 	// Call pure publisher (non-blocking - log errors but don't fail)
@@ -348,6 +349,7 @@ func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) 
 		Checksum:                checksum,
 		NameSuffix:              "-invalid",
 		ValidationError:         validationError,
+		CompressionThreshold:    templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold,
 	}
 
 	// Call pure publisher (non-blocking - log errors but don't fail)

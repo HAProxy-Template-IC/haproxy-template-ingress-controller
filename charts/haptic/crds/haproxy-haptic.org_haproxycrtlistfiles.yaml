@@ -4,21 +4,21 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
-  name: haproxymapfiles.haproxy-haptic.org
+  name: haproxycrtlistfiles.haproxy-haptic.org
 spec:
   group: haproxy-haptic.org
   names:
-    kind: HAProxyMapFile
-    listKind: HAProxyMapFileList
-    plural: haproxymapfiles
+    kind: HAProxyCRTListFile
+    listKind: HAProxyCRTListFileList
+    plural: haproxycrtlistfiles
     shortNames:
-    - hpmap
-    singular: haproxymapfile
+    - hpcl
+    singular: haproxycrtlistfile
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.mapName
-      name: Map Name
+    - jsonPath: .spec.listName
+      name: List Name
       type: string
     - jsonPath: .spec.path
       name: Path
@@ -30,11 +30,11 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          HAProxyMapFile contains a rendered HAProxy map file.
+          HAProxyCRTListFile contains a rendered HAProxy crt-list file.
 
-          This is a read-only resource automatically created and updated by the controller
-          to expose map files generated from templates. Each HAProxyMapFile is owned by
-          a HAProxyConfig resource.
+          CRT-list files contain SSL certificate references with per-certificate options
+          and SNI filters. This is a read-only resource automatically created and updated
+          by the controller. Each HAProxyCRTListFile is owned by a HAProxyCfg resource.
         properties:
           apiVersion:
             description: |-
@@ -54,11 +54,11 @@ spec:
           metadata:
             type: object
           spec:
-            description: HAProxyMapFileSpec contains the map file content.
+            description: HAProxyCRTListFileSpec contains the crt-list file content.
             properties:
               checksum:
                 description: |-
-                  Checksum is the SHA-256 hash of the map file entries.
+                  Checksum is the SHA-256 hash of the crt-list entries.
 
                   Used to detect changes and verify consistency across pods.
                   Format: sha256:<hex-digest>
@@ -72,43 +72,45 @@ spec:
                 type: boolean
               entries:
                 description: |-
-                  Entries is the map file content in HAProxy map format.
+                  Entries is the crt-list file content.
 
-                  Each line typically contains a key-value pair separated by whitespace.
+                  Each line contains a certificate path with optional SSL options and SNI filters.
+                  Format: <cert-path> [ssl-options] [sni-filter]
                   Example:
-                    /api backend-api
-                    /web backend-web
+                    /etc/haproxy/ssl/example.com.pem [ocsp-update on] example.com
+                    /etc/haproxy/ssl/wildcard.pem *.example.org
                 minLength: 1
                 type: string
-              mapName:
+              listName:
                 description: |-
-                  MapName is the logical name of the map file.
+                  ListName is the logical name of the crt-list file.
 
-                  This corresponds to the key in HAProxyTemplateConfig.spec.maps.
+                  Example: "frontend-certs" or "backend-client-certs"
                 minLength: 1
                 type: string
               path:
                 description: |-
-                  Path is the file system path where this map file is stored.
+                  Path is the file system path where this crt-list file is stored.
 
-                  Example: /etc/haproxy/maps/path-prefix.map
+                  Example: /etc/haproxy/crt-lists/frontend.crtlist
                 minLength: 1
                 type: string
             required:
             - checksum
             - entries
-            - mapName
+            - listName
             - path
             type: object
           status:
-            description: HAProxyMapFileStatus tracks deployment state to HAProxy pods.
+            description: HAProxyCRTListFileStatus tracks deployment state to HAProxy
+              pods.
             properties:
               conditions:
                 description: |-
                   Conditions represent the latest available observations of the resource's state.
 
                   Standard conditions include:
-                  - "Synced": Map file has been successfully applied to all target pods
+                  - "Synced": CRT-list file has been successfully applied to all target pods
                   - "Ready": Resource is ready for use
                 items:
                   description: Condition contains details for one aspect of the current
@@ -170,9 +172,9 @@ spec:
                 x-kubernetes-list-type: map
               deployedToPods:
                 description: |-
-                  DeployedToPods tracks which HAProxy pods currently have this map file.
+                  DeployedToPods tracks which HAProxy pods currently have this crt-list file.
 
-                  Pods are automatically added when the map file is applied and removed when
+                  Pods are automatically added when the crt-list file is applied and removed when
                   the pod terminates.
                 items:
                   description: PodDeploymentStatus tracks deployment to a specific

@@ -57,6 +57,24 @@ spec:
                 description: Controller contains controller-level settings (ports,
                   leader election, etc.).
                 properties:
+                  configPublishing:
+                    description: ConfigPublishing configures how rendered configs
+                      are stored in CRDs.
+                    properties:
+                      compressionThreshold:
+                        default: 1048576
+                        description: |-
+                          CompressionThreshold is the minimum size in bytes at which configs are compressed.
+
+                          Configs smaller than this threshold are stored uncompressed.
+                          Compression uses zstd+base64 encoding.
+
+                          Default: 1048576 (1 MiB)
+                          Set to 0 or negative to disable compression.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    type: object
                   leaderElection:
                     description: LeaderElection configures leader election for high
                       availability.

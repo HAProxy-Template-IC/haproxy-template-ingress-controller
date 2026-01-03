@@ -45,6 +45,9 @@ func TestConvertSpec(t *testing.T) {
 					LeaderElection: config.LeaderElectionConfig{
 						Enabled: true, // Default when not specified
 					},
+					ConfigPublishing: config.ConfigPublishingConfig{
+						CompressionThreshold: config.DefaultCompressionThreshold, // Default when not set
+					},
 				},
 				HAProxyConfig: config.HAProxyConfig{
 					Template: "global\n  daemon",
@@ -134,6 +137,9 @@ func TestConvertSpec(t *testing.T) {
 						RenewDeadline: "10s",
 						RetryPeriod:   "2s",
 					},
+					ConfigPublishing: config.ConfigPublishingConfig{
+						CompressionThreshold: config.DefaultCompressionThreshold, // Default when not set
+					},
 				},
 				Logging: config.LoggingConfig{
 					Level: "INFO",
@@ -206,6 +212,9 @@ func TestConvertSpec(t *testing.T) {
 				Controller: config.ControllerConfig{
 					LeaderElection: config.LeaderElectionConfig{
 						Enabled: false,
+					},
+					ConfigPublishing: config.ConfigPublishingConfig{
+						CompressionThreshold: config.DefaultCompressionThreshold, // Default when not set
 					},
 				},
 				HAProxyConfig: config.HAProxyConfig{

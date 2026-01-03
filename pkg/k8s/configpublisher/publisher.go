@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 
@@ -80,34 +82,13 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		RuntimeConfigNamespace: runtimeConfig.Namespace,
 		MapFileNames:           []string{},
 		SecretNames:            []string{},
+		GeneralFileNames:       []string{},
+		CRTListFileNames:       []string{},
 	}
 
-	// Create or update map files
+	// Publish auxiliary files (map files, SSL secrets, general files, crt-list files)
 	if req.AuxiliaryFiles != nil {
-		for _, mapFile := range req.AuxiliaryFiles.MapFiles {
-			mapFileName, err := p.createOrUpdateMapFile(ctx, req, runtimeConfig, mapFile)
-			if err != nil {
-				p.logger.Warn("failed to create/update map file",
-					"name", mapFile.Path,
-					"error", err,
-				)
-				continue // Non-blocking - log and continue
-			}
-			result.MapFileNames = append(result.MapFileNames, mapFileName)
-		}
-
-		// Create or update SSL certificate secrets
-		for _, cert := range req.AuxiliaryFiles.SSLCertificates {
-			secretName, err := p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, cert)
-			if err != nil {
-				p.logger.Warn("failed to create/update SSL secret",
-					"path", cert.Path,
-					"error", err,
-				)
-				continue // Non-blocking - log and continue
-			}
-			result.SecretNames = append(result.SecretNames, secretName)
-		}
+		p.publishAuxiliaryFiles(ctx, req, runtimeConfig, result)
 	}
 
 	// Update HAProxyCfg status with child resource references
@@ -123,9 +104,72 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		"runtimeConfig", runtimeConfig.Name,
 		"mapFiles", len(result.MapFileNames),
 		"secrets", len(result.SecretNames),
+		"generalFiles", len(result.GeneralFileNames),
+		"crtListFiles", len(result.CRTListFileNames),
 	)
 
 	return result, nil
+}
+
+// publishAuxiliaryFiles creates or updates all auxiliary file resources.
+// Errors are logged but don't fail the overall publish operation.
+func (p *Publisher) publishAuxiliaryFiles(
+	ctx context.Context,
+	req *PublishRequest,
+	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
+	result *PublishResult,
+) {
+	// Create or update map files
+	for _, mapFile := range req.AuxiliaryFiles.MapFiles {
+		mapFileName, err := p.createOrUpdateMapFile(ctx, req, runtimeConfig, mapFile)
+		if err != nil {
+			p.logger.Warn("failed to create/update map file",
+				"name", mapFile.Path,
+				"error", err,
+			)
+			continue
+		}
+		result.MapFileNames = append(result.MapFileNames, mapFileName)
+	}
+
+	// Create or update SSL certificate secrets
+	for _, cert := range req.AuxiliaryFiles.SSLCertificates {
+		secretName, err := p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, cert)
+		if err != nil {
+			p.logger.Warn("failed to create/update SSL secret",
+				"path", cert.Path,
+				"error", err,
+			)
+			continue
+		}
+		result.SecretNames = append(result.SecretNames, secretName)
+	}
+
+	// Create or update general files
+	for _, generalFile := range req.AuxiliaryFiles.GeneralFiles {
+		generalFileName, err := p.createOrUpdateGeneralFile(ctx, req, runtimeConfig, generalFile)
+		if err != nil {
+			p.logger.Warn("failed to create/update general file",
+				"name", generalFile.Filename,
+				"error", err,
+			)
+			continue
+		}
+		result.GeneralFileNames = append(result.GeneralFileNames, generalFileName)
+	}
+
+	// Create or update crt-list files
+	for _, crtListFile := range req.AuxiliaryFiles.CRTListFiles {
+		crtListFileName, err := p.createOrUpdateCRTListFile(ctx, req, runtimeConfig, crtListFile)
+		if err != nil {
+			p.logger.Warn("failed to create/update crt-list file",
+				"path", crtListFile.Path,
+				"error", err,
+			)
+			continue
+		}
+		result.CRTListFileNames = append(result.CRTListFileNames, crtListFileName)
+	}
 }
 
 // UpdateDeploymentStatus updates the deployment status to add a pod.
@@ -180,6 +224,28 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 					"error", err,
 				)
 				// Non-blocking - continue with other map files
+			}
+		}
+
+		// Update all child general files
+		for _, generalFileRef := range runtimeConfig.Status.AuxiliaryFiles.GeneralFiles {
+			if err := p.updateGeneralFileDeploymentStatus(ctx, generalFileRef.Namespace, generalFileRef.Name, &podStatus); err != nil {
+				p.logger.Warn("failed to update general file deployment status",
+					"generalFile", generalFileRef.Name,
+					"error", err,
+				)
+				// Non-blocking - continue with other general files
+			}
+		}
+
+		// Update all child crt-list files
+		for _, crtListFileRef := range runtimeConfig.Status.AuxiliaryFiles.CRTListFiles {
+			if err := p.updateCRTListFileDeploymentStatus(ctx, crtListFileRef.Namespace, crtListFileRef.Name, &podStatus); err != nil {
+				p.logger.Warn("failed to update crt-list file deployment status",
+					"crtListFile", crtListFileRef.Name,
+					"error", err,
+				)
+				// Non-blocking - continue with other crt-list files
 			}
 		}
 	}
@@ -257,8 +323,8 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 		return
 	}
 
-	// Clean up map files
-	p.cleanupMapFiles(ctx, runtimeConfig.Status.AuxiliaryFiles, cleanup)
+	// Clean up auxiliary files (map files, general files, crt-list files)
+	p.cleanupAuxiliaryFilePodReferences(ctx, runtimeConfig.Status.AuxiliaryFiles, cleanup)
 }
 
 // removePodFromList removes a pod from the deployment status list.
@@ -277,8 +343,8 @@ func (p *Publisher) removePodFromList(pods []haproxyv1alpha1.PodDeploymentStatus
 	return newPods, removed
 }
 
-// cleanupMapFiles removes pod reference from all map files.
-func (p *Publisher) cleanupMapFiles(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, cleanup *PodCleanupRequest) {
+// cleanupAuxiliaryFilePodReferences removes pod reference from all auxiliary files (map files, general files, crt-list files).
+func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, cleanup *PodCleanupRequest) {
 	if auxFiles == nil {
 		return
 	}
@@ -287,6 +353,26 @@ func (p *Publisher) cleanupMapFiles(ctx context.Context, auxFiles *haproxyv1alph
 		if err := p.cleanupMapFilePodReference(ctx, mapFileRef.Namespace, mapFileRef.Name, *cleanup); err != nil {
 			p.logger.Warn("failed to cleanup map file pod reference",
 				"mapFile", mapFileRef.Name,
+				"error", err,
+			)
+			// Non-blocking - continue
+		}
+	}
+
+	for _, generalFileRef := range auxFiles.GeneralFiles {
+		if err := p.cleanupGeneralFilePodReference(ctx, generalFileRef.Namespace, generalFileRef.Name, *cleanup); err != nil {
+			p.logger.Warn("failed to cleanup general file pod reference",
+				"generalFile", generalFileRef.Name,
+				"error", err,
+			)
+			// Non-blocking - continue
+		}
+	}
+
+	for _, crtListFileRef := range auxFiles.CRTListFiles {
+		if err := p.cleanupCRTListFilePodReference(ctx, crtListFileRef.Namespace, crtListFileRef.Name, *cleanup); err != nil {
+			p.logger.Warn("failed to cleanup crt-list file pod reference",
+				"crtListFile", crtListFileRef.Name,
 				"error", err,
 			)
 			// Non-blocking - continue
@@ -316,6 +402,9 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 
 // buildRuntimeConfig constructs a HAProxyCfg resource from the request.
 func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haproxyv1alpha1.HAProxyCfg {
+	// Compress if content exceeds threshold
+	result := p.compressIfNeeded(req.Config, req.CompressionThreshold, "HAProxyCfg")
+
 	runtimeConfig := &haproxyv1alpha1.HAProxyCfg{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -335,9 +424,10 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 			},
 		},
 		Spec: haproxyv1alpha1.HAProxyCfgSpec{
-			Path:     req.ConfigPath,
-			Content:  req.Config,
-			Checksum: req.Checksum,
+			Path:       req.ConfigPath,
+			Content:    result.content,
+			Checksum:   req.Checksum, // Checksum is of original content
+			Compressed: result.compressed,
 		},
 	}
 
@@ -463,7 +553,10 @@ func (p *Publisher) updateExistingStatus(ctx context.Context, req *PublishReques
 // createOrUpdateMapFile creates or updates a HAProxyMapFile resource.
 func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, mapFile auxiliaryfiles.MapFile) (string, error) {
 	name := p.generateMapFileName(filepath.Base(mapFile.Path))
-	checksum := calculateChecksum(mapFile.Content)
+	checksum := calculateChecksum(mapFile.Content) // Checksum of original content
+
+	// Compress if content exceeds threshold
+	result := p.compressIfNeeded(mapFile.Content, req.CompressionThreshold, "HAProxyMapFile/"+name)
 
 	mapFileResource := &haproxyv1alpha1.HAProxyMapFile{
 		ObjectMeta: metav1.ObjectMeta{
@@ -484,10 +577,11 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 			},
 		},
 		Spec: haproxyv1alpha1.HAProxyMapFileSpec{
-			MapName:  filepath.Base(mapFile.Path),
-			Path:     mapFile.Path,
-			Entries:  mapFile.Content,
-			Checksum: checksum,
+			MapName:    filepath.Base(mapFile.Path),
+			Path:       mapFile.Path,
+			Entries:    result.content,
+			Checksum:   checksum,
+			Compressed: result.compressed,
 		},
 	}
 
@@ -530,6 +624,9 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, cert auxiliaryfiles.SSLCertificate) (string, error) {
 	name := p.generateSecretName(filepath.Base(cert.Path))
 
+	// Compress if content exceeds threshold
+	result := p.compressIfNeeded(cert.Content, req.CompressionThreshold, "Secret/"+name)
+
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -537,6 +634,9 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 			Labels: map[string]string{
 				"haproxy-haptic.org/runtime-config": owner.Name,
 				"haproxy-haptic.org/type":           "ssl-certificate",
+			},
+			Annotations: map[string]string{
+				"haproxy-haptic.org/compressed": strconv.FormatBool(result.compressed),
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -551,7 +651,7 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			"certificate": []byte(cert.Content),
+			"certificate": []byte(result.content),
 			"path":        []byte(cert.Path),
 		},
 	}
@@ -580,12 +680,153 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 	// Update existing secret
 	existing.Data = secret.Data
 	existing.Labels = secret.Labels
+	existing.Annotations = secret.Annotations
 
 	updated, err := p.k8sClient.CoreV1().
 		Secrets(req.TemplateConfigNamespace).
 		Update(ctx, existing, metav1.UpdateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to update secret: %w", err)
+	}
+
+	return updated.Name, nil
+}
+
+// createOrUpdateGeneralFile creates or updates a HAProxyGeneralFile resource.
+func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, generalFile auxiliaryfiles.GeneralFile) (string, error) {
+	name := p.generateGeneralFileName(generalFile.Filename)
+	checksum := calculateChecksum(generalFile.Content) // Checksum of original content
+
+	// Compress if content exceeds threshold
+	result := p.compressIfNeeded(generalFile.Content, req.CompressionThreshold, "HAProxyGeneralFile/"+name)
+
+	generalFileResource := &haproxyv1alpha1.HAProxyGeneralFile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: req.TemplateConfigNamespace,
+			Labels: map[string]string{
+				"haproxy-haptic.org/runtime-config": owner.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         "haproxy-haptic.org/v1alpha1",
+					Kind:               "HAProxyCfg",
+					Name:               owner.Name,
+					UID:                owner.UID,
+					Controller:         boolPtr(true),
+					BlockOwnerDeletion: boolPtr(true),
+				},
+			},
+		},
+		Spec: haproxyv1alpha1.HAProxyGeneralFileSpec{
+			FileName:   generalFile.Filename,
+			Path:       generalFile.Path,
+			Content:    result.content,
+			Checksum:   checksum,
+			Compressed: result.compressed,
+		},
+	}
+
+	// Try to get existing resource
+	existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles(req.TemplateConfigNamespace).
+		Get(ctx, name, metav1.GetOptions{})
+
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return "", fmt.Errorf("failed to get existing general file: %w", err)
+		}
+
+		// Create new resource
+		created, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyGeneralFiles(req.TemplateConfigNamespace).
+			Create(ctx, generalFileResource, metav1.CreateOptions{})
+		if err != nil {
+			return "", fmt.Errorf("failed to create general file: %w", err)
+		}
+
+		return created.Name, nil
+	}
+
+	// Update existing resource
+	existing.Spec = generalFileResource.Spec
+	existing.Labels = generalFileResource.Labels
+
+	updated, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles(req.TemplateConfigNamespace).
+		Update(ctx, existing, metav1.UpdateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to update general file: %w", err)
+	}
+
+	return updated.Name, nil
+}
+
+// createOrUpdateCRTListFile creates or updates a HAProxyCRTListFile resource.
+func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, crtListFile auxiliaryfiles.CRTListFile) (string, error) {
+	name := p.generateCRTListFileName(crtListFile.Path)
+	checksum := calculateChecksum(crtListFile.Content) // Checksum of original content
+
+	// Compress if content exceeds threshold
+	result := p.compressIfNeeded(crtListFile.Content, req.CompressionThreshold, "HAProxyCRTListFile/"+name)
+
+	crtListResource := &haproxyv1alpha1.HAProxyCRTListFile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: req.TemplateConfigNamespace,
+			Labels: map[string]string{
+				"haproxy-haptic.org/runtime-config": owner.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         "haproxy-haptic.org/v1alpha1",
+					Kind:               "HAProxyCfg",
+					Name:               owner.Name,
+					UID:                owner.UID,
+					Controller:         boolPtr(true),
+					BlockOwnerDeletion: boolPtr(true),
+				},
+			},
+		},
+		Spec: haproxyv1alpha1.HAProxyCRTListFileSpec{
+			ListName:   filepath.Base(crtListFile.Path),
+			Path:       crtListFile.Path,
+			Entries:    result.content,
+			Checksum:   checksum,
+			Compressed: result.compressed,
+		},
+	}
+
+	// Try to get existing resource
+	existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles(req.TemplateConfigNamespace).
+		Get(ctx, name, metav1.GetOptions{})
+
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return "", fmt.Errorf("failed to get existing crt-list file: %w", err)
+		}
+
+		// Create new resource
+		created, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCRTListFiles(req.TemplateConfigNamespace).
+			Create(ctx, crtListResource, metav1.CreateOptions{})
+		if err != nil {
+			return "", fmt.Errorf("failed to create crt-list file: %w", err)
+		}
+
+		return created.Name, nil
+	}
+
+	// Update existing resource
+	existing.Spec = crtListResource.Spec
+	existing.Labels = crtListResource.Labels
+
+	updated, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles(req.TemplateConfigNamespace).
+		Update(ctx, existing, metav1.UpdateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to update crt-list file: %w", err)
 	}
 
 	return updated.Name, nil
@@ -626,6 +867,26 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 		})
 	}
 
+	// Update general file references
+	current.Status.AuxiliaryFiles.GeneralFiles = []haproxyv1alpha1.ResourceReference{}
+	for _, name := range result.GeneralFileNames {
+		current.Status.AuxiliaryFiles.GeneralFiles = append(current.Status.AuxiliaryFiles.GeneralFiles, haproxyv1alpha1.ResourceReference{
+			Kind:      "HAProxyGeneralFile",
+			Name:      name,
+			Namespace: runtimeConfig.Namespace,
+		})
+	}
+
+	// Update crt-list file references
+	current.Status.AuxiliaryFiles.CRTListFiles = []haproxyv1alpha1.ResourceReference{}
+	for _, name := range result.CRTListFileNames {
+		current.Status.AuxiliaryFiles.CRTListFiles = append(current.Status.AuxiliaryFiles.CRTListFiles, haproxyv1alpha1.ResourceReference{
+			Kind:      "HAProxyCRTListFile",
+			Name:      name,
+			Namespace: runtimeConfig.Namespace,
+		})
+	}
+
 	// Calculate total size
 	totalSize := int64(len(runtimeConfig.Spec.Content))
 	if current.Status.Metadata != nil {
@@ -654,25 +915,61 @@ func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace
 		return fmt.Errorf("failed to get map file: %w", err)
 	}
 
-	// Add or update pod in deployedToPods list
-	updated := false
-	for i := range mapFile.Status.DeployedToPods {
-		if mapFile.Status.DeployedToPods[i].PodName == podStatus.PodName {
-			mapFile.Status.DeployedToPods[i] = *podStatus
-			updated = true
-			break
-		}
-	}
-
-	if !updated {
-		mapFile.Status.DeployedToPods = append(mapFile.Status.DeployedToPods, *podStatus)
-	}
+	mapFile.Status.DeployedToPods = addOrUpdatePodStatus(mapFile.Status.DeployedToPods, podStatus)
 
 	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyMapFiles(namespace).
 		UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update map file status: %w", err)
+	}
+
+	return nil
+}
+
+// updateGeneralFileDeploymentStatus updates a general file's deployment status.
+func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
+	generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // General file might have been deleted
+		}
+		return fmt.Errorf("failed to get general file: %w", err)
+	}
+
+	generalFile.Status.DeployedToPods = addOrUpdatePodStatus(generalFile.Status.DeployedToPods, podStatus)
+
+	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles(namespace).
+		UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update general file status: %w", err)
+	}
+
+	return nil
+}
+
+// updateCRTListFileDeploymentStatus updates a crt-list file's deployment status.
+func (p *Publisher) updateCRTListFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
+	crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // CRT list file might have been deleted
+		}
+		return fmt.Errorf("failed to get crt-list file: %w", err)
+	}
+
+	crtListFile.Status.DeployedToPods = addOrUpdatePodStatus(crtListFile.Status.DeployedToPods, podStatus)
+
+	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles(namespace).
+		UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update crt-list file status: %w", err)
 	}
 
 	return nil
@@ -690,23 +987,12 @@ func (p *Publisher) cleanupMapFilePodReference(ctx context.Context, namespace, n
 		return fmt.Errorf("failed to get map file: %w", err)
 	}
 
-	// Remove pod from deployedToPods list
-	newDeployedToPods := []haproxyv1alpha1.PodDeploymentStatus{}
-	removed := false
-
-	for i := range mapFile.Status.DeployedToPods {
-		if mapFile.Status.DeployedToPods[i].PodName == cleanup.PodName {
-			removed = true
-			continue
-		}
-		newDeployedToPods = append(newDeployedToPods, mapFile.Status.DeployedToPods[i])
-	}
-
+	newPods, removed := removePodFromStatus(mapFile.Status.DeployedToPods, cleanup.PodName)
 	if !removed {
 		return nil // Pod not in this map file
 	}
 
-	mapFile.Status.DeployedToPods = newDeployedToPods
+	mapFile.Status.DeployedToPods = newPods
 
 	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyMapFiles(namespace).
@@ -718,7 +1004,94 @@ func (p *Publisher) cleanupMapFilePodReference(ctx context.Context, namespace, n
 	return nil
 }
 
+// cleanupGeneralFilePodReference removes a pod from a general file's deployment status.
+func (p *Publisher) cleanupGeneralFilePodReference(ctx context.Context, namespace, name string, cleanup PodCleanupRequest) error {
+	generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // General file might have been deleted
+		}
+		return fmt.Errorf("failed to get general file: %w", err)
+	}
+
+	newPods, removed := removePodFromStatus(generalFile.Status.DeployedToPods, cleanup.PodName)
+	if !removed {
+		return nil // Pod not in this general file
+	}
+
+	generalFile.Status.DeployedToPods = newPods
+
+	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles(namespace).
+		UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update general file status: %w", err)
+	}
+
+	return nil
+}
+
+// cleanupCRTListFilePodReference removes a pod from a crt-list file's deployment status.
+func (p *Publisher) cleanupCRTListFilePodReference(ctx context.Context, namespace, name string, cleanup PodCleanupRequest) error {
+	crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // CRT list file might have been deleted
+		}
+		return fmt.Errorf("failed to get crt-list file: %w", err)
+	}
+
+	newPods, removed := removePodFromStatus(crtListFile.Status.DeployedToPods, cleanup.PodName)
+	if !removed {
+		return nil // Pod not in this crt-list file
+	}
+
+	crtListFile.Status.DeployedToPods = newPods
+
+	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles(namespace).
+		UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update crt-list file status: %w", err)
+	}
+
+	return nil
+}
+
 // Helper functions
+
+// addOrUpdatePodStatus adds or updates a pod in the deployment status list.
+// Returns the updated slice. This is a simple helper for auxiliary file types
+// (MapFile, GeneralFile, CRTListFile) that don't need the complex logic
+// used by HAProxyCfg's updateOrAppendPodStatus.
+func addOrUpdatePodStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podStatus *haproxyv1alpha1.PodDeploymentStatus) []haproxyv1alpha1.PodDeploymentStatus {
+	for i := range pods {
+		if pods[i].PodName == podStatus.PodName {
+			pods[i] = *podStatus
+			return pods
+		}
+	}
+	return append(pods, *podStatus)
+}
+
+// removePodFromStatus removes a pod from the deployment status list.
+// Returns the updated slice and whether the pod was found and removed.
+func removePodFromStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podName string) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
+	newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(pods))
+	removed := false
+	for i := range pods {
+		if pods[i].PodName == podName {
+			removed = true
+			continue
+		}
+		newPods = append(newPods, pods[i])
+	}
+	return newPods, removed
+}
 
 // updateOrAppendPodStatus updates an existing pod status or appends a new one.
 // Returns the updated slice.
@@ -853,6 +1226,27 @@ func (p *Publisher) generateSecretName(certPath string) string {
 	return "haproxy-cert-" + name
 }
 
+func (p *Publisher) generateGeneralFileName(fileName string) string {
+	// Sanitize file name to create valid Kubernetes resource name
+	name := filepath.Base(fileName)
+	if ext := filepath.Ext(name); ext != "" {
+		name = name[:len(name)-len(ext)]
+	}
+	name = strings.ReplaceAll(name, "_", "-")
+	name = strings.ReplaceAll(name, ".", "-")
+	return "haproxy-file-" + name
+}
+
+func (p *Publisher) generateCRTListFileName(listPath string) string {
+	// Sanitize list path to create valid Kubernetes resource name
+	name := filepath.Base(listPath)
+	if ext := filepath.Ext(name); ext != "" {
+		name = name[:len(name)-len(ext)]
+	}
+	name = strings.ReplaceAll(name, "_", "-")
+	return "haproxy-crtlist-" + name
+}
+
 func calculateChecksum(content string) string {
 	hash := sha256.Sum256([]byte(content))
 	return fmt.Sprintf("sha256:%x", hash)
@@ -860,4 +1254,52 @@ func calculateChecksum(content string) string {
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+// compressResult holds the result of a compression attempt.
+type compressResult struct {
+	content    string
+	compressed bool
+}
+
+// compressIfNeeded compresses content if it exceeds the threshold and compression is beneficial.
+// Returns the (possibly compressed) content and whether compression was applied.
+//
+// Threshold semantics:
+//   - threshold <= 0: compression disabled (never compress)
+//   - threshold > 0: compress if content exceeds threshold
+func (p *Publisher) compressIfNeeded(content string, threshold int64, resourceType string) compressResult {
+	if threshold <= 0 || int64(len(content)) <= threshold {
+		return compressResult{content: content, compressed: false}
+	}
+
+	compressedContent, err := compression.Compress(content)
+	if err != nil {
+		p.logger.Warn("compression failed, storing uncompressed",
+			"resource_type", resourceType,
+			"error", err,
+			"size_bytes", len(content),
+		)
+		return compressResult{content: content, compressed: false}
+	}
+
+	// Only use compression if it actually reduces size
+	if len(compressedContent) >= len(content) {
+		p.logger.Debug("compression skipped, no size reduction",
+			"resource_type", resourceType,
+			"original_bytes", len(content),
+			"compressed_bytes", len(compressedContent),
+		)
+		return compressResult{content: content, compressed: false}
+	}
+
+	ratio := float64(len(compressedContent)) * 100 / float64(len(content))
+	p.logger.Info("compressed content for CRD storage",
+		"resource_type", resourceType,
+		"original_bytes", len(content),
+		"compressed_bytes", len(compressedContent),
+		"ratio", fmt.Sprintf("%.1f%%", ratio),
+	)
+
+	return compressResult{content: compressedContent, compressed: true}
 }

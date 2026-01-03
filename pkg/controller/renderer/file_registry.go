@@ -166,9 +166,9 @@ func (r *FileRegistry) GetFiles() *dataplane.AuxiliaryFiles {
 			})
 
 		case "file":
-			// GeneralFile uses Filename (base name) not Path
 			files.GeneralFiles = append(files.GeneralFiles, auxiliaryfiles.GeneralFile{
 				Filename: filepath.Base(reg.Path),
+				Path:     reg.Path,
 				Content:  reg.Content,
 			})
 		}

@@ -9,6 +9,7 @@ dependenciesRules:
   - package: "**.pkg.controller.**"
     shouldOnlyDependsOn:
       internal:
+        - "**.pkg.compression.**"  # Decompression for CRD content
         - "**.pkg.controller.**"
         - "**.pkg.core.**"
         - "**.pkg.dataplane.**"
@@ -242,6 +243,22 @@ dependenciesRules:
         - "**.pkg.httpstore.**"
         - "**.pkg.introspection.**"
         - "**.pkg.k8s.**"
+        - "**.pkg.metrics.**"
+        - "**.pkg.templating.**"
+        - "**.pkg.webhook.**"
+
+  # Rule 20: compression package should NOT depend on other top-level packages (pure library)
+  - package: "**.pkg.compression.**"
+    shouldNotDependsOn:
+      internal:
+        - "**.pkg.controller.**"
+        - "**.pkg.core.**"
+        - "**.pkg.dataplane.**"
+        - "**.pkg.events.**"
+        - "**.pkg.httpstore.**"
+        - "**.pkg.introspection.**"
+        - "**.pkg.k8s.**"
+        - "**.pkg.lifecycle.**"
         - "**.pkg.metrics.**"
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"

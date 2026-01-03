@@ -30,6 +30,14 @@ func (c *FakeHaproxyTemplateICV1alpha1) HAProxyCfgs(namespace string) v1alpha1.H
 	return newFakeHAProxyCfgs(c, namespace)
 }
 
+func (c *FakeHaproxyTemplateICV1alpha1) HAProxyCRTListFiles(namespace string) v1alpha1.HAProxyCRTListFileInterface {
+	return newFakeHAProxyCRTListFiles(c, namespace)
+}
+
+func (c *FakeHaproxyTemplateICV1alpha1) HAProxyGeneralFiles(namespace string) v1alpha1.HAProxyGeneralFileInterface {
+	return newFakeHAProxyGeneralFiles(c, namespace)
+}
+
 func (c *FakeHaproxyTemplateICV1alpha1) HAProxyMapFiles(namespace string) v1alpha1.HAProxyMapFileInterface {
 	return newFakeHAProxyMapFiles(c, namespace)
 }

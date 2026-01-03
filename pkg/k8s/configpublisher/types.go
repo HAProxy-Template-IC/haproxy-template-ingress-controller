@@ -22,7 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// AuxiliaryFiles contains all auxiliary files (maps, certificates, general files).
+// AuxiliaryFiles contains all auxiliary files (maps, certificates, general files, crt-lists).
 type AuxiliaryFiles struct {
 	// MapFiles contains HAProxy map files.
 	MapFiles []auxiliaryfiles.MapFile
@@ -32,6 +32,9 @@ type AuxiliaryFiles struct {
 
 	// GeneralFiles contains general-purpose files (error pages, etc.).
 	GeneralFiles []auxiliaryfiles.GeneralFile
+
+	// CRTListFiles contains crt-list files for SSL certificate lists.
+	CRTListFiles []auxiliaryfiles.CRTListFile
 }
 
 // PublishRequest contains the information needed to publish HAProxy runtime configuration.
@@ -73,6 +76,12 @@ type PublishRequest struct {
 	// When set, this indicates the configuration is invalid and should not be deployed.
 	// +optional
 	ValidationError string
+
+	// CompressionThreshold is the minimum size in bytes at which configs are compressed.
+	// Configs smaller than this threshold are stored uncompressed.
+	// Set to 0 or negative to disable compression.
+	// Set to a positive value (e.g., 1048576 for 1 MiB) to enable compression.
+	CompressionThreshold int64
 }
 
 // PublishResult contains the result of publishing configuration resources.
@@ -88,6 +97,12 @@ type PublishResult struct {
 
 	// SecretNames lists the names of created/updated Secret resources for SSL certificates.
 	SecretNames []string
+
+	// GeneralFileNames lists the names of created/updated HAProxyGeneralFile resources.
+	GeneralFileNames []string
+
+	// CRTListFileNames lists the names of created/updated HAProxyCRTListFile resources.
+	CRTListFileNames []string
 }
 
 // DeploymentStatusUpdate contains information about a configuration deployment to a pod.

@@ -4,21 +4,21 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
-  name: haproxymapfiles.haproxy-haptic.org
+  name: haproxygeneralfiles.haproxy-haptic.org
 spec:
   group: haproxy-haptic.org
   names:
-    kind: HAProxyMapFile
-    listKind: HAProxyMapFileList
-    plural: haproxymapfiles
+    kind: HAProxyGeneralFile
+    listKind: HAProxyGeneralFileList
+    plural: haproxygeneralfiles
     shortNames:
-    - hpmap
-    singular: haproxymapfile
+    - hpgf
+    singular: haproxygeneralfile
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.mapName
-      name: Map Name
+    - jsonPath: .spec.fileName
+      name: File Name
       type: string
     - jsonPath: .spec.path
       name: Path
@@ -30,11 +30,11 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          HAProxyMapFile contains a rendered HAProxy map file.
+          HAProxyGeneralFile contains a rendered HAProxy general file (error pages, custom responses, etc.).
 
           This is a read-only resource automatically created and updated by the controller
-          to expose map files generated from templates. Each HAProxyMapFile is owned by
-          a HAProxyConfig resource.
+          to expose general files generated from templates. Each HAProxyGeneralFile is owned by
+          a HAProxyCfg resource.
         properties:
           apiVersion:
             description: |-
@@ -54,11 +54,11 @@ spec:
           metadata:
             type: object
           spec:
-            description: HAProxyMapFileSpec contains the map file content.
+            description: HAProxyGeneralFileSpec contains the general file content.
             properties:
               checksum:
                 description: |-
-                  Checksum is the SHA-256 hash of the map file entries.
+                  Checksum is the SHA-256 hash of the file content.
 
                   Used to detect changes and verify consistency across pods.
                   Format: sha256:<hex-digest>
@@ -66,49 +66,48 @@ spec:
                 type: string
               compressed:
                 description: |-
-                  Compressed indicates the entries are zstd+base64 encoded.
+                  Compressed indicates the content is zstd+base64 encoded.
 
                   When true, consumers must decompress before use.
                 type: boolean
-              entries:
+              content:
                 description: |-
-                  Entries is the map file content in HAProxy map format.
+                  Content is the file content.
 
-                  Each line typically contains a key-value pair separated by whitespace.
-                  Example:
-                    /api backend-api
-                    /web backend-web
+                  This can be any content the HAProxy configuration references,
+                  such as custom error pages or response files.
                 minLength: 1
                 type: string
-              mapName:
+              fileName:
                 description: |-
-                  MapName is the logical name of the map file.
+                  FileName is the logical name of the file.
 
-                  This corresponds to the key in HAProxyTemplateConfig.spec.maps.
+                  This corresponds to the key in HAProxyTemplateConfig.spec.files.
                 minLength: 1
                 type: string
               path:
                 description: |-
-                  Path is the file system path where this map file is stored.
+                  Path is the file system path where this file is stored.
 
-                  Example: /etc/haproxy/maps/path-prefix.map
+                  Example: /etc/haproxy/general/503.http
                 minLength: 1
                 type: string
             required:
             - checksum
-            - entries
-            - mapName
+            - content
+            - fileName
             - path
             type: object
           status:
-            description: HAProxyMapFileStatus tracks deployment state to HAProxy pods.
+            description: HAProxyGeneralFileStatus tracks deployment state to HAProxy
+              pods.
             properties:
               conditions:
                 description: |-
                   Conditions represent the latest available observations of the resource's state.
 
                   Standard conditions include:
-                  - "Synced": Map file has been successfully applied to all target pods
+                  - "Synced": File has been successfully applied to all target pods
                   - "Ready": Resource is ready for use
                 items:
                   description: Condition contains details for one aspect of the current
@@ -170,9 +169,9 @@ spec:
                 x-kubernetes-list-type: map
               deployedToPods:
                 description: |-
-                  DeployedToPods tracks which HAProxy pods currently have this map file.
+                  DeployedToPods tracks which HAProxy pods currently have this file.
 
-                  Pods are automatically added when the map file is applied and removed when
+                  Pods are automatically added when the file is applied and removed when
                   the pod terminates.
                 items:
                   description: PodDeploymentStatus tracks deployment to a specific

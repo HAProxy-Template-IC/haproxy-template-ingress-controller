@@ -12,6 +12,9 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 ### Added
 
 - Test-specific `extraContext` overrides for validation tests
+- **CRD content compression**: HAProxyCfg content automatically compressed with zstd when exceeding `configPublishing.compressionThreshold` (default 1 MiB), reducing etcd storage
+- **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support
+- **HAProxyCRTListFile CRD**: Publish crt-list files as Kubernetes custom resources with compression support
 
 ## [0.1.0-alpha.11] - 2026-01-02
 

@@ -427,12 +427,13 @@ backend test-backend
 // HAProxyTemplateConfigBuilder provides a fluent API for creating HAProxyTemplateConfig resources.
 // This reduces duplication across the multiple factory functions that create similar configs.
 type HAProxyTemplateConfigBuilder struct {
-	namespace      string
-	name           string
-	secretName     string
-	leaderElection bool
-	template       string
-	files          map[string]haproxyv1alpha1.GeneralFile
+	namespace            string
+	name                 string
+	secretName           string
+	leaderElection       bool
+	template             string
+	files                map[string]haproxyv1alpha1.GeneralFile
+	compressionThreshold *int64
 }
 
 // NewHAProxyTemplateConfigBuilder creates a new builder with required parameters.
@@ -461,6 +462,14 @@ func (b *HAProxyTemplateConfigBuilder) WithTemplate(template string) *HAProxyTem
 // WithFiles sets custom auxiliary files.
 func (b *HAProxyTemplateConfigBuilder) WithFiles(files map[string]haproxyv1alpha1.GeneralFile) *HAProxyTemplateConfigBuilder {
 	b.files = files
+	return b
+}
+
+// WithCompressionThreshold sets the compression threshold for CRD content.
+// Set to a low value (e.g., 1) to force compression of any config.
+// Set to 0 or negative to disable compression.
+func (b *HAProxyTemplateConfigBuilder) WithCompressionThreshold(threshold int64) *HAProxyTemplateConfigBuilder {
+	b.compressionThreshold = &threshold
 	return b
 }
 
@@ -495,6 +504,14 @@ func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateC
 					RenewDeadline: "10s",
 					RetryPeriod:   "2s",
 				},
+				ConfigPublishing: func() haproxyv1alpha1.ConfigPublishingConfig {
+					if b.compressionThreshold != nil {
+						return haproxyv1alpha1.ConfigPublishingConfig{
+							CompressionThreshold: *b.compressionThreshold,
+						}
+					}
+					return haproxyv1alpha1.ConfigPublishingConfig{}
+				}(),
 			},
 			Logging: haproxyv1alpha1.LoggingConfig{
 				Level: "DEBUG", // DEBUG level for tests

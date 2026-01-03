@@ -12,6 +12,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
@@ -81,6 +82,17 @@ func (s *Store) Update(resource interface{}) {
 		s.mu.Unlock()
 		s.logger.Debug("HAProxyCfg has no content")
 		return
+	}
+
+	// Check if content is compressed and decompress if needed
+	isCompressed, _, _ := unstructured.NestedBool(u.Object, "spec", "compressed")
+	if isCompressed {
+		decompressed, err := compression.Decompress(content)
+		if err != nil {
+			s.logger.Warn("failed to decompress current config", "error", err)
+			return
+		}
+		content = decompressed
 	}
 
 	parsed, err := s.parser.ParseFromString(content)

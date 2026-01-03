@@ -1268,6 +1268,9 @@ func TestFindMapFile(t *testing.T) {
 
 func TestRenderAuxiliaryFiles(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	validationPaths := &dataplane.ValidationPaths{
+		GeneralStorageDir: "/etc/haproxy/general",
+	}
 
 	t.Run("renders map files", func(t *testing.T) {
 		templates := map[string]string{
@@ -1288,7 +1291,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		renderCtx := map[string]interface{}{}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx)
+		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.MapFiles, 1)
 		assert.Equal(t, "backends.map", auxFiles.MapFiles[0].Path)
@@ -1315,7 +1318,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		renderCtx := map[string]interface{}{}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx)
+		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.GeneralFiles, 1)
 		assert.Equal(t, "blocklist.txt", auxFiles.GeneralFiles[0].Filename)
@@ -1342,7 +1345,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		renderCtx := map[string]interface{}{}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx)
+		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 		require.NoError(t, err)
 		require.Len(t, auxFiles.SSLCertificates, 1)
 		assert.Equal(t, "server.pem", auxFiles.SSLCertificates[0].Path)
@@ -1362,7 +1365,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(engine, map[string]interface{}{})
+		auxFiles, err := runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
 		require.NoError(t, err)
 		assert.Empty(t, auxFiles.MapFiles)
 		assert.Empty(t, auxFiles.GeneralFiles)
@@ -1386,7 +1389,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{})
+		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to render map file")
 	})
@@ -1408,7 +1411,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{})
+		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to render general file")
 	})
@@ -1430,7 +1433,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{})
+		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to render SSL certificate")
 	})

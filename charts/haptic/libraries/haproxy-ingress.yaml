@@ -1015,15 +1015,15 @@ templateSnippets:
               {%- var maxAge = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-max-age") | fallback("86400") | tostring() %}
               {%- var cond = HostMatchCondition(hosts) %}
       # haproxy-ingress/cors ({{ key }})
-      http-response add-header Access-Control-Allow-Origin "{{ origin }}" if {{ cond }}
-      http-response add-header Access-Control-Allow-Methods "{{ methods }}" if {{ cond }} METH_OPTIONS
-      http-response add-header Access-Control-Allow-Headers "{{ headers }}" if {{ cond }} METH_OPTIONS
-      http-response add-header Access-Control-Max-Age "{{ maxAge }}" if {{ cond }} METH_OPTIONS
+      http-response add-header Access-Control-Allow-Origin '{{ origin }}' if {{ cond }}
+      http-response add-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }} METH_OPTIONS
+      http-response add-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }} METH_OPTIONS
+      http-response add-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }} METH_OPTIONS
               {% if credentials == "true" %}
-      http-response add-header Access-Control-Allow-Credentials "true" if {{ cond }}
+      http-response add-header Access-Control-Allow-Credentials 'true' if {{ cond }}
               {% end %}
               {% if exposeHeaders != "" %}
-      http-response add-header Access-Control-Expose-Headers "{{ exposeHeaders }}" if {{ cond }}
+      http-response add-header Access-Control-Expose-Headers '{{ exposeHeaders }}' if {{ cond }}
               {% end %}
             {%- end %}
           {%- end %}
@@ -1067,7 +1067,7 @@ templateSnippets:
                   {%- if len(parts) >= 2 %}
                     {%- var headerName = trimSpace(parts[0]) %}
                     {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
-      http-request set-header {{ headerName }} "{{ headerValue }}" if {{ HostMatchCondition(hosts) }}
+      http-request set-header {{ headerName }} '{{ headerValue }}' if {{ HostMatchCondition(hosts) }}
                   {%- end %}
                 {%- end %}
               {%- end %}
