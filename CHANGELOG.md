@@ -16,6 +16,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support
 - **HAProxyCRTListFile CRD**: Publish crt-list files as Kubernetes custom resources with compression support
 
+### Fixed
+
+- **Graceful shutdown errors**: Track all iteration-scoped goroutines in errgroup and reduce internal shutdown timeout to 25s to prevent pod Error state during rolling updates
+
 ## [0.1.0-alpha.11] - 2026-01-02
 
 ### Added

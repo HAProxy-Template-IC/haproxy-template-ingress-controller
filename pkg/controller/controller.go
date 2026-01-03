@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,6 +90,11 @@ const (
 	ConfigPollInterval = 5 * time.Second
 	// DebugEventBufferSize is the size of the event buffer for debug/introspection.
 	DebugEventBufferSize = 1000
+	// ShutdownTimeout is the maximum time to wait for goroutines to finish during shutdown.
+	// Set to 25s to allow clean exit before Kubernetes' default 30s terminationGracePeriodSeconds.
+	ShutdownTimeout = 25 * time.Second
+	// ShutdownProgressInterval is how often to log progress during shutdown.
+	ShutdownProgressInterval = 5 * time.Second
 )
 
 // errNoWebhookRules indicates that no webhook rules are configured.
@@ -734,6 +740,7 @@ func setupResourceWatchers(
 	bus *busevents.EventBus,
 	logger *slog.Logger,
 	cancel context.CancelFunc,
+	errGroup *errgroup.Group,
 ) (*resourcewatcher.ResourceWatcherComponent, error) {
 	// Extract resource type names for IndexSynchronizationTracker
 	// Include haproxy-pods which is auto-injected by ResourceWatcherComponent
@@ -753,20 +760,9 @@ func setupResourceWatchers(
 	// Create IndexSynchronizationTracker
 	indexTracker := indextracker.New(bus, logger, resourceNames)
 
-	// Start resource watcher and index tracker
-	go func() {
-		if err := resourceWatcher.Start(iterCtx); err != nil {
-			logger.Error("resource watcher failed", "error", err)
-			cancel()
-		}
-	}()
-
-	go func() {
-		if err := indexTracker.Start(iterCtx); err != nil {
-			logger.Error("index tracker failed", "error", err)
-			cancel()
-		}
-	}()
+	// Start resource watcher and index tracker (tracked by errgroup for graceful shutdown)
+	startInErrGroup(errGroup, iterCtx, logger, cancel, "resource watcher", resourceWatcher.Start)
+	startInErrGroup(errGroup, iterCtx, logger, cancel, "index tracker", indexTracker.Start)
 
 	// Wait for all resource indices to sync
 	logger.Debug("Waiting for resource indices to sync")
@@ -791,6 +787,7 @@ func setupConfigWatchers(
 	bus *busevents.EventBus,
 	logger *slog.Logger,
 	cancel context.CancelFunc,
+	errGroup *errgroup.Group,
 ) error {
 	// Create watcher for HAProxyTemplateConfig CRD
 	crdWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
@@ -843,20 +840,9 @@ func setupConfigWatchers(
 		return fmt.Errorf("failed to create Secret watcher: %w", err)
 	}
 
-	// Start watchers in goroutines
-	go func() {
-		if err := crdWatcher.Start(iterCtx); err != nil {
-			logger.Error("HAProxyTemplateConfig watcher failed", "error", err)
-			cancel()
-		}
-	}()
-
-	go func() {
-		if err := secretWatcher.Start(iterCtx); err != nil {
-			logger.Error("Secret watcher failed", "error", err)
-			cancel()
-		}
-	}()
+	// Start watchers (tracked by errgroup for graceful shutdown)
+	startInErrGroup(errGroup, iterCtx, logger, cancel, "HAProxyTemplateConfig watcher", crdWatcher.Start)
+	startInErrGroup(errGroup, iterCtx, logger, cancel, "Secret watcher", secretWatcher.Start)
 
 	logger.Debug("Watchers started, waiting for initial sync")
 
@@ -908,6 +894,8 @@ func setupCurrentConfigStore(
 	crdName string,
 	haproxyCfgGVR schema.GroupVersionResource,
 	logger *slog.Logger,
+	cancel context.CancelFunc,
+	errGroup *errgroup.Group,
 ) (*currentconfigstore.Store, error) {
 	// Create CurrentConfigStore to cache parsed HAProxy config
 	store, err := currentconfigstore.New(logger)
@@ -951,12 +939,8 @@ func setupCurrentConfigStore(
 		return nil, fmt.Errorf("failed to create HAProxyCfg watcher: %w", err)
 	}
 
-	// Start HAProxyCfg watcher in background (for updates after deployment)
-	go func() {
-		if err := haproxyCfgWatcher.Start(iterCtx); err != nil {
-			logger.Error("HAProxyCfg watcher failed", "error", err)
-		}
-	}()
+	// Start HAProxyCfg watcher (tracked by errgroup for graceful shutdown)
+	startInErrGroup(errGroup, iterCtx, logger, cancel, "HAProxyCfg watcher", haproxyCfgWatcher.Start)
 	logger.Debug("HAProxyCfg watcher started for current config updates")
 
 	return store, nil
@@ -1125,15 +1109,13 @@ func startReconciliationComponents(
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	cancel context.CancelFunc,
+	errGroup *errgroup.Group,
 ) {
-	// Start all-replica components using the registry (non-blocking)
+	// Start all-replica components using the registry (tracked by errgroup for graceful shutdown)
 	// The registry handles concurrent startup and error propagation
-	go func() {
-		if err := registry.StartAll(iterCtx, false); err != nil {
-			logger.Error("reconciliation component failed", "error", err)
-			cancel()
-		}
-	}()
+	startInErrGroup(errGroup, iterCtx, logger, cancel, "reconciliation component", func(ctx context.Context) error {
+		return registry.StartAll(ctx, false)
+	})
 
 	logger.Info("Reconciliation components started via lifecycle registry (all replicas)",
 		"component_count", registry.Count())
@@ -1147,18 +1129,23 @@ func startLeaderOnlyComponents(
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	parentCancel context.CancelFunc,
+	errGroup *errgroup.Group,
 ) *leaderOnlyComponents {
 	// Create separate context for leader-only components
 	leaderCtx, leaderCancel := context.WithCancel(parentCtx)
 
-	// Start leader-only components using the registry (non-blocking)
-	// The registry handles concurrent startup and error propagation
-	go func() {
+	// Start leader-only components using the registry (tracked by errgroup for graceful shutdown)
+	// The registry handles concurrent startup and error propagation.
+	// Note: Uses inline errGroup.Go instead of startInErrGroup because context cancellation
+	// (losing leadership) should not be treated as an error.
+	errGroup.Go(func() error {
 		if err := registry.StartLeaderOnlyComponents(leaderCtx); err != nil && leaderCtx.Err() == nil {
 			logger.Error("leader-only component failed", "error", err)
 			parentCancel()
+			return err
 		}
-	}()
+		return nil
+	})
 
 	logger.Debug("Leader-only components started via lifecycle registry",
 		"components", "Deployer, DeploymentScheduler, ConfigPublisher")
@@ -1197,6 +1184,7 @@ type leaderCallbackDeps struct {
 	logger          *slog.Logger
 	cancel          context.CancelFunc
 	podName         string
+	errGroup        *errgroup.Group
 }
 
 // leaderCallbackState holds mutable state shared across leader callbacks.
@@ -1222,6 +1210,7 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 				deps.registry,
 				deps.logger,
 				deps.cancel,
+				deps.errGroup,
 			)
 		},
 		OnStoppedLeading: func() {
@@ -1262,6 +1251,7 @@ func setupWebhook(
 	logger *slog.Logger,
 	metricsRecorder webhook.MetricsRecorder,
 	cancel context.CancelFunc,
+	errGroup *errgroup.Group,
 ) {
 	// Extract webhook rules from config
 	rules := webhook.ExtractWebhookRules(cfg)
@@ -1273,14 +1263,9 @@ func setupWebhook(
 	logger.Info("Webhook validation enabled",
 		"rule_count", len(rules))
 
-	// Start DryRunValidator if provided (created before EventBus.Start())
+	// Start DryRunValidator if provided (tracked by errgroup for graceful shutdown)
 	if dryrunValidator != nil {
-		go func() {
-			if err := dryrunValidator.Start(iterCtx); err != nil {
-				logger.Error("dry-run validator failed", "error", err)
-				cancel()
-			}
-		}()
+		startInErrGroup(errGroup, iterCtx, logger, cancel, "dry-run validator", dryrunValidator.Start)
 		logger.Info("Dry-run validator started")
 	}
 
@@ -1308,14 +1293,8 @@ func setupWebhook(
 		metricsRecorder,
 	)
 
-	// Start webhook component in background
-	go func() {
-		if err := webhookComponent.Start(iterCtx); err != nil {
-			logger.Error("webhook component failed", "error", err)
-			cancel()
-		}
-	}()
-
+	// Start webhook component (tracked by errgroup for graceful shutdown)
+	startInErrGroup(errGroup, iterCtx, logger, cancel, "webhook component", webhookComponent.Start)
 	logger.Info("Webhook component started")
 }
 
@@ -1389,6 +1368,7 @@ func setupReconciliation(
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	cancel context.CancelFunc,
+	errGroup *errgroup.Group,
 ) (*reconciliationComponents, error) {
 	// Create all components
 	components, err := createReconciliationComponents(cfg, k8sClient, resourceWatcher, currentConfigStore, bus, registry, logger)
@@ -1399,7 +1379,7 @@ func setupReconciliation(
 	// Start all-replica components in background
 	// Leader-only components (Deployer, DeploymentScheduler, ConfigPublisher) are NOT started here
 	// Note: Components already subscribed during construction, so they're ready to receive events
-	startReconciliationComponents(iterCtx, registry, logger, cancel)
+	startReconciliationComponents(iterCtx, registry, logger, cancel, errGroup)
 
 	// Publish initial config and credentials events
 	// These events are buffered by EventBus until Start() is called in the main controller loop
@@ -1474,6 +1454,7 @@ func setupLeaderElection(
 			logger:          logger,
 			cancel:          cancel,
 			podName:         podName,
+			errGroup:        g,
 		})
 
 		// Create leader election component (event adapter)
@@ -1500,7 +1481,7 @@ func setupLeaderElection(
 	// Leader election disabled - start leader-only components immediately
 	logger.Info("Leader election disabled, starting all components")
 	state := &leaderCallbackState{
-		components: startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel),
+		components: startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel, g),
 	}
 	return state
 }
@@ -1577,7 +1558,7 @@ func runIteration(
 	finalizeConfigLoad(state, setup, crd.GetResourceVersion())
 
 	// 3. Setup resource watchers
-	resourceWatcher, err := setupResourceWatchers(setup.IterCtx, cfg, k8sClient, setup.Bus, logger, setup.Cancel)
+	resourceWatcher, err := setupResourceWatchers(setup.IterCtx, cfg, k8sClient, setup.Bus, logger, setup.Cancel, setup.ErrGroup)
 	if err != nil {
 		return err
 	}
@@ -1588,13 +1569,13 @@ func runIteration(
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(
 		setup.IterCtx, k8sClient, crdName, secretName,
-		crdGVR, secretGVR, setup.Bus, logger, setup.Cancel,
+		crdGVR, secretGVR, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
 	); err != nil {
 		return err
 	}
 
 	// 4.5. Setup CurrentConfigStore for slot-aware server assignment
-	currentConfigStore, err := setupCurrentConfigStore(setup.IterCtx, k8sClient, crdName, haproxyCfgGVR, logger)
+	currentConfigStore, err := setupCurrentConfigStore(setup.IterCtx, k8sClient, crdName, haproxyCfgGVR, logger, setup.Cancel, setup.ErrGroup)
 	if err != nil {
 		return err
 	}
@@ -1606,7 +1587,7 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, setup.Bus, setup.Registry, logger, setup.Cancel)
+	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, setup.Bus, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
 	if err != nil {
 		return err
 	}
@@ -1643,7 +1624,7 @@ func runIteration(
 	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
 	if webhook.HasWebhookEnabled(cfg) {
 		logger.Info("Stage 7: Setting up webhook validation")
-		setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, setup.Bus, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel)
+		setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, setup.Bus, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
 	}
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
@@ -1749,25 +1730,74 @@ func startBackgroundComponents(
 	}()
 }
 
+// startInErrGroup starts a component in the errgroup with consistent error handling.
+// On error, it logs the failure, calls cancel to trigger shutdown, and returns the error.
+// This ensures all iteration-scoped goroutines are tracked for graceful shutdown.
+func startInErrGroup(
+	errGroup *errgroup.Group,
+	iterCtx context.Context,
+	logger *slog.Logger,
+	cancel context.CancelFunc,
+	componentName string,
+	startFn func(context.Context) error,
+) {
+	errGroup.Go(func() error {
+		if err := startFn(iterCtx); err != nil {
+			logger.Error(componentName+" failed", "error", err)
+			cancel()
+			return err
+		}
+		return nil
+	})
+}
+
 // waitForGoroutinesToFinish waits for all goroutines in errgroup to finish with a timeout.
 // This is CRITICAL for lease release - elector needs time to call ReleaseOnCancel.
 func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, prefix string) {
-	logger.Info(fmt.Sprintf("Waiting for goroutines to finish %s...", strings.ToLower(prefix)))
+	logger.Info(fmt.Sprintf("Waiting for goroutines to finish %s...", strings.ToLower(prefix)),
+		"goroutine_count", runtime.NumGoroutine())
 
 	done := make(chan error, 1)
 	go func() {
 		done <- errGroup.Wait()
 	}()
 
-	select {
-	case err := <-done:
-		if err != nil {
-			logger.Warn(fmt.Sprintf("Goroutines finished with error during %s", strings.ToLower(prefix)), "error", err)
-		} else {
-			logger.Info("All goroutines finished gracefully")
+	// Log progress periodically while waiting
+	ticker := time.NewTicker(ShutdownProgressInterval)
+	defer ticker.Stop()
+
+	startTime := time.Now()
+	timeoutCh := time.After(ShutdownTimeout)
+
+	for {
+		select {
+		case err := <-done:
+			elapsed := time.Since(startTime)
+			if err != nil {
+				logger.Warn(fmt.Sprintf("Goroutines finished with error during %s", strings.ToLower(prefix)),
+					"error", err,
+					"elapsed_ms", elapsed.Milliseconds(),
+					"goroutine_count", runtime.NumGoroutine())
+			} else {
+				logger.Info("All goroutines finished gracefully",
+					"elapsed_ms", elapsed.Milliseconds(),
+					"goroutine_count", runtime.NumGoroutine())
+			}
+			return
+
+		case <-ticker.C:
+			elapsed := time.Since(startTime)
+			logger.Info(fmt.Sprintf("%s: still waiting for goroutines...", prefix),
+				"elapsed_s", int(elapsed.Seconds()),
+				"remaining_s", int((ShutdownTimeout - elapsed).Seconds()),
+				"goroutine_count", runtime.NumGoroutine())
+
+		case <-timeoutCh:
+			logger.Warn(fmt.Sprintf("%s timeout exceeded - some goroutines may not have finished", prefix),
+				"timeout_s", int(ShutdownTimeout.Seconds()),
+				"goroutine_count", runtime.NumGoroutine())
+			return
 		}
-	case <-time.After(30 * time.Second):
-		logger.Warn(fmt.Sprintf("%s timeout exceeded (30s) - some goroutines may not have finished", prefix))
 	}
 }
 
