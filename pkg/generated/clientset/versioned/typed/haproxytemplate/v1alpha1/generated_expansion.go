@@ -18,6 +18,10 @@ package v1alpha1
 
 type HAProxyCfgExpansion interface{}
 
+type HAProxyCRTListFileExpansion interface{}
+
+type HAProxyGeneralFileExpansion interface{}
+
 type HAProxyMapFileExpansion interface{}
 
 type HAProxyTemplateConfigExpansion interface{}

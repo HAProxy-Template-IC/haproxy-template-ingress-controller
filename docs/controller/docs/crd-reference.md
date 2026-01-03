@@ -111,6 +111,39 @@ controller:
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 
+#### configPublishing
+
+Controls how rendered configurations are stored in `HAProxyCfg` CRD resources.
+
+```yaml
+controller:
+  configPublishing:
+    compressionThreshold: 1048576  # 1 MiB (default)
+```
+
+| Field                  | Type  | Default   | Description                                                                      |
+|------------------------|-------|-----------|----------------------------------------------------------------------------------|
+| `compressionThreshold` | int64 | 1048576   | Compress content when size exceeds this threshold (bytes). Set to -1 to disable |
+
+**How compression works:**
+
+- When HAProxy configuration exceeds the threshold, it's compressed using zstd and base64-encoded
+- The `HAProxyCfg` resource stores compressed content with `spec.compressed: true`
+- Reduces etcd storage and speeds up watch events for large configurations
+
+**Fetching decompressed content:**
+
+```bash
+# View HAProxyCfg resources
+kubectl get haproxycfg -n <namespace>
+
+# Fetch and decompress content (requires zstd)
+kubectl get haproxycfg <name> -n <namespace> -o jsonpath='{.spec.content}' | base64 -d | zstd -d
+
+# If not compressed (spec.compressed is false), content is plain text
+kubectl get haproxycfg <name> -n <namespace> -o jsonpath='{.spec.content}'
+```
+
 ### logging
 
 Log level configuration.

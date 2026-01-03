@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -366,6 +367,7 @@ func (c *Component) renderAuxiliaryFiles(renderCtx map[string]interface{}) (*dat
 
 		auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
 			Filename: name,
+			Path:     filepath.Join(c.config.Dataplane.GeneralStorageDir, name),
 			Content:  rendered,
 		})
 	}

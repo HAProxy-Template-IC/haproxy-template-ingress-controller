@@ -668,6 +668,7 @@ func (c *Component) renderAuxiliaryFiles(renderCtx map[string]interface{}) (*dat
 			mu.Lock()
 			auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
 				Filename: name,
+				Path:     filepath.Join(c.config.Dataplane.GeneralStorageDir, name),
 				Content:  rendered,
 			})
 			mu.Unlock()

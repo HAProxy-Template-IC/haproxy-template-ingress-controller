@@ -13,10 +13,14 @@ package auxiliaryfiles
 // These files are uploaded to the Dataplane API storage and can be referenced in the
 // HAProxy configuration (e.g., in http-errors sections).
 type GeneralFile struct {
-	// Filename is the file name (used as API 'id'). Files are stored in
-	// /usr/local/etc/haproxy/general/ regardless of the filename provided.
+	// Filename is the base file name (used as API 'id').
 	// Example: "400.http"
 	Filename string
+
+	// Path is the absolute file path where the file is stored.
+	// This is computed from the configured GeneralStorageDir + Filename.
+	// Example: "/etc/haproxy/general/400.http"
+	Path string
 
 	// Content is the file contents as a string. This maps to the 'file' field in
 	// multipart form uploads to the Dataplane API.

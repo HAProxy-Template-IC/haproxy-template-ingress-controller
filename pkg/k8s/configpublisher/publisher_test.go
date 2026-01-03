@@ -452,3 +452,237 @@ func TestUpdateDeploymentStatus_RuntimeConfigNotFound(t *testing.T) {
 	// Should not error - gracefully handles missing runtime config
 	require.NoError(t, err)
 }
+
+// TestPublishConfig_GeneralFiles tests publishing a runtime config with general files.
+func TestPublishConfig_GeneralFiles(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			GeneralFiles: []auxiliaryfiles.GeneralFile{
+				{
+					Filename: "503.http",
+					Path:     "/etc/haproxy/general/503.http",
+					Content:  "HTTP/1.0 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nService Unavailable",
+				},
+			},
+		},
+	}
+
+	result, err := publisher.PublishConfig(ctx, &req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	require.Len(t, result.GeneralFileNames, 1)
+
+	// Verify HAProxyGeneralFile was created
+	generalFiles, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles("default").
+		List(ctx, metav1.ListOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, generalFiles.Items, 1)
+	assert.Equal(t, "503.http", generalFiles.Items[0].Spec.FileName)
+	assert.Equal(t, "/etc/haproxy/general/503.http", generalFiles.Items[0].Spec.Path)
+	assert.Equal(t, "HTTP/1.0 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nService Unavailable",
+		generalFiles.Items[0].Spec.Content)
+}
+
+// TestPublishConfig_CRTListFiles tests publishing a runtime config with crt-list files.
+func TestPublishConfig_CRTListFiles(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			CRTListFiles: []auxiliaryfiles.CRTListFile{
+				{
+					Path: "/etc/haproxy/ssl/crt-list.txt",
+					Content: `/etc/haproxy/ssl/example.pem [verify none alpn h2,http/1.1] example.com
+/etc/haproxy/ssl/wildcard.pem *.example.com`,
+				},
+			},
+		},
+	}
+
+	result, err := publisher.PublishConfig(ctx, &req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	require.Len(t, result.CRTListFileNames, 1)
+
+	// Verify HAProxyCRTListFile was created
+	crtListFiles, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles("default").
+		List(ctx, metav1.ListOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, crtListFiles.Items, 1)
+	assert.Equal(t, "/etc/haproxy/ssl/crt-list.txt", crtListFiles.Items[0].Spec.Path)
+	assert.Contains(t, crtListFiles.Items[0].Spec.Entries, "example.com")
+	assert.Contains(t, crtListFiles.Items[0].Spec.Entries, "wildcard.pem")
+}
+
+// TestPublishConfig_WithCompression tests that large content is compressed.
+func TestPublishConfig_WithCompression(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create large content that will benefit from compression
+	// Repeating patterns compress well
+	largeContent := ""
+	for i := 0; i < 1000; i++ {
+		largeContent += "backend app_backend_" + string(rune('a'+i%26)) + "\n"
+		largeContent += "  server server1 10.0.0.1:8080 check\n"
+		largeContent += "  server server2 10.0.0.2:8080 check\n"
+		largeContent += "\n"
+	}
+
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  largeContent,
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		CompressionThreshold:    1024, // 1KB threshold
+	}
+
+	result, err := publisher.PublishConfig(ctx, &req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Verify HAProxyCfg was created with compression flag
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	// Content should be compressed (shorter than original)
+	assert.True(t, runtimeConfig.Spec.Compressed, "Large config should be compressed")
+	assert.Less(t, len(runtimeConfig.Spec.Content), len(largeContent),
+		"Compressed content should be smaller than original")
+}
+
+// TestPublishConfig_CompressionDisabled tests that compression is disabled when threshold is <= 0.
+func TestPublishConfig_CompressionDisabled(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create large content
+	largeContent := ""
+	for i := 0; i < 1000; i++ {
+		largeContent += "backend app_backend_" + string(rune('a'+i%26)) + "\n"
+		largeContent += "  server server1 10.0.0.1:8080 check\n"
+	}
+
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  largeContent,
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		CompressionThreshold:    0, // Disabled
+	}
+
+	result, err := publisher.PublishConfig(ctx, &req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Verify HAProxyCfg was created without compression
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	assert.False(t, runtimeConfig.Spec.Compressed, "Compression should be disabled")
+	assert.Equal(t, largeContent, runtimeConfig.Spec.Content, "Content should be unchanged")
+}
+
+// TestPublishConfig_SSLSecretCompressionAnnotation tests that SSL secrets use annotations for compression flag.
+func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		CompressionThreshold:    0, // Disabled - small content won't be compressed anyway
+		AuxiliaryFiles: &AuxiliaryFiles{
+			SSLCertificates: []auxiliaryfiles.SSLCertificate{
+				{
+					Path:    "/etc/haproxy/ssl/cert.pem",
+					Content: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n",
+				},
+			},
+		},
+	}
+
+	result, err := publisher.PublishConfig(ctx, &req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	require.Len(t, result.SecretNames, 1)
+
+	// Verify SSL secret uses annotation for compression flag
+	secrets, err := k8sClient.CoreV1().
+		Secrets("default").
+		List(ctx, metav1.ListOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, secrets.Items, 1)
+
+	// Check annotation exists
+	compressedAnnotation, ok := secrets.Items[0].Annotations["haproxy-haptic.org/compressed"]
+	assert.True(t, ok, "compressed annotation should exist")
+	assert.Equal(t, "false", compressedAnnotation, "compressed should be false for small content")
+
+	// Verify 'compressed' is NOT in Data
+	_, hasCompressedData := secrets.Items[0].Data["compressed"]
+	assert.False(t, hasCompressedData, "compressed should NOT be in Secret data")
+}

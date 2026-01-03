@@ -27,6 +27,8 @@ import (
 type HaproxyTemplateICV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	HAProxyCfgsGetter
+	HAProxyCRTListFilesGetter
+	HAProxyGeneralFilesGetter
 	HAProxyMapFilesGetter
 	HAProxyTemplateConfigsGetter
 }
@@ -38,6 +40,14 @@ type HaproxyTemplateICV1alpha1Client struct {
 
 func (c *HaproxyTemplateICV1alpha1Client) HAProxyCfgs(namespace string) HAProxyCfgInterface {
 	return newHAProxyCfgs(c, namespace)
+}
+
+func (c *HaproxyTemplateICV1alpha1Client) HAProxyCRTListFiles(namespace string) HAProxyCRTListFileInterface {
+	return newHAProxyCRTListFiles(c, namespace)
+}
+
+func (c *HaproxyTemplateICV1alpha1Client) HAProxyGeneralFiles(namespace string) HAProxyGeneralFileInterface {
+	return newHAProxyGeneralFiles(c, namespace)
 }
 
 func (c *HaproxyTemplateICV1alpha1Client) HAProxyMapFiles(namespace string) HAProxyMapFileInterface {

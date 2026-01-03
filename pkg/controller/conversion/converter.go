@@ -57,6 +57,13 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		leaderElectionEnabled = *spec.Controller.LeaderElection.Enabled
 	}
 
+	// Apply default compression threshold when not set (Go zero value)
+	// This ensures runtime behavior matches the CRD kubebuilder default annotation
+	compressionThreshold := spec.Controller.ConfigPublishing.CompressionThreshold
+	if compressionThreshold == 0 {
+		compressionThreshold = config.DefaultCompressionThreshold
+	}
+
 	controllerConfig := config.ControllerConfig{
 		LeaderElection: config.LeaderElectionConfig{
 			Enabled:       leaderElectionEnabled,
@@ -64,6 +71,9 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 			LeaseDuration: spec.Controller.LeaderElection.LeaseDuration,
 			RenewDeadline: spec.Controller.LeaderElection.RenewDeadline,
 			RetryPeriod:   spec.Controller.LeaderElection.RetryPeriod,
+		},
+		ConfigPublishing: config.ConfigPublishingConfig{
+			CompressionThreshold: compressionThreshold,
 		},
 	}
 

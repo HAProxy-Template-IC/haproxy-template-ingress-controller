@@ -18,6 +18,10 @@
 // from the Kubernetes ConfigMap and credentials from the Secret.
 package config
 
+// DefaultCompressionThreshold is the default minimum size in bytes at which configs are compressed.
+// This matches the CRD kubebuilder default annotation.
+const DefaultCompressionThreshold int64 = 1048576 // 1 MiB
+
 // Config is the root configuration structure loaded from the ConfigMap.
 type Config struct {
 	// PodSelector identifies HAProxy pods to configure.
@@ -167,6 +171,9 @@ type PodSelector struct {
 type ControllerConfig struct {
 	// LeaderElection configures leader election for high availability.
 	LeaderElection LeaderElectionConfig `yaml:"leader_election"`
+
+	// ConfigPublishing configures how rendered configs are stored in CRDs.
+	ConfigPublishing ConfigPublishingConfig `yaml:"config_publishing"`
 }
 
 // LeaderElectionConfig configures leader election for running multiple replicas.
@@ -200,6 +207,14 @@ type LeaderElectionConfig struct {
 	// Default: 5s
 	// Must be less than RenewDeadline
 	RetryPeriod string `yaml:"retry_period"`
+}
+
+// ConfigPublishingConfig configures how rendered configs are stored in CRDs.
+type ConfigPublishingConfig struct {
+	// CompressionThreshold is the minimum size in bytes at which configs are compressed.
+	// Default: 1 MiB (1048576 bytes) via CRD kubebuilder default.
+	// Set to 0 or negative to disable compression.
+	CompressionThreshold int64 `yaml:"compression_threshold"`
 }
 
 // LoggingConfig configures logging behavior.

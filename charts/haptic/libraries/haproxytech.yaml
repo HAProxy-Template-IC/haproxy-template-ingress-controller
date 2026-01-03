@@ -187,20 +187,20 @@ templateSnippets:
       # haproxytech/frontend-filters-haproxytech-cors (for {{ key }})
       http-request capture req.hdr(Origin) len 128 if {{ cond }}
 
-      http-response set-header Access-Control-Allow-Origin "{{ origin }}" if {{ cond }}
+      http-response set-header Access-Control-Allow-Origin '{{ origin }}' if {{ cond }}
 
-      http-response set-header Access-Control-Allow-Methods "{{ methods }}" if {{ cond }}
+      http-response set-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }}
 
               {% if headers != "" -%}
-      http-response set-header Access-Control-Allow-Headers "{{ headers }}" if {{ cond }}
+      http-response set-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }}
 
               {% end -%}
               {% if credentials == "true" -%}
-      http-response set-header Access-Control-Allow-Credentials "true" if {{ cond }}
+      http-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }}
 
               {% end -%}
               {% if maxAge != "0" -%}
-      http-response set-header Access-Control-Max-Age "{{ maxAge }}" if {{ cond }}
+      http-response set-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }}
 
               {% end -%}
             {%- end %}
@@ -492,7 +492,7 @@ templateSnippets:
         {%- var host = ingress | dig("metadata", "annotations", "haproxy.org/set-host") | fallback("") | tostring() %}
         {%- if host != "" %}
       # haproxytech/backend-directives-haproxytech-set-host
-      http-request set-header Host "{{ host }}"
+      http-request set-header Host '{{ host }}'
         {%- end %}
       {%- end -%}
 
@@ -508,7 +508,7 @@ templateSnippets:
             {%- var t = trimSpace(line) %}
             {%- if t != "" && strings_contains(t, " ") %}
               {%- var parts = split(t, " ") %}
-      http-request set-header {{ parts[0] }} "{{ parts[1:] | join(" ") }}"
+      http-request set-header {{ parts[0] }} '{{ parts[1:] | join(" ") }}'
             {%- end %}
           {%- end %}
         {%- end %}
@@ -518,7 +518,7 @@ templateSnippets:
             {%- var t = trimSpace(line) %}
             {%- if t != "" && strings_contains(t, " ") %}
               {%- var parts = split(t, " ") %}
-      http-response set-header {{ parts[0] }} "{{ parts[1:] | join(" ") }}"
+      http-response set-header {{ parts[0] }} '{{ parts[1:] | join(" ") }}'
             {%- end %}
           {%- end %}
         {%- end %}
@@ -1232,3 +1232,63 @@ validationTests:
         target: haproxy.cfg
         pattern: "balance hdr\\(x-session-id\\)"
         description: Must use hdr() balance algorithm with header name
+
+  test-haproxytech-cors-regex-anchor:
+    description: CORS origin with regex $ anchor must not cause HAProxy parse error
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-regex-ingress
+            annotations:
+              haproxy.org/cors-enable: "true"
+              haproxy.org/cors-allow-origin: "^https://(.+\\.)?(dev\\.|test\\.)?example\\.com$"
+              haproxy.org/cors-allow-methods: "GET, POST, OPTIONS"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: api-service
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: api-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with regex $ anchor in CORS origin
+      - type: contains
+        target: haproxy.cfg
+        pattern: "Access-Control-Allow-Origin"
+        description: Must set CORS origin header
+      - type: contains
+        target: haproxy.cfg
+        pattern: "com\\$'"
+        description: Origin regex must contain the $ anchor followed by closing quote
