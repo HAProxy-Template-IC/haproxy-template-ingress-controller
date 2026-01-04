@@ -302,6 +302,14 @@ type WatchedResource struct {
 	//   component: loadbalancer
 	LabelSelector map[string]string `yaml:"label_selector,omitempty"`
 
+	// FieldSelector filters resources using client-side JSONPath evaluation.
+	// Unlike Kubernetes' native fieldSelector (which only supports limited fields),
+	// this supports any JSONPath expression.
+	//
+	// Format: "field.path=value"
+	// Example: "spec.ingressClassName=haproxy-internal"
+	FieldSelector string `yaml:"field_selector,omitempty"`
+
 	// Store specifies the storage backend: "full" (MemoryStore) or "on-demand" (CachedStore).
 	// Default: "full"
 	//

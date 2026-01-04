@@ -381,10 +381,12 @@ type WatchedResource struct {
 	// +optional
 	LabelSelector string `json:"labelSelector,omitempty"`
 
-	// FieldSelector filters resources by fields (server-side filtering).
+	// FieldSelector filters resources using client-side JSONPath evaluation.
+	// Unlike Kubernetes' native fieldSelector (which only supports limited fields),
+	// this supports any JSONPath expression.
 	//
-	// Example: "metadata.namespace=default"
-	// Note: Not all fields support field selectors. Use label selectors when possible.
+	// Format: "field.path=value"
+	// Example: "spec.ingressClassName=haproxy-internal"
 	// +optional
 	FieldSelector string `json:"fieldSelector,omitempty"`
 
