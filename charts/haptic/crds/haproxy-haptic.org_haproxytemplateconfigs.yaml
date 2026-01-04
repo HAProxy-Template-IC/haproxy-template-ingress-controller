@@ -70,7 +70,7 @@ spec:
                           Compression uses zstd+base64 encoding.
 
                           Default: 1048576 (1 MiB)
-                          Set to 0 or negative to disable compression.
+                          Set to 0 to disable compression.
                         format: int64
                         minimum: 0
                         type: integer
@@ -724,10 +724,12 @@ spec:
                       type: boolean
                     fieldSelector:
                       description: |-
-                        FieldSelector filters resources by fields (server-side filtering).
+                        FieldSelector filters resources using client-side JSONPath evaluation.
+                        Unlike Kubernetes' native fieldSelector (which only supports limited fields),
+                        this supports any JSONPath expression.
 
-                        Example: "metadata.namespace=default"
-                        Note: Not all fields support field selectors. Use label selectors when possible.
+                        Format: "field.path=value"
+                        Example: "spec.ingressClassName=haproxy-internal"
                       type: string
                     indexBy:
                       description: |-

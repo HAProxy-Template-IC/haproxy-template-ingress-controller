@@ -207,6 +207,17 @@ type WatcherConfig struct {
 	//   }
 	LabelSelector *metav1.LabelSelector
 
+	// FieldSelector filters resources by field value using client-side JSONPath evaluation.
+	// Unlike Kubernetes' native fieldSelector (which only supports limited fields like
+	// metadata.name), this supports any JSONPath expression and evaluates client-side.
+	//
+	// Format: "field.path=value"
+	// Example: "spec.ingressClassName=haproxy-internal"
+	//
+	// Resources that don't match the field selector are filtered out before being
+	// added to the store. This is evaluated after LabelSelector filtering.
+	FieldSelector string
+
 	// IndexBy specifies JSONPath expressions for extracting index keys from resources.
 	//
 	// Resources are indexed by the values of these expressions in order.

@@ -111,6 +111,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 			EnableValidationWebhook: crdRes.EnableValidationWebhook,
 			IndexBy:                 crdRes.IndexBy,
 			LabelSelector:           labelSelectorMap,
+			FieldSelector:           crdRes.FieldSelector,
 			Store:                   crdRes.Store,
 		}
 	}

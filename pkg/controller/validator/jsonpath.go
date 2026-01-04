@@ -20,6 +20,7 @@ import (
 // Validated fields:
 // - WatchedResourcesIgnoreFields (all expressions)
 // - WatchedResources[*].IndexBy (all expressions)
+// - WatchedResources[*].FieldSelector (field.path=value format)
 //
 // This component is part of the scatter-gather validation pattern and publishes
 // ConfigValidationResponse events with validation results.
@@ -96,6 +97,13 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 				errors = append(errors, fmt.Sprintf("watched_resources.%s.index_by[%d]: %v", resourceName, i, err))
 			}
 		}
+
+		// Validate FieldSelector expression if present
+		if resource.FieldSelector != "" {
+			if _, err := indexer.NewFieldSelectorMatcher(resource.FieldSelector); err != nil {
+				errors = append(errors, fmt.Sprintf("watched_resources.%s.field_selector: %v", resourceName, err))
+			}
+		}
 	}
 
 	// Publish validation response
@@ -114,6 +122,9 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	expressionCount := len(cfg.WatchedResourcesIgnoreFields)
 	for _, resource := range cfg.WatchedResources {
 		expressionCount += len(resource.IndexBy)
+		if resource.FieldSelector != "" {
+			expressionCount++
+		}
 	}
 
 	if valid {

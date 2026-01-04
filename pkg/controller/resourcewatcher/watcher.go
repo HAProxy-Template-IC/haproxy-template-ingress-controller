@@ -145,6 +145,7 @@ func New(
 			GVR:              gvr,
 			Namespace:        determineNamespace(resourceTypeName, k8sClient),
 			LabelSelector:    labelSelector,
+			FieldSelector:    watchedResource.FieldSelector,
 			IndexBy:          watchedResource.IndexBy,
 			IgnoreFields:     ignoreFields,
 			StoreType:        determineStoreType(watchedResource.Store),
@@ -188,7 +189,8 @@ func New(
 			"resource_type", resourceTypeName,
 			"gvr", gvr.String(),
 			"index_by", watchedResource.IndexBy,
-			"ignore_fields", len(ignoreFields))
+			"ignore_fields", len(ignoreFields),
+			"field_selector", watchedResource.FieldSelector)
 	}
 
 	return rwc, nil
