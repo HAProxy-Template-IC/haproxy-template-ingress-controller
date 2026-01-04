@@ -109,7 +109,9 @@ spec:
 
               # Start HAProxy in master-worker mode with master socket
               # -dr: Skip DNS resolution failures - servers start in DOWN state instead of failing startup
-              exec {{ include "haptic.haproxy.bin" . }} -dr -W -db -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
+              # -m: Memory limit in MB (derived from container memory requests)
+              {{- $memLimitMB := include "haptic.haproxy.memoryLimitMB" . }}
+              exec {{ include "haptic.haproxy.bin" . }} -dr -W -db{{ if $memLimitMB }} -m {{ $memLimitMB }}{{ end }} -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
           ports:
             - name: http
               containerPort: {{ .Values.haproxy.ports.http }}

@@ -12,6 +12,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 ### Added
 
 - Auth realm validation for `haproxy.org/auth-realm` annotation with configurable sanitization via `extraContext.sanitize_auth_realm`
+- HAProxy `-m` memory limit flag automatically set from container memory requests to prevent OOMKill
 
 ### Changed
 
