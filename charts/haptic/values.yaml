@@ -13,6 +13,13 @@ commonLabels: {}
 commonAnnotations: {}
 # config.kubernetes.io/managed-by: helm
 
+# HAProxy version - controls both controller image suffix and HAProxy image tag
+# Controller image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.11-haproxy3.2
+# HAProxy image: haproxytech/haproxy-debian:3.2
+# Must match a version built by CI (see versions.env for supported versions)
+# renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=semver
+haproxyVersion: "3.2"
+
 # Replica count for controller
 # Default: 2 replicas for high availability with leader election
 # Only the leader replica deploys configs; followers remain ready for failover
@@ -727,13 +734,10 @@ haproxy:
   # Number of HAProxy replicas
   replicaCount: 2
   # HAProxy image configuration
+  # Tag is derived from top-level haproxyVersion (guarantees controller/HAProxy version match)
   image:
     repository: haproxytech/haproxy-debian
     pullPolicy: IfNotPresent
-    # HAProxy has independent versioning from controller
-    # Chart default: 3.2 (can override via --set haproxy.image.tag=3.0)
-    # renovate: datasource=docker depName=haproxytech/haproxy-debian
-    tag: "3.4"
   # Enterprise mode configuration
   # Set to true when using HAProxy Enterprise images (hapee-registry.haproxy.com/haproxy-enterprise)
   # Enterprise images have different binary paths and user configuration
