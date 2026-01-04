@@ -343,3 +343,39 @@ release name and namespace to prevent constant drift detection.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Convert Kubernetes memory value to megabytes for HAProxy -m flag.
+Supports: Gi, Mi, G, M, Ki, K formats
+Returns empty string if no memory requests configured.
+*/}}
+{{- define "haptic.haproxy.memoryLimitMB" -}}
+{{- $memory := "" -}}
+{{- if .Values.haproxy.resources -}}
+{{- if .Values.haproxy.resources.requests -}}
+{{- $memory = .Values.haproxy.resources.requests.memory | default "" -}}
+{{- end -}}
+{{- end -}}
+{{- if $memory -}}
+  {{- if hasSuffix "Gi" $memory -}}
+    {{- $val := trimSuffix "Gi" $memory | float64 -}}
+    {{- mul $val 1024 | int -}}
+  {{- else if hasSuffix "Mi" $memory -}}
+    {{- trimSuffix "Mi" $memory | int -}}
+  {{- else if hasSuffix "G" $memory -}}
+    {{- $val := trimSuffix "G" $memory | float64 -}}
+    {{- mul $val 1000 | int -}}
+  {{- else if hasSuffix "M" $memory -}}
+    {{- trimSuffix "M" $memory | int -}}
+  {{- else if hasSuffix "Ki" $memory -}}
+    {{- $val := trimSuffix "Ki" $memory | float64 -}}
+    {{- div $val 1024 | int -}}
+  {{- else if hasSuffix "K" $memory -}}
+    {{- $val := trimSuffix "K" $memory | float64 -}}
+    {{- div $val 1000 | int -}}
+  {{- else -}}
+    {{- /* Assume bytes, convert to MB */ -}}
+    {{- div ($memory | float64) 1048576 | int -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
