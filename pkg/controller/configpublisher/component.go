@@ -27,6 +27,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
@@ -234,6 +235,13 @@ func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent
 	hash := sha256.Sum256([]byte(renderedConfig))
 	checksum := hex.EncodeToString(hash[:])
 
+	// Apply default compression threshold when not set (Go zero value)
+	// This ensures runtime behavior matches the CRD kubebuilder default annotation
+	compressionThreshold := templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold
+	if compressionThreshold == 0 {
+		compressionThreshold = config.DefaultCompressionThreshold
+	}
+
 	// Convert event to publish request
 	req := configpublisher.PublishRequest{
 		TemplateConfigName:      templateConfig.Name,
@@ -245,7 +253,7 @@ func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent
 		RenderedAt:              renderedAt,
 		ValidatedAt:             time.Now(),
 		Checksum:                checksum,
-		CompressionThreshold:    templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold,
+		CompressionThreshold:    compressionThreshold,
 	}
 
 	// Call pure publisher (non-blocking - log errors but don't fail)
@@ -337,6 +345,12 @@ func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) 
 	hash := sha256.Sum256([]byte(renderedConfig))
 	checksum := hex.EncodeToString(hash[:])
 
+	// Apply default compression threshold when not set (Go zero value)
+	compressionThreshold := templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold
+	if compressionThreshold == 0 {
+		compressionThreshold = config.DefaultCompressionThreshold
+	}
+
 	// Create publish request with -invalid suffix
 	req := configpublisher.PublishRequest{
 		TemplateConfigName:      templateConfig.Name,
@@ -349,7 +363,7 @@ func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) 
 		Checksum:                checksum,
 		NameSuffix:              "-invalid",
 		ValidationError:         validationError,
-		CompressionThreshold:    templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold,
+		CompressionThreshold:    compressionThreshold,
 	}
 
 	// Call pure publisher (non-blocking - log errors but don't fail)
