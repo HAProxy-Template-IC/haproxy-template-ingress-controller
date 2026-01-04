@@ -15,6 +15,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Changed
 
+- Basic auth now matches official HAProxy Ingress Controller behavior: userlist naming changed to `{namespace}-{ingressName}`, uses `http_auth_group()` with `authenticated-users` group
 - Set production-ready default resource requests and limits for all containers:
   - Controller: 100m CPU / 512Mi memory (Guaranteed QoS)
   - HAProxy: 250m CPU / 1Gi memory (Guaranteed QoS)

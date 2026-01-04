@@ -394,13 +394,15 @@ gatewayClass:
     # Namespace will default to Release.Namespace if empty
     namespace: ""
 # Dataplane API credentials
-# If password is empty or not provided, a secure random password will be generated
-# and preserved across helm upgrades via lookup of the existing Secret.
+# If password is empty, it will be:
+#   1. Preserved from existing Secret (via lookup during helm install/upgrade)
+#   2. Generated deterministically from release name and namespace (for GitOps tools
+#      like ArgoCD where lookup is unavailable during template rendering)
 # Set explicit values for dev environments where you need predictable credentials.
 credentials:
   dataplane:
     username: admin
-    password: ""  # Leave empty for auto-generation (recommended for production)
+    password: ""  # Leave empty for auto-generation
 # ServiceAccount configuration
 serviceAccount:
   # Specifies whether a service account should be created
