@@ -518,6 +518,27 @@ The source hash is calculated from all `.go` files in `pkg/` and `cmd/`. It chan
 
 **Always run `status` before debugging** to confirm you're testing the right code. If OUT OF SYNC, run `./scripts/start-dev-env.sh restart`.
 
+### HAProxy Version Management
+
+**Build-time** (what CI builds):
+
+- `versions.env` defines supported versions (`HAPROXY_VERSIONS="3.0 3.1 3.2"`)
+- `Dockerfile` uses `DEFAULT_HAPROXY` for local builds
+- CI builds controller images for each version: `0.1.0-haproxy3.0`, `0.1.0-haproxy3.1`, `0.1.0-haproxy3.2`
+
+**Deploy-time** (what the chart uses):
+
+- `haproxyVersion` in `values.yaml` selects the version (must be one CI builds)
+- This single value drives both:
+  - Controller image tag: `registry.gitlab.com/.../haptic:0.1.0-haproxy3.2`
+  - HAProxy image tag: `haproxytech/haproxy-debian:3.2`
+- This guarantees the controller and HAProxy pod always use matching versions
+
+When updating default versions, update both:
+
+1. `versions.env` / `Dockerfile` - for build defaults
+2. `charts/haptic/values.yaml` - for deploy defaults
+
 ## Common Patterns
 
 ### Graceful Shutdown
