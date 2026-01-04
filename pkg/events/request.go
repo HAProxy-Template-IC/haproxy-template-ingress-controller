@@ -88,8 +88,10 @@ func executeRequest(ctx context.Context, bus *EventBus, request Request, opts Re
 		done:               make(chan struct{}),
 	}
 
-	// Subscribe to responses for this request
-	responseChan := bus.Subscribe(100)
+	// Subscribe to responses for this request.
+	// Suppress late subscription warning because scatter-gather subscriptions
+	// are intentionally created after Start() during normal operation.
+	responseChan := bus.subscribeInternal(100, true)
 
 	// Start response listener in background
 	listenerCtx, cancelListener := context.WithCancel(ctx)

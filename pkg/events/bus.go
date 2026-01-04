@@ -188,13 +188,17 @@ func (b *EventBus) SubscribeLeaderOnly(bufferSize int) <-chan Event {
 }
 
 // subscribeInternal handles subscription creation with optional late subscription warning.
-func (b *EventBus) subscribeInternal(bufferSize int, isLeaderOnly bool) <-chan Event {
+//
+// Set suppressLateWarning to true for:
+//   - Leader-only components that intentionally subscribe after leader election
+//   - Internal infrastructure (e.g., scatter-gather) that creates temporary subscriptions
+func (b *EventBus) subscribeInternal(bufferSize int, suppressLateWarning bool) <-chan Event {
 	// Check if subscribing after Start() - may miss buffered events
 	b.startMu.Lock()
 	started := b.started
 	b.startMu.Unlock()
 
-	if started && !isLeaderOnly {
+	if started && !suppressLateWarning {
 		// Get caller info for debugging
 		_, file, line, ok := runtime.Caller(2)
 		caller := "unknown"
@@ -209,9 +213,10 @@ func (b *EventBus) subscribeInternal(bufferSize int, isLeaderOnly bool) <-chan E
 			caller = file
 		}
 
-		slog.Warn("Subscription after EventBus.Start() may miss buffered events - use SubscribeLeaderOnly for leader-only components",
+		slog.Warn("Subscription after EventBus.Start() may miss buffered events",
 			"caller", caller,
-			"line", line)
+			"line", line,
+			"hint", "use SubscribeLeaderOnly() for leader-only components")
 	}
 
 	b.mu.Lock()
