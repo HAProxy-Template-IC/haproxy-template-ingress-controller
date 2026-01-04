@@ -19,6 +19,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 ### Fixed
 
 - **Graceful shutdown errors**: Track all iteration-scoped goroutines in errgroup and reduce internal shutdown timeout to 25s to prevent pod Error state during rolling updates
+- **Compression threshold default**: Apply 1 MiB default compression threshold when `configPublishing.compressionThreshold` is not set in the CRD, fixing "etcdserver: request is too large" errors
 
 ## [0.1.0-alpha.11] - 2026-01-02
 
