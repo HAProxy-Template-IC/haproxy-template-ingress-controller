@@ -381,3 +381,78 @@ Returns empty string if no memory requests configured.
   {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Convert a Kubernetes memory string to megabytes.
+Supports: Gi, Mi, G, M, Ki, K formats.
+Input: memory string (e.g., "256Mi", "1Gi")
+Returns: integer megabytes, or 0 if parsing fails
+*/}}
+{{- define "haptic.memoryToMB" -}}
+{{- $memory := . -}}
+{{- if $memory -}}
+  {{- if hasSuffix "Gi" $memory -}}
+    {{- $val := trimSuffix "Gi" $memory | float64 -}}
+    {{- mul $val 1024 | int -}}
+  {{- else if hasSuffix "Mi" $memory -}}
+    {{- trimSuffix "Mi" $memory | int -}}
+  {{- else if hasSuffix "G" $memory -}}
+    {{- $val := trimSuffix "G" $memory | float64 -}}
+    {{- mul $val 1000 | int -}}
+  {{- else if hasSuffix "M" $memory -}}
+    {{- trimSuffix "M" $memory | int -}}
+  {{- else if hasSuffix "Ki" $memory -}}
+    {{- $val := trimSuffix "Ki" $memory | float64 -}}
+    {{- div $val 1024 | int -}}
+  {{- else if hasSuffix "K" $memory -}}
+    {{- $val := trimSuffix "K" $memory | float64 -}}
+    {{- div $val 1000 | int -}}
+  {{- else -}}
+    {{- /* Assume bytes, convert to MB */ -}}
+    {{- div ($memory | float64) 1048576 | int -}}
+  {{- end -}}
+{{- else -}}
+  {{- 0 -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Auto-calculate GOMAXPROCS for dataplane container.
+Returns env var YAML if:
+  - No CPU limit is set (automaxprocs won't work correctly)
+  - User hasn't provided GOMAXPROCS in extraEnv
+Formula: max(2, floor(memory_limit_MB / 128))
+Input: .Values.haproxy.dataplane context
+*/}}
+{{- define "haptic.dataplane.autoGomaxprocs" -}}
+{{- $resources := .resources -}}
+{{- $extraEnv := .extraEnv | default list -}}
+{{- /* Check if user already set GOMAXPROCS */ -}}
+{{- $userSetGomaxprocs := false -}}
+{{- range $extraEnv -}}
+  {{- if eq .name "GOMAXPROCS" -}}
+    {{- $userSetGomaxprocs = true -}}
+  {{- end -}}
+{{- end -}}
+{{- /* Check if CPU limit exists (automaxprocs will handle it) */ -}}
+{{- $hasCpuLimit := false -}}
+{{- if and $resources $resources.limits $resources.limits.cpu -}}
+  {{- $hasCpuLimit = true -}}
+{{- end -}}
+{{- /* Auto-calculate only if needed */ -}}
+{{- if and (not $userSetGomaxprocs) (not $hasCpuLimit) -}}
+  {{- $memLimit := "" -}}
+  {{- if and $resources $resources.limits -}}
+    {{- $memLimit = $resources.limits.memory | default "" -}}
+  {{- end -}}
+  {{- if $memLimit -}}
+    {{- $memMB := include "haptic.memoryToMB" $memLimit | int -}}
+    {{- $gomaxprocs := div $memMB 128 | int -}}
+    {{- if lt $gomaxprocs 2 -}}
+      {{- $gomaxprocs = 2 -}}
+    {{- end -}}
+- name: GOMAXPROCS
+  value: {{ $gomaxprocs | quote }}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
