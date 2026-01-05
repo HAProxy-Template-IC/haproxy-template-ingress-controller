@@ -191,21 +191,27 @@ Uses mustMergeOverwrite for deep merging of all nested structures
 
 {{/*
 Controller image
-Combines base tag (defaults to Chart.AppVersion) with HAProxy version suffix
+Combines base tag (defaults to Chart.AppVersion) with HAProxy version suffix (unless disabled)
 Example: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.11-haproxy3.2
+For dev environments, set image.appendHaproxyVersion=false to use plain tag
 */}}
 {{- define "haptic.controller.image" -}}
 {{- $baseTag := .Values.image.tag | default .Chart.AppVersion -}}
+{{- if ne .Values.image.appendHaproxyVersion false -}}
 {{- printf "%s:%s-haproxy%s" .Values.image.repository $baseTag .Values.haproxyVersion -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.image.repository $baseTag -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
 HAProxy image
-Uses haproxyVersion from values (same version as controller)
+Uses haproxy.image.tag if set, otherwise falls back to haproxyVersion
 Example: haproxytech/haproxy-debian:3.2
 */}}
 {{- define "haptic.haproxy.image" -}}
-{{- printf "%s:%s" .Values.haproxy.image.repository .Values.haproxyVersion -}}
+{{- $tag := .Values.haproxy.image.tag | default .Values.haproxyVersion -}}
+{{- printf "%s:%s" .Values.haproxy.image.repository $tag -}}
 {{- end -}}
 
 {{/*

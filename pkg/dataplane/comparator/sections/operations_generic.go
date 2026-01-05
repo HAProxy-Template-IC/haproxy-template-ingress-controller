@@ -21,9 +21,16 @@ const (
 	OperationDelete
 )
 
-// Priority constants for operation ordering.
+// PriorityMultiplier is used to create sub-priority space for index-based operations.
+// All operation types multiply their base priority by this value to create effective priorities.
+// For IndexChildOp, the index is added (for creates) or subtracted from 999 (for deletes)
+// to ensure correct ordering within the same base priority level.
+const PriorityMultiplier = 1000
+
+// Priority constants for operation ordering (base priorities, before multiplier).
 // Lower priority = executed first for Creates, executed last for Deletes.
 // Higher priority = executed last for Creates, executed first for Deletes.
+// Note: Effective priority = BasePriority * PriorityMultiplier (+ index adjustment for IndexChildOp).
 const (
 	// Priority 10 - Top-level sections that must exist first.
 	PriorityGlobal     = 10
@@ -170,8 +177,10 @@ func NewTopLevelOp[TModel any, TAPI any](
 
 func (op *TopLevelOp[TModel, TAPI]) Type() OperationType { return op.opType }
 func (op *TopLevelOp[TModel, TAPI]) Section() string     { return op.sectionName }
-func (op *TopLevelOp[TModel, TAPI]) Priority() int       { return op.priorityVal }
-func (op *TopLevelOp[TModel, TAPI]) Describe() string    { return op.describeFn() }
+
+// Priority returns the effective priority. Uses multiplier for compatibility with IndexChildOp.
+func (op *TopLevelOp[TModel, TAPI]) Priority() int    { return op.priorityVal * 1000 }
+func (op *TopLevelOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *TopLevelOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	name := op.nameFn(op.model)
@@ -233,8 +242,23 @@ func NewIndexChildOp[TModel any, TAPI any](
 
 func (op *IndexChildOp[TModel, TAPI]) Type() OperationType { return op.opType }
 func (op *IndexChildOp[TModel, TAPI]) Section() string     { return op.sectionName }
-func (op *IndexChildOp[TModel, TAPI]) Priority() int       { return op.priorityVal }
-func (op *IndexChildOp[TModel, TAPI]) Describe() string    { return op.describeFn() }
+
+// Priority returns the effective priority incorporating the index for correct ordering.
+// For creates: lower indexes run first (index 0 before index 1).
+// For deletes: higher indexes run first (index 1 before index 0).
+// This ensures index-based operations execute in the correct order even with parallel execution.
+func (op *IndexChildOp[TModel, TAPI]) Priority() int {
+	// Use multiplier to create sub-priority space within each base priority level.
+	// Max 1000 indexes per parent should be sufficient.
+	basePriority := op.priorityVal * 1000
+	if op.opType == OperationDelete {
+		// Deletes: higher index = lower effective priority (runs first)
+		return basePriority + (999 - op.index)
+	}
+	// Creates/Updates: lower index = lower effective priority (runs first)
+	return basePriority + op.index
+}
+func (op *IndexChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *IndexChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	// For delete operations, we don't need to transform
@@ -294,8 +318,10 @@ func NewNameChildOp[TModel any, TAPI any](
 
 func (op *NameChildOp[TModel, TAPI]) Type() OperationType { return op.opType }
 func (op *NameChildOp[TModel, TAPI]) Section() string     { return op.sectionName }
-func (op *NameChildOp[TModel, TAPI]) Priority() int       { return op.priorityVal }
-func (op *NameChildOp[TModel, TAPI]) Describe() string    { return op.describeFn() }
+
+// Priority returns the effective priority. Uses multiplier for compatibility with IndexChildOp.
+func (op *NameChildOp[TModel, TAPI]) Priority() int    { return op.priorityVal * 1000 }
+func (op *NameChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *NameChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	// For delete operations, we don't need to transform
@@ -349,8 +375,10 @@ func NewSingletonOp[TModel any, TAPI any](
 
 func (op *SingletonOp[TModel, TAPI]) Type() OperationType { return op.opType }
 func (op *SingletonOp[TModel, TAPI]) Section() string     { return op.sectionName }
-func (op *SingletonOp[TModel, TAPI]) Priority() int       { return op.priorityVal }
-func (op *SingletonOp[TModel, TAPI]) Describe() string    { return op.describeFn() }
+
+// Priority returns the effective priority. Uses multiplier for compatibility with IndexChildOp.
+func (op *SingletonOp[TModel, TAPI]) Priority() int    { return op.priorityVal * 1000 }
+func (op *SingletonOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *SingletonOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	// For delete operations, we don't need to transform
@@ -409,8 +437,10 @@ func NewContainerChildOp[TModel any, TAPI any](
 
 func (op *ContainerChildOp[TModel, TAPI]) Type() OperationType { return op.opType }
 func (op *ContainerChildOp[TModel, TAPI]) Section() string     { return op.sectionName }
-func (op *ContainerChildOp[TModel, TAPI]) Priority() int       { return op.priorityVal }
-func (op *ContainerChildOp[TModel, TAPI]) Describe() string    { return op.describeFn() }
+
+// Priority returns the effective priority. Uses multiplier for compatibility with IndexChildOp.
+func (op *ContainerChildOp[TModel, TAPI]) Priority() int    { return op.priorityVal * 1000 }
+func (op *ContainerChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *ContainerChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	childName := op.nameFn(op.model)

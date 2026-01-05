@@ -247,9 +247,10 @@ backend test_backend
 	// Find userlist operation
 	for _, op := range diff.Operations {
 		if op.Section() == "userlist" {
-			// Userlist priority should be 10 (same as other foundational sections)
-			if op.Priority() != 10 {
-				t.Errorf("Expected userlist priority to be 10, got %d", op.Priority())
+			// Userlist priority should be 10 * PriorityMultiplier (same as other foundational sections)
+			expectedPriority := 10 * sections.PriorityMultiplier
+			if op.Priority() != expectedPriority {
+				t.Errorf("Expected userlist priority to be %d, got %d", expectedPriority, op.Priority())
 			}
 			return
 		}

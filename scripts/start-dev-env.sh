@@ -711,6 +711,7 @@ deploy_controller() {
         "--namespace" "${CTRL_NAMESPACE}"
         "--values" "${ASSETS_DIR}/dev-values.yaml"
         "--set" "image.tag=${IMAGE_TAG}"
+        "--set" "image.appendHaproxyVersion=false"
         "--set" "haproxy.image.repository=${HAPROXY_REPO}"
         "--set" "haproxy.image.tag=${HAPROXY_TAG}"
         # Note: --wait is removed because readiness probes are disabled in dev mode
@@ -1028,6 +1029,7 @@ dev_restart() {
         "--create-namespace"
         "--values" "${ASSETS_DIR}/dev-values.yaml"
         "--set" "image.tag=${IMAGE_TAG}"
+        "--set" "image.appendHaproxyVersion=false"
         "--set" "haproxy.image.repository=${HAPROXY_REPO}"
         "--set" "haproxy.image.tag=${HAPROXY_TAG}"
         "--wait"

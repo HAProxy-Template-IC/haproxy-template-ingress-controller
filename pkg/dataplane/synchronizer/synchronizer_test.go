@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -54,11 +55,11 @@ func newMockOperation(opType sections.OperationType, section string, priority in
 }
 
 // newFailingOperation creates a mock operation that returns an error when executed.
-func newFailingOperation(opType sections.OperationType, section string, err error) *mockOperation {
+func newFailingOperation(opType sections.OperationType, section string, priority int, err error) *mockOperation {
 	return &mockOperation{
 		opType:      opType,
 		section:     section,
-		priority:    10,
+		priority:    priority,
 		description: "failing " + section + " operation",
 		executeFunc: func(_ context.Context, _ *client.DataplaneClient, _ string) error {
 			return err
@@ -92,9 +93,9 @@ backend test_backend
 	require.NoError(t, err)
 
 	// Create synchronizer without a real client (we won't need it for no-changes case)
-	sync := New(nil)
+	synchronizer := New(nil)
 
-	result, err := sync.Sync(context.Background(), current, desired, DefaultSyncOptions())
+	result, err := synchronizer.Sync(context.Background(), current, desired, DefaultSyncOptions())
 	require.NoError(t, err)
 
 	assert.True(t, result.Success)
@@ -139,9 +140,9 @@ backend new_backend
 	require.NoError(t, err)
 
 	// Create synchronizer without a real client (dry-run doesn't execute)
-	sync := New(nil)
+	synchronizer := New(nil)
 
-	result, err := sync.Sync(context.Background(), current, desired, DryRunOptions())
+	result, err := synchronizer.Sync(context.Background(), current, desired, DryRunOptions())
 	require.NoError(t, err)
 
 	assert.True(t, result.Success)
@@ -167,10 +168,10 @@ func TestDryRun_ReturnsOperationsWithoutExecuting(t *testing.T) {
 		},
 	}
 
-	sync := New(nil)
+	synchronizer := New(nil)
 	startTime := time.Now()
 
-	result := sync.dryRun(diff, startTime)
+	result := synchronizer.dryRun(diff, startTime)
 
 	assert.True(t, result.Success)
 	assert.Equal(t, PolicyDryRun, result.Policy)
@@ -192,10 +193,10 @@ func TestExecuteOperations_AllSucceed(t *testing.T) {
 		newMockOperation(sections.OperationUpdate, "frontend", 10),
 	}
 
-	sync := New(nil)
+	synchronizer := New(nil)
 	opts := DefaultSyncOptions()
 
-	applied, failed, err := sync.executeOperations(context.Background(), ops, opts)
+	applied, failed, err := synchronizer.executeOperations(context.Background(), ops, "test-tx", opts)
 
 	require.NoError(t, err)
 	assert.Len(t, applied, 3)
@@ -208,51 +209,58 @@ func TestExecuteOperations_AllSucceed(t *testing.T) {
 	}
 }
 
-// TestExecuteOperations_FirstFailure_StopsExecution tests that execution stops on first failure
-// when ContinueOnError is false.
+// TestExecuteOperations_FirstFailure_StopsExecution tests that execution stops on first error
+// when ContinueOnError is false. With parallel execution by priority, operations at the same
+// priority run in parallel, so we use different priorities to ensure sequential execution
+// for this test: first a successful operation (priority 10), then a failing one (priority 20).
 func TestExecuteOperations_FirstFailure_StopsExecution(t *testing.T) {
 	testErr := errors.New("operation failed")
+	// Use different priorities to ensure sequential execution across groups.
+	// Priority 10 runs first (should succeed), Priority 20 runs second (should fail),
+	// Priority 30 should NOT run because priority 20 failed.
 	ops := []comparator.Operation{
-		newMockOperation(sections.OperationCreate, "backend", 20),
-		newFailingOperation(sections.OperationCreate, "server", testErr),
-		newMockOperation(sections.OperationUpdate, "frontend", 10),
+		newMockOperation(sections.OperationCreate, "backend", 10),
+		newFailingOperation(sections.OperationCreate, "server", 20, testErr),
+		newMockOperation(sections.OperationUpdate, "frontend", 30),
 	}
 
-	sync := New(nil)
+	synchronizer := New(nil)
 	opts := SyncOptions{
 		Policy:          PolicyApply,
 		ContinueOnError: false,
 	}
 
-	applied, failed, err := sync.executeOperations(context.Background(), ops, opts)
+	applied, failed, err := synchronizer.executeOperations(context.Background(), ops, "test-tx", opts)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "operation failed")
 	assert.Len(t, applied, 1, "Only first operation should be applied")
 	assert.Len(t, failed, 1, "Second operation should be in failed list")
 
-	// Verify third operation was NOT executed (stopped after first failure)
+	// Verify third operation was NOT executed (stopped after priority 20 failed)
 	thirdOp := ops[2].(*mockOperation)
 	assert.False(t, thirdOp.executed, "Third operation should not be executed after failure")
 }
 
 // TestExecuteOperations_ContinueOnError tests that execution continues after failure
-// when ContinueOnError is true.
+// when ContinueOnError is true. All operations run regardless of failures.
 func TestExecuteOperations_ContinueOnError(t *testing.T) {
 	testErr := errors.New("operation failed")
+	// Use different priorities to ensure sequential execution across groups.
+	// With ContinueOnError, all groups run regardless of failures.
 	ops := []comparator.Operation{
-		newMockOperation(sections.OperationCreate, "backend", 20),
-		newFailingOperation(sections.OperationCreate, "server", testErr),
-		newMockOperation(sections.OperationUpdate, "frontend", 10),
+		newMockOperation(sections.OperationCreate, "backend", 10),
+		newFailingOperation(sections.OperationCreate, "server", 20, testErr),
+		newMockOperation(sections.OperationUpdate, "frontend", 30),
 	}
 
-	sync := New(nil)
+	synchronizer := New(nil)
 	opts := SyncOptions{
 		Policy:          PolicyApply,
 		ContinueOnError: true,
 	}
 
-	applied, failed, err := sync.executeOperations(context.Background(), ops, opts)
+	applied, failed, err := synchronizer.executeOperations(context.Background(), ops, "test-tx", opts)
 
 	require.NoError(t, err, "Should not return error when ContinueOnError is true")
 	assert.Len(t, applied, 2, "First and third operations should be applied")
@@ -265,10 +273,10 @@ func TestExecuteOperations_ContinueOnError(t *testing.T) {
 
 // TestExecuteOperations_EmptyList tests executeOperations with empty operation list.
 func TestExecuteOperations_EmptyList(t *testing.T) {
-	sync := New(nil)
+	synchronizer := New(nil)
 	opts := DefaultSyncOptions()
 
-	applied, failed, err := sync.executeOperations(context.Background(), nil, opts)
+	applied, failed, err := synchronizer.executeOperations(context.Background(), nil, "test-tx", opts)
 
 	require.NoError(t, err)
 	assert.Empty(t, applied)
@@ -529,17 +537,17 @@ func TestDryRunOptions(t *testing.T) {
 
 // TestWithLogger tests that WithLogger sets a custom logger.
 func TestWithLogger(t *testing.T) {
-	sync := New(nil)
-	require.NotNil(t, sync)
+	synchronizer := New(nil)
+	require.NotNil(t, synchronizer)
 
 	// Create a custom logger
 	customLogger := slog.Default().With("test", "value")
 
 	// Chain the WithLogger call and verify it returns the same synchronizer
-	result := sync.WithLogger(customLogger)
+	result := synchronizer.WithLogger(customLogger)
 
-	assert.Same(t, sync, result, "WithLogger should return the same synchronizer instance")
-	assert.Equal(t, customLogger, sync.logger, "Logger should be set to custom logger")
+	assert.Same(t, synchronizer, result, "WithLogger should return the same synchronizer instance")
+	assert.Equal(t, customLogger, synchronizer.logger, "Logger should be set to custom logger")
 }
 
 // TestSyncPolicy_MaxRetries_UnknownPolicy tests the default case for MaxRetries.
@@ -562,8 +570,8 @@ global
 `)
 	require.NoError(t, err)
 
-	sync := New(nil)
-	_, err = sync.Sync(context.Background(), nil, desired, DefaultSyncOptions())
+	synchronizer := New(nil)
+	_, err = synchronizer.Sync(context.Background(), nil, desired, DefaultSyncOptions())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "current configuration is nil")
@@ -580,8 +588,8 @@ global
 `)
 	require.NoError(t, err)
 
-	sync := New(nil)
-	_, err = sync.Sync(context.Background(), current, nil, DefaultSyncOptions())
+	synchronizer := New(nil)
+	_, err = synchronizer.Sync(context.Background(), current, nil, DefaultSyncOptions())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "desired configuration is nil")
@@ -589,7 +597,7 @@ global
 
 // TestSyncFromStrings_ParsesAndSyncsConfigs tests that SyncFromStrings properly parses both configs.
 func TestSyncFromStrings_ParsesAndSyncsConfigs(t *testing.T) {
-	sync := New(nil)
+	synchronizer := New(nil)
 
 	currentConfig := `
 global
@@ -619,7 +627,7 @@ backend new_backend
 `
 
 	// Use DryRunOptions to avoid needing a real client
-	result, err := sync.SyncFromStrings(context.Background(), currentConfig, desiredConfig, DryRunOptions())
+	result, err := synchronizer.SyncFromStrings(context.Background(), currentConfig, desiredConfig, DryRunOptions())
 
 	require.NoError(t, err)
 	assert.True(t, result.Success)
@@ -630,7 +638,7 @@ backend new_backend
 
 // TestSyncFromStrings_NoChanges tests SyncFromStrings with identical configs.
 func TestSyncFromStrings_NoChanges(t *testing.T) {
-	sync := New(nil)
+	synchronizer := New(nil)
 
 	config := `
 global
@@ -646,7 +654,7 @@ backend test_backend
     server srv1 127.0.0.1:8080
 `
 
-	result, err := sync.SyncFromStrings(context.Background(), config, config, DryRunOptions())
+	result, err := synchronizer.SyncFromStrings(context.Background(), config, config, DryRunOptions())
 
 	require.NoError(t, err)
 	assert.True(t, result.Success)
@@ -656,7 +664,7 @@ backend test_backend
 
 // TestSyncFromStrings_DryRunWithChanges tests SyncFromStrings with changes in dry-run mode.
 func TestSyncFromStrings_DryRunWithChanges(t *testing.T) {
-	sync := New(nil)
+	synchronizer := New(nil)
 
 	currentConfig := `
 global
@@ -682,7 +690,7 @@ backend new_backend
     server srv2 127.0.0.1:9090
 `
 
-	result, err := sync.SyncFromStrings(context.Background(), currentConfig, desiredConfig, DryRunOptions())
+	result, err := synchronizer.SyncFromStrings(context.Background(), currentConfig, desiredConfig, DryRunOptions())
 
 	require.NoError(t, err)
 	assert.True(t, result.Success)
@@ -850,12 +858,26 @@ func TestSyncOperations_Success(t *testing.T) {
 }
 
 // TestSyncOperations_FailOnError tests SyncOperations stops on first error.
+// With parallel execution by priority, operations at the same priority level
+// run in parallel, and operations at higher priorities don't start if an
+// earlier priority group fails.
 func TestSyncOperations_FailOnError(t *testing.T) {
 	testErr := errors.New("operation failed")
+
+	// Create operations with different priorities:
+	// - Priority 10: failing operation (runs first)
+	// - Priority 20: should NOT execute (later priority group)
+	failingOp := newMockOperation(sections.OperationCreate, "server", 10)
+	failingOp.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+		return testErr
+	}
+	failingOp.description = "failing server operation"
+
+	laterOp := newMockOperation(sections.OperationCreate, "backend", 20)
+
 	ops := []comparator.Operation{
-		newMockOperation(sections.OperationCreate, "backend", 20),
-		newFailingOperation(sections.OperationCreate, "server", testErr),
-		newMockOperation(sections.OperationUpdate, "frontend", 10),
+		failingOp,
+		laterOp,
 	}
 
 	tx := &client.Transaction{
@@ -870,9 +892,8 @@ func TestSyncOperations_FailOnError(t *testing.T) {
 	assert.Contains(t, err.Error(), "operation failed")
 	assert.Contains(t, err.Error(), "failing server operation")
 
-	// Verify third operation was NOT executed
-	thirdOp := ops[2].(*mockOperation)
-	assert.False(t, thirdOp.executed, "Third operation should not be executed after failure")
+	// Verify later priority operation was NOT executed
+	assert.False(t, laterOp.executed, "Higher priority operations should not execute after earlier priority fails")
 }
 
 // TestSyncOperations_EmptyList tests SyncOperations with empty operation list.
@@ -887,6 +908,132 @@ func TestSyncOperations_EmptyList(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.ReloadTriggered)
+}
+
+// TestSyncOperations_ParallelByPriority tests that operations are grouped by priority
+// and executed in priority order, with operations at the same priority running in parallel.
+func TestSyncOperations_ParallelByPriority(t *testing.T) {
+	// Track execution order
+	var executionOrder []string
+	var mu sync.Mutex
+
+	recordExecution := func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		executionOrder = append(executionOrder, name)
+	}
+
+	// Create operations at different priorities
+	// Priority 10: op1, op2 (should run first, in parallel)
+	// Priority 20: op3 (should run second)
+	// Priority 30: op4, op5 (should run third, in parallel)
+	op1 := newMockOperation(sections.OperationCreate, "frontend1", 10)
+	op1.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+		recordExecution("op1-priority10")
+		return nil
+	}
+
+	op2 := newMockOperation(sections.OperationCreate, "frontend2", 10)
+	op2.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+		recordExecution("op2-priority10")
+		return nil
+	}
+
+	op3 := newMockOperation(sections.OperationCreate, "backend", 20)
+	op3.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+		recordExecution("op3-priority20")
+		return nil
+	}
+
+	op4 := newMockOperation(sections.OperationCreate, "server1", 30)
+	op4.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+		recordExecution("op4-priority30")
+		return nil
+	}
+
+	op5 := newMockOperation(sections.OperationCreate, "server2", 30)
+	op5.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+		recordExecution("op5-priority30")
+		return nil
+	}
+
+	ops := []comparator.Operation{op5, op3, op1, op4, op2} // Scrambled order
+
+	tx := &client.Transaction{ID: "test-tx", Version: 1}
+
+	result, err := SyncOperations(context.Background(), nil, ops, tx)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// All operations should have executed
+	assert.True(t, op1.executed)
+	assert.True(t, op2.executed)
+	assert.True(t, op3.executed)
+	assert.True(t, op4.executed)
+	assert.True(t, op5.executed)
+
+	// Verify priority ordering: all priority 10 ops before priority 20, all priority 20 before priority 30
+	mu.Lock()
+	order := executionOrder
+	mu.Unlock()
+
+	require.Len(t, order, 5)
+
+	// Find positions
+	priority10Positions := []int{}
+	priority20Position := -1
+	priority30Positions := []int{}
+
+	for i, name := range order {
+		if strings.Contains(name, "priority10") {
+			priority10Positions = append(priority10Positions, i)
+		} else if strings.Contains(name, "priority20") {
+			priority20Position = i
+		} else if strings.Contains(name, "priority30") {
+			priority30Positions = append(priority30Positions, i)
+		}
+	}
+
+	// Priority 10 ops should come before priority 20
+	for _, pos := range priority10Positions {
+		assert.Less(t, pos, priority20Position, "Priority 10 operations should execute before priority 20")
+	}
+
+	// Priority 20 should come before priority 30
+	for _, pos := range priority30Positions {
+		assert.Less(t, priority20Position, pos, "Priority 20 operations should execute before priority 30")
+	}
+}
+
+// TestGroupByPriority tests the groupByPriority helper function.
+func TestGroupByPriority(t *testing.T) {
+	ops := []comparator.Operation{
+		newMockOperation(sections.OperationCreate, "backend", 20),
+		newMockOperation(sections.OperationCreate, "server", 30),
+		newMockOperation(sections.OperationCreate, "frontend", 10),
+		newMockOperation(sections.OperationUpdate, "backend2", 20),
+	}
+
+	groups := groupByPriority(ops)
+
+	assert.Len(t, groups, 3, "Should have 3 priority groups")
+	assert.Len(t, groups[10], 1, "Priority 10 should have 1 operation")
+	assert.Len(t, groups[20], 2, "Priority 20 should have 2 operations")
+	assert.Len(t, groups[30], 1, "Priority 30 should have 1 operation")
+}
+
+// TestSortedPriorityKeys tests the sortedPriorityKeys helper function.
+func TestSortedPriorityKeys(t *testing.T) {
+	groups := map[int][]comparator.Operation{
+		30: {newMockOperation(sections.OperationCreate, "server", 30)},
+		10: {newMockOperation(sections.OperationCreate, "frontend", 10)},
+		20: {newMockOperation(sections.OperationCreate, "backend", 20)},
+	}
+
+	keys := sortedPriorityKeys(groups)
+
+	assert.Equal(t, []int{10, 20, 30}, keys, "Keys should be sorted in ascending order")
 }
 
 // createMockDataplaneServer creates a mock Dataplane API server for testing.
@@ -961,7 +1108,7 @@ func TestSync_Apply_ExercisesApplyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create synchronizer with real client
-	sync := New(dpClient)
+	synchronizer := New(dpClient)
 
 	// Create configs with a difference
 	currentConfig := `
@@ -1003,7 +1150,7 @@ backend new_backend
 
 	// This exercises the apply path - we don't require success since
 	// the mock server may not handle all operations perfectly
-	result, _ := sync.Sync(context.Background(), current, desired, opts)
+	result, _ := synchronizer.Sync(context.Background(), current, desired, opts)
 
 	// Verify we got a result (path was exercised)
 	require.NotNil(t, result)
@@ -1074,7 +1221,7 @@ func TestSync_Apply_VersionConflict(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sync := New(dpClient)
+	synchronizer := New(dpClient)
 
 	currentConfig := `
 global
@@ -1110,7 +1257,7 @@ backend new_backend
 		ContinueOnError: false,
 	}
 
-	result, err := sync.Sync(context.Background(), current, desired, opts)
+	result, err := synchronizer.Sync(context.Background(), current, desired, opts)
 
 	// Should fail - either from version conflict or operation error
 	require.Error(t, err)
@@ -1132,7 +1279,7 @@ func TestSync_Apply_ContinueOnError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sync := New(dpClient)
+	synchronizer := New(dpClient)
 
 	// Create configs with multiple differences
 	currentConfig := `
@@ -1169,11 +1316,139 @@ backend backend2
 		ContinueOnError: true, // Continue even if operations fail
 	}
 
-	result, err := sync.Sync(context.Background(), current, desired, opts)
+	result, err := synchronizer.Sync(context.Background(), current, desired, opts)
 
 	require.NoError(t, err)
 	assert.True(t, result.Success)
 	assert.True(t, result.HasChanges())
+}
+
+// TestSyncOperations_IndexBasedOperationsExecuteInOrder tests that index-based operations
+// execute sequentially in index order. This is critical for operations like HTTP checks
+// where index 0 must complete BEFORE index 1 starts.
+//
+// The implementation uses unique priorities per index (basePriority*1000 + index), which
+// causes each index to be in its own priority group. Since priority groups execute
+// sequentially (not in parallel), this guarantees correct ordering.
+func TestSyncOperations_IndexBasedOperationsExecuteInOrder(t *testing.T) {
+	const basePriority = 60 // Example: http-check priority
+
+	// Track when each operation starts and completes
+	type timing struct {
+		startTime    time.Time
+		completeTime time.Time
+	}
+
+	var mu sync.Mutex
+	timings := make(map[int]timing) // index -> timing
+
+	// Create operations that record their start/complete times with a small delay
+	createIndexOp := func(index int) *mockOperation {
+		priority := basePriority*sections.PriorityMultiplier + index // Simulates IndexChildOp.Priority()
+		op := newMockOperation(sections.OperationCreate, fmt.Sprintf("http-check-%d", index), priority)
+		op.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+			mu.Lock()
+			t := timings[index]
+			t.startTime = time.Now()
+			timings[index] = t
+			mu.Unlock()
+
+			// Small delay to ensure timing differences are measurable
+			time.Sleep(10 * time.Millisecond)
+
+			mu.Lock()
+			t = timings[index]
+			t.completeTime = time.Now()
+			timings[index] = t
+			mu.Unlock()
+
+			return nil
+		}
+		return op
+	}
+
+	// Create 5 index-based operations in scrambled order
+	ops := []comparator.Operation{
+		createIndexOp(3),
+		createIndexOp(0),
+		createIndexOp(4),
+		createIndexOp(1),
+		createIndexOp(2),
+	}
+
+	tx := &client.Transaction{ID: "test-tx", Version: 1}
+
+	result, err := SyncOperations(context.Background(), nil, ops, tx)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Verify all operations executed
+	for _, op := range ops {
+		assert.True(t, op.(*mockOperation).executed, "Operation should be executed")
+	}
+
+	// Verify timing: each index must complete BEFORE the next index starts
+	mu.Lock()
+	defer mu.Unlock()
+
+	for i := 0; i < 4; i++ {
+		current := timings[i]
+		next := timings[i+1]
+
+		assert.True(t, current.completeTime.Before(next.startTime) || current.completeTime.Equal(next.startTime),
+			"Index %d should complete before index %d starts (completed: %v, started: %v)",
+			i, i+1, current.completeTime, next.startTime)
+	}
+}
+
+// TestSyncOperations_IndexBasedDeletesExecuteInReverseOrder tests that index-based delete
+// operations execute in reverse index order (higher indices first). This is important
+// because deleting index 0 when index 1 still exists could cause array reindexing issues.
+func TestSyncOperations_IndexBasedDeletesExecuteInReverseOrder(t *testing.T) {
+	const basePriority = 60
+
+	// Track execution order
+	var mu sync.Mutex
+	var executionOrder []int
+
+	// Create delete operations that record their execution order
+	createDeleteOp := func(index int) *mockOperation {
+		// For deletes: basePriority*1000 + (999 - index) - higher indices run first
+		priority := basePriority*sections.PriorityMultiplier + (999 - index)
+		op := newMockOperation(sections.OperationDelete, fmt.Sprintf("http-check-%d", index), priority)
+		op.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+			mu.Lock()
+			executionOrder = append(executionOrder, index)
+			mu.Unlock()
+			return nil
+		}
+		return op
+	}
+
+	// Create 5 delete operations in scrambled order
+	ops := []comparator.Operation{
+		createDeleteOp(2),
+		createDeleteOp(4),
+		createDeleteOp(0),
+		createDeleteOp(3),
+		createDeleteOp(1),
+	}
+
+	tx := &client.Transaction{ID: "test-tx", Version: 1}
+
+	result, err := SyncOperations(context.Background(), nil, ops, tx)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Verify execution order is reverse (4, 3, 2, 1, 0)
+	expected := []int{4, 3, 2, 1, 0}
+	assert.Equal(t, expected, executionOrder,
+		"Delete operations should execute in reverse index order (highest first)")
 }
 
 // TestSync_Apply_OperationFailure tests the apply path when operations fail.
@@ -1223,7 +1498,7 @@ func TestSync_Apply_OperationFailure(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sync := New(dpClient)
+	synchronizer := New(dpClient)
 
 	currentConfig := `
 global
@@ -1256,7 +1531,7 @@ backend new_backend
 		ContinueOnError: false, // Stop on first error
 	}
 
-	result, err := sync.Sync(context.Background(), current, desired, opts)
+	result, err := synchronizer.Sync(context.Background(), current, desired, opts)
 
 	// Should fail due to operation error
 	require.Error(t, err)

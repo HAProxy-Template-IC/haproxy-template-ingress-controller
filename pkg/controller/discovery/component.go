@@ -92,7 +92,6 @@ type Component struct {
 	localVersion   *dataplane.Version             // Local HAProxy version detected at startup
 	admittedPods   map[string]*dataplane.Endpoint // Map of PodName → admitted Endpoint with cached version
 	pendingRetries map[string]*retryState         // Map of PodName → retry state for pending pods
-	warnedPods     map[string]bool                // Map of PodName → true for version warnings already issued
 
 	// Retry timer for pending pods
 	retryTimer   *time.Timer
@@ -134,7 +133,6 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) 
 		localVersion:   localVersion,
 		admittedPods:   make(map[string]*dataplane.Endpoint),
 		pendingRetries: make(map[string]*retryState),
-		warnedPods:     make(map[string]bool),
 	}, nil
 }
 
@@ -570,24 +568,29 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 			continue
 		}
 
-		// Compare versions: remote must be >= local
+		// Compare versions: remote must match local (major.minor)
 		comparison := remoteVersion.Compare(c.localVersion)
-		if comparison < 0 {
-			// Remote version is older than local - permanently reject
-			c.logger.Error("rejecting pod: remote HAProxy version older than local",
+		if comparison != 0 {
+			// Version mismatch - permanently reject
+			direction := "older"
+			if comparison > 0 {
+				direction = "newer"
+			}
+			c.logger.Error("rejecting pod: remote HAProxy version does not match local",
 				"pod", podName,
 				"remote_version", remoteVersion.Full,
 				"local_version", c.localVersion.Full,
 				"remote_major", remoteVersion.Major,
 				"remote_minor", remoteVersion.Minor,
 				"local_major", c.localVersion.Major,
-				"local_minor", c.localVersion.Minor)
-			// Don't add to pending retries - this is a permanent rejection
+				"local_minor", c.localVersion.Minor,
+				"direction", direction)
+			// Don't add to pending retries - version mismatch is permanent
 			// K8s pods are replaced on upgrade, not mutated
 			continue
 		}
 
-		// Version compatible - admit pod
+		// Version matches - admit pod
 		admittedEndpoint := &dataplane.Endpoint{
 			URL:                  candidate.URL,
 			Username:             credentials.DataplaneUsername,
@@ -599,21 +602,9 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 			DetectedFullVersion:  remoteVersion.Full,
 		}
 
-		// Log version compatibility
-		if comparison > 0 {
-			// Remote is newer than local - warn once
-			if !c.warnedPods[podName] {
-				c.logger.Warn("remote HAProxy version newer than local (controller may not support all features)",
-					"pod", podName,
-					"remote_version", remoteVersion.Full,
-					"local_version", c.localVersion.Full)
-				c.warnedPods[podName] = true
-			}
-		} else {
-			c.logger.Info("Pod admitted with matching version",
-				"pod", podName,
-				"version", remoteVersion.Full)
-		}
+		c.logger.Info("Pod admitted with matching version",
+			"pod", podName,
+			"version", remoteVersion.Full)
 
 		// Cache admitted endpoint
 		c.admittedPods[podName] = admittedEndpoint
@@ -697,7 +688,6 @@ func (c *Component) cleanupRemovedPods(currentCandidates map[string]string) {
 			c.logger.Debug("cleaning up state for removed pod", "pod", podName)
 			delete(c.admittedPods, podName)
 			delete(c.pendingRetries, podName)
-			delete(c.warnedPods, podName)
 		}
 	}
 
@@ -705,13 +695,6 @@ func (c *Component) cleanupRemovedPods(currentCandidates map[string]string) {
 	for podName := range c.pendingRetries {
 		if _, exists := currentCandidates[podName]; !exists {
 			delete(c.pendingRetries, podName)
-		}
-	}
-
-	// Clean up warned pods
-	for podName := range c.warnedPods {
-		if _, exists := currentCandidates[podName]; !exists {
-			delete(c.warnedPods, podName)
 		}
 	}
 }

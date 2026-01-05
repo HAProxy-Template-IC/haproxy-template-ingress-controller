@@ -22,6 +22,7 @@ import (
 
 // assertOperation validates that an Operation has the expected properties.
 // This helper reduces repetition in factory function tests.
+// wantPriority is the expected effective priority (after PriorityMultiplier).
 func assertOperation(t *testing.T, op Operation, wantType OperationType, wantSection string, wantPriority int, wantDescContains string) {
 	t.Helper()
 

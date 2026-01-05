@@ -881,8 +881,6 @@ func TestComponent_CleanupRemovedPods(t *testing.T) {
 	component.admittedPods["pod-3"] = &dataplane.Endpoint{PodName: "pod-3"}
 	component.pendingRetries["pod-2"] = &retryState{retryCount: 1, lastAttempt: time.Now()}
 	component.pendingRetries["pod-4"] = &retryState{retryCount: 1, lastAttempt: time.Now()}
-	component.warnedPods["pod-1"] = true
-	component.warnedPods["pod-3"] = true
 	component.mu.Unlock()
 
 	// Current candidates only have pod-1 and pod-3
@@ -914,11 +912,6 @@ func TestComponent_CleanupRemovedPods(t *testing.T) {
 	assert.True(t, exists, "pod-1 should remain in admittedPods")
 	_, exists = component.admittedPods["pod-3"]
 	assert.True(t, exists, "pod-3 should remain in admittedPods")
-
-	// pod-1 and pod-3 warnings should remain
-	assert.Len(t, component.warnedPods, 2)
-	assert.True(t, component.warnedPods["pod-1"])
-	assert.True(t, component.warnedPods["pod-3"])
 }
 
 func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {

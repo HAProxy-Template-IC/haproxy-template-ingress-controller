@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
+	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"golang.org/x/sync/errgroup"
 )
 
 // Synchronizer orchestrates configuration synchronization between
@@ -136,7 +139,7 @@ func (s *Synchronizer) apply(ctx context.Context, diff *comparator.ConfigDiff, o
 			"version", tx.Version,
 		)
 
-		applied, failed, err := s.executeOperations(ctx, diff.Operations, opts)
+		applied, failed, err := s.executeOperations(ctx, diff.Operations, tx.ID, opts)
 		appliedOps = applied
 		failedOps = failed
 
@@ -188,38 +191,20 @@ func (s *Synchronizer) apply(ctx context.Context, diff *comparator.ConfigDiff, o
 	return NewSuccessResult(opts.Policy, diff, appliedOps, duration, retries), nil
 }
 
-// executeOperations executes a list of operations, respecting ContinueOnError.
-func (s *Synchronizer) executeOperations(ctx context.Context, operations []comparator.Operation, opts SyncOptions) (applied []comparator.Operation, failed []OperationError, err error) {
-	for _, op := range operations {
-		s.logger.Debug("Executing operation",
-			"type", op.Type(),
-			"section", op.Section(),
-			"description", op.Describe(),
-		)
+// executeOperations executes a list of operations using parallel execution by priority.
+// Operations at the same priority level run in parallel; priority groups run sequentially.
+func (s *Synchronizer) executeOperations(ctx context.Context, operations []comparator.Operation, txID string, opts SyncOptions) (applied []comparator.Operation, failed []OperationError, err error) {
+	result, err := executeOperationsParallel(ctx, s.client, operations, txID, parallelExecutionOptions{
+		ContinueOnError: opts.ContinueOnError,
+		Logger:          s.logger,
+	})
 
-		// Execute the operation
-		// Note: transactionID handling will be added when Execute is implemented
-		if execErr := op.Execute(ctx, s.client, ""); execErr != nil {
-			s.logger.Error("Operation failed",
-				"operation", op.Describe(),
-				"error", execErr,
-			)
-
-			failed = append(failed, OperationError{
-				Operation: op,
-				Cause:     execErr,
-			})
-
-			if !opts.ContinueOnError {
-				return applied, failed, fmt.Errorf("operation failed: %w", execErr)
-			}
-			continue
-		}
-
-		applied = append(applied, op)
+	if result != nil {
+		applied = result.Applied
+		failed = result.Failed
 	}
 
-	return applied, failed, nil
+	return applied, failed, err
 }
 
 // SyncFromStrings is a convenience method that parses configuration strings
@@ -282,11 +267,12 @@ type SyncOperationsResult struct {
 //	    return err
 //	})
 func SyncOperations(ctx context.Context, dpClient *client.DataplaneClient, operations []comparator.Operation, tx *client.Transaction) (*SyncOperationsResult, error) {
-	// Execute all operations within the provided transaction
-	for _, op := range operations {
-		if err := op.Execute(ctx, dpClient, tx.ID); err != nil {
-			return nil, fmt.Errorf("operation %q failed: %w", op.Describe(), err)
-		}
+	_, err := executeOperationsParallel(ctx, dpClient, operations, tx.ID, parallelExecutionOptions{
+		ContinueOnError: false,
+		Logger:          nil, // No logging for standalone function - caller handles logging
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	// Operations succeeded - caller will commit the transaction
@@ -296,4 +282,216 @@ func SyncOperations(ctx context.Context, dpClient *client.DataplaneClient, opera
 		ReloadTriggered: false, // Will be updated by caller after commit
 		ReloadID:        "",
 	}, nil
+}
+
+// parallelExecutionOptions configures parallel operation execution.
+type parallelExecutionOptions struct {
+	// ContinueOnError controls whether to continue executing operations after a failure.
+	// If false, execution stops on first error. If true, all operations are attempted.
+	ContinueOnError bool
+
+	// Logger for operation execution logging. If nil, logging is skipped.
+	Logger *slog.Logger
+}
+
+// parallelExecutionResult contains the results of parallel operation execution.
+type parallelExecutionResult struct {
+	// Applied contains operations that completed successfully.
+	Applied []comparator.Operation
+
+	// Failed contains operations that failed with their errors.
+	Failed []OperationError
+}
+
+// executeOperationsParallel executes operations grouped by priority with parallel execution
+// within each priority group. This is the unified execution function used by both
+// SyncOperations and Synchronizer.executeOperations.
+//
+// Operations are grouped by priority and executed in priority order (lower first).
+// Within each priority group, operations run in parallel since they have no dependencies.
+//
+// When ContinueOnError is false, execution stops on the first error.
+// When ContinueOnError is true, all operations are attempted and failures are collected.
+func executeOperationsParallel(
+	ctx context.Context,
+	dpClient *client.DataplaneClient,
+	operations []comparator.Operation,
+	txID string,
+	opts parallelExecutionOptions,
+) (*parallelExecutionResult, error) {
+	if len(operations) == 0 {
+		return &parallelExecutionResult{}, nil
+	}
+
+	result := &parallelExecutionResult{}
+
+	// Group operations by priority
+	groups := groupByPriority(operations)
+	priorities := sortedPriorityKeys(groups)
+
+	// Execute each priority group sequentially
+	for _, priority := range priorities {
+		ops := groups[priority]
+
+		applied, failed, err := executePriorityGroup(ctx, dpClient, ops, txID, opts)
+		result.Applied = append(result.Applied, applied...)
+		result.Failed = append(result.Failed, failed...)
+
+		if err != nil && !opts.ContinueOnError {
+			return result, err
+		}
+	}
+
+	// When ContinueOnError is false, we already returned on first error above.
+	// When ContinueOnError is true, failures are tracked in result.Failed but we don't return error.
+	// This allows the caller to check result.Failed to see what failed.
+	if len(result.Failed) > 0 && !opts.ContinueOnError {
+		return result, fmt.Errorf("%d operation(s) failed", len(result.Failed))
+	}
+
+	return result, nil
+}
+
+// executePriorityGroup executes all operations in a single priority group in parallel.
+func executePriorityGroup(
+	ctx context.Context,
+	dpClient *client.DataplaneClient,
+	ops []comparator.Operation,
+	txID string,
+	opts parallelExecutionOptions,
+) (applied []comparator.Operation, failed []OperationError, err error) {
+	if opts.ContinueOnError {
+		return executePriorityGroupContinueOnError(ctx, dpClient, ops, txID, opts.Logger)
+	}
+	return executePriorityGroupStopOnError(ctx, dpClient, ops, txID, opts.Logger)
+}
+
+// executePriorityGroupStopOnError executes operations in parallel, stopping on first error.
+func executePriorityGroupStopOnError(
+	ctx context.Context,
+	dpClient *client.DataplaneClient,
+	ops []comparator.Operation,
+	txID string,
+	logger *slog.Logger,
+) (applied []comparator.Operation, failed []OperationError, err error) {
+	g, gCtx := errgroup.WithContext(ctx)
+
+	// Track results (thread-safe via channels)
+	appliedChan := make(chan comparator.Operation, len(ops))
+	failedChan := make(chan OperationError, len(ops))
+
+	for _, op := range ops {
+		if logger != nil {
+			logger.Debug("Executing operation",
+				"type", op.Type(),
+				"section", op.Section(),
+				"description", op.Describe(),
+			)
+		}
+
+		g.Go(func() error {
+			if execErr := op.Execute(gCtx, dpClient, txID); execErr != nil {
+				if logger != nil {
+					logger.Error("Operation failed",
+						"operation", op.Describe(),
+						"error", execErr,
+					)
+				}
+				failedChan <- OperationError{Operation: op, Cause: execErr}
+				return fmt.Errorf("operation %q failed: %w", op.Describe(), execErr)
+			}
+			appliedChan <- op
+			return nil
+		})
+	}
+
+	err = g.Wait()
+	close(appliedChan)
+	close(failedChan)
+
+	// Collect results
+	for op := range appliedChan {
+		applied = append(applied, op)
+	}
+	for opErr := range failedChan {
+		failed = append(failed, opErr)
+	}
+
+	return applied, failed, err
+}
+
+// executePriorityGroupContinueOnError executes all operations, collecting failures.
+func executePriorityGroupContinueOnError(
+	ctx context.Context,
+	dpClient *client.DataplaneClient,
+	ops []comparator.Operation,
+	txID string,
+	logger *slog.Logger,
+) (applied []comparator.Operation, failed []OperationError, err error) {
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, op := range ops {
+		if logger != nil {
+			logger.Debug("Executing operation",
+				"type", op.Type(),
+				"section", op.Section(),
+				"description", op.Describe(),
+			)
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			if execErr := op.Execute(ctx, dpClient, txID); execErr != nil {
+				if logger != nil {
+					logger.Error("Operation failed",
+						"operation", op.Describe(),
+						"error", execErr,
+					)
+				}
+				mu.Lock()
+				failed = append(failed, OperationError{
+					Operation: op,
+					Cause:     execErr,
+				})
+				mu.Unlock()
+				return
+			}
+
+			mu.Lock()
+			applied = append(applied, op)
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+
+	if len(failed) > 0 {
+		return applied, failed, fmt.Errorf("%d operation(s) failed in priority group", len(failed))
+	}
+	return applied, failed, nil
+}
+
+// groupByPriority groups operations by their priority level.
+// Operations at the same priority level have no dependencies and can be executed in parallel.
+func groupByPriority(ops []comparator.Operation) map[int][]comparator.Operation {
+	groups := make(map[int][]comparator.Operation)
+	for _, op := range ops {
+		p := op.Priority()
+		groups[p] = append(groups[p], op)
+	}
+	return groups
+}
+
+// sortedPriorityKeys returns the priority keys in ascending order.
+// This ensures operations are executed in dependency order (lower priority first).
+func sortedPriorityKeys(groups map[int][]comparator.Operation) []int {
+	keys := make([]int, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
 }
