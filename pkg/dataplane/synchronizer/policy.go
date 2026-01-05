@@ -64,6 +64,10 @@ type SyncOptions struct {
 	// ValidateBeforeApply runs HAProxy validation before committing changes.
 	// This adds an extra API call but provides safety.
 	ValidateBeforeApply bool
+
+	// MaxParallel limits concurrent operations during sync.
+	// 0 means unlimited (not recommended for large configs).
+	MaxParallel int
 }
 
 // DefaultSyncOptions returns the default sync options.

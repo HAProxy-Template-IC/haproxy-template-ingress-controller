@@ -423,6 +423,69 @@ Returns: integer megabytes, or 0 if parsing fails
 {{- end -}}
 
 {{/*
+Calculate the effective GOMAXPROCS value for the dataplane container.
+Returns the numeric value in ALL cases (for use in calculations like maxParallel).
+Priority:
+  1. If user set GOMAXPROCS in extraEnv → use that
+  2. If CPU limit exists → estimate from CPU (ceil of limit)
+  3. If memory limit exists → calculate from memory (mem_MB / 64)
+  4. Fallback → 2
+Input: .Values.haproxy.dataplane context
+*/}}
+{{- define "haptic.dataplane.gomaxprocsValue" -}}
+{{- $resources := .resources -}}
+{{- $extraEnv := .extraEnv | default list -}}
+{{- $result := 0 -}}
+{{- /* 1. Check if user explicitly set GOMAXPROCS */ -}}
+{{- range $extraEnv -}}
+  {{- if eq .name "GOMAXPROCS" -}}
+    {{- $result = .value | int -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq $result 0 -}}
+  {{- /* 2. If CPU limit exists, estimate from it (automaxprocs behavior) */ -}}
+  {{- if and $resources $resources.limits $resources.limits.cpu -}}
+    {{- $cpuLimit := $resources.limits.cpu | toString -}}
+    {{- /* Parse CPU: "2" -> 2, "2000m" -> 2, "500m" -> 1 */ -}}
+    {{- if hasSuffix "m" $cpuLimit -}}
+      {{- $millis := trimSuffix "m" $cpuLimit | int -}}
+      {{- /* ceil(millis/1000): add 999 then divide */ -}}
+      {{- $result = max 1 (div (add $millis 999) 1000) -}}
+    {{- else -}}
+      {{- $result = $cpuLimit | int -}}
+    {{- end -}}
+  {{- else if and $resources $resources.limits $resources.limits.memory -}}
+    {{- /* 3. Calculate from memory limit */ -}}
+    {{- $memLimit := $resources.limits.memory -}}
+    {{- $memMB := include "haptic.memoryToMB" $memLimit | int -}}
+    {{- $result = div $memMB 64 | int -}}
+  {{- end -}}
+{{- end -}}
+{{- /* 4. Ensure minimum of 2 */ -}}
+{{- if lt $result 2 -}}
+  {{- $result = 2 -}}
+{{- end -}}
+{{- $result -}}
+{{- end -}}
+
+{{/*
+Calculate maxParallel for controller config dataplane section.
+If user explicitly set maxParallel (including 0), use that value.
+Otherwise, auto-calculate as dataplane GOMAXPROCS * 10.
+Input: root context (.)
+*/}}
+{{- define "haptic.config.dataplane.maxParallel" -}}
+{{- /* Check if user explicitly set maxParallel to a number (including 0) */ -}}
+{{- if hasKey .Values.controller.config.dataplane "maxParallel" -}}
+  {{- .Values.controller.config.dataplane.maxParallel | int -}}
+{{- else -}}
+  {{- /* Auto-calculate: GOMAXPROCS * 10 */ -}}
+  {{- $gomaxprocs := include "haptic.dataplane.gomaxprocsValue" .Values.haproxy.dataplane | int -}}
+  {{- mul $gomaxprocs 10 -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Auto-calculate GOMAXPROCS for dataplane container.
 Returns env var YAML if:
   - No CPU limit is set (automaxprocs won't work correctly)

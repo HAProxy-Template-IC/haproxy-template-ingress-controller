@@ -843,7 +843,7 @@ func TestSyncOperations_Success(t *testing.T) {
 		Version: 1,
 	}
 
-	result, err := SyncOperations(context.Background(), nil, ops, tx)
+	result, err := SyncOperations(context.Background(), nil, ops, tx, 0) // 0 = unlimited
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -885,7 +885,7 @@ func TestSyncOperations_FailOnError(t *testing.T) {
 		Version: 2,
 	}
 
-	result, err := SyncOperations(context.Background(), nil, ops, tx)
+	result, err := SyncOperations(context.Background(), nil, ops, tx, 0) // 0 = unlimited
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -903,7 +903,7 @@ func TestSyncOperations_EmptyList(t *testing.T) {
 		Version: 1,
 	}
 
-	result, err := SyncOperations(context.Background(), nil, nil, tx)
+	result, err := SyncOperations(context.Background(), nil, nil, tx, 0) // 0 = unlimited
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -961,7 +961,7 @@ func TestSyncOperations_ParallelByPriority(t *testing.T) {
 
 	tx := &client.Transaction{ID: "test-tx", Version: 1}
 
-	result, err := SyncOperations(context.Background(), nil, ops, tx)
+	result, err := SyncOperations(context.Background(), nil, ops, tx, 0) // 0 = unlimited
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1378,7 +1378,7 @@ func TestSyncOperations_IndexBasedOperationsExecuteInOrder(t *testing.T) {
 
 	tx := &client.Transaction{ID: "test-tx", Version: 1}
 
-	result, err := SyncOperations(context.Background(), nil, ops, tx)
+	result, err := SyncOperations(context.Background(), nil, ops, tx, 0) // 0 = unlimited
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1437,7 +1437,7 @@ func TestSyncOperations_IndexBasedDeletesExecuteInReverseOrder(t *testing.T) {
 
 	tx := &client.Transaction{ID: "test-tx", Version: 1}
 
-	result, err := SyncOperations(context.Background(), nil, ops, tx)
+	result, err := SyncOperations(context.Background(), nil, ops, tx, 0) // 0 = unlimited
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1449,6 +1449,185 @@ func TestSyncOperations_IndexBasedDeletesExecuteInReverseOrder(t *testing.T) {
 	expected := []int{4, 3, 2, 1, 0}
 	assert.Equal(t, expected, executionOrder,
 		"Delete operations should execute in reverse index order (highest first)")
+}
+
+// TestSyncOperations_MaxParallel_LimitsConcurrency tests that MaxParallel limits
+// the number of concurrent operations. Creates many operations at the same priority
+// and verifies that no more than MaxParallel run concurrently.
+func TestSyncOperations_MaxParallel_LimitsConcurrency(t *testing.T) {
+	const (
+		totalOps    = 50
+		maxParallel = 5
+		opDuration  = 10 * time.Millisecond
+	)
+
+	// Track max concurrent operations
+	var currentConcurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+
+	// Create operations that track concurrency
+	ops := make([]comparator.Operation, totalOps)
+	for i := 0; i < totalOps; i++ {
+		op := newMockOperation(sections.OperationCreate, fmt.Sprintf("backend-%d", i), 20) // Same priority
+		op.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+			// Increment current concurrent count
+			current := currentConcurrent.Add(1)
+
+			// Update max if this is a new high
+			for {
+				max := maxConcurrent.Load()
+				if current <= max {
+					break
+				}
+				if maxConcurrent.CompareAndSwap(max, current) {
+					break
+				}
+			}
+
+			// Simulate work
+			time.Sleep(opDuration)
+
+			// Decrement concurrent count
+			currentConcurrent.Add(-1)
+			return nil
+		}
+		ops[i] = op
+	}
+
+	tx := &client.Transaction{ID: "test-tx-maxparallel", Version: 1}
+
+	result, err := SyncOperations(context.Background(), nil, ops, tx, maxParallel)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Verify all operations executed
+	for _, op := range ops {
+		assert.True(t, op.(*mockOperation).executed, "All operations should be executed")
+	}
+
+	// Verify max concurrent never exceeded limit
+	observedMax := maxConcurrent.Load()
+	assert.LessOrEqual(t, observedMax, int32(maxParallel),
+		"Max concurrent operations (%d) should not exceed MaxParallel (%d)", observedMax, maxParallel)
+
+	// Verify we actually hit the limit (operations should have parallelized)
+	assert.GreaterOrEqual(t, observedMax, int32(2),
+		"Should have some parallelism (observed max: %d)", observedMax)
+}
+
+// TestSyncOperations_MaxParallel_Unlimited tests that MaxParallel=0 allows unlimited concurrency.
+func TestSyncOperations_MaxParallel_Unlimited(t *testing.T) {
+	const (
+		totalOps   = 20
+		opDuration = 10 * time.Millisecond
+	)
+
+	// Track max concurrent operations
+	var currentConcurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+
+	// Create operations that track concurrency
+	ops := make([]comparator.Operation, totalOps)
+	for i := 0; i < totalOps; i++ {
+		op := newMockOperation(sections.OperationCreate, fmt.Sprintf("backend-%d", i), 20) // Same priority
+		op.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+			current := currentConcurrent.Add(1)
+
+			for {
+				max := maxConcurrent.Load()
+				if current <= max {
+					break
+				}
+				if maxConcurrent.CompareAndSwap(max, current) {
+					break
+				}
+			}
+
+			time.Sleep(opDuration)
+			currentConcurrent.Add(-1)
+			return nil
+		}
+		ops[i] = op
+	}
+
+	tx := &client.Transaction{ID: "test-tx-unlimited", Version: 1}
+
+	// MaxParallel=0 means unlimited
+	result, err := SyncOperations(context.Background(), nil, ops, tx, 0)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// With unlimited concurrency and same priority, all ops should run together
+	observedMax := maxConcurrent.Load()
+	assert.GreaterOrEqual(t, observedMax, int32(totalOps/2),
+		"With unlimited concurrency, should see high parallelism (observed: %d, expected at least: %d)",
+		observedMax, totalOps/2)
+}
+
+// TestExecuteOperations_MaxParallel_ContinueOnError tests that MaxParallel works
+// with the ContinueOnError mode in executeOperations.
+func TestExecuteOperations_MaxParallel_ContinueOnError(t *testing.T) {
+	const (
+		totalOps    = 30
+		maxParallel = 3
+		opDuration  = 10 * time.Millisecond
+	)
+
+	// Track max concurrent operations
+	var currentConcurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+
+	// Create operations, some will fail
+	ops := make([]comparator.Operation, totalOps)
+	for i := 0; i < totalOps; i++ {
+		op := newMockOperation(sections.OperationCreate, fmt.Sprintf("backend-%d", i), 20)
+		shouldFail := i%10 == 5 // Every 10th operation at index 5 fails
+		op.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
+			current := currentConcurrent.Add(1)
+
+			for {
+				max := maxConcurrent.Load()
+				if current <= max {
+					break
+				}
+				if maxConcurrent.CompareAndSwap(max, current) {
+					break
+				}
+			}
+
+			time.Sleep(opDuration)
+			currentConcurrent.Add(-1)
+
+			if shouldFail {
+				return errors.New("simulated failure")
+			}
+			return nil
+		}
+		ops[i] = op
+	}
+
+	synchronizer := New(nil)
+	opts := SyncOptions{
+		Policy:          PolicyApply,
+		ContinueOnError: true,
+		MaxParallel:     maxParallel,
+	}
+
+	applied, failed, err := synchronizer.executeOperations(context.Background(), ops, "test-tx", opts)
+
+	// With ContinueOnError, should not return error
+	require.NoError(t, err)
+
+	// Should have some failures (3 out of 30)
+	assert.Len(t, failed, 3, "Expected 3 failures (indices 5, 15, 25)")
+	assert.Len(t, applied, 27, "Expected 27 successful operations")
+
+	// Verify max concurrent never exceeded limit
+	observedMax := maxConcurrent.Load()
+	assert.LessOrEqual(t, observedMax, int32(maxParallel),
+		"Max concurrent operations (%d) should not exceed MaxParallel (%d)", observedMax, maxParallel)
 }
 
 // TestSync_Apply_OperationFailure tests the apply path when operations fail.

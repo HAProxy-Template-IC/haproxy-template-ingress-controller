@@ -11,6 +11,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Added
 
+- **Dataplane API concurrency limiting**: New `maxParallel` config option to limit concurrent API operations during sync, preventing timeouts when syncing large configurations (default: auto-calculated from dataplane GOMAXPROCS × 10)
 - Test-specific `extraContext` overrides for validation tests
 - **CRD content compression**: HAProxyCfg content automatically compressed with zstd when exceeding `configPublishing.compressionThreshold` (default 1 MiB), reducing etcd storage
 - **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support

@@ -1026,8 +1026,8 @@ func createReconciliationComponents(
 	// Create Executor
 	executorComponent := executor.New(bus, logger)
 
-	// Create Deployer
-	deployerComponent := deployer.New(bus, logger)
+	// Create Deployer with maxParallel from config
+	deployerComponent := deployer.New(bus, logger, cfg.Dataplane.MaxParallel)
 
 	// Create DeploymentScheduler with rate limiting and timeout
 	minDeploymentInterval := cfg.Dataplane.GetMinDeploymentInterval()
