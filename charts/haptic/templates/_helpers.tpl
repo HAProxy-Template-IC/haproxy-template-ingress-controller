@@ -453,7 +453,7 @@ Input: .Values.haproxy.dataplane context
   {{- end -}}
   {{- if $memLimit -}}
     {{- $memMB := include "haptic.memoryToMB" $memLimit | int -}}
-    {{- $gomaxprocs := div $memMB 128 | int -}}
+    {{- $gomaxprocs := div $memMB 64 | int -}}
     {{- if lt $gomaxprocs 2 -}}
       {{- $gomaxprocs = 2 -}}
     {{- end -}}

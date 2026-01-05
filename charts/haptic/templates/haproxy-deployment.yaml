@@ -187,11 +187,25 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              # Wait for HAProxy to create the socket
+              # Wait for HAProxy master socket file to exist
+              echo "Waiting for HAProxy master socket file..."
               while [ ! -S /etc/haproxy/haproxy-master.sock ]; do
-                echo "Waiting for HAProxy master socket..."
-                sleep 1
+                sleep 0.5
               done
+
+              # Wait for HAProxy to accept connections on the socket
+              echo "Waiting for HAProxy master socket to accept connections..."
+              MAX_RETRIES=30
+              RETRY_COUNT=0
+              while ! echo "show info" | socat -T2 stdio unix-connect:/etc/haproxy/haproxy-master.sock >/dev/null 2>&1; do
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                  echo "Warning: HAProxy master socket not responding after ${MAX_RETRIES} retries, proceeding anyway"
+                  break
+                fi
+                sleep 0.5
+              done
+              echo "HAProxy master socket is ready"
 
               # Create required directories
               # Note: Directories owned by user 99 via pod fsGroup, no chown needed
