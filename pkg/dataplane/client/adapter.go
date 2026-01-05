@@ -5,7 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 )
+
+// abortContext creates a fresh context for transaction abort operations.
+// This allows cleanup to proceed even when the original context has timed out.
+func abortContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 5*time.Second)
+}
 
 // VersionAdapter wraps a DataplaneClient to provide automatic version management
 // and 409 conflict retry logic.
@@ -100,8 +107,10 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 		// Execute operations within transaction
 		err = fn(ctx, tx)
 		if err != nil {
-			// Abort transaction on error
-			_ = tx.Abort(ctx) // Ignore abort errors
+			// Abort transaction on error (use fresh context in case original timed out)
+			abortCtx, abortCancel := abortContext()
+			_ = tx.Abort(abortCtx)
+			abortCancel()
 			return nil, fmt.Errorf("transaction operation failed: %w", err)
 		}
 
@@ -112,10 +121,14 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 			if errors.As(err, &versionErr) {
 				// Version conflict on commit - retry with new version
 				lastErr = err
-				_ = tx.Abort(ctx) // Ensure cleanup
+				abortCtx, abortCancel := abortContext()
+				_ = tx.Abort(abortCtx)
+				abortCancel()
 				continue
 			}
-			_ = tx.Abort(ctx) // Ensure cleanup
+			abortCtx, abortCancel := abortContext()
+			_ = tx.Abort(abortCtx)
+			abortCancel()
 			return nil, fmt.Errorf("failed to commit transaction: %w", err)
 		}
 
@@ -167,7 +180,9 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 		// Execute operations within transaction
 		err = fn(ctx, tx)
 		if err != nil {
-			_ = tx.Abort(ctx)
+			abortCtx, abortCancel := abortContext()
+			_ = tx.Abort(abortCtx)
+			abortCancel()
 			return fmt.Errorf("transaction operation failed: %w", err)
 		}
 
@@ -177,10 +192,14 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 			var versionErr *VersionConflictError
 			if errors.As(err, &versionErr) {
 				lastErr = err
-				_ = tx.Abort(ctx)
+				abortCtx, abortCancel := abortContext()
+				_ = tx.Abort(abortCtx)
+				abortCancel()
 				continue
 			}
-			_ = tx.Abort(ctx)
+			abortCtx, abortCancel := abortContext()
+			_ = tx.Abort(abortCtx)
+			abortCancel()
 			return fmt.Errorf("failed to commit transaction: %w", err)
 		}
 

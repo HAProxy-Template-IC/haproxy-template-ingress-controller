@@ -1125,7 +1125,7 @@ func NewMailerEntryCreate(mailersName string, entry *models.MailerEntry) Operati
 	return NewContainerChildOp(
 		OperationCreate,
 		"mailer_entry",
-		PriorityMailers,
+		PriorityMailerEntry,
 		mailersName,
 		entry,
 		IdentityMailerEntry,
@@ -1140,7 +1140,7 @@ func NewMailerEntryUpdate(mailersName string, entry *models.MailerEntry) Operati
 	return NewContainerChildOp(
 		OperationUpdate,
 		"mailer_entry",
-		PriorityMailers,
+		PriorityMailerEntry,
 		mailersName,
 		entry,
 		IdentityMailerEntry,
@@ -1155,7 +1155,7 @@ func NewMailerEntryDelete(mailersName string, entry *models.MailerEntry) Operati
 	return NewContainerChildOp(
 		OperationDelete,
 		"mailer_entry",
-		PriorityMailers,
+		PriorityMailerEntry,
 		mailersName,
 		entry,
 		NilMailerEntry,
@@ -1223,7 +1223,7 @@ func NewNameserverCreate(resolverName string, nameserver *models.Nameserver) Ope
 	return NewContainerChildOp(
 		OperationCreate,
 		"nameserver",
-		PriorityResolver,
+		PriorityNameserver,
 		resolverName,
 		nameserver,
 		IdentityNameserver,
@@ -1238,7 +1238,7 @@ func NewNameserverUpdate(resolverName string, nameserver *models.Nameserver) Ope
 	return NewContainerChildOp(
 		OperationUpdate,
 		"nameserver",
-		PriorityResolver,
+		PriorityNameserver,
 		resolverName,
 		nameserver,
 		IdentityNameserver,
@@ -1253,7 +1253,7 @@ func NewNameserverDelete(resolverName string, nameserver *models.Nameserver) Ope
 	return NewContainerChildOp(
 		OperationDelete,
 		"nameserver",
-		PriorityResolver,
+		PriorityNameserver,
 		resolverName,
 		nameserver,
 		NilNameserver,

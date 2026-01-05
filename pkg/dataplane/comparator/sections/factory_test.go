@@ -21,6 +21,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// effectivePriority calculates the expected effective priority for non-indexed operations.
+func effectivePriority(basePriority int) int {
+	return basePriority * PriorityMultiplier
+}
+
+// effectiveIndexedPriority calculates the expected effective priority for indexed operations.
+func effectiveIndexedPriority(basePriority int, opType OperationType, index int) int {
+	base := basePriority * PriorityMultiplier
+	if opType == OperationDelete {
+		return base + (999 - index)
+	}
+	return base + index
+}
+
 func TestPtrStr(t *testing.T) {
 	tests := []struct {
 		name string
@@ -74,7 +88,7 @@ func TestBackendFactoryFunctions(t *testing.T) {
 			factory:          NewBackendCreate,
 			wantType:         OperationCreate,
 			wantSection:      "backend",
-			wantPriority:     PriorityBackend,
+			wantPriority:     effectivePriority(PriorityBackend),
 			wantDescContains: "Create backend 'api-backend'",
 		},
 		{
@@ -82,7 +96,7 @@ func TestBackendFactoryFunctions(t *testing.T) {
 			factory:          NewBackendUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "backend",
-			wantPriority:     PriorityBackend,
+			wantPriority:     effectivePriority(PriorityBackend),
 			wantDescContains: "Update backend 'api-backend'",
 		},
 		{
@@ -90,7 +104,7 @@ func TestBackendFactoryFunctions(t *testing.T) {
 			factory:          NewBackendDelete,
 			wantType:         OperationDelete,
 			wantSection:      "backend",
-			wantPriority:     PriorityBackend,
+			wantPriority:     effectivePriority(PriorityBackend),
 			wantDescContains: "Delete backend 'api-backend'",
 		},
 	}
@@ -120,7 +134,7 @@ func TestFrontendFactoryFunctions(t *testing.T) {
 			factory:          NewFrontendCreate,
 			wantType:         OperationCreate,
 			wantSection:      "frontend",
-			wantPriority:     PriorityFrontend,
+			wantPriority:     effectivePriority(PriorityFrontend),
 			wantDescContains: "Create frontend 'http-frontend'",
 		},
 		{
@@ -128,7 +142,7 @@ func TestFrontendFactoryFunctions(t *testing.T) {
 			factory:          NewFrontendUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "frontend",
-			wantPriority:     PriorityFrontend,
+			wantPriority:     effectivePriority(PriorityFrontend),
 			wantDescContains: "Update frontend 'http-frontend'",
 		},
 		{
@@ -136,7 +150,7 @@ func TestFrontendFactoryFunctions(t *testing.T) {
 			factory:          NewFrontendDelete,
 			wantType:         OperationDelete,
 			wantSection:      "frontend",
-			wantPriority:     PriorityFrontend,
+			wantPriority:     effectivePriority(PriorityFrontend),
 			wantDescContains: "Delete frontend 'http-frontend'",
 		},
 	}
@@ -166,7 +180,7 @@ func TestDefaultsFactoryFunctions(t *testing.T) {
 			factory:          NewDefaultsCreate,
 			wantType:         OperationCreate,
 			wantSection:      "defaults",
-			wantPriority:     PriorityDefaults,
+			wantPriority:     effectivePriority(PriorityDefaults),
 			wantDescContains: "Create defaults section 'http-defaults'",
 		},
 		{
@@ -174,7 +188,7 @@ func TestDefaultsFactoryFunctions(t *testing.T) {
 			factory:          NewDefaultsUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "defaults",
-			wantPriority:     PriorityDefaults,
+			wantPriority:     effectivePriority(PriorityDefaults),
 			wantDescContains: "Update defaults section 'http-defaults'",
 		},
 		{
@@ -182,7 +196,7 @@ func TestDefaultsFactoryFunctions(t *testing.T) {
 			factory:          NewDefaultsDelete,
 			wantType:         OperationDelete,
 			wantSection:      "defaults",
-			wantPriority:     PriorityDefaults,
+			wantPriority:     effectivePriority(PriorityDefaults),
 			wantDescContains: "Delete defaults section 'http-defaults'",
 		},
 	}
@@ -202,7 +216,7 @@ func TestGlobalFactoryFunction(t *testing.T) {
 
 	assert.Equal(t, OperationUpdate, op.Type())
 	assert.Equal(t, "global", op.Section())
-	assert.Equal(t, PriorityGlobal, op.Priority())
+	assert.Equal(t, effectivePriority(PriorityGlobal), op.Priority())
 	assert.Equal(t, "Update global section", op.Describe())
 }
 
@@ -242,7 +256,7 @@ func TestACLFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "acl", op.Section())
-				assert.Equal(t, PriorityACL, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityACL, tt.wantType, 0), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -281,7 +295,7 @@ func TestACLFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "acl", op.Section())
-				assert.Equal(t, PriorityACL, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityACL, tt.wantType, 0), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -320,7 +334,7 @@ func TestServerFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory("api", server)
-			assertOperation(t, op, tt.wantType, "server", PriorityServer, tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, "server", effectivePriority(PriorityServer), tt.wantDescContains)
 		})
 	}
 }
@@ -357,7 +371,7 @@ func TestBindFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory("http", "http-bind", bind)
-			assertOperation(t, op, tt.wantType, "bind", PriorityBind, tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, "bind", effectivePriority(PriorityBind), tt.wantDescContains)
 		})
 	}
 }
@@ -398,7 +412,7 @@ func TestHTTPRequestRuleFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "http_request_rule", op.Section())
-				assert.Equal(t, PriorityRule, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 5), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -437,7 +451,7 @@ func TestHTTPRequestRuleFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "http_request_rule", op.Section())
-				assert.Equal(t, PriorityRule, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 3), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -479,7 +493,7 @@ func TestBackendSwitchingRuleFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "backend_switching_rule", op.Section())
-			assert.Equal(t, PriorityBackendSwitchingRule, op.Priority())
+			assert.Equal(t, effectiveIndexedPriority(PriorityBackendSwitchingRule, tt.wantType, 0), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -520,7 +534,7 @@ func TestUserFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "user", op.Section())
-			assert.Equal(t, PriorityUser, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityUser), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -562,7 +576,7 @@ func TestCacheFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "cache", op.Section())
-			assert.Equal(t, PriorityCache, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityCache), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -604,7 +618,7 @@ func TestResolverFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "resolver", op.Section())
-			assert.Equal(t, PriorityResolver, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityResolver), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -645,7 +659,7 @@ func TestNameserverFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "nameserver", op.Section())
-			assert.Equal(t, PriorityResolver, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityNameserver), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -708,7 +722,7 @@ func TestHTTPResponseRuleFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "http_response_rule", op.Section())
-				assert.Equal(t, PriorityRule, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 5), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -747,7 +761,7 @@ func TestHTTPResponseRuleFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "http_response_rule", op.Section())
-				assert.Equal(t, PriorityRule, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 3), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -790,7 +804,7 @@ func TestFilterFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "filter", op.Section())
-				assert.Equal(t, PriorityFilter, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityFilter, tt.wantType, 2), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -829,7 +843,7 @@ func TestFilterFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "filter", op.Section())
-				assert.Equal(t, PriorityFilter, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityFilter, tt.wantType, 1), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -872,7 +886,7 @@ func TestLogTargetFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "log_target", op.Section())
-				assert.Equal(t, PriorityLogTarget, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityLogTarget, tt.wantType, 0), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -911,7 +925,7 @@ func TestLogTargetFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "log_target", op.Section())
-				assert.Equal(t, PriorityLogTarget, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityLogTarget, tt.wantType, 0), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -954,7 +968,7 @@ func TestServerTemplateFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "server_template", op.Section())
-			assert.Equal(t, PriorityServer, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityServer), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -995,7 +1009,7 @@ func TestMailerEntryFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "mailer_entry", op.Section())
-			assert.Equal(t, PriorityMailers, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityMailerEntry), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1036,7 +1050,7 @@ func TestPeerEntryFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "peer_entry", op.Section())
-			assert.Equal(t, PriorityPeerEntry, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityPeerEntry), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1077,7 +1091,7 @@ func TestHTTPErrorsSectionFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "http_errors", op.Section())
-			assert.Equal(t, PriorityHTTPErrors, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityHTTPErrors), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1120,7 +1134,7 @@ func TestLogForwardFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "log_forward", op.Section())
-			assert.Equal(t, PriorityLogForward, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityLogForward), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1163,7 +1177,7 @@ func TestMailersSectionFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "mailers", op.Section())
-			assert.Equal(t, PriorityMailers, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityMailers), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1206,7 +1220,7 @@ func TestPeerSectionFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "peers", op.Section())
-			assert.Equal(t, PriorityPeer, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityPeer), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1247,7 +1261,7 @@ func TestProgramFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "program", op.Section())
-			assert.Equal(t, PriorityProgram, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityProgram), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1290,7 +1304,7 @@ func TestRingFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "ring", op.Section())
-			assert.Equal(t, PriorityRing, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityRing), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1331,7 +1345,7 @@ func TestCrtStoreFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "crt_store", op.Section())
-			assert.Equal(t, PriorityCrtStore, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityCrtStore), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1368,7 +1382,7 @@ func TestUserlistFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "userlist", op.Section())
-			assert.Equal(t, PriorityUserlist, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityUserlist), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1411,7 +1425,7 @@ func TestFCGIAppFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "fcgi_app", op.Section())
-			assert.Equal(t, PriorityFCGIApp, op.Priority())
+			assert.Equal(t, effectivePriority(PriorityFCGIApp), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1453,7 +1467,7 @@ func TestTCPRequestRuleFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "tcp_request_rule", op.Section())
-				assert.Equal(t, PriorityRule, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 0), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -1492,7 +1506,7 @@ func TestTCPRequestRuleFactoryFunctions(t *testing.T) {
 
 				assert.Equal(t, tt.wantType, op.Type())
 				assert.Equal(t, "tcp_request_rule", op.Section())
-				assert.Equal(t, PriorityRule, op.Priority())
+				assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 0), op.Priority())
 				assert.Contains(t, op.Describe(), tt.wantDescContains)
 			})
 		}
@@ -1534,7 +1548,7 @@ func TestTCPResponseRuleFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "tcp_response_rule", op.Section())
-			assert.Equal(t, PriorityRule, op.Priority())
+			assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 0), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1575,7 +1589,7 @@ func TestStickRuleFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "stick_rule", op.Section())
-			assert.Equal(t, PriorityRule, op.Priority())
+			assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 0), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1616,7 +1630,7 @@ func TestHTTPAfterResponseRuleFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "http_after_response_rule", op.Section())
-			assert.Equal(t, PriorityRule, op.Priority())
+			assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 0), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1657,7 +1671,7 @@ func TestServerSwitchingRuleFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "server_switching_rule", op.Section())
-			assert.Equal(t, PriorityRule, op.Priority())
+			assert.Equal(t, effectiveIndexedPriority(PriorityRule, tt.wantType, 0), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1698,7 +1712,7 @@ func TestHTTPCheckFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "http_check", op.Section())
-			assert.Equal(t, PriorityHTTPCheck, op.Priority())
+			assert.Equal(t, effectiveIndexedPriority(PriorityHTTPCheck, tt.wantType, 0), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1739,7 +1753,7 @@ func TestTCPCheckFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "tcp_check", op.Section())
-			assert.Equal(t, PriorityTCPCheck, op.Priority())
+			assert.Equal(t, effectiveIndexedPriority(PriorityTCPCheck, tt.wantType, 0), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}
@@ -1780,7 +1794,7 @@ func TestCaptureFactoryFunctions(t *testing.T) {
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "capture", op.Section())
-			assert.Equal(t, PriorityCapture, op.Priority())
+			assert.Equal(t, effectiveIndexedPriority(PriorityCapture, tt.wantType, 0), op.Priority())
 			assert.Contains(t, op.Describe(), tt.wantDescContains)
 		})
 	}

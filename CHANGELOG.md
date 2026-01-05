@@ -16,8 +16,13 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support
 - **HAProxyCRTListFile CRD**: Publish crt-list files as Kubernetes custom resources with compression support
 
+### Changed
+
+- **Parallel Dataplane API operations**: Execute operations in parallel within each priority group, reducing sync time from sequential (~10-20s) to parallel (~sub-second) for large deployments
+
 ### Fixed
 
+- **Transaction cleanup on timeout**: Use fresh context for transaction abort operations, ensuring cleanup when deployment timeout is reached
 - **Graceful shutdown errors**: Track all iteration-scoped goroutines in errgroup and reduce internal shutdown timeout to 25s to prevent pod Error state during rolling updates
 - **Compression threshold default**: Apply 1 MiB default compression threshold when `configPublishing.compressionThreshold` is not set in the CRD, fixing "etcdserver: request is too large" errors
 

@@ -24,7 +24,7 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 			factory:          NewBotMgmtProfileCreate,
 			wantType:         OperationCreate,
 			wantSection:      "botmgmt-profile",
-			wantPriority:     PriorityEEBotMgmtProfile,
+			wantPriority:     effectivePriority(PriorityEEBotMgmtProfile),
 			wantDescContains: "Create botmgmt-profile 'bot-profile-1'",
 		},
 		{
@@ -32,7 +32,7 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 			factory:          NewBotMgmtProfileUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "botmgmt-profile",
-			wantPriority:     PriorityEEBotMgmtProfile,
+			wantPriority:     effectivePriority(PriorityEEBotMgmtProfile),
 			wantDescContains: "Update botmgmt-profile 'bot-profile-1'",
 		},
 		{
@@ -40,7 +40,7 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 			factory:          NewBotMgmtProfileDelete,
 			wantType:         OperationDelete,
 			wantSection:      "botmgmt-profile",
-			wantPriority:     PriorityEEBotMgmtProfile,
+			wantPriority:     effectivePriority(PriorityEEBotMgmtProfile),
 			wantDescContains: "Delete botmgmt-profile 'bot-profile-1'",
 		},
 	}
@@ -69,7 +69,7 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 			factory:          NewCaptchaCreate,
 			wantType:         OperationCreate,
 			wantSection:      "captcha",
-			wantPriority:     PriorityEECaptcha,
+			wantPriority:     effectivePriority(PriorityEECaptcha),
 			wantDescContains: "Create captcha 'recaptcha-v3'",
 		},
 		{
@@ -77,7 +77,7 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 			factory:          NewCaptchaUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "captcha",
-			wantPriority:     PriorityEECaptcha,
+			wantPriority:     effectivePriority(PriorityEECaptcha),
 			wantDescContains: "Update captcha 'recaptcha-v3'",
 		},
 		{
@@ -85,7 +85,7 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 			factory:          NewCaptchaDelete,
 			wantType:         OperationDelete,
 			wantSection:      "captcha",
-			wantPriority:     PriorityEECaptcha,
+			wantPriority:     effectivePriority(PriorityEECaptcha),
 			wantDescContains: "Delete captcha 'recaptcha-v3'",
 		},
 	}
@@ -114,7 +114,7 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 			factory:          NewWAFProfileCreate,
 			wantType:         OperationCreate,
 			wantSection:      "waf-profile",
-			wantPriority:     PriorityEEWAFProfile,
+			wantPriority:     effectivePriority(PriorityEEWAFProfile),
 			wantDescContains: "Create waf-profile 'waf-default'",
 		},
 		{
@@ -122,7 +122,7 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 			factory:          NewWAFProfileUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "waf-profile",
-			wantPriority:     PriorityEEWAFProfile,
+			wantPriority:     effectivePriority(PriorityEEWAFProfile),
 			wantDescContains: "Update waf-profile 'waf-default'",
 		},
 		{
@@ -130,7 +130,7 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 			factory:          NewWAFProfileDelete,
 			wantType:         OperationDelete,
 			wantSection:      "waf-profile",
-			wantPriority:     PriorityEEWAFProfile,
+			wantPriority:     effectivePriority(PriorityEEWAFProfile),
 			wantDescContains: "Delete waf-profile 'waf-default'",
 		},
 	}
@@ -160,7 +160,7 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 			factory:          NewWAFGlobalCreate,
 			wantType:         OperationCreate,
 			wantSection:      "waf-global",
-			wantPriority:     PriorityEEWAFGlobal,
+			wantPriority:     effectivePriority(PriorityEEWAFGlobal),
 			wantDescContains: "Create waf-global configuration",
 		},
 		{
@@ -168,7 +168,7 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 			factory:          NewWAFGlobalUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "waf-global",
-			wantPriority:     PriorityEEWAFGlobal,
+			wantPriority:     effectivePriority(PriorityEEWAFGlobal),
 			wantDescContains: "Update waf-global configuration",
 		},
 		{
@@ -176,7 +176,7 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 			factory:          NewWAFGlobalDelete,
 			wantType:         OperationDelete,
 			wantSection:      "waf-global",
-			wantPriority:     PriorityEEWAFGlobal,
+			wantPriority:     effectivePriority(PriorityEEWAFGlobal),
 			wantDescContains: "Delete waf-global configuration",
 		},
 	}
@@ -303,7 +303,7 @@ func TestWAFGlobalSingleton_Methods(t *testing.T) {
 
 	assert.Equal(t, OperationCreate, op.Type())
 	assert.Equal(t, "waf-global", op.Section())
-	assert.Equal(t, PriorityEEWAFGlobal, op.Priority())
+	assert.Equal(t, effectivePriority(PriorityEEWAFGlobal), op.Priority())
 	assert.Contains(t, op.Describe(), "waf-global")
 }
 
