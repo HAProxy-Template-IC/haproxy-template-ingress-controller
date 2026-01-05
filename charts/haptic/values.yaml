@@ -218,6 +218,15 @@ controller:
       # Helps detect and correct configuration drift from external changes
       # Default: 60s
       driftPreventionInterval: 60s
+      # Maximum parallel Dataplane API operations during sync.
+      # Prevents overwhelming the API when syncing large configurations.
+      # Values:
+      #   - null/omitted: auto-calculated as dataplane GOMAXPROCS * 10
+      #   - 0: unlimited (explicitly disable limiting - not recommended)
+      #   - N > 0: use that exact limit
+      # Auto-calculation uses the dataplane container's CPU/memory to determine
+      # an appropriate parallelism level that balances throughput and API stability.
+      # maxParallel: null
       # Directory paths for HAProxy auxiliary files
       # These paths are used for both validation and deployment
       # See: https://www.haproxy.com/documentation/haproxy-data-plane-api/reference/configuration-file/#resources

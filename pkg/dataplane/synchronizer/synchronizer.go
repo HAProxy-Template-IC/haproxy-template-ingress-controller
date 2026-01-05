@@ -197,6 +197,7 @@ func (s *Synchronizer) executeOperations(ctx context.Context, operations []compa
 	result, err := executeOperationsParallel(ctx, s.client, operations, txID, parallelExecutionOptions{
 		ContinueOnError: opts.ContinueOnError,
 		Logger:          s.logger,
+		MaxParallel:     opts.MaxParallel,
 	})
 
 	if result != nil {
@@ -254,6 +255,7 @@ type SyncOperationsResult struct {
 //   - client: The DataplaneClient
 //   - operations: List of operations to execute
 //   - tx: The transaction to execute operations within (from VersionAdapter)
+//   - maxParallel: Maximum concurrent operations (0 = unlimited)
 //
 // Returns:
 //   - SyncOperationsResult with reload information
@@ -263,13 +265,14 @@ type SyncOperationsResult struct {
 //
 //	adapter := client.NewVersionAdapter(client, 3)
 //	err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
-//	    result, err := synchronizer.SyncOperations(ctx, client, diff.Operations, tx)
+//	    result, err := synchronizer.SyncOperations(ctx, client, diff.Operations, tx, 80)
 //	    return err
 //	})
-func SyncOperations(ctx context.Context, dpClient *client.DataplaneClient, operations []comparator.Operation, tx *client.Transaction) (*SyncOperationsResult, error) {
+func SyncOperations(ctx context.Context, dpClient *client.DataplaneClient, operations []comparator.Operation, tx *client.Transaction, maxParallel int) (*SyncOperationsResult, error) {
 	_, err := executeOperationsParallel(ctx, dpClient, operations, tx.ID, parallelExecutionOptions{
 		ContinueOnError: false,
 		Logger:          nil, // No logging for standalone function - caller handles logging
+		MaxParallel:     maxParallel,
 	})
 	if err != nil {
 		return nil, err
@@ -292,6 +295,9 @@ type parallelExecutionOptions struct {
 
 	// Logger for operation execution logging. If nil, logging is skipped.
 	Logger *slog.Logger
+
+	// MaxParallel limits concurrent operations. 0 means unlimited.
+	MaxParallel int
 }
 
 // parallelExecutionResult contains the results of parallel operation execution.
@@ -361,9 +367,9 @@ func executePriorityGroup(
 	opts parallelExecutionOptions,
 ) (applied []comparator.Operation, failed []OperationError, err error) {
 	if opts.ContinueOnError {
-		return executePriorityGroupContinueOnError(ctx, dpClient, ops, txID, opts.Logger)
+		return executePriorityGroupContinueOnError(ctx, dpClient, ops, txID, opts)
 	}
-	return executePriorityGroupStopOnError(ctx, dpClient, ops, txID, opts.Logger)
+	return executePriorityGroupStopOnError(ctx, dpClient, ops, txID, opts)
 }
 
 // executePriorityGroupStopOnError executes operations in parallel, stopping on first error.
@@ -372,17 +378,22 @@ func executePriorityGroupStopOnError(
 	dpClient *client.DataplaneClient,
 	ops []comparator.Operation,
 	txID string,
-	logger *slog.Logger,
+	opts parallelExecutionOptions,
 ) (applied []comparator.Operation, failed []OperationError, err error) {
 	g, gCtx := errgroup.WithContext(ctx)
+
+	// Apply concurrency limit if specified
+	if opts.MaxParallel > 0 {
+		g.SetLimit(opts.MaxParallel)
+	}
 
 	// Track results (thread-safe via channels)
 	appliedChan := make(chan comparator.Operation, len(ops))
 	failedChan := make(chan OperationError, len(ops))
 
 	for _, op := range ops {
-		if logger != nil {
-			logger.Debug("Executing operation",
+		if opts.Logger != nil {
+			opts.Logger.Debug("Executing operation",
 				"type", op.Type(),
 				"section", op.Section(),
 				"description", op.Describe(),
@@ -391,8 +402,8 @@ func executePriorityGroupStopOnError(
 
 		g.Go(func() error {
 			if execErr := op.Execute(gCtx, dpClient, txID); execErr != nil {
-				if logger != nil {
-					logger.Error("Operation failed",
+				if opts.Logger != nil {
+					opts.Logger.Error("Operation failed",
 						"operation", op.Describe(),
 						"error", execErr,
 					)
@@ -426,14 +437,32 @@ func executePriorityGroupContinueOnError(
 	dpClient *client.DataplaneClient,
 	ops []comparator.Operation,
 	txID string,
-	logger *slog.Logger,
+	opts parallelExecutionOptions,
 ) (applied []comparator.Operation, failed []OperationError, err error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	// Create semaphore for concurrency limiting if MaxParallel is set
+	var sem chan struct{}
+	if opts.MaxParallel > 0 {
+		sem = make(chan struct{}, opts.MaxParallel)
+	}
+
+	// Callback to record results
+	onSuccess := func(op comparator.Operation) {
+		mu.Lock()
+		applied = append(applied, op)
+		mu.Unlock()
+	}
+	onFailure := func(op comparator.Operation, execErr error) {
+		mu.Lock()
+		failed = append(failed, OperationError{Operation: op, Cause: execErr})
+		mu.Unlock()
+	}
+
 	for _, op := range ops {
-		if logger != nil {
-			logger.Debug("Executing operation",
+		if opts.Logger != nil {
+			opts.Logger.Debug("Executing operation",
 				"type", op.Type(),
 				"section", op.Section(),
 				"description", op.Describe(),
@@ -441,29 +470,7 @@ func executePriorityGroupContinueOnError(
 		}
 
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			if execErr := op.Execute(ctx, dpClient, txID); execErr != nil {
-				if logger != nil {
-					logger.Error("Operation failed",
-						"operation", op.Describe(),
-						"error", execErr,
-					)
-				}
-				mu.Lock()
-				failed = append(failed, OperationError{
-					Operation: op,
-					Cause:     execErr,
-				})
-				mu.Unlock()
-				return
-			}
-
-			mu.Lock()
-			applied = append(applied, op)
-			mu.Unlock()
-		}()
+		go executeWithSemaphore(ctx, dpClient, txID, op, sem, opts.Logger, onSuccess, onFailure, wg.Done)
 	}
 
 	wg.Wait()
@@ -472,6 +479,45 @@ func executePriorityGroupContinueOnError(
 		return applied, failed, fmt.Errorf("%d operation(s) failed in priority group", len(failed))
 	}
 	return applied, failed, nil
+}
+
+// executeWithSemaphore executes a single operation with optional semaphore-based concurrency limiting.
+func executeWithSemaphore(
+	ctx context.Context,
+	dpClient *client.DataplaneClient,
+	txID string,
+	op comparator.Operation,
+	sem chan struct{},
+	logger *slog.Logger,
+	onSuccess func(comparator.Operation),
+	onFailure func(comparator.Operation, error),
+	done func(),
+) {
+	defer done()
+
+	// Acquire semaphore slot if limiting is enabled
+	if sem != nil {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-ctx.Done():
+			onFailure(op, ctx.Err())
+			return
+		}
+	}
+
+	if execErr := op.Execute(ctx, dpClient, txID); execErr != nil {
+		if logger != nil {
+			logger.Error("Operation failed",
+				"operation", op.Describe(),
+				"error", execErr,
+			)
+		}
+		onFailure(op, execErr)
+		return
+	}
+
+	onSuccess(op)
 }
 
 // groupByPriority groups operations by their priority level.

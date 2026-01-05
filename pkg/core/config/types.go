@@ -271,6 +271,11 @@ type DataplaneConfig struct {
 	// Used for validation.
 	// Default: /etc/haproxy/haproxy.cfg
 	ConfigFile string `yaml:"config_file"`
+
+	// MaxParallel limits concurrent Dataplane API operations during sync.
+	// This prevents overwhelming the API when syncing large configurations.
+	// 0 means auto-calculated (based on dataplane GOMAXPROCS * 10).
+	MaxParallel int `yaml:"max_parallel"`
 }
 
 // WatchedResource configures watching for a specific Kubernetes resource type.

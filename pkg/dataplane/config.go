@@ -91,6 +91,11 @@ type SyncOptions struct {
 	// This should be set higher than the DataPlane API's reload-delay setting.
 	// Only used when VerifyReload is true.
 	ReloadVerificationTimeout time.Duration
+
+	// MaxParallel limits concurrent Dataplane API operations during sync.
+	// This prevents overwhelming the API when syncing large configurations.
+	// 0 means unlimited (not recommended for large configs).
+	MaxParallel int
 }
 
 // DefaultSyncOptions returns sensible default sync options.

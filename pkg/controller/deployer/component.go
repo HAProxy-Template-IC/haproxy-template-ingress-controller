@@ -63,6 +63,10 @@ type Component struct {
 	logger               *slog.Logger
 	deploymentInProgress atomic.Bool // Defensive: prevents concurrent deployments if scheduler has bugs
 
+	// maxParallel limits concurrent Dataplane API operations during sync.
+	// 0 means unlimited (not recommended for large configs).
+	maxParallel int
+
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
 }
@@ -72,10 +76,11 @@ type Component struct {
 // Parameters:
 //   - eventBus: The EventBus for subscribing to events and publishing results
 //   - logger: Structured logger for component logging
+//   - maxParallel: Maximum concurrent Dataplane API operations (0 = unlimited)
 //
 // Returns:
 //   - A new Component instance ready to be started
-func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
+func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel int) *Component {
 	// Use SubscribeLeaderOnly because this component only runs on the leader.
 	// It subscribes after EventBus.Start() when leadership is acquired.
 	// All-replica components replay their state on BecameLeaderEvent to ensure
@@ -84,6 +89,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 		eventBus:      eventBus,
 		eventChan:     eventBus.SubscribeLeaderOnly(EventBufferSize),
 		logger:        logger.With("component", ComponentName),
+		maxParallel:   maxParallel,
 		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}
 }
@@ -386,8 +392,12 @@ func (c *Component) deployToSingleEndpoint(
 	}
 	defer client.Close()
 
-	// Sync configuration with default options
-	result, err := client.Sync(ctx, config, auxFiles, nil)
+	// Use default sync options and apply maxParallel limit
+	opts := dataplane.DefaultSyncOptions()
+	opts.MaxParallel = c.maxParallel
+
+	// Sync configuration
+	result, err := client.Sync(ctx, config, auxFiles, opts)
 	if err != nil {
 		return nil, fmt.Errorf("sync failed: %w", err)
 	}

@@ -310,6 +310,19 @@ type DataplaneConfig struct {
 	// Default: 30s
 	// +optional
 	DeploymentTimeout string `json:"deploymentTimeout,omitempty"`
+
+	// MaxParallel limits concurrent Dataplane API operations during sync.
+	// This prevents overwhelming the API when syncing large configurations.
+	//
+	// Values:
+	//   - 0 or unset: auto-calculated as dataplane GOMAXPROCS * 10
+	//   - Positive integer: use that exact limit
+	//
+	// The auto-calculation uses the dataplane container's CPU allocation to determine
+	// an appropriate parallelism level that balances throughput and API stability.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxParallel int `json:"maxParallel,omitempty"`
 }
 
 // TemplatingSettings configures template rendering behavior.

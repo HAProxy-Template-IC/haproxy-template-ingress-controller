@@ -868,7 +868,7 @@ func (o *orchestrator) executeConfigOperations(
 				"version", tx.Version)
 
 			// Execute operations within the transaction
-			_, err := synchronizer.SyncOperations(ctx, o.client, diff.Operations, tx)
+			_, err := synchronizer.SyncOperations(ctx, o.client, diff.Operations, tx, opts.MaxParallel)
 			if err != nil {
 				return err
 			}

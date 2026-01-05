@@ -11,6 +11,11 @@ spec:
   {{- if and $config.credentialsSecretRef (not $config.credentialsSecretRef.name) }}
     {{- $_ := set $config.credentialsSecretRef "name" (printf "%s-credentials" (include "haptic.fullname" .)) }}
   {{- end }}
+  {{- /* Set maxParallel for dataplane (auto-calculate if not explicitly set) */ -}}
+  {{- if $config.dataplane }}
+    {{- $maxParallel := include "haptic.config.dataplane.maxParallel" . | int }}
+    {{- $_ := set $config.dataplane "maxParallel" $maxParallel }}
+  {{- end }}
   {{- if $config.controller }}
     {{- /* Remove fields that are not part of the CRD (configured via env vars instead) */ -}}
     {{- $_ := unset $config.controller "healthzPort" }}

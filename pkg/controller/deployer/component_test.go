@@ -31,7 +31,7 @@ import (
 // Test helper to create a test deployer component.
 func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	logger := testutil.NewTestLogger()
-	return New(eventBus, logger)
+	return New(eventBus, logger, 0) // 0 = unlimited parallelism
 }
 
 // TestHandleDeploymentScheduled tests deployment execution when scheduled.
