@@ -133,6 +133,9 @@ spec:
             - name: WEBHOOK_CERT_SECRET_NAME
               value: {{ .Values.webhook.secretName | default (printf "%s-webhook-cert" (include "haptic.fullname" .)) | quote }}
             {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- if .Values.startupProbe.enabled }}
           startupProbe:
             httpGet:

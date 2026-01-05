@@ -519,6 +519,12 @@ resources:
     memory: 512Mi
   limits:
     memory: 512Mi
+# Extra environment variables for controller container
+# Example:
+#   extraEnv:
+#     - name: MY_VAR
+#       value: "my-value"
+extraEnv: []
 # Node selector
 nodeSelector: {}
 # Tolerations
@@ -806,6 +812,20 @@ haproxy:
         memory: 256Mi
       limits:
         memory: 256Mi
+    # Extra environment variables for Dataplane API container
+    # Example:
+    #   extraEnv:
+    #     - name: GOMAXPROCS
+    #       value: "4"
+    # Note: GOMAXPROCS is auto-calculated from memory limits when no CPU limit is set.
+    # Setting it here overrides the automatic calculation.
+    extraEnv: []
+  # Extra environment variables for HAProxy container
+  # Example:
+  #   extraEnv:
+  #     - name: MY_VAR
+  #       value: "my-value"
+  extraEnv: []
   # Resource limits and requests for HAProxy containers
   # Default configuration uses Guaranteed QoS for memory (requests = limits) for eviction protection.
   # No CPU limit is set to avoid throttling during traffic spikes.

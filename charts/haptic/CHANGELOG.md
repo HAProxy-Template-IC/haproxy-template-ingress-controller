@@ -13,6 +13,8 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 - Auth realm validation for `haproxy.org/auth-realm` annotation with configurable sanitization via `extraContext.sanitize_auth_realm`
 - HAProxy `-m` memory limit flag automatically set from container memory requests to prevent OOMKill
+- `extraEnv`, `haproxy.extraEnv`, and `haproxy.dataplane.extraEnv` for custom environment variables on all containers
+- Auto-calculated `GOMAXPROCS` for dataplane container based on memory limits (prevents OOMKill on large nodes without CPU limits)
 
 ### Changed
 
