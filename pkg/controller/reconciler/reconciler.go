@@ -325,7 +325,7 @@ func (r *Reconciler) handleDriftPrevention(_ *events.DriftPreventionTriggeredEve
 	// Trigger reconciliation immediately with drift_prevention reason
 	// The TriggerReason will be propagated through the event chain and used by
 	// DeploymentScheduler to deploy cached config if validation fails
-	r.triggerReconciliation("drift_prevention")
+	r.triggerReconciliation(events.TriggerReasonDriftPrevention)
 }
 
 // ensureRefractoryTimer ensures a timer is running for the remainder of the refractory period.

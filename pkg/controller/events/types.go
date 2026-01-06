@@ -155,3 +155,13 @@ const (
 	EventTypeHTTPResourceAccepted = "http.resource.accepted"
 	EventTypeHTTPResourceRejected = "http.resource.rejected"
 )
+
+// -----------------------------------------------------------------------------
+// Trigger Reason Constants.
+// -----------------------------------------------------------------------------
+
+// TriggerReason constants for reconciliation events.
+// These are propagated through the event chain via TriggerReason fields.
+const (
+	TriggerReasonDriftPrevention = "drift_prevention"
+)
