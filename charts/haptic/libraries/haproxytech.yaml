@@ -306,9 +306,7 @@ templateSnippets:
   global-top-500-haproxytech-ingress-auth:
     template: |
       {#- HAProxy userlist generation for basic authentication -#}
-      {#- Matches official HAProxy Ingress Controller behavior: -#}
-      {#-   - Userlist named {namespace}-{ingressName} -#}
-      {#-   - Uses group authenticated-users with http_auth_group() -#}
+      {#- Uses per-secret userlist naming for deduplication (improves validation performance) -#}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
@@ -328,18 +326,16 @@ templateSnippets:
               {%- secretNs = parts[0] %}
               {%- secretName = parts[1] %}
             {%- end %}
-            {#- Userlist name matches official controller: {namespace}-{ingressName} -#}
-            {%- var userlistName = ns + "-" + name %}
+            {#- Userlist name is per-secret for deduplication -#}
+            {%- var userlistName = "auth_" + secretNs + "_" + secretName %}
             {%- if first_seen("haproxytech_userlist", userlistName) %}
               {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
               {%- if secret != nil %}
       # haproxytech/global-top-haproxytech-ingress-auth
-                {%- var secretData = secret | dig("data") | fallback(map[string]any{}) -%}
-                {%- var usernames = keys(secretData) %}
       userlist {{ userlistName }}
-        group authenticated-users users {{ usernames | join(",") }}
-                {% for username, hash := range secretData -%}
-        user {{ username }} password {{ hash | b64decode() }} groups authenticated-users
+                {% var secretData = secret | dig("data") | fallback(map[string]any{}) -%}
+                {%- for username, hash := range secretData %}
+        user {{ username }} password {{ hash | b64decode() }}
                 {% end -%}
               {%- else %}
                 {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy.org/auth-secret' does not exist. Please create the secret or update the annotation.") -}}
@@ -580,7 +576,7 @@ templateSnippets:
   backend-directives-500-haproxytech-ingress-auth:
     template: |
       {#- HAProxy basic authentication backend directive -#}
-      {#- Uses http_auth_group() to match official HAProxy Ingress Controller -#}
+      {#- Uses per-secret userlist naming for deduplication -#}
       {%- if ingress != nil %}
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
@@ -603,10 +599,18 @@ templateSnippets:
             {%- end %}
           {%- end %}
           {%- if authSecret != "" %}
-            {#- Userlist name matches official controller: {namespace}-{ingressName} -#}
-            {%- var userlistName = ns + "-" + name %}
+            {#- Parse secret reference (supports "ns/name" or just "name") -#}
+            {%- var secretNs = ns %}
+            {%- var secretName = authSecret %}
+            {%- if strings_contains(authSecret, "/") %}
+              {%- var parts = split(authSecret, "/") %}
+              {%- secretNs = parts[0] %}
+              {%- secretName = parts[1] %}
+            {%- end %}
+            {#- Userlist name is per-secret for deduplication -#}
+            {%- var userlistName = "auth_" + secretNs + "_" + secretName %}
       # haproxytech/backend-directives-haproxytech-ingress-auth
-      http-request auth realm "{{ authRealm }}" unless { http_auth_group({{ userlistName }}) authenticated-users }
+      http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
           {%- end -%}
         {%- end -%}
       {%- end -%}
@@ -847,20 +851,16 @@ validationTests:
         description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
-        pattern: "userlist production-api-ingress"
-        description: Must generate userlist named {namespace}-{ingressName}
+        pattern: "userlist auth_auth-system_shared-auth"
+        description: Must generate userlist named auth_{secretNamespace}_{secretName}
       - type: contains
         target: haproxy.cfg
-        pattern: "group authenticated-users users"
-        description: Userlist must have authenticated-users group
+        pattern: "user admin password"
+        description: User entries must have password
       - type: contains
         target: haproxy.cfg
-        pattern: "user admin password .* groups authenticated-users"
-        description: User entries must have groups authenticated-users
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http_auth_group\\(production-api-ingress\\) authenticated-users"
-        description: Backend must use http_auth_group with authenticated-users
+        pattern: "http_auth\\(auth_auth-system_shared-auth\\)"
+        description: Backend must use http_auth with per-secret userlist
 
   test-auth-custom-realm:
     description: Basic authentication with custom realm
@@ -1062,8 +1062,8 @@ validationTests:
         pattern: 'http-request auth realm "DeepL-demo"'
         description: Realm must have spaces replaced with dashes
 
-  test-auth-per-ingress-userlists:
-    description: Each ingress gets its own userlist (matching official controller behavior)
+  test-auth-per-secret-userlists:
+    description: Ingresses sharing the same secret share the same userlist (deduplication for performance)
     fixtures:
       secrets:
         - apiVersion: v1
@@ -1170,20 +1170,20 @@ validationTests:
         description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
+        pattern: "userlist auth_default_shared-credentials"
+        description: Both ingresses share the same userlist based on secret reference
+      - type: not_contains
+        target: haproxy.cfg
         pattern: "userlist default-app1-ingress"
-        description: First ingress gets its own userlist
-      - type: contains
+        description: Must NOT generate per-ingress userlists
+      - type: not_contains
         target: haproxy.cfg
         pattern: "userlist default-app2-ingress"
-        description: Second ingress gets its own userlist
+        description: Must NOT generate per-ingress userlists
       - type: contains
         target: haproxy.cfg
-        pattern: "http_auth_group\\(default-app1-ingress\\) authenticated-users"
-        description: First backend uses http_auth_group
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http_auth_group\\(default-app2-ingress\\) authenticated-users"
-        description: Second backend uses http_auth_group
+        pattern: "http_auth\\(auth_default_shared-credentials\\)"
+        description: Both backends use http_auth with shared userlist
 
   test-load-balance-hdr-parameter:
     description: Load balance with hdr(header-name) parameter for header-based routing

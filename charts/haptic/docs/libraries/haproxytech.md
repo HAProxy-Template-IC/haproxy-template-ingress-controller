@@ -1751,6 +1751,9 @@ http-request auth realm "API Access" unless { http_auth(auth_default_auth-creden
 - Automatic deduplication: multiple ingresses sharing the same secret generate a single userlist
 - HAProxy 3.2+ uses bcrypt password hashing (not MD5 apr1)
 
+!!! note "Implementation Difference from HAProxy Ingress Controller"
+    This controller uses **per-secret** userlist naming (`auth_{secretNs}_{secretName}`) rather than the official HAProxy Ingress Controller's per-ingress naming (`{namespace}-{ingressName}`). This deduplicates userlists when multiple Ingresses reference the same secret, significantly improving configuration validation performance for expensive password hashes like bcrypt (~85ms per hash validation).
+
 ---
 
 ### haproxy.org/auth-secret

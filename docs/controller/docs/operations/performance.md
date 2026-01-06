@@ -242,6 +242,38 @@ global
     tune.http.maxhdr 128      # Allow more headers
 ```
 
+### Password Hash Performance
+
+HAProxy validates password hash formats during configuration parsing by running the full hashing algorithm. This can significantly slow down config validation when using expensive hash algorithms.
+
+**Hash algorithm validation times:**
+
+| Algorithm | Example | Time per hash |
+|-----------|---------|---------------|
+| MD5 | `$1$salt$hash` | ~0.004ms |
+| SHA-256 | `$5$salt$hash` | ~3ms |
+| SHA-512 | `$6$salt$hash` | ~3ms |
+| bcrypt (cost 10) | `$2y$10$salt$hash` | **~85ms** |
+
+!!! warning "bcrypt with high cost factors is expensive"
+    A configuration with 200 bcrypt passwords at cost factor 10 adds **~17 seconds** to every config validation. This directly impacts reconciliation time and webhook validation latency.
+
+**Recommendations:**
+
+- **Prefer SHA-512 (`$6$`)** for password hashes - cryptographically strong with fast validation
+- **Avoid bcrypt cost factors above 8** in high-frequency validation scenarios
+- **Consolidate userlists** to avoid duplicate password entries - HAProxy validates each occurrence separately, even for identical hashes
+- **Consider external authentication** (OAuth, OIDC) for large user bases instead of embedding passwords in config
+
+**Checking your config:**
+
+```bash
+# Count expensive bcrypt hashes
+grep -c '\$2[aby]\$' /path/to/haproxy.cfg
+
+# Estimate validation overhead (bcrypt count × 85ms)
+```
+
 ## Scaling Strategies
 
 ### Horizontal Scaling
