@@ -17,12 +17,16 @@ package deployer
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -89,8 +93,62 @@ type DeploymentScheduler struct {
 	lastDeploymentEndTime time.Time // When the last deployment completed
 	deploymentTimeout     time.Duration
 
+	// Cache for deployment optimization - skip if config unchanged
+	lastDeployedConfigHash string    // SHA-256 hash of last successfully deployed config
+	lastDeployedPodSetHash string    // Hash of pod endpoints for the last deployment
+	lastDeployedTime       time.Time // When the last successful deployment occurred
+
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
+}
+
+// computeDeploymentHash computes a combined hash of config and auxiliary files.
+// Used to detect if deployment can be skipped (config unchanged).
+func computeDeploymentHash(config string, auxFiles interface{}) string {
+	h := sha256.New()
+	h.Write([]byte(config))
+
+	// Include auxiliary files in hash if present
+	if aux, ok := auxFiles.(*dataplane.AuxiliaryFiles); ok && aux != nil {
+		for _, f := range aux.GeneralFiles {
+			h.Write([]byte(f.Filename))
+			h.Write([]byte(f.Content))
+		}
+		for _, f := range aux.SSLCertificates {
+			h.Write([]byte(f.Path))
+			h.Write([]byte(f.Content))
+		}
+		for _, f := range aux.MapFiles {
+			h.Write([]byte(f.Path))
+			h.Write([]byte(f.Content))
+		}
+		for _, f := range aux.CRTListFiles {
+			h.Write([]byte(f.Path))
+			h.Write([]byte(f.Content))
+		}
+	}
+
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// computePodSetHash computes a hash of the current pod endpoints.
+// Used to detect if pod set changed (new/removed HAProxy pods).
+func computePodSetHash(endpoints []interface{}) string {
+	h := sha256.New()
+
+	// Extract and sort URLs for deterministic hashing
+	urls := make([]string, 0, len(endpoints))
+	for _, ep := range endpoints {
+		if endpoint, ok := ep.(dataplane.Endpoint); ok {
+			urls = append(urls, endpoint.URL)
+		}
+	}
+	sort.Strings(urls)
+
+	for _, url := range urls {
+		h.Write([]byte(url))
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // NewDeploymentScheduler creates a new DeploymentScheduler component.
@@ -271,6 +329,29 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 		return
 	}
 
+	// Compute hashes for cache comparison
+	configHash := computeDeploymentHash(config, auxFiles)
+	podSetHash := computePodSetHash(endpoints)
+
+	// Drift prevention deployments must ALWAYS execute (bypass cache)
+	isDriftPrevention := event.TriggerReason == events.TriggerReasonDriftPrevention
+
+	// Check if deployment can be skipped (config unchanged for same pod set)
+	s.mu.RLock()
+	canSkip := !isDriftPrevention &&
+		configHash == s.lastDeployedConfigHash &&
+		podSetHash == s.lastDeployedPodSetHash &&
+		!s.lastDeployedTime.IsZero()
+	s.mu.RUnlock()
+
+	if canSkip {
+		s.logger.Debug("skipping deployment - config unchanged since last deploy",
+			"config_hash", configHash[:8],
+			"pod_set_hash", podSetHash[:8],
+			"last_deployed", s.lastDeployedTime.Format(time.RFC3339))
+		return
+	}
+
 	// Schedule deployment to current endpoints (or queue if deployment in progress)
 	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "config_validation", correlationID)
 }
@@ -350,8 +431,16 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 // handleDeploymentCompleted handles deployment completion events.
 //
 // This marks the deployment as complete, updates the deployment end time,
-// and processes any pending deployment via scheduleOrQueue.
+// caches the deployed config hash for optimization, and processes any
+// pending deployment via scheduleOrQueue.
 func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentCompletedEvent) {
+	// Cache the deployed config hash for future comparison (skip unchanged deployments)
+	s.mu.Lock()
+	s.lastDeployedConfigHash = computeDeploymentHash(s.lastValidatedConfig, s.lastValidatedAux)
+	s.lastDeployedPodSetHash = computePodSetHash(s.currentEndpoints)
+	s.lastDeployedTime = time.Now()
+	s.mu.Unlock()
+
 	s.schedulerMutex.Lock()
 
 	// Mark deployment as complete and clear start time
@@ -576,6 +665,13 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	s.deploymentInProgress = false
 	s.deploymentStartTime = time.Time{}
 	s.pendingDeployment = nil
+
+	// Clear deployment cache - new leader should verify config state
+	s.mu.Lock()
+	s.lastDeployedConfigHash = ""
+	s.lastDeployedPodSetHash = ""
+	s.lastDeployedTime = time.Time{}
+	s.mu.Unlock()
 
 	// Note: lastDeploymentEndTime is NOT cleared - this historical data is safe to keep
 	// and helps prevent rapid deployments if leadership is quickly reacquired
