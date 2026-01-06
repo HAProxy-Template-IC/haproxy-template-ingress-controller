@@ -198,12 +198,10 @@ templateSnippets:
                 {%- var port = svc | dig("port", "number") | fallback(80) -%}
                 {%- var portId = (svc | dig("port", "name")) | fallback(svc | dig("port", "number") | fallback("")) -%}
                 {%- if first_seen("ingress_backend", ns, name, svcName, portId) -%}
-                  {%- var healthPath = path | dig("path") | fallback("/") %}
       # Backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
                   {%- var backendKey = BackendNameIngress(ingress, path) %}
       backend {{ backendKey }}
         balance roundrobin
-        option httpchk GET {{ healthPath }}
         default-server check
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context }}
