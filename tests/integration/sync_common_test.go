@@ -218,31 +218,15 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 		}
 	}
 
-	// Step 2: Push initial configuration (using low-level client)
+	// Step 2: Push initial configuration using Sync API
+	// We use Sync instead of PushRawConfiguration because:
+	// - PushRawConfiguration uses skip_version=true which keeps version at 1
+	// - When version=1, Sync uses SyncModeRawInitial (raw push) and increments version
+	// - This ensures the actual test sync sees version > 1 and uses fine-grained sync
 	initialConfigContent := LoadTestConfig(t, tc.initialConfigFile)
-	_, err := client.PushRawConfiguration(ctx, initialConfigContent)
+	initialResult, err := dpClient.Sync(ctx, initialConfigContent, nil, nil)
 	require.NoError(t, err, "pushing initial config should succeed")
-	t.Logf("Pushed initial config: %s", tc.initialConfigFile)
-
-	// Step 2.5: Wait for initial config to be applied
-	// The HAProxy reload triggered by PushRawConfiguration may take time to complete,
-	// especially in resource-constrained CI environments (DinD). We must wait until
-	// the config is actually applied before proceeding to sync, otherwise the sync
-	// will see the old default config and generate incorrect operations.
-	//
-	// We detect that the config is applied by checking that the default "frontend status"
-	// section (from HAProxy's default config) is no longer present - our test configs
-	// don't include this frontend.
-	err = WaitForCondition(ctx, FastWaitConfig(), func(ctx context.Context) (bool, error) {
-		currentConfig, err := client.GetRawConfiguration(ctx)
-		if err != nil {
-			return false, nil // Retry on error
-		}
-		// The default HAProxy config contains "frontend status" which our test configs don't have
-		return !strings.Contains(currentConfig, "frontend status"), nil
-	})
-	require.NoError(t, err, "initial config should be applied within timeout")
-	t.Logf("Initial config applied successfully")
+	t.Logf("Pushed initial config: %s (mode=%s)", tc.initialConfigFile, initialResult.SyncMode)
 
 	// Step 3: Sync to desired configuration using high-level API
 	// This replaces the manual parse/compare/apply steps
@@ -311,11 +295,13 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	}
 
 	// Step 5.5: Validate fallback to raw push expectation
+	// Note: expectedFallbackToRaw specifically tests for fallback behavior (SyncModeRawFallback),
+	// not intentional raw push modes (SyncModeRawInitial for version=1, SyncModeRawThreshold).
 	if tc.expectedFallbackToRaw {
-		assert.True(t, result.FallbackToRaw, "expected fallback to raw config push")
+		assert.Equal(t, dataplane.SyncModeRawFallback, result.SyncMode, "expected fallback to raw config push")
 		t.Logf("⚠️  Fallback to raw config push occurred (expected)")
 	} else {
-		assert.False(t, result.FallbackToRaw, "expected fine-grained sync without fallback")
+		assert.NotEqual(t, dataplane.SyncModeRawFallback, result.SyncMode, "expected no fallback to raw push")
 	}
 
 	// Step 6: Parse desired config for idempotency verification

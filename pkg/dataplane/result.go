@@ -6,6 +6,20 @@ import (
 	"time"
 )
 
+// SyncMode indicates which sync strategy was used.
+type SyncMode string
+
+const (
+	// SyncModeFineGrained indicates fine-grained API operations were used.
+	SyncModeFineGrained SyncMode = "fine_grained"
+	// SyncModeRawInitial indicates raw push was used for initial configuration (version=1).
+	SyncModeRawInitial SyncMode = "raw_initial"
+	// SyncModeRawThreshold indicates raw push was used because changes exceeded threshold.
+	SyncModeRawThreshold SyncMode = "raw_threshold"
+	// SyncModeRawFallback indicates raw push was used as fallback after fine-grained failure.
+	SyncModeRawFallback SyncMode = "raw_fallback"
+)
+
 // SyncResult contains detailed information about a sync operation.
 type SyncResult struct {
 	// Success indicates whether the sync completed successfully
@@ -30,9 +44,9 @@ type SyncResult struct {
 	// This includes timeout errors or explicit reload failures from HAProxy.
 	ReloadVerificationError string
 
-	// FallbackToRaw indicates whether we had to fall back to raw config push
-	// This happens when fine-grained sync encounters non-recoverable errors
-	FallbackToRaw bool
+	// SyncMode indicates which sync strategy was used.
+	// See SyncMode* constants for possible values.
+	SyncMode SyncMode
 
 	// Duration of the sync operation
 	Duration time.Duration
@@ -41,11 +55,17 @@ type SyncResult struct {
 	Retries int
 
 	// Details contains detailed diff information
-	// This field is always populated, even when FallbackToRaw is true
+	// This field is always populated regardless of SyncMode
 	Details DiffDetails
 
 	// Message provides additional context about the result
 	Message string
+}
+
+// UsedRawPush returns true if raw configuration push was used instead of fine-grained sync.
+// This is a convenience helper for code that needs to know whether any form of raw push was used.
+func (r *SyncResult) UsedRawPush() bool {
+	return r.SyncMode != SyncModeFineGrained && r.SyncMode != ""
 }
 
 // AppliedOperation represents a single applied configuration change.
@@ -159,10 +179,17 @@ func (r *SyncResult) String() string {
 		fmt.Sprintf("Status: %s", status),
 		fmt.Sprintf("Duration: %s (retries: %d)", r.Duration, r.Retries))
 
-	// Fallback indicator
-	if r.FallbackToRaw {
+	// Sync mode indicator
+	switch r.SyncMode {
+	case SyncModeFineGrained:
+		parts = append(parts, "Mode: Fine-grained sync")
+	case SyncModeRawInitial:
+		parts = append(parts, "Mode: Raw config push (initial configuration)")
+	case SyncModeRawThreshold:
+		parts = append(parts, "Mode: Raw config push (threshold exceeded)")
+	case SyncModeRawFallback:
 		parts = append(parts, "Mode: Raw config push (fallback)")
-	} else {
+	default:
 		parts = append(parts, "Mode: Fine-grained sync")
 	}
 

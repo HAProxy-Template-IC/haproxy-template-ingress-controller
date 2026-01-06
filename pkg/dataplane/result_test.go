@@ -52,10 +52,10 @@ func TestSyncResult_String(t *testing.T) {
 		{
 			name: "failure with fallback",
 			result: SyncResult{
-				Success:       false,
-				Duration:      1 * time.Second,
-				FallbackToRaw: true,
-				Message:       "fallback required due to conflict",
+				Success:  false,
+				Duration: 1 * time.Second,
+				SyncMode: SyncModeRawFallback,
+				Message:  "fallback required due to conflict",
 			},
 			contains: []string{"FAILED", "1s", "Raw config push (fallback)", "Message: fallback required"},
 		},

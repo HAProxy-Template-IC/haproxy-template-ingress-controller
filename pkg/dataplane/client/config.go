@@ -142,6 +142,8 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 //
 // Parameters:
 //   - config: The complete HAProxy configuration string
+//   - version: The expected configuration version for optimistic locking.
+//     The version is incremented after a successful push.
 //
 // Returns:
 //   - reloadID: The reload identifier from the Reload-ID header (if reload triggered)
@@ -149,7 +151,7 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 //
 // Example:
 //
-//	reloadID, err := client.PushRawConfiguration(context.Background(), newConfig)
+//	reloadID, err := client.PushRawConfiguration(context.Background(), newConfig, 1)
 //	if err != nil {
 //	    slog.Error("failed to push config", "error", err)
 //	    os.Exit(1)
@@ -157,27 +159,33 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 //	if reloadID != "" {
 //	    slog.Info("HAProxy reloaded", "reload_id", reloadID)
 //	}
-func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config string) (string, error) {
-	skipVersion := true
+func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config string, version int64) (string, error) {
+	// Convert int64 to API's Version type (int alias)
+	v32Version := v32.Version(version)
+	v31Version := v31.Version(version)
+	v30Version := v30.Version(version)
+	v32eeVersion := v32ee.Version(version)
+	v31eeVersion := v31ee.Version(version)
+	v30eeVersion := v30ee.Version(version)
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
 		V32: func(c *v32.Client) (*http.Response, error) {
-			return c.PostHAProxyConfigurationWithTextBody(ctx, &v32.PostHAProxyConfigurationParams{SkipVersion: &skipVersion}, config)
+			return c.PostHAProxyConfigurationWithTextBody(ctx, &v32.PostHAProxyConfigurationParams{Version: &v32Version}, config)
 		},
 		V31: func(c *v31.Client) (*http.Response, error) {
-			return c.PostHAProxyConfigurationWithTextBody(ctx, &v31.PostHAProxyConfigurationParams{SkipVersion: &skipVersion}, config)
+			return c.PostHAProxyConfigurationWithTextBody(ctx, &v31.PostHAProxyConfigurationParams{Version: &v31Version}, config)
 		},
 		V30: func(c *v30.Client) (*http.Response, error) {
-			return c.PostHAProxyConfigurationWithTextBody(ctx, &v30.PostHAProxyConfigurationParams{SkipVersion: &skipVersion}, config)
+			return c.PostHAProxyConfigurationWithTextBody(ctx, &v30.PostHAProxyConfigurationParams{Version: &v30Version}, config)
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
-			return c.PostHAProxyConfigurationWithTextBody(ctx, &v32ee.PostHAProxyConfigurationParams{SkipVersion: &skipVersion}, config)
+			return c.PostHAProxyConfigurationWithTextBody(ctx, &v32ee.PostHAProxyConfigurationParams{Version: &v32eeVersion}, config)
 		},
 		V31EE: func(c *v31ee.Client) (*http.Response, error) {
-			return c.PostHAProxyConfigurationWithTextBody(ctx, &v31ee.PostHAProxyConfigurationParams{SkipVersion: &skipVersion}, config)
+			return c.PostHAProxyConfigurationWithTextBody(ctx, &v31ee.PostHAProxyConfigurationParams{Version: &v31eeVersion}, config)
 		},
 		V30EE: func(c *v30ee.Client) (*http.Response, error) {
-			return c.PostHAProxyConfigurationWithTextBody(ctx, &v30ee.PostHAProxyConfigurationParams{SkipVersion: &skipVersion}, config)
+			return c.PostHAProxyConfigurationWithTextBody(ctx, &v30ee.PostHAProxyConfigurationParams{Version: &v30eeVersion}, config)
 		},
 	})
 

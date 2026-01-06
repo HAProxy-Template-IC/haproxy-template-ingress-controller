@@ -95,6 +95,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		GeneralStorageDir:       spec.Dataplane.GeneralStorageDir,
 		ConfigFile:              spec.Dataplane.ConfigFile,
 		MaxParallel:             spec.Dataplane.MaxParallel,
+		RawPushThreshold:        spec.Dataplane.RawPushThreshold,
 	}
 
 	// Convert watched resources
