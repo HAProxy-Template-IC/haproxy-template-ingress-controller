@@ -218,6 +218,23 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  rawPushThreshold:
+                    default: 100
+                    description: |-
+                      RawPushThreshold sets the number of configuration changes that triggers
+                      a raw config push instead of fine-grained sync.
+
+                      Fine-grained sync applies individual API operations (create/update/delete)
+                      which is efficient for small changes but slow for large deployments.
+                      When changes exceed this threshold, the controller pushes the complete
+                      configuration as a raw config, which is faster for bulk updates.
+
+                      Additionally, when the remote HAProxy config version is 1 (initial state),
+                      raw push is always used regardless of this threshold.
+
+                      Default: 100
+                    minimum: 0
+                    type: integer
                   sslCertsDir:
                     description: |-
                       SSLCertsDir is the directory for SSL certificates.

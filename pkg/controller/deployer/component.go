@@ -67,6 +67,10 @@ type Component struct {
 	// 0 means unlimited (not recommended for large configs).
 	maxParallel int
 
+	// rawPushThreshold triggers raw config push when change count exceeds this value.
+	// 0 means disabled (fine-grained sync always used, except version=1).
+	rawPushThreshold int
+
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
 }
@@ -77,20 +81,22 @@ type Component struct {
 //   - eventBus: The EventBus for subscribing to events and publishing results
 //   - logger: Structured logger for component logging
 //   - maxParallel: Maximum concurrent Dataplane API operations (0 = unlimited)
+//   - rawPushThreshold: Change count threshold for raw config push (0 = disabled)
 //
 // Returns:
 //   - A new Component instance ready to be started
-func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel int) *Component {
+func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel, rawPushThreshold int) *Component {
 	// Use SubscribeLeaderOnly because this component only runs on the leader.
 	// It subscribes after EventBus.Start() when leadership is acquired.
 	// All-replica components replay their state on BecameLeaderEvent to ensure
 	// leader-only components don't miss critical state.
 	return &Component{
-		eventBus:      eventBus,
-		eventChan:     eventBus.SubscribeLeaderOnly(EventBufferSize),
-		logger:        logger.With("component", ComponentName),
-		maxParallel:   maxParallel,
-		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
+		eventBus:         eventBus,
+		eventChan:        eventBus.SubscribeLeaderOnly(EventBufferSize),
+		logger:           logger.With("component", ComponentName),
+		maxParallel:      maxParallel,
+		rawPushThreshold: rawPushThreshold,
+		healthTracker:    lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}
 }
 
@@ -392,9 +398,10 @@ func (c *Component) deployToSingleEndpoint(
 	}
 	defer client.Close()
 
-	// Use default sync options and apply maxParallel limit
+	// Use default sync options and apply configuration limits
 	opts := dataplane.DefaultSyncOptions()
 	opts.MaxParallel = c.maxParallel
+	opts.RawPushThreshold = c.rawPushThreshold
 
 	// Sync configuration
 	result, err := client.Sync(ctx, config, auxFiles, opts)
@@ -448,7 +455,7 @@ func (c *Component) convertSyncResultToMetadata(result *dataplane.SyncResult) *e
 		ReloadID:               result.ReloadID,
 		SyncDuration:           result.Duration,
 		VersionConflictRetries: result.Retries,
-		FallbackUsed:           result.FallbackToRaw,
+		FallbackUsed:           result.UsedRawPush(),
 		OperationCounts: events.OperationCounts{
 			TotalAPIOperations: result.Details.TotalOperations,
 			BackendsAdded:      len(result.Details.BackendsAdded),

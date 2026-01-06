@@ -96,6 +96,11 @@ type SyncOptions struct {
 	// This prevents overwhelming the API when syncing large configurations.
 	// 0 means unlimited (not recommended for large configs).
 	MaxParallel int
+
+	// RawPushThreshold triggers raw config push when change count exceeds this value.
+	// When set to 0, this threshold check is disabled (fine-grained sync always used).
+	// Note: Version 1 (initial state) always triggers raw push regardless of this setting.
+	RawPushThreshold int
 }
 
 // DefaultSyncOptions returns sensible default sync options.

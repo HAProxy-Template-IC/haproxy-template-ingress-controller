@@ -133,10 +133,11 @@ if err != nil {
 defer client.Close()
 
 opts := &dataplane.SyncOptions{
-    MaxRetries:      5,                 // Retry 409 conflicts up to 5 times
-    Timeout:         3 * time.Minute,   // Overall timeout
-    ContinueOnError: false,             // Stop on first error
-    FallbackToRaw:   true,              // Fall back to raw push on errors
+    MaxRetries:       5,                 // Retry 409 conflicts up to 5 times
+    Timeout:          3 * time.Minute,   // Overall timeout
+    ContinueOnError:  false,             // Stop on first error
+    FallbackToRaw:    true,              // Fall back to raw push on errors
+    RawPushThreshold: 100,               // Use raw push when changes exceed this count
 }
 
 result, err := client.Sync(ctx, desiredConfig, nil, opts)
@@ -148,6 +149,7 @@ result, err := client.Sync(ctx, desiredConfig, nil, opts)
 - `Timeout`: Overall timeout for the sync operation (default: 2 minutes)
 - `ContinueOnError`: Continue applying operations even if some fail (default: false)
 - `FallbackToRaw`: Automatically fall back to raw config push on non-recoverable errors (default: true)
+- `RawPushThreshold`: Trigger raw config push when change count exceeds this value (0 = disabled)
 
 ### Dry Run (Preview Changes)
 
@@ -223,9 +225,9 @@ if result.ReloadTriggered {
     fmt.Printf("HAProxy reloaded with ID: %s\n", result.ReloadID)
 }
 
-// Check if fallback was used
-if result.FallbackToRaw {
-    fmt.Println("Warning: Had to use raw config push (fallback)")
+// Check sync mode (fine-grained vs raw push)
+if result.UsedRawPush() {
+    fmt.Printf("Warning: Used raw config push (mode: %s)\n", result.SyncMode)
 }
 ```
 
@@ -524,10 +526,11 @@ type Endpoint struct {
 
 ```go
 type SyncOptions struct {
-    MaxRetries      int           // Retry limit for 409 conflicts (default: 3)
-    Timeout         time.Duration // Overall timeout (default: 2 minutes)
-    ContinueOnError bool          // Continue on operation failure (default: false)
-    FallbackToRaw   bool          // Auto-fallback to raw push (default: true)
+    MaxRetries       int           // Retry limit for 409 conflicts (default: 3)
+    Timeout          time.Duration // Overall timeout (default: 2 minutes)
+    ContinueOnError  bool          // Continue on operation failure (default: false)
+    FallbackToRaw    bool          // Auto-fallback to raw push (default: true)
+    RawPushThreshold int           // Raw push when changes exceed threshold (0 = disabled)
 }
 ```
 
@@ -539,12 +542,23 @@ type SyncResult struct {
     AppliedOperations []AppliedOperation // Structured operations applied
     ReloadTriggered   bool              // Whether reload was triggered
     ReloadID          string            // Reload ID (if triggered)
-    FallbackToRaw     bool              // Whether fallback was used
+    SyncMode          SyncMode          // Sync strategy used (fine_grained, raw_initial, raw_threshold, raw_fallback)
     Duration          time.Duration     // Operation duration
     Retries           int               // Number of retries
     Details           DiffDetails       // Detailed diff information
     Message           string            // Summary message
 }
+
+// SyncMode indicates which sync strategy was used
+const (
+    SyncModeFineGrained  SyncMode = "fine_grained"  // Fine-grained API operations
+    SyncModeRawInitial   SyncMode = "raw_initial"   // Raw push for initial config (version=1)
+    SyncModeRawThreshold SyncMode = "raw_threshold" // Raw push because changes exceeded threshold
+    SyncModeRawFallback  SyncMode = "raw_fallback"  // Raw push as fallback after fine-grained failure
+)
+
+// UsedRawPush() returns true if any form of raw config push was used
+func (r *SyncResult) UsedRawPush() bool
 ```
 
 #### `DiffResult`
@@ -662,18 +676,23 @@ defer client.Close()
 result, err := client.Sync(ctx, config, nil, opts)
 ```
 
-### 5. Monitor Fallback Usage
+### 5. Monitor Raw Push Usage
 
-Alert on fallback to raw config:
+Alert on unexpected raw config push:
 
 ```go
 client, err := dataplane.NewClient(ctx, endpoint)
 defer client.Close()
 
 result, err := client.Sync(ctx, config, nil, nil)
-if err == nil && result.FallbackToRaw {
-    log.Warn("Had to use raw config push - investigate fine-grained sync failure")
-    // Send alert to monitoring system
+if err == nil && result.UsedRawPush() {
+    log.Warn("Used raw config push",
+        "mode", result.SyncMode,
+        "reason", getRawPushReason(result.SyncMode))
+    // Send alert for fallback mode (indicates fine-grained sync failure)
+    if result.SyncMode == dataplane.SyncModeRawFallback {
+        sendAlert("Fine-grained sync failed, used fallback")
+    }
 }
 ```
 

@@ -132,8 +132,8 @@ func displaySyncResults(result *dataplane.SyncResult) {
 		fmt.Printf("Retries (version conflicts): %d\n", result.Retries)
 	}
 
-	if result.FallbackToRaw {
-		fmt.Println("⚠ Warning: Used raw config fallback (fine-grained sync failed)")
+	if result.UsedRawPush() {
+		fmt.Println("⚠ Warning: Used raw config push (fine-grained sync not used)")
 	}
 
 	if result.ReloadTriggered {

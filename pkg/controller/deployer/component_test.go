@@ -31,7 +31,7 @@ import (
 // Test helper to create a test deployer component.
 func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	logger := testutil.NewTestLogger()
-	return New(eventBus, logger, 0) // 0 = unlimited parallelism
+	return New(eventBus, logger, 0, 0) // 0 = unlimited parallelism, 0 = disabled raw push threshold
 }
 
 // TestHandleDeploymentScheduled tests deployment execution when scheduled.
@@ -284,7 +284,7 @@ func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
 			ReloadID:        "12345",
 			Duration:        100 * time.Millisecond,
 			Retries:         2,
-			FallbackToRaw:   false,
+			SyncMode:        dataplane.SyncModeFineGrained,
 			Details: dataplane.DiffDetails{
 				TotalOperations:  10,
 				BackendsAdded:    []string{"backend1", "backend2"},

@@ -276,6 +276,12 @@ type DataplaneConfig struct {
 	// This prevents overwhelming the API when syncing large configurations.
 	// 0 means auto-calculated (based on dataplane GOMAXPROCS * 10).
 	MaxParallel int `yaml:"max_parallel"`
+
+	// RawPushThreshold sets the number of configuration changes that triggers
+	// a raw config push instead of fine-grained sync.
+	// 0 means disabled (always use fine-grained sync, except version=1).
+	// Default: 100
+	RawPushThreshold int `yaml:"raw_push_threshold"`
 }
 
 // WatchedResource configures watching for a specific Kubernetes resource type.

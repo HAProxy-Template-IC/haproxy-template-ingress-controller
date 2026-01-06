@@ -194,16 +194,50 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		return o.createNoChangesResult(startTime, &diff.Summary), nil
 	}
 
-	// Step 7: Attempt fine-grained sync with retry logic (pass pre-computed diffs)
+	// Step 6: Fetch current config version to determine if raw push should be used
+	// Version 1 indicates initial state - always use raw push regardless of threshold
+	versionRetryConfig := client.RetryConfig{
+		MaxAttempts: 3,
+		RetryIf:     client.IsConnectionError(),
+		Backoff:     client.BackoffExponential,
+		BaseDelay:   100 * time.Millisecond,
+		Logger:      o.logger.With("operation", "fetch_version"),
+	}
+
+	version, versionErr := client.WithRetry(ctx, versionRetryConfig, func(attempt int) (int64, error) {
+		return o.client.GetVersion(ctx)
+	})
+	if versionErr != nil {
+		// Log warning but don't fail - version check is an optimization, not a requirement
+		o.logger.Warn("Failed to get config version, skipping version-based raw push decision",
+			"error", versionErr)
+		version = -1 // Use -1 to indicate unknown version
+	}
+
+	// Step 7: Check if raw push should be used instead of fine-grained sync
+	// Priority: version=1 > threshold exceeded > fine-grained sync
+	if version == 1 {
+		o.logger.Info("Using raw push for initial configuration", "version", version)
+		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawInitial, false)
+	}
+
+	if opts.RawPushThreshold > 0 && diff.Summary.TotalOperations() > opts.RawPushThreshold {
+		o.logger.Info("Using raw push due to high change count",
+			"changes", diff.Summary.TotalOperations(),
+			"threshold", opts.RawPushThreshold)
+		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawThreshold, false)
+	}
+
+	// Step 8: Attempt fine-grained sync with retry logic (pass pre-computed diffs)
 	// The function returns whether Phase 1 (aux files) completed successfully
 	result, auxFilesSynced, err := o.attemptFineGrainedSyncWithDiffs(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
 
-	// Step 7: If fine-grained sync failed and fallback is enabled, try raw config push
+	// Step 9: If fine-grained sync failed and fallback is enabled, try raw config push
 	if err != nil && opts.FallbackToRaw {
 		o.logger.Warn("Fine-grained sync failed, attempting fallback to raw config push",
 			"error", err)
 
-		fallbackResult, fallbackErr := o.attemptRawFallback(ctx, desiredConfig, diff, auxDiffs, opts, startTime, auxFilesSynced)
+		fallbackResult, fallbackErr := o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawFallback, auxFilesSynced)
 		if fallbackErr != nil {
 			return nil, NewFallbackError(err, fallbackErr)
 		}
@@ -258,7 +292,7 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 		AppliedOperations: appliedOps,
 		ReloadTriggered:   reloadTriggered,
 		ReloadID:          reloadID,
-		FallbackToRaw:     false,
+		SyncMode:          SyncModeFineGrained,
 		Duration:          time.Since(startTime),
 		Retries:           max(0, retries-1),
 		Details:           convertDiffSummary(&diff.Summary),
@@ -301,12 +335,22 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	return result, auxFilesSynced, nil
 }
 
-// attemptRawFallback attempts to sync using raw configuration push.
+// executeRawPush performs raw configuration push with configurable behavior.
+// This method is used for both intentional raw push (version=1, threshold exceeded) and fallback scenarios.
+//
+// Parameters:
+//   - version: The current config version for optimistic locking. Version is incremented after push.
+//   - mode: The SyncMode to record (SyncModeRawInitial, SyncModeRawThreshold, or SyncModeRawFallback)
+//   - auxFilesAlreadySynced: If true, Phase 1 is skipped because aux files were already synced
+//
 // Uses the same auxiliary file sync and reload verification as the fine-grained path.
-// If auxFilesAlreadySynced is true, Phase 1 is skipped because aux files were already synced
-// in the failed fine-grained sync attempt.
-func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig string, diff *comparator.ConfigDiff, auxDiffs *auxiliaryFileDiffs, opts *SyncOptions, startTime time.Time, auxFilesAlreadySynced bool) (*SyncResult, error) {
-	o.logger.Warn("Falling back to raw configuration push")
+func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string, diff *comparator.ConfigDiff, auxDiffs *auxiliaryFileDiffs, opts *SyncOptions, startTime time.Time, version int64, mode SyncMode, auxFilesAlreadySynced bool) (*SyncResult, error) {
+	// Log at appropriate level based on mode
+	if mode == SyncModeRawFallback {
+		o.logger.Warn("Executing raw configuration push (fallback)")
+	} else {
+		o.logger.Info("Executing raw configuration push", "reason", mode)
+	}
 
 	// Phase 1: Sync auxiliary files BEFORE pushing raw config (same as fine-grained sync)
 	// Files must exist before HAProxy validates the configuration.
@@ -327,7 +371,7 @@ func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig str
 	}
 
 	// Phase 2: Push raw configuration (now that auxiliary files exist and reloads verified)
-	reloadID, err := o.client.PushRawConfiguration(ctx, desiredConfig)
+	reloadID, err := o.client.PushRawConfiguration(ctx, desiredConfig, version)
 	if err != nil {
 		return nil, &SyncError{
 			Stage:   "fallback",
@@ -351,11 +395,11 @@ func (o *orchestrator) attemptRawFallback(ctx context.Context, desiredConfig str
 		AppliedOperations: appliedOps, // Preserve detailed operations instead of generic message
 		ReloadTriggered:   true,       // Raw push always triggers reload
 		ReloadID:          reloadID,   // Capture reload ID from raw config push
-		FallbackToRaw:     true,
+		SyncMode:          mode,
 		Duration:          time.Since(startTime),
 		Retries:           0,
 		Details:           convertDiffSummary(&diff.Summary),
-		Message:           "Successfully applied configuration via raw config push (fallback)",
+		Message:           fmt.Sprintf("Successfully applied configuration via raw config push (%s)", mode),
 	}
 
 	// Verify reload if verification enabled (raw push always triggers reload)
@@ -982,7 +1026,7 @@ func (o *orchestrator) createNoChangesResult(startTime time.Time, summary *compa
 		Success:           true,
 		AppliedOperations: nil,
 		ReloadTriggered:   false,
-		FallbackToRaw:     false,
+		SyncMode:          SyncModeFineGrained, // No actual sync happened, but semantically fine-grained path
 		Duration:          time.Since(startTime),
 		Retries:           0,
 		Details:           convertDiffSummary(summary),

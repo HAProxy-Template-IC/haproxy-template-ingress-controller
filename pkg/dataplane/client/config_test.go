@@ -257,7 +257,7 @@ func TestPushRawConfiguration(t *testing.T) {
 			client, cleanup := createTestClient(t, makePushConfigHandler(tt.statusCode, tt.reloadID))
 			defer cleanup()
 
-			reloadID, err := client.PushRawConfiguration(context.Background(), "global\n  daemon\n")
+			reloadID, err := client.PushRawConfiguration(context.Background(), "global\n  daemon\n", 1)
 			assertPushConfigResult(t, tt.expectErr, tt.wantReloadID, reloadID, err)
 		})
 	}

@@ -323,6 +323,23 @@ type DataplaneConfig struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	MaxParallel int `json:"maxParallel,omitempty"`
+
+	// RawPushThreshold sets the number of configuration changes that triggers
+	// a raw config push instead of fine-grained sync.
+	//
+	// Fine-grained sync applies individual API operations (create/update/delete)
+	// which is efficient for small changes but slow for large deployments.
+	// When changes exceed this threshold, the controller pushes the complete
+	// configuration as a raw config, which is faster for bulk updates.
+	//
+	// Additionally, when the remote HAProxy config version is 1 (initial state),
+	// raw push is always used regardless of this threshold.
+	//
+	// Default: 100
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default=100
+	// +optional
+	RawPushThreshold int `json:"rawPushThreshold,omitempty"`
 }
 
 // TemplatingSettings configures template rendering behavior.

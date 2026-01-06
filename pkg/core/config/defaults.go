@@ -51,6 +51,10 @@ const (
 
 	// DefaultLeaderElectionRetryPeriod is the default retry period.
 	DefaultLeaderElectionRetryPeriod = 2 * time.Second
+
+	// DefaultRawPushThreshold is the default number of changes that triggers
+	// a raw config push instead of fine-grained sync.
+	DefaultRawPushThreshold = 100
 )
 
 // SetDefaults applies default values to unset configuration fields.
@@ -102,6 +106,9 @@ func SetDefaults(cfg *Config) {
 	}
 	if cfg.Dataplane.ConfigFile == "" {
 		cfg.Dataplane.ConfigFile = DefaultDataplaneConfigFile
+	}
+	if cfg.Dataplane.RawPushThreshold == 0 {
+		cfg.Dataplane.RawPushThreshold = DefaultRawPushThreshold
 	}
 
 	// Watched resources defaults
