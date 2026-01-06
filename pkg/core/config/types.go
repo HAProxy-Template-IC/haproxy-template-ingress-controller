@@ -134,7 +134,7 @@ type HTTPResourceFixture struct {
 
 // ValidationAssertion defines a single validation check.
 type ValidationAssertion struct {
-	// Type is the assertion type: "haproxy_valid", "contains", "not_contains", "match_count", "equals", "jsonpath", "match_order".
+	// Type is the assertion type: "haproxy_valid", "contains", "not_contains", "match_count", "equals", "jsonpath", "match_order", "deterministic".
 	Type string `yaml:"type"`
 
 	// Description explains what this assertion validates.

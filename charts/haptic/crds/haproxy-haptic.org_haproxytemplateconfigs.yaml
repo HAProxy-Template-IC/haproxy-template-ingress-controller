@@ -616,6 +616,7 @@ spec:
                                 - jsonpath: Evaluates JSONPath expression against target
                                 - match_count: Counts how many times pattern matches in target (regex)
                                 - match_order: Validates that patterns appear in specified order
+                                - deterministic: Verifies that rendering twice produces identical output
                             enum:
                             - haproxy_valid
                             - contains
@@ -624,6 +625,7 @@ spec:
                             - jsonpath
                             - match_count
                             - match_order
+                            - deterministic
                             type: string
                         required:
                         - type

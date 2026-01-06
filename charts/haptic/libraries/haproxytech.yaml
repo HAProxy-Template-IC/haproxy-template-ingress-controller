@@ -334,8 +334,8 @@ templateSnippets:
       # haproxytech/global-top-haproxytech-ingress-auth
       userlist {{ userlistName }}
                 {% var secretData = secret | dig("data") | fallback(map[string]any{}) -%}
-                {%- for username, hash := range secretData %}
-        user {{ username }} password {{ hash | b64decode() }}
+                {%- for _, username := range keys(secretData) %}
+        user {{ username }} password {{ secretData[username] | b64decode() }}
                 {% end -%}
               {%- else %}
                 {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy.org/auth-secret' does not exist. Please create the secret or update the annotation.") -}}

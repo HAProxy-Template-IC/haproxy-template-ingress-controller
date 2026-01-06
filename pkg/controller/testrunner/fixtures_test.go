@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -1056,7 +1058,7 @@ func TestRunAssertion(t *testing.T) {
 			Pattern: "backend mybackend",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "contains", result.Type)
 	})
@@ -1068,7 +1070,7 @@ func TestRunAssertion(t *testing.T) {
 			Pattern: "error",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "not_contains", result.Type)
 	})
@@ -1081,7 +1083,7 @@ func TestRunAssertion(t *testing.T) {
 			Expected: "1",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "match_count", result.Type)
 	})
@@ -1093,7 +1095,7 @@ func TestRunAssertion(t *testing.T) {
 			Expected: haproxyConfig,
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "equals", result.Type)
 	})
@@ -1109,7 +1111,7 @@ func TestRunAssertion(t *testing.T) {
 			"test": "value",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, templateCtx, "", nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, templateCtx, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "jsonpath", result.Type)
 	})
@@ -1121,7 +1123,7 @@ func TestRunAssertion(t *testing.T) {
 			Patterns: []string{"frontend", "backend"},
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "match_order", result.Type)
 	})
@@ -1131,7 +1133,7 @@ func TestRunAssertion(t *testing.T) {
 			Type: "invalid_type",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
 		assert.False(t, result.Passed)
 		assert.Contains(t, result.Error, "unknown assertion type")
 	})
@@ -1436,5 +1438,217 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to render SSL certificate")
+	})
+}
+
+// =============================================================================
+// assertDeterministic Tests
+// =============================================================================
+
+func TestAssertDeterministic(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	tmpDir := t.TempDir()
+	validationPaths := &dataplane.ValidationPaths{
+		SSLCertsDir:       filepath.Join(tmpDir, "ssl"),
+		CRTListDir:        filepath.Join(tmpDir, "ssl"),
+		MapsDir:           filepath.Join(tmpDir, "maps"),
+		GeneralStorageDir: filepath.Join(tmpDir, "files"),
+		ConfigFile:        filepath.Join(tmpDir, "haproxy.cfg"),
+	}
+
+	t.Run("deterministic template passes", func(t *testing.T) {
+		// Template that produces identical output on every render
+		templates := map[string]string{
+			"haproxy.cfg": "# Deterministic config\nfrontend test\n  bind *:80",
+		}
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		runner := &Runner{
+			config: &config.Config{
+				HAProxyConfig: config.HAProxyConfig{
+					Template: templates["haproxy.cfg"],
+				},
+			},
+			logger: logger,
+		}
+
+		assertion := &config.ValidationAssertion{
+			Type:        "deterministic",
+			Description: "Template must be deterministic",
+		}
+
+		renderDeps := &RenderDependencies{
+			Engine:          engine,
+			Stores:          make(map[string]types.Store),
+			ValidationPaths: validationPaths,
+		}
+
+		// The template engine adds a trailing newline, so we need to match that
+		firstConfig := "# Deterministic config\nfrontend test\n  bind *:80\n"
+		firstAuxFiles := &dataplane.AuxiliaryFiles{} // Empty but not nil
+		result := runner.assertDeterministic(assertion, firstConfig, firstAuxFiles, renderDeps)
+
+		if !result.Passed {
+			t.Logf("Assertion failed with error: %s", result.Error)
+		}
+		assert.True(t, result.Passed, "Expected assertion to pass, got error: %s", result.Error)
+		assert.Equal(t, "deterministic", result.Type)
+		assert.Equal(t, "Template must be deterministic", result.Description)
+	})
+
+	t.Run("missing render dependencies fails", func(t *testing.T) {
+		runner := &Runner{
+			config: &config.Config{},
+			logger: logger,
+		}
+
+		ctx := context.Background()
+		assertion := &config.ValidationAssertion{
+			Type: "deterministic",
+		}
+
+		result := runner.runAssertion(ctx, assertion, "test config", nil, nil, "", nil, nil)
+
+		assert.False(t, result.Passed)
+		assert.Contains(t, result.Error, "requires render dependencies")
+	})
+
+	t.Run("no first render output fails", func(t *testing.T) {
+		templates := map[string]string{
+			"haproxy.cfg": "# test",
+		}
+		engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+		require.NoError(t, err)
+
+		runner := &Runner{
+			config: &config.Config{},
+			logger: logger,
+		}
+
+		assertion := &config.ValidationAssertion{
+			Type: "deterministic",
+		}
+
+		renderDeps := &RenderDependencies{
+			Engine:          engine,
+			Stores:          make(map[string]types.Store),
+			ValidationPaths: validationPaths,
+		}
+
+		// Empty first config and nil aux files = no first render output
+		result := runner.assertDeterministic(assertion, "", nil, renderDeps)
+
+		assert.False(t, result.Passed)
+		assert.Contains(t, result.Error, "first render produced no output")
+	})
+}
+
+// =============================================================================
+// generateUnifiedDiff Tests
+// =============================================================================
+
+func TestGenerateUnifiedDiff(t *testing.T) {
+	t.Run("shows diff between different strings", func(t *testing.T) {
+		from := "line1\nline2\nline3\n"
+		to := "line1\nmodified\nline3\n"
+
+		diff := generateUnifiedDiff("file1", "file2", from, to)
+
+		assert.Contains(t, diff, "--- file1")
+		assert.Contains(t, diff, "+++ file2")
+		assert.Contains(t, diff, "-line2")
+		assert.Contains(t, diff, "+modified")
+	})
+
+	t.Run("returns message for identical strings", func(t *testing.T) {
+		from := "identical content"
+		to := "identical content"
+
+		diff := generateUnifiedDiff("file1", "file2", from, to)
+
+		assert.Contains(t, diff, "no visible diff")
+	})
+}
+
+// =============================================================================
+// compareAuxiliaryFiles Tests
+// =============================================================================
+
+func TestCompareAuxiliaryFiles(t *testing.T) {
+	t.Run("both nil returns empty", func(t *testing.T) {
+		result := compareAuxiliaryFiles(nil, nil)
+		assert.Empty(t, result)
+	})
+
+	t.Run("one nil returns error", func(t *testing.T) {
+		first := &dataplane.AuxiliaryFiles{}
+		result := compareAuxiliaryFiles(first, nil)
+		assert.Contains(t, result, "one render produced files")
+
+		result = compareAuxiliaryFiles(nil, first)
+		assert.Contains(t, result, "one render produced files")
+	})
+
+	t.Run("identical files returns empty", func(t *testing.T) {
+		first := &dataplane.AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{
+				{Path: "test.map", Content: "key value"},
+			},
+		}
+		second := &dataplane.AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{
+				{Path: "test.map", Content: "key value"},
+			},
+		}
+
+		result := compareAuxiliaryFiles(first, second)
+		assert.Empty(t, result)
+	})
+
+	t.Run("different map file content returns diff", func(t *testing.T) {
+		first := &dataplane.AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{
+				{Path: "test.map", Content: "key value1"},
+			},
+		}
+		second := &dataplane.AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{
+				{Path: "test.map", Content: "key value2"},
+			},
+		}
+
+		result := compareAuxiliaryFiles(first, second)
+		assert.Contains(t, result, "map files")
+		assert.Contains(t, result, "differs between renders")
+	})
+
+	t.Run("missing file in second returns error", func(t *testing.T) {
+		first := &dataplane.AuxiliaryFiles{
+			GeneralFiles: []auxiliaryfiles.GeneralFile{
+				{Filename: "test.txt", Content: "content"},
+			},
+		}
+		second := &dataplane.AuxiliaryFiles{
+			GeneralFiles: []auxiliaryfiles.GeneralFile{},
+		}
+
+		result := compareAuxiliaryFiles(first, second)
+		assert.Contains(t, result, "exists in first render but not in second")
+	})
+
+	t.Run("missing file in first returns error", func(t *testing.T) {
+		first := &dataplane.AuxiliaryFiles{
+			GeneralFiles: []auxiliaryfiles.GeneralFile{},
+		}
+		second := &dataplane.AuxiliaryFiles{
+			GeneralFiles: []auxiliaryfiles.GeneralFile{
+				{Filename: "test.txt", Content: "content"},
+			},
+		}
+
+		result := compareAuxiliaryFiles(first, second)
+		assert.Contains(t, result, "exists in second render but not in first")
 	})
 }

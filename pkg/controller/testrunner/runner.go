@@ -550,8 +550,18 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	// 6. Build template context for JSONPath assertions
 	templateContext := r.buildRenderingContext(stores, validationPaths, httpStore, currentConfig)
 
-	// 7. Run all assertions (whether rendering succeeded or failed)
-	r.executeAssertions(ctx, &result, test, haproxyConfig, auxiliaryFiles, templateContext, validationPaths)
+	// 7. Create render dependencies for deterministic assertion (if needed)
+	renderDeps := &RenderDependencies{
+		Engine:          engine,
+		Stores:          stores,
+		ValidationPaths: validationPaths,
+		HTTPStore:       httpStore,
+		CurrentConfig:   currentConfig,
+		ExtraContext:    test.ExtraContext,
+	}
+
+	// 8. Run all assertions (whether rendering succeeded or failed)
+	r.executeAssertions(ctx, &result, test, haproxyConfig, auxiliaryFiles, templateContext, validationPaths, renderDeps)
 
 	// Test passes if either:
 	// - Rendering succeeded AND all assertions passed
@@ -604,9 +614,10 @@ func (r *Runner) executeAssertions(
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	templateContext map[string]interface{},
 	validationPaths *dataplane.ValidationPaths,
+	renderDeps *RenderDependencies,
 ) {
 	for i := range test.Assertions {
-		assertionResult := r.runAssertion(ctx, &test.Assertions[i], haproxyConfig, auxiliaryFiles, templateContext, result.RenderError, validationPaths)
+		assertionResult := r.runAssertion(ctx, &test.Assertions[i], haproxyConfig, auxiliaryFiles, templateContext, result.RenderError, validationPaths, renderDeps)
 		result.Assertions = append(result.Assertions, assertionResult)
 
 		if !assertionResult.Passed {
@@ -782,6 +793,7 @@ func (r *Runner) runAssertion(
 	templateContext map[string]interface{},
 	renderError string,
 	validationPaths *dataplane.ValidationPaths,
+	renderDeps *RenderDependencies,
 ) AssertionResult {
 	result := AssertionResult{
 		Type:        assertion.Type,
@@ -810,6 +822,14 @@ func (r *Runner) runAssertion(
 
 	case "match_order":
 		result = r.assertMatchOrder(haproxyConfig, auxiliaryFiles, assertion, renderError)
+
+	case "deterministic":
+		if renderDeps == nil {
+			result.Passed = false
+			result.Error = "deterministic assertion requires render dependencies (internal error)"
+		} else {
+			result = r.assertDeterministic(assertion, haproxyConfig, auxiliaryFiles, renderDeps)
+		}
 
 	default:
 		result.Passed = false
