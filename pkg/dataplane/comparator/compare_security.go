@@ -1,6 +1,10 @@
 package comparator
 
 import (
+	"reflect"
+	"sort"
+	"strings"
+
 	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
@@ -95,6 +99,87 @@ func userlistMetadataChanged(current, desired *models.Userlist) bool {
 	return false
 }
 
+// commaSeparatedEqual compares two comma-separated strings order-insensitively.
+// Used for Group.Users where order doesn't carry semantic meaning.
+func commaSeparatedEqual(s1, s2 string) bool {
+	if s1 == s2 {
+		return true // Fast path for identical strings
+	}
+
+	list1 := strings.Split(s1, ",")
+	list2 := strings.Split(s2, ",")
+
+	if len(list1) != len(list2) {
+		return false
+	}
+
+	sort.Strings(list1)
+	sort.Strings(list2)
+
+	for i := range list1 {
+		if list1[i] != list2[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// groupEqual compares two groups with order-insensitive Users comparison.
+// This replaces Group.Equal() which does literal string comparison on Users.
+func groupEqual(g1, g2 models.Group) bool {
+	// Name must match exactly
+	if g1.Name != g2.Name {
+		return false
+	}
+
+	// Users - order-insensitive comparison (usernames are unique, order is irrelevant)
+	if !commaSeparatedEqual(g1.Users, g2.Users) {
+		return false
+	}
+
+	// Metadata - use reflect.DeepEqual like client-native does
+	if len(g1.Metadata) != len(g2.Metadata) {
+		return false
+	}
+	for k, v := range g1.Metadata {
+		if !reflect.DeepEqual(g2.Metadata[k], v) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// boolPtrEqual compares two bool pointers for equality.
+func boolPtrEqual(b1, b2 *bool) bool {
+	if b1 == nil && b2 == nil {
+		return true
+	}
+	if b1 == nil || b2 == nil {
+		return false
+	}
+	return *b1 == *b2
+}
+
+// userEqual compares two users with order-insensitive Groups comparison.
+// This replaces User.Equal() which does literal string comparison on Groups.
+func userEqual(u1, u2 models.User) bool {
+	if u1.Username != u2.Username {
+		return false
+	}
+	if u1.Password != u2.Password {
+		return false
+	}
+	if !boolPtrEqual(u1.SecurePassword, u2.SecurePassword) {
+		return false
+	}
+	// Groups - order-insensitive comparison (group names are unique, order is irrelevant)
+	if !commaSeparatedEqual(u1.Groups, u2.Groups) {
+		return false
+	}
+	return reflect.DeepEqual(u1.Metadata, u2.Metadata)
+}
+
 // groupsEqual compares two group maps for equality.
 func groupsEqual(g1, g2 map[string]models.Group) bool {
 	if len(g1) != len(g2) {
@@ -106,7 +191,7 @@ func groupsEqual(g1, g2 map[string]models.Group) bool {
 		if !exists {
 			return false
 		}
-		if !group1.Equal(group2) {
+		if !groupEqual(group1, group2) {
 			return false
 		}
 	}
@@ -145,8 +230,8 @@ func (c *Comparator) compareUserlistUsers(userlistName string, current, desired 
 			continue
 		}
 
-		// Compare user attributes (password, groups, etc.)
-		if !currentUser.Equal(desiredUser) {
+		// Compare user attributes (password, groups, etc.) with order-insensitive Groups
+		if !userEqual(currentUser, desiredUser) {
 			userCopy := desiredUser
 			operations = append(operations, sections.NewUserUpdate(userlistName, &userCopy))
 		}

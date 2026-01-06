@@ -659,8 +659,9 @@ type ValidationAssertion struct {
 	//   - jsonpath: Evaluates JSONPath expression against target
 	//   - match_count: Counts how many times pattern matches in target (regex)
 	//   - match_order: Validates that patterns appear in specified order
+	//   - deterministic: Verifies that rendering twice produces identical output
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=haproxy_valid;contains;not_contains;equals;jsonpath;match_count;match_order
+	// +kubebuilder:validation:Enum=haproxy_valid;contains;not_contains;equals;jsonpath;match_count;match_order;deterministic
 	Type string `json:"type"`
 
 	// Description explains what this assertion validates.

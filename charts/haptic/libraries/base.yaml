@@ -554,3 +554,5 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: Base configuration must be valid
+      - type: deterministic
+        description: Template rendering must be deterministic (identical output on repeated renders)

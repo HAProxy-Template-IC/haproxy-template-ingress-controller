@@ -1234,8 +1234,8 @@ templateSnippets:
       # haproxy-ingress/global-top-auth ({{ key }})
       userlist {{ userlistName }}
               {% var secretData = secret | dig("data") | fallback(map[string]any{}) -%}
-              {%- for username, hash := range secretData %}
-        user {{ username }} password {{ hash | b64decode() }}
+              {%- for _, username := range keys(secretData) %}
+        user {{ username }} password {{ secretData[username] | b64decode() }}
               {% end -%}
             {%- else %}
               {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy-ingress.github.io/auth-secret' on Ingress '" + key + "' does not exist.") -}}
