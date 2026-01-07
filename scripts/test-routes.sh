@@ -854,49 +854,39 @@ wait_for_services_ready() {
     local config_deployed=false
 
     while [[ $attempt -le $config_attempts ]]; do
-        # Check if HAProxyCfg was DEPLOYED (not just checked) AFTER the Ingress was created
-        # deployedAt updates only on actual config changes, lastCheckedAt updates on drift checks too
-        local deployed_at=$(kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
-            jq -r '.items[0].status.deployedToPods[0].deployedAt // empty')
+        # Verify the configuration contains backends with real servers
+        # Note: We don't check deployedAt timestamp because it only updates when
+        # there are actual operations to HAProxy. If the config is already in sync
+        # (common with fast reconciliation), deployedAt preserves its old value.
+        # Having backends with real servers is sufficient proof the config was processed.
+        local haproxy_cfg=$(kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
+            jq -r '.items[0].spec.content // ""')
 
-        if [[ -n "$deployed_at" ]]; then
-            # Convert Kubernetes timestamp to epoch
-            local deployed_epoch=$(date -d "$deployed_at" +%s 2>/dev/null || echo 0)
+        if [[ -n "$haproxy_cfg" ]]; then
+            # Check for echo backends
+            local backend_count
+            backend_count=$(echo "$haproxy_cfg" | grep -c "^backend.*echo" 2>/dev/null) || backend_count=0
 
-            debug "Configuration deployed at epoch $deployed_epoch, Ingress created at epoch $ingress_created_epoch"
+            debug "Configuration has $backend_count echo backends"
 
-            # Configuration must be deployed after Ingress creation
-            if [[ $deployed_epoch -gt $ingress_created_epoch ]]; then
-                # Also verify the configuration actually contains backends
-                # Use // "" to convert null to empty string before grep
-                local backend_count=$(kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
-                    jq -r '.items[0].spec.content // ""' | grep -c "^backend.*echo" 2>/dev/null)
+            if [[ $backend_count -gt 0 ]]; then
+                # Also verify haproxy-demo-backend has real servers (not placeholders)
+                # Placeholders use 127.0.0.1:1, real servers use pod IPs (10.x.x.x)
+                local demo_backend_servers
+                demo_backend_servers=$(echo "$haproxy_cfg" | \
+                    grep -A 20 "backend.*haproxy-demo-backend" | \
+                    grep -c "server SRV_.*10\." 2>/dev/null) || demo_backend_servers=0
 
-                debug "Configuration has $backend_count echo backends"
-
-                if [[ $backend_count -gt 0 ]]; then
-                    # Also verify haproxy-demo-backend has real servers (not placeholders)
-                    # Placeholders use 127.0.0.1:1, real servers use pod IPs (10.x.x.x)
-                    local haproxy_cfg=$(kubectl -n "$CTRL_NAMESPACE" get haproxycfg -o json 2>/dev/null | \
-                        jq -r '.items[0].spec.content // ""')
-                    local demo_backend_servers
-                    demo_backend_servers=$(echo "$haproxy_cfg" | \
-                        grep -A 20 "backend.*haproxy-demo-backend" | \
-                        grep -c "server SRV_.*10\." 2>/dev/null) || demo_backend_servers=0
-
-                    if [[ $demo_backend_servers -gt 0 ]]; then
-                        debug "HAProxy configuration with backends was deployed"
-                        debug "haproxy-demo-backend has $demo_backend_servers real servers"
-                        config_deployed=true
-                        break
-                    else
-                        debug "Configuration has backends but haproxy-demo-backend still has placeholder servers"
-                    fi
+                if [[ $demo_backend_servers -gt 0 ]]; then
+                    debug "HAProxy configuration with backends was deployed"
+                    debug "haproxy-demo-backend has $demo_backend_servers real servers"
+                    config_deployed=true
+                    break
                 else
-                    debug "Configuration deployed but has no backends yet (reconciling...)"
+                    debug "Configuration has backends but haproxy-demo-backend still has placeholder servers"
                 fi
             else
-                debug "Configuration exists but was deployed before Ingress creation"
+                debug "Configuration exists but has no backends yet (reconciling...)"
             fi
         fi
 

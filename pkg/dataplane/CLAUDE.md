@@ -112,6 +112,42 @@ Some changes can be applied without HAProxy reload:
 
 The comparator detects which type of changes occurred and optimizes deployment strategy.
 
+### Server Field Runtime Support
+
+The Dataplane API can update only specific server fields at runtime without triggering a HAProxy reload:
+
+**Runtime-supported fields (HTTP 200 - no reload):**
+
+- `Weight`, `Address`, `Port` - Core server properties
+- `Maintenance` - Server admin state (`enabled`/`disabled`)
+- `AgentCheck`, `AgentAddr`, `AgentSend`, `HealthCheckPort` - Agent checks
+
+**Important:** The `disabled` and `enabled` options on server lines do NOT cause reloads. This enables the reserved slots pattern where unused slots are `disabled` and enabled at runtime when pods scale up.
+
+**Fields that trigger reload (HTTP 202):**
+
+- `Check` - Health check configuration
+- `Proto` - Protocol (h2, etc.)
+- `SSL`, `Verify`, `CaFile`, `Crt` - TLS configuration
+- All other server options
+
+**Template Implication:** To maximize runtime API usage, templates should:
+
+1. Place all server options (`check`, `proto`, SSL settings) in `default-server` directive
+2. Keep individual `server` lines to only `address:port` plus `enabled` or `disabled`
+
+Example:
+
+```haproxy
+backend my-backend
+    default-server check proto h2
+    server SRV_1 10.0.0.1:8080 enabled      # Active server
+    server SRV_2 10.0.0.2:8080 enabled      # Active server
+    server SRV_3 127.0.0.1:1 disabled       # Reserved slot
+```
+
+This allows endpoint changes (pod IP/port) and server state changes (enabled/disabled) to be applied via runtime API without reloading HAProxy.
+
 ## Multi-Version API Support
 
 The client supports HAProxy DataPlane API versions v3.0, v3.1, and v3.2 simultaneously through runtime version detection and a centralized dispatcher pattern.
