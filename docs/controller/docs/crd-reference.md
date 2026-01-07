@@ -179,7 +179,7 @@ JSONPath expressions for fields to remove from all watched resources.
 ```yaml
 watchedResourcesIgnoreFields:
   - metadata.managedFields
-  - metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]
+  - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
 ```
 
 Reduces memory usage by filtering unnecessary data.
