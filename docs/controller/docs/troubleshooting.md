@@ -200,7 +200,7 @@ curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 # Filter large fields
 watchedResourcesIgnoreFields:
   - metadata.managedFields
-  - metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]
+  - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
 
 # Use cached store for secrets
 watchedResources:
