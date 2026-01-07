@@ -258,6 +258,7 @@ controller:
         # sanitize_auth_realm: false
     watchedResourcesIgnoreFields:
       - metadata.managedFields
+      - metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]
     watchedResources:
       # Resource-specific watched resources are defined in template libraries:
       # - ingresses: Defined in ingress library (when enabled)
