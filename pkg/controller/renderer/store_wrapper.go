@@ -15,9 +15,11 @@
 package renderer
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -84,7 +86,7 @@ type StoreWrapper struct {
 func (w *StoreWrapper) List() []interface{} {
 	// Return cached result if already unwrapped
 	if w.ListCached {
-		w.Logger.Debug("returning cached list",
+		w.Logger.Log(context.Background(), logging.LevelTrace, "returning cached list",
 			"resource_type", w.ResourceType,
 			"count", len(w.CachedList))
 		return w.CachedList
@@ -155,7 +157,7 @@ func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
 		return []interface{}{}
 	}
 
-	w.Logger.Debug("store fetch called",
+	w.Logger.Log(context.Background(), logging.LevelTrace, "store fetch called",
 		"resource_type", w.ResourceType,
 		"keys", keys,
 		"found_count", len(items))
@@ -206,7 +208,7 @@ func (w *StoreWrapper) GetSingle(keys ...interface{}) interface{} {
 		return nil
 	}
 
-	w.Logger.Debug("store GetSingle called",
+	w.Logger.Log(context.Background(), logging.LevelTrace, "store GetSingle called",
 		"resource_type", w.ResourceType,
 		"keys", keys,
 		"found_count", len(items))
