@@ -830,6 +830,10 @@ haproxy:
     # Note: GOMAXPROCS is auto-calculated from memory limits when no CPU limit is set.
     # Setting it here overrides the automatic calculation.
     extraEnv: []
+    # validateConfig: Whether Dataplane API should validate configs before applying.
+    # The controller already validates locally, so server-side validation is redundant.
+    # Set to true if you want double-validation for extra safety.
+    validateConfig: false
   # Extra environment variables for HAProxy container
   # Example:
   #   extraEnv:

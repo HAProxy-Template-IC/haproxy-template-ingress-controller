@@ -146,21 +146,38 @@ func TestDebouncer_MixedOperations(t *testing.T) {
 	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
 	debouncer.SetSyncMode(false)
 
-	// Mix of operations
+	// First create fires immediately (leading edge)
 	debouncer.RecordCreate()
+
+	// Wait a tiny bit for the immediate callback to fire
+	time.Sleep(20 * time.Millisecond)
+
+	// These operations happen within refractory period - batched together
 	debouncer.RecordUpdate()
 	debouncer.RecordUpdate()
 	debouncer.RecordDelete()
 	debouncer.RecordCreate()
 
+	// Wait for refractory period to expire and batched callback to fire
 	time.Sleep(100 * time.Millisecond)
 
 	mu.Lock()
-	require.Len(t, received, 1)
-	assert.Equal(t, 2, received[0].Created)
-	assert.Equal(t, 2, received[0].Modified)
-	assert.Equal(t, 1, received[0].Deleted)
-	mu.Unlock()
+	defer mu.Unlock()
+
+	// With leading-edge behavior:
+	// - First callback: immediate (just the first create)
+	// - Second callback: batched operations during refractory period
+	require.Len(t, received, 2)
+
+	// First callback: immediate create
+	assert.Equal(t, 1, received[0].Created)
+	assert.Equal(t, 0, received[0].Modified)
+	assert.Equal(t, 0, received[0].Deleted)
+
+	// Second callback: batched operations
+	assert.Equal(t, 1, received[1].Created)
+	assert.Equal(t, 2, received[1].Modified)
+	assert.Equal(t, 1, received[1].Deleted)
 }
 
 func TestDebouncer_DebounceBatching(t *testing.T) {

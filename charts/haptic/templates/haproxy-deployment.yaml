@@ -238,9 +238,13 @@ spec:
               haproxy:
                 config_file: {{ .Values.controller.config.dataplane.configFile }}
                 haproxy_bin: {{ include "haptic.haproxy.bin" . }}
+                {{- if .Values.haproxy.dataplane.validateConfig }}
                 # validate_cmd: Use -dr to skip DNS resolution failures during config validation
                 # This prevents config rejection when DNS is temporarily unavailable
                 validate_cmd: {{ include "haptic.haproxy.bin" . }} -dr -c -f %s
+                {{- else }}
+                validate_cmd: /bin/true
+                {{- end }}
                 master_worker_mode: true
                 master_runtime: /etc/haproxy/haproxy-master.sock
                 reload:
