@@ -221,9 +221,14 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawInitial, false)
 	}
 
-	if opts.RawPushThreshold > 0 && diff.Summary.TotalOperations() > opts.RawPushThreshold {
-		o.logger.Info("Using raw push due to high change count",
-			"changes", diff.Summary.TotalOperations(),
+	// Use StructuralOperations() for threshold check - this excludes server UPDATE operations
+	// which are runtime-eligible and don't require HAProxy reload.
+	// This prevents unnecessary reloads when many EndpointSlice changes accumulate.
+	structuralOps := diff.Summary.StructuralOperations()
+	if opts.RawPushThreshold > 0 && structuralOps > opts.RawPushThreshold {
+		o.logger.Info("Using raw push due to high structural change count",
+			"structural_changes", structuralOps,
+			"total_changes", diff.Summary.TotalOperations(),
 			"threshold", opts.RawPushThreshold)
 		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawThreshold, false)
 	}

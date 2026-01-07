@@ -73,6 +73,23 @@ func (s *DiffSummary) TotalOperations() int {
 	return s.TotalCreates + s.TotalUpdates + s.TotalDeletes
 }
 
+// StructuralOperations returns the number of operations that require HAProxy reload.
+// This excludes server UPDATE operations which are runtime-eligible and can be
+// applied without reload via the HAProxy Runtime API.
+//
+// Use this for threshold decisions (e.g., when to fall back to raw config push)
+// since runtime-eligible operations should not trigger reloads.
+func (s *DiffSummary) StructuralOperations() int {
+	// Count server modifications (runtime-eligible, no reload needed)
+	serverModifications := 0
+	for _, servers := range s.ServersModified {
+		serverModifications += len(servers)
+	}
+
+	// Structural = all operations minus server modifications
+	return s.TotalOperations() - serverModifications
+}
+
 // String returns a human-readable summary of changes.
 func (s *DiffSummary) String() string {
 	if !s.HasChanges() {

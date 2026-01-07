@@ -122,6 +122,87 @@ func TestDiffSummary_TotalOperations(t *testing.T) {
 	}
 }
 
+// TestDiffSummary_StructuralOperations tests the StructuralOperations method.
+// This method should exclude server UPDATE operations (runtime-eligible) from the count.
+func TestDiffSummary_StructuralOperations(t *testing.T) {
+	tests := []struct {
+		name     string
+		summary  DiffSummary
+		expected int
+	}{
+		{
+			name:     "no operations",
+			summary:  DiffSummary{},
+			expected: 0,
+		},
+		{
+			name:     "creates only - all structural",
+			summary:  DiffSummary{TotalCreates: 5},
+			expected: 5,
+		},
+		{
+			name:     "deletes only - all structural",
+			summary:  DiffSummary{TotalDeletes: 3},
+			expected: 3,
+		},
+		{
+			name: "server modifications excluded",
+			summary: DiffSummary{
+				TotalUpdates: 10, // 10 updates total
+				ServersModified: map[string][]string{
+					"backend1": {"srv1", "srv2", "srv3"}, // 3 server mods
+					"backend2": {"srv4", "srv5"},         // 2 server mods
+				},
+			},
+			expected: 5, // 10 - 5 server mods = 5 structural
+		},
+		{
+			name: "only server modifications - zero structural",
+			summary: DiffSummary{
+				TotalUpdates: 100, // 100 updates total
+				ServersModified: map[string][]string{
+					"backend1": make([]string, 50), // 50 server mods
+					"backend2": make([]string, 50), // 50 server mods
+				},
+			},
+			expected: 0, // 100 - 100 server mods = 0 structural
+		},
+		{
+			name: "mixed operations with server modifications",
+			summary: DiffSummary{
+				TotalCreates: 10,  // 10 creates (structural)
+				TotalUpdates: 150, // 150 updates (partially server mods)
+				TotalDeletes: 5,   // 5 deletes (structural)
+				ServersModified: map[string][]string{
+					"backend1": make([]string, 100), // 100 server mods
+				},
+			},
+			expected: 65, // 10 + (150-100) + 5 = 65 structural
+		},
+		{
+			name: "server adds and deletes are structural",
+			summary: DiffSummary{
+				TotalCreates: 5,
+				TotalDeletes: 3,
+				ServersAdded: map[string][]string{
+					"backend1": {"srv1", "srv2"}, // counted in TotalCreates
+				},
+				ServersDeleted: map[string][]string{
+					"backend1": {"srv3"}, // counted in TotalDeletes
+				},
+				ServersModified: map[string][]string{}, // empty - no modifications
+			},
+			expected: 8, // creates + deletes = structural (server add/delete require reload)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.summary.StructuralOperations())
+		})
+	}
+}
+
 // TestDiffSummary_String tests the String method.
 func TestDiffSummary_String(t *testing.T) {
 	t.Run("no changes", func(t *testing.T) {
