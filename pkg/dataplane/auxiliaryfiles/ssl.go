@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
@@ -75,7 +76,9 @@ func calculateCertIdentifier(content string) string {
 	}
 
 	// Return format matching HAProxy API: "cert:serial:XXX:issuers:YYY"
-	// API returns issuers as comma-separated list from all certs in chain
+	// API returns issuers in reverse order (root CA first, leaf issuer last),
+	// so we reverse our chain-order list to match.
+	slices.Reverse(issuerCNs)
 	issuersStr := strings.Join(issuerCNs, ", ")
 	return fmt.Sprintf("cert:serial:%s:issuers:%s", leafCert.SerialNumber.String(), issuersStr)
 }
