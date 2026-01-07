@@ -339,8 +339,9 @@ func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, runningPodNames
 		}
 
 		// Also clean up auxiliary file status (map files, general files, crt-list files)
-		for _, podName := range stalePods {
-			p.cleanupAuxiliaryFilePodReferences(ctx, cfg.Status.AuxiliaryFiles, &PodCleanupRequest{PodName: podName})
+		// Use batched cleanup to minimize API calls (one update per file vs one per pod)
+		if cfg.Status.AuxiliaryFiles != nil {
+			p.reconcileAuxiliaryFilePods(ctx, cfg.Status.AuxiliaryFiles, runningSet)
 		}
 	}
 
@@ -446,6 +447,156 @@ func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFi
 			// Non-blocking - continue
 		}
 	}
+}
+
+// reconcileAuxiliaryFilePods removes stale pod entries from all auxiliary files.
+// Unlike cleanupAuxiliaryFilePodReferences which handles one pod at a time,
+// this processes all pods in a single pass per file to minimize API calls.
+func (p *Publisher) reconcileAuxiliaryFilePods(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, runningSet map[string]struct{}) {
+	for _, ref := range auxFiles.MapFiles {
+		if err := p.reconcileMapFilePods(ctx, ref.Namespace, ref.Name, runningSet); err != nil {
+			p.logger.Warn("failed to reconcile map file pods", "name", ref.Name, "error", err)
+		}
+	}
+	for _, ref := range auxFiles.GeneralFiles {
+		if err := p.reconcileGeneralFilePods(ctx, ref.Namespace, ref.Name, runningSet); err != nil {
+			p.logger.Warn("failed to reconcile general file pods", "name", ref.Name, "error", err)
+		}
+	}
+	for _, ref := range auxFiles.CRTListFiles {
+		if err := p.reconcileCRTListFilePods(ctx, ref.Namespace, ref.Name, runningSet); err != nil {
+			p.logger.Warn("failed to reconcile crt-list file pods", "name", ref.Name, "error", err)
+		}
+	}
+}
+
+// reconcileMapFilePods removes all stale pods from a map file in one update.
+func (p *Publisher) reconcileMapFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
+	mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyMapFiles(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get map file: %w", err)
+	}
+
+	// Filter to keep only running pods
+	newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(mapFile.Status.DeployedToPods))
+	var removed []string
+	for i := range mapFile.Status.DeployedToPods {
+		pod := &mapFile.Status.DeployedToPods[i]
+		if _, exists := runningSet[pod.PodName]; exists {
+			newPods = append(newPods, *pod)
+		} else {
+			removed = append(removed, pod.PodName)
+		}
+	}
+
+	if len(removed) == 0 {
+		return nil
+	}
+
+	p.logger.Debug("removing stale pods from map file",
+		"name", name,
+		"removed_pods", removed,
+	)
+
+	mapFile.Status.DeployedToPods = newPods
+	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyMapFiles(namespace).
+		UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update map file status: %w", err)
+	}
+	return nil
+}
+
+// reconcileGeneralFilePods removes all stale pods from a general file in one update.
+func (p *Publisher) reconcileGeneralFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
+	generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get general file: %w", err)
+	}
+
+	// Filter to keep only running pods
+	newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(generalFile.Status.DeployedToPods))
+	var removed []string
+	for i := range generalFile.Status.DeployedToPods {
+		pod := &generalFile.Status.DeployedToPods[i]
+		if _, exists := runningSet[pod.PodName]; exists {
+			newPods = append(newPods, *pod)
+		} else {
+			removed = append(removed, pod.PodName)
+		}
+	}
+
+	if len(removed) == 0 {
+		return nil
+	}
+
+	p.logger.Debug("removing stale pods from general file",
+		"name", name,
+		"removed_pods", removed,
+	)
+
+	generalFile.Status.DeployedToPods = newPods
+	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyGeneralFiles(namespace).
+		UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update general file status: %w", err)
+	}
+	return nil
+}
+
+// reconcileCRTListFilePods removes all stale pods from a crt-list file in one update.
+func (p *Publisher) reconcileCRTListFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
+	crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get crt-list file: %w", err)
+	}
+
+	// Filter to keep only running pods
+	newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(crtListFile.Status.DeployedToPods))
+	var removed []string
+	for i := range crtListFile.Status.DeployedToPods {
+		pod := &crtListFile.Status.DeployedToPods[i]
+		if _, exists := runningSet[pod.PodName]; exists {
+			newPods = append(newPods, *pod)
+		} else {
+			removed = append(removed, pod.PodName)
+		}
+	}
+
+	if len(removed) == 0 {
+		return nil
+	}
+
+	p.logger.Debug("removing stale pods from crt-list file",
+		"name", name,
+		"removed_pods", removed,
+	)
+
+	crtListFile.Status.DeployedToPods = newPods
+	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCRTListFiles(namespace).
+		UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update crt-list file status: %w", err)
+	}
+	return nil
 }
 
 // createOrUpdateRuntimeConfig creates or updates the HAProxyCfg resource.
