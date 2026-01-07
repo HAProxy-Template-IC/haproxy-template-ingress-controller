@@ -22,7 +22,10 @@ var (
 func getEncoder() *zstd.Encoder {
 	encoderOnce.Do(func() {
 		var err error
-		encoder, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+		encoder, err = zstd.NewWriter(nil,
+			zstd.WithEncoderLevel(zstd.SpeedDefault),
+			zstd.WithEncoderConcurrency(1), // Single encoder: compression is always sequential
+		)
 		if err != nil {
 			panic("failed to create zstd encoder: " + err.Error())
 		}

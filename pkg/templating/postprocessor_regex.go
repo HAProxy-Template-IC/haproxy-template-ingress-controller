@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"bufio"
 	"fmt"
 	"regexp"
 	"strings"
@@ -58,10 +59,9 @@ func NewRegexReplaceProcessor(pattern, replace string) (*RegexReplaceProcessor, 
 
 // Process applies the regex replacement to each line of the input.
 //
-// The processor:
-//  1. Splits input into lines
-//  2. Applies regex replacement to each line independently
-//  3. Joins lines back together with original line endings
+// The processor streams through input line-by-line using bufio.Scanner,
+// avoiding intermediate allocations from strings.Split/Join. This reduces
+// peak memory usage from ~2x input size to ~1x input size for large configs.
 //
 // This line-by-line approach enables:
 //   - Efficient processing of large files
@@ -72,10 +72,27 @@ func (p *RegexReplaceProcessor) Process(input string) (string, error) {
 		return input, nil
 	}
 
-	lines := strings.Split(input, "\n")
-	for i, line := range lines {
-		lines[i] = p.pattern.ReplaceAllString(line, p.replace)
+	var builder strings.Builder
+	builder.Grow(len(input)) // Pre-allocate to avoid reallocations
+
+	scanner := bufio.NewScanner(strings.NewReader(input))
+	first := true
+	for scanner.Scan() {
+		if !first {
+			builder.WriteByte('\n')
+		}
+		first = false
+		line := scanner.Text()
+		builder.WriteString(p.pattern.ReplaceAllString(line, p.replace))
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("scanning input: %w", err)
 	}
 
-	return strings.Join(lines, "\n"), nil
+	// Preserve trailing newline if input had one
+	if input[len(input)-1] == '\n' {
+		builder.WriteByte('\n')
+	}
+
+	return builder.String(), nil
 }
