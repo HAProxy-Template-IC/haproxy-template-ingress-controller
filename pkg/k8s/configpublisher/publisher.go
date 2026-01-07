@@ -279,6 +279,74 @@ func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanu
 	return nil
 }
 
+// ReconcileDeployedToPods removes status entries for pods that no longer exist.
+//
+// This reconciles the deployedToPods status in all HAProxyCfg resources against
+// the list of currently running HAProxy pods. Entries for pods not in the running
+// set are removed. This cleans up stale entries from pods that terminated while
+// the controller was restarting.
+//
+// Also cleans up corresponding entries in auxiliary file resources (HAProxyMapFile,
+// HAProxyGeneralFile, HAProxyCRTListFile).
+func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, runningPodNames []string) error {
+	runningSet := make(map[string]struct{}, len(runningPodNames))
+	for _, name := range runningPodNames {
+		runningSet[name] = struct{}{}
+	}
+
+	runtimeConfigs, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("").
+		List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("listing HAProxyCfgs: %w", err)
+	}
+
+	for i := range runtimeConfigs.Items {
+		cfg := &runtimeConfigs.Items[i]
+
+		// Find ALL stale pods in one pass
+		var stalePods []string
+		newDeployedToPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(cfg.Status.DeployedToPods))
+		for i := range cfg.Status.DeployedToPods {
+			pod := &cfg.Status.DeployedToPods[i]
+			if _, exists := runningSet[pod.PodName]; !exists {
+				stalePods = append(stalePods, pod.PodName)
+			} else {
+				newDeployedToPods = append(newDeployedToPods, *pod)
+			}
+		}
+
+		if len(stalePods) == 0 {
+			continue
+		}
+
+		p.logger.Info("removing stale pod entries from HAProxyCfg status",
+			"name", cfg.Name,
+			"namespace", cfg.Namespace,
+			"stale_pods", stalePods,
+		)
+
+		// Update status once with all stale pods removed
+		cfg.Status.DeployedToPods = newDeployedToPods
+		_, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCfgs(cfg.Namespace).
+			UpdateStatus(ctx, cfg, metav1.UpdateOptions{})
+		if err != nil {
+			p.logger.Warn("failed to reconcile HAProxyCfg status",
+				"name", cfg.Name,
+				"error", err,
+			)
+		}
+
+		// Also clean up auxiliary file status (map files, general files, crt-list files)
+		for _, podName := range stalePods {
+			p.cleanupAuxiliaryFilePodReferences(ctx, cfg.Status.AuxiliaryFiles, &PodCleanupRequest{PodName: podName})
+		}
+	}
+
+	return nil
+}
+
 // DeleteRuntimeConfig deletes a HAProxyCfg resource.
 //
 // Used to clean up invalid configuration resources when validation succeeds again.
@@ -1294,7 +1362,7 @@ func (p *Publisher) compressIfNeeded(content string, threshold int64, resourceTy
 	}
 
 	ratio := float64(len(compressedContent)) * 100 / float64(len(content))
-	p.logger.Info("compressed content for CRD storage",
+	p.logger.Debug("compressed content for CRD storage",
 		"resource_type", resourceType,
 		"original_bytes", len(content),
 		"compressed_bytes", len(compressedContent),

@@ -885,7 +885,7 @@ func (o *orchestrator) executeConfigOperations(
 
 	if allRuntimeEligible {
 		// Execute runtime-eligible operations without transaction (no reload)
-		o.logger.Info("All operations are runtime-eligible, executing without transaction")
+		o.logger.Debug("All operations are runtime-eligible, executing without transaction")
 
 		// Execute operations directly using runtime API (empty transactionID)
 		for _, op := range diff.Operations {

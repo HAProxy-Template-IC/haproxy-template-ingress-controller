@@ -139,6 +139,9 @@ func (c *Component) handleEvent(event busevents.Event) {
 	case *events.HAProxyPodTerminatedEvent:
 		c.handlePodTerminated(e)
 
+	case *events.HAProxyPodsDiscoveredEvent:
+		c.handlePodsDiscovered(e)
+
 	case *events.LostLeadershipEvent:
 		c.handleLostLeadership(e)
 	}
@@ -496,6 +499,33 @@ func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent)
 		"pod_name", event.PodName,
 		"pod_namespace", event.PodNamespace,
 	)
+}
+
+// handlePodsDiscovered reconciles deployedToPods status against currently running pods.
+//
+// This cleans up stale entries from pods that terminated while the controller was
+// restarting (or before the controller started). It is called whenever HAProxy pods
+// are discovered, including on startup and when pods change.
+func (c *Component) handlePodsDiscovered(event *events.HAProxyPodsDiscoveredEvent) {
+	// Extract pod names from discovered endpoints
+	podNames := make([]string, 0, len(event.Endpoints))
+	for _, ep := range event.Endpoints {
+		if endpoint, ok := ep.(dataplane.Endpoint); ok {
+			podNames = append(podNames, endpoint.PodName)
+		}
+	}
+
+	// Create timeout context (same pattern as handlePodTerminated)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Reconcile status against running pods
+	if err := c.publisher.ReconcileDeployedToPods(ctx, podNames); err != nil {
+		c.logger.Warn("failed to reconcile deployed pods status", "error", err)
+	} else {
+		c.logger.Debug("reconciled deployed pods status",
+			"running_pods", len(podNames))
+	}
 }
 
 // convertAuxiliaryFiles converts dataplane auxiliary files to publisher auxiliary files.
