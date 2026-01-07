@@ -686,3 +686,194 @@ func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
 	_, hasCompressedData := secrets.Items[0].Data["compressed"]
 	assert.False(t, hasCompressedData, "compressed should NOT be in Secret data")
 }
+
+// TestReconcileDeployedToPods_RemovesStalePods tests that stale pods are removed from status.
+func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+	}
+
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	// Add three pods
+	for _, podName := range []string{"haproxy-0", "haproxy-1", "haproxy-2"} {
+		update := DeploymentStatusUpdate{
+			RuntimeConfigName:      "test-config-haproxycfg",
+			RuntimeConfigNamespace: "default",
+			PodName:                podName,
+			DeployedAt:             time.Now(),
+			Checksum:               "abc123",
+		}
+
+		err = publisher.UpdateDeploymentStatus(ctx, &update)
+		require.NoError(t, err)
+	}
+
+	// Reconcile with only haproxy-1 as running
+	runningPods := []string{"haproxy-1"}
+	err = publisher.ReconcileDeployedToPods(ctx, runningPods)
+	require.NoError(t, err)
+
+	// Verify only haproxy-1 remains
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+	assert.Equal(t, "haproxy-1", runtimeConfig.Status.DeployedToPods[0].PodName)
+}
+
+// TestReconcileDeployedToPods_NoRunningPods tests that all pods are removed when no pods running.
+func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+	}
+
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	// Add two pods
+	for _, podName := range []string{"haproxy-0", "haproxy-1"} {
+		update := DeploymentStatusUpdate{
+			RuntimeConfigName:      "test-config-haproxycfg",
+			RuntimeConfigNamespace: "default",
+			PodName:                podName,
+			DeployedAt:             time.Now(),
+			Checksum:               "abc123",
+		}
+
+		err = publisher.UpdateDeploymentStatus(ctx, &update)
+		require.NoError(t, err)
+	}
+
+	// Reconcile with no running pods
+	runningPods := []string{}
+	err = publisher.ReconcileDeployedToPods(ctx, runningPods)
+	require.NoError(t, err)
+
+	// Verify all pods are removed
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	assert.Empty(t, runtimeConfig.Status.DeployedToPods)
+}
+
+// TestReconcileDeployedToPods_NoStalePods tests that nothing changes when all pods are running.
+func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+	}
+
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	// Add two pods
+	for _, podName := range []string{"haproxy-0", "haproxy-1"} {
+		update := DeploymentStatusUpdate{
+			RuntimeConfigName:      "test-config-haproxycfg",
+			RuntimeConfigNamespace: "default",
+			PodName:                podName,
+			DeployedAt:             time.Now(),
+			Checksum:               "abc123",
+		}
+
+		err = publisher.UpdateDeploymentStatus(ctx, &update)
+		require.NoError(t, err)
+	}
+
+	// Reconcile with all pods running
+	runningPods := []string{"haproxy-0", "haproxy-1"}
+	err = publisher.ReconcileDeployedToPods(ctx, runningPods)
+	require.NoError(t, err)
+
+	// Verify both pods remain
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 2)
+}
+
+// TestReconcileDeployedToPods_EmptyStatus tests reconciling when no pods in status.
+func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config without adding any pods
+	req := PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "abc123",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+	}
+
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+
+	// Reconcile with some running pods
+	runningPods := []string{"haproxy-0", "haproxy-1"}
+	err = publisher.ReconcileDeployedToPods(ctx, runningPods)
+	require.NoError(t, err)
+
+	// Should not error - no-op
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	assert.Empty(t, runtimeConfig.Status.DeployedToPods)
+}
