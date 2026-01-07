@@ -33,6 +33,17 @@ type Operation interface {
 	Describe() string
 }
 
+// RuntimeReloadTracker is an optional interface for operations that can track
+// whether they triggered a HAProxy reload during runtime execution.
+// Only server update operations implement this interface since they can be
+// executed via the runtime API without a transaction.
+type RuntimeReloadTracker interface {
+	// TriggeredReload returns true if the operation triggered a HAProxy reload
+	// during its last execution. This is only meaningful for runtime-eligible
+	// operations (server updates with empty transaction ID).
+	TriggeredReload() bool
+}
+
 // ptrStr safely dereferences a string pointer, returning empty string if nil.
 func ptrStr(s *string) string {
 	if s == nil {
@@ -1282,19 +1293,45 @@ func NewServerCreate(backendName string, server *models.Server) Operation {
 	)
 }
 
+// ServerUpdateOp is a specialized operation for server updates that tracks
+// whether the update triggered a HAProxy reload. This is needed because server
+// updates can be executed via the runtime API (without transaction) and the
+// DataPlane API returns 202 if a reload was required.
+type ServerUpdateOp struct {
+	backendName     string
+	server          *models.Server
+	reloadTriggered bool
+}
+
 // NewServerUpdate creates an operation to update a server in a backend.
+// Unlike other operations, server updates use a specialized type that tracks
+// reload status for runtime-eligible operations.
 func NewServerUpdate(backendName string, server *models.Server) Operation {
-	return NewNameChildOp(
-		OperationUpdate,
-		"server",
-		PriorityServer,
-		backendName,
-		server.Name,
-		server,
-		IdentityServer,
-		executors.ServerUpdate(backendName),
-		DescribeNamedChild(OperationUpdate, "server", server.Name, "backend", backendName),
-	)
+	return &ServerUpdateOp{
+		backendName: backendName,
+		server:      server,
+	}
+}
+
+func (op *ServerUpdateOp) Type() OperationType { return OperationUpdate }
+func (op *ServerUpdateOp) Section() string     { return "server" }
+func (op *ServerUpdateOp) Priority() int       { return PriorityServer * 1000 }
+func (op *ServerUpdateOp) Describe() string {
+	return DescribeNamedChild(OperationUpdate, "server", op.server.Name, "backend", op.backendName)()
+}
+
+// TriggeredReload implements RuntimeReloadTracker interface.
+// Returns true if the last Execute call triggered a HAProxy reload.
+func (op *ServerUpdateOp) TriggeredReload() bool {
+	return op.reloadTriggered
+}
+
+// Execute performs the server update operation.
+// When txID is empty (runtime execution), it tracks whether the operation triggered a reload.
+func (op *ServerUpdateOp) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
+	reloaded, err := executors.ServerUpdateWithReloadTracking(ctx, c, op.backendName, op.server.Name, op.server, txID)
+	op.reloadTriggered = reloaded
+	return err
 }
 
 // NewServerDelete creates an operation to delete a server from a backend.

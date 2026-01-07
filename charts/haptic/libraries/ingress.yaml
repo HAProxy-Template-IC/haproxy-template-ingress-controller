@@ -186,6 +186,7 @@ templateSnippets:
       {#- Generates backend sections for a list of Ingresses -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
       {% macro GenerateIngressBackends(ingresses []any) string %}
         {%- for _, ingress := range ingresses -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") -%}
@@ -202,10 +203,10 @@ templateSnippets:
                   {%- var backendKey = BackendNameIngress(ingress, path) %}
       backend {{ backendKey }}
         balance roundrobin
-        default-server check
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context }}
-        {{ BackendServers(tostring(svcName), 0, toint(port), serverOpts, nil, backendKey) }}
+        default-server check{{ BuildServerOptions(serverOpts) }}
+        {{ BackendServers(tostring(svcName), 0, toint(port), nil, nil, backendKey) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
@@ -638,15 +639,16 @@ validationTests:
         description: Backend must be generated
 
       # Slot preservation assertions: existing pod 10.0.0.1 keeps its original slot (SRV_1)
+      # Note: check option is now on default-server, not on individual server lines
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.1:8080.* check"
+        pattern: "server SRV_1 10\\.0\\.0\\.1:8080"
         description: Existing pod 10.0.0.1 must preserve its slot (SRV_1)
 
       # New pod 10.0.0.3 should take the freed slot from removed pod 10.0.0.2 (SRV_2)
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.3:8080.* check"
+        pattern: "server SRV_2 10\\.0\\.0\\.3:8080"
         description: New pod 10.0.0.3 should take the freed slot (SRV_2) from removed pod
 
       # Remaining slots should be placeholders
@@ -727,14 +729,15 @@ validationTests:
       - type: haproxy_valid
         description: HAProxy config must be valid
 
+      # Note: check option is now on default-server, not on individual server lines
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.5:8080.* check"
+        pattern: "server SRV_1 10\\.0\\.0\\.5:8080"
         description: Existing pod 10.0.0.5 must preserve its slot (SRV_1)
 
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.2:8080.* check"
+        pattern: "server SRV_2 10\\.0\\.0\\.2:8080"
         description: New pod 10.0.0.2 (lower IP) must take freed slot (SRV_2), not be sorted first
 
       - type: contains

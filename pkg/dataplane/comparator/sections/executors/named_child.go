@@ -309,16 +309,28 @@ func ServerCreate(backendName string) func(ctx context.Context, c *client.Datapl
 // When txID is non-empty, it uses the Configuration API with transaction.
 func ServerUpdate(backendName string) func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, childName string, model *models.Server) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, _ string, childName string, model *models.Server) error {
-		if txID != "" {
-			return serverUpdateWithTransaction(ctx, c, backendName, childName, model, txID)
-		}
-
-		version64, err := c.GetVersion(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to get configuration version: %w", err)
-		}
-		return serverUpdateWithVersion(ctx, c, backendName, childName, model, version64)
+		_, err := ServerUpdateWithReloadTracking(ctx, c, backendName, childName, model, txID)
+		return err
 	}
+}
+
+// ServerUpdateWithReloadTracking updates a server and returns whether the operation triggered a reload.
+// This is the primary entry point for server updates that need to track reload status.
+// When txID is empty, it uses version-based update via runtime API.
+// When txID is non-empty, it uses the Configuration API with transaction (always reloads on commit).
+func ServerUpdateWithReloadTracking(ctx context.Context, c *client.DataplaneClient, backendName, childName string, model *models.Server, txID string) (reloadTriggered bool, err error) {
+	if txID != "" {
+		// Transaction-based updates always trigger reload on commit
+		// The reload is tracked at transaction commit level, not here
+		err = serverUpdateWithTransaction(ctx, c, backendName, childName, model, txID)
+		return false, err
+	}
+
+	version64, err := c.GetVersion(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get configuration version: %w", err)
+	}
+	return serverUpdateWithVersion(ctx, c, backendName, childName, model, version64)
 }
 
 // serverUpdateWithTransaction updates a server using a transaction.
@@ -359,7 +371,8 @@ func serverUpdateWithTransaction(ctx context.Context, c *client.DataplaneClient,
 }
 
 // serverUpdateWithVersion updates a server using version-based update.
-func serverUpdateWithVersion(ctx context.Context, c *client.DataplaneClient, backendName, childName string, model *models.Server, version64 int64) error {
+// Returns whether the update triggered a reload (202 status) and any error.
+func serverUpdateWithVersion(ctx context.Context, c *client.DataplaneClient, backendName, childName string, model *models.Server, version64 int64) (reloadTriggered bool, err error) {
 	clientset := c.Clientset()
 
 	resp, err := client.DispatchUpdate(ctx, c, childName, model,
@@ -395,10 +408,14 @@ func serverUpdateWithVersion(ctx context.Context, c *client.DataplaneClient, bac
 		},
 	)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
-	return client.CheckResponse(resp, "server update in backend")
+
+	// Check if the update triggered a reload (202 = reload, 200 = runtime change)
+	reloadTriggered = resp.StatusCode == http.StatusAccepted
+
+	return reloadTriggered, client.CheckResponse(resp, "server update in backend")
 }
 
 // ServerDelete returns an executor for deleting servers from backends.

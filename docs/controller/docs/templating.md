@@ -323,6 +323,19 @@ server SRV_{{ i }} 127.0.0.1:1 disabled
 
 **Benefit**: Endpoint changes update server addresses via runtime API without dropping connections.
 
+!!! tip "Maximize Runtime API Usage"
+    Keep server lines minimal - only `address:port` plus `enabled` or `disabled`. Place all other options (`check`, `proto h2`, SSL settings) in the `default-server` directive:
+
+    ```haproxy
+    backend my-backend
+        default-server check proto h2
+        server SRV_1 10.0.0.1:8080 enabled
+        server SRV_2 10.0.0.2:8080 enabled
+        server SRV_3 127.0.0.1:1 disabled
+    ```
+
+    The Dataplane API can update Address, Port, and enabled/disabled state at runtime without reloading HAProxy. Both `enabled` and `disabled` are runtime-supported, enabling the reserved slots pattern. Options like `check` on individual server lines trigger reloads on any change.
+
 ### Cross-Resource Lookups
 
 Use fields from one resource to query another:

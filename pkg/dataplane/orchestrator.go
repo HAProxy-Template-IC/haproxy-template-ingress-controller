@@ -865,6 +865,24 @@ func (o *orchestrator) compareCRTListFiles(ctx context.Context, crtlistFiles []a
 	return crtlistDiff, nil
 }
 
+// executeRuntimeOperations executes runtime-eligible operations without transaction.
+// Returns applied operations, reload count, and error.
+func (o *orchestrator) executeRuntimeOperations(
+	ctx context.Context,
+	operations []comparator.Operation,
+) (appliedOps []AppliedOperation, reloadCount int, err error) {
+	for _, op := range operations {
+		if execErr := op.Execute(ctx, o.client, ""); execErr != nil {
+			return nil, reloadCount, fmt.Errorf("runtime operation failed: %w", execErr)
+		}
+		// Check if this operation triggered a reload
+		if tracker, ok := op.(sections.RuntimeReloadTracker); ok && tracker.TriggeredReload() {
+			reloadCount++
+		}
+	}
+	return convertOperationsToApplied(operations), reloadCount, nil
+}
+
 // executeConfigOperations executes configuration operations with retry logic.
 // Returns applied operations, reload status, reload ID, retry count, and error.
 func (o *orchestrator) executeConfigOperations(
@@ -889,23 +907,20 @@ func (o *orchestrator) executeConfigOperations(
 	var commitResult *client.CommitResult
 
 	if allRuntimeEligible {
-		// Execute runtime-eligible operations without transaction (no reload)
+		// Execute runtime-eligible operations without transaction
+		// Note: Runtime API may still trigger reloads if server fields outside
+		// the runtime-supported set are modified (returns 202 instead of 200)
 		o.logger.Debug("All operations are runtime-eligible, executing without transaction")
 
-		// Execute operations directly using runtime API (empty transactionID)
-		for _, op := range diff.Operations {
-			if execErr := op.Execute(ctx, o.client, ""); execErr != nil {
-				err = fmt.Errorf("runtime operation failed: %w", execErr)
-				break
-			}
-		}
+		var runtimeReloads int
+		appliedOps, runtimeReloads, err = o.executeRuntimeOperations(ctx, diff.Operations)
+		retries = 1
+		reloadTriggered = runtimeReloads > 0
 
-		retries = 1             // Count single execution
-		reloadTriggered = false // Runtime API doesn't trigger reload
-		reloadID = ""           // No reload ID
-
-		if err == nil {
-			appliedOps = convertOperationsToApplied(diff.Operations)
+		if err == nil && runtimeReloads > 0 {
+			o.logger.Debug("Runtime operations triggered reloads",
+				"reload_count", runtimeReloads,
+				"total_operations", len(diff.Operations))
 		}
 	} else {
 		// Execute with transaction (triggers reload)

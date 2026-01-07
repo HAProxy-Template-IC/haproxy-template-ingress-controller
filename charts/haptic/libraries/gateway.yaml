@@ -3641,14 +3641,15 @@ validationTests:
         pattern: "backend gtw_default_slot-route_slot-svc_80"
         description: Gateway backend must be generated
 
+      # Note: check option is now on default-server, not on individual server lines
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.1:8080.* check"
+        pattern: "server SRV_1 10\\.0\\.0\\.1:8080"
         description: Existing pod 10.0.0.1 must preserve its slot (SRV_1)
 
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.3:8080.* check"
+        pattern: "server SRV_2 10\\.0\\.0\\.3:8080"
         description: New pod 10.0.0.3 should take the freed slot (SRV_2) from removed pod
 
       - type: contains
@@ -3729,14 +3730,15 @@ validationTests:
       - type: haproxy_valid
         description: HAProxy config must be valid
 
+      # Note: check option is now on default-server, not on individual server lines
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.5:8080.* check"
+        pattern: "server SRV_1 10\\.0\\.0\\.5:8080"
         description: Existing pod 10.0.0.5 must preserve its slot (SRV_1)
 
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.2:8080.* check"
+        pattern: "server SRV_2 10\\.0\\.0\\.2:8080"
         description: New pod 10.0.0.2 (lower IP) must take freed slot (SRV_2), not be sorted first
 
       - type: contains

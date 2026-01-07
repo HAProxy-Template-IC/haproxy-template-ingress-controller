@@ -659,6 +659,42 @@ templateSnippets:
       {%- end %}
 ```
 
+### Server Options and Runtime API
+
+To enable HAProxy runtime API updates without reloads, server options must be in `default-server`, not on individual server lines.
+
+**Runtime-supported server fields (no reload):**
+
+- `Weight`, `Address`, `Port` - Core properties
+- `Maintenance` (`enabled`/`disabled`) - Server state
+- `AgentCheck`, `AgentAddr`, `AgentSend`, `HealthCheckPort` - Agent checks
+
+**Important:** The `disabled` and `enabled` options do NOT cause reloads. This is essential for the reserved slots pattern where unused slots are `disabled` and enabled at runtime when pods scale up.
+
+**All other options trigger reloads** including: `check`, `proto`, `ssl`, `verify`, `ca-file`, `crt`
+
+**Correct pattern in templates:**
+
+```scriggo
+backend ing_{{ ingress.metadata.name }}
+    default-server check{{ BuildServerOptions(serverOpts) }}
+    {{ BackendServers(serviceName, 10, port, nil, nil, backendKey) }}
+```
+
+The `BackendServers` macro generates server lines with only `address:port` plus `enabled` (for active servers) or `disabled` (for reserved slots), while all other options go in `default-server`.
+
+**Example output:**
+
+```haproxy
+backend ing_default_my-ingress
+    default-server check proto h2
+    server SRV_1 10.0.0.1:8080 enabled
+    server SRV_2 10.0.0.2:8080 enabled
+    server SRV_3 127.0.0.1:1 disabled
+```
+
+**Why this matters:** When pods scale up/down, only the server's Address, Port, and enabled/disabled state change. If these are the only fields on server lines, the controller updates them via runtime API (no reload, no connection drops). If options like `check` are on server lines, any change requires a reload.
+
 ### Optimizing Expensive Computations with Utility Snippets
 
 Libraries provide **utility snippets** that cache expensive computations. These snippets encapsulate all the caching complexity, making it easy to use cached data from any template.

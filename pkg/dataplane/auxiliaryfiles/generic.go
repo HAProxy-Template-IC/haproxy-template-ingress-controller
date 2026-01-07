@@ -3,6 +3,7 @@ package auxiliaryfiles
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -78,6 +79,13 @@ func categorizeFile[T FileItem](currentMap map[string]T, id string, desiredFile 
 		diff.ToUpdate = append(diff.ToUpdate, desiredFile)
 	} else if currentContent != desiredContent {
 		// File exists and content differs → update
+		slog.Debug("auxiliary file content mismatch",
+			"file", id,
+			"current", currentContent,
+			"desired", desiredContent,
+			"current_len", len(currentContent),
+			"desired_len", len(desiredContent),
+		)
 		diff.ToUpdate = append(diff.ToUpdate, desiredFile)
 	}
 	// If content is identical, no action needed

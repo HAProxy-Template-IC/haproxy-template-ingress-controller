@@ -319,7 +319,7 @@ templateSnippets:
       {#- ── 8. Generate server lines ────────────────────────────────────── -#}
       {%- for i := 1; i <= slots; i++ %}
       {%- if ep := slotAssignments[i]; ep != nil %}
-      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{{ BuildServerOptions(serverOpts) }} check  # Pod: {{ ep["name"] }}
+      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }} enabled  # Pod: {{ ep["name"] }}
       {% else %}
       server SRV_{{ i }} 127.0.0.1:1 disabled  # Placeholder
       {% end %}
