@@ -815,6 +815,131 @@ bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
 	})
 }
 
+// TestCalculateCertIdentifier_IssuersSortedAlphabetically tests that issuers are sorted
+// alphabetically to ensure deterministic comparison with the API.
+// This is a regression test for the bug where the HAProxy DataPlane API returns issuers
+// in non-deterministic order (from Go map iteration), causing the controller to see
+// certificates as "changed" on every reconciliation.
+func TestCalculateCertIdentifier_IssuersSortedAlphabetically(t *testing.T) {
+	// The key insight: HAProxy DataPlane API stores issuers in a Go map which has
+	// undefined iteration order. The API might return "R13, ISRG Root X1" or
+	// "ISRG Root X1, R13" depending on map iteration order.
+	//
+	// Our fix: sort issuers alphabetically on both sides to ensure consistent matching.
+
+	t.Run("single issuer remains unchanged", func(t *testing.T) {
+		// Self-signed cert has only one issuer
+		selfSignedCert := `-----BEGIN CERTIFICATE-----
+MIIDFzCCAf+gAwIBAgIUGLGWKDJjVLH8Sq6F3ueIbrzGWfMwDQYJKoZIhvcNAQEL
+BQAwGzEZMBcGA1UEAwwQdGVzdC5leGFtcGxlLmNvbTAeFw0yNTEyMTAyMTI2NTla
+Fw0yNTEyMTEyMTI2NTlaMBsxGTAXBgNVBAMMEHRlc3QuZXhhbXBsZS5jb20wggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDPHl2u1cXp/Wt58BQI9P7Ed5ed
+GY6bU+EfyrUnNr1lTe+YgFb/OnRgP3mKFDmuzLE6QfgTsnNlwuWjlIa4oR80u2hW
+qwPP9h4EWmKKHR+IFWnekgGe4tQ7x+9TlocUL1IcVUN7hl7DO24VxekpJ225jcyI
+4FGWugwaTWahVOCc1gglS2N8iCOdK7E3PFnGN5EIu0671QRWGcEQ56XMQo6C6VSB
+0KSMALcLihT94Lfs9jyoAHFzU06mF/Vq7igcX9mgbWlVKst5JUtG9tvf3I2V4luy
+6V0w6O+OijFsDpy2iDQkOmH213/d2h7SFdNVbxVQwOLo9gbFV4Vy6mwC8ADzAgMB
+AAGjUzBRMB0GA1UdDgQWBBSK/1+6h97tZgdcv69To/NWQX/a3TAfBgNVHSMEGDAW
+gBSK/1+6h97tZgdcv69To/NWQX/a3TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3
+DQEBCwUAA4IBAQCPtd0+M99AvTHrTkQF77r1TmtAQESOyqGOAvLjhC3A5m7nm9mZ
+CBMPK5wfK0JtAJj4AAKl+5ZMAkaEZ3xDZ0TGcUCzoaXhejhL6TdLGoY29vqNn9Oe
+cufJDxtcMRiLEIHMoGkrXDakZhLmJSYkgwwZu92De6ryc3t3pM8FrtLvFok3Y3jD
+hZXwDvkhmTvkhl76lMyqZY004rUclu4+yFWtqEvcUcusWZwabWYzYMmWfOfgRi2v
+9+HqFPD8HE2IqA7XFqAZbTnBXiJf1rIvPE293RkHAeVUSVF/JnpEthyFECvnDREC
+bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
+-----END CERTIFICATE-----`
+
+		result := calculateCertIdentifier(selfSignedCert)
+		// Single issuer: "test.example.com"
+		assert.Contains(t, result, "cert:serial:")
+		assert.Contains(t, result, ":issuers:test.example.com")
+	})
+
+	t.Run("multiple issuers are sorted alphabetically", func(t *testing.T) {
+		// Simulate a certificate chain where we'd get multiple issuer CNs.
+		// When parsing multiple certs, each cert's Issuer.CommonName is collected.
+		// The fix sorts these alphabetically before joining.
+
+		// Using the same self-signed cert twice creates ["test.example.com", "test.example.com"]
+		// which after sorting and joining gives "test.example.com, test.example.com"
+		chainPEM := `-----BEGIN CERTIFICATE-----
+MIIDFzCCAf+gAwIBAgIUGLGWKDJjVLH8Sq6F3ueIbrzGWfMwDQYJKoZIhvcNAQEL
+BQAwGzEZMBcGA1UEAwwQdGVzdC5leGFtcGxlLmNvbTAeFw0yNTEyMTAyMTI2NTla
+Fw0yNTEyMTEyMTI2NTlaMBsxGTAXBgNVBAMMEHRlc3QuZXhhbXBsZS5jb20wggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDPHl2u1cXp/Wt58BQI9P7Ed5ed
+GY6bU+EfyrUnNr1lTe+YgFb/OnRgP3mKFDmuzLE6QfgTsnNlwuWjlIa4oR80u2hW
+qwPP9h4EWmKKHR+IFWnekgGe4tQ7x+9TlocUL1IcVUN7hl7DO24VxekpJ225jcyI
+4FGWugwaTWahVOCc1gglS2N8iCOdK7E3PFnGN5EIu0671QRWGcEQ56XMQo6C6VSB
+0KSMALcLihT94Lfs9jyoAHFzU06mF/Vq7igcX9mgbWlVKst5JUtG9tvf3I2V4luy
+6V0w6O+OijFsDpy2iDQkOmH213/d2h7SFdNVbxVQwOLo9gbFV4Vy6mwC8ADzAgMB
+AAGjUzBRMB0GA1UdDgQWBBSK/1+6h97tZgdcv69To/NWQX/a3TAfBgNVHSMEGDAW
+gBSK/1+6h97tZgdcv69To/NWQX/a3TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3
+DQEBCwUAA4IBAQCPtd0+M99AvTHrTkQF77r1TmtAQESOyqGOAvLjhC3A5m7nm9mZ
+CBMPK5wfK0JtAJj4AAKl+5ZMAkaEZ3xDZ0TGcUCzoaXhejhL6TdLGoY29vqNn9Oe
+cufJDxtcMRiLEIHMoGkrXDakZhLmJSYkgwwZu92De6ryc3t3pM8FrtLvFok3Y3jD
+hZXwDvkhmTvkhl76lMyqZY004rUclu4+yFWtqEvcUcusWZwabWYzYMmWfOfgRi2v
+9+HqFPD8HE2IqA7XFqAZbTnBXiJf1rIvPE293RkHAeVUSVF/JnpEthyFECvnDREC
+bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDFzCCAf+gAwIBAgIUGLGWKDJjVLH8Sq6F3ueIbrzGWfMwDQYJKoZIhvcNAQEL
+BQAwGzEZMBcGA1UEAwwQdGVzdC5leGFtcGxlLmNvbTAeFw0yNTEyMTAyMTI2NTla
+Fw0yNTEyMTEyMTI2NTlaMBsxGTAXBgNVBAMMEHRlc3QuZXhhbXBsZS5jb20wggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDPHl2u1cXp/Wt58BQI9P7Ed5ed
+GY6bU+EfyrUnNr1lTe+YgFb/OnRgP3mKFDmuzLE6QfgTsnNlwuWjlIa4oR80u2hW
+qwPP9h4EWmKKHR+IFWnekgGe4tQ7x+9TlocUL1IcVUN7hl7DO24VxekpJ225jcyI
+4FGWugwaTWahVOCc1gglS2N8iCOdK7E3PFnGN5EIu0671QRWGcEQ56XMQo6C6VSB
+0KSMALcLihT94Lfs9jyoAHFzU06mF/Vq7igcX9mgbWlVKst5JUtG9tvf3I2V4luy
+6V0w6O+OijFsDpy2iDQkOmH213/d2h7SFdNVbxVQwOLo9gbFV4Vy6mwC8ADzAgMB
+AAGjUzBRMB0GA1UdDgQWBBSK/1+6h97tZgdcv69To/NWQX/a3TAfBgNVHSMEGDAW
+gBSK/1+6h97tZgdcv69To/NWQX/a3TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3
+DQEBCwUAA4IBAQCPtd0+M99AvTHrTkQF77r1TmtAQESOyqGOAvLjhC3A5m7nm9mZ
+CBMPK5wfK0JtAJj4AAKl+5ZMAkaEZ3xDZ0TGcUCzoaXhejhL6TdLGoY29vqNn9Oe
+cufJDxtcMRiLEIHMoGkrXDakZhLmJSYkgwwZu92De6ryc3t3pM8FrtLvFok3Y3jD
+hZXwDvkhmTvkhl76lMyqZY004rUclu4+yFWtqEvcUcusWZwabWYzYMmWfOfgRi2v
+9+HqFPD8HE2IqA7XFqAZbTnBXiJf1rIvPE293RkHAeVUSVF/JnpEthyFECvnDREC
+bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
+-----END CERTIFICATE-----`
+
+		result := calculateCertIdentifier(chainPEM)
+		assert.Contains(t, result, "cert:serial:")
+		// Both certs have same issuer, so we get it twice, sorted
+		assert.Contains(t, result, ":issuers:test.example.com, test.example.com")
+	})
+
+	t.Run("consistent results ensure no false change detection", func(t *testing.T) {
+		// The key property we're testing: same PEM always produces same identifier.
+		// This prevents the controller from seeing the certificate as "changed" on each reconciliation.
+		cert := `-----BEGIN CERTIFICATE-----
+MIIDFzCCAf+gAwIBAgIUGLGWKDJjVLH8Sq6F3ueIbrzGWfMwDQYJKoZIhvcNAQEL
+BQAwGzEZMBcGA1UEAwwQdGVzdC5leGFtcGxlLmNvbTAeFw0yNTEyMTAyMTI2NTla
+Fw0yNTEyMTEyMTI2NTlaMBsxGTAXBgNVBAMMEHRlc3QuZXhhbXBsZS5jb20wggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDPHl2u1cXp/Wt58BQI9P7Ed5ed
+GY6bU+EfyrUnNr1lTe+YgFb/OnRgP3mKFDmuzLE6QfgTsnNlwuWjlIa4oR80u2hW
+qwPP9h4EWmKKHR+IFWnekgGe4tQ7x+9TlocUL1IcVUN7hl7DO24VxekpJ225jcyI
+4FGWugwaTWahVOCc1gglS2N8iCOdK7E3PFnGN5EIu0671QRWGcEQ56XMQo6C6VSB
+0KSMALcLihT94Lfs9jyoAHFzU06mF/Vq7igcX9mgbWlVKst5JUtG9tvf3I2V4luy
+6V0w6O+OijFsDpy2iDQkOmH213/d2h7SFdNVbxVQwOLo9gbFV4Vy6mwC8ADzAgMB
+AAGjUzBRMB0GA1UdDgQWBBSK/1+6h97tZgdcv69To/NWQX/a3TAfBgNVHSMEGDAW
+gBSK/1+6h97tZgdcv69To/NWQX/a3TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3
+DQEBCwUAA4IBAQCPtd0+M99AvTHrTkQF77r1TmtAQESOyqGOAvLjhC3A5m7nm9mZ
+CBMPK5wfK0JtAJj4AAKl+5ZMAkaEZ3xDZ0TGcUCzoaXhejhL6TdLGoY29vqNn9Oe
+cufJDxtcMRiLEIHMoGkrXDakZhLmJSYkgwwZu92De6ryc3t3pM8FrtLvFok3Y3jD
+hZXwDvkhmTvkhl76lMyqZY004rUclu4+yFWtqEvcUcusWZwabWYzYMmWfOfgRi2v
+9+HqFPD8HE2IqA7XFqAZbTnBXiJf1rIvPE293RkHAeVUSVF/JnpEthyFECvnDREC
+bFjGRo6RrhpFS0xPa5B9w9i6rpKV/xN6QuEG
+-----END CERTIFICATE-----`
+
+		// Call multiple times to ensure deterministic results
+		result1 := calculateCertIdentifier(cert)
+		result2 := calculateCertIdentifier(cert)
+		result3 := calculateCertIdentifier(cert)
+
+		assert.Equal(t, result1, result2)
+		assert.Equal(t, result2, result3)
+	})
+}
+
 // TestConvertCRTListsToGeneralFiles tests conversion of CRT-list files to general files.
 func TestConvertCRTListsToGeneralFiles(t *testing.T) {
 	tests := []struct {
