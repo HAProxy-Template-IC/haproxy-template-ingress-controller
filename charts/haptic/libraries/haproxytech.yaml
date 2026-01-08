@@ -334,8 +334,14 @@ templateSnippets:
       # haproxytech/global-top-haproxytech-ingress-auth
       userlist {{ userlistName }}
                 {% var secretData = secret | dig("data") | fallback(map[string]any{}) -%}
+                {%- var hashRegex = extraContext | dig("password_hash_validation_regex") | fallback("^.*$") | tostring() %}
+                {%- var hashErrMsg = extraContext | dig("password_hash_validation_error_message") | fallback("Invalid password hash") | tostring() %}
                 {%- for _, username := range keys(secretData) %}
-        user {{ username }} password {{ secretData[username] | b64decode() }}
+                  {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
+                  {%- if !regex_search(passwordHash, hashRegex) %}
+                    {{- fail(hashErrMsg + " for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                  {%- end %}
+        user {{ username }} password {{ passwordHash }}
                 {% end -%}
               {%- else %}
                 {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy.org/auth-secret' does not exist. Please create the secret or update the annotation.") -}}
@@ -1304,3 +1310,140 @@ validationTests:
         target: haproxy.cfg
         pattern: "com\\$'"
         description: Origin regex must contain the $ anchor followed by closing quote
+
+  test-haproxytech-auth-password-hash-validation-reject:
+    description: Password hash validation rejects non-matching hashes
+    extraContext:
+      password_hash_validation_regex: "^\\$apr1\\$"
+      password_hash_validation_error_message: "Bcrypt hashes not allowed"
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: auth-secret
+          type: Opaque
+          data:
+            admin: JDJ5JDEwJGJjcnlwdGhhc2g=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-test
+            annotations:
+              haproxy.org/auth-type: basic-auth
+              haproxy.org/auth-secret: auth-secret
+          spec:
+            rules:
+              - host: test.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: test-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: test-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Bcrypt hashes not allowed"
+        description: Must reject bcrypt hash with custom error message
+      - type: contains
+        target: rendering_error
+        pattern: "admin"
+        description: Error must include username
+      - type: contains
+        target: rendering_error
+        pattern: "pattern"
+        description: Error must include pattern info
+
+  test-haproxytech-auth-password-hash-validation-allow:
+    description: Password hash validation allows matching hashes
+    extraContext:
+      password_hash_validation_regex: "^\\$2[ayb]\\$"
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: auth-secret
+          type: Opaque
+          data:
+            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-test
+            annotations:
+              haproxy.org/auth-type: basic-auth
+              haproxy.org/auth-secret: auth-secret
+          spec:
+            rules:
+              - host: test.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: test-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: test-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user admin password"
+        description: User must be in config

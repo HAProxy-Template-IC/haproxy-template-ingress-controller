@@ -256,6 +256,13 @@ controller:
         # The DataPlane API forbids spaces in realm names. By default (false), the controller
         # fails with a clear error. Set to true to auto-sanitize realm names.
         # sanitize_auth_realm: false
+        # Password hash validation regex - validates password hashes in auth secrets
+        # Default "^.*$" allows all hashes for backward compatibility.
+        # Example to block bcrypt: "^(?!\$2[ayb]\$).*$"
+        password_hash_validation_regex: "^.*$"
+        # Error message shown when password hash validation fails.
+        # The actual error will include username, secret name, and pattern.
+        password_hash_validation_error_message: "Invalid password hash"
     watchedResourcesIgnoreFields:
       - metadata.managedFields
       - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
