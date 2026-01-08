@@ -34,9 +34,8 @@ type PathConfig struct {
 // ResolvedPaths contains capability-aware resolved paths for HAProxy auxiliary files.
 // This is the result of applying capability-based resolution to a PathConfig.
 //
-// The key difference from PathConfig is that CRTListDir is computed based on
-// HAProxy capabilities - it may fall back to GeneralDir if CRT-list storage
-// is not supported (HAProxy < 3.2).
+// The key difference from PathConfig is that CRTListDir is always set to GeneralDir
+// because CRT-list files are stored as general files to avoid reload on create.
 type ResolvedPaths struct {
 	// MapsDir is the resolved path for HAProxy map files.
 	MapsDir string
@@ -45,8 +44,8 @@ type ResolvedPaths struct {
 	SSLDir string
 
 	// CRTListDir is the resolved path for CRT-list files.
-	// When SupportsCrtList is true (HAProxy >= 3.2), this equals SSLDir.
-	// When SupportsCrtList is false (HAProxy < 3.2), this equals GeneralDir.
+	// Always equals GeneralDir because CRT-list files are stored as general files
+	// to avoid reload on create (native CRT-list API doesn't support skip_reload).
 	CRTListDir string
 
 	// GeneralDir is the resolved path for HAProxy general files.
@@ -60,27 +59,22 @@ type ResolvedPaths struct {
 // This is the SINGLE SOURCE OF TRUTH for all capability-dependent path logic.
 //
 // Currently handles:
-//   - CRT-list fallback: HAProxy < 3.2 doesn't support crt-list storage,
-//     so CRT-list files are stored in the general directory instead.
+//   - CRT-list storage: Always uses general directory because the native CRT-list
+//     API triggers reload on create without supporting skip_reload parameter.
+//     General file storage returns 201 without triggering reload.
 //
 // Future capability-dependent paths should be added here to ensure
 // consistent resolution across all components.
-func ResolvePaths(base PathConfig, capabilities Capabilities) *ResolvedPaths {
-	resolved := &ResolvedPaths{
+func ResolvePaths(base PathConfig, _ Capabilities) *ResolvedPaths {
+	return &ResolvedPaths{
 		MapsDir:    base.MapsDir,
 		SSLDir:     base.SSLDir,
 		GeneralDir: base.GeneralDir,
 		ConfigFile: base.ConfigFile,
+		// Always use GeneralDir for CRT-lists to avoid reload on create.
+		// Native CRT-list API triggers reload without skip_reload support.
+		CRTListDir: base.GeneralDir,
 	}
-
-	// CRT-list fallback: HAProxy < 3.2 doesn't support crt-list storage
-	if capabilities.SupportsCrtList {
-		resolved.CRTListDir = base.SSLDir
-	} else {
-		resolved.CRTListDir = base.GeneralDir
-	}
-
-	return resolved
 }
 
 // ToValidationPaths converts ResolvedPaths to ValidationPaths.

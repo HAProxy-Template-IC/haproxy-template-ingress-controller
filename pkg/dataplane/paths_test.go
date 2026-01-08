@@ -17,29 +17,27 @@ func TestResolvePaths(t *testing.T) {
 		ConfigFile: "/etc/haproxy/haproxy.cfg",
 	}
 
+	// CRTListDir is always GeneralDir because CRT-list files are stored as general files
+	// to avoid reload on create (native CRT-list API doesn't support skip_reload).
 	tests := []struct {
 		name         string
 		capabilities Capabilities
-		wantCRTList  string
 	}{
 		{
 			name: "crt-list supported (v3.2+)",
 			capabilities: client.Capabilities{
 				SupportsCrtList: true,
 			},
-			wantCRTList: "/etc/haproxy/ssl",
 		},
 		{
 			name: "crt-list not supported (v3.0/v3.1)",
 			capabilities: client.Capabilities{
 				SupportsCrtList: false,
 			},
-			wantCRTList: "/etc/haproxy/files",
 		},
 		{
 			name:         "empty capabilities",
 			capabilities: client.Capabilities{},
-			wantCRTList:  "/etc/haproxy/files",
 		},
 	}
 
@@ -52,7 +50,9 @@ func TestResolvePaths(t *testing.T) {
 			assert.Equal(t, "/etc/haproxy/ssl", resolved.SSLDir)
 			assert.Equal(t, "/etc/haproxy/files", resolved.GeneralDir)
 			assert.Equal(t, "/etc/haproxy/haproxy.cfg", resolved.ConfigFile)
-			assert.Equal(t, tt.wantCRTList, resolved.CRTListDir)
+			// CRTListDir always equals GeneralDir to avoid reload on create
+			assert.Equal(t, "/etc/haproxy/files", resolved.CRTListDir,
+				"CRTListDir should always be GeneralDir regardless of capabilities")
 		})
 	}
 }

@@ -64,7 +64,9 @@ func (s *mockStorage) delete(name string) bool {
 }
 
 // createTestServer creates a mock HTTP server for testing auxiliary file operations.
-func createTestServer(generalFiles, mapFiles, crtLists *mockStorage) *httptest.Server {
+// Note: CRT-list files are stored as general files (not native CRT-list API) to avoid
+// reload on create, so no separate crtLists parameter is needed.
+func createTestServer(generalFiles, mapFiles *mockStorage) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
@@ -75,7 +77,7 @@ func createTestServer(generalFiles, mapFiles, crtLists *mockStorage) *httptest.S
 			return
 		}
 
-		// General files storage
+		// General files storage (also used for CRT-list files)
 		if strings.HasPrefix(path, "/services/haproxy/storage/general/") {
 			handleStorageRequest(w, r, generalFiles, "general", "/services/haproxy/storage/general/")
 			return
@@ -92,16 +94,6 @@ func createTestServer(generalFiles, mapFiles, crtLists *mockStorage) *httptest.S
 		}
 		if path == "/services/haproxy/storage/maps" {
 			handleStorageList(w, mapFiles)
-			return
-		}
-
-		// CRT-list files storage
-		if strings.HasPrefix(path, "/services/haproxy/storage/ssl_crt_lists/") {
-			handleStorageRequest(w, r, crtLists, "crtlist", "/services/haproxy/storage/ssl_crt_lists/")
-			return
-		}
-		if path == "/services/haproxy/storage/ssl_crt_lists" {
-			handleStorageList(w, crtLists)
 			return
 		}
 
@@ -205,7 +197,7 @@ func createTestClient(t *testing.T, serverURL string) *client.DataplaneClient {
 // TestCompareGeneralFiles_Integration tests CompareGeneralFiles with a mock HTTP server.
 func TestCompareGeneralFiles_Integration(t *testing.T) {
 	generalFiles := newMockStorage()
-	server := createTestServer(generalFiles, nil, nil)
+	server := createTestServer(generalFiles, nil)
 	defer server.Close()
 
 	c := createTestClient(t, server.URL)
@@ -265,7 +257,7 @@ func TestCompareGeneralFiles_Integration(t *testing.T) {
 // upload handling in the mock server. The core sync logic is tested via unit tests.
 func TestSyncGeneralFiles_Integration(t *testing.T) {
 	generalFiles := newMockStorage()
-	server := createTestServer(generalFiles, nil, nil)
+	server := createTestServer(generalFiles, nil)
 	defer server.Close()
 
 	c := createTestClient(t, server.URL)
@@ -294,7 +286,7 @@ func TestSyncGeneralFiles_Integration(t *testing.T) {
 // TestCompareMapFiles_Integration tests CompareMapFiles with a mock HTTP server.
 func TestCompareMapFiles_Integration(t *testing.T) {
 	mapFiles := newMockStorage()
-	server := createTestServer(nil, mapFiles, nil)
+	server := createTestServer(nil, mapFiles)
 	defer server.Close()
 
 	c := createTestClient(t, server.URL)
@@ -335,7 +327,7 @@ func TestCompareMapFiles_Integration(t *testing.T) {
 // upload handling in the mock server. The core sync logic is tested via unit tests.
 func TestSyncMapFiles_Integration(t *testing.T) {
 	mapFiles := newMockStorage()
-	server := createTestServer(nil, mapFiles, nil)
+	server := createTestServer(nil, mapFiles)
 	defer server.Close()
 
 	c := createTestClient(t, server.URL)
@@ -366,9 +358,12 @@ func TestSyncMapFiles_Integration(t *testing.T) {
 // logic is tested via the unit tests for Compare and Sync generic functions.
 
 // TestCompareCRTLists_Integration tests CompareCRTLists with a mock HTTP server.
+// Note: CRT-list files are always stored as general files to avoid reload on create
+// (native CRT-list API triggers reload without skip_reload support).
 func TestCompareCRTLists_Integration(t *testing.T) {
-	crtLists := newMockStorage()
-	server := createTestServer(nil, nil, crtLists)
+	// CRT-lists are stored as general files, so we need general file storage mock
+	generalFiles := newMockStorage()
+	server := createTestServer(generalFiles, nil)
 	defer server.Close()
 
 	c := createTestClient(t, server.URL)
@@ -387,8 +382,8 @@ func TestCompareCRTLists_Integration(t *testing.T) {
 		assert.Empty(t, diff.ToDelete)
 	})
 
-	// Add a file and test update
-	crtLists.put("crt-list.txt", "old content")
+	// Add a file and test update (stored as general file with normalized filename)
+	generalFiles.put("crt-list.txt", "old content")
 
 	t.Run("compare with existing file needing update", func(t *testing.T) {
 		desired := []CRTListFile{
@@ -405,9 +400,12 @@ func TestCompareCRTLists_Integration(t *testing.T) {
 }
 
 // TestSyncCRTLists_Integration tests SyncCRTLists with a mock HTTP server.
+// Note: CRT-list files are always stored as general files to avoid reload on create
+// (native CRT-list API triggers reload without skip_reload support).
 func TestSyncCRTLists_Integration(t *testing.T) {
-	crtLists := newMockStorage()
-	server := createTestServer(nil, nil, crtLists)
+	// CRT-lists are stored as general files, so we need general file storage mock
+	generalFiles := newMockStorage()
+	server := createTestServer(generalFiles, nil)
 	defer server.Close()
 
 	c := createTestClient(t, server.URL)
@@ -419,7 +417,7 @@ func TestSyncCRTLists_Integration(t *testing.T) {
 	})
 
 	t.Run("sync deletes", func(t *testing.T) {
-		crtLists.put("todelete.txt", "content")
+		generalFiles.put("todelete.txt", "content")
 
 		diff := &CRTListDiff{
 			ToDelete: []string{"todelete.txt"},
@@ -428,7 +426,7 @@ func TestSyncCRTLists_Integration(t *testing.T) {
 		_, err := SyncCRTLists(ctx, c, diff)
 		require.NoError(t, err)
 
-		_, ok := crtLists.get("todelete.txt")
+		_, ok := generalFiles.get("todelete.txt")
 		assert.False(t, ok)
 	})
 }
