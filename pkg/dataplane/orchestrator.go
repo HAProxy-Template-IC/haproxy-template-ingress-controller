@@ -292,6 +292,19 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	o.deleteObsoleteFilesPostConfig(ctx, fileDiff, sslDiff, mapDiff, crtlistDiff)
 
 	// Build result
+	auxDiffs := &auxiliaryFileDiffs{
+		fileDiff:    fileDiff,
+		sslDiff:     sslDiff,
+		mapDiff:     mapDiff,
+		crtlistDiff: crtlistDiff,
+	}
+
+	details := convertDiffSummary(&diff.Summary)
+	addAuxiliaryFileCounts(&details, auxDiffs)
+
+	// Merge config operations with aux file operations for consistent view
+	appliedOps = append(appliedOps, auxDiffsToOperations(auxDiffs)...)
+
 	result := &SyncResult{
 		Success:           true,
 		AppliedOperations: appliedOps,
@@ -300,8 +313,8 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 		SyncMode:          SyncModeFineGrained,
 		Duration:          time.Since(startTime),
 		Retries:           max(0, retries-1),
-		Details:           convertDiffSummary(&diff.Summary),
-		Message:           fmt.Sprintf("Successfully applied %d configuration changes", len(appliedOps)),
+		Details:           details,
+		Message:           fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
 	}
 
 	// Phase 4: Verify reload if triggered and verification enabled
@@ -394,17 +407,23 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 	// Even though we used raw config push, we still know what changes were applied
 	appliedOps := convertOperationsToApplied(diff.Operations)
 
-	// Build result
+	// Build result with detailed diff information
+	details := convertDiffSummary(&diff.Summary)
+	addAuxiliaryFileCounts(&details, auxDiffs)
+
+	// Merge config operations with aux file operations for consistent view
+	appliedOps = append(appliedOps, auxDiffsToOperations(auxDiffs)...)
+
 	result := &SyncResult{
 		Success:           true,
-		AppliedOperations: appliedOps, // Preserve detailed operations instead of generic message
+		AppliedOperations: appliedOps, // All operations including aux files
 		ReloadTriggered:   true,       // Raw push always triggers reload
-		ReloadID:          reloadID,   // Capture reload ID from raw config push
+		ReloadID:          reloadID,
 		SyncMode:          mode,
 		Duration:          time.Since(startTime),
 		Retries:           0,
-		Details:           convertDiffSummary(&diff.Summary),
-		Message:           fmt.Sprintf("Successfully applied configuration via raw config push (%s)", mode),
+		Details:           details,
+		Message:           fmt.Sprintf("Successfully applied %d operations via raw config push (%s)", len(appliedOps), mode),
 	}
 
 	// Verify reload if verification enabled (raw push always triggers reload)
@@ -576,6 +595,181 @@ func convertDiffSummary(summary *comparator.DiffSummary) DiffDetails {
 		HTTPRulesModified: make(map[string]int),
 		HTTPRulesDeleted:  make(map[string]int),
 	}
+}
+
+// addAuxiliaryFileCounts populates auxiliary file counts in DiffDetails from auxiliary file diffs.
+func addAuxiliaryFileCounts(details *DiffDetails, auxDiffs *auxiliaryFileDiffs) {
+	if auxDiffs == nil {
+		return
+	}
+
+	// General files
+	if auxDiffs.fileDiff != nil {
+		details.GeneralFilesAdded = len(auxDiffs.fileDiff.ToCreate)
+		details.GeneralFilesModified = len(auxDiffs.fileDiff.ToUpdate)
+		details.GeneralFilesDeleted = len(auxDiffs.fileDiff.ToDelete)
+	}
+
+	// SSL certificates
+	if auxDiffs.sslDiff != nil {
+		details.SSLCertsAdded = len(auxDiffs.sslDiff.ToCreate)
+		details.SSLCertsModified = len(auxDiffs.sslDiff.ToUpdate)
+		details.SSLCertsDeleted = len(auxDiffs.sslDiff.ToDelete)
+	}
+
+	// Map files
+	if auxDiffs.mapDiff != nil {
+		details.MapsAdded = len(auxDiffs.mapDiff.ToCreate)
+		details.MapsModified = len(auxDiffs.mapDiff.ToUpdate)
+		details.MapsDeleted = len(auxDiffs.mapDiff.ToDelete)
+	}
+}
+
+// auxDiffsToOperations converts auxiliary file diffs to AppliedOperations.
+// This provides a consistent view of all operations (config + aux files) in SyncResult.AppliedOperations.
+func auxDiffsToOperations(auxDiffs *auxiliaryFileDiffs) []AppliedOperation {
+	if auxDiffs == nil {
+		return nil
+	}
+
+	var ops []AppliedOperation
+	ops = append(ops, fileDiffToOperations(auxDiffs.fileDiff)...)
+	ops = append(ops, sslDiffToOperations(auxDiffs.sslDiff)...)
+	ops = append(ops, mapDiffToOperations(auxDiffs.mapDiff)...)
+	ops = append(ops, crtlistDiffToOperations(auxDiffs.crtlistDiff)...)
+	return ops
+}
+
+// fileDiffToOperations converts general file diffs to AppliedOperations.
+func fileDiffToOperations(diff *auxiliaryfiles.FileDiff) []AppliedOperation {
+	if diff == nil {
+		return nil
+	}
+	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
+	for _, f := range diff.ToCreate {
+		ops = append(ops, AppliedOperation{
+			Type:        "create",
+			Section:     "file",
+			Resource:    f.Filename,
+			Description: "Created general file " + f.Filename,
+		})
+	}
+	for _, f := range diff.ToUpdate {
+		ops = append(ops, AppliedOperation{
+			Type:        "update",
+			Section:     "file",
+			Resource:    f.Filename,
+			Description: "Updated general file " + f.Filename,
+		})
+	}
+	for _, path := range diff.ToDelete {
+		ops = append(ops, AppliedOperation{
+			Type:        "delete",
+			Section:     "file",
+			Resource:    path,
+			Description: "Deleted general file " + path,
+		})
+	}
+	return ops
+}
+
+// sslDiffToOperations converts SSL certificate diffs to AppliedOperations.
+func sslDiffToOperations(diff *auxiliaryfiles.SSLCertificateDiff) []AppliedOperation {
+	if diff == nil {
+		return nil
+	}
+	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
+	for _, c := range diff.ToCreate {
+		ops = append(ops, AppliedOperation{
+			Type:        "create",
+			Section:     "ssl-cert",
+			Resource:    c.Path,
+			Description: "Created SSL certificate " + c.Path,
+		})
+	}
+	for _, c := range diff.ToUpdate {
+		ops = append(ops, AppliedOperation{
+			Type:        "update",
+			Section:     "ssl-cert",
+			Resource:    c.Path,
+			Description: "Updated SSL certificate " + c.Path,
+		})
+	}
+	for _, path := range diff.ToDelete {
+		ops = append(ops, AppliedOperation{
+			Type:        "delete",
+			Section:     "ssl-cert",
+			Resource:    path,
+			Description: "Deleted SSL certificate " + path,
+		})
+	}
+	return ops
+}
+
+// mapDiffToOperations converts map file diffs to AppliedOperations.
+func mapDiffToOperations(diff *auxiliaryfiles.MapFileDiff) []AppliedOperation {
+	if diff == nil {
+		return nil
+	}
+	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
+	for _, m := range diff.ToCreate {
+		ops = append(ops, AppliedOperation{
+			Type:        "create",
+			Section:     "map",
+			Resource:    m.Path,
+			Description: "Created map file " + m.Path,
+		})
+	}
+	for _, m := range diff.ToUpdate {
+		ops = append(ops, AppliedOperation{
+			Type:        "update",
+			Section:     "map",
+			Resource:    m.Path,
+			Description: "Updated map file " + m.Path,
+		})
+	}
+	for _, path := range diff.ToDelete {
+		ops = append(ops, AppliedOperation{
+			Type:        "delete",
+			Section:     "map",
+			Resource:    path,
+			Description: "Deleted map file " + path,
+		})
+	}
+	return ops
+}
+
+// crtlistDiffToOperations converts CRT-list file diffs to AppliedOperations.
+func crtlistDiffToOperations(diff *auxiliaryfiles.CRTListDiff) []AppliedOperation {
+	if diff == nil {
+		return nil
+	}
+	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
+	for _, c := range diff.ToCreate {
+		ops = append(ops, AppliedOperation{
+			Type:        "create",
+			Section:     "crt-list",
+			Resource:    c.Path,
+			Description: "Created crt-list file " + c.Path,
+		})
+	}
+	for _, c := range diff.ToUpdate {
+		ops = append(ops, AppliedOperation{
+			Type:        "update",
+			Section:     "crt-list",
+			Resource:    c.Path,
+			Description: "Updated crt-list file " + c.Path,
+		})
+	}
+	for _, path := range diff.ToDelete {
+		ops = append(ops, AppliedOperation{
+			Type:        "delete",
+			Section:     "crt-list",
+			Resource:    path,
+			Description: "Deleted crt-list file " + path,
+		})
+	}
+	return ops
 }
 
 // areAllOperationsRuntimeEligible checks if all operations can be executed via Runtime API without reload.

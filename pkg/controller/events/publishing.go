@@ -125,6 +125,7 @@ type SyncMetadata struct {
 
 // OperationCounts provides statistics about sync operations.
 type OperationCounts struct {
+	// Config operations
 	TotalAPIOperations int
 	BackendsAdded      int
 	BackendsRemoved    int
@@ -135,6 +136,17 @@ type OperationCounts struct {
 	FrontendsAdded     int
 	FrontendsRemoved   int
 	FrontendsModified  int
+
+	// Auxiliary file operations
+	MapsAdded            int
+	MapsRemoved          int
+	MapsModified         int
+	SSLCertsAdded        int
+	SSLCertsRemoved      int
+	SSLCertsModified     int
+	GeneralFilesAdded    int
+	GeneralFilesRemoved  int
+	GeneralFilesModified int
 }
 
 // NewConfigAppliedToPodEvent creates a new ConfigAppliedToPodEvent.

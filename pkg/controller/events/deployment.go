@@ -132,6 +132,12 @@ type DeploymentCompletedEvent struct {
 	TotalAPIOperations int   // Sum of API operations across all instances
 	timestamp          time.Time
 
+	// OperationBreakdown provides a generic breakdown of operations performed.
+	// Keys are formatted as "section_type" (e.g., "backend_create", "server_update", "global_update").
+	// Values are the count of operations of that type.
+	// Aggregated across all successfully deployed instances.
+	OperationBreakdown map[string]int
+
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
 }
@@ -145,6 +151,11 @@ type DeploymentResult struct {
 	DurationMs         int64 // Total deployment duration in milliseconds
 	ReloadsTriggered   int   // Count of instances that triggered HAProxy reload
 	TotalAPIOperations int   // Sum of API operations across all instances
+
+	// OperationBreakdown provides a generic breakdown of operations performed.
+	// Keys are formatted as "section_type" (e.g., "backend_create", "server_update", "global_update").
+	// Values are the count of operations of that type.
+	OperationBreakdown map[string]int
 }
 
 // NewDeploymentCompletedEvent creates a new DeploymentCompletedEvent.
@@ -158,8 +169,18 @@ type DeploymentResult struct {
 //	    DurationMs:         totalDurationMs,
 //	    ReloadsTriggered:   reloads,
 //	    TotalAPIOperations: ops,
+//	    OperationBreakdown: breakdown,
 //	}, events.PropagateCorrelation(startedEvent))
 func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOption) *DeploymentCompletedEvent {
+	// Defensive copy of the map
+	var breakdownCopy map[string]int
+	if result.OperationBreakdown != nil {
+		breakdownCopy = make(map[string]int, len(result.OperationBreakdown))
+		for k, v := range result.OperationBreakdown {
+			breakdownCopy[k] = v
+		}
+	}
+
 	return &DeploymentCompletedEvent{
 		Total:              result.Total,
 		Succeeded:          result.Succeeded,
@@ -167,6 +188,7 @@ func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOpt
 		DurationMs:         result.DurationMs,
 		ReloadsTriggered:   result.ReloadsTriggered,
 		TotalAPIOperations: result.TotalAPIOperations,
+		OperationBreakdown: breakdownCopy,
 		timestamp:          time.Now(),
 		Correlation:        NewCorrelation(opts...),
 	}

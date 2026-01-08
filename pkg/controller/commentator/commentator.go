@@ -547,16 +547,25 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		// Compute consolidated reconciliation summary using dedicated method
 		summary := ec.computeReconciliationSummary(e)
 
-		return "Reconciliation",
-			append(attrs,
-				"trigger", summary.Trigger,
-				"instances", summary.Instances,
-				"reloads", summary.Reloads,
-				"ops", summary.Operations,
-				"render_ms", summary.RenderMs,
-				"validate_ms", summary.ValidateMs,
-				"deploy_ms", summary.DeployMs,
-				"total_ms", summary.TotalMs)
+		attrs = append(attrs,
+			"trigger", summary.Trigger,
+			"instances", summary.Instances,
+			"reloads", summary.Reloads,
+			"ops", summary.Operations,
+			"render_ms", summary.RenderMs,
+			"validate_ms", summary.ValidateMs,
+			"deploy_ms", summary.DeployMs,
+			"total_ms", summary.TotalMs)
+
+		// Add non-zero operation breakdown entries
+		// Keys are formatted as "section_type" (e.g., "backend_create", "server_update")
+		for key, count := range e.OperationBreakdown {
+			if count > 0 {
+				attrs = append(attrs, key, count)
+			}
+		}
+
+		return "Reconciliation", attrs
 
 	// Storage Events
 	case *events.StorageSyncStartedEvent:

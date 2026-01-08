@@ -149,6 +149,17 @@ type DiffDetails struct {
 	HTTPRulesAdded    map[string]int
 	HTTPRulesModified map[string]int
 	HTTPRulesDeleted  map[string]int
+
+	// Auxiliary file changes
+	MapsAdded            int
+	MapsModified         int
+	MapsDeleted          int
+	SSLCertsAdded        int
+	SSLCertsModified     int
+	SSLCertsDeleted      int
+	GeneralFilesAdded    int
+	GeneralFilesModified int
+	GeneralFilesDeleted  int
 }
 
 // NewDiffDetails creates an empty DiffDetails with initialized maps.
@@ -258,6 +269,11 @@ func (d *DiffDetails) String() string {
 	// Int map changes (HTTP rules)
 	parts = d.appendIntMapCountChanges(parts, d.HTTPRulesAdded, d.HTTPRulesModified, d.HTTPRulesDeleted, "HTTP rules")
 
+	// Auxiliary file changes
+	parts = d.appendSimpleCountChanges(parts, d.MapsAdded, d.MapsModified, d.MapsDeleted, "Maps")
+	parts = d.appendSimpleCountChanges(parts, d.SSLCertsAdded, d.SSLCertsModified, d.SSLCertsDeleted, "SSL certs")
+	parts = d.appendSimpleCountChanges(parts, d.GeneralFilesAdded, d.GeneralFilesModified, d.GeneralFilesDeleted, "General files")
+
 	return strings.Join(parts, "\n")
 }
 
@@ -325,6 +341,20 @@ func (d *DiffDetails) appendIntMapCountChanges(parts []string, added, modified, 
 	}
 	if totalDeleted > 0 {
 		parts = append(parts, fmt.Sprintf("- %s deleted: %d", resourceType, totalDeleted))
+	}
+	return parts
+}
+
+// appendSimpleCountChanges appends formatted counts for simple integer counters.
+func (d *DiffDetails) appendSimpleCountChanges(parts []string, added, modified, deleted int, resourceType string) []string {
+	if added > 0 {
+		parts = append(parts, fmt.Sprintf("- %s added: %d", resourceType, added))
+	}
+	if modified > 0 {
+		parts = append(parts, fmt.Sprintf("- %s modified: %d", resourceType, modified))
+	}
+	if deleted > 0 {
+		parts = append(parts, fmt.Sprintf("- %s deleted: %d", resourceType, deleted))
 	}
 	return parts
 }
