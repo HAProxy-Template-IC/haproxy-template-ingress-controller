@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +35,12 @@ const (
 	// Events exceeding this limit are dropped with a warning.
 	MaxPreStartBufferSize = 1000
 )
+
+// DropCallback is called when an event is dropped due to a full subscriber buffer.
+// The eventType parameter contains the event's type string.
+// This callback pattern keeps the EventBus domain-agnostic while allowing
+// the controller layer to handle drops with appropriate logging and metrics.
+type DropCallback func(eventType string)
 
 // Event is the base interface for all events in the system.
 // Events are used for asynchronous pub/sub communication between components.
@@ -62,6 +69,11 @@ type Event interface {
 // Typed Subscriptions:
 // In addition to universal subscriptions (Subscribe), the EventBus supports typed
 // subscriptions (SubscribeTypes) that filter events at the bus level for efficiency.
+//
+// Event Drop Monitoring:
+// When subscriber buffers are full, events are dropped to prevent blocking.
+// Use SetDropCallback() to receive notifications when drops occur, and
+// DroppedEvents() to query the total drop count.
 type EventBus struct {
 	subscribers      []chan Event
 	typedSubscribers []*typedSubscription
@@ -71,6 +83,10 @@ type EventBus struct {
 	started        bool
 	startMu        sync.Mutex
 	preStartBuffer []Event
+
+	// Event drop monitoring
+	droppedEvents uint64       // atomic counter for dropped events
+	onDrop        DropCallback // optional callback for drop notifications
 }
 
 // NewEventBus creates a new EventBus.
@@ -132,6 +148,10 @@ func (b *EventBus) Publish(event Event) int {
 		default:
 			// Channel full, subscriber is lagging - drop event
 			// This prevents slow consumers from blocking the system
+			atomic.AddUint64(&b.droppedEvents, 1)
+			if b.onDrop != nil {
+				b.onDrop(event.EventType())
+			}
 		}
 	}
 
@@ -143,6 +163,10 @@ func (b *EventBus) Publish(event Event) int {
 				sent++
 			default:
 				// Channel full, subscriber is lagging - drop event
+				atomic.AddUint64(&b.droppedEvents, 1)
+				if b.onDrop != nil {
+					b.onDrop(event.EventType())
+				}
 			}
 		}
 	}
@@ -383,6 +407,10 @@ func (b *EventBus) replayEventToSubscribers(event Event, subscribers []chan Even
 			// Event sent
 		default:
 			// Channel full - drop event (same behavior as normal Publish)
+			atomic.AddUint64(&b.droppedEvents, 1)
+			if b.onDrop != nil {
+				b.onDrop(event.EventType())
+			}
 		}
 	}
 
@@ -394,6 +422,10 @@ func (b *EventBus) replayEventToSubscribers(event Event, subscribers []chan Even
 				// Event sent
 			default:
 				// Channel full - drop event
+				atomic.AddUint64(&b.droppedEvents, 1)
+				if b.onDrop != nil {
+					b.onDrop(event.EventType())
+				}
 			}
 		}
 	}
@@ -421,4 +453,33 @@ func (b *EventBus) replayEventToSubscribers(event Event, subscribers []chan Even
 //	})
 func (b *EventBus) Request(ctx context.Context, request Request, opts RequestOptions) (*RequestResult, error) {
 	return executeRequest(ctx, b, request, opts)
+}
+
+// SetDropCallback sets a callback to be invoked when events are dropped due to
+// full subscriber buffers. The callback receives the event type string.
+//
+// This callback pattern keeps the EventBus domain-agnostic while allowing
+// the controller layer to handle drops with appropriate logging and metrics.
+//
+// Set to nil to disable drop notifications.
+//
+// Example:
+//
+//	bus.SetDropCallback(func(eventType string) {
+//	    slog.Warn("Event dropped", "event_type", eventType)
+//	    metrics.EventsDropped.Inc()
+//	})
+func (b *EventBus) SetDropCallback(cb DropCallback) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onDrop = cb
+}
+
+// DroppedEvents returns the total number of events that have been dropped
+// due to full subscriber buffers since the EventBus was created.
+//
+// This counter is useful for monitoring event bus health and identifying
+// slow subscribers that may be causing event loss.
+func (b *EventBus) DroppedEvents() uint64 {
+	return atomic.LoadUint64(&b.droppedEvents)
 }

@@ -52,6 +52,10 @@ type Metrics struct {
 	// Event metrics
 	EventSubscribers prometheus.Gauge
 	EventsPublished  prometheus.Counter
+	EventsDropped    prometheus.Counter
+
+	// Queue wait metrics - time events spend waiting in channels before processing
+	ReconciliationQueueWait *prometheus.HistogramVec
 
 	// Webhook metrics
 	WebhookRequestsTotal   *prometheus.CounterVec
@@ -172,6 +176,20 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_events_published_total",
 			"Total number of events published",
+		),
+		EventsDropped: pkgmetrics.NewCounter(
+			registry,
+			"haptic_events_dropped_total",
+			"Total number of events dropped due to full subscriber buffers",
+		),
+
+		// Queue wait metrics
+		ReconciliationQueueWait: pkgmetrics.NewHistogramVec(
+			registry,
+			"haptic_reconciliation_queue_wait_seconds",
+			"Time events spent waiting in queue before processing",
+			[]string{"phase"},
+			pkgmetrics.DurationBuckets(),
 		),
 
 		// Webhook metrics
@@ -354,4 +372,19 @@ func (m *Metrics) RecordValidationTests(total, passed, failed int, durationSecon
 	m.ValidationTestsPassTotal.Add(float64(passed))
 	m.ValidationTestsFailTotal.Add(float64(failed))
 	m.ValidationTestDuration.Observe(durationSeconds)
+}
+
+// RecordEventDrop records an event drop due to full subscriber buffer.
+// Call this from the drop callback registered with EventBus.SetDropCallback().
+func (m *Metrics) RecordEventDrop() {
+	m.EventsDropped.Inc()
+}
+
+// RecordQueueWait records queue wait time for a reconciliation phase.
+//
+// Parameters:
+//   - phase: The phase name (e.g., "trigger_to_render", "render_to_validate", "validate_to_deploy")
+//   - seconds: Time spent waiting in queue (use time.Duration.Seconds())
+func (m *Metrics) RecordQueueWait(phase string, seconds float64) {
+	m.ReconciliationQueueWait.WithLabelValues(phase).Observe(seconds)
 }

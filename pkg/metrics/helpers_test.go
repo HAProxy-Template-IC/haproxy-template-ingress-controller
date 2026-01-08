@@ -77,6 +77,39 @@ func TestNewHistogramWithBuckets(t *testing.T) {
 	assert.NotNil(t, histogram)
 }
 
+func TestNewHistogramVec(t *testing.T) {
+	registry := prometheus.NewRegistry()
+
+	histVec := NewHistogramVec(
+		registry,
+		"test_queue_wait_seconds",
+		"Queue wait time by phase",
+		[]string{"phase"},
+		DurationBuckets(),
+	)
+	assert.NotNil(t, histVec)
+
+	// Record observations for different phases
+	histVec.WithLabelValues("trigger_to_render").Observe(0.05)
+	histVec.WithLabelValues("render_to_validate").Observe(0.1)
+	histVec.WithLabelValues("validate_to_deploy").Observe(0.25)
+
+	// Verify metrics were registered correctly
+	metricFamilies, err := registry.Gather()
+	require.NoError(t, err)
+
+	// Find our metric
+	found := false
+	for _, mf := range metricFamilies {
+		if mf.GetName() == "test_queue_wait_seconds" {
+			found = true
+			// Should have 3 label combinations
+			assert.Len(t, mf.GetMetric(), 3)
+		}
+	}
+	assert.True(t, found, "histogram vec metric not found in registry")
+}
+
 func TestNewGauge(t *testing.T) {
 	registry := prometheus.NewRegistry()
 
