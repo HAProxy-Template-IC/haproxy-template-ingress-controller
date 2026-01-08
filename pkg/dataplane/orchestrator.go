@@ -289,7 +289,7 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	}
 
 	// Phase 3: Delete obsolete files AFTER successful config sync
-	o.deleteObsoleteFilesPostConfig(ctx, fileDiff, sslDiff, mapDiff, crtlistDiff)
+	o.deleteObsoleteFilesPostConfig(ctx, fileDiff, sslDiff, mapDiff)
 
 	// Build result
 	auxDiffs := &auxiliaryFileDiffs{
@@ -796,7 +796,7 @@ func (o *orchestrator) areAllOperationsRuntimeEligible(operations []comparator.O
 
 // deleteObsoleteFilesPostConfig deletes obsolete auxiliary files AFTER successful config sync.
 // Errors are logged as warnings but do not fail the sync since config is already applied.
-func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDiff *auxiliaryfiles.FileDiff, sslDiff *auxiliaryfiles.SSLCertificateDiff, mapDiff *auxiliaryfiles.MapFileDiff, crtlistDiff *auxiliaryfiles.CRTListDiff) {
+func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDiff *auxiliaryfiles.FileDiff, sslDiff *auxiliaryfiles.SSLCertificateDiff, mapDiff *auxiliaryfiles.MapFileDiff) {
 	// Delete general files
 	if fileDiff != nil && len(fileDiff.ToDelete) > 0 {
 		o.logger.Info("Deleting obsolete general files", "count", len(fileDiff.ToDelete))
@@ -848,22 +848,11 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 		}
 	}
 
-	// Delete crt-list files
-	if crtlistDiff != nil && len(crtlistDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting obsolete crt-list files", "count", len(crtlistDiff.ToDelete))
-
-		postConfigCRTList := &auxiliaryfiles.CRTListDiff{
-			ToCreate: nil,
-			ToUpdate: nil,
-			ToDelete: crtlistDiff.ToDelete,
-		}
-
-		if _, err := auxiliaryfiles.SyncCRTLists(ctx, o.client, postConfigCRTList); err != nil {
-			o.logger.Warn("Failed to delete obsolete crt-list files", "error", err, "crtlists", crtlistDiff.ToDelete)
-		} else {
-			o.logger.Info("Obsolete crt-list files deleted successfully")
-		}
-	}
+	// Note: CRT-list deletion is handled by the general files deletion above.
+	// Since CRT-lists are stored as general files (to avoid reload on create),
+	// they are merged into the general files comparison and deleted together.
+	// The crtlistDiff.ToDelete is cleared in compareAuxiliaryFiles() to prevent
+	// conflicting delete operations between general files and CRT-lists.
 }
 
 // parseAndCompareConfigs parses both current and desired configurations and compares them.
@@ -927,10 +916,20 @@ func (o *orchestrator) compareAuxiliaryFiles(
 
 	g, gCtx := errgroup.WithContext(ctx)
 
-	// Compare general files
+	// Merge CRT-lists into general files for unified comparison.
+	// Since CRT-lists are stored as general files (to avoid reload on create),
+	// we must compare them together to prevent conflicting delete operations.
+	// Without this merge, each comparison would mark the other's files for deletion.
+	mergedGeneralFiles := auxFiles.GeneralFiles
+	if len(auxFiles.CRTListFiles) > 0 {
+		crtListsAsGeneral := auxiliaryfiles.CRTListsToGeneralFiles(auxFiles.CRTListFiles)
+		mergedGeneralFiles = append(mergedGeneralFiles, crtListsAsGeneral...)
+	}
+
+	// Compare general files (now includes CRT-lists for unified deletion handling)
 	g.Go(func() error {
 		var err error
-		fileDiff, err = o.compareGeneralFiles(gCtx, auxFiles.GeneralFiles)
+		fileDiff, err = o.compareGeneralFiles(gCtx, mergedGeneralFiles)
 		return err
 	})
 
@@ -948,7 +947,7 @@ func (o *orchestrator) compareAuxiliaryFiles(
 		return err
 	})
 
-	// Compare crt-list files
+	// Compare crt-list files (for create/update operations and metrics)
 	g.Go(func() error {
 		var err error
 		crtlistDiff, err = o.compareCRTListFiles(gCtx, auxFiles.CRTListFiles)
@@ -958,6 +957,12 @@ func (o *orchestrator) compareAuxiliaryFiles(
 	// Wait for all auxiliary file comparisons to complete
 	if err := g.Wait(); err != nil {
 		return nil, nil, nil, nil, err
+	}
+
+	// Clear CRT-list ToDelete - deletion is handled by unified general files comparison.
+	// The CRT-list comparison still provides create/update operations for sync and metrics.
+	if crtlistDiff != nil {
+		crtlistDiff.ToDelete = nil
 	}
 
 	return fileDiff, sslDiff, mapDiff, crtlistDiff, nil

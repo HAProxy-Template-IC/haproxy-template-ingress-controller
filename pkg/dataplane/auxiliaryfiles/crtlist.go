@@ -31,6 +31,13 @@ func convertCRTListsToGeneralFiles(crtLists []CRTListFile) []GeneralFile {
 	return generalFiles
 }
 
+// CRTListsToGeneralFiles converts CRT-list files to general files format.
+// This is used by the orchestrator to merge CRT-lists into the unified
+// general files comparison, since both are stored in general file storage.
+func CRTListsToGeneralFiles(crtLists []CRTListFile) []GeneralFile {
+	return convertCRTListsToGeneralFiles(crtLists)
+}
+
 // convertCRTListDiffToFileDiff converts a CRTListDiff to a FileDiff for general file storage.
 // Note: ToDelete paths are already sanitized filenames returned by the comparison,
 // so they don't need additional sanitization here.
