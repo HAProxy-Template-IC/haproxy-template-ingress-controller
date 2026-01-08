@@ -450,6 +450,12 @@ func setupComponents(
 	domainMetrics := metrics.NewMetrics(registry)
 	metricsComponent := metrics.New(domainMetrics, bus)
 
+	// Register event drop callback for observability
+	bus.SetDropCallback(func(eventType string) {
+		logger.Warn("event dropped due to full subscriber buffer", "event_type", eventType)
+		domainMetrics.RecordEventDrop()
+	})
+
 	// Create ResourceStoreManager for webhook validation
 	storeManager := resourcestore.NewManager()
 

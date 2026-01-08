@@ -44,6 +44,13 @@ type ReconciliationSummary struct {
 	// This may be less than the sum of individual phase durations if there are gaps.
 	TotalMs int64
 
+	// Queue wait times between phases (derived from event timestamps).
+	// These represent the time events spent waiting in channels before processing.
+	TriggerToRenderQueueMs  int64
+	RenderToValidateQueueMs int64
+	ValidateToDeployQueueMs int64
+	TotalQueueMs            int64
+
 	// Instances is the "succeeded/total" string for deployment.
 	Instances string
 
@@ -148,6 +155,13 @@ func (ec *EventCommentator) FindRecent(n int) []busevents.Event {
 //
 // This method extracts SRP-violating logic from generateInsight into a dedicated
 // function focused solely on event correlation and metric aggregation.
+//
+// Queue wait calculation:
+// Each event has a timestamp (when it was created, after processing completed) and
+// DurationMs (how long processing took). Therefore:
+//
+//	processing_start = event.timestamp - DurationMs
+//	queue_wait = processing_start - previous_event.timestamp
 func (ec *EventCommentator) computeReconciliationSummary(
 	deploymentEvent *events.DeploymentCompletedEvent,
 ) ReconciliationSummary {
@@ -163,10 +177,12 @@ func (ec *EventCommentator) computeReconciliationSummary(
 		return summary
 	}
 
-	// Find correlated events to extract phase timings
+	// Find correlated events to extract phase timings and timestamps
 	correlatedEvents := ec.ringBuffer.FindByCorrelationID(correlationID, 0)
 
 	var triggerTimestamp time.Time
+	var renderTimestamp time.Time
+	var validateTimestamp time.Time
 
 	for _, evt := range correlatedEvents {
 		switch te := evt.(type) {
@@ -175,8 +191,10 @@ func (ec *EventCommentator) computeReconciliationSummary(
 			triggerTimestamp = te.Timestamp()
 		case *events.TemplateRenderedEvent:
 			summary.RenderMs = te.DurationMs
+			renderTimestamp = te.Timestamp()
 		case *events.ValidationCompletedEvent:
 			summary.ValidateMs = te.DurationMs
+			validateTimestamp = te.Timestamp()
 		}
 	}
 
@@ -188,6 +206,40 @@ func (ec *EventCommentator) computeReconciliationSummary(
 		// Fallback to sum of individual phases if trigger event not found
 		summary.TotalMs = summary.RenderMs + summary.ValidateMs + summary.DeployMs
 	}
+
+	// Calculate queue wait times between phases
+	// Queue wait = (event.timestamp - event.DurationMs) - previous_event.timestamp
+	// This represents the time the event spent waiting in the channel before processing started
+
+	// Trigger → Render queue wait
+	if !triggerTimestamp.IsZero() && !renderTimestamp.IsZero() && summary.RenderMs > 0 {
+		renderStartTime := renderTimestamp.Add(-time.Duration(summary.RenderMs) * time.Millisecond)
+		summary.TriggerToRenderQueueMs = renderStartTime.Sub(triggerTimestamp).Milliseconds()
+		if summary.TriggerToRenderQueueMs < 0 {
+			summary.TriggerToRenderQueueMs = 0
+		}
+	}
+
+	// Render → Validate queue wait
+	if !renderTimestamp.IsZero() && !validateTimestamp.IsZero() && summary.ValidateMs > 0 {
+		validateStartTime := validateTimestamp.Add(-time.Duration(summary.ValidateMs) * time.Millisecond)
+		summary.RenderToValidateQueueMs = validateStartTime.Sub(renderTimestamp).Milliseconds()
+		if summary.RenderToValidateQueueMs < 0 {
+			summary.RenderToValidateQueueMs = 0
+		}
+	}
+
+	// Validate → Deploy queue wait
+	if !validateTimestamp.IsZero() && summary.DeployMs > 0 {
+		deployStartTime := deploymentEvent.Timestamp().Add(-time.Duration(summary.DeployMs) * time.Millisecond)
+		summary.ValidateToDeployQueueMs = deployStartTime.Sub(validateTimestamp).Milliseconds()
+		if summary.ValidateToDeployQueueMs < 0 {
+			summary.ValidateToDeployQueueMs = 0
+		}
+	}
+
+	// Total queue overhead
+	summary.TotalQueueMs = summary.TriggerToRenderQueueMs + summary.RenderToValidateQueueMs + summary.ValidateToDeployQueueMs
 
 	return summary
 }
@@ -563,7 +615,12 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 			"render_ms", summary.RenderMs,
 			"validate_ms", summary.ValidateMs,
 			"deploy_ms", summary.DeployMs,
-			"total_ms", summary.TotalMs)
+			"total_ms", summary.TotalMs,
+			// Queue wait metrics - time events spent waiting in channels before processing
+			"queue_trigger_to_render_ms", summary.TriggerToRenderQueueMs,
+			"queue_render_to_validate_ms", summary.RenderToValidateQueueMs,
+			"queue_validate_to_deploy_ms", summary.ValidateToDeployQueueMs,
+			"queue_total_ms", summary.TotalQueueMs)
 
 		// Add non-zero operation breakdown entries
 		// Keys are formatted as "section_type" (e.g., "backend_create", "server_update")

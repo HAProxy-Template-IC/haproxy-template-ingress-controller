@@ -192,6 +192,42 @@ func NewCounterVec(registry prometheus.Registerer, name, help string, labels []s
 	)
 }
 
+// NewHistogramVec creates and registers a histogram vector with labels and custom buckets.
+//
+// A histogram vector is a collection of histograms with the same name but different
+// label dimensions. Use histogram vectors when you need to measure distributions
+// across different categories.
+//
+// Parameters:
+//   - registry: The Prometheus registry to register with
+//   - name: Metric name
+//   - help: Human-readable description
+//   - labels: Label names (e.g., []string{"method", "endpoint"})
+//   - buckets: Bucket boundaries (e.g., DurationBuckets())
+//
+// Example:
+//
+//	registry := prometheus.NewRegistry()
+//	latencyByPhase := metrics.NewHistogramVec(
+//	    registry,
+//	    "operation_duration_seconds",
+//	    "Operation duration by phase",
+//	    []string{"phase"},
+//	    metrics.DurationBuckets(),
+//	)
+//	latencyByPhase.WithLabelValues("init").Observe(0.5)
+//	latencyByPhase.WithLabelValues("processing").Observe(1.2)
+func NewHistogramVec(registry prometheus.Registerer, name, help string, labels []string, buckets []float64) *prometheus.HistogramVec {
+	return promauto.With(registry).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    name,
+			Help:    help,
+			Buckets: buckets,
+		},
+		labels,
+	)
+}
+
 // DurationBuckets returns histogram buckets suitable for duration metrics in seconds.
 //
 // The buckets cover a range from 10ms to 10s, which is appropriate for most
