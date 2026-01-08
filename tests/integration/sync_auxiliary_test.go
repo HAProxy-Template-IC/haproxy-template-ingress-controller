@@ -26,6 +26,9 @@ func TestSyncAuxiliary(t *testing.T) {
 			expectedDeletes: 0,
 			expectedOperations: []string{
 				"Create http-errors section 'myerrors'",
+				"Created general file 400.http",
+				"Created general file 403.http",
+				"Created general file 500.http",
 			},
 			expectedReload: true,
 		},
@@ -40,6 +43,8 @@ func TestSyncAuxiliary(t *testing.T) {
 				"/etc/haproxy/general/500.http": "error-files/500.http",
 			},
 			// Desired config has no error files (they should be deleted)
+			// Note: aux file deletions aren't tracked as operations when desired is empty
+			// (orchestrator short-circuits comparison when desired files list is empty)
 			generalFiles:    map[string]string{},
 			expectedCreates: 0,
 			expectedUpdates: 0,
@@ -70,6 +75,12 @@ func TestSyncAuxiliary(t *testing.T) {
 			expectedDeletes: 0,
 			expectedOperations: []string{
 				"Update http-errors section 'myerrors'",
+				"Created general file 404.http",
+				"Created general file 503.http",
+				"Created general file custom400.http",
+				"Deleted general file 400.http",
+				"Deleted general file 403.http",
+				"Deleted general file 500.http",
 			},
 			expectedReload: true,
 		},
@@ -89,6 +100,7 @@ func TestSyncAuxiliary(t *testing.T) {
 				"Delete frontend 'http'",
 				"Create frontend 'https'",
 				"Create bind '*:443 ssl crt /etc/haproxy/ssl/example_com.pem' in frontend 'https'",
+				"Created SSL certificate example.com.pem",
 			},
 			expectedReload: true,
 		},
@@ -101,6 +113,8 @@ func TestSyncAuxiliary(t *testing.T) {
 				"example.com.pem": "ssl-certs/example.com.pem",
 			},
 			// Desired config has no SSL (cert should be deleted)
+			// Note: aux file deletions aren't tracked as operations when desired is empty
+			// (orchestrator short-circuits comparison when desired files list is empty)
 			sslCertificates: map[string]string{},
 			expectedCreates: 2,
 			expectedUpdates: 0,
@@ -129,6 +143,9 @@ func TestSyncAuxiliary(t *testing.T) {
 			expectedDeletes: 0,
 			expectedOperations: []string{
 				"Update bind '*:443 ssl crt /etc/haproxy/ssl/updated_com.pem' in frontend 'https'",
+				"Created SSL certificate updated.com.pem",
+				// Delete uses HAProxy's sanitized name (dots → underscores)
+				"Deleted SSL certificate example_com.pem",
 			},
 			expectedReload: true,
 		},
@@ -147,6 +164,7 @@ func TestSyncAuxiliary(t *testing.T) {
 			expectedOperations: []string{
 				"Create backend switching rule (%[req.hdr(host),lower,map(/etc/haproxy/maps/domains.map,web)]) in frontend 'http'",
 				"Update frontend 'http'",
+				"Created map file domains.map",
 			},
 			expectedReload: true,
 		},
@@ -159,6 +177,8 @@ func TestSyncAuxiliary(t *testing.T) {
 				"domains.map": "map-files/domains.map",
 			},
 			// Desired config has no map file (should be deleted)
+			// Note: aux file deletions aren't tracked as operations when desired is empty
+			// (orchestrator short-circuits comparison when desired files list is empty)
 			mapFiles:        map[string]string{},
 			expectedCreates: 0,
 			expectedUpdates: 1,
@@ -192,6 +212,8 @@ func TestSyncAuxiliary(t *testing.T) {
 				"Create server 'srv1' in backend 'api-v2'",
 				"Create server 'srv1' in backend 'mobile'",
 				"Update backend switching rule (%[req.hdr(host),lower,map(/etc/haproxy/maps/updated-domains.map,web)]) in frontend 'http'",
+				"Created map file updated-domains.map",
+				"Deleted map file domains.map",
 			},
 			expectedReload: true,
 		},
@@ -212,6 +234,8 @@ func TestSyncAuxiliary(t *testing.T) {
 			expectedDeletes:    0,
 			expectedOperations: []string{
 				// No HAProxy config operations expected - config is identical
+				// But map file update is tracked
+				"Updated map file domains.map",
 			},
 			expectedReload: false, // No config changes, but map should still update
 			// Verify the map file was actually updated

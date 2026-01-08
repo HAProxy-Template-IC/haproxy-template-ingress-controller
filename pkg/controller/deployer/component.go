@@ -260,97 +260,18 @@ func (c *Component) deployToEndpoints(
 
 	// Deploy to all endpoints in parallel
 	var wg sync.WaitGroup
-	var successCount int32
-	var failureCount int32
-	var reloadsTriggered int32
-	var totalOperations int32
+
+	// deploymentState holds aggregated metrics protected for concurrent access
+	state := &deploymentState{
+		operationBreakdown: make(map[string]int),
+	}
 
 	for i := range endpoints {
 		wg.Add(1)
 		go func(ep *dataplane.Endpoint) {
 			defer wg.Done()
-
-			instanceStart := time.Now()
-			syncResult, err := c.deployToSingleEndpoint(ctx, config, auxFiles, ep)
-			durationMs := time.Since(instanceStart).Milliseconds()
-
-			// Determine if this is a drift check based on deployment reason
-			isDriftCheck := reason == "drift_prevention"
-
-			if err != nil {
-				c.logger.Error("deployment failed for endpoint",
-					"endpoint", ep.URL,
-					"pod", ep.PodName,
-					"error", err,
-					"duration_ms", durationMs,
-					"correlation_id", correlationID)
-
-				// Publish InstanceDeploymentFailedEvent with correlation
-				c.eventBus.Publish(events.NewInstanceDeploymentFailedEvent(
-					ep,
-					err.Error(),
-					true, // retryable
-					events.WithCorrelation(correlationID, correlationID),
-				))
-
-				// Publish ConfigAppliedToPodEvent with error info (for status tracking)
-				if runtimeConfigName != "" && runtimeConfigNamespace != "" {
-					syncMetadata := &events.SyncMetadata{
-						Error: err.Error(),
-					}
-					c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
-						runtimeConfigName,
-						runtimeConfigNamespace,
-						ep.PodName,
-						ep.PodNamespace,
-						checksum,
-						isDriftCheck,
-						syncMetadata,
-					))
-				}
-
-				atomic.AddInt32(&failureCount, 1)
-			} else {
-				c.logger.Debug("Deployment succeeded for endpoint",
-					"endpoint", ep.URL,
-					"pod", ep.PodName,
-					"duration_ms", durationMs,
-					"reload_triggered", syncResult.ReloadTriggered,
-					"correlation_id", correlationID)
-
-				// Publish InstanceDeployedEvent with correlation
-				c.eventBus.Publish(events.NewInstanceDeployedEvent(
-					ep,
-					durationMs,
-					syncResult.ReloadTriggered,
-					events.WithCorrelation(correlationID, correlationID),
-				))
-
-				// Publish ConfigAppliedToPodEvent (for runtime config status updates)
-				if runtimeConfigName != "" && runtimeConfigNamespace != "" {
-					// Convert dataplane.SyncResult to events.SyncMetadata
-					syncMetadata := c.convertSyncResultToMetadata(syncResult)
-
-					c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
-						runtimeConfigName,
-						runtimeConfigNamespace,
-						ep.PodName,
-						ep.PodNamespace,
-						checksum,
-						isDriftCheck,
-						syncMetadata,
-					))
-				}
-
-				atomic.AddInt32(&successCount, 1)
-
-				// Track reloads and operations for aggregate metrics
-				if syncResult.ReloadTriggered {
-					atomic.AddInt32(&reloadsTriggered, 1)
-				}
-				// Details is always populated per dataplane.SyncResult contract
-				atomic.AddInt32(&totalOperations, safeIntToInt32(syncResult.Details.TotalOperations))
-			}
+			c.processEndpointDeployment(ctx, ep, config, auxFiles, checksum, reason,
+				runtimeConfigName, runtimeConfigNamespace, correlationID, state)
 		}(&endpoints[i])
 	}
 
@@ -361,10 +282,10 @@ func (c *Component) deployToEndpoints(
 
 	c.logger.Debug("Deployment completed",
 		"total_endpoints", len(endpoints),
-		"succeeded", successCount,
-		"failed", failureCount,
-		"reloads_triggered", reloadsTriggered,
-		"total_operations", totalOperations,
+		"succeeded", state.successCount,
+		"failed", state.failureCount,
+		"reloads_triggered", state.reloadsTriggered,
+		"total_operations", state.totalOperations,
 		"duration_ms", totalDurationMs,
 		"correlation_id", correlationID)
 
@@ -372,14 +293,162 @@ func (c *Component) deployToEndpoints(
 	c.eventBus.Publish(events.NewDeploymentCompletedEvent(
 		events.DeploymentResult{
 			Total:              len(endpoints),
-			Succeeded:          int(successCount),
-			Failed:             int(failureCount),
+			Succeeded:          int(state.successCount),
+			Failed:             int(state.failureCount),
 			DurationMs:         totalDurationMs,
-			ReloadsTriggered:   int(reloadsTriggered),
-			TotalAPIOperations: int(totalOperations),
+			ReloadsTriggered:   int(state.reloadsTriggered),
+			TotalAPIOperations: int(state.totalOperations),
+			OperationBreakdown: state.operationBreakdown,
 		},
 		events.WithCorrelation(correlationID, correlationID),
 	))
+}
+
+// deploymentState holds aggregated metrics protected for concurrent access.
+type deploymentState struct {
+	successCount       int32
+	failureCount       int32
+	reloadsTriggered   int32
+	totalOperations    int32
+	breakdownMu        sync.Mutex
+	operationBreakdown map[string]int
+}
+
+// processEndpointDeployment handles deployment to a single endpoint and updates shared state.
+// This method is called from goroutines and must be thread-safe.
+func (c *Component) processEndpointDeployment(
+	ctx context.Context,
+	ep *dataplane.Endpoint,
+	config string,
+	auxFiles *dataplane.AuxiliaryFiles,
+	checksum string,
+	reason string,
+	runtimeConfigName string,
+	runtimeConfigNamespace string,
+	correlationID string,
+	state *deploymentState,
+) {
+	instanceStart := time.Now()
+	syncResult, err := c.deployToSingleEndpoint(ctx, config, auxFiles, ep)
+	durationMs := time.Since(instanceStart).Milliseconds()
+
+	// Determine if this is a drift check based on deployment reason
+	isDriftCheck := reason == "drift_prevention"
+
+	if err != nil {
+		c.handleEndpointFailure(ep, err, durationMs, checksum, isDriftCheck,
+			runtimeConfigName, runtimeConfigNamespace, correlationID, state)
+	} else {
+		c.handleEndpointSuccess(ep, syncResult, durationMs, checksum, isDriftCheck,
+			runtimeConfigName, runtimeConfigNamespace, correlationID, state)
+	}
+}
+
+// handleEndpointFailure processes a failed endpoint deployment.
+func (c *Component) handleEndpointFailure(
+	ep *dataplane.Endpoint,
+	err error,
+	durationMs int64,
+	checksum string,
+	isDriftCheck bool,
+	runtimeConfigName string,
+	runtimeConfigNamespace string,
+	correlationID string,
+	state *deploymentState,
+) {
+	c.logger.Error("deployment failed for endpoint",
+		"endpoint", ep.URL,
+		"pod", ep.PodName,
+		"error", err,
+		"duration_ms", durationMs,
+		"correlation_id", correlationID)
+
+	// Publish InstanceDeploymentFailedEvent with correlation
+	c.eventBus.Publish(events.NewInstanceDeploymentFailedEvent(
+		ep,
+		err.Error(),
+		true, // retryable
+		events.WithCorrelation(correlationID, correlationID),
+	))
+
+	// Publish ConfigAppliedToPodEvent with error info (for status tracking)
+	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
+		syncMetadata := &events.SyncMetadata{
+			Error: err.Error(),
+		}
+		c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
+			runtimeConfigName,
+			runtimeConfigNamespace,
+			ep.PodName,
+			ep.PodNamespace,
+			checksum,
+			isDriftCheck,
+			syncMetadata,
+		))
+	}
+
+	atomic.AddInt32(&state.failureCount, 1)
+}
+
+// handleEndpointSuccess processes a successful endpoint deployment.
+func (c *Component) handleEndpointSuccess(
+	ep *dataplane.Endpoint,
+	syncResult *dataplane.SyncResult,
+	durationMs int64,
+	checksum string,
+	isDriftCheck bool,
+	runtimeConfigName string,
+	runtimeConfigNamespace string,
+	correlationID string,
+	state *deploymentState,
+) {
+	c.logger.Debug("Deployment succeeded for endpoint",
+		"endpoint", ep.URL,
+		"pod", ep.PodName,
+		"duration_ms", durationMs,
+		"reload_triggered", syncResult.ReloadTriggered,
+		"correlation_id", correlationID)
+
+	// Publish InstanceDeployedEvent with correlation
+	c.eventBus.Publish(events.NewInstanceDeployedEvent(
+		ep,
+		durationMs,
+		syncResult.ReloadTriggered,
+		events.WithCorrelation(correlationID, correlationID),
+	))
+
+	// Publish ConfigAppliedToPodEvent (for runtime config status updates)
+	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
+		syncMetadata := c.convertSyncResultToMetadata(syncResult)
+		c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
+			runtimeConfigName,
+			runtimeConfigNamespace,
+			ep.PodName,
+			ep.PodNamespace,
+			checksum,
+			isDriftCheck,
+			syncMetadata,
+		))
+	}
+
+	atomic.AddInt32(&state.successCount, 1)
+
+	// Track reloads and operations for aggregate metrics
+	if syncResult.ReloadTriggered {
+		atomic.AddInt32(&state.reloadsTriggered, 1)
+	}
+
+	// Details is always populated per dataplane.SyncResult contract
+	atomic.AddInt32(&state.totalOperations, safeIntToInt32(syncResult.Details.TotalOperations))
+
+	// Accumulate operation breakdown from AppliedOperations
+	// All operations (config + aux files) are now in AppliedOperations
+	state.breakdownMu.Lock()
+	for _, op := range syncResult.AppliedOperations {
+		key := op.Section + "_" + op.Type
+		state.operationBreakdown[key]++
+	}
+	state.breakdownMu.Unlock()
 }
 
 // deployToSingleEndpoint deploys configuration to a single HAProxy endpoint.
