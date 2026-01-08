@@ -564,9 +564,9 @@ func TestPathResolverWithCapabilities_CRTListFallback(t *testing.T) {
 			expectMapSupported:     true,
 		},
 		{
-			name:                   "HAProxy 3.2 - CRT-list uses SSL directory",
+			name:                   "HAProxy 3.2 - CRT-list uses general directory (to avoid reload)",
 			version:                &dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"},
-			expectSSLDir:           true,
+			expectSSLDir:           false, // CRT-lists always use general directory to avoid reload on create
 			expectCrtListSupported: true,
 			expectMapSupported:     true,
 		},
@@ -682,8 +682,8 @@ frontend test
 	require.NotNil(t, renderedEvent)
 
 	// CRITICAL: Verify that pathResolver.GetPath("crt-list") returns the full path, not just the filename
-	// This is the TDD test that will initially FAIL because CRTListDir is not set
-	assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list /etc/haproxy/ssl/certificate-list.txt",
+	// CRT-list files are stored as general files to avoid reload on create (native CRT-list API triggers reload)
+	assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list /etc/haproxy/files/certificate-list.txt",
 		"pathResolver.GetPath('certificate-list.txt', 'crt-list') should return full path with directory prefix")
 
 	// Ensure it doesn't contain just the filename (which is what happens when CRTListDir is empty)

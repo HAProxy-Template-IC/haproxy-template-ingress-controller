@@ -971,20 +971,23 @@ func TestCRTLists(t *testing.T) {
 
 // TestCRTListsCompareAndSync tests the Compare and Sync workflow for CRT-lists
 // through sequential phases that build upon each other.
+//
+// NOTE: CRT-lists are stored as general files to avoid HAProxy reloads on create.
+// The native CRT-list API triggers a reload but doesn't support skip_reload parameter.
+// General file CREATE returns HTTP 201 without triggering a reload.
 func TestCRTListsCompareAndSync(t *testing.T) {
 	t.Parallel()
 	env := fixenv.New(t)
 
-	// Skip if CRT-list storage is not supported (requires DataPlane API v3.2+)
-	skipIfCRTListNotSupported(t, env)
+	// No version skip needed - general file storage works on all HAProxy versions
 	ctx := context.Background()
 	client := TestDataplaneClient(env)
 
-	// Clean up any existing crt-list files
-	crtlists, err := client.GetAllCRTListFiles(ctx)
+	// Clean up any existing general files that might be CRT-lists from previous runs
+	generalFiles, err := client.GetAllGeneralFiles(ctx)
 	require.NoError(t, err)
-	for _, crtlist := range crtlists {
-		_ = client.DeleteCRTListFile(ctx, crtlist)
+	for _, file := range generalFiles {
+		_ = client.DeleteGeneralFile(ctx, file)
 	}
 
 	// Test: Compare empty state to desired crt-lists (should show all creates)
@@ -1015,12 +1018,13 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err)
 
-		// Verify crt-lists were created
-		crtlists, err := client.GetAllCRTListFiles(ctx)
+		// Verify crt-lists were created (stored as general files)
+		// Note: filenames are sanitized (dots → underscores) by sanitizeStorageName()
+		generalFiles, err := client.GetAllGeneralFiles(ctx)
 		require.NoError(t, err)
-		assert.Len(t, crtlists, 2)
-		assert.Contains(t, crtlists, "example.com.txt")
-		assert.Contains(t, crtlists, "test.com.txt")
+		assert.Len(t, generalFiles, 2)
+		assert.Contains(t, generalFiles, "example_com.txt")
+		assert.Contains(t, generalFiles, "test_com.txt")
 	})
 
 	// Test: Compare with crt-lists already present
@@ -1035,10 +1039,11 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		require.NoError(t, err)
 
 		// Should detect the change via content comparison
+		// Note: paths in diff are sanitized (dots → underscores) to match API storage
 		assert.Len(t, diff.ToCreate, 0, "should have 0 crt-lists to create")
 		assert.Len(t, diff.ToUpdate, 1, "should have 1 crt-list to update")
 		assert.Len(t, diff.ToDelete, 0, "should have 0 crt-lists to delete")
-		assert.Equal(t, "example.com.txt", diff.ToUpdate[0].Path)
+		assert.Equal(t, "example_com.txt", diff.ToUpdate[0].Path)
 	})
 
 	// Test: Sync updates crt-lists
@@ -1054,15 +1059,16 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err)
 
-		// Verify crt-lists still exist
-		crtlists, err := client.GetAllCRTListFiles(ctx)
+		// Verify crt-lists still exist (stored as general files)
+		// Note: filenames are sanitized (dots → underscores) by sanitizeStorageName()
+		generalFiles, err := client.GetAllGeneralFiles(ctx)
 		require.NoError(t, err)
-		assert.Len(t, crtlists, 2)
-		assert.Contains(t, crtlists, "example.com.txt")
-		assert.Contains(t, crtlists, "test.com.txt")
+		assert.Len(t, generalFiles, 2)
+		assert.Contains(t, generalFiles, "example_com.txt")
+		assert.Contains(t, generalFiles, "test_com.txt")
 
-		// Verify content was updated
-		content, err := client.GetCRTListFileContent(ctx, "example.com.txt")
+		// Verify content was updated (use sanitized filename)
+		content, err := client.GetGeneralFileContent(ctx, "example_com.txt")
 		require.NoError(t, err)
 		assert.Equal(t, LoadTestFileContent(t, "crt-lists/crt-list-updated.txt"), content)
 	})
@@ -1077,10 +1083,11 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareCRTLists(ctx, client, desired)
 		require.NoError(t, err)
 
+		// Note: paths in diff are sanitized (dots → underscores) to match API storage
 		assert.Len(t, diff.ToCreate, 0, "should have 0 crt-lists to create")
 		assert.Len(t, diff.ToUpdate, 0, "should have 0 crt-lists to update")
 		assert.Len(t, diff.ToDelete, 1, "should have 1 crt-list to delete")
-		assert.Equal(t, "example.com.txt", diff.ToDelete[0])
+		assert.Equal(t, "example_com.txt", diff.ToDelete[0])
 	})
 
 	// Test: Sync deletes crt-lists
@@ -1095,12 +1102,13 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err)
 
-		// Verify crt-list was deleted
-		crtlists, err := client.GetAllCRTListFiles(ctx)
+		// Verify crt-list was deleted (from general files storage)
+		// Note: filenames are sanitized (dots → underscores) by sanitizeStorageName()
+		generalFiles, err := client.GetAllGeneralFiles(ctx)
 		require.NoError(t, err)
-		assert.Len(t, crtlists, 1)
-		assert.Contains(t, crtlists, "test.com.txt")
-		assert.NotContains(t, crtlists, "example.com.txt")
+		assert.Len(t, generalFiles, 1)
+		assert.Contains(t, generalFiles, "test_com.txt")
+		assert.NotContains(t, generalFiles, "example_com.txt")
 	})
 
 	// Test: Idempotency - running sync again with same desired state
@@ -1124,11 +1132,11 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 
 	// Test: Regression - crt-list doesn't exist should CREATE, not UPDATE
 	t.Run("non-existent-crtlist-creates-not-updates", func(t *testing.T) {
-		// Clean up all crt-lists
-		crtlists, err := client.GetAllCRTListFiles(ctx)
+		// Clean up all general files (CRT-lists are stored as general files)
+		generalFiles, err := client.GetAllGeneralFiles(ctx)
 		require.NoError(t, err)
-		for _, crtlist := range crtlists {
-			_ = client.DeleteCRTListFile(ctx, crtlist)
+		for _, file := range generalFiles {
+			_ = client.DeleteGeneralFile(ctx, file)
 		}
 
 		// Request a crt-list that doesn't exist
@@ -1148,10 +1156,10 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
 		require.NoError(t, err, "sync should succeed when creating new crt-list")
 
-		// Verify crt-list was actually created
-		crtlists, err = client.GetAllCRTListFiles(ctx)
+		// Verify crt-list was actually created (in general files storage)
+		generalFiles, err = client.GetAllGeneralFiles(ctx)
 		require.NoError(t, err)
-		assert.Contains(t, crtlists, "new-list.txt", "crt-list should exist after sync")
+		assert.Contains(t, generalFiles, "new-list.txt", "crt-list should exist after sync")
 	})
 }
 
@@ -1303,6 +1311,39 @@ func TestAuxiliaryFilesIdempotency(t *testing.T) {
 
 				// Phase 2: Compare again with SAME content - MUST have zero operations
 				diff2, err := auxiliaryfiles.CompareGeneralFiles(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+
+				// STRICT ASSERTION: idempotent sync must have zero operations
+				assert.Empty(t, diff2.ToCreate, "idempotent sync should have 0 creates")
+				assert.Empty(t, diff2.ToUpdate, "idempotent sync should have 0 updates")
+				assert.Empty(t, diff2.ToDelete, "idempotent sync should have 0 deletes")
+			},
+		},
+		{
+			name: "crt-lists",
+			test: func(t *testing.T, ctx context.Context, env fixenv.Env) {
+				dataplaneClient := TestDataplaneClient(env)
+
+				// Clean up any existing general files (CRT-lists are stored as general files)
+				files, err := dataplaneClient.GetAllGeneralFiles(ctx)
+				require.NoError(t, err)
+				for _, file := range files {
+					_ = dataplaneClient.DeleteGeneralFile(ctx, file)
+				}
+
+				desired := []auxiliaryfiles.CRTListFile{
+					{Path: "example.com.txt", Content: LoadTestFileContent(t, "crt-lists/basic-crt-list.txt")},
+					{Path: "test.com.txt", Content: LoadTestFileContent(t, "crt-lists/crt-list-single-cert.txt")},
+				}
+
+				// Phase 1: Sync files
+				diff1, err := auxiliaryfiles.CompareCRTLists(ctx, dataplaneClient, desired)
+				require.NoError(t, err)
+				_, err = auxiliaryfiles.SyncCRTLists(ctx, dataplaneClient, diff1)
+				require.NoError(t, err)
+
+				// Phase 2: Compare again with SAME content - MUST have zero operations
+				diff2, err := auxiliaryfiles.CompareCRTLists(ctx, dataplaneClient, desired)
 				require.NoError(t, err)
 
 				// STRICT ASSERTION: idempotent sync must have zero operations

@@ -83,7 +83,7 @@ func TestPathResolver_GetPath(t *testing.T) {
 	resolver := &PathResolver{
 		MapsDir:    "/etc/haproxy/maps",
 		SSLDir:     "/etc/haproxy/ssl",
-		CRTListDir: "/etc/haproxy/ssl", // CRT-list files stored in SSL directory
+		CRTListDir: "/etc/haproxy/general", // CRT-list files stored in general directory to avoid reload
 		GeneralDir: "/etc/haproxy/general",
 	}
 
@@ -116,7 +116,7 @@ func TestPathResolver_GetPath(t *testing.T) {
 			name:     "crt-list file",
 			filename: "certificate-list.txt",
 			args:     []interface{}{"crt-list"},
-			want:     "/etc/haproxy/ssl/certificate-list.txt",
+			want:     "/etc/haproxy/general/certificate-list.txt",
 		},
 		// Sanitization tests for SSL certificates
 		{
@@ -142,7 +142,7 @@ func TestPathResolver_GetPath(t *testing.T) {
 			name:     "crt-list with domain dots - sanitized",
 			filename: "example.com.crtlist",
 			args:     []interface{}{"crt-list"},
-			want:     "/etc/haproxy/ssl/example_com.crtlist",
+			want:     "/etc/haproxy/general/example_com.crtlist",
 		},
 		// Map files should NOT be sanitized
 		{
