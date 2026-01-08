@@ -206,10 +206,8 @@ func (ec *EventCommentator) processEvent(event busevents.Event) {
 // This is where the "commentator" intelligence lives - applying domain knowledge
 // and correlating recent events to provide contextual insights.
 func (ec *EventCommentator) logWithInsight(event busevents.Event) {
-	eventType := event.EventType()
-
-	// Determine log level based on event type
-	level := ec.determineLogLevel(eventType)
+	// Determine log level based on event type and content
+	level := ec.determineLogLevel(event)
 
 	// Generate contextual message and structured attributes
 	message, attrs := ec.generateInsight(event)
@@ -238,9 +236,11 @@ func (ec *EventCommentator) appendCorrelation(event busevents.Event, attrs []any
 	return attrs
 }
 
-// determineLogLevel maps event types to appropriate log levels.
-func (ec *EventCommentator) determineLogLevel(eventType string) slog.Level {
-	switch eventType {
+// determineLogLevel maps events to appropriate log levels.
+// Most events are mapped by type, but some events like DeploymentCompleted
+// are mapped based on content (e.g., no-op deployments are demoted to DEBUG).
+func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level {
+	switch event.EventType() {
 	// Error level - failures and invalid config (user needs to fix)
 	case events.EventTypeReconciliationFailed,
 		events.EventTypeTemplateRenderFailed,
@@ -264,10 +264,18 @@ func (ec *EventCommentator) determineLogLevel(eventType string) slog.Level {
 		events.EventTypeControllerShutdown,
 		events.EventTypeConfigValidated,
 		events.EventTypeIndexSynchronized,
-		events.EventTypeDeploymentCompleted,
 		events.EventTypeLeaderElectionStarted,
 		events.EventTypeBecameLeader,
 		events.EventTypeNewLeaderObserved:
+		return slog.LevelInfo
+
+	// Deployment completed - demote to DEBUG when nothing changed
+	case events.EventTypeDeploymentCompleted:
+		if deploymentEvent, ok := event.(*events.DeploymentCompletedEvent); ok {
+			if deploymentEvent.ReloadsTriggered == 0 && deploymentEvent.TotalAPIOperations == 0 {
+				return slog.LevelDebug
+			}
+		}
 		return slog.LevelInfo
 
 	// Debug level - everything else (detailed operational events)
