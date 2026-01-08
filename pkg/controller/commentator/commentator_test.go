@@ -49,142 +49,177 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	tests := []struct {
-		name      string
-		eventType string
-		want      slog.Level
+		name  string
+		event busevents.Event
+		want  slog.Level
 	}{
 		// Error level events
 		{
-			name:      "reconciliation failed is error",
-			eventType: events.EventTypeReconciliationFailed,
-			want:      slog.LevelError,
+			name:  "reconciliation failed is error",
+			event: mockEvent{eventType: events.EventTypeReconciliationFailed},
+			want:  slog.LevelError,
 		},
 		{
-			name:      "template render failed is error",
-			eventType: events.EventTypeTemplateRenderFailed,
-			want:      slog.LevelError,
+			name:  "template render failed is error",
+			event: mockEvent{eventType: events.EventTypeTemplateRenderFailed},
+			want:  slog.LevelError,
 		},
 		{
-			name:      "validation failed is error",
-			eventType: events.EventTypeValidationFailed,
-			want:      slog.LevelError,
+			name:  "validation failed is error",
+			event: mockEvent{eventType: events.EventTypeValidationFailed},
+			want:  slog.LevelError,
 		},
 		{
-			name:      "instance deployment failed is error",
-			eventType: events.EventTypeInstanceDeploymentFailed,
-			want:      slog.LevelError,
+			name:  "instance deployment failed is error",
+			event: mockEvent{eventType: events.EventTypeInstanceDeploymentFailed},
+			want:  slog.LevelError,
 		},
 		{
-			name:      "storage sync failed is error",
-			eventType: events.EventTypeStorageSyncFailed,
-			want:      slog.LevelError,
+			name:  "storage sync failed is error",
+			event: mockEvent{eventType: events.EventTypeStorageSyncFailed},
+			want:  slog.LevelError,
 		},
 		{
-			name:      "webhook validation error is error",
-			eventType: events.EventTypeWebhookValidationError,
-			want:      slog.LevelError,
+			name:  "webhook validation error is error",
+			event: mockEvent{eventType: events.EventTypeWebhookValidationError},
+			want:  slog.LevelError,
 		},
 		{
-			name:      "config invalid is error",
-			eventType: events.EventTypeConfigInvalid,
-			want:      slog.LevelError,
+			name:  "config invalid is error",
+			event: mockEvent{eventType: events.EventTypeConfigInvalid},
+			want:  slog.LevelError,
 		},
 
 		// Warn level events
 		{
-			name:      "credentials invalid is warn",
-			eventType: events.EventTypeCredentialsInvalid,
-			want:      slog.LevelWarn,
+			name:  "credentials invalid is warn",
+			event: mockEvent{eventType: events.EventTypeCredentialsInvalid},
+			want:  slog.LevelWarn,
 		},
 		{
-			name:      "webhook validation denied is warn",
-			eventType: events.EventTypeWebhookValidationDenied,
-			want:      slog.LevelWarn,
+			name:  "webhook validation denied is warn",
+			event: mockEvent{eventType: events.EventTypeWebhookValidationDenied},
+			want:  slog.LevelWarn,
 		},
 		{
-			name:      "lost leadership is warn",
-			eventType: events.EventTypeLostLeadership,
-			want:      slog.LevelWarn,
+			name:  "lost leadership is warn",
+			event: mockEvent{eventType: events.EventTypeLostLeadership},
+			want:  slog.LevelWarn,
 		},
 
 		// Info level events
 		{
-			name:      "controller started is info",
-			eventType: events.EventTypeControllerStarted,
-			want:      slog.LevelInfo,
+			name:  "controller started is info",
+			event: mockEvent{eventType: events.EventTypeControllerStarted},
+			want:  slog.LevelInfo,
 		},
 		{
-			name:      "controller shutdown is info",
-			eventType: events.EventTypeControllerShutdown,
-			want:      slog.LevelInfo,
+			name:  "controller shutdown is info",
+			event: mockEvent{eventType: events.EventTypeControllerShutdown},
+			want:  slog.LevelInfo,
 		},
 		{
-			name:      "config validated is info",
-			eventType: events.EventTypeConfigValidated,
-			want:      slog.LevelInfo,
+			name:  "config validated is info",
+			event: mockEvent{eventType: events.EventTypeConfigValidated},
+			want:  slog.LevelInfo,
 		},
 		{
-			name:      "index synchronized is info",
-			eventType: events.EventTypeIndexSynchronized,
-			want:      slog.LevelInfo,
+			name:  "index synchronized is info",
+			event: mockEvent{eventType: events.EventTypeIndexSynchronized},
+			want:  slog.LevelInfo,
 		},
 		{
-			name:      "reconciliation completed is debug (consolidated in DeploymentCompletedEvent)",
-			eventType: events.EventTypeReconciliationCompleted,
-			want:      slog.LevelDebug,
+			name:  "reconciliation completed is debug (consolidated in DeploymentCompletedEvent)",
+			event: mockEvent{eventType: events.EventTypeReconciliationCompleted},
+			want:  slog.LevelDebug,
 		},
 		{
-			name:      "validation completed is debug (consolidated in DeploymentCompletedEvent)",
-			eventType: events.EventTypeValidationCompleted,
-			want:      slog.LevelDebug,
+			name:  "validation completed is debug (consolidated in DeploymentCompletedEvent)",
+			event: mockEvent{eventType: events.EventTypeValidationCompleted},
+			want:  slog.LevelDebug,
 		},
 		{
-			name:      "deployment completed is info",
-			eventType: events.EventTypeDeploymentCompleted,
-			want:      slog.LevelInfo,
+			name: "deployment completed with changes is info",
+			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+				Total:              2,
+				Succeeded:          2,
+				ReloadsTriggered:   1,
+				TotalAPIOperations: 5,
+			}),
+			want: slog.LevelInfo,
 		},
 		{
-			name:      "leader election started is info",
-			eventType: events.EventTypeLeaderElectionStarted,
-			want:      slog.LevelInfo,
+			name: "deployment completed with reloads but no ops is info",
+			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+				Total:              2,
+				Succeeded:          2,
+				ReloadsTriggered:   1,
+				TotalAPIOperations: 0,
+			}),
+			want: slog.LevelInfo,
 		},
 		{
-			name:      "became leader is info",
-			eventType: events.EventTypeBecameLeader,
-			want:      slog.LevelInfo,
+			name: "deployment completed with ops but no reloads is info",
+			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+				Total:              2,
+				Succeeded:          2,
+				ReloadsTriggered:   0,
+				TotalAPIOperations: 3,
+			}),
+			want: slog.LevelInfo,
 		},
 		{
-			name:      "new leader observed is info",
-			eventType: events.EventTypeNewLeaderObserved,
-			want:      slog.LevelInfo,
+			name: "deployment completed with no changes is debug",
+			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+				Total:              2,
+				Succeeded:          2,
+				ReloadsTriggered:   0,
+				TotalAPIOperations: 0,
+			}),
+			want: slog.LevelDebug,
+		},
+		{
+			name:  "leader election started is info",
+			event: mockEvent{eventType: events.EventTypeLeaderElectionStarted},
+			want:  slog.LevelInfo,
+		},
+		{
+			name:  "became leader is info",
+			event: mockEvent{eventType: events.EventTypeBecameLeader},
+			want:  slog.LevelInfo,
+		},
+		{
+			name:  "new leader observed is info",
+			event: mockEvent{eventType: events.EventTypeNewLeaderObserved},
+			want:  slog.LevelInfo,
 		},
 
 		// Debug level (default)
 		{
-			name:      "config parsed is debug",
-			eventType: events.EventTypeConfigParsed,
-			want:      slog.LevelDebug,
+			name:  "config parsed is debug",
+			event: mockEvent{eventType: events.EventTypeConfigParsed},
+			want:  slog.LevelDebug,
 		},
 		{
-			name:      "resource index updated is debug",
-			eventType: events.EventTypeResourceIndexUpdated,
-			want:      slog.LevelDebug,
+			name:  "resource index updated is debug",
+			event: mockEvent{eventType: events.EventTypeResourceIndexUpdated},
+			want:  slog.LevelDebug,
 		},
 		{
-			name:      "template rendered is debug",
-			eventType: events.EventTypeTemplateRendered,
-			want:      slog.LevelDebug,
+			name:  "template rendered is debug",
+			event: mockEvent{eventType: events.EventTypeTemplateRendered},
+			want:  slog.LevelDebug,
 		},
 		{
-			name:      "unknown event type is debug",
-			eventType: "unknown.event",
-			want:      slog.LevelDebug,
+			name:  "unknown event type is debug",
+			event: mockEvent{eventType: "unknown.event"},
+			want:  slog.LevelDebug,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ec.determineLogLevel(tt.eventType)
+			got := ec.determineLogLevel(tt.event)
 			assert.Equal(t, tt.want, got)
 		})
 	}
