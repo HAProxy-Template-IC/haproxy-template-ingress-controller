@@ -36,7 +36,8 @@ const (
 	ComponentName = "executor"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	EventBufferSize = 50
+	// Size 100: Handles 5 event types from the reconciliation pipeline stages.
+	EventBufferSize = 100
 )
 
 // Executor implements the reconciliation orchestrator component.
@@ -74,9 +75,15 @@ type Executor struct {
 // Returns:
 //   - A new Executor instance ready to be started
 func New(eventBus *busevents.EventBus, logger *slog.Logger) *Executor {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	// Subscribe to only the event types we handle during construction (before EventBus.Start())
+	// This ensures proper startup synchronization and reduces buffer pressure
+	eventChan := eventBus.SubscribeTypes(EventBufferSize,
+		events.EventTypeReconciliationTriggered,
+		events.EventTypeTemplateRendered,
+		events.EventTypeTemplateRenderFailed,
+		events.EventTypeValidationCompleted,
+		events.EventTypeValidationFailed,
+	)
 
 	return &Executor{
 		eventBus:             eventBus,

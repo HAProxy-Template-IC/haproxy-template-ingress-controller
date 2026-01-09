@@ -268,7 +268,7 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	startTime time.Time,
 ) (*SyncResult, bool, error) {
 	// Phase 1: Sync auxiliary files (pre-config) using pre-computed diffs
-	auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, fileDiff, sslDiff, mapDiff, crtlistDiff)
+	auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, fileDiff, sslDiff, mapDiff)
 	if err != nil {
 		return nil, false, err
 	}
@@ -374,7 +374,7 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 	// Files must exist before HAProxy validates the configuration.
 	// Skip if aux files were already synced in the failed fine-grained sync attempt.
 	if !auxFilesAlreadySynced {
-		auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff)
+		auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.mapDiff)
 		if err != nil {
 			return nil, err
 		}
@@ -1319,12 +1319,15 @@ func (o *orchestrator) scheduleAuxiliarySync(
 // trigger a HAProxy reload before all SSL certificates are uploaded. When HAProxy reloads,
 // it validates the current config which may reference SSL certs still being uploaded in parallel.
 // By syncing SSL certs first, we ensure they exist before any reload can be triggered.
+//
+// NOTE: CRT-list files are NOT synced separately here. They are merged into general files
+// in compareAuxiliaryFiles() for unified storage. The crtlistDiff is used by callers
+// for metrics and logging only, not for actual sync.
 func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 	ctx context.Context,
 	fileDiff *auxiliaryfiles.FileDiff,
 	sslDiff *auxiliaryfiles.SSLCertificateDiff,
 	mapDiff *auxiliaryfiles.MapFileDiff,
-	crtlistDiff *auxiliaryfiles.CRTListDiff,
 ) ([]string, error) {
 	var allReloadIDs []string
 	var mu sync.Mutex
@@ -1414,30 +1417,10 @@ func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 		}, &allReloadIDs, &mu)
 	}
 
-	// Sync crt-list files if there are changes
-	if crtlistDiff != nil && crtlistDiff.HasChanges() {
-		o.scheduleAuxiliarySync(g, gCtx, &auxiliaryFileSyncParams{
-			resourceType: "CRT-list file",
-			creates:      len(crtlistDiff.ToCreate),
-			updates:      len(crtlistDiff.ToUpdate),
-			deletes:      len(crtlistDiff.ToDelete),
-			stage:        "sync_crtlists_pre",
-			message:      "failed to sync crt-list files before config sync",
-			hints: []string{
-				"Check crt-list storage permissions",
-				"Verify crt-list file format is correct",
-				"Review error message for specific crt-list failures",
-			},
-			syncFunc: func(ctx context.Context) ([]string, error) {
-				preConfigCRTList := &auxiliaryfiles.CRTListDiff{
-					ToCreate: crtlistDiff.ToCreate,
-					ToUpdate: crtlistDiff.ToUpdate,
-					ToDelete: nil,
-				}
-				return auxiliaryfiles.SyncCRTLists(ctx, o.client, preConfigCRTList)
-			},
-		}, &allReloadIDs, &mu)
-	}
+	// NOTE: CRT-list files are NOT synced separately here.
+	// They are merged into general files in compareAuxiliaryFiles() for unified storage.
+	// The crtlistDiff is used for metrics and logging only, not for actual sync.
+	// See: compareAuxiliaryFiles() lines 920-927 where CRT-lists are merged into general files.
 
 	// Wait for all remaining auxiliary file syncs to complete
 	if err := g.Wait(); err != nil {

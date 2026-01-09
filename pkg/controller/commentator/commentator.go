@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -15,10 +16,6 @@ import (
 const (
 	// ComponentName is the unique identifier for this component.
 	ComponentName = "commentator"
-
-	// EventBufferSize is the size of the event subscription buffer.
-	// Size 200: High-volume component that observes all events for logging.
-	EventBufferSize = 200
 
 	// maxErrorPreviewLength is the maximum length for error message previews
 	// in validation failure summaries. Longer errors are truncated.
@@ -82,8 +79,10 @@ type EventCommentator struct {
 //   - *EventCommentator ready to start
 func NewEventCommentator(eventBus *busevents.EventBus, logger *slog.Logger, bufferSize int) *EventCommentator {
 	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	// This ensures proper startup synchronization without timing-based sleeps.
+	// Use SubscribeLossy because commentator is an observability component where
+	// occasional event drops are acceptable and should not trigger WARN logs.
+	eventChan := eventBus.SubscribeLossy(buffers.Observability())
 
 	return &EventCommentator{
 		eventBus:   eventBus,

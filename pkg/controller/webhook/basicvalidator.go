@@ -50,9 +50,9 @@ type BasicValidatorComponent struct {
 
 // NewBasicValidatorComponent creates a new basic validator component.
 func NewBasicValidatorComponent(eventBus *busevents.EventBus, logger *slog.Logger) *BasicValidatorComponent {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	// Subscribe to only WebhookValidationRequest events during construction
+	// This ensures proper startup synchronization and reduces buffer pressure
+	eventChan := eventBus.SubscribeTypes(EventBufferSize, events.EventTypeWebhookValidationRequestSG)
 
 	return &BasicValidatorComponent{
 		eventBus:  eventBus,

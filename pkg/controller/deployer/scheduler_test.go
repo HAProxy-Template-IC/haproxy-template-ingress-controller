@@ -40,7 +40,8 @@ func TestNewDeploymentScheduler(t *testing.T) {
 	require.NotNil(t, scheduler)
 	assert.Equal(t, minInterval, scheduler.minDeploymentInterval)
 	assert.Equal(t, timeout, scheduler.deploymentTimeout)
-	assert.NotNil(t, scheduler.eventChan)
+	// eventChan is nil after construction - subscribed in Start() for leader-only components
+	assert.Nil(t, scheduler.eventChan)
 }
 
 // TestDeploymentScheduler_Start tests scheduler startup and shutdown.

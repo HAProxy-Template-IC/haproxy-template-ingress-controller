@@ -63,9 +63,9 @@ type CertLoaderComponent struct {
 // Returns:
 //   - *CertLoaderComponent ready to start
 func NewCertLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CertLoaderComponent {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	// Subscribe to only CertResourceChangedEvent during construction
+	// This ensures proper startup synchronization and reduces buffer pressure
+	eventChan := eventBus.SubscribeTypes(EventBufferSize, events.EventTypeCertResourceChanged)
 
 	return &CertLoaderComponent{
 		eventBus:  eventBus,

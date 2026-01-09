@@ -66,7 +66,7 @@ type scheduledDeployment struct {
 // The component publishes DeploymentScheduledEvent when a deployment should execute.
 type DeploymentScheduler struct {
 	eventBus              *busevents.EventBus
-	eventChan             <-chan busevents.Event // Event subscription channel (subscribed in constructor)
+	eventChan             <-chan busevents.Event // Event subscription channel (subscribed in Start())
 	logger                *slog.Logger
 	minDeploymentInterval time.Duration
 	ctx                   context.Context // Main event loop context for scheduling
@@ -162,13 +162,12 @@ func computePodSetHash(endpoints []interface{}) string {
 // Returns:
 //   - A new DeploymentScheduler instance ready to be started
 func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, minDeploymentInterval, deploymentTimeout time.Duration) *DeploymentScheduler {
-	// Use SubscribeLeaderOnly because this component only runs on the leader.
-	// It subscribes after EventBus.Start() when leadership is acquired.
-	// All-replica components replay their state on BecameLeaderEvent to ensure
-	// leader-only components don't miss critical state.
+	// Note: eventChan is NOT subscribed here - subscription happens in Start().
+	// This is a leader-only component that subscribes when Start() is called
+	// (after leadership is acquired). All-replica components replay their state
+	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	return &DeploymentScheduler{
 		eventBus:              eventBus,
-		eventChan:             eventBus.SubscribeLeaderOnly(SchedulerEventBufferSize),
 		logger:                logger.With("component", SchedulerComponentName),
 		minDeploymentInterval: minDeploymentInterval,
 		deploymentTimeout:     deploymentTimeout,
@@ -185,7 +184,7 @@ func (s *DeploymentScheduler) Name() string {
 // Start begins the deployment scheduler's event loop.
 //
 // This method blocks until the context is cancelled or an error occurs.
-// It processes events from the subscription channel established in the constructor.
+// It subscribes to events when called (after leadership is acquired).
 //
 // Parameters:
 //   - ctx: Context for cancellation and lifecycle management
@@ -195,6 +194,20 @@ func (s *DeploymentScheduler) Name() string {
 //   - Error only in exceptional circumstances
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.ctx = ctx // Save context for scheduling operations
+
+	// Subscribe when starting (after leadership acquired).
+	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
+	// All-replica components replay their cached state on BecameLeaderEvent.
+	s.eventChan = s.eventBus.SubscribeTypesLeaderOnly(SchedulerEventBufferSize,
+		events.EventTypeTemplateRendered,
+		events.EventTypeConfigValidated,
+		events.EventTypeValidationCompleted,
+		events.EventTypeValidationFailed,
+		events.EventTypeHAProxyPodsDiscovered,
+		events.EventTypeDeploymentCompleted,
+		events.EventTypeConfigPublished,
+		events.EventTypeLostLeadership,
+	)
 
 	s.logger.Debug("deployment scheduler starting",
 		"min_deployment_interval_ms", s.minDeploymentInterval.Milliseconds(),

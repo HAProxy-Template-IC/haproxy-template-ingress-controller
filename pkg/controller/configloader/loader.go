@@ -50,9 +50,9 @@ type ConfigLoaderComponent struct {
 // Returns:
 //   - *ConfigLoaderComponent ready to start
 func NewConfigLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *ConfigLoaderComponent {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	// Subscribe to only ConfigResourceChangedEvent during construction
+	// This ensures proper startup synchronization and reduces buffer pressure
+	eventChan := eventBus.SubscribeTypes(EventBufferSize, events.EventTypeConfigResourceChanged)
 
 	return &ConfigLoaderComponent{
 		eventBus:  eventBus,

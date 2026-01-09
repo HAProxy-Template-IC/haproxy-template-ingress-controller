@@ -16,6 +16,8 @@ package events
 
 import (
 	"context"
+	"log/slog"
+	"runtime"
 )
 
 // typedSubscription represents a subscription filtered by event type.
@@ -23,6 +25,7 @@ type typedSubscription struct {
 	eventTypes []string
 	outputChan chan Event
 	filterFunc func(Event) bool
+	lossy      bool // If true, drops are silent (no onDrop callback)
 }
 
 // SubscribeTypes creates a subscription that only receives events of the specified types.
@@ -52,6 +55,95 @@ type typedSubscription struct {
 //	    // Only receives the specified event types
 //	}
 func (b *EventBus) SubscribeTypes(bufferSize int, eventTypes ...string) <-chan Event {
+	return b.subscribeTypesInternal(bufferSize, eventTypes, false, false)
+}
+
+// SubscribeTypesLeaderOnly creates a typed subscription for leader-only components.
+//
+// This method is identical to SubscribeTypes() but is semantically named to indicate
+// it's intended for leader-only components that subscribe after leader election.
+//
+// Leader-only components rely on the state replay mechanism: all-replica components
+// re-publish their cached state when BecameLeaderEvent is received, ensuring
+// leader-only components don't miss critical state even though they subscribe late.
+//
+// Parameters:
+//   - bufferSize: Size of the output channel buffer
+//   - eventTypes: Event type strings to filter for (from Event.EventType())
+//
+// Returns a channel that receives only events matching the specified types.
+// The channel is read-only and will never be closed.
+//
+// To stop receiving events and prevent memory leaks, call UnsubscribeTyped()
+// with the returned channel.
+//
+// Example:
+//
+//	// In a leader-only component's constructor (after BecameLeaderEvent)
+//	eventChan := bus.SubscribeTypesLeaderOnly(50,
+//	    events.EventTypeTemplateRendered,
+//	    events.EventTypeValidationCompleted,
+//	    events.EventTypeLostLeadership)
+//	defer bus.UnsubscribeTyped(eventChan)
+func (b *EventBus) SubscribeTypesLeaderOnly(bufferSize int, eventTypes ...string) <-chan Event {
+	return b.subscribeTypesInternal(bufferSize, eventTypes, true, false)
+}
+
+// SubscribeTypesLossy creates a typed subscription that silently drops events when full.
+//
+// Use this for observability components that filter by event type but where occasional
+// drops are acceptable. Drops from lossy subscribers:
+//   - Are counted in DroppedEventsObservability() (for metrics)
+//   - Do NOT trigger the onDrop callback (no WARN logs)
+//
+// Parameters:
+//   - bufferSize: Size of the output channel buffer
+//   - eventTypes: Event type strings to filter for (from Event.EventType())
+//
+// Returns a channel that receives only events matching the specified types.
+// The channel is read-only and will never be closed.
+//
+// To stop receiving events and prevent memory leaks, call UnsubscribeTyped()
+// with the returned channel.
+func (b *EventBus) SubscribeTypesLossy(bufferSize int, eventTypes ...string) <-chan Event {
+	return b.subscribeTypesInternal(bufferSize, eventTypes, false, true)
+}
+
+// subscribeTypesInternal creates a typed subscription with event type filtering.
+//
+// Parameters:
+//   - bufferSize: Size of the output channel buffer
+//   - eventTypes: Event type strings to filter for
+//   - suppressLateWarning: If true, suppresses warning when subscribing after Start()
+//   - lossy: If true, drops are silent (no onDrop callback, counted separately)
+func (b *EventBus) subscribeTypesInternal(bufferSize int, eventTypes []string, suppressLateWarning, lossy bool) <-chan Event {
+	// Check if subscribing after Start() - may miss buffered events
+	b.startMu.Lock()
+	started := b.started
+	b.startMu.Unlock()
+
+	if started && !suppressLateWarning {
+		// Get caller info for debugging
+		_, file, line, ok := runtime.Caller(2)
+		caller := "unknown"
+		if ok {
+			// Extract just the filename for brevity
+			for i := len(file) - 1; i >= 0; i-- {
+				if file[i] == '/' {
+					file = file[i+1:]
+					break
+				}
+			}
+			caller = file
+		}
+
+		slog.Warn("Typed subscription after EventBus.Start() may miss buffered events",
+			"caller", caller,
+			"line", line,
+			"event_types", eventTypes,
+			"hint", "use SubscribeTypesLeaderOnly() for leader-only components")
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -75,6 +167,7 @@ func (b *EventBus) SubscribeTypes(bufferSize int, eventTypes ...string) <-chan E
 		eventTypes: eventTypes,
 		outputChan: outputChan,
 		filterFunc: filterFunc,
+		lossy:      lossy,
 	}
 
 	// Register typed subscription

@@ -78,9 +78,13 @@ func NewStatusUpdater(
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 ) *StatusUpdater {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(StatusUpdaterEventBufferSize)
+	// Subscribe to only the event types we handle during construction (before EventBus.Start())
+	// This ensures proper startup synchronization and reduces buffer pressure
+	eventChan := eventBus.SubscribeTypes(StatusUpdaterEventBufferSize,
+		events.EventTypeConfigValidated,
+		events.EventTypeConfigInvalid,
+		events.EventTypeValidationFailed,
+	)
 
 	return &StatusUpdater{
 		crdClient: crdClient,

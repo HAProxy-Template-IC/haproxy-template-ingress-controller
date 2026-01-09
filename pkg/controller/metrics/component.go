@@ -56,7 +56,20 @@ type Component struct {
 func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(200) // Large buffer for high-frequency metrics
+	// Use typed subscription to only receive events we handle (reduces buffer pressure)
+	eventChan := eventBus.SubscribeTypes(200,
+		events.EventTypeReconciliationCompleted,
+		events.EventTypeReconciliationFailed,
+		events.EventTypeDeploymentCompleted,
+		events.EventTypeInstanceDeploymentFailed,
+		events.EventTypeValidationCompleted,
+		events.EventTypeValidationFailed,
+		events.EventTypeValidationTestsCompleted,
+		events.EventTypeIndexSynchronized,
+		events.EventTypeResourceIndexUpdated,
+		events.EventTypeBecameLeader,
+		events.EventTypeLostLeadership,
+	)
 
 	return &Component{
 		metrics:        metrics,
@@ -69,11 +82,19 @@ func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 // Start begins the metrics event processing loop.
 //
 // This method blocks until the context is cancelled.
+// It also periodically updates the observability drop metric from EventBus stats.
 func (c *Component) Start(ctx context.Context) error {
+	// Ticker to poll EventBus stats for observability drops (every 5 seconds)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case event := <-c.eventChan:
 			c.handleEvent(event)
+		case <-ticker.C:
+			// Update observability drops from EventBus (not exposed via callback)
+			c.metrics.SetObservabilityDrops(c.eventBus.DroppedEventsObservability())
 		case <-ctx.Done():
 			return ctx.Err()
 		}

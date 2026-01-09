@@ -88,8 +88,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.
 		logger = slog.Default()
 	}
 
-	// Subscribe during construction per CLAUDE.md guidelines
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	// Subscribe to only the event types we handle during construction per CLAUDE.md guidelines
+	// This reduces buffer pressure by filtering at the EventBus level
+	eventChan := eventBus.SubscribeTypes(EventBufferSize,
+		events.EventTypeValidationCompleted,
+		events.EventTypeValidationFailed,
+	)
 
 	return &Component{
 		eventBus:         eventBus,

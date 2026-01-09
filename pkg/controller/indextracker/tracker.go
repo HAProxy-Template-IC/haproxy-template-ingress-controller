@@ -65,7 +65,10 @@ func New(
 
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(100)
+	// Use typed subscription to only receive events we handle (reduces buffer pressure)
+	eventChan := eventBus.SubscribeTypes(100,
+		events.EventTypeResourceSyncComplete,
+	)
 
 	return &IndexSynchronizationTracker{
 		eventBus:          eventBus,

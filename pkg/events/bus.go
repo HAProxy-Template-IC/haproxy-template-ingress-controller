@@ -54,6 +54,12 @@ type Event interface {
 	Timestamp() time.Time
 }
 
+// subscriber represents a universal subscription to the event bus.
+type subscriber struct {
+	ch    chan Event
+	lossy bool // If true, drops are silent (no onDrop callback)
+}
+
 // EventBus provides centralized pub/sub coordination for all controller components.
 //
 // The EventBus supports two patterns:
@@ -70,12 +76,18 @@ type Event interface {
 // In addition to universal subscriptions (Subscribe), the EventBus supports typed
 // subscriptions (SubscribeTypes) that filter events at the bus level for efficiency.
 //
+// Lossy Subscriptions:
+// For observability components where occasional drops are acceptable, use SubscribeLossy()
+// or SubscribeTypesLossy(). These subscriptions silently drop events without triggering
+// the onDrop callback, and drops are counted separately in DroppedEventsObservability().
+//
 // Event Drop Monitoring:
 // When subscriber buffers are full, events are dropped to prevent blocking.
-// Use SetDropCallback() to receive notifications when drops occur, and
-// DroppedEvents() to query the total drop count.
+// Use SetDropCallback() to receive notifications when critical drops occur.
+// DroppedEventsCritical() returns drops from business-critical subscribers.
+// DroppedEventsObservability() returns expected drops from lossy subscribers.
 type EventBus struct {
-	subscribers      []chan Event
+	subscribers      []subscriber // Changed from []chan Event to support lossy flag
 	typedSubscribers []*typedSubscription
 	mu               sync.RWMutex
 
@@ -84,9 +96,10 @@ type EventBus struct {
 	startMu        sync.Mutex
 	preStartBuffer []Event
 
-	// Event drop monitoring
-	droppedEvents uint64       // atomic counter for dropped events
-	onDrop        DropCallback // optional callback for drop notifications
+	// Event drop monitoring - separate counters for different subscriber types
+	droppedEventsCritical      uint64       // atomic: drops from critical subscribers (triggers WARN)
+	droppedEventsObservability uint64       // atomic: drops from lossy subscribers (silent)
+	onDrop                     DropCallback // optional callback for drop notifications (critical only)
 }
 
 // NewEventBus creates a new EventBus.
@@ -99,10 +112,30 @@ type EventBus struct {
 // Recommended: 100 for most applications.
 func NewEventBus(capacity int) *EventBus {
 	return &EventBus{
-		subscribers:      make([]chan Event, 0),
+		subscribers:      make([]subscriber, 0),
 		typedSubscribers: make([]*typedSubscription, 0),
 		started:          false,
 		preStartBuffer:   make([]Event, 0, capacity),
+	}
+}
+
+// recordDrop records a dropped event and optionally calls the onDrop callback.
+// This consolidates drop handling logic into a single place (DRY principle).
+//
+// For lossy subscribers, drops are counted in droppedEventsObservability and
+// no callback is triggered (these drops are expected and acceptable).
+//
+// For critical subscribers, drops are counted in droppedEventsCritical and
+// the onDrop callback is triggered (these drops indicate a problem).
+func (b *EventBus) recordDrop(eventType string, lossy bool) {
+	if lossy {
+		atomic.AddUint64(&b.droppedEventsObservability, 1)
+		// No callback for lossy subscribers - drops are expected
+	} else {
+		atomic.AddUint64(&b.droppedEventsCritical, 1)
+		if b.onDrop != nil {
+			b.onDrop(eventType)
+		}
 	}
 }
 
@@ -140,18 +173,16 @@ func (b *EventBus) Publish(event Event) int {
 	defer b.mu.RUnlock()
 
 	sent := 0
+	eventType := event.EventType()
+
 	// Send to universal subscribers
-	for _, ch := range b.subscribers {
+	for _, sub := range b.subscribers {
 		select {
-		case ch <- event:
+		case sub.ch <- event:
 			sent++
 		default:
 			// Channel full, subscriber is lagging - drop event
-			// This prevents slow consumers from blocking the system
-			atomic.AddUint64(&b.droppedEvents, 1)
-			if b.onDrop != nil {
-				b.onDrop(event.EventType())
-			}
+			b.recordDrop(eventType, sub.lossy)
 		}
 	}
 
@@ -163,10 +194,7 @@ func (b *EventBus) Publish(event Event) int {
 				sent++
 			default:
 				// Channel full, subscriber is lagging - drop event
-				atomic.AddUint64(&b.droppedEvents, 1)
-				if b.onDrop != nil {
-					b.onDrop(event.EventType())
-				}
+				b.recordDrop(eventType, sub.lossy)
 			}
 		}
 	}
@@ -191,7 +219,7 @@ func (b *EventBus) Publish(event Event) int {
 // a warning as it may indicate a bug. For leader-only components that intentionally
 // subscribe late (after leader election), use SubscribeLeaderOnly() instead.
 func (b *EventBus) Subscribe(bufferSize int) <-chan Event {
-	return b.subscribeInternal(bufferSize, false)
+	return b.subscribeInternal(bufferSize, false, false)
 }
 
 // SubscribeLeaderOnly creates a subscription for leader-only components.
@@ -208,15 +236,42 @@ func (b *EventBus) Subscribe(bufferSize int) <-chan Event {
 // To stop receiving events, the subscriber should call Unsubscribe()
 // to remove the subscription and prevent memory leaks.
 func (b *EventBus) SubscribeLeaderOnly(bufferSize int) <-chan Event {
-	return b.subscribeInternal(bufferSize, true)
+	return b.subscribeInternal(bufferSize, true, false)
+}
+
+// SubscribeLossy creates a subscription that silently drops events when buffer is full.
+//
+// Use this for observability components (like commentator, debug/events) where
+// occasional event drops are acceptable and expected during high load. Drops from
+// lossy subscribers:
+//   - Are counted in DroppedEventsObservability() (for metrics)
+//   - Do NOT trigger the onDrop callback (no WARN logs)
+//
+// This prevents log spam from expected drops in observability components while
+// still allowing monitoring via metrics.
+//
+// The returned channel is read-only and will never be closed.
+// To stop receiving events, the subscriber should call Unsubscribe()
+// to remove the subscription and prevent memory leaks.
+func (b *EventBus) SubscribeLossy(bufferSize int) <-chan Event {
+	return b.subscribeInternal(bufferSize, false, true)
 }
 
 // subscribeInternal handles subscription creation with optional late subscription warning.
 //
+// Parameters:
+//   - bufferSize: Size of the channel buffer
+//   - suppressLateWarning: If true, don't warn when subscribing after Start()
+//   - lossy: If true, drops are silent (no onDrop callback, counted separately)
+//
 // Set suppressLateWarning to true for:
 //   - Leader-only components that intentionally subscribe after leader election
 //   - Internal infrastructure (e.g., scatter-gather) that creates temporary subscriptions
-func (b *EventBus) subscribeInternal(bufferSize int, suppressLateWarning bool) <-chan Event {
+//
+// Set lossy to true for:
+//   - Observability components where occasional drops are acceptable
+//   - Debug components that shouldn't affect system behavior
+func (b *EventBus) subscribeInternal(bufferSize int, suppressLateWarning, lossy bool) <-chan Event {
 	// Check if subscribing after Start() - may miss buffered events
 	b.startMu.Lock()
 	started := b.started
@@ -247,7 +302,7 @@ func (b *EventBus) subscribeInternal(bufferSize int, suppressLateWarning bool) <
 	defer b.mu.Unlock()
 
 	ch := make(chan Event, bufferSize)
-	b.subscribers = append(b.subscribers, ch)
+	b.subscribers = append(b.subscribers, subscriber{ch: ch, lossy: lossy})
 	return ch
 }
 
@@ -266,7 +321,7 @@ func (b *EventBus) Unsubscribe(ch <-chan Event) {
 	defer b.mu.Unlock()
 
 	for i, sub := range b.subscribers {
-		if sub == ch {
+		if sub.ch == ch {
 			// Remove subscriber by replacing with last element and truncating
 			b.subscribers[i] = b.subscribers[len(b.subscribers)-1]
 			b.subscribers = b.subscribers[:len(b.subscribers)-1]
@@ -399,18 +454,17 @@ func (b *EventBus) replayBufferedEvents() {
 }
 
 // replayEventToSubscribers sends a single event to all subscribers.
-func (b *EventBus) replayEventToSubscribers(event Event, subscribers []chan Event, typedSubs []*typedSubscription) {
+func (b *EventBus) replayEventToSubscribers(event Event, subscribers []subscriber, typedSubs []*typedSubscription) {
+	eventType := event.EventType()
+
 	// Send to universal subscribers
-	for _, ch := range subscribers {
+	for _, sub := range subscribers {
 		select {
-		case ch <- event:
+		case sub.ch <- event:
 			// Event sent
 		default:
 			// Channel full - drop event (same behavior as normal Publish)
-			atomic.AddUint64(&b.droppedEvents, 1)
-			if b.onDrop != nil {
-				b.onDrop(event.EventType())
-			}
+			b.recordDrop(eventType, sub.lossy)
 		}
 	}
 
@@ -422,10 +476,7 @@ func (b *EventBus) replayEventToSubscribers(event Event, subscribers []chan Even
 				// Event sent
 			default:
 				// Channel full - drop event
-				atomic.AddUint64(&b.droppedEvents, 1)
-				if b.onDrop != nil {
-					b.onDrop(event.EventType())
-				}
+				b.recordDrop(eventType, sub.lossy)
 			}
 		}
 	}
@@ -455,8 +506,13 @@ func (b *EventBus) Request(ctx context.Context, request Request, opts RequestOpt
 	return executeRequest(ctx, b, request, opts)
 }
 
-// SetDropCallback sets a callback to be invoked when events are dropped due to
-// full subscriber buffers. The callback receives the event type string.
+// SetDropCallback sets a callback to be invoked when events are dropped
+// from CRITICAL (non-lossy) subscriber buffers. The callback receives the
+// event type string.
+//
+// This callback is NOT called for lossy subscribers (created via SubscribeLossy()
+// or SubscribeTypesLossy()). Lossy drops are expected and silently counted
+// in DroppedEventsObservability().
 //
 // This callback pattern keeps the EventBus domain-agnostic while allowing
 // the controller layer to handle drops with appropriate logging and metrics.
@@ -466,8 +522,8 @@ func (b *EventBus) Request(ctx context.Context, request Request, opts RequestOpt
 // Example:
 //
 //	bus.SetDropCallback(func(eventType string) {
-//	    slog.Warn("Event dropped", "event_type", eventType)
-//	    metrics.EventsDropped.Inc()
+//	    slog.Warn("Event dropped from critical subscriber", "event_type", eventType)
+//	    metrics.EventsDroppedCritical.Inc()
 //	})
 func (b *EventBus) SetDropCallback(cb DropCallback) {
 	b.mu.Lock()
@@ -475,11 +531,34 @@ func (b *EventBus) SetDropCallback(cb DropCallback) {
 	b.onDrop = cb
 }
 
+// DroppedEventsCritical returns the number of events dropped from
+// business-critical (non-lossy) subscribers.
+//
+// Non-zero values indicate a problem that needs attention - critical
+// subscribers are not keeping up with event volume.
+func (b *EventBus) DroppedEventsCritical() uint64 {
+	return atomic.LoadUint64(&b.droppedEventsCritical)
+}
+
+// DroppedEventsObservability returns the number of events dropped from
+// lossy subscribers (observability components like commentator, debug/events).
+//
+// Non-zero values are expected and acceptable during high load. These drops
+// don't affect controller operation - they just mean some log entries or
+// debug info was skipped.
+func (b *EventBus) DroppedEventsObservability() uint64 {
+	return atomic.LoadUint64(&b.droppedEventsObservability)
+}
+
 // DroppedEvents returns the total number of events that have been dropped
 // due to full subscriber buffers since the EventBus was created.
 //
-// This counter is useful for monitoring event bus health and identifying
-// slow subscribers that may be causing event loss.
+// This is the sum of DroppedEventsCritical() + DroppedEventsObservability()
+// and is kept for backwards compatibility.
+//
+// For more actionable monitoring, use the separate counters:
+//   - DroppedEventsCritical() - Alert if > 0 (indicates a problem)
+//   - DroppedEventsObservability() - Expected during high load (no action needed)
 func (b *EventBus) DroppedEvents() uint64 {
-	return atomic.LoadUint64(&b.droppedEvents)
+	return b.DroppedEventsCritical() + b.DroppedEventsObservability()
 }
