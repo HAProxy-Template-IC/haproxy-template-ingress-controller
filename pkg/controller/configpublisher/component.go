@@ -65,6 +65,10 @@ type Component struct {
 	renderedAt        time.Time
 	hasTemplateConfig bool
 	hasRenderedConfig bool
+
+	// subscriptionReady is closed when the component has subscribed to events.
+	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
+	subscriptionReady chan struct{}
 }
 
 // New creates a new config publisher component.
@@ -82,9 +86,10 @@ func New(
 	// (after leadership is acquired). All-replica components replay their state
 	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	return &Component{
-		publisher: publisher,
-		eventBus:  eventBus,
-		logger:    logger.With("component", ComponentName),
+		publisher:         publisher,
+		eventBus:          eventBus,
+		logger:            logger.With("component", ComponentName),
+		subscriptionReady: make(chan struct{}),
 	}
 }
 
@@ -92,6 +97,12 @@ func New(
 // Implements the lifecycle.Component interface.
 func (c *Component) Name() string {
 	return ComponentName
+}
+
+// SubscriptionReady returns a channel that is closed when the component has
+// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
+func (c *Component) SubscriptionReady() <-chan struct{} {
+	return c.subscriptionReady
 }
 
 // Start begins the config publisher's event loop.
@@ -119,6 +130,9 @@ func (c *Component) Start(ctx context.Context) error {
 		events.EventTypeHAProxyPodsDiscovered,
 		events.EventTypeLostLeadership,
 	)
+
+	// Signal that subscription is complete for SubscriptionReadySignaler interface.
+	close(c.subscriptionReady)
 
 	c.logger.Debug("config publisher starting")
 

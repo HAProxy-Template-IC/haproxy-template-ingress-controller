@@ -35,7 +35,8 @@ func TestNewDriftPreventionMonitor(t *testing.T) {
 
 	require.NotNil(t, monitor)
 	assert.Equal(t, interval, monitor.driftPreventionInterval)
-	assert.NotNil(t, monitor.eventChan)
+	// eventChan is set in Start() for leader-only pattern, not in constructor
+	assert.Nil(t, monitor.eventChan)
 }
 
 // TestDriftPreventionMonitor_Start tests monitor startup and shutdown.

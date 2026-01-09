@@ -73,6 +73,10 @@ type Component struct {
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
+
+	// subscriptionReady is closed when the component has subscribed to events.
+	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
+	subscriptionReady chan struct{}
 }
 
 // New creates a new Deployer component.
@@ -91,11 +95,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel, rawPush
 	// (after leadership is acquired). All-replica components replay their state
 	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	return &Component{
-		eventBus:         eventBus,
-		logger:           logger.With("component", ComponentName),
-		maxParallel:      maxParallel,
-		rawPushThreshold: rawPushThreshold,
-		healthTracker:    lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
+		eventBus:          eventBus,
+		logger:            logger.With("component", ComponentName),
+		maxParallel:       maxParallel,
+		rawPushThreshold:  rawPushThreshold,
+		healthTracker:     lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
+		subscriptionReady: make(chan struct{}),
 	}
 }
 
@@ -103,6 +108,12 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel, rawPush
 // Implements the lifecycle.Component interface.
 func (c *Component) Name() string {
 	return ComponentName
+}
+
+// SubscriptionReady returns a channel that is closed when the component has
+// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
+func (c *Component) SubscriptionReady() <-chan struct{} {
+	return c.subscriptionReady
 }
 
 // Start begins the deployer's event loop.
@@ -121,6 +132,9 @@ func (c *Component) Start(ctx context.Context) error {
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// Only needs DeploymentScheduledEvent - typed subscription reduces buffer pressure.
 	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(EventBufferSize, events.EventTypeDeploymentScheduled)
+
+	// Signal that subscription is complete for SubscriptionReadySignaler interface.
+	close(c.subscriptionReady)
 
 	c.logger.Debug("deployer starting")
 

@@ -1071,20 +1071,19 @@ func createReconciliationComponents(
 	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, bus, logger)
 
 	// Register components with the lifecycle registry using builder pattern
-	// DriftMonitor runs on all replicas to keep HTTP Store caches warm.
-	// Only leader's DeploymentScheduler will actually deploy.
+	// Renderer and DriftMonitor are leader-only to avoid multi-replica race conditions.
 	// StatusUpdater is leader-only to avoid API conflicts from concurrent updates.
 	registry.Build().
 		AllReplica(
 			reconcilerComponent,
-			rendererComponent,
 			haproxyValidatorComponent,
 			executorComponent,
 			discoveryComponent,
 			httpStoreComponent,
-			driftMonitorComponent,
 		).
 		LeaderOnly(
+			rendererComponent,
+			driftMonitorComponent,
 			deployerComponent,
 			deploymentSchedulerComponent,
 			configPublisherComponent,
@@ -1129,6 +1128,11 @@ func startReconciliationComponents(
 
 // startLeaderOnlyComponents starts components that only the leader should run using the lifecycle registry.
 // Returns a leaderOnlyComponents struct with cancellation control.
+//
+// IMPORTANT: This function blocks until all leader-only components have completed their event
+// subscription. This ensures the EventBus Pause/Start pattern works correctly - the leaderelection
+// callback can safely call eventBus.Start() after this function returns, knowing all leader-only
+// components are ready to receive replayed events.
 func startLeaderOnlyComponents(
 	parentCtx context.Context,
 	components *reconciliationComponents,
@@ -1140,21 +1144,39 @@ func startLeaderOnlyComponents(
 	// Create separate context for leader-only components
 	leaderCtx, leaderCancel := context.WithCancel(parentCtx)
 
-	// Start leader-only components using the registry (tracked by errgroup for graceful shutdown)
-	// The registry handles concurrent startup and error propagation.
-	// Note: Uses inline errGroup.Go instead of startInErrGroup because context cancellation
-	// (losing leadership) should not be treated as an error.
+	// Start leader-only components using the async registry method.
+	// StartLeaderOnlyComponentsAsync blocks until all components have signaled they're
+	// subscription-ready, then returns. This ensures all leader-only components are subscribed
+	// before the leaderelection callback calls eventBus.Start() to replay buffered events.
+	errCh, err := registry.StartLeaderOnlyComponentsAsync(leaderCtx)
+	if err != nil {
+		logger.Error("failed to start leader-only components", "error", err)
+		parentCancel()
+		// Return empty components struct - the error will propagate via errgroup
+		return &leaderOnlyComponents{
+			ctx:    leaderCtx,
+			cancel: leaderCancel,
+		}
+	}
+
+	// Track component errors in the errgroup for graceful shutdown coordination.
+	// This goroutine monitors the error channel and propagates any component failures.
 	errGroup.Go(func() error {
-		if err := registry.StartLeaderOnlyComponents(leaderCtx); err != nil && leaderCtx.Err() == nil {
-			logger.Error("leader-only component failed", "error", err)
-			parentCancel()
-			return err
+		select {
+		case err, ok := <-errCh:
+			if ok && err != nil && leaderCtx.Err() == nil {
+				logger.Error("leader-only component failed", "error", err)
+				parentCancel()
+				return err
+			}
+		case <-leaderCtx.Done():
+			// Leadership lost or context cancelled
 		}
 		return nil
 	})
 
 	logger.Debug("Leader-only components started via lifecycle registry",
-		"components", "Deployer, DeploymentScheduler, ConfigPublisher")
+		"components", "Deployer, DeploymentScheduler, ConfigPublisher, Renderer, DriftMonitor")
 
 	return &leaderOnlyComponents{
 		deployer:            components.deployer,

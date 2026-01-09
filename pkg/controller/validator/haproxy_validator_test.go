@@ -503,9 +503,8 @@ func TestHAProxyValidator_HandleBecameLeader_WithState(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	cfg := &config.Config{
-		HAProxyConfig: config.HAProxyConfig{
-			Template: `global
+	// Valid HAProxy config for testing
+	validConfig := `global
     daemon
 
 defaults
@@ -520,17 +519,16 @@ frontend http-in
 
 backend servers
     server s1 127.0.0.1:8080
-`,
-		},
-	}
+`
 
-	stores := map[string]types.Store{
-		"ingresses": &mockStore{},
+	// Create temp directories for validation paths
+	tmpDir := t.TempDir()
+	validationPaths := &dataplane.ValidationPaths{
+		MapsDir:           tmpDir + "/maps",
+		SSLCertsDir:       tmpDir + "/certs",
+		GeneralStorageDir: tmpDir + "/general",
+		ConfigFile:        tmpDir + "/haproxy.cfg",
 	}
-
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, &mockStore{}, nil, capabilities, logger)
-	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
@@ -540,12 +538,21 @@ backend servers
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	// Trigger a reconciliation to populate state
-	bus.Publish(events.NewReconciliationTriggeredEvent("initial"))
+	// Directly publish TemplateRenderedEvent to populate validator state
+	// (The renderer is now leader-only and we're testing the validator in isolation)
+	bus.Publish(events.NewTemplateRenderedEvent(
+		validConfig,                 // haproxyConfig
+		validConfig,                 // validationHAProxyConfig
+		validationPaths,             // validationPaths
+		&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
+		&dataplane.AuxiliaryFiles{}, // validationAuxiliaryFiles
+		0,                           // auxFileCount
+		100,                         // durationMs
+		"initial",                   // triggerReason
+	))
 
 	// Wait for first validation
 	var firstValidation *events.ValidationCompletedEvent

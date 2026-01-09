@@ -31,6 +31,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
@@ -48,23 +49,7 @@ import (
 const (
 	// ComponentName is the unique identifier for this component.
 	ComponentName = "renderer"
-
-	// EventBufferSize is the size of the event subscription buffer.
-	EventBufferSize = 50
 )
-
-// renderOutput holds the output of a successful render for caching.
-type renderOutput struct {
-	productionConfig   string
-	validationConfig   string
-	validationPaths    *dataplane.ValidationPaths
-	productionAuxFiles *dataplane.AuxiliaryFiles
-	validationAuxFiles *dataplane.AuxiliaryFiles
-	auxFileCount       int
-	durationMs         int64
-	correlationID      string
-	triggerReason      string
-}
 
 // singleRenderResult holds the output of a single render (production or validation).
 type singleRenderResult struct {
@@ -75,16 +60,16 @@ type singleRenderResult struct {
 
 // Component implements the renderer component.
 //
-// It subscribes to ReconciliationTriggeredEvent and BecameLeaderEvent,
-// renders all templates using the template engine and resource stores, and publishes the results
-// via TemplateRenderedEvent or TemplateRenderFailedEvent.
+// It subscribes to ReconciliationTriggeredEvent, renders all templates using
+// the template engine and resource stores, and publishes the results via
+// TemplateRenderedEvent or TemplateRenderFailedEvent.
 //
 // The component renders configurations twice per reconciliation:
 // 1. Production version with absolute paths for HAProxy pods (/etc/haproxy/*)
 // 2. Validation version with temp directory paths for controller validation
 //
-// The component caches the last rendered output to support state replay during
-// leadership transitions (when new leader-only components start subscribing).
+// This is a leader-only component that starts when leadership is acquired.
+// The Reconciler triggers a fresh reconciliation on BecameLeaderEvent to provide current state.
 //
 // CRT-list Fallback:
 // The component determines CRT-list storage capability from the local HAProxy version
@@ -93,7 +78,7 @@ type singleRenderResult struct {
 // directory, ensuring the generated configuration matches where files are actually stored.
 type Component struct {
 	eventBus           *busevents.EventBus
-	eventChan          <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
+	eventChan          <-chan busevents.Event // Subscribed in Start() for leader-only pattern
 	engine             templating.Engine
 	config             *config.Config
 	stores             map[string]types.Store
@@ -103,19 +88,6 @@ type Component struct {
 	logger             *slog.Logger
 	ctx                context.Context // Context from Start() for HTTP requests
 
-	// State protected by mutex (for leadership transition replay and capabilities)
-	mu                           sync.RWMutex
-	lastHAProxyConfig            string
-	lastValidationConfig         string
-	lastValidationPaths          interface{} // dataplane.ValidationPaths
-	lastAuxiliaryFiles           *dataplane.AuxiliaryFiles
-	lastValidationAuxiliaryFiles *dataplane.AuxiliaryFiles
-	lastAuxFileCount             int
-	lastRenderDurationMs         int64
-	lastCorrelationID            string // Correlation ID from triggering event
-	lastTriggerReason            string // Reason from ReconciliationTriggeredEvent (e.g., "drift_prevention")
-	hasRenderedConfig            bool
-
 	// capabilities defines which features are available for the local HAProxy version.
 	// Determined from local HAProxy version at construction time via CapabilitiesFromVersion().
 	// When capabilities.SupportsCrtList is false, CRT-list paths resolve to general files directory.
@@ -123,22 +95,10 @@ type Component struct {
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
-}
 
-// cacheRenderOutput stores render output for leadership transition replay.
-func (c *Component) cacheRenderOutput(out *renderOutput) {
-	c.mu.Lock()
-	c.lastHAProxyConfig = out.productionConfig
-	c.lastValidationConfig = out.validationConfig
-	c.lastValidationPaths = out.validationPaths
-	c.lastAuxiliaryFiles = out.productionAuxFiles
-	c.lastValidationAuxiliaryFiles = out.validationAuxFiles
-	c.lastAuxFileCount = out.auxFileCount
-	c.lastRenderDurationMs = out.durationMs
-	c.lastCorrelationID = out.correlationID
-	c.lastTriggerReason = out.triggerReason
-	c.hasRenderedConfig = true
-	c.mu.Unlock()
+	// subscriptionReady is closed when the component has subscribed to events.
+	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
+	subscriptionReady chan struct{}
 }
 
 // New creates a new Renderer component.
@@ -189,12 +149,8 @@ func New(
 		return nil, fmt.Errorf("failed to create template engine: %w", err)
 	}
 
-	// Subscribe to only the event types we handle during construction (before EventBus.Start())
-	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(EventBufferSize,
-		events.EventTypeReconciliationTriggered,
-		events.EventTypeBecameLeader,
-	)
+	// Note: Subscription happens in Start() using SubscribeTypesLeaderOnly() because
+	// this is a leader-only component that starts after leadership is acquired.
 
 	logger.Debug("Renderer initialized with capabilities",
 		"supports_crt_list", capabilities.SupportsCrtList,
@@ -203,7 +159,6 @@ func New(
 
 	return &Component{
 		eventBus:           eventBus,
-		eventChan:          eventChan,
 		engine:             engine,
 		config:             cfg,
 		stores:             stores,
@@ -212,6 +167,7 @@ func New(
 		logger:             logger.With("component", ComponentName),
 		capabilities:       capabilities,
 		healthTracker:      lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
+		subscriptionReady:  make(chan struct{}),
 	}, nil
 }
 
@@ -227,13 +183,20 @@ func (c *Component) Name() string {
 	return ComponentName
 }
 
+// SubscriptionReady returns a channel that is closed when the component has
+// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
+//
+// For leader-only components like the Renderer, subscription happens in Start()
+// rather than in the constructor. This method allows the lifecycle registry to
+// wait for subscription before signaling that the component is ready.
+func (c *Component) SubscriptionReady() <-chan struct{} {
+	return c.subscriptionReady
+}
+
 // Start begins the renderer's event loop.
 //
 // This method blocks until the context is cancelled or an error occurs.
-// The component is already subscribed to the EventBus (subscription happens in New()),
-// so this method only processes events:
-//   - ReconciliationTriggeredEvent: Starts template rendering
-//   - BecameLeaderEvent: Replays last rendered state for new leader-only components
+// As a leader-only component, it subscribes to events when started (after leadership is acquired).
 //
 // The component runs until the context is cancelled, at which point it
 // performs cleanup and returns.
@@ -245,6 +208,18 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
+	// Subscribe when starting (after leadership acquired).
+	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
+	// Use Critical buffer: standard processing with event coalescing
+	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(buffers.Critical(),
+		events.EventTypeReconciliationTriggered,
+	)
+
+	// Signal that subscription is complete for SubscriptionReadySignaler interface.
+	// This allows the registry to know we're ready to receive events before
+	// EventBus.Start() replays buffered events.
+	close(c.subscriptionReady)
+
 	c.logger.Debug("renderer starting")
 
 	// Store context for HTTP requests during rendering
@@ -264,12 +239,8 @@ func (c *Component) Start(ctx context.Context) error {
 
 // handleEvent processes events from the EventBus.
 func (c *Component) handleEvent(event busevents.Event) {
-	switch ev := event.(type) {
-	case *events.ReconciliationTriggeredEvent:
+	if ev, ok := event.(*events.ReconciliationTriggeredEvent); ok {
 		c.handleReconciliationTriggered(ev)
-
-	case *events.BecameLeaderEvent:
-		c.handleBecameLeader(ev)
 	}
 }
 
@@ -499,19 +470,6 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 		"auxiliary_files", auxFileCount,
 	)
 
-	// Cache rendered output for leadership transition replay
-	c.cacheRenderOutput(&renderOutput{
-		productionConfig:   productionResult.haproxyConfig,
-		validationConfig:   validationResult.haproxyConfig,
-		validationPaths:    validationPaths,
-		productionAuxFiles: productionResult.auxiliaryFiles,
-		validationAuxFiles: validationResult.auxiliaryFiles,
-		auxFileCount:       auxFileCount,
-		durationMs:         durationMs,
-		correlationID:      correlationID,
-		triggerReason:      event.Reason,
-	})
-
 	// Publish success event with both rendered configs, propagating correlation
 	c.eventBus.Publish(events.NewTemplateRenderedEvent(
 		productionResult.haproxyConfig,
@@ -580,53 +538,6 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver, isValida
 		auxiliaryFiles: auxiliaryFiles,
 		durationMs:     totalMs,
 	}, nil
-}
-
-// handleBecameLeader handles BecameLeaderEvent by re-publishing the last rendered config.
-//
-// This ensures DeploymentScheduler (which starts subscribing only after becoming leader)
-// receives the current rendered state, even if rendering occurred before leadership was acquired.
-//
-// This prevents the "late subscriber problem" where leader-only components miss events
-// that were published before they started subscribing.
-func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
-	c.mu.RLock()
-	hasState := c.hasRenderedConfig
-	haproxyConfig := c.lastHAProxyConfig
-	validationConfig := c.lastValidationConfig
-	validationPaths := c.lastValidationPaths
-	auxiliaryFiles := c.lastAuxiliaryFiles
-	validationAuxiliaryFiles := c.lastValidationAuxiliaryFiles
-	auxFileCount := c.lastAuxFileCount
-	durationMs := c.lastRenderDurationMs
-	correlationID := c.lastCorrelationID
-	triggerReason := c.lastTriggerReason
-	c.mu.RUnlock()
-
-	if !hasState {
-		c.logger.Debug("Became leader but no rendered config available yet, skipping state replay")
-		return
-	}
-
-	c.logger.Debug("Became leader, re-publishing last rendered config for DeploymentScheduler",
-		"production_config_bytes", len(haproxyConfig),
-		"validation_config_bytes", len(validationConfig),
-		"auxiliary_files", auxFileCount,
-		"correlation_id", correlationID)
-
-	// Re-publish the last rendered event to ensure new leader-only components receive it
-	// Include the original correlation ID so the deployment can be traced
-	c.eventBus.Publish(events.NewTemplateRenderedEvent(
-		haproxyConfig,
-		validationConfig,
-		validationPaths,
-		auxiliaryFiles,
-		validationAuxiliaryFiles,
-		auxFileCount,
-		durationMs,
-		triggerReason,
-		events.WithCorrelation(correlationID, correlationID),
-	))
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) in parallel.

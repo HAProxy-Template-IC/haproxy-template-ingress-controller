@@ -646,6 +646,87 @@ func TestReconciler_HandleHTTPResourceAccepted(t *testing.T) {
 	assert.Equal(t, "http_resource_accepted", receivedEvent.Reason)
 }
 
+// TestReconciler_HandleBecameLeader tests BecameLeaderEvent handling.
+// When leadership is acquired, the reconciler should trigger an immediate reconciliation
+// to ensure leader-only components (renderer, drift monitor) receive fresh state.
+func TestReconciler_HandleBecameLeader(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	config := &Config{
+		DebounceInterval: testutil.LongTimeout, // Long interval to show it's bypassed
+	}
+
+	reconciler := New(bus, logger, config)
+
+	// Subscribe to events
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start reconciler
+	go reconciler.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// Publish BecameLeaderEvent
+	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
+
+	// Should trigger immediately (not wait for debounce)
+	receivedEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+
+	require.NotNil(t, receivedEvent)
+	assert.Equal(t, "became_leader", receivedEvent.Reason)
+}
+
+// TestReconciler_BecameLeaderCancelsDebounce tests that BecameLeaderEvent cancels pending debounce.
+func TestReconciler_BecameLeaderCancelsDebounce(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	config := &Config{
+		DebounceInterval: 300 * time.Millisecond,
+	}
+
+	reconciler := New(bus, logger, config)
+
+	eventChan := bus.Subscribe(50)
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go reconciler.Start(ctx)
+	time.Sleep(testutil.StartupDelay)
+
+	// First, trigger resource change to start a pending debounce timer
+	bus.Publish(events.NewResourceIndexUpdatedEvent("ingresses", types.ChangeStats{
+		Created:       1,
+		IsInitialSync: false,
+	}))
+
+	// Wait for immediate trigger
+	firstEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+	require.NotNil(t, firstEvent)
+	assert.Equal(t, "resource_change", firstEvent.Reason)
+
+	// Trigger another change during refractory (starts pending timer)
+	bus.Publish(events.NewResourceIndexUpdatedEvent("services", types.ChangeStats{
+		Modified:      1,
+		IsInitialSync: false,
+	}))
+
+	// Now send BecameLeaderEvent - should trigger immediately and cancel pending timer
+	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
+
+	// Wait for became_leader event
+	secondEvent := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+	require.NotNil(t, secondEvent)
+	assert.Equal(t, "became_leader", secondEvent.Reason)
+
+	// Verify no more events (the pending debounce was cancelled)
+	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
+}
+
 // TestReconciler_HandleEvent_UnknownEvent tests unknown event handling.
 func TestReconciler_HandleEvent_UnknownEvent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()

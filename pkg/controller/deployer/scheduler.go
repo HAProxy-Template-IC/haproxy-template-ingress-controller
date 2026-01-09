@@ -100,6 +100,10 @@ type DeploymentScheduler struct {
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
+
+	// subscriptionReady is closed when the component has subscribed to events.
+	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
+	subscriptionReady chan struct{}
 }
 
 // computeDeploymentHash computes a combined hash of config and auxiliary files.
@@ -172,6 +176,7 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 		minDeploymentInterval: minDeploymentInterval,
 		deploymentTimeout:     deploymentTimeout,
 		healthTracker:         lifecycle.NewProcessingTracker(SchedulerComponentName, lifecycle.DefaultProcessingTimeout),
+		subscriptionReady:     make(chan struct{}),
 	}
 }
 
@@ -179,6 +184,12 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 // Implements the lifecycle.Component interface.
 func (s *DeploymentScheduler) Name() string {
 	return SchedulerComponentName
+}
+
+// SubscriptionReady returns a channel that is closed when the component has
+// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
+func (s *DeploymentScheduler) SubscriptionReady() <-chan struct{} {
+	return s.subscriptionReady
 }
 
 // Start begins the deployment scheduler's event loop.
@@ -208,6 +219,9 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 		events.EventTypeConfigPublished,
 		events.EventTypeLostLeadership,
 	)
+
+	// Signal that subscription is complete for SubscriptionReadySignaler interface.
+	close(s.subscriptionReady)
 
 	s.logger.Debug("deployment scheduler starting",
 		"min_deployment_interval_ms", s.minDeploymentInterval.Milliseconds(),
