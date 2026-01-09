@@ -49,9 +49,9 @@ type CredentialsLoaderComponent struct {
 // Returns:
 //   - *CredentialsLoaderComponent ready to start
 func NewCredentialsLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CredentialsLoaderComponent {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	// Subscribe to only SecretResourceChangedEvent during construction
+	// This ensures proper startup synchronization and reduces buffer pressure
+	eventChan := eventBus.SubscribeTypes(EventBufferSize, events.EventTypeSecretResourceChanged)
 
 	return &CredentialsLoaderComponent{
 		eventBus:  eventBus,

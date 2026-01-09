@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/events/ringbuffer"
@@ -60,8 +61,10 @@ type EventBuffer struct {
 //	go eventBuffer.Start(ctx)
 func NewEventBuffer(size int, eventBus *busevents.EventBus) *EventBuffer {
 	// Subscribe in constructor per CLAUDE.md guidelines to ensure subscription
-	// happens before EventBus.Start() is called
-	eventChan := eventBus.Subscribe(1000)
+	// happens before EventBus.Start() is called.
+	// Use SubscribeLossy because event buffer is an observability component where
+	// occasional event drops are acceptable and should not trigger WARN logs.
+	eventChan := eventBus.SubscribeLossy(buffers.Observability())
 
 	return &EventBuffer{
 		buffer:    ringbuffer.New[Event](size),

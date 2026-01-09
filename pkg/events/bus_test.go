@@ -11,6 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// init registers test response types for scatter-gather tests.
+// This is needed because executeRequest now uses typed subscriptions
+// that filter to only Response event types.
+func init() {
+	responseEventTypes = append(responseEventTypes, "test.response")
+}
+
 // -----------------------------------------------------------------------------
 // Test Event Types
 // -----------------------------------------------------------------------------
@@ -1023,6 +1030,37 @@ func TestEventBus_SubscribeTypes_SlowSubscriberDropsEvents(t *testing.T) {
 	}
 }
 
+func TestEventBus_SubscribeTypesLeaderOnly_FiltersCorrectly(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Start the bus first (simulating leader-only component subscribing late)
+	bus.Start()
+
+	// Subscribe to only "test.event" type using leader-only method
+	typedSub := bus.SubscribeTypesLeaderOnly(10, "test.event")
+
+	// Publish both event types
+	bus.Publish(testEvent{message: "should receive"})
+	bus.Publish(otherTestEvent{value: 42})
+	bus.Publish(testEvent{message: "should also receive"})
+
+	// Typed subscription should only receive testEvent
+	receivedTyped := 0
+	timeout := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case evt := <-typedSub:
+			_, ok := evt.(testEvent)
+			assert.True(t, ok, "typed subscription received wrong type: %T", evt)
+			receivedTyped++
+		case <-timeout:
+			assert.Equal(t, 2, receivedTyped, "expected 2 testEvent events")
+			return
+		}
+	}
+}
+
 func BenchmarkEventBus_SubscribeTypes(b *testing.B) {
 	bus := NewEventBus(100)
 	event := testEvent{message: "benchmark"}
@@ -1204,4 +1242,211 @@ func TestEventBus_SubscribeMultiple_UnsubscribesOnCancel(t *testing.T) {
 
 	// There should be 0 universal subscribers after unsubscribe
 	assert.Equal(t, 0, subsCount, "expected 0 universal subscribers after context cancel")
+}
+
+// -----------------------------------------------------------------------------
+// Lossy Subscription Tests
+// -----------------------------------------------------------------------------
+
+func TestEventBus_SubscribeLossy_SilentDrop(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Track drop callback invocations
+	dropCount := 0
+	bus.SetDropCallback(func(_ string) {
+		dropCount++
+	})
+
+	// Create lossy subscriber with tiny buffer
+	lossySub := bus.SubscribeLossy(1)
+
+	// Start the bus
+	bus.Start()
+
+	// Fill buffer and cause drops
+	for i := 0; i < 10; i++ {
+		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
+	}
+
+	// Verify: drops happened but callback was NOT called
+	assert.Equal(t, 0, dropCount, "lossy subscriber should not trigger drop callback")
+	assert.Greater(t, bus.DroppedEventsObservability(), uint64(0), "expected observability drops")
+	assert.Equal(t, uint64(0), bus.DroppedEventsCritical(), "expected no critical drops")
+
+	// Drain the one event that fit
+	<-lossySub
+}
+
+func TestEventBus_Subscribe_CriticalDrop(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Track drop callback invocations
+	dropCount := 0
+	bus.SetDropCallback(func(_ string) {
+		dropCount++
+	})
+
+	// Create regular (critical) subscriber with tiny buffer
+	criticalSub := bus.Subscribe(1)
+
+	// Start the bus
+	bus.Start()
+
+	// Fill buffer and cause drops
+	for i := 0; i < 10; i++ {
+		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
+	}
+
+	// Verify: drops triggered callback
+	assert.Greater(t, dropCount, 0, "critical subscriber should trigger drop callback")
+	assert.Greater(t, bus.DroppedEventsCritical(), uint64(0), "expected critical drops")
+	assert.Equal(t, uint64(0), bus.DroppedEventsObservability(), "expected no observability drops")
+
+	// Drain the one event that fit
+	<-criticalSub
+}
+
+func TestEventBus_SubscribeTypesLossy_SilentDrop(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Track drop callback invocations
+	dropCount := 0
+	bus.SetDropCallback(func(_ string) {
+		dropCount++
+	})
+
+	// Create lossy typed subscriber with tiny buffer
+	lossyTypedSub := bus.SubscribeTypesLossy(1, "test.event")
+
+	// Start the bus
+	bus.Start()
+
+	// Fill buffer and cause drops
+	for i := 0; i < 10; i++ {
+		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
+	}
+
+	// Verify: drops happened but callback was NOT called
+	assert.Equal(t, 0, dropCount, "lossy typed subscriber should not trigger drop callback")
+	assert.Greater(t, bus.DroppedEventsObservability(), uint64(0), "expected observability drops")
+	assert.Equal(t, uint64(0), bus.DroppedEventsCritical(), "expected no critical drops")
+
+	// Drain the one event that fit
+	<-lossyTypedSub
+}
+
+func TestEventBus_SubscribeTypes_CriticalDrop(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Track drop callback invocations
+	dropCount := 0
+	bus.SetDropCallback(func(_ string) {
+		dropCount++
+	})
+
+	// Create regular (critical) typed subscriber with tiny buffer
+	criticalTypedSub := bus.SubscribeTypes(1, "test.event")
+
+	// Start the bus
+	bus.Start()
+
+	// Fill buffer and cause drops
+	for i := 0; i < 10; i++ {
+		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
+	}
+
+	// Verify: drops triggered callback
+	assert.Greater(t, dropCount, 0, "critical typed subscriber should trigger drop callback")
+	assert.Greater(t, bus.DroppedEventsCritical(), uint64(0), "expected critical drops")
+	assert.Equal(t, uint64(0), bus.DroppedEventsObservability(), "expected no observability drops")
+
+	// Drain the one event that fit
+	<-criticalTypedSub
+}
+
+func TestEventBus_DroppedEvents_CombinedTotal(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Create one lossy and one critical subscriber, both with tiny buffers
+	_ = bus.SubscribeLossy(1)
+	_ = bus.Subscribe(1)
+
+	// Start the bus
+	bus.Start()
+
+	// Cause drops on both
+	for i := 0; i < 10; i++ {
+		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
+	}
+
+	// Verify combined total equals sum of both counters
+	criticalDrops := bus.DroppedEventsCritical()
+	observabilityDrops := bus.DroppedEventsObservability()
+	totalDrops := bus.DroppedEvents()
+
+	assert.Equal(t, criticalDrops+observabilityDrops, totalDrops, "total should equal sum of both")
+	assert.Greater(t, criticalDrops, uint64(0), "expected critical drops")
+	assert.Greater(t, observabilityDrops, uint64(0), "expected observability drops")
+}
+
+func TestEventBus_MixedSubscribers_DropCounters(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Create mix of subscriber types with tiny buffers
+	_ = bus.Subscribe(1)                              // critical universal
+	_ = bus.SubscribeLossy(1)                         // lossy universal
+	_ = bus.SubscribeTypes(1, "test.event")           // critical typed
+	_ = bus.SubscribeTypesLossy(1, "test.event")      // lossy typed
+	_ = bus.SubscribeTypesLossy(1, "other.test.type") // lossy typed (non-matching)
+
+	// Start the bus
+	bus.Start()
+
+	// Cause drops
+	for i := 0; i < 5; i++ {
+		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
+	}
+
+	// Both counters should have drops from their respective subscribers
+	// 2 critical subscribers (universal + typed) should have drops
+	// 2 lossy subscribers (universal + typed matching) should have drops
+	// The non-matching lossy typed subscriber won't have drops (events filtered)
+	assert.Greater(t, bus.DroppedEventsCritical(), uint64(0), "expected critical drops")
+	assert.Greater(t, bus.DroppedEventsObservability(), uint64(0), "expected observability drops")
+}
+
+func TestEventBus_UnsubscribeLossy(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(100)
+
+	// Create lossy subscriber
+	lossySub := bus.SubscribeLossy(10)
+
+	// Start the bus
+	bus.Start()
+
+	// Verify subscription works
+	bus.Publish(testEvent{message: "before-unsub"})
+
+	select {
+	case <-lossySub:
+		// Good - received event
+	case <-time.After(100 * time.Millisecond):
+		require.Fail(t, "timeout waiting for event")
+	}
+
+	// Unsubscribe
+	bus.Unsubscribe(lossySub)
+
+	// Publish after unsubscribe
+	sent := bus.Publish(testEvent{message: "after-unsub"})
+
+	// Should report 0 subscribers received
+	assert.Equal(t, 0, sent, "expected 0 subscribers after Unsubscribe")
 }

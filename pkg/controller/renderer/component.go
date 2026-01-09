@@ -189,9 +189,12 @@ func New(
 		return nil, fmt.Errorf("failed to create template engine: %w", err)
 	}
 
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(EventBufferSize)
+	// Subscribe to only the event types we handle during construction (before EventBus.Start())
+	// This ensures proper startup synchronization and reduces buffer pressure
+	eventChan := eventBus.SubscribeTypes(EventBufferSize,
+		events.EventTypeReconciliationTriggered,
+		events.EventTypeBecameLeader,
+	)
 
 	logger.Debug("Renderer initialized with capabilities",
 		"supports_crt_list", capabilities.SupportsCrtList,

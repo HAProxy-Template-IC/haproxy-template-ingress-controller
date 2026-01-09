@@ -117,7 +117,20 @@ var _ debug.StateProvider = (*StateCache)(nil)
 func NewStateCache(eventBus *busevents.EventBus, resourceWatcher *resourcewatcher.ResourceWatcherComponent, logger *slog.Logger) *StateCache {
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
-	eventChan := eventBus.Subscribe(100)
+	// Use typed subscription to only receive events we handle (reduces buffer pressure)
+	eventChan := eventBus.SubscribeTypes(100,
+		events.EventTypeConfigValidated,
+		events.EventTypeCredentialsUpdated,
+		events.EventTypeTemplateRendered,
+		events.EventTypeTemplateRenderFailed,
+		events.EventTypeReconciliationTriggered,
+		events.EventTypeValidationStarted,
+		events.EventTypeValidationCompleted,
+		events.EventTypeValidationFailed,
+		events.EventTypeDeploymentStarted,
+		events.EventTypeDeploymentCompleted,
+		events.EventTypeInstanceDeploymentFailed,
+	)
 
 	return &StateCache{
 		eventBus:        eventBus,

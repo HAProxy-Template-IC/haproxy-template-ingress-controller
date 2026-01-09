@@ -59,7 +59,7 @@ const (
 // The component publishes deployment result events for observability.
 type Component struct {
 	eventBus             *busevents.EventBus
-	eventChan            <-chan busevents.Event // Event subscription channel (subscribed in constructor)
+	eventChan            <-chan busevents.Event // Event subscription channel (subscribed in Start())
 	logger               *slog.Logger
 	deploymentInProgress atomic.Bool // Defensive: prevents concurrent deployments if scheduler has bugs
 
@@ -86,13 +86,12 @@ type Component struct {
 // Returns:
 //   - A new Component instance ready to be started
 func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel, rawPushThreshold int) *Component {
-	// Use SubscribeLeaderOnly because this component only runs on the leader.
-	// It subscribes after EventBus.Start() when leadership is acquired.
-	// All-replica components replay their state on BecameLeaderEvent to ensure
-	// leader-only components don't miss critical state.
+	// Note: eventChan is NOT subscribed here - subscription happens in Start().
+	// This is a leader-only component that subscribes when Start() is called
+	// (after leadership is acquired). All-replica components replay their state
+	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	return &Component{
 		eventBus:         eventBus,
-		eventChan:        eventBus.SubscribeLeaderOnly(EventBufferSize),
 		logger:           logger.With("component", ComponentName),
 		maxParallel:      maxParallel,
 		rawPushThreshold: rawPushThreshold,
@@ -109,7 +108,7 @@ func (c *Component) Name() string {
 // Start begins the deployer's event loop.
 //
 // This method blocks until the context is cancelled or an error occurs.
-// It processes events from the subscription channel established in the constructor.
+// It subscribes to events when called (after leadership is acquired).
 //
 // Parameters:
 //   - ctx: Context for cancellation and lifecycle management
@@ -118,6 +117,11 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
+	// Subscribe when starting (after leadership acquired).
+	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
+	// Only needs DeploymentScheduledEvent - typed subscription reduces buffer pressure.
+	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(EventBufferSize, events.EventTypeDeploymentScheduled)
+
 	c.logger.Debug("deployer starting")
 
 	for {

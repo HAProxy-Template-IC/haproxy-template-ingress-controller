@@ -56,6 +56,17 @@ type RequestResult struct {
 	Errors []string
 }
 
+// responseEventTypes lists all Response event types for scatter-gather subscriptions.
+//
+// This enables typed subscriptions that only receive Response events, filtering
+// at the EventBus level rather than receiving all events and discarding non-responses.
+//
+// When adding new Response types in pkg/controller/events, register them here.
+var responseEventTypes = []string{
+	"config.validation.response",     // ConfigValidationResponse
+	"webhook.validation.response.sg", // WebhookValidationResponse
+}
+
 // executeRequest implements the scatter-gather pattern.
 //
 // This is the core implementation separated from EventBus.Request() for testability.
@@ -88,10 +99,16 @@ func executeRequest(ctx context.Context, bus *EventBus, request Request, opts Re
 		done:               make(chan struct{}),
 	}
 
-	// Subscribe to responses for this request.
-	// Suppress late subscription warning because scatter-gather subscriptions
-	// are intentionally created after Start() during normal operation.
-	responseChan := bus.subscribeInternal(100, true)
+	// Subscribe to ONLY Response event types for this request.
+	// Uses typed subscription to filter at the EventBus level, so only Response
+	// events reach this collector. This is more efficient than universal subscription
+	// which would receive all events and discard non-responses.
+	//
+	// Parameters:
+	// - Suppress late warning: scatter-gather always subscribes after Start()
+	// - Not lossy: we need to receive all responses reliably
+	responseChan := bus.subscribeTypesInternal(100, responseEventTypes, true, false)
+	defer bus.UnsubscribeTyped(responseChan)
 
 	// Start response listener in background
 	listenerCtx, cancelListener := context.WithCancel(ctx)

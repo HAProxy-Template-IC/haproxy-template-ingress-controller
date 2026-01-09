@@ -50,9 +50,11 @@ type Metrics struct {
 	ResourceCount *prometheus.GaugeVec
 
 	// Event metrics
-	EventSubscribers prometheus.Gauge
-	EventsPublished  prometheus.Counter
-	EventsDropped    prometheus.Counter
+	EventSubscribers           prometheus.Gauge
+	EventsPublished            prometheus.Counter
+	EventsDropped              prometheus.Counter // Total drops (backwards compatible)
+	EventsDroppedCritical      prometheus.Counter // Drops from critical subscribers (alert-worthy)
+	EventsDroppedObservability prometheus.Gauge   // Drops from observability subscribers (polled, expected)
 
 	// Queue wait metrics - time events spend waiting in channels before processing
 	ReconciliationQueueWait *prometheus.HistogramVec
@@ -181,6 +183,16 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_events_dropped_total",
 			"Total number of events dropped due to full subscriber buffers",
+		),
+		EventsDroppedCritical: pkgmetrics.NewCounter(
+			registry,
+			"haptic_events_dropped_critical_total",
+			"Events dropped from critical subscribers (alert if > 0)",
+		),
+		EventsDroppedObservability: pkgmetrics.NewGauge(
+			registry,
+			"haptic_events_dropped_observability_total",
+			"Events dropped from observability subscribers (expected, non-alerting)",
 		),
 
 		// Queue wait metrics
@@ -375,9 +387,18 @@ func (m *Metrics) RecordValidationTests(total, passed, failed int, durationSecon
 }
 
 // RecordEventDrop records an event drop due to full subscriber buffer.
+// This increments the total drop counter for backwards compatibility.
 // Call this from the drop callback registered with EventBus.SetDropCallback().
 func (m *Metrics) RecordEventDrop() {
 	m.EventsDropped.Inc()
+	// Also increment critical drops since onDrop callback is only called for critical subscribers
+	m.EventsDroppedCritical.Inc()
+}
+
+// SetObservabilityDrops sets the observability drop gauge from EventBus statistics.
+// This should be called periodically since observability drops don't trigger callbacks.
+func (m *Metrics) SetObservabilityDrops(count uint64) {
+	m.EventsDroppedObservability.Set(float64(count))
 }
 
 // RecordQueueWait records queue wait time for a reconciliation phase.

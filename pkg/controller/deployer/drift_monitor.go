@@ -80,11 +80,12 @@ type DriftPreventionMonitor struct {
 // Returns:
 //   - A new DriftPreventionMonitor instance ready to be started
 func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger, driftPreventionInterval time.Duration) *DriftPreventionMonitor {
-	// Subscribe during construction (before EventBus.Start()) to ensure proper
-	// startup synchronization. DriftPreventionMonitor runs on all replicas to
-	// keep HTTP Store caches warm through regular reconciliation cycles.
-	// Only the leader's DeploymentScheduler will act on the resulting events.
-	eventChan := eventBus.Subscribe(DriftMonitorEventBufferSize)
+	// Subscribe to only DeploymentCompletedEvent during construction (before EventBus.Start())
+	// to ensure proper startup synchronization and reduce buffer pressure.
+	// DriftPreventionMonitor runs on all replicas to keep HTTP Store caches warm
+	// through regular reconciliation cycles. Only the leader's DeploymentScheduler
+	// will act on the resulting events.
+	eventChan := eventBus.SubscribeTypes(DriftMonitorEventBufferSize, events.EventTypeDeploymentCompleted)
 
 	// Create health tracker with stall timeout = interval × 1.5 to allow for jitter
 	// For default 60s interval, this gives 90s stall timeout

@@ -37,7 +37,10 @@ const (
 	ComponentName = "config-publisher"
 
 	// EventBufferSize is the buffer size for the event subscription channel.
-	EventBufferSize = 50
+	// Large buffer (200) to handle burst traffic during startup.
+	// ConfigPublisher makes synchronous k8s API calls, so it processes events slowly
+	// compared to the rate at which all-replica components publish them.
+	EventBufferSize = 200
 )
 
 // Component is the event adapter for the config publisher.
@@ -51,7 +54,7 @@ type Component struct {
 	eventBus  *busevents.EventBus
 	logger    *slog.Logger
 
-	// Subscribed in constructor for proper startup synchronization
+	// Subscribed in Start() when leadership is acquired
 	eventChan <-chan busevents.Event
 
 	// Cached state from events (protected by mutex)
@@ -74,15 +77,14 @@ func New(
 		logger = slog.Default()
 	}
 
-	// Use SubscribeLeaderOnly because this component only runs on the leader.
-	// It subscribes after EventBus.Start() when leadership is acquired.
-	// All-replica components replay their state on BecameLeaderEvent to ensure
-	// leader-only components don't miss critical state.
+	// Note: eventChan is NOT subscribed here - subscription happens in Start().
+	// This is a leader-only component that subscribes when Start() is called
+	// (after leadership is acquired). All-replica components replay their state
+	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	return &Component{
 		publisher: publisher,
 		eventBus:  eventBus,
 		logger:    logger.With("component", ComponentName),
-		eventChan: eventBus.SubscribeLeaderOnly(EventBufferSize),
 	}
 }
 
@@ -95,7 +97,7 @@ func (c *Component) Name() string {
 // Start begins the config publisher's event loop.
 //
 // This method blocks until the context is cancelled or an error occurs.
-// It processes events from the subscription channel established in the constructor.
+// It subscribes to events when called (after leadership is acquired).
 //
 // Parameters:
 //   - ctx: Context for cancellation and lifecycle management
@@ -104,6 +106,20 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
+	// Subscribe when starting (after leadership acquired).
+	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
+	// All-replica components replay their cached state on BecameLeaderEvent.
+	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(EventBufferSize,
+		events.EventTypeConfigValidated,
+		events.EventTypeTemplateRendered,
+		events.EventTypeValidationCompleted,
+		events.EventTypeValidationFailed,
+		events.EventTypeConfigAppliedToPod,
+		events.EventTypeHAProxyPodTerminated,
+		events.EventTypeHAProxyPodsDiscovered,
+		events.EventTypeLostLeadership,
+	)
+
 	c.logger.Debug("config publisher starting")
 
 	for {
