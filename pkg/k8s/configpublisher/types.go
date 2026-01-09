@@ -174,4 +174,8 @@ type OperationSummary struct {
 type PodCleanupRequest struct {
 	// PodName is the name of the terminated pod.
 	PodName string
+
+	// Namespace is the namespace where HAProxyCfg resources should be looked up.
+	// This ensures namespace-scoped cleanup operations.
+	Namespace string
 }

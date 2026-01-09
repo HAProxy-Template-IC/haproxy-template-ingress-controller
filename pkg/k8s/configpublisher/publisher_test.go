@@ -370,9 +370,10 @@ func TestCleanupPodReferences_RemovePod(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Remove one pod
+	// Remove one pod (using namespace-scoped cleanup)
 	cleanup := PodCleanupRequest{
-		PodName: "haproxy-0",
+		PodName:   "haproxy-0",
+		Namespace: "default",
 	}
 
 	err = publisher.CleanupPodReferences(ctx, &cleanup)
@@ -411,9 +412,10 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
 
-	// Try to cleanup pod that was never added
+	// Try to cleanup pod that was never added (using namespace-scoped cleanup)
 	cleanup := PodCleanupRequest{
-		PodName: "nonexistent-pod",
+		PodName:   "nonexistent-pod",
+		Namespace: "default",
 	}
 
 	err = publisher.CleanupPodReferences(ctx, &cleanup)
@@ -724,9 +726,9 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Reconcile with only haproxy-1 as running
+	// Reconcile with only haproxy-1 as running (namespace-scoped)
 	runningPods := []string{"haproxy-1"}
-	err = publisher.ReconcileDeployedToPods(ctx, runningPods)
+	err = publisher.ReconcileDeployedToPods(ctx, "default", runningPods)
 	require.NoError(t, err)
 
 	// Verify only haproxy-1 remains
@@ -776,9 +778,9 @@ func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Reconcile with no running pods
+	// Reconcile with no running pods (namespace-scoped)
 	runningPods := []string{}
-	err = publisher.ReconcileDeployedToPods(ctx, runningPods)
+	err = publisher.ReconcileDeployedToPods(ctx, "default", runningPods)
 	require.NoError(t, err)
 
 	// Verify all pods are removed
@@ -827,9 +829,9 @@ func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Reconcile with all pods running
+	// Reconcile with all pods running (namespace-scoped)
 	runningPods := []string{"haproxy-0", "haproxy-1"}
-	err = publisher.ReconcileDeployedToPods(ctx, runningPods)
+	err = publisher.ReconcileDeployedToPods(ctx, "default", runningPods)
 	require.NoError(t, err)
 
 	// Verify both pods remain
@@ -864,9 +866,9 @@ func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
 
-	// Reconcile with some running pods
+	// Reconcile with some running pods (namespace-scoped)
 	runningPods := []string{"haproxy-0", "haproxy-1"}
-	err = publisher.ReconcileDeployedToPods(ctx, runningPods)
+	err = publisher.ReconcileDeployedToPods(ctx, "default", runningPods)
 	require.NoError(t, err)
 
 	// Should not error - no-op

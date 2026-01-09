@@ -320,6 +320,11 @@ func (c *Component) createPathResolvers(env *validationEnvironment) (production,
 	validation = toPathResolver(validationResolved)
 	validationPaths = validationResolved.ToValidationPaths()
 
+	// Set TempDir so validator can clean up the validation temp directory.
+	// Cleanup is done by the validator after validation completes, not here,
+	// to prevent race conditions where cleanup runs before async validation.
+	validationPaths.TempDir = env.tmpDir
+
 	return production, validation, validationPaths
 }
 
@@ -356,7 +361,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 			return
 		}
 
-		c.logger.Info("Processing coalesced reconciliation trigger",
+		c.logger.Debug("Processing coalesced reconciliation trigger",
 			"correlation_id", latest.CorrelationID(),
 			"reason", latest.Reason)
 		c.performRender(latest)
@@ -385,7 +390,7 @@ func (c *Component) drainReconciliationTriggers() *events.ReconciliationTriggere
 		default:
 			// No more events in channel
 			if supersededCount > 0 {
-				c.logger.Info("Coalesced reconciliation triggers",
+				c.logger.Debug("Coalesced reconciliation triggers",
 					"superseded_count", supersededCount,
 					"processing", latest.CorrelationID())
 			}
@@ -410,13 +415,15 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 		"correlation_id", correlationID)
 
 	// Setup validation environment (sequential - needed by both renders)
+	// Note: We don't call cleanup() here. The validator is responsible for cleaning up
+	// the temp directory after validation completes (via validationPaths.TempDir).
+	// This prevents race conditions where cleanup runs before async validation.
 	setupStart := time.Now()
-	validationEnv, cleanup, err := c.setupValidationEnvironment()
+	validationEnv, _, err := c.setupValidationEnvironment()
 	if err != nil {
 		c.publishRenderFailure("validation-setup", err)
 		return
 	}
-	defer cleanup()
 
 	// Create path resolvers (sequential - needed by both renders)
 	productionPathResolver, validationPathResolver, validationPaths := c.createPathResolvers(validationEnv)

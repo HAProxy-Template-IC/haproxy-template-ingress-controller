@@ -89,6 +89,11 @@ func validateModel[TV32, TV31, TV30 any](spec *openapi3.T, version *Version, sch
 // ValidationPaths holds the filesystem paths for HAProxy validation.
 // These paths must match the HAProxy Dataplane API server's resource configuration.
 type ValidationPaths struct {
+	// TempDir is the root temp directory for validation files.
+	// The validator is responsible for cleaning this up after validation completes.
+	// This prevents race conditions where the renderer's cleanup runs before
+	// the async validator can use the validation files.
+	TempDir           string
 	MapsDir           string
 	SSLCertsDir       string
 	CRTListDir        string // Directory for CRT-list files (may differ from SSLCertsDir on HAProxy < 3.2)
