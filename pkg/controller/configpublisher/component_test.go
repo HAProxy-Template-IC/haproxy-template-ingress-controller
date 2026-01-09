@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -88,6 +89,8 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	))
 
 	// Step 2: Publish TemplateRenderedEvent to cache rendered config
+	// Generate a correlation ID to link TemplateRenderedEvent and ValidationCompletedEvent
+	correlationID := uuid.New().String()
 	testHAProxyConfig := "global\n  daemon\n\ndefaults\n  mode http\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
@@ -98,10 +101,13 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		0,                 // aux file count
 		100,               // duration ms
 		"",                // trigger reason
+		events.WithCorrelation(correlationID, ""),
 	))
 
-	// Step 3: Publish ValidationCompletedEvent to trigger publishing
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, ""))
+	// Step 3: Publish ValidationCompletedEvent to trigger publishing (with matching correlation ID)
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
+		events.WithCorrelation(correlationID, ""),
+	))
 
 	// Wait for ConfigPublishedEvent
 	var receivedEvent *events.ConfigPublishedEvent
@@ -218,6 +224,17 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	// Give component time to subscribe
 	time.Sleep(100 * time.Millisecond)
 
+	// Send ConfigValidatedEvent to set up templateConfig (required for namespace-scoped cleanup)
+	templateConfig := &v1alpha1.HAProxyTemplateConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-config",
+			Namespace: "default",
+			UID:       "test-uid-123",
+		},
+	}
+	eventBus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
+	time.Sleep(50 * time.Millisecond)
+
 	// Create a runtime config manually
 	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -286,6 +303,17 @@ func TestComponent_MultiplePods(t *testing.T) {
 
 	// Give component time to subscribe
 	time.Sleep(100 * time.Millisecond)
+
+	// Send ConfigValidatedEvent to set up templateConfig (required for namespace-scoped cleanup)
+	templateConfig := &v1alpha1.HAProxyTemplateConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-config",
+			Namespace: "default",
+			UID:       "test-uid-123",
+		},
+	}
+	eventBus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
+	time.Sleep(50 * time.Millisecond)
 
 	// Create a runtime config manually
 	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
@@ -403,6 +431,8 @@ func TestComponent_LostLeadership(t *testing.T) {
 	))
 
 	// Step 2: Publish TemplateRenderedEvent to cache rendered config
+	// Generate a correlation ID to link TemplateRenderedEvent and ValidationCompletedEvent
+	correlationID := uuid.New().String()
 	testHAProxyConfig := "global\n  daemon\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
@@ -413,6 +443,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 		0,
 		100,
 		"",
+		events.WithCorrelation(correlationID, ""),
 	))
 
 	// Give component time to process events
@@ -425,8 +456,10 @@ func TestComponent_LostLeadership(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Step 4: Now publish ValidationCompletedEvent - should NOT publish config
-	// because cached state was cleared
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, ""))
+	// because cached state was cleared (with matching correlation ID)
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
+		events.WithCorrelation(correlationID, ""),
+	))
 
 	// Give time for any potential ConfigPublishedEvent (which shouldn't happen)
 	timeout := time.After(500 * time.Millisecond)
@@ -486,6 +519,8 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	))
 
 	// Step 2: Publish TemplateRenderedEvent to cache rendered config
+	// Generate a correlation ID to link TemplateRenderedEvent and ValidationFailedEvent
+	correlationID := uuid.New().String()
 	testHAProxyConfig := "global\n  daemon\n  maxconn invalid\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
@@ -496,16 +531,18 @@ func TestComponent_ValidationFailed(t *testing.T) {
 		0,
 		100,
 		"",
+		events.WithCorrelation(correlationID, ""),
 	))
 
 	// Give component time to process events
 	time.Sleep(200 * time.Millisecond)
 
-	// Step 3: Publish ValidationFailedEvent
+	// Step 3: Publish ValidationFailedEvent (with matching correlation ID)
 	eventBus.Publish(events.NewValidationFailedEvent(
 		[]string{"maxconn must be numeric", "invalid configuration directive"},
 		100,
 		"",
+		events.WithCorrelation(correlationID, ""),
 	))
 
 	// Give component time to process event
@@ -544,10 +581,13 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Publish ValidationFailedEvent without any prior cached state
+	// Even with a correlation ID, there's no matching TemplateRenderedEvent
+	correlationID := uuid.New().String()
 	eventBus.Publish(events.NewValidationFailedEvent(
 		[]string{"some error"},
 		100,
 		"",
+		events.WithCorrelation(correlationID, ""),
 	))
 
 	// Give component time to process event

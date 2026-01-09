@@ -256,17 +256,21 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 // CleanupPodReferences removes a terminated pod from all deployment status lists.
 //
 // This method removes the pod from:
-// - All HAProxyCfg.status.deployedToPods.
-// - All HAProxyMapFile.status.deployedToPods.
+// - All HAProxyCfg.status.deployedToPods in the specified namespace.
+// - All HAProxyMapFile.status.deployedToPods in the specified namespace.
+//
+// The namespace parameter ensures namespace-scoped operations. The controller
+// should only manage CRDs in its own namespace.
 func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanupRequest) error {
 	p.logger.Debug("cleaning up pod references",
 		"pod", cleanup.PodName,
+		"namespace", cleanup.Namespace,
 	)
 
-	// List all HAProxyCfgs across all namespaces
-	// (runtime configs can be in different namespaces than the pods)
+	// List HAProxyCfgs in the specified namespace only (namespace-scoped).
+	// The controller manages CRDs in its own namespace, not cluster-wide.
 	runtimeConfigs, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs("").
+		HAProxyCfgs(cleanup.Namespace).
 		List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list runtime configs: %w", err)
@@ -281,21 +285,26 @@ func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanu
 
 // ReconcileDeployedToPods removes status entries for pods that no longer exist.
 //
-// This reconciles the deployedToPods status in all HAProxyCfg resources against
+// This reconciles the deployedToPods status in HAProxyCfg resources against
 // the list of currently running HAProxy pods. Entries for pods not in the running
 // set are removed. This cleans up stale entries from pods that terminated while
 // the controller was restarting.
 //
 // Also cleans up corresponding entries in auxiliary file resources (HAProxyMapFile,
 // HAProxyGeneralFile, HAProxyCRTListFile).
-func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, runningPodNames []string) error {
+//
+// The namespace parameter ensures namespace-scoped operations. The controller
+// should only manage CRDs in its own namespace.
+func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace string, runningPodNames []string) error {
 	runningSet := make(map[string]struct{}, len(runningPodNames))
 	for _, name := range runningPodNames {
 		runningSet[name] = struct{}{}
 	}
 
+	// List HAProxyCfgs in the specified namespace only (namespace-scoped).
+	// The controller manages CRDs in its own namespace, not cluster-wide.
 	runtimeConfigs, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs("").
+		HAProxyCfgs(namespace).
 		List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing HAProxyCfgs: %w", err)

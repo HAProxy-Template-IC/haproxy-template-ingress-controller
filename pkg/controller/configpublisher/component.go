@@ -27,7 +27,6 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
@@ -41,7 +40,47 @@ const (
 	// ConfigPublisher makes synchronous k8s API calls, so it processes events slowly
 	// compared to the rate at which all-replica components publish them.
 	EventBufferSize = 200
+
+	// publishWorkChannelSize is the buffer size for the publish work channel.
+	// A size of 1 provides natural coalescing - if new work arrives while
+	// previous work is being processed, the old pending work is replaced.
+	publishWorkChannelSize = 1
+
+	// statusWorkChannelSize is the buffer size for pod status update work.
+	// Larger buffer to handle pod status updates during deployment rollouts.
+	statusWorkChannelSize = 20
 )
+
+// renderedConfigEntry holds cached rendered config data indexed by correlation ID.
+// This ensures we match the correct TemplateRenderedEvent with its corresponding
+// ValidationCompletedEvent, preventing stale data from being published when
+// events from multiple reconciliation cycles are interleaved.
+type renderedConfigEntry struct {
+	config     string
+	auxFiles   *dataplane.AuxiliaryFiles
+	renderedAt time.Time
+}
+
+// publishWorkItem represents a config publish task for the async worker.
+type publishWorkItem struct {
+	correlationID  string
+	event          *events.ValidationCompletedEvent
+	templateConfig *v1alpha1.HAProxyTemplateConfig
+	entry          *renderedConfigEntry
+}
+
+// validationFailedWorkItem represents a failed config publish task for the async worker.
+type validationFailedWorkItem struct {
+	correlationID  string
+	event          *events.ValidationFailedEvent
+	templateConfig *v1alpha1.HAProxyTemplateConfig
+	entry          *renderedConfigEntry
+}
+
+// statusWorkItem represents a pod status update task for the async worker.
+type statusWorkItem struct {
+	event *events.ConfigAppliedToPodEvent
+}
 
 // Component is the event adapter for the config publisher.
 // It wraps the pure Publisher component and coordinates it with the event bus.
@@ -49,6 +88,14 @@ const (
 // This component caches information from multiple events (ConfigValidatedEvent,
 // TemplateRenderedEvent) and publishes runtime config resources only after
 // successful HAProxy validation (ValidationCompletedEvent).
+//
+// Rendered configs are cached by correlation ID to ensure we match the correct
+// TemplateRenderedEvent with its corresponding ValidationCompletedEvent, even when
+// events from multiple reconciliation cycles are interleaved.
+//
+// The component uses async workers for K8S API operations to prevent blocking
+// the event loop. This ensures new events are processed promptly even when
+// K8S API calls are slow.
 type Component struct {
 	publisher *configpublisher.Publisher
 	eventBus  *busevents.EventBus
@@ -60,15 +107,23 @@ type Component struct {
 	// Cached state from events (protected by mutex)
 	mu                sync.RWMutex
 	templateConfig    *v1alpha1.HAProxyTemplateConfig
-	renderedConfig    string
-	renderedAuxFiles  *dataplane.AuxiliaryFiles
-	renderedAt        time.Time
 	hasTemplateConfig bool
-	hasRenderedConfig bool
+
+	// renderedConfigs maps correlation ID to rendered config data.
+	// This ensures we match the correct TemplateRenderedEvent with its corresponding
+	// ValidationCompletedEvent when events from multiple cycles are interleaved.
+	renderedConfigs map[string]*renderedConfigEntry
 
 	// subscriptionReady is closed when the component has subscribed to events.
 	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
 	subscriptionReady chan struct{}
+
+	// Work channels for async K8S API operations.
+	// Using channels with small buffers provides natural coalescing:
+	// newer work replaces older pending work when the worker is busy.
+	publishWork          chan *publishWorkItem
+	validationFailedWork chan *validationFailedWorkItem
+	statusWork           chan *statusWorkItem
 }
 
 // New creates a new config publisher component.
@@ -86,10 +141,14 @@ func New(
 	// (after leadership is acquired). All-replica components replay their state
 	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	return &Component{
-		publisher:         publisher,
-		eventBus:          eventBus,
-		logger:            logger.With("component", ComponentName),
-		subscriptionReady: make(chan struct{}),
+		publisher:            publisher,
+		eventBus:             eventBus,
+		logger:               logger.With("component", ComponentName),
+		renderedConfigs:      make(map[string]*renderedConfigEntry),
+		subscriptionReady:    make(chan struct{}),
+		publishWork:          make(chan *publishWorkItem, publishWorkChannelSize),
+		validationFailedWork: make(chan *validationFailedWorkItem, publishWorkChannelSize),
+		statusWork:           make(chan *statusWorkItem, statusWorkChannelSize),
 	}
 }
 
@@ -135,6 +194,13 @@ func (c *Component) Start(ctx context.Context) error {
 	close(c.subscriptionReady)
 
 	c.logger.Debug("config publisher starting")
+
+	// Start async workers for K8S API operations.
+	// These workers process work items from their channels, allowing the main
+	// event loop to continue processing events without blocking on slow API calls.
+	go c.publishWorker(ctx)
+	go c.validationFailedWorker(ctx)
+	go c.statusWorker(ctx)
 
 	for {
 		select {
@@ -211,10 +277,21 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 }
 
 // handleTemplateRendered caches the rendered config for later publishing.
+// The config is indexed by correlation ID to ensure we match it with the
+// corresponding ValidationCompletedEvent.
 func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) {
+	correlationID := event.CorrelationID()
+	if correlationID == "" {
+		c.logger.Warn("TemplateRenderedEvent missing correlation ID, using event ID as fallback",
+			"event_id", event.EventID(),
+			"config_bytes", event.ConfigBytes)
+		correlationID = event.EventID()
+	}
+
 	c.logger.Debug("caching rendered config for publishing",
 		"config_bytes", event.ConfigBytes,
 		"auxiliary_file_count", event.AuxiliaryFileCount,
+		"correlation_id", correlationID,
 	)
 
 	// Extract auxiliary files using typed accessor for compile-time type safety
@@ -229,25 +306,35 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 		}
 	}
 
-	// Cache the rendered config
+	// Cache the rendered config indexed by correlation ID
 	c.mu.Lock()
-	c.renderedConfig = event.HAProxyConfig
-	c.renderedAuxFiles = auxFiles
-	c.renderedAt = event.Timestamp()
-	c.hasRenderedConfig = true
+	c.renderedConfigs[correlationID] = &renderedConfigEntry{
+		config:     event.HAProxyConfig,
+		auxFiles:   auxFiles,
+		renderedAt: event.Timestamp(),
+	}
 	c.mu.Unlock()
 }
 
-// handleValidationCompleted publishes the configuration after successful validation.
-func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent) {
-	// Get cached state
+// handleValidationCompleted queues the configuration for async publishing.
+// Uses correlation ID to match with the corresponding TemplateRenderedEvent.
+//
+// This method is non-blocking - it queues work for the publishWorker instead of
+// making K8S API calls directly. This prevents the event loop from blocking on
+// slow API calls, allowing the component to keep up with event volume.
+func (c *Component) handleValidationCompleted(event *events.ValidationCompletedEvent) {
+	correlationID := event.CorrelationID()
+	if correlationID == "" {
+		c.logger.Warn("ValidationCompletedEvent missing correlation ID, cannot match rendered config",
+			"event_id", event.EventID())
+		return
+	}
+
+	// Get cached state using correlation ID for proper event matching
 	c.mu.RLock()
 	hasTemplateConfig := c.hasTemplateConfig
-	hasRenderedConfig := c.hasRenderedConfig
 	templateConfig := c.templateConfig
-	renderedConfig := c.renderedConfig
-	renderedAuxFiles := c.renderedAuxFiles
-	renderedAt := c.renderedAt
+	entry, hasRenderedConfig := c.renderedConfigs[correlationID]
 	c.mu.RUnlock()
 
 	// Check if we have all required data
@@ -255,98 +342,77 @@ func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent
 		c.logger.Warn("cannot publish configuration, missing cached state",
 			"has_template_config", hasTemplateConfig,
 			"has_rendered_config", hasRenderedConfig,
+			"correlation_id", correlationID,
 		)
 		return
 	}
 
-	c.logger.Debug("publishing configuration after successful validation",
+	c.logger.Debug("queuing configuration for async publishing",
 		"config_name", templateConfig.Name,
 		"config_namespace", templateConfig.Namespace,
+		"config_bytes", len(entry.config),
+		"correlation_id", correlationID,
 	)
 
-	// Calculate checksum of rendered config
-	hash := sha256.Sum256([]byte(renderedConfig))
-	checksum := hex.EncodeToString(hash[:])
-
-	// Apply default compression threshold when not set (Go zero value)
-	// This ensures runtime behavior matches the CRD kubebuilder default annotation
-	compressionThreshold := templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold
-	if compressionThreshold == 0 {
-		compressionThreshold = config.DefaultCompressionThreshold
+	// Queue work for async processing. Use non-blocking send with coalescing:
+	// - If channel is empty, work is queued immediately
+	// - If channel has pending work, replace it with newer work (coalescing)
+	// This ensures we always publish the latest config, not stale intermediate ones.
+	workItem := &publishWorkItem{
+		correlationID:  correlationID,
+		event:          event,
+		templateConfig: templateConfig,
+		entry:          entry,
 	}
 
-	// Convert event to publish request
-	req := configpublisher.PublishRequest{
-		TemplateConfigName:      templateConfig.Name,
-		TemplateConfigNamespace: templateConfig.Namespace,
-		TemplateConfigUID:       templateConfig.UID,
-		Config:                  renderedConfig,
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		AuxiliaryFiles:          c.convertAuxiliaryFiles(renderedAuxFiles),
-		RenderedAt:              renderedAt,
-		ValidatedAt:             time.Now(),
-		Checksum:                checksum,
-		CompressionThreshold:    compressionThreshold,
+	select {
+	case c.publishWork <- workItem:
+		// Work queued successfully
+	default:
+		// Channel full - drain old work and queue new work (coalescing)
+		select {
+		case oldWork := <-c.publishWork:
+			c.logger.Debug("coalescing publish work, replacing stale event",
+				"old_correlation_id", oldWork.correlationID,
+				"new_correlation_id", correlationID,
+			)
+			// Cleanup the old entry since we're skipping it
+			c.mu.Lock()
+			delete(c.renderedConfigs, oldWork.correlationID)
+			c.mu.Unlock()
+		default:
+			// Channel was drained by worker between our checks - try again
+		}
+		// Now try to queue the new work
+		select {
+		case c.publishWork <- workItem:
+			// Work queued successfully after coalescing
+		default:
+			// Very unlikely - worker grabbed our slot, just log and skip
+			c.logger.Debug("publish work channel busy, will retry on next event",
+				"correlation_id", correlationID)
+		}
 	}
+}
 
-	// Call pure publisher (non-blocking - log errors but don't fail)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	result, err := c.publisher.PublishConfig(ctx, &req)
-	if err != nil {
-		c.logger.Warn("failed to publish configuration",
-			"error", err,
-			"config_name", templateConfig.Name,
-			"config_namespace", templateConfig.Namespace,
-		)
-
-		// Publish failure event (non-blocking)
-		c.eventBus.Publish(events.NewConfigPublishFailedEvent(
-			fmt.Errorf("failed to publish configuration for %s/%s: %w", templateConfig.Namespace, templateConfig.Name, err),
-		))
+// handleValidationFailed queues the invalid configuration for async publishing.
+// Uses correlation ID to match with the corresponding TemplateRenderedEvent.
+//
+// This method is non-blocking - it queues work for the validationFailedWorker instead
+// of making K8S API calls directly.
+func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) {
+	correlationID := event.CorrelationID()
+	if correlationID == "" {
+		c.logger.Warn("ValidationFailedEvent missing correlation ID, cannot match rendered config",
+			"event_id", event.EventID())
 		return
 	}
 
-	c.logger.Debug("configuration published successfully",
-		"runtime_config_name", result.RuntimeConfigName,
-		"runtime_config_namespace", result.RuntimeConfigNamespace,
-		"map_file_count", len(result.MapFileNames),
-		"secret_count", len(result.SecretNames),
-	)
-
-	// Cleanup invalid config resource if it exists
-	invalidConfigName := result.RuntimeConfigName + "-invalid"
-	if err := c.publisher.DeleteRuntimeConfig(ctx, result.RuntimeConfigNamespace, invalidConfigName); err != nil {
-		c.logger.Debug("failed to cleanup invalid config resource (may not exist)",
-			"invalid_config_name", invalidConfigName,
-			"error", err,
-		)
-	} else {
-		c.logger.Debug("cleaned up invalid config resource",
-			"invalid_config_name", invalidConfigName,
-		)
-	}
-
-	// Publish success event
-	c.eventBus.Publish(events.NewConfigPublishedEvent(
-		result.RuntimeConfigName,
-		result.RuntimeConfigNamespace,
-		len(result.MapFileNames),
-		len(result.SecretNames),
-	))
-}
-
-// handleValidationFailed publishes the invalid configuration for observability.
-func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) {
-	// Get cached state
+	// Get cached state using correlation ID for proper event matching
 	c.mu.RLock()
 	hasTemplateConfig := c.hasTemplateConfig
-	hasRenderedConfig := c.hasRenderedConfig
 	templateConfig := c.templateConfig
-	renderedConfig := c.renderedConfig
-	renderedAuxFiles := c.renderedAuxFiles
-	renderedAt := c.renderedAt
+	entry, hasRenderedConfig := c.renderedConfigs[correlationID]
 	c.mu.RUnlock()
 
 	// Check if we have all required data
@@ -354,74 +420,58 @@ func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) 
 		c.logger.Warn("cannot publish invalid configuration, missing cached state",
 			"has_template_config", hasTemplateConfig,
 			"has_rendered_config", hasRenderedConfig,
+			"correlation_id", correlationID,
 		)
 		return
 	}
 
-	// Join validation errors into a single string
-	validationError := ""
-	if len(event.Errors) > 0 {
-		validationError = event.Errors[0]
-		if len(event.Errors) > 1 {
-			validationError = fmt.Sprintf("%s (and %d more errors)", event.Errors[0], len(event.Errors)-1)
-		}
-	}
-
-	c.logger.Info("publishing invalid configuration for observability",
+	c.logger.Debug("queuing invalid configuration for async publishing",
 		"config_name", templateConfig.Name,
 		"config_namespace", templateConfig.Namespace,
 		"error_count", len(event.Errors),
-		"first_error", validationError,
+		"correlation_id", correlationID,
 	)
 
-	// Calculate checksum of rendered config
-	hash := sha256.Sum256([]byte(renderedConfig))
-	checksum := hex.EncodeToString(hash[:])
-
-	// Apply default compression threshold when not set (Go zero value)
-	compressionThreshold := templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold
-	if compressionThreshold == 0 {
-		compressionThreshold = config.DefaultCompressionThreshold
+	// Queue work for async processing
+	workItem := &validationFailedWorkItem{
+		correlationID:  correlationID,
+		event:          event,
+		templateConfig: templateConfig,
+		entry:          entry,
 	}
 
-	// Create publish request with -invalid suffix
-	req := configpublisher.PublishRequest{
-		TemplateConfigName:      templateConfig.Name,
-		TemplateConfigNamespace: templateConfig.Namespace,
-		TemplateConfigUID:       templateConfig.UID,
-		Config:                  renderedConfig,
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		AuxiliaryFiles:          c.convertAuxiliaryFiles(renderedAuxFiles),
-		RenderedAt:              renderedAt,
-		Checksum:                checksum,
-		NameSuffix:              "-invalid",
-		ValidationError:         validationError,
-		CompressionThreshold:    compressionThreshold,
+	select {
+	case c.validationFailedWork <- workItem:
+		// Work queued successfully
+	default:
+		// Channel full - coalesce
+		select {
+		case oldWork := <-c.validationFailedWork:
+			c.logger.Debug("coalescing validation failed work",
+				"old_correlation_id", oldWork.correlationID,
+				"new_correlation_id", correlationID,
+			)
+			c.mu.Lock()
+			delete(c.renderedConfigs, oldWork.correlationID)
+			c.mu.Unlock()
+		default:
+		}
+		select {
+		case c.validationFailedWork <- workItem:
+		default:
+			c.logger.Debug("validation failed work channel busy",
+				"correlation_id", correlationID)
+		}
 	}
-
-	// Call pure publisher (non-blocking - log errors but don't fail)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	_, err := c.publisher.PublishConfig(ctx, &req)
-	if err != nil {
-		c.logger.Warn("failed to publish invalid configuration",
-			"error", err,
-			"config_name", templateConfig.Name,
-			"config_namespace", templateConfig.Namespace,
-		)
-		return
-	}
-
-	c.logger.Info("invalid configuration published successfully for debugging",
-		"config_name", templateConfig.Name,
-		"config_namespace", templateConfig.Namespace,
-	)
 }
 
-// handleConfigAppliedToPod updates the deployment status when a config is applied to a pod.
+// handleConfigAppliedToPod queues a pod status update for async processing.
+//
+// This method is non-blocking - it queues work for the statusWorker instead of
+// making K8S API calls directly. This prevents the event loop from blocking on
+// slow API calls, allowing the component to keep up with event volume.
 func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEvent) {
-	c.logger.Debug("updating deployment status for pod",
+	c.logger.Debug("queuing deployment status update for pod",
 		"runtime_config_name", event.RuntimeConfigName,
 		"runtime_config_namespace", event.RuntimeConfigNamespace,
 		"pod_name", event.PodName,
@@ -430,13 +480,353 @@ func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEve
 		"is_drift_check", event.IsDriftCheck,
 	)
 
+	// Queue work for async processing
+	workItem := &statusWorkItem{
+		event: event,
+	}
+
+	select {
+	case c.statusWork <- workItem:
+		// Work queued successfully
+	default:
+		// Channel full - log and skip (status updates are less critical)
+		c.logger.Warn("status work channel full, skipping pod status update",
+			"runtime_config_name", event.RuntimeConfigName,
+			"pod_name", event.PodName,
+		)
+	}
+}
+
+// handlePodTerminated cleans up pod references when a pod is terminated.
+func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent) {
+	// Get the namespace from cached templateConfig (namespace-scoped operations).
+	c.mu.RLock()
+	hasConfig := c.hasTemplateConfig
+	namespace := ""
+	if c.templateConfig != nil {
+		namespace = c.templateConfig.Namespace
+	}
+	c.mu.RUnlock()
+
+	if !hasConfig || namespace == "" {
+		c.logger.Debug("skipping pod cleanup - no template config available yet",
+			"pod_name", event.PodName,
+		)
+		return
+	}
+
+	c.logger.Info("cleaning up pod references after termination",
+		"pod_name", event.PodName,
+		"pod_namespace", event.PodNamespace,
+		"crd_namespace", namespace,
+	)
+
+	// Convert event to cleanup request with namespace
+	cleanupReq := configpublisher.PodCleanupRequest{
+		PodName:   event.PodName,
+		Namespace: namespace,
+	}
+
+	// Call pure publisher (non-blocking - log errors but don't fail)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := c.publisher.CleanupPodReferences(ctx, &cleanupReq); err != nil {
+		c.logger.Warn("failed to cleanup pod references",
+			"error", err,
+			"pod_name", event.PodName,
+			"pod_namespace", event.PodNamespace,
+		)
+		// Non-blocking - just log the error
+		return
+	}
+
+	c.logger.Debug("pod references cleaned up successfully",
+		"pod_name", event.PodName,
+		"pod_namespace", event.PodNamespace,
+	)
+}
+
+// handlePodsDiscovered reconciles deployedToPods status against currently running pods.
+//
+// This cleans up stale entries from pods that terminated while the controller was
+// restarting (or before the controller started). It is called whenever HAProxy pods
+// are discovered, including on startup and when pods change.
+func (c *Component) handlePodsDiscovered(event *events.HAProxyPodsDiscoveredEvent) {
+	// Get the namespace from cached templateConfig (namespace-scoped operations).
+	c.mu.RLock()
+	hasConfig := c.hasTemplateConfig
+	namespace := ""
+	if c.templateConfig != nil {
+		namespace = c.templateConfig.Namespace
+	}
+	c.mu.RUnlock()
+
+	if !hasConfig || namespace == "" {
+		c.logger.Debug("skipping pod reconciliation - no template config available yet",
+			"pod_count", len(event.Endpoints),
+		)
+		return
+	}
+
+	// Extract pod names from discovered endpoints
+	podNames := make([]string, 0, len(event.Endpoints))
+	for _, ep := range event.Endpoints {
+		if endpoint, ok := ep.(dataplane.Endpoint); ok {
+			podNames = append(podNames, endpoint.PodName)
+		}
+	}
+
+	// Create timeout context (same pattern as handlePodTerminated)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Reconcile status against running pods (namespace-scoped)
+	if err := c.publisher.ReconcileDeployedToPods(ctx, namespace, podNames); err != nil {
+		c.logger.Warn("failed to reconcile deployed pods status", "error", err)
+	} else {
+		c.logger.Debug("reconciled deployed pods status",
+			"namespace", namespace,
+			"running_pods", len(podNames))
+	}
+}
+
+// convertAuxiliaryFiles converts dataplane auxiliary files to publisher auxiliary files.
+func (c *Component) convertAuxiliaryFiles(dataplaneFiles *dataplane.AuxiliaryFiles) *configpublisher.AuxiliaryFiles {
+	if dataplaneFiles == nil {
+		return nil
+	}
+
+	return &configpublisher.AuxiliaryFiles{
+		MapFiles:        dataplaneFiles.MapFiles,
+		SSLCertificates: dataplaneFiles.SSLCertificates,
+		GeneralFiles:    dataplaneFiles.GeneralFiles,
+	}
+}
+
+// handleLostLeadership handles LostLeadershipEvent by clearing cached configuration state.
+//
+// When a replica loses leadership, leader-only components (including this publisher)
+// are stopped via context cancellation. However, we defensively clear cached state
+// to ensure clean state if leadership is reacquired.
+//
+// This prevents scenarios where:
+//   - Stale templateConfig from previous leadership period is used
+//   - Old renderedConfig is incorrectly published
+//   - Cached auxiliary files reference non-existent resources
+func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.hasTemplateConfig || len(c.renderedConfigs) > 0 {
+		c.logger.Info("lost leadership, clearing cached configuration state",
+			"had_template_config", c.hasTemplateConfig,
+			"rendered_configs_count", len(c.renderedConfigs),
+		)
+	}
+
+	// Clear all cached state
+	c.templateConfig = nil
+	c.hasTemplateConfig = false
+	c.renderedConfigs = make(map[string]*renderedConfigEntry)
+}
+
+// publishWorker processes publish work items asynchronously.
+// This worker runs in a separate goroutine to prevent blocking the event loop
+// on slow K8S API calls.
+func (c *Component) publishWorker(ctx context.Context) {
+	for {
+		select {
+		case work := <-c.publishWork:
+			c.processPublishWork(work)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// processPublishWork performs the actual config publishing.
+func (c *Component) processPublishWork(work *publishWorkItem) {
+	c.logger.Debug("processing publish work",
+		"config_name", work.templateConfig.Name,
+		"config_namespace", work.templateConfig.Namespace,
+		"config_bytes", len(work.entry.config),
+		"correlation_id", work.correlationID,
+	)
+
+	// Generate checksum for config (content-based, not time-based)
+	checksum := sha256.Sum256([]byte(work.entry.config))
+	checksumHex := hex.EncodeToString(checksum[:8]) // First 8 bytes for brevity
+
+	// Convert auxiliary files
+	auxFiles := c.convertAuxiliaryFiles(work.entry.auxFiles)
+
+	// Create publish request
+	request := &configpublisher.PublishRequest{
+		TemplateConfigName:      work.templateConfig.Name,
+		TemplateConfigNamespace: work.templateConfig.Namespace,
+		TemplateConfigUID:       work.templateConfig.UID,
+		Config:                  work.entry.config,
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		AuxiliaryFiles:          auxFiles,
+		RenderedAt:              work.entry.renderedAt,
+		ValidatedAt:             work.event.Timestamp(),
+		Checksum:                checksumHex,
+		CompressionThreshold:    work.templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold,
+	}
+
+	// Call pure publisher with timeout context
+	publishCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := c.publisher.PublishConfig(publishCtx, request)
+	if err != nil {
+		c.logger.Error("failed to publish runtime configuration",
+			"error", err,
+			"config_name", work.templateConfig.Name,
+			"correlation_id", work.correlationID,
+		)
+		// Clean up the cached entry
+		c.mu.Lock()
+		delete(c.renderedConfigs, work.correlationID)
+		c.mu.Unlock()
+		return
+	}
+
+	c.logger.Info("runtime configuration published successfully",
+		"runtime_config_name", result.RuntimeConfigName,
+		"runtime_config_namespace", result.RuntimeConfigNamespace,
+		"checksum", checksumHex,
+		"correlation_id", work.correlationID,
+	)
+
+	// Clean up the cached entry after successful publish
+	c.mu.Lock()
+	delete(c.renderedConfigs, work.correlationID)
+	c.mu.Unlock()
+
+	// Publish success event with runtime config info
+	c.eventBus.Publish(events.NewConfigPublishedEvent(
+		result.RuntimeConfigName,
+		result.RuntimeConfigNamespace,
+		len(result.MapFileNames),
+		len(result.SecretNames),
+	))
+}
+
+// validationFailedWorker processes validation failed work items asynchronously.
+func (c *Component) validationFailedWorker(ctx context.Context) {
+	for {
+		select {
+		case work := <-c.validationFailedWork:
+			c.processValidationFailedWork(work)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// processValidationFailedWork performs the actual invalid config publishing.
+func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) {
+	c.logger.Debug("processing validation failed work",
+		"config_name", work.templateConfig.Name,
+		"config_namespace", work.templateConfig.Namespace,
+		"error_count", len(work.event.Errors),
+		"correlation_id", work.correlationID,
+	)
+
+	// Generate checksum for config
+	checksum := sha256.Sum256([]byte(work.entry.config))
+	checksumHex := hex.EncodeToString(checksum[:8])
+
+	// Convert auxiliary files
+	auxFiles := c.convertAuxiliaryFiles(work.entry.auxFiles)
+
+	// Build validation error summary
+	var validationError string
+	if len(work.event.Errors) > 0 {
+		validationError = work.event.Errors[0]
+		if len(work.event.Errors) > 1 {
+			validationError = fmt.Sprintf("%s (+%d more errors)", validationError, len(work.event.Errors)-1)
+		}
+	}
+
+	// Create publish request with invalid state (uses "-invalid" suffix)
+	request := &configpublisher.PublishRequest{
+		TemplateConfigName:      work.templateConfig.Name,
+		TemplateConfigNamespace: work.templateConfig.Namespace,
+		TemplateConfigUID:       work.templateConfig.UID,
+		Config:                  work.entry.config,
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		AuxiliaryFiles:          auxFiles,
+		RenderedAt:              work.entry.renderedAt,
+		Checksum:                checksumHex,
+		NameSuffix:              "-invalid",
+		ValidationError:         validationError,
+		CompressionThreshold:    work.templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold,
+	}
+
+	// Call pure publisher with timeout context
+	publishCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := c.publisher.PublishConfig(publishCtx, request)
+	if err != nil {
+		c.logger.Error("failed to publish invalid runtime configuration",
+			"error", err,
+			"config_name", work.templateConfig.Name,
+			"correlation_id", work.correlationID,
+		)
+		// Clean up the cached entry
+		c.mu.Lock()
+		delete(c.renderedConfigs, work.correlationID)
+		c.mu.Unlock()
+		return
+	}
+
+	c.logger.Warn("invalid runtime configuration published",
+		"runtime_config_name", result.RuntimeConfigName,
+		"runtime_config_namespace", result.RuntimeConfigNamespace,
+		"validation_error", validationError,
+		"correlation_id", work.correlationID,
+	)
+
+	// Clean up the cached entry after successful publish
+	c.mu.Lock()
+	delete(c.renderedConfigs, work.correlationID)
+	c.mu.Unlock()
+}
+
+// statusWorker processes pod status update work items asynchronously.
+func (c *Component) statusWorker(ctx context.Context) {
+	for {
+		select {
+		case work := <-c.statusWork:
+			c.processStatusWork(work)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// processStatusWork performs the actual pod status update.
+func (c *Component) processStatusWork(work *statusWorkItem) {
+	event := work.event
+
+	c.logger.Debug("processing status update for pod",
+		"runtime_config_name", event.RuntimeConfigName,
+		"runtime_config_namespace", event.RuntimeConfigNamespace,
+		"pod_name", event.PodName,
+		"checksum", event.Checksum,
+	)
+
 	// Convert event to status update
 	timestamp := event.Timestamp()
 	update := configpublisher.DeploymentStatusUpdate{
 		RuntimeConfigName:      event.RuntimeConfigName,
 		RuntimeConfigNamespace: event.RuntimeConfigNamespace,
 		PodName:                event.PodName,
-		LastCheckedAt:          &timestamp, // Always set - every sync updates this
+		LastCheckedAt:          &timestamp,
 		Checksum:               event.Checksum,
 		IsDriftCheck:           event.IsDriftCheck,
 	}
@@ -479,17 +869,16 @@ func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEve
 		update.Error = event.SyncMetadata.Error
 	}
 
-	// Call pure publisher (non-blocking - log errors but don't fail)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Call pure publisher with timeout context
+	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := c.publisher.UpdateDeploymentStatus(ctx, &update); err != nil {
+	if err := c.publisher.UpdateDeploymentStatus(updateCtx, &update); err != nil {
 		c.logger.Warn("failed to update deployment status",
 			"error", err,
 			"runtime_config_name", event.RuntimeConfigName,
 			"pod_name", event.PodName,
 		)
-		// Non-blocking - just log the error
 		return
 	}
 
@@ -497,106 +886,4 @@ func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEve
 		"runtime_config_name", event.RuntimeConfigName,
 		"pod_name", event.PodName,
 	)
-}
-
-// handlePodTerminated cleans up pod references when a pod is terminated.
-func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent) {
-	c.logger.Info("cleaning up pod references after termination",
-		"pod_name", event.PodName,
-		"pod_namespace", event.PodNamespace,
-	)
-
-	// Convert event to cleanup request
-	cleanupReq := configpublisher.PodCleanupRequest{
-		PodName: event.PodName,
-	}
-
-	// Call pure publisher (non-blocking - log errors but don't fail)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := c.publisher.CleanupPodReferences(ctx, &cleanupReq); err != nil {
-		c.logger.Warn("failed to cleanup pod references",
-			"error", err,
-			"pod_name", event.PodName,
-			"pod_namespace", event.PodNamespace,
-		)
-		// Non-blocking - just log the error
-		return
-	}
-
-	c.logger.Debug("pod references cleaned up successfully",
-		"pod_name", event.PodName,
-		"pod_namespace", event.PodNamespace,
-	)
-}
-
-// handlePodsDiscovered reconciles deployedToPods status against currently running pods.
-//
-// This cleans up stale entries from pods that terminated while the controller was
-// restarting (or before the controller started). It is called whenever HAProxy pods
-// are discovered, including on startup and when pods change.
-func (c *Component) handlePodsDiscovered(event *events.HAProxyPodsDiscoveredEvent) {
-	// Extract pod names from discovered endpoints
-	podNames := make([]string, 0, len(event.Endpoints))
-	for _, ep := range event.Endpoints {
-		if endpoint, ok := ep.(dataplane.Endpoint); ok {
-			podNames = append(podNames, endpoint.PodName)
-		}
-	}
-
-	// Create timeout context (same pattern as handlePodTerminated)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Reconcile status against running pods
-	if err := c.publisher.ReconcileDeployedToPods(ctx, podNames); err != nil {
-		c.logger.Warn("failed to reconcile deployed pods status", "error", err)
-	} else {
-		c.logger.Debug("reconciled deployed pods status",
-			"running_pods", len(podNames))
-	}
-}
-
-// convertAuxiliaryFiles converts dataplane auxiliary files to publisher auxiliary files.
-func (c *Component) convertAuxiliaryFiles(dataplaneFiles *dataplane.AuxiliaryFiles) *configpublisher.AuxiliaryFiles {
-	if dataplaneFiles == nil {
-		return nil
-	}
-
-	return &configpublisher.AuxiliaryFiles{
-		MapFiles:        dataplaneFiles.MapFiles,
-		SSLCertificates: dataplaneFiles.SSLCertificates,
-		GeneralFiles:    dataplaneFiles.GeneralFiles,
-	}
-}
-
-// handleLostLeadership handles LostLeadershipEvent by clearing cached configuration state.
-//
-// When a replica loses leadership, leader-only components (including this publisher)
-// are stopped via context cancellation. However, we defensively clear cached state
-// to ensure clean state if leadership is reacquired.
-//
-// This prevents scenarios where:
-//   - Stale templateConfig from previous leadership period is used
-//   - Old renderedConfig is incorrectly published
-//   - Cached auxiliary files reference non-existent resources
-func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.hasTemplateConfig || c.hasRenderedConfig {
-		c.logger.Info("lost leadership, clearing cached configuration state",
-			"had_template_config", c.hasTemplateConfig,
-			"had_rendered_config", c.hasRenderedConfig,
-		)
-	}
-
-	// Clear all cached state
-	c.templateConfig = nil
-	c.renderedConfig = ""
-	c.renderedAuxFiles = nil
-	c.renderedAt = time.Time{}
-	c.hasTemplateConfig = false
-	c.hasRenderedConfig = false
 }

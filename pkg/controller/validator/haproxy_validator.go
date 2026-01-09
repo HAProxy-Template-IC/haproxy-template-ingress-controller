@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -160,6 +161,27 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	correlationID := event.CorrelationID()
 	triggerReason := event.TriggerReason
 
+	// Extract validation paths first to get TempDir for cleanup.
+	// The renderer creates a temp directory for each render cycle, and the validator
+	// is responsible for cleaning it up after validation completes.
+	validationPaths, ok := event.GetValidationPaths()
+	if !ok {
+		v.publishValidationFailure(
+			[]string{"failed to extract validation paths from event"},
+			time.Since(startTime).Milliseconds(),
+			correlationID,
+			triggerReason,
+			"", // Don't cache infrastructure errors
+		)
+		return
+	}
+
+	// Defer cleanup of the validation temp directory.
+	// This ensures cleanup happens regardless of how the function exits (success, failure, or cache skip).
+	// The renderer creates the temp directory but delegates cleanup to the validator to prevent
+	// race conditions where cleanup runs before async validation.
+	defer v.cleanupValidationTempDir(validationPaths.TempDir)
+
 	// Compute config hash to detect identical configs
 	configHash := v.computeConfigHash(event.HAProxyConfig)
 
@@ -203,20 +225,6 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	if !ok {
 		v.publishValidationFailure(
 			[]string{"failed to extract validation auxiliary files from event"},
-			time.Since(startTime).Milliseconds(),
-			correlationID,
-			triggerReason,
-			"", // Don't cache infrastructure errors
-		)
-		return
-	}
-
-	// Extract validation paths from event
-	// Uses typed accessor method for compile-time type safety
-	validationPaths, ok := event.GetValidationPaths()
-	if !ok {
-		v.publishValidationFailure(
-			[]string{"failed to extract validation paths from event"},
 			time.Since(startTime).Milliseconds(),
 			correlationID,
 			triggerReason,
@@ -348,4 +356,19 @@ func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, du
 func (v *HAProxyValidatorComponent) computeConfigHash(config string) string {
 	hash := sha256.Sum256([]byte(config))
 	return hex.EncodeToString(hash[:])
+}
+
+// cleanupValidationTempDir removes the validation temp directory.
+// Called via defer in handleTemplateRendered to ensure cleanup happens regardless of validation outcome.
+// Logs a warning on failure but does not return an error since cleanup is best-effort.
+func (v *HAProxyValidatorComponent) cleanupValidationTempDir(tempDir string) {
+	if tempDir == "" {
+		return
+	}
+
+	if err := os.RemoveAll(tempDir); err != nil {
+		v.logger.Warn("Failed to clean up validation temp directory",
+			"path", tempDir,
+			"error", err)
+	}
 }
