@@ -61,6 +61,40 @@ type HealthChecker interface {
 	HealthCheck() error
 }
 
+// SubscriptionReadySignaler is an optional interface for components that subscribe
+// to events during Start() rather than during construction.
+//
+// Leader-only components typically subscribe in Start() because they're created
+// during construction but only started when leadership is acquired. This interface
+// allows such components to signal when subscription is complete, ensuring the
+// registry waits for subscription before considering the component "ready".
+//
+// Without this interface, there's a race condition where:
+//  1. Component's Start() goroutine is launched
+//  2. Registry marks component as "ready"
+//  3. EventBus replays buffered events
+//  4. But the component hasn't subscribed yet (Start() hasn't executed enough)
+//  5. Component misses critical events
+//
+// By implementing this interface, the component can signal after subscription:
+//
+//	func (c *Component) Start(ctx context.Context) error {
+//	    c.eventChan = c.eventBus.Subscribe(100)  // Subscribe
+//	    close(c.subscriptionReady)               // Signal ready
+//	    // ... event loop
+//	}
+//
+//	func (c *Component) SubscriptionReady() <-chan struct{} {
+//	    return c.subscriptionReady
+//	}
+type SubscriptionReadySignaler interface {
+	// SubscriptionReady returns a channel that is closed when the component has
+	// completed its event subscription and is ready to receive events.
+	// The registry will wait for this channel before considering the component
+	// ready for dependents.
+	SubscriptionReady() <-chan struct{}
+}
+
 // Status represents the current lifecycle state of a component.
 type Status string
 

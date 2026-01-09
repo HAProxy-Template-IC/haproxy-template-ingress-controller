@@ -109,6 +109,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config) *Rec
 		events.EventTypeHTTPResourceUpdated,
 		events.EventTypeHTTPResourceAccepted,
 		events.EventTypeDriftPreventionTriggered,
+		events.EventTypeBecameLeader,
 	)
 
 	return &Reconciler{
@@ -195,6 +196,9 @@ func (r *Reconciler) handleEvent(event busevents.Event) {
 
 	case *events.DriftPreventionTriggeredEvent:
 		r.handleDriftPrevention(e)
+
+	case *events.BecameLeaderEvent:
+		r.handleBecameLeader(e)
 	}
 }
 
@@ -333,6 +337,21 @@ func (r *Reconciler) handleDriftPrevention(_ *events.DriftPreventionTriggeredEve
 	// The TriggerReason will be propagated through the event chain and used by
 	// DeploymentScheduler to deploy cached config if validation fails
 	r.triggerReconciliation(events.TriggerReasonDriftPrevention)
+}
+
+// handleBecameLeader triggers immediate reconciliation when leadership is acquired.
+//
+// This ensures leader-only components (renderer, drift monitor) receive fresh state.
+// The renderer is leader-only and starts when we become leader, so this reconciliation
+// provides the initial config rendering for the new leader.
+func (r *Reconciler) handleBecameLeader(_ *events.BecameLeaderEvent) {
+	r.logger.Info("Became leader, triggering immediate reconciliation")
+
+	// Stop pending debounce timer - leader transition takes priority
+	r.stopDebounceTimer()
+
+	// Trigger reconciliation immediately
+	r.triggerReconciliation("became_leader")
 }
 
 // ensureRefractoryTimer ensures a timer is running for the remainder of the refractory period.

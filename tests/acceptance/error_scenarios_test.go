@@ -476,6 +476,15 @@ func buildControllerCrashRecoveryFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Controller pod ready")
 
+			// Setup metrics access for waiting on reconciliation completion
+			metricsClient, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
+			require.NoError(t, err)
+
+			// Wait for initial reconciliation to complete (renderer is leader-only)
+			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
+			require.NoError(t, err)
+			t.Log("Controller completed initial reconciliation")
+
 			// Get initial pod and verify config
 			pod, err := GetControllerPod(ctx, client, namespace)
 			require.NoError(t, err)
@@ -1134,6 +1143,16 @@ func buildWatchReconnectionFeature() types.Feature {
 			newPod, err := WaitForNewPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, string(pod.UID), 90*time.Second)
 			require.NoError(t, err)
 			t.Logf("New pod: %s (was %s)", newPod.Name, initialPodName)
+
+			// Setup metrics access for waiting on reconciliation completion
+			metricsClient, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
+			require.NoError(t, err)
+
+			// Wait for new pod to complete reconciliation (renderer is leader-only,
+			// so rendered config won't be available until reconciliation completes)
+			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
+			require.NoError(t, err)
+			t.Log("New pod completed reconciliation")
 
 			// Verify new pod processed the update - reuse debugClient via NodePort
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)

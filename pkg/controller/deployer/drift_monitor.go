@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -29,30 +30,29 @@ import (
 const (
 	// DriftMonitorComponentName is the unique identifier for the drift prevention monitor component.
 	DriftMonitorComponentName = "drift-monitor"
-
-	// DriftMonitorEventBufferSize is the size of the event subscription buffer for the drift monitor.
-	DriftMonitorEventBufferSize = 50
 )
 
 // DriftPreventionMonitor triggers periodic reconciliation to prevent configuration
-// drift and keep HTTP Store caches warm across all replicas.
+// drift in HAProxy pods.
 //
 // When no deployment has occurred within the configured interval, it publishes
 // a DriftPreventionTriggeredEvent to trigger reconciliation. This helps detect
 // and correct configuration drift caused by other Dataplane API clients or
 // manual changes.
 //
-// The component runs on ALL replicas (not just the leader) to ensure HTTP Store
-// caches stay warm. Only the leader's DeploymentScheduler will actually deploy.
+// This is a leader-only component that starts when leadership is acquired.
+// Only the leader needs drift prevention since only the leader deploys.
+// The Reconciler triggers fresh reconciliation on BecameLeaderEvent to provide current state.
 //
 // Event subscriptions:
 //   - DeploymentCompletedEvent: Reset drift prevention timer
+//   - LostLeadershipEvent: Stop drift timer when losing leadership
 //
 // The component publishes DriftPreventionTriggeredEvent when drift prevention
 // is needed.
 type DriftPreventionMonitor struct {
 	eventBus                *busevents.EventBus
-	eventChan               <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
+	eventChan               <-chan busevents.Event // Subscribed in Start() for leader-only pattern
 	logger                  *slog.Logger
 	driftPreventionInterval time.Duration
 
@@ -65,12 +65,16 @@ type DriftPreventionMonitor struct {
 
 	// Health check: stall detection for timer-based component
 	healthTracker *lifecycle.HealthTracker
+
+	// subscriptionReady is closed when the component has subscribed to events.
+	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
+	subscriptionReady chan struct{}
 }
 
 // NewDriftPreventionMonitor creates a new DriftPreventionMonitor component.
 //
-// The component is subscribed to the EventBus during construction to ensure proper
-// startup synchronization without timing-based sleeps.
+// As a leader-only component, subscription happens in Start() after leadership
+// is acquired, not during construction.
 //
 // Parameters:
 //   - eventBus: The EventBus for subscribing to events and publishing triggers
@@ -80,13 +84,6 @@ type DriftPreventionMonitor struct {
 // Returns:
 //   - A new DriftPreventionMonitor instance ready to be started
 func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger, driftPreventionInterval time.Duration) *DriftPreventionMonitor {
-	// Subscribe to only DeploymentCompletedEvent during construction (before EventBus.Start())
-	// to ensure proper startup synchronization and reduce buffer pressure.
-	// DriftPreventionMonitor runs on all replicas to keep HTTP Store caches warm
-	// through regular reconciliation cycles. Only the leader's DeploymentScheduler
-	// will act on the resulting events.
-	eventChan := eventBus.SubscribeTypes(DriftMonitorEventBufferSize, events.EventTypeDeploymentCompleted)
-
 	// Create health tracker with stall timeout = interval × 1.5 to allow for jitter
 	// For default 60s interval, this gives 90s stall timeout
 	healthTracker := lifecycle.NewActivityTracker(
@@ -95,11 +92,12 @@ func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger
 	)
 
 	return &DriftPreventionMonitor{
-		eventBus:                eventBus,
-		eventChan:               eventChan,
+		eventBus: eventBus,
+		// eventChan is subscribed in Start() for leader-only pattern
 		logger:                  logger.With("component", DriftMonitorComponentName),
 		driftPreventionInterval: driftPreventionInterval,
 		healthTracker:           healthTracker,
+		subscriptionReady:       make(chan struct{}),
 	}
 }
 
@@ -109,12 +107,20 @@ func (m *DriftPreventionMonitor) Name() string {
 	return DriftMonitorComponentName
 }
 
+// SubscriptionReady returns a channel that is closed when the component has
+// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
+func (m *DriftPreventionMonitor) SubscriptionReady() <-chan struct{} {
+	return m.subscriptionReady
+}
+
 // Start begins the drift prevention monitor's event loop.
 //
 // This method blocks until the context is cancelled or an error occurs.
-// The component is already subscribed to the EventBus (subscription happens in NewDriftPreventionMonitor()),
-// so this method only processes events and manages the drift prevention timer:
+// As a leader-only component, it subscribes to events when started (after leadership is acquired).
+//
+// Event handling:
 //   - DeploymentCompletedEvent: Resets the drift prevention timer
+//   - LostLeadershipEvent: Stops drift timer when losing leadership
 //   - Drift timer expiration: Publishes DriftPreventionTriggeredEvent
 //
 // The component runs until the context is cancelled, at which point it
@@ -127,6 +133,17 @@ func (m *DriftPreventionMonitor) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
+	// Subscribe when starting (after leadership acquired).
+	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
+	// Use Critical buffer: fast timer-reset operations
+	m.eventChan = m.eventBus.SubscribeTypesLeaderOnly(buffers.Critical(),
+		events.EventTypeDeploymentCompleted,
+		events.EventTypeLostLeadership,
+	)
+
+	// Signal that subscription is complete for SubscriptionReadySignaler interface.
+	close(m.subscriptionReady)
+
 	m.logger.Debug("drift monitor starting",
 		"drift_prevention_interval_ms", m.driftPreventionInterval.Milliseconds())
 
@@ -151,8 +168,11 @@ func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
 
 // handleEvent processes events from the EventBus.
 func (m *DriftPreventionMonitor) handleEvent(event busevents.Event) {
-	if _, ok := event.(*events.DeploymentCompletedEvent); ok {
+	switch event.(type) {
+	case *events.DeploymentCompletedEvent:
 		m.handleDeploymentCompleted()
+	case *events.LostLeadershipEvent:
+		m.handleLostLeadership()
 	}
 }
 
@@ -165,6 +185,15 @@ func (m *DriftPreventionMonitor) handleDeploymentCompleted() {
 
 	m.logger.Debug("deployment completed, resetting drift prevention timer")
 	m.resetDriftTimer()
+}
+
+// handleLostLeadership handles leadership loss events.
+//
+// This stops the drift timer since only the leader needs drift prevention.
+// The new leader will start their own drift timer when they acquire leadership.
+func (m *DriftPreventionMonitor) handleLostLeadership() {
+	m.logger.Info("lost leadership, stopping drift timer")
+	m.stopDriftTimer()
 }
 
 // handleDriftTimerExpired handles drift timer expiration.

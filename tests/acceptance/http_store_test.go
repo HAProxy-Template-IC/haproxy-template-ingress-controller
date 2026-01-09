@@ -421,6 +421,14 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("Leader election complete")
 
+			// Wait for leader to complete first reconciliation (renderer is leader-only,
+			// so aux files won't be available until reconciliation completes)
+			metricsClient, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
+			require.NoError(t, err)
+			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
+			require.NoError(t, err)
+			t.Log("Leader completed first reconciliation")
+
 			// Get the current leader
 			leaderIdentity, err := GetLeaseHolder(ctx, clientset, namespace, leaseName)
 			require.NoError(t, err)
@@ -461,6 +469,12 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 				namespace, leaseName, leaderIdentity, PodRestartTimeout)
 			require.NoError(t, err)
 			t.Logf("New leader: %s", newLeaderIdentity)
+
+			// Wait for new leader to complete first reconciliation (renderer is leader-only)
+			t.Log("Waiting for new leader to complete reconciliation...")
+			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
+			require.NoError(t, err)
+			t.Log("New leader completed reconciliation")
 
 			// Verify new leader has the blocklist content via NodePort
 			// (NodePort service routes to available pods, which now includes only the new leader)

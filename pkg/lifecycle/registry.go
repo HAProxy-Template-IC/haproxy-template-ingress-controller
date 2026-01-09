@@ -301,11 +301,12 @@ func (r *Registry) waitForDependencies(ctx context.Context, comp *registeredComp
 // Design note on timing: Status is set to Running and ready channel is closed
 // after Start() has been entered. This ensures:
 //  1. Dependent components don't race ahead of their dependencies
-//  2. Components subscribe to EventBus in their constructor, not in Start()
-//  3. Therefore, components ARE ready to receive events as soon as Start() begins
+//  2. All-replica components subscribe in their constructor, not in Start()
+//  3. Leader-only components subscribe in Start() and implement SubscriptionReadySignaler
 //
-// This design requires that components complete any critical initialization
-// in their constructor, not in Start().
+// For leader-only components that implement SubscriptionReadySignaler, we wait for
+// their signal before considering them ready. This prevents a race condition where
+// EventBus.Start() replays events before leader-only components have subscribed.
 func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent) error {
 	name := comp.component.Name()
 
@@ -328,10 +329,26 @@ func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent
 	// Wait for goroutine to reach the point where Start() is about to be called
 	<-startEntered
 
-	// Yield to scheduler to give the Start() call a chance to actually begin.
-	// This reduces race conditions where dependent components start before
-	// their dependency's Start() has actually begun executing code.
-	runtime.Gosched()
+	// Check if component implements SubscriptionReadySignaler for precise synchronization.
+	// Leader-only components subscribe during Start(), so they need this mechanism to
+	// ensure EventBus.Start() doesn't replay events before subscription is complete.
+	if signaler, ok := comp.component.(SubscriptionReadySignaler); ok {
+		readyCh := signaler.SubscriptionReady()
+		if readyCh != nil {
+			// Wait for component to signal subscription complete
+			select {
+			case <-readyCh:
+				r.logger.Debug("component subscription ready", "name", name)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	} else {
+		// Yield to scheduler to give the Start() call a chance to actually begin.
+		// This reduces race conditions where dependent components start before
+		// their dependency's Start() has actually begun executing code.
+		runtime.Gosched()
+	}
 
 	// Signal that this component is ready for dependents
 	close(comp.ready)
@@ -503,6 +520,111 @@ func (r *Registry) StartLeaderOnlyComponents(ctx context.Context) error {
 	}
 
 	return g.Wait()
+}
+
+// StartLeaderOnlyComponentsAsync starts leader-only components and waits for them to be
+// subscription-ready before returning. Unlike StartLeaderOnlyComponents, this method
+// returns as soon as all components have signaled they're ready to receive events,
+// rather than waiting for their Start() methods to complete.
+//
+// This is designed for use with the EventBus Pause/Start pattern, where leader-only
+// components need to be subscribed before EventBus.Start() replays buffered events.
+//
+// Returns:
+//   - A channel that will receive an error if any component fails, or be closed if all
+//     components complete successfully. The caller should track this in an errgroup.
+//   - An error if components cannot be started (e.g., dependency validation fails)
+//
+// Example:
+//
+//	// In leadership callback
+//	func (c *Controller) onBecameLeader() error {
+//	    errCh, err := c.registry.StartLeaderOnlyComponentsAsync(ctx)
+//	    if err != nil {
+//	        return err
+//	    }
+//	    // Components are now subscribed, safe to call eventBus.Start()
+//	    // Track errors asynchronously
+//	    go func() {
+//	        if err := <-errCh; err != nil {
+//	            log.Error("Leader component failed", "error", err)
+//	        }
+//	    }()
+//	    return nil
+//	}
+func (r *Registry) StartLeaderOnlyComponentsAsync(ctx context.Context) (<-chan error, error) {
+	r.mu.Lock()
+	componentsToStart := make([]*registeredComponent, 0)
+	startSet := make(map[string]bool)
+
+	for _, comp := range r.components {
+		// Only start leader-only components that are pending or standby
+		if comp.config.leaderOnly && (comp.status == StatusPending || comp.status == StatusStandby) {
+			comp.status = StatusStarting
+			// Re-create ready channel in case this is called multiple times
+			comp.ready = make(chan struct{})
+			componentsToStart = append(componentsToStart, comp)
+			startSet[comp.component.Name()] = true
+		}
+	}
+
+	// Add already running components to the start set for dependency validation
+	for _, comp := range r.components {
+		if comp.status == StatusRunning {
+			startSet[comp.component.Name()] = true
+		}
+	}
+
+	// Validate dependencies
+	if err := r.validateDependencies(componentsToStart, startSet); err != nil {
+		r.mu.Unlock()
+		return nil, err
+	}
+
+	r.mu.Unlock()
+
+	errCh := make(chan error, 1)
+
+	if len(componentsToStart) == 0 {
+		close(errCh)
+		return errCh, nil
+	}
+
+	// Track completion of all components
+	g, gCtx := errgroup.WithContext(ctx)
+
+	// Start all components in goroutines
+	for _, comp := range componentsToStart {
+		comp := comp
+		g.Go(func() error {
+			// Wait for dependencies to be ready
+			if err := r.waitForDependencies(gCtx, comp); err != nil {
+				return err
+			}
+			return r.startComponent(gCtx, comp)
+		})
+	}
+
+	// Wait for all components to be ready (subscription complete)
+	for _, comp := range componentsToStart {
+		select {
+		case <-comp.ready:
+			// Component is subscription-ready
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	// Launch goroutine to track completion and propagate errors
+	go func() {
+		err := g.Wait()
+		if err != nil && err != context.Canceled {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	return errCh, nil
 }
 
 // Count returns the number of registered components.
