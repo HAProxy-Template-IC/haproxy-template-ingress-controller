@@ -69,7 +69,7 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 // TestDeployToEndpoints_InvalidEndpointType tests handling invalid endpoint types.
 func TestDeployToEndpoints_InvalidEndpointType(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	deployer := createTestDeployer(bus)
@@ -153,7 +153,7 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 	bus.Start()
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 
 	// Simulate deployment scheduled event (with no endpoints)
 	bus.Publish(events.NewDeploymentScheduledEvent(

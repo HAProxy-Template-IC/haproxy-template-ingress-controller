@@ -156,7 +156,7 @@ func TestNew_CallbackWrapping_OnStartedLeading(t *testing.T) {
 	}
 
 	// Subscribe before bus.Start()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	component, err := New(config, clientset, bus, callbacks, logger)
@@ -272,7 +272,7 @@ func TestComponent_Run_PublishesLeaderElectionStartedEvent(t *testing.T) {
 	callbacks := k8sleaderelection.Callbacks{}
 
 	// Subscribe before bus.Start()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	component, err := New(config, clientset, bus, callbacks, logger)

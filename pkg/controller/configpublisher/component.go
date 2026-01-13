@@ -179,7 +179,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// All-replica components replay their cached state on BecameLeaderEvent.
-	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(EventBufferSize,
+	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, EventBufferSize,
 		events.EventTypeConfigValidated,
 		events.EventTypeTemplateRendered,
 		events.EventTypeValidationCompleted,

@@ -22,6 +22,9 @@ import (
 	pkgevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
+// ComponentName is the unique identifier for the metrics component.
+const ComponentName = "metrics"
+
 // Component is an event-driven metrics collector.
 //
 // Subscribes to controller events and updates metrics via the Metrics struct.
@@ -57,7 +60,7 @@ func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
 	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(200,
+	eventChan := eventBus.SubscribeTypes(ComponentName, 200,
 		events.EventTypeReconciliationCompleted,
 		events.EventTypeReconciliationFailed,
 		events.EventTypeDeploymentCompleted,

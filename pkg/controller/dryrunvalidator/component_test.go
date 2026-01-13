@@ -470,7 +470,7 @@ func TestPublishResponse_Allowed(t *testing.T) {
 
 	component := New(bus, nil, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Publish allowed response
@@ -499,7 +499,7 @@ func TestPublishResponse_Denied(t *testing.T) {
 
 	component := New(bus, nil, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Publish denied response
@@ -774,7 +774,7 @@ func TestHandleValidationRequest_InvalidGVK(t *testing.T) {
 	// Create component without store manager
 	component := New(bus, nil, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Create validation request with invalid GVK (no dot separator)
@@ -825,7 +825,7 @@ func TestHandleValidationRequest_StoreNotRegistered(t *testing.T) {
 
 	component := New(bus, storeManager, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Create validation request for Ingress (store not registered)
@@ -881,7 +881,7 @@ func TestHandleValidationRequest_RenderingError(t *testing.T) {
 
 	component := New(bus, storeManager, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Create validation request
@@ -940,7 +940,7 @@ func TestHandleValidationRequest_Success(t *testing.T) {
 
 	component := New(bus, storeManager, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Create validation request
@@ -998,7 +998,7 @@ func TestHandleValidationRequest_UpdateOperation(t *testing.T) {
 
 	component := New(bus, storeManager, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Create UPDATE validation request
@@ -1088,7 +1088,7 @@ func TestHandleValidationRequest_DifferentResourceTypes(t *testing.T) {
 
 			component := New(bus, storeManager, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-			eventChan := bus.Subscribe(10)
+			eventChan := bus.Subscribe("test-sub", 10)
 			bus.Start()
 
 			req := &events.WebhookValidationRequest{
@@ -1172,7 +1172,7 @@ func TestRunValidationTests_AllTestsPass(t *testing.T) {
 
 	component := New(bus, storeManager, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Create validation request (validation tests run when c.config.ValidationTests > 0)
@@ -1254,7 +1254,7 @@ func TestRunValidationTests_TestsFail(t *testing.T) {
 
 	component := New(bus, storeManager, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Create validation request
@@ -1335,7 +1335,7 @@ func TestRunValidationTests_PublishesEvents(t *testing.T) {
 
 	component := New(bus, storeManager, cfg, engine, validationPaths, dataplane.Capabilities{}, logger)
 
-	eventChan := bus.Subscribe(20)
+	eventChan := bus.Subscribe("test-sub", 20)
 	bus.Start()
 
 	req := &events.WebhookValidationRequest{

@@ -39,7 +39,7 @@ func TestReconciler_LeadingEdgeTrigger(t *testing.T) {
 	reconciler := New(bus, logger, config)
 
 	// Subscribe to reconciliation triggered events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -83,7 +83,7 @@ func TestReconciler_RefractoryBatching(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -144,7 +144,7 @@ func TestReconciler_MaxLatencyGuarantee(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -201,7 +201,7 @@ func TestReconciler_ImmediateTriggerAfterRefractoryEnds(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -249,7 +249,7 @@ func TestReconciler_IndexSynchronizedTriggersImmediate(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -284,7 +284,7 @@ func TestReconciler_SkipInitialSyncEvents(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -323,7 +323,7 @@ func TestReconciler_IndexSynchronizedCancelsDebounce(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -373,7 +373,7 @@ func TestReconciler_ContextCancellation(t *testing.T) {
 	}
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -430,7 +430,7 @@ func TestReconciler_CustomDebounceInterval(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -514,7 +514,7 @@ func TestReconciler_SkipHAProxyPodChanges(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -549,7 +549,7 @@ func TestReconciler_NonHAProxyPodChangesStillTrigger(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -595,7 +595,7 @@ func TestReconciler_HandleHTTPResourceChange(t *testing.T) {
 	reconciler := New(bus, logger, config)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -626,7 +626,7 @@ func TestReconciler_HandleHTTPResourceAccepted(t *testing.T) {
 	reconciler := New(bus, logger, config)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -659,7 +659,7 @@ func TestReconciler_HandleBecameLeader(t *testing.T) {
 	reconciler := New(bus, logger, config)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -689,7 +689,7 @@ func TestReconciler_BecameLeaderCancelsDebounce(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())

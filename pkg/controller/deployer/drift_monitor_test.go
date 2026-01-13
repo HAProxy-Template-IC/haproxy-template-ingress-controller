@@ -144,7 +144,7 @@ func TestDriftPreventionMonitor_HandleDeploymentCompleted(t *testing.T) {
 // TestDriftPreventionMonitor_HandleDriftTimerExpired tests timer expiration.
 func TestDriftPreventionMonitor_HandleDriftTimerExpired(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
@@ -205,7 +205,7 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 // TestDriftPreventionMonitor_TimerTriggersEvent tests the full timer flow.
 func TestDriftPreventionMonitor_TimerTriggersEvent(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	// Use short interval for testing

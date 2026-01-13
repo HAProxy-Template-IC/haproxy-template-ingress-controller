@@ -52,7 +52,7 @@ type ConfigLoaderComponent struct {
 func NewConfigLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *ConfigLoaderComponent {
 	// Subscribe to only ConfigResourceChangedEvent during construction
 	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(EventBufferSize, events.EventTypeConfigResourceChanged)
+	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeConfigResourceChanged)
 
 	return &ConfigLoaderComponent{
 		eventBus:  eventBus,

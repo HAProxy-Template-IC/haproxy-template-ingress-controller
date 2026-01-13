@@ -115,7 +115,7 @@ func TestConfigChangeHandler_HandleConfigParsed_NoValidators(t *testing.T) {
 	// No validators configured
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -249,7 +249,7 @@ func TestConfigChangeHandler_HandleBecameLeader_NoValidatedConfig(t *testing.T) 
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -271,7 +271,7 @@ func TestConfigChangeHandler_HandleBecameLeader_WithValidatedConfig(t *testing.T
 
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -358,10 +358,10 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_AllValid(t *testi
 	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	// Subscribe to output events BEFORE bus.Start()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 
 	// Subscribe mock validators BEFORE bus.Start()
-	validatorChan := bus.Subscribe(50)
+	validatorChan := bus.Subscribe("test-sub", 50)
 
 	bus.Start()
 
@@ -413,10 +413,10 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_ValidationFailed(
 	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	// Subscribe to output events BEFORE bus.Start()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 
 	// Subscribe mock validators BEFORE bus.Start()
-	validatorChan := bus.Subscribe(50)
+	validatorChan := bus.Subscribe("test-sub", 50)
 
 	bus.Start()
 
@@ -468,7 +468,7 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_Timeout(t *testin
 	validators := []string{"nonexistent"}
 	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	// Use short timeout context
@@ -497,10 +497,10 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_MissingResponder(
 	handler := NewConfigChangeHandler(bus, logger, configCh, validators, testDebounceInterval)
 
 	// Subscribe to output events BEFORE bus.Start()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 
 	// Subscribe mock validators BEFORE bus.Start()
-	validatorChan := bus.Subscribe(50)
+	validatorChan := bus.Subscribe("test-sub", 50)
 
 	bus.Start()
 

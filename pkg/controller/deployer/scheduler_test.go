@@ -86,7 +86,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 // TestDeploymentScheduler_HandleValidationCompleted tests validation completed event handling.
 func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -159,7 +159,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 // TestDeploymentScheduler_HandlePodsDiscovered tests pod discovery event handling.
 func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -238,7 +238,7 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 // When validation fails for any reason, the scheduler should deploy the last known good config.
 func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -631,7 +631,7 @@ func TestDeploymentScheduler_HandleConfigValidated(t *testing.T) {
 // with a pending deployment.
 func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -677,7 +677,7 @@ waitLoop:
 // TestDeploymentScheduler_ScheduleWithRateLimit tests rate limiting.
 func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	// Use longer rate limit to test the path
@@ -769,7 +769,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 // TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig tests runtime config name computation.
 func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -812,7 +812,7 @@ waitLoop:
 // TestDeploymentScheduler_ScheduleWithPendingWhileScheduling tests handling pending deployment during scheduling.
 func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond, 30*time.Second)

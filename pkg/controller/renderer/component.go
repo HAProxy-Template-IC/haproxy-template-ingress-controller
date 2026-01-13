@@ -211,7 +211,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// Use Critical buffer: standard processing with event coalescing
-	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(buffers.Critical(),
+	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, buffers.Critical(),
 		events.EventTypeReconciliationTriggered,
 	)
 

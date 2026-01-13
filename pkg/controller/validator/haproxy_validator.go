@@ -93,7 +93,7 @@ func NewHAProxyValidator(
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
 	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(HAProxyValidatorEventBufferSize,
+	eventChan := eventBus.SubscribeTypes(HAProxyValidatorComponentName, HAProxyValidatorEventBufferSize,
 		events.EventTypeTemplateRendered,
 		events.EventTypeBecameLeader,
 	)

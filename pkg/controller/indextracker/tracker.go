@@ -32,6 +32,9 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
+// ComponentName is the unique identifier for the index synchronization tracker component.
+const ComponentName = "index-tracker"
+
 // IndexSynchronizationTracker monitors resource synchronization and publishes
 // an event when all resource types have completed initial sync.
 type IndexSynchronizationTracker struct {
@@ -66,7 +69,7 @@ func New(
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
 	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(100,
+	eventChan := eventBus.SubscribeTypes(ComponentName, 100,
 		events.EventTypeResourceSyncComplete,
 	)
 

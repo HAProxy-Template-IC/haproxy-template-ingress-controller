@@ -80,7 +80,7 @@ func NewStatusUpdater(
 ) *StatusUpdater {
 	// Subscribe to only the event types we handle during construction (before EventBus.Start())
 	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(StatusUpdaterEventBufferSize,
+	eventChan := eventBus.SubscribeTypes(StatusUpdaterComponentName, StatusUpdaterEventBufferSize,
 		events.EventTypeConfigValidated,
 		events.EventTypeConfigInvalid,
 		events.EventTypeValidationFailed,

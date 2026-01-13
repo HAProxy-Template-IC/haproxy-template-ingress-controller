@@ -596,7 +596,7 @@ func TestComponent_createResourceValidator_MetricsOnSuccess(t *testing.T) {
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	// Subscribe mock responder BEFORE starting EventBus (per project pattern)
-	eventChan := eventBus.Subscribe(10)
+	eventChan := eventBus.Subscribe("test-sub", 10)
 	eventBus.Start()
 
 	done := startMockResponder(eventBus, eventChan, []mockValidationResponse{
@@ -632,7 +632,7 @@ func TestComponent_createResourceValidator_MetricsOnDenial(t *testing.T) {
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	// Subscribe mock responder BEFORE starting EventBus (per project pattern)
-	eventChan := eventBus.Subscribe(10)
+	eventChan := eventBus.Subscribe("test-sub", 10)
 	eventBus.Start()
 
 	done := startMockResponder(eventBus, eventChan, []mockValidationResponse{

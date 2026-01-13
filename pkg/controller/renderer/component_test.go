@@ -161,7 +161,7 @@ defaults
 	require.NoError(t, err)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -227,7 +227,7 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -301,7 +301,7 @@ func TestRenderer_EmptyStores(t *testing.T) {
 	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -359,7 +359,7 @@ func TestRenderer_MultipleStores(t *testing.T) {
 	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -444,7 +444,7 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -603,7 +603,7 @@ frontend test
 			renderer, err := New(bus, cfg, stores, &mockStore{}, nil, capabilities, logger)
 			require.NoError(t, err)
 
-			eventChan := bus.Subscribe(50)
+			eventChan := bus.Subscribe("test-sub", 50)
 			bus.Start()
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -664,7 +664,7 @@ frontend test
 
 	// Get the path resolver from the engine
 	// We'll test this through the template rendering since pathResolver is not exported
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -764,7 +764,7 @@ func TestRenderer_WithPostProcessors(t *testing.T) {
 	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -817,7 +817,7 @@ frontend fe1
 	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1049,7 +1049,7 @@ func TestRenderer_ReconciliationCoalescing_LatestWins(t *testing.T) {
 	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1091,7 +1091,7 @@ func TestRenderer_TriggerReasonPropagation(t *testing.T) {
 	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1151,7 +1151,7 @@ func TestRenderer_WithHTTPStoreComponent(t *testing.T) {
 	httpStoreComponent := httpstore.New(bus, logger, 0)
 	renderer.SetHTTPStoreComponent(httpStoreComponent)
 
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1194,7 +1194,7 @@ func TestRenderer_WithoutHTTPStoreComponent(t *testing.T) {
 	// Do NOT set HTTP store component - it should remain nil
 	assert.Nil(t, renderer.httpStoreComponent)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1251,7 +1251,7 @@ func TestRenderer_HTTPStoreContextAvailability(t *testing.T) {
 	httpStoreComponent := httpstore.New(bus, logger, 0)
 	renderer.SetHTTPStoreComponent(httpStoreComponent)
 
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())

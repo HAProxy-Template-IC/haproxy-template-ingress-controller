@@ -69,7 +69,7 @@ func NewBaseValidator(
 	// Subscribe to only ConfigValidationRequest events during construction
 	// This ensures proper startup synchronization and reduces buffer pressure
 	// by filtering at the EventBus level rather than in the event loop
-	eventChan := eventBus.SubscribeTypes(EventBufferSize, events.EventTypeConfigValidationRequest)
+	eventChan := eventBus.SubscribeTypes(name, EventBufferSize, events.EventTypeConfigValidationRequest)
 
 	return &BaseValidator{
 		eventBus:    eventBus,

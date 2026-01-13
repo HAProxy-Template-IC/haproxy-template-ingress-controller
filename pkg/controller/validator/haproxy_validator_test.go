@@ -107,7 +107,7 @@ backend servers
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -195,7 +195,7 @@ backend servers
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -280,7 +280,7 @@ backend servers
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -358,7 +358,7 @@ backend servers
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -464,7 +464,7 @@ func TestHAProxyValidator_HandleBecameLeader_NoState(t *testing.T) {
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -532,7 +532,7 @@ backend servers
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -627,7 +627,7 @@ backend servers
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -688,7 +688,7 @@ func TestHAProxyValidator_InvalidValidationPaths(t *testing.T) {
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -738,7 +738,7 @@ func TestHAProxyValidator_InvalidAuxiliaryFiles(t *testing.T) {
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())

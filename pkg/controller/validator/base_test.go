@@ -125,7 +125,7 @@ func TestBaseValidator_PanicRecovery(t *testing.T) {
 	validator := NewBaseValidator(bus, logger, "test-validator", "Test validator", handler)
 
 	// Subscribe to events to receive the error response
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -192,7 +192,7 @@ func TestBasicValidator_InvalidConfigType(t *testing.T) {
 
 	validator := NewBasicValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -222,7 +222,7 @@ func TestTemplateValidator_InvalidConfigType(t *testing.T) {
 
 	validator := NewTemplateValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -252,7 +252,7 @@ func TestJSONPathValidator_InvalidConfigType(t *testing.T) {
 
 	validator := NewJSONPathValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -282,7 +282,7 @@ func TestTemplateValidator_SnippetErrors(t *testing.T) {
 
 	validator := NewTemplateValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -327,7 +327,7 @@ func TestTemplateValidator_MapErrors(t *testing.T) {
 
 	validator := NewTemplateValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -370,7 +370,7 @@ func TestTemplateValidator_FileErrors(t *testing.T) {
 
 	validator := NewTemplateValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -415,7 +415,7 @@ func TestTemplateValidator_CurrentConfigDeclaration(t *testing.T) {
 
 	validator := NewTemplateValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -456,7 +456,7 @@ func TestJSONPathValidator_IndexByErrors(t *testing.T) {
 
 	validator := NewJSONPathValidator(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())

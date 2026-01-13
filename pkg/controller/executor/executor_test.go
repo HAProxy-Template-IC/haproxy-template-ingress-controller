@@ -35,7 +35,7 @@ func TestExecutor_BasicReconciliationFlow(t *testing.T) {
 	executor := New(bus, logger)
 
 	// Subscribe to all events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -72,7 +72,7 @@ func TestExecutor_EventOrder(t *testing.T) {
 
 	executor := New(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -132,7 +132,7 @@ func TestExecutor_MultipleReconciliations(t *testing.T) {
 
 	executor := New(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -196,7 +196,7 @@ func TestExecutor_DurationMeasurement(t *testing.T) {
 
 	executor := New(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -233,7 +233,7 @@ func TestExecutor_ContextCancellation(t *testing.T) {
 
 	executor := New(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -282,7 +282,7 @@ func TestExecutor_IgnoresUnrelatedEvents(t *testing.T) {
 
 	executor := New(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -342,7 +342,7 @@ func TestExecutor_HandleTemplateRendered(t *testing.T) {
 	executor := New(bus, logger)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -385,7 +385,7 @@ func TestExecutor_HandleTemplateRenderFailed(t *testing.T) {
 	executor := New(bus, logger)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -414,7 +414,7 @@ func TestExecutor_HandleValidationCompleted(t *testing.T) {
 	executor := New(bus, logger)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -446,7 +446,7 @@ func TestExecutor_HandleValidationCompleted_NoWarnings(t *testing.T) {
 	executor := New(bus, logger)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -476,7 +476,7 @@ func TestExecutor_HandleValidationFailed(t *testing.T) {
 	executor := New(bus, logger)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -504,7 +504,7 @@ func TestExecutor_HandleValidationFailed_NoErrors(t *testing.T) {
 	executor := New(bus, logger)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -531,7 +531,7 @@ func TestExecutor_ReasonPropagation(t *testing.T) {
 
 	executor := New(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -77,7 +77,7 @@ type Executor struct {
 func New(eventBus *busevents.EventBus, logger *slog.Logger) *Executor {
 	// Subscribe to only the event types we handle during construction (before EventBus.Start())
 	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(EventBufferSize,
+	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
 		events.EventTypeReconciliationTriggered,
 		events.EventTypeTemplateRendered,
 		events.EventTypeTemplateRenderFailed,

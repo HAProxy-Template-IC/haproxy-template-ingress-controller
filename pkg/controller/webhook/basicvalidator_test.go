@@ -107,7 +107,7 @@ func TestBasicValidatorComponent_validateBasicStructure(t *testing.T) {
 func TestBasicValidatorComponent_handleValidationRequest(t *testing.T) {
 	t.Run("allows valid object", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
-		eventChan := eventBus.Subscribe(50)
+		eventChan := eventBus.Subscribe("test-sub", 50)
 		component := NewBasicValidatorComponent(eventBus, testLogger())
 		eventBus.Start()
 
@@ -148,7 +148,7 @@ func TestBasicValidatorComponent_handleValidationRequest(t *testing.T) {
 
 	t.Run("denies object without name", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
-		eventChan := eventBus.Subscribe(50)
+		eventChan := eventBus.Subscribe("test-sub", 50)
 		component := NewBasicValidatorComponent(eventBus, testLogger())
 		eventBus.Start()
 
@@ -188,7 +188,7 @@ func TestBasicValidatorComponent_handleValidationRequest(t *testing.T) {
 
 	t.Run("denies invalid object type", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
-		eventChan := eventBus.Subscribe(50)
+		eventChan := eventBus.Subscribe("test-sub", 50)
 		component := NewBasicValidatorComponent(eventBus, testLogger())
 		eventBus.Start()
 
@@ -220,7 +220,7 @@ func TestBasicValidatorComponent_handleValidationRequest(t *testing.T) {
 func TestBasicValidatorComponent_handleEvent(t *testing.T) {
 	t.Run("processes WebhookValidationRequest", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
-		eventChan := eventBus.Subscribe(50)
+		eventChan := eventBus.Subscribe("test-sub", 50)
 		component := NewBasicValidatorComponent(eventBus, testLogger())
 		eventBus.Start()
 
@@ -259,7 +259,7 @@ func TestBasicValidatorComponent_handleEvent(t *testing.T) {
 
 	t.Run("ignores other event types", func(t *testing.T) {
 		eventBus := busevents.NewEventBus(100)
-		eventChan := eventBus.Subscribe(50)
+		eventChan := eventBus.Subscribe("test-sub", 50)
 		component := NewBasicValidatorComponent(eventBus, testLogger())
 		eventBus.Start()
 
@@ -283,7 +283,7 @@ func TestBasicValidatorComponent_Start(t *testing.T) {
 		defer cancel()
 
 		eventBus := busevents.NewEventBus(100)
-		eventChan := eventBus.Subscribe(50)
+		eventChan := eventBus.Subscribe("test-sub", 50)
 		component := NewBasicValidatorComponent(eventBus, testLogger())
 		eventBus.Start()
 

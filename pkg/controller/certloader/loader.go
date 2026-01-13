@@ -65,7 +65,7 @@ type CertLoaderComponent struct {
 func NewCertLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CertLoaderComponent {
 	// Subscribe to only CertResourceChangedEvent during construction
 	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(EventBufferSize, events.EventTypeCertResourceChanged)
+	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeCertResourceChanged)
 
 	return &CertLoaderComponent{
 		eventBus:  eventBus,
