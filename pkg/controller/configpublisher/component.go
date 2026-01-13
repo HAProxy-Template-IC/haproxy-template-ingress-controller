@@ -16,8 +16,6 @@ package configpublisher
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -48,8 +46,9 @@ const (
 	publishWorkChannelSize = 1
 
 	// statusWorkChannelSize is the buffer size for pod status update work.
-	// Larger buffer to handle pod status updates during deployment rollouts.
-	statusWorkChannelSize = 20
+	// Larger buffer (100) to handle pod status updates during deployment rollouts
+	// and high-frequency reconciliation cycles triggered by EndpointSlice changes.
+	statusWorkChannelSize = 100
 )
 
 // renderedConfigEntry holds cached rendered config data indexed by correlation ID.
@@ -125,6 +124,11 @@ type Component struct {
 	publishWork          chan *publishWorkItem
 	validationFailedWork chan *validationFailedWorkItem
 	statusWork           chan *statusWorkItem
+
+	// lastPublishedChecksum tracks the checksum of the last successfully published config.
+	// Used to skip redundant CRD updates when config content is unchanged.
+	// Protected by mu.
+	lastPublishedChecksum string
 }
 
 // New creates a new config publisher component.
@@ -640,6 +644,7 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	c.templateConfig = nil
 	c.hasTemplateConfig = false
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
+	c.lastPublishedChecksum = ""
 }
 
 // publishWorker processes publish work items asynchronously.
@@ -665,9 +670,27 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		"correlation_id", work.correlationID,
 	)
 
-	// Generate checksum for config (content-based, not time-based)
-	checksum := sha256.Sum256([]byte(work.entry.config))
-	checksumHex := hex.EncodeToString(checksum[:8]) // First 8 bytes for brevity
+	// Generate checksum covering main config and all auxiliary files
+	checksumHex := dataplane.ComputeContentChecksum(work.entry.config, work.entry.auxFiles)
+
+	// Skip publish if checksum unchanged (content deduplication).
+	// This prevents redundant CRD updates when config content hasn't changed,
+	// which commonly happens during high-frequency EndpointSlice reconciliations.
+	c.mu.RLock()
+	lastChecksum := c.lastPublishedChecksum
+	c.mu.RUnlock()
+
+	if checksumHex == lastChecksum {
+		c.logger.Debug("skipping publish, config unchanged",
+			"checksum", checksumHex,
+			"correlation_id", work.correlationID,
+		)
+		// Clean up cached entry
+		c.mu.Lock()
+		delete(c.renderedConfigs, work.correlationID)
+		c.mu.Unlock()
+		return
+	}
 
 	// Convert auxiliary files
 	auxFiles := c.convertAuxiliaryFiles(work.entry.auxFiles)
@@ -711,8 +734,9 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		"correlation_id", work.correlationID,
 	)
 
-	// Clean up the cached entry after successful publish
+	// Update last published checksum and clean up the cached entry after successful publish
 	c.mu.Lock()
+	c.lastPublishedChecksum = checksumHex
 	delete(c.renderedConfigs, work.correlationID)
 	c.mu.Unlock()
 
@@ -746,9 +770,8 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 		"correlation_id", work.correlationID,
 	)
 
-	// Generate checksum for config
-	checksum := sha256.Sum256([]byte(work.entry.config))
-	checksumHex := hex.EncodeToString(checksum[:8])
+	// Generate checksum covering main config and all auxiliary files
+	checksumHex := dataplane.ComputeContentChecksum(work.entry.config, work.entry.auxFiles)
 
 	// Convert auxiliary files
 	auxFiles := c.convertAuxiliaryFiles(work.entry.auxFiles)
