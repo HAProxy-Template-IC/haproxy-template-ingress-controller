@@ -90,7 +90,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.
 
 	// Subscribe to only the event types we handle during construction per CLAUDE.md guidelines
 	// This reduces buffer pressure by filtering at the EventBus level
-	eventChan := eventBus.SubscribeTypes(EventBufferSize,
+	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
 		events.EventTypeValidationCompleted,
 		events.EventTypeValidationFailed,
 	)

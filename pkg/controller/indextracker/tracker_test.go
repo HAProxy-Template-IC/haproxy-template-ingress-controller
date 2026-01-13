@@ -194,7 +194,7 @@ func TestStart_PublishesIndexSynchronizedEvent(t *testing.T) {
 	tracker := New(bus, logger, resourceNames)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Start tracker in goroutine
@@ -229,7 +229,7 @@ func TestStart_DoesNotPublishDuplicateIndexSynchronizedEvent(t *testing.T) {
 	tracker := New(bus, logger, resourceNames)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Start tracker in goroutine

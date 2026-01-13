@@ -118,7 +118,7 @@ func NewStateCache(eventBus *busevents.EventBus, resourceWatcher *resourcewatche
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
 	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(100,
+	eventChan := eventBus.SubscribeTypes("state-cache", 100,
 		events.EventTypeConfigValidated,
 		events.EventTypeCredentialsUpdated,
 		events.EventTypeTemplateRendered,

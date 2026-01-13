@@ -109,7 +109,7 @@ func NewConfigChangeHandler(
 
 	// Subscribe to only the event types we handle during construction (before EventBus.Start())
 	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(EventBufferSize,
+	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
 		events.EventTypeConfigParsed,
 		events.EventTypeConfigValidated,
 		events.EventTypeBecameLeader,

@@ -60,7 +60,7 @@ func TestCertLoaderComponent_ProcessValidCert(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCertLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -86,7 +86,7 @@ func TestCertLoaderComponent_InvalidResourceType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCertLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -105,7 +105,7 @@ func TestCertLoaderComponent_MissingDataField(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCertLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -128,7 +128,7 @@ func TestCertLoaderComponent_MissingTlsCrt(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCertLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -155,7 +155,7 @@ func TestCertLoaderComponent_MissingTlsKey(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCertLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -182,7 +182,7 @@ func TestCertLoaderComponent_InvalidBase64Cert(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCertLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -210,7 +210,7 @@ func TestCertLoaderComponent_InvalidBase64Key(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCertLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -304,7 +304,7 @@ func TestCertLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCertLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())

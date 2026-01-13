@@ -79,7 +79,7 @@ func TestSecretWatcher_OnAdd_MatchingSecret(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	secret := &corev1.Secret{
@@ -110,7 +110,7 @@ func TestSecretWatcher_OnAdd_DifferentSecret(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	secret := &corev1.Secret{
@@ -132,7 +132,7 @@ func TestSecretWatcher_OnAdd_InvalidType(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	watcher.onAdd("not-a-secret")
@@ -146,7 +146,7 @@ func TestSecretWatcher_OnUpdate_MatchingSecret(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	oldSecret := &corev1.Secret{
@@ -183,7 +183,7 @@ func TestSecretWatcher_OnUpdate_SameResourceVersion(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	oldSecret := &corev1.Secret{
@@ -213,7 +213,7 @@ func TestSecretWatcher_OnUpdate_DifferentSecret(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	oldSecret := &corev1.Secret{
@@ -243,7 +243,7 @@ func TestSecretWatcher_OnUpdate_InvalidTypes(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	watcher.onUpdate("not-a-secret", &corev1.Secret{})
@@ -258,7 +258,7 @@ func TestSecretWatcher_OnDelete_MatchingSecret(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	secret := &corev1.Secret{
@@ -280,7 +280,7 @@ func TestSecretWatcher_OnDelete_DifferentSecret(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	secret := &corev1.Secret{
@@ -302,7 +302,7 @@ func TestSecretWatcher_OnDelete_Tombstone(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	secret := &corev1.Secret{
@@ -329,7 +329,7 @@ func TestSecretWatcher_OnDelete_InvalidType(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	watcher.onDelete("not-a-secret")
@@ -343,7 +343,7 @@ func TestSecretWatcher_OnDelete_TombstoneWithInvalidObject(t *testing.T) {
 
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	tombstone := cache.DeletedFinalStateUnknown{

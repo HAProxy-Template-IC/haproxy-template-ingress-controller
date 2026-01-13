@@ -75,7 +75,7 @@ func TestComponent_ConfigValidatedEvent(t *testing.T) {
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
@@ -121,7 +121,7 @@ func TestComponent_CredentialsUpdatedEvent(t *testing.T) {
 	component.SetPodStore(podStore)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
@@ -176,7 +176,7 @@ func TestComponent_ResourceIndexUpdatedEvent(t *testing.T) {
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
@@ -233,7 +233,7 @@ func TestComponent_ResourceIndexUpdatedEvent_InitialSync_Skipped(t *testing.T) {
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
@@ -286,7 +286,7 @@ func TestComponent_ResourceIndexUpdatedEvent_WrongResourceType_Ignored(t *testin
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
@@ -339,7 +339,7 @@ func TestComponent_ResourceSyncCompleteEvent(t *testing.T) {
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
@@ -388,7 +388,7 @@ func TestComponent_ResourceSyncCompleteEvent_WrongResourceType_Ignored(t *testin
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
@@ -479,7 +479,7 @@ func testMissingPrerequisite(t *testing.T, hasConfig, hasCredentials, hasPodStor
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
@@ -595,7 +595,7 @@ func TestComponent_BecameLeaderEvent(t *testing.T) {
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	// Use a longer context timeout (5s) to ensure component stays alive through all phases
@@ -641,7 +641,7 @@ func TestComponent_BecameLeaderEvent_MissingPrerequisites(t *testing.T) {
 	// DO NOT set prerequisites - should not trigger discovery
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
@@ -682,7 +682,7 @@ func TestComponent_InvalidConfigType(t *testing.T) {
 	}
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
@@ -717,7 +717,7 @@ func TestComponent_InvalidCredentialsType(t *testing.T) {
 	component.SetPodStore(podStore)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)
@@ -771,7 +771,7 @@ func TestComponent_PerformInitialDiscovery_NoPodsInStore(t *testing.T) {
 	component.mu.Unlock()
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.EventTimeout)

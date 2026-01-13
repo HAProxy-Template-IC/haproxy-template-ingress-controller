@@ -131,7 +131,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// Only needs DeploymentScheduledEvent - typed subscription reduces buffer pressure.
-	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(EventBufferSize, events.EventTypeDeploymentScheduled)
+	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, EventBufferSize, events.EventTypeDeploymentScheduled)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	close(c.subscriptionReady)

@@ -209,7 +209,7 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// All-replica components replay their cached state on BecameLeaderEvent.
-	s.eventChan = s.eventBus.SubscribeTypesLeaderOnly(SchedulerEventBufferSize,
+	s.eventChan = s.eventBus.SubscribeTypesLeaderOnly(SchedulerComponentName, SchedulerEventBufferSize,
 		events.EventTypeTemplateRendered,
 		events.EventTypeConfigValidated,
 		events.EventTypeValidationCompleted,

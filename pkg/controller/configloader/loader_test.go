@@ -54,7 +54,7 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 	loader := NewConfigLoaderComponent(bus, logger)
 
 	// Subscribe to events and start
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
@@ -92,7 +92,7 @@ func TestConfigLoaderComponent_UnsupportedResourceType(t *testing.T) {
 	loader := NewConfigLoaderComponent(bus, logger)
 
 	// Subscribe to events and start
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
@@ -139,7 +139,7 @@ func TestConfigLoaderComponent_InvalidResourceType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	loader := NewConfigLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)
@@ -164,7 +164,7 @@ func TestConfigLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	loader := NewConfigLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(10)
+	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.VeryLongTimeout)

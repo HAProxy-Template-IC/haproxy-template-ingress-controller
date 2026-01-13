@@ -451,8 +451,13 @@ func setupComponents(
 	metricsComponent := metrics.New(domainMetrics, bus)
 
 	// Register event drop callback for observability
-	bus.SetDropCallback(func(eventType string) {
-		logger.Warn("event dropped due to full subscriber buffer", "event_type", eventType)
+	bus.SetDropCallback(func(info busevents.DropInfo) {
+		logger.Warn("event dropped due to full subscriber buffer",
+			"subscriber", info.SubscriberName,
+			"event_type", info.EventType,
+			"buffer_size", info.BufferSize,
+			"subscribed_types", info.EventTypes,
+		)
 		domainMetrics.RecordEventDrop()
 	})
 

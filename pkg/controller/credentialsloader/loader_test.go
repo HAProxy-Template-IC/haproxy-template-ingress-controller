@@ -60,7 +60,7 @@ func TestCredentialsLoaderComponent_ProcessValidCredentials(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCredentialsLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -88,7 +88,7 @@ func TestCredentialsLoaderComponent_InvalidResourceType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCredentialsLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -106,7 +106,7 @@ func TestCredentialsLoaderComponent_MissingDataField(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCredentialsLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -130,7 +130,7 @@ func TestCredentialsLoaderComponent_NonStringDataValue(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCredentialsLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -198,7 +198,7 @@ func TestCredentialsLoaderComponent_MissingRequiredCredentials(t *testing.T) {
 			bus, logger := testutil.NewTestBusAndLogger()
 			component := NewCredentialsLoaderComponent(bus, logger)
 
-			eventChan := bus.Subscribe(50)
+			eventChan := bus.Subscribe("test-sub", 50)
 			bus.Start()
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -221,7 +221,7 @@ func TestCredentialsLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := NewCredentialsLoaderComponent(bus, logger)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())

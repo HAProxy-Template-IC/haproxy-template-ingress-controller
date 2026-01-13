@@ -152,7 +152,7 @@ func TestComponent_HandleValidationCompleted_NoPending(t *testing.T) {
 	component := New(bus, logger, 0)
 
 	// Subscribe to events
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -180,7 +180,7 @@ func TestComponent_HandleValidationFailed_NoPending(t *testing.T) {
 
 	component := New(bus, logger, 0)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -208,7 +208,7 @@ func TestComponent_HandleValidationFailed_EmptyErrors(t *testing.T) {
 
 	component := New(bus, logger, 0)
 
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -389,7 +389,7 @@ func TestComponent_HandleValidationCompleted_WithPending(t *testing.T) {
 	store.LoadFixture("http://pending.example.com/data.txt", "original content")
 
 	// Subscribe to events BEFORE starting bus
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -420,7 +420,7 @@ func TestComponent_HandleValidationFailed_WithErrors(t *testing.T) {
 	store.LoadFixture("http://example.com/data.txt", "content")
 
 	// Subscribe BEFORE starting bus
-	eventChan := bus.Subscribe(50)
+	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -591,7 +591,7 @@ func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	store := component.GetStore()
 
 	// Subscribe to events BEFORE starting bus
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -656,7 +656,7 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	store := component.GetStore()
 
 	// Subscribe to events BEFORE starting bus
-	eventChan := bus.Subscribe(100)
+	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())

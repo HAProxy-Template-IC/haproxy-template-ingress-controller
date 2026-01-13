@@ -103,7 +103,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config) *Rec
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
 	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(EventBufferSize,
+	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
 		events.EventTypeResourceIndexUpdated,
 		events.EventTypeIndexSynchronized,
 		events.EventTypeHTTPResourceUpdated,

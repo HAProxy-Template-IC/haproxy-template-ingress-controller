@@ -18,14 +18,18 @@ import (
 	"context"
 	"log/slog"
 	"runtime"
+	"strings"
 )
 
 // typedSubscription represents a subscription filtered by event type.
 type typedSubscription struct {
-	eventTypes []string
-	outputChan chan Event
-	filterFunc func(Event) bool
-	lossy      bool // If true, drops are silent (no onDrop callback)
+	eventTypes    []string
+	eventTypesStr string // Comma-separated event types for debugging
+	outputChan    chan Event
+	filterFunc    func(Event) bool
+	name          string // Subscriber name for debugging (e.g., "renderer", "deployer")
+	bufferSize    int    // Original buffer size for debugging
+	lossy         bool   // If true, drops are silent (no onDrop callback)
 }
 
 // SubscribeTypes creates a subscription that only receives events of the specified types.
@@ -35,6 +39,7 @@ type typedSubscription struct {
 // each subscriber's event loop.
 //
 // Parameters:
+//   - name: Subscriber name for debugging (e.g., "reconciler", "renderer")
 //   - bufferSize: Size of the output channel buffer
 //   - eventTypes: Event type strings to filter for (from Event.EventType())
 //
@@ -46,7 +51,7 @@ type typedSubscription struct {
 //
 // Example:
 //
-//	eventChan := bus.SubscribeTypes(100,
+//	eventChan := bus.SubscribeTypes("executor", 100,
 //	    "reconciliation.triggered",
 //	    "template.rendered",
 //	    "validation.completed")
@@ -54,8 +59,8 @@ type typedSubscription struct {
 //	for event := range eventChan {
 //	    // Only receives the specified event types
 //	}
-func (b *EventBus) SubscribeTypes(bufferSize int, eventTypes ...string) <-chan Event {
-	return b.subscribeTypesInternal(bufferSize, eventTypes, false, false)
+func (b *EventBus) SubscribeTypes(name string, bufferSize int, eventTypes ...string) <-chan Event {
+	return b.subscribeTypesInternal(name, bufferSize, eventTypes, false, false)
 }
 
 // SubscribeTypesLeaderOnly creates a typed subscription for leader-only components.
@@ -68,6 +73,7 @@ func (b *EventBus) SubscribeTypes(bufferSize int, eventTypes ...string) <-chan E
 // leader-only components don't miss critical state even though they subscribe late.
 //
 // Parameters:
+//   - name: Subscriber name for debugging (e.g., "deployer", "scheduler")
 //   - bufferSize: Size of the output channel buffer
 //   - eventTypes: Event type strings to filter for (from Event.EventType())
 //
@@ -80,13 +86,13 @@ func (b *EventBus) SubscribeTypes(bufferSize int, eventTypes ...string) <-chan E
 // Example:
 //
 //	// In a leader-only component's constructor (after BecameLeaderEvent)
-//	eventChan := bus.SubscribeTypesLeaderOnly(50,
+//	eventChan := bus.SubscribeTypesLeaderOnly("scheduler", 50,
 //	    events.EventTypeTemplateRendered,
 //	    events.EventTypeValidationCompleted,
 //	    events.EventTypeLostLeadership)
 //	defer bus.UnsubscribeTyped(eventChan)
-func (b *EventBus) SubscribeTypesLeaderOnly(bufferSize int, eventTypes ...string) <-chan Event {
-	return b.subscribeTypesInternal(bufferSize, eventTypes, true, false)
+func (b *EventBus) SubscribeTypesLeaderOnly(name string, bufferSize int, eventTypes ...string) <-chan Event {
+	return b.subscribeTypesInternal(name, bufferSize, eventTypes, true, false)
 }
 
 // SubscribeTypesLossy creates a typed subscription that silently drops events when full.
@@ -97,6 +103,7 @@ func (b *EventBus) SubscribeTypesLeaderOnly(bufferSize int, eventTypes ...string
 //   - Do NOT trigger the onDrop callback (no WARN logs)
 //
 // Parameters:
+//   - name: Subscriber name for debugging (e.g., "metrics", "debug-events")
 //   - bufferSize: Size of the output channel buffer
 //   - eventTypes: Event type strings to filter for (from Event.EventType())
 //
@@ -105,18 +112,19 @@ func (b *EventBus) SubscribeTypesLeaderOnly(bufferSize int, eventTypes ...string
 //
 // To stop receiving events and prevent memory leaks, call UnsubscribeTyped()
 // with the returned channel.
-func (b *EventBus) SubscribeTypesLossy(bufferSize int, eventTypes ...string) <-chan Event {
-	return b.subscribeTypesInternal(bufferSize, eventTypes, false, true)
+func (b *EventBus) SubscribeTypesLossy(name string, bufferSize int, eventTypes ...string) <-chan Event {
+	return b.subscribeTypesInternal(name, bufferSize, eventTypes, false, true)
 }
 
 // subscribeTypesInternal creates a typed subscription with event type filtering.
 //
 // Parameters:
+//   - name: Subscriber name for debugging
 //   - bufferSize: Size of the output channel buffer
 //   - eventTypes: Event type strings to filter for
 //   - suppressLateWarning: If true, suppresses warning when subscribing after Start()
 //   - lossy: If true, drops are silent (no onDrop callback, counted separately)
-func (b *EventBus) subscribeTypesInternal(bufferSize int, eventTypes []string, suppressLateWarning, lossy bool) <-chan Event {
+func (b *EventBus) subscribeTypesInternal(name string, bufferSize int, eventTypes []string, suppressLateWarning, lossy bool) <-chan Event {
 	// Check if subscribing after Start() - may miss buffered events
 	b.startMu.Lock()
 	started := b.started
@@ -164,10 +172,13 @@ func (b *EventBus) subscribeTypesInternal(bufferSize int, eventTypes []string, s
 
 	// Create internal subscription with filter
 	sub := &typedSubscription{
-		eventTypes: eventTypes,
-		outputChan: outputChan,
-		filterFunc: filterFunc,
-		lossy:      lossy,
+		eventTypes:    eventTypes,
+		eventTypesStr: strings.Join(eventTypes, ","),
+		outputChan:    outputChan,
+		filterFunc:    filterFunc,
+		name:          name,
+		bufferSize:    bufferSize,
+		lossy:         lossy,
 	}
 
 	// Register typed subscription
@@ -206,8 +217,8 @@ func (b *EventBus) subscribeTypesInternal(bufferSize int, eventTypes []string, s
 // When the context is cancelled, the goroutine stops, the subscription is
 // removed from the bus, and the channel will stop receiving events.
 func Subscribe[T Event](ctx context.Context, bus *EventBus, bufferSize int) <-chan T {
-	// Subscribe to universal channel
-	universalChan := bus.Subscribe(bufferSize)
+	// Subscribe to universal channel (internal usage - use generic type name)
+	universalChan := bus.Subscribe("generic-typed", bufferSize)
 
 	// Create typed output channel
 	typedChan := make(chan T, bufferSize)
@@ -268,8 +279,8 @@ func Subscribe[T Event](ctx context.Context, bus *EventBus, bufferSize int) <-ch
 //	    }
 //	}
 func SubscribeMultiple(ctx context.Context, bus *EventBus, bufferSize int, types ...string) <-chan Event {
-	// Subscribe to universal channel
-	universalChan := bus.Subscribe(bufferSize)
+	// Subscribe to universal channel (internal usage - use generic type name)
+	universalChan := bus.Subscribe("multiple-typed", bufferSize)
 
 	// Create type lookup map for efficient filtering
 	typeSet := make(map[string]struct{}, len(types))

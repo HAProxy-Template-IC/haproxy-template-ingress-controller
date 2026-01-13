@@ -82,7 +82,7 @@ func NewEventCommentator(eventBus *busevents.EventBus, logger *slog.Logger, buff
 	// This ensures proper startup synchronization without timing-based sleeps.
 	// Use SubscribeLossy because commentator is an observability component where
 	// occasional event drops are acceptable and should not trigger WARN logs.
-	eventChan := eventBus.SubscribeLossy(buffers.Observability())
+	eventChan := eventBus.SubscribeLossy(ComponentName, buffers.Observability())
 
 	return &EventCommentator{
 		eventBus:   eventBus,

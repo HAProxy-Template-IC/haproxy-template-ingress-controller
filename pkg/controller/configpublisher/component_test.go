@@ -62,7 +62,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	component := New(publisher, eventBus, testLogger())
 
 	// Subscribe to capture ConfigPublishedEvent
-	eventChan := eventBus.Subscribe(50)
+	eventChan := eventBus.Subscribe("test-sub", 50)
 
 	// Start event bus and component
 	eventBus.Start()
@@ -404,7 +404,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	component := New(publisher, eventBus, testLogger())
 
 	// Subscribe to capture events
-	eventChan := eventBus.Subscribe(50)
+	eventChan := eventBus.Subscribe("test-sub", 50)
 
 	// Start event bus and component
 	eventBus.Start()

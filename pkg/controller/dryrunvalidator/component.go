@@ -110,7 +110,7 @@ func New(
 
 	// Subscribe to only WebhookValidationRequest events per CLAUDE.md guidelines
 	// This ensures subscription happens before EventBus.Start() and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(EventBufferSize, events.EventTypeWebhookValidationRequestSG)
+	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeWebhookValidationRequestSG)
 
 	return &Component{
 		eventBus:        eventBus,

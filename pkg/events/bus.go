@@ -36,11 +36,18 @@ const (
 	MaxPreStartBufferSize = 1000
 )
 
+// DropInfo contains information about a dropped event for debugging.
+type DropInfo struct {
+	EventType      string // The type of event that was dropped
+	SubscriberName string // Name of the subscriber whose buffer was full
+	BufferSize     int    // Total buffer size
+	EventTypes     string // For typed subscriptions, the event types being filtered (comma-separated)
+}
+
 // DropCallback is called when an event is dropped due to a full subscriber buffer.
-// The eventType parameter contains the event's type string.
 // This callback pattern keeps the EventBus domain-agnostic while allowing
 // the controller layer to handle drops with appropriate logging and metrics.
-type DropCallback func(eventType string)
+type DropCallback func(info DropInfo)
 
 // Event is the base interface for all events in the system.
 // Events are used for asynchronous pub/sub communication between components.
@@ -56,8 +63,10 @@ type Event interface {
 
 // subscriber represents a universal subscription to the event bus.
 type subscriber struct {
-	ch    chan Event
-	lossy bool // If true, drops are silent (no onDrop callback)
+	ch         chan Event
+	name       string // Subscriber name for debugging (e.g., "commentator", "reconciler")
+	bufferSize int    // Original buffer size for debugging
+	lossy      bool   // If true, drops are silent (no onDrop callback)
 }
 
 // EventBus provides centralized pub/sub coordination for all controller components.
@@ -127,14 +136,14 @@ func NewEventBus(capacity int) *EventBus {
 //
 // For critical subscribers, drops are counted in droppedEventsCritical and
 // the onDrop callback is triggered (these drops indicate a problem).
-func (b *EventBus) recordDrop(eventType string, lossy bool) {
+func (b *EventBus) recordDrop(info DropInfo, lossy bool) {
 	if lossy {
 		atomic.AddUint64(&b.droppedEventsObservability, 1)
 		// No callback for lossy subscribers - drops are expected
 	} else {
 		atomic.AddUint64(&b.droppedEventsCritical, 1)
 		if b.onDrop != nil {
-			b.onDrop(eventType)
+			b.onDrop(info)
 		}
 	}
 }
@@ -182,7 +191,11 @@ func (b *EventBus) Publish(event Event) int {
 			sent++
 		default:
 			// Channel full, subscriber is lagging - drop event
-			b.recordDrop(eventType, sub.lossy)
+			b.recordDrop(DropInfo{
+				EventType:      eventType,
+				SubscriberName: sub.name,
+				BufferSize:     sub.bufferSize,
+			}, sub.lossy)
 		}
 	}
 
@@ -194,7 +207,12 @@ func (b *EventBus) Publish(event Event) int {
 				sent++
 			default:
 				// Channel full, subscriber is lagging - drop event
-				b.recordDrop(eventType, sub.lossy)
+				b.recordDrop(DropInfo{
+					EventType:      eventType,
+					SubscriberName: sub.name,
+					BufferSize:     sub.bufferSize,
+					EventTypes:     sub.eventTypesStr,
+				}, sub.lossy)
 			}
 		}
 	}
@@ -218,8 +236,12 @@ func (b *EventBus) Publish(event Event) int {
 // to ensure buffered events are received. Subscribing after Start() will trigger
 // a warning as it may indicate a bug. For leader-only components that intentionally
 // subscribe late (after leader election), use SubscribeLeaderOnly() instead.
-func (b *EventBus) Subscribe(bufferSize int) <-chan Event {
-	return b.subscribeInternal(bufferSize, false, false)
+//
+// Parameters:
+//   - name: Subscriber name for debugging (e.g., "commentator", "reconciler")
+//   - bufferSize: Size of the channel buffer
+func (b *EventBus) Subscribe(name string, bufferSize int) <-chan Event {
+	return b.subscribeInternal(name, bufferSize, false, false)
 }
 
 // SubscribeLeaderOnly creates a subscription for leader-only components.
@@ -235,8 +257,12 @@ func (b *EventBus) Subscribe(bufferSize int) <-chan Event {
 // The returned channel is read-only and will never be closed.
 // To stop receiving events, the subscriber should call Unsubscribe()
 // to remove the subscription and prevent memory leaks.
-func (b *EventBus) SubscribeLeaderOnly(bufferSize int) <-chan Event {
-	return b.subscribeInternal(bufferSize, true, false)
+//
+// Parameters:
+//   - name: Subscriber name for debugging (e.g., "deployer", "scheduler")
+//   - bufferSize: Size of the channel buffer
+func (b *EventBus) SubscribeLeaderOnly(name string, bufferSize int) <-chan Event {
+	return b.subscribeInternal(name, bufferSize, true, false)
 }
 
 // SubscribeLossy creates a subscription that silently drops events when buffer is full.
@@ -253,13 +279,18 @@ func (b *EventBus) SubscribeLeaderOnly(bufferSize int) <-chan Event {
 // The returned channel is read-only and will never be closed.
 // To stop receiving events, the subscriber should call Unsubscribe()
 // to remove the subscription and prevent memory leaks.
-func (b *EventBus) SubscribeLossy(bufferSize int) <-chan Event {
-	return b.subscribeInternal(bufferSize, false, true)
+//
+// Parameters:
+//   - name: Subscriber name for debugging (e.g., "commentator")
+//   - bufferSize: Size of the channel buffer
+func (b *EventBus) SubscribeLossy(name string, bufferSize int) <-chan Event {
+	return b.subscribeInternal(name, bufferSize, false, true)
 }
 
 // subscribeInternal handles subscription creation with optional late subscription warning.
 //
 // Parameters:
+//   - name: Subscriber name for debugging (e.g., "commentator", "reconciler")
 //   - bufferSize: Size of the channel buffer
 //   - suppressLateWarning: If true, don't warn when subscribing after Start()
 //   - lossy: If true, drops are silent (no onDrop callback, counted separately)
@@ -271,7 +302,7 @@ func (b *EventBus) SubscribeLossy(bufferSize int) <-chan Event {
 // Set lossy to true for:
 //   - Observability components where occasional drops are acceptable
 //   - Debug components that shouldn't affect system behavior
-func (b *EventBus) subscribeInternal(bufferSize int, suppressLateWarning, lossy bool) <-chan Event {
+func (b *EventBus) subscribeInternal(name string, bufferSize int, suppressLateWarning, lossy bool) <-chan Event {
 	// Check if subscribing after Start() - may miss buffered events
 	b.startMu.Lock()
 	started := b.started
@@ -302,7 +333,12 @@ func (b *EventBus) subscribeInternal(bufferSize int, suppressLateWarning, lossy 
 	defer b.mu.Unlock()
 
 	ch := make(chan Event, bufferSize)
-	b.subscribers = append(b.subscribers, subscriber{ch: ch, lossy: lossy})
+	b.subscribers = append(b.subscribers, subscriber{
+		ch:         ch,
+		name:       name,
+		bufferSize: bufferSize,
+		lossy:      lossy,
+	})
 	return ch
 }
 
@@ -464,7 +500,11 @@ func (b *EventBus) replayEventToSubscribers(event Event, subscribers []subscribe
 			// Event sent
 		default:
 			// Channel full - drop event (same behavior as normal Publish)
-			b.recordDrop(eventType, sub.lossy)
+			b.recordDrop(DropInfo{
+				EventType:      eventType,
+				SubscriberName: sub.name,
+				BufferSize:     sub.bufferSize,
+			}, sub.lossy)
 		}
 	}
 
@@ -476,7 +516,12 @@ func (b *EventBus) replayEventToSubscribers(event Event, subscribers []subscribe
 				// Event sent
 			default:
 				// Channel full - drop event
-				b.recordDrop(eventType, sub.lossy)
+				b.recordDrop(DropInfo{
+					EventType:      eventType,
+					SubscriberName: sub.name,
+					BufferSize:     sub.bufferSize,
+					EventTypes:     sub.eventTypesStr,
+				}, sub.lossy)
 			}
 		}
 	}
