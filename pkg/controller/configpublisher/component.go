@@ -27,6 +27,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
@@ -604,6 +605,16 @@ func (c *Component) convertAuxiliaryFiles(dataplaneFiles *dataplane.AuxiliaryFil
 	}
 }
 
+// getCompressionThreshold returns the effective compression threshold,
+// applying the default value when not set in the CRD.
+func (c *Component) getCompressionThreshold(templateConfig *v1alpha1.HAProxyTemplateConfig) int64 {
+	threshold := templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold
+	if threshold == 0 {
+		return config.DefaultCompressionThreshold
+	}
+	return threshold
+}
+
 // handleLostLeadership handles LostLeadershipEvent by clearing cached configuration state.
 //
 // When a replica loses leadership, leader-only components (including this publisher)
@@ -672,7 +683,7 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		RenderedAt:              work.entry.renderedAt,
 		ValidatedAt:             work.event.Timestamp(),
 		Checksum:                checksumHex,
-		CompressionThreshold:    work.templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold,
+		CompressionThreshold:    c.getCompressionThreshold(work.templateConfig),
 	}
 
 	// Call pure publisher with timeout context
@@ -763,7 +774,7 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 		Checksum:                checksumHex,
 		NameSuffix:              "-invalid",
 		ValidationError:         validationError,
-		CompressionThreshold:    work.templateConfig.Spec.Controller.ConfigPublishing.CompressionThreshold,
+		CompressionThreshold:    c.getCompressionThreshold(work.templateConfig),
 	}
 
 	// Call pure publisher with timeout context
