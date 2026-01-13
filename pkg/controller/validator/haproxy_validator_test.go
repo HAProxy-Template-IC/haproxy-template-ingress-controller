@@ -318,7 +318,23 @@ Done:
 	assert.GreaterOrEqual(t, validationCompleted.DurationMs, int64(0))
 }
 
-// TestRendererToValidator_MultipleReconciliations tests multiple reconciliation cycles.
+// waitForValidation waits for a ValidationCompletedEvent on the channel.
+// Returns true if received within timeout, false otherwise.
+func waitForValidation(eventChan <-chan busevents.Event, timeout time.Duration) bool {
+	timer := time.After(timeout)
+	for {
+		select {
+		case event := <-eventChan:
+			if _, ok := event.(*events.ValidationCompletedEvent); ok {
+				return true
+			}
+		case <-timer:
+			return false
+		}
+	}
+}
+
+// TestRendererToValidator_MultipleReconciliations tests renderer content deduplication.
 func TestRendererToValidator_MultipleReconciliations(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -348,10 +364,7 @@ backend servers
 		"ingresses": &mockStore{},
 	}
 
-	// Create mock haproxy-pods store
 	haproxyPodStore := &mockStore{}
-
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
 	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
@@ -369,51 +382,14 @@ backend servers
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Trigger first reconciliation
+	// First reconciliation should produce validation
 	bus.Publish(events.NewReconciliationTriggeredEvent("first"))
+	assert.True(t, waitForValidation(eventChan, 10*time.Second), "First reconciliation should produce validation")
 
-	// Wait for first validation
-	// Use longer timeout for race detector (which makes execution 2-10x slower)
-	timeout1 := time.After(10 * time.Second)
-	receivedFirst := false
-
-Loop1:
-	for {
-		select {
-		case event := <-eventChan:
-			if _, ok := event.(*events.ValidationCompletedEvent); ok {
-				receivedFirst = true
-				break Loop1
-			}
-		case <-timeout1:
-			t.Fatal("Timeout waiting for first validation")
-		}
-	}
-
-	assert.True(t, receivedFirst)
-
-	// Trigger second reconciliation
+	// Second reconciliation with identical content should be deduplicated (no validation event).
+	// The renderer skips emitting TemplateRenderedEvent when content checksum matches.
 	bus.Publish(events.NewReconciliationTriggeredEvent("second"))
-
-	// Wait for second validation
-	// Use longer timeout for race detector (which makes execution 2-10x slower)
-	timeout2 := time.After(10 * time.Second)
-	var secondValidation *events.ValidationCompletedEvent
-
-Loop2:
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.ValidationCompletedEvent); ok {
-				secondValidation = e
-				break Loop2
-			}
-		case <-timeout2:
-			t.Fatal("Timeout waiting for second validation")
-		}
-	}
-
-	require.NotNil(t, secondValidation)
+	assert.False(t, waitForValidation(eventChan, 200*time.Millisecond), "Identical content should be deduplicated")
 }
 
 // TestValidator_ContextCancellation tests graceful shutdown on context cancellation.

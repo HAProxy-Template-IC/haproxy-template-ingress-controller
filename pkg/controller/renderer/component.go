@@ -99,6 +99,13 @@ type Component struct {
 	// subscriptionReady is closed when the component has subscribed to events.
 	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
 	subscriptionReady chan struct{}
+
+	// lastRenderedChecksum tracks the checksum of the last successfully rendered config.
+	// Used with HasPendingValidation() to skip redundant TemplateRenderedEvents when
+	// content hasn't changed. Cleared on leadership loss to ensure fresh render on
+	// leadership regain.
+	// Not mutex-protected because it's only accessed from the single-threaded event loop.
+	lastRenderedChecksum string
 }
 
 // New creates a new Renderer component.
@@ -213,6 +220,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// Use Critical buffer: standard processing with event coalescing
 	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, buffers.Critical(),
 		events.EventTypeReconciliationTriggered,
+		events.EventTypeLostLeadership,
 	)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
@@ -239,8 +247,21 @@ func (c *Component) Start(ctx context.Context) error {
 
 // handleEvent processes events from the EventBus.
 func (c *Component) handleEvent(event busevents.Event) {
-	if ev, ok := event.(*events.ReconciliationTriggeredEvent); ok {
+	switch ev := event.(type) {
+	case *events.ReconciliationTriggeredEvent:
 		c.handleReconciliationTriggered(ev)
+	case *events.LostLeadershipEvent:
+		c.handleLostLeadership(ev)
+	}
+}
+
+// handleLostLeadership clears cached state when leadership is lost.
+// This ensures a fresh render on leadership regain, preventing stale checksums
+// from causing missed events.
+func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
+	if c.lastRenderedChecksum != "" {
+		c.logger.Debug("cleared render checksum cache on leadership loss")
+		c.lastRenderedChecksum = ""
 	}
 }
 
@@ -476,6 +497,35 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 		"validation_config_bytes", len(validationResult.haproxyConfig),
 		"auxiliary_files", auxFileCount,
 	)
+
+	// Compute checksum on production render (consistent paths across renders)
+	checksumHex := dataplane.ComputeContentChecksum(productionResult.haproxyConfig, productionResult.auxiliaryFiles)
+
+	// Check if HTTP store has pending content needing validation.
+	// HTTP store uses two-phase content: pending → accepted.
+	// Production render uses accepted content; validation render includes pending.
+	// We must emit event if pending content exists to trigger validation/promotion.
+	httpStorePending := c.httpStoreComponent != nil &&
+		c.httpStoreComponent.GetStore().HasPendingValidation()
+
+	// Skip publishing only if:
+	// 1. Content unchanged (checksum matches), AND
+	// 2. No HTTP store pending content (which needs validation to promote)
+	if checksumHex == c.lastRenderedChecksum && !httpStorePending {
+		c.logger.Debug("skipping template rendered event, content unchanged",
+			"checksum", checksumHex,
+			"trigger_reason", event.Reason,
+		)
+		// Clean up validation temp directory since we're not publishing the event
+		if err := os.RemoveAll(validationEnv.tmpDir); err != nil {
+			c.logger.Warn("failed to clean up validation temp directory",
+				"path", validationEnv.tmpDir, "error", err)
+		}
+		return
+	}
+
+	// Update checksum before publishing
+	c.lastRenderedChecksum = checksumHex
 
 	// Publish success event with both rendered configs, propagating correlation
 	c.eventBus.Publish(events.NewTemplateRenderedEvent(
