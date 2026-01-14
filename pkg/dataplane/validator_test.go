@@ -1025,3 +1025,141 @@ func TestGetSwaggerForVersion_ConcurrentAccess(t *testing.T) {
 		}
 	}
 }
+
+// TestGetResolvedSchema_Caching tests that resolved schemas are cached.
+func TestGetResolvedSchema_Caching(t *testing.T) {
+	spec, err := getCachedSwaggerV32()
+	if err != nil {
+		t.Fatalf("failed to get spec: %v", err)
+	}
+
+	// First call should resolve and cache
+	schema1, err := getResolvedSchema(spec, "server")
+	if err != nil {
+		t.Fatalf("first getResolvedSchema() failed: %v", err)
+	}
+	if schema1 == nil {
+		t.Fatal("first getResolvedSchema() returned nil")
+	}
+
+	// Second call should return cached instance
+	schema2, err := getResolvedSchema(spec, "server")
+	if err != nil {
+		t.Fatalf("second getResolvedSchema() failed: %v", err)
+	}
+
+	// Verify same instance (caching works)
+	if schema1 != schema2 {
+		t.Error("getResolvedSchema() should return the same cached instance")
+	}
+}
+
+// TestGetResolvedSchema_AllOfResolution tests that allOf schemas are properly resolved.
+func TestGetResolvedSchema_AllOfResolution(t *testing.T) {
+	spec, err := getCachedSwaggerV32()
+	if err != nil {
+		t.Fatalf("failed to get spec: %v", err)
+	}
+
+	// "server" schema has allOf referencing "server_params"
+	schema, err := getResolvedSchema(spec, "server")
+	if err != nil {
+		t.Fatalf("getResolvedSchema() failed: %v", err)
+	}
+
+	// Verify the schema has properties (allOf was resolved)
+	if schema.Properties == nil {
+		t.Fatal("resolved schema should have properties")
+	}
+
+	// Check for a property that comes from server_params (inherited via allOf)
+	if _, ok := schema.Properties["address"]; !ok {
+		t.Error("resolved schema should have 'address' property from server_params")
+	}
+
+	// Check for a property that comes from server itself
+	if _, ok := schema.Properties["name"]; !ok {
+		t.Error("resolved schema should have 'name' property")
+	}
+}
+
+// TestGetResolvedSchema_ConcurrentAccess tests thread-safe caching.
+func TestGetResolvedSchema_ConcurrentAccess(t *testing.T) {
+	spec, err := getCachedSwaggerV32()
+	if err != nil {
+		t.Fatalf("failed to get spec: %v", err)
+	}
+
+	const goroutines = 100
+	schemas := []string{"server", "server_template", "bind", "acl", "filter"}
+
+	errs := make(chan error, goroutines*len(schemas))
+
+	for i := 0; i < goroutines; i++ {
+		for _, name := range schemas {
+			go func() {
+				_, err := getResolvedSchema(spec, name)
+				errs <- err
+			}()
+		}
+	}
+
+	// Collect results
+	for i := 0; i < goroutines*len(schemas); i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent getResolvedSchema() failed: %v", err)
+		}
+	}
+}
+
+// TestGetResolvedSchema_VersionIsolation tests that caches are version-specific.
+func TestGetResolvedSchema_VersionIsolation(t *testing.T) {
+	specV30, err := getCachedSwaggerV30()
+	if err != nil {
+		t.Fatalf("failed to get V30 spec: %v", err)
+	}
+	specV31, err := getCachedSwaggerV31()
+	if err != nil {
+		t.Fatalf("failed to get V31 spec: %v", err)
+	}
+	specV32, err := getCachedSwaggerV32()
+	if err != nil {
+		t.Fatalf("failed to get V32 spec: %v", err)
+	}
+
+	// Get server schema from each version
+	schemaV30, err := getResolvedSchema(specV30, "server")
+	if err != nil {
+		t.Fatalf("getResolvedSchema(V30) failed: %v", err)
+	}
+	schemaV31, err := getResolvedSchema(specV31, "server")
+	if err != nil {
+		t.Fatalf("getResolvedSchema(V31) failed: %v", err)
+	}
+	schemaV32, err := getResolvedSchema(specV32, "server")
+	if err != nil {
+		t.Fatalf("getResolvedSchema(V32) failed: %v", err)
+	}
+
+	// All schemas should be non-nil and have properties
+	if schemaV30 == nil || schemaV31 == nil || schemaV32 == nil {
+		t.Fatal("all version schemas should be non-nil")
+	}
+
+	if len(schemaV30.Properties) == 0 || len(schemaV31.Properties) == 0 || len(schemaV32.Properties) == 0 {
+		t.Error("all version schemas should have properties")
+	}
+}
+
+// TestGetResolvedSchema_NotFound tests error handling for non-existent schemas.
+func TestGetResolvedSchema_NotFound(t *testing.T) {
+	spec, err := getCachedSwaggerV32()
+	if err != nil {
+		t.Fatalf("failed to get spec: %v", err)
+	}
+
+	_, err = getResolvedSchema(spec, "nonexistent_schema")
+	if err == nil {
+		t.Error("getResolvedSchema() should return error for non-existent schema")
+	}
+}
