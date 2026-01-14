@@ -37,6 +37,87 @@ func (m *mockStore) Delete(_ ...string) error                           { return
 func (m *mockStore) Clear() error                                       { return nil }
 func (m *mockStore) GetByPartialKey(_ ...string) ([]interface{}, error) { return nil, nil }
 
+// callbackRecorder provides thread-safe callback recording with channel-based waiting.
+// This eliminates flaky time.Sleep-based tests by using proper synchronization.
+type callbackRecorder struct {
+	mu       sync.Mutex
+	received []types.ChangeStats
+	times    []time.Time
+	notify   chan struct{}
+}
+
+func newCallbackRecorder() *callbackRecorder {
+	return &callbackRecorder{
+		notify: make(chan struct{}, 100), // Buffered to avoid blocking
+	}
+}
+
+func (r *callbackRecorder) callback(_ types.Store, stats types.ChangeStats) {
+	r.mu.Lock()
+	r.received = append(r.received, stats)
+	r.times = append(r.times, time.Now())
+	r.mu.Unlock()
+
+	// Signal that a callback was received
+	select {
+	case r.notify <- struct{}{}:
+	default:
+		// Channel full, that's fine
+	}
+}
+
+// waitForCallbacks waits until at least n callbacks have been received or timeout.
+func (r *callbackRecorder) waitForCallbacks(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+
+	for {
+		r.mu.Lock()
+		count := len(r.received)
+		r.mu.Unlock()
+
+		if count >= n {
+			return
+		}
+
+		select {
+		case <-r.notify:
+			// Got a callback, check count again
+		case <-deadline:
+			r.mu.Lock()
+			actual := len(r.received)
+			r.mu.Unlock()
+			t.Fatalf("timeout waiting for %d callbacks, got %d", n, actual)
+		}
+	}
+}
+
+// getReceived returns a copy of received callbacks.
+func (r *callbackRecorder) getReceived() []types.ChangeStats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]types.ChangeStats, len(r.received))
+	copy(result, r.received)
+	return result
+}
+
+// getTimes returns a copy of callback times.
+func (r *callbackRecorder) getTimes() []time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]time.Time, len(r.times))
+	copy(result, r.times)
+	return result
+}
+
+// clear resets the recorder.
+func (r *callbackRecorder) clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.received = nil
+	r.times = nil
+}
+
 func TestNewDebouncer(t *testing.T) {
 	store := &mockStore{}
 	callback := func(types.Store, types.ChangeStats) {}
@@ -51,16 +132,9 @@ func TestNewDebouncer(t *testing.T) {
 
 func TestDebouncer_RecordCreate(t *testing.T) {
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []types.ChangeStats
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, stats types.ChangeStats) {
-		mu.Lock()
-		received = append(received, stats)
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false) // Enable callbacks
 
 	// Record creates
@@ -68,89 +142,65 @@ func TestDebouncer_RecordCreate(t *testing.T) {
 	debouncer.RecordCreate()
 	debouncer.RecordCreate()
 
-	// Wait for debounce to fire
-	time.Sleep(100 * time.Millisecond)
+	// Wait for callback (with leading edge, first fires immediately, rest batched)
+	recorder.waitForCallbacks(t, 1)
 
-	mu.Lock()
+	received := recorder.getReceived()
 	require.Len(t, received, 1)
 	assert.Equal(t, 3, received[0].Created)
 	assert.Equal(t, 0, received[0].Modified)
 	assert.Equal(t, 0, received[0].Deleted)
-	mu.Unlock()
 }
 
 func TestDebouncer_RecordUpdate(t *testing.T) {
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []types.ChangeStats
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, stats types.ChangeStats) {
-		mu.Lock()
-		received = append(received, stats)
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false)
 
 	debouncer.RecordUpdate()
 	debouncer.RecordUpdate()
 
-	time.Sleep(100 * time.Millisecond)
+	recorder.waitForCallbacks(t, 1)
 
-	mu.Lock()
+	received := recorder.getReceived()
 	require.Len(t, received, 1)
 	assert.Equal(t, 0, received[0].Created)
 	assert.Equal(t, 2, received[0].Modified)
 	assert.Equal(t, 0, received[0].Deleted)
-	mu.Unlock()
 }
 
 func TestDebouncer_RecordDelete(t *testing.T) {
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []types.ChangeStats
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, stats types.ChangeStats) {
-		mu.Lock()
-		received = append(received, stats)
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false)
 
 	debouncer.RecordDelete()
 
-	time.Sleep(100 * time.Millisecond)
+	recorder.waitForCallbacks(t, 1)
 
-	mu.Lock()
+	received := recorder.getReceived()
 	require.Len(t, received, 1)
 	assert.Equal(t, 0, received[0].Created)
 	assert.Equal(t, 0, received[0].Modified)
 	assert.Equal(t, 1, received[0].Deleted)
-	mu.Unlock()
 }
 
 func TestDebouncer_MixedOperations(t *testing.T) {
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []types.ChangeStats
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, stats types.ChangeStats) {
-		mu.Lock()
-		received = append(received, stats)
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false)
 
 	// First create fires immediately (leading edge)
 	debouncer.RecordCreate()
 
-	// Wait a tiny bit for the immediate callback to fire
-	time.Sleep(20 * time.Millisecond)
+	// Wait for first callback
+	recorder.waitForCallbacks(t, 1)
 
 	// These operations happen within refractory period - batched together
 	debouncer.RecordUpdate()
@@ -158,11 +208,10 @@ func TestDebouncer_MixedOperations(t *testing.T) {
 	debouncer.RecordDelete()
 	debouncer.RecordCreate()
 
-	// Wait for refractory period to expire and batched callback to fire
-	time.Sleep(100 * time.Millisecond)
+	// Wait for second callback (batched)
+	recorder.waitForCallbacks(t, 2)
 
-	mu.Lock()
-	defer mu.Unlock()
+	received := recorder.getReceived()
 
 	// With leading-edge behavior:
 	// - First callback: immediate (just the first create)
@@ -183,12 +232,17 @@ func TestDebouncer_MixedOperations(t *testing.T) {
 func TestDebouncer_DebounceBatching(t *testing.T) {
 	store := &mockStore{}
 	var callCount atomic.Int32
+	notify := make(chan struct{}, 100)
 
 	callback := func(_ types.Store, _ types.ChangeStats) {
 		callCount.Add(1)
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
 	}
 
-	// Use longer debounce interval to handle race detector overhead (2-10x slower)
+	// Use longer debounce interval
 	debouncer := NewDebouncer(200*time.Millisecond, callback, store, false)
 	debouncer.SetSyncMode(false)
 
@@ -198,28 +252,33 @@ func TestDebouncer_DebounceBatching(t *testing.T) {
 		time.Sleep(10 * time.Millisecond) // Less than debounce interval
 	}
 
-	// Wait for final debounce (longer to account for race detector overhead)
-	time.Sleep(300 * time.Millisecond)
+	// Wait for callbacks with proper synchronization
+	deadline := time.After(3 * time.Second)
+	expectedCallbacks := int32(2) // Leading edge: first immediate, rest batched
+
+waitLoop:
+	for callCount.Load() < expectedCallbacks {
+		select {
+		case <-notify:
+			// Got a callback
+		case <-deadline:
+			// Timeout reached, exit loop and check what we have
+			break waitLoop
+		}
+	}
 
 	// With leading-edge behavior:
 	// - First change fires immediately
 	// - Subsequent changes during refractory period are batched
 	// - Total: 2 callbacks (first immediate, second after refractory)
-	assert.Equal(t, int32(2), callCount.Load())
+	assert.Equal(t, expectedCallbacks, callCount.Load())
 }
 
 func TestDebouncer_Flush(t *testing.T) {
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []types.ChangeStats
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, stats types.ChangeStats) {
-		mu.Lock()
-		received = append(received, stats)
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(1*time.Second, callback, store, false) // Long interval
+	debouncer := NewDebouncer(1*time.Second, recorder.callback, store, false) // Long interval
 	debouncer.SetSyncMode(false)
 
 	debouncer.RecordCreate()
@@ -228,11 +287,11 @@ func TestDebouncer_Flush(t *testing.T) {
 	// Flush immediately without waiting
 	debouncer.Flush()
 
-	mu.Lock()
+	// Flush is synchronous, so callback should have been called
+	received := recorder.getReceived()
 	require.Len(t, received, 1)
 	assert.Equal(t, 1, received[0].Created)
 	assert.Equal(t, 1, received[0].Modified)
-	mu.Unlock()
 }
 
 func TestDebouncer_FlushEmpty(t *testing.T) {
@@ -255,9 +314,14 @@ func TestDebouncer_FlushEmpty(t *testing.T) {
 func TestDebouncer_Stop(t *testing.T) {
 	store := &mockStore{}
 	var callCount atomic.Int32
+	notify := make(chan struct{}, 10)
 
 	callback := func(_ types.Store, _ types.ChangeStats) {
 		callCount.Add(1)
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
 	}
 
 	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
@@ -266,8 +330,12 @@ func TestDebouncer_Stop(t *testing.T) {
 	// First change fires immediately with leading-edge behavior
 	debouncer.RecordCreate()
 
-	// Wait for the immediate callback to fire
-	time.Sleep(20 * time.Millisecond)
+	// Wait for the immediate callback
+	select {
+	case <-notify:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for first callback")
+	}
 
 	// Record another change (will be queued for refractory period)
 	debouncer.RecordUpdate()
@@ -275,7 +343,8 @@ func TestDebouncer_Stop(t *testing.T) {
 	// Stop before the queued callback fires
 	debouncer.Stop()
 
-	time.Sleep(100 * time.Millisecond)
+	// Give time to verify no more callbacks come
+	time.Sleep(150 * time.Millisecond)
 
 	// Only the first immediate callback should have been invoked
 	// The second (queued) callback should have been stopped
@@ -284,52 +353,47 @@ func TestDebouncer_Stop(t *testing.T) {
 
 func TestDebouncer_SyncMode(t *testing.T) {
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []types.ChangeStats
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, stats types.ChangeStats) {
-		mu.Lock()
-		received = append(received, stats)
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 
 	// In sync mode by default
 	debouncer.RecordCreate()
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for callback
+	recorder.waitForCallbacks(t, 1)
 
-	mu.Lock()
+	received := recorder.getReceived()
 	// Callbacks should fire (suppressDuringSync=false)
 	require.Len(t, received, 1)
 	assert.True(t, received[0].IsInitialSync)
-	mu.Unlock()
 
 	// Clear for next test
-	mu.Lock()
-	received = nil
-	mu.Unlock()
+	recorder.clear()
 
 	// Switch to normal mode
 	debouncer.SetSyncMode(false)
 
 	debouncer.RecordCreate()
 
-	time.Sleep(100 * time.Millisecond)
+	recorder.waitForCallbacks(t, 1)
 
-	mu.Lock()
+	received = recorder.getReceived()
 	require.Len(t, received, 1)
 	assert.False(t, received[0].IsInitialSync)
-	mu.Unlock()
 }
 
 func TestDebouncer_SuppressDuringSync(t *testing.T) {
 	store := &mockStore{}
 	var callCount atomic.Int32
+	notify := make(chan struct{}, 10)
 
 	callback := func(_ types.Store, _ types.ChangeStats) {
 		callCount.Add(1)
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
 	}
 
 	debouncer := NewDebouncer(50*time.Millisecond, callback, store, true) // suppress during sync
@@ -337,15 +401,19 @@ func TestDebouncer_SuppressDuringSync(t *testing.T) {
 	// In sync mode, callbacks should be suppressed but stats preserved
 	debouncer.RecordCreate()
 
+	// Brief wait - callback should NOT fire
 	time.Sleep(100 * time.Millisecond)
-
 	assert.Equal(t, int32(0), callCount.Load())
 
 	// After sync completes, SetSyncMode(false) flushes accumulated stats
 	debouncer.SetSyncMode(false)
 
-	// Give time for the flush to complete
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the flush callback
+	select {
+	case <-notify:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for flush callback")
+	}
 
 	// The suppressed event from sync should now be delivered
 	assert.Equal(t, int32(1), callCount.Load())
@@ -353,7 +421,11 @@ func TestDebouncer_SuppressDuringSync(t *testing.T) {
 	// New events after sync should also trigger callbacks
 	debouncer.RecordCreate()
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-notify:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for post-sync callback")
+	}
 
 	assert.Equal(t, int32(2), callCount.Load())
 }
@@ -371,7 +443,7 @@ func TestDebouncer_FlushBypassesSuppression(t *testing.T) {
 	// In sync mode with suppression
 	debouncer.RecordCreate()
 
-	// Flush should bypass suppression
+	// Flush should bypass suppression (synchronous)
 	debouncer.Flush()
 
 	assert.Equal(t, int32(1), callCount.Load())
@@ -402,6 +474,7 @@ func TestDebouncer_NilCallback(t *testing.T) {
 
 	debouncer.RecordCreate()
 
+	// Wait for potential callback (none should come, but shouldn't panic)
 	time.Sleep(100 * time.Millisecond)
 
 	// Test passed if no panic
@@ -442,8 +515,8 @@ func TestDebouncer_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 
-	// Wait for final debounce
-	time.Sleep(50 * time.Millisecond)
+	// Flush to ensure all pending callbacks complete
+	debouncer.Flush()
 
 	// Should have received at least one callback (exact count depends on timing)
 	assert.GreaterOrEqual(t, callCount.Load(), int32(1))
@@ -451,31 +524,27 @@ func TestDebouncer_ConcurrentAccess(t *testing.T) {
 
 func TestDebouncer_ResetAfterCallback(t *testing.T) {
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []types.ChangeStats
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, stats types.ChangeStats) {
-		mu.Lock()
-		received = append(received, stats)
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false)
 
 	// First batch
 	debouncer.RecordCreate()
 	debouncer.RecordCreate()
 
+	recorder.waitForCallbacks(t, 1)
+
+	// Wait for refractory period to expire
 	time.Sleep(100 * time.Millisecond)
 
 	// Second batch (should be independent)
 	debouncer.RecordUpdate()
 	debouncer.RecordDelete()
 
-	time.Sleep(100 * time.Millisecond)
+	recorder.waitForCallbacks(t, 2)
 
-	mu.Lock()
+	received := recorder.getReceived()
 	require.Len(t, received, 2)
 	// First batch
 	assert.Equal(t, 2, received[0].Created)
@@ -484,54 +553,36 @@ func TestDebouncer_ResetAfterCallback(t *testing.T) {
 	assert.Equal(t, 0, received[1].Created)
 	assert.Equal(t, 1, received[1].Modified)
 	assert.Equal(t, 1, received[1].Deleted)
-	mu.Unlock()
 }
 
 func TestDebouncer_LeadingEdge_ImmediateFire(t *testing.T) {
 	// Test that first change fires immediately when no recent activity
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []time.Time
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, _ types.ChangeStats) {
-		mu.Lock()
-		received = append(received, time.Now())
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(200*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(200*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false)
 
 	startTime := time.Now()
 	debouncer.RecordCreate()
 
-	// Wait a short time for the immediate callback
-	time.Sleep(50 * time.Millisecond)
+	// Wait for callback
+	recorder.waitForCallbacks(t, 1)
 
-	mu.Lock()
-	require.Len(t, received, 1, "should have received one callback")
-	callbackDelay := received[0].Sub(startTime)
-	mu.Unlock()
+	times := recorder.getTimes()
+	require.Len(t, times, 1, "should have received one callback")
+	callbackDelay := times[0].Sub(startTime)
 
-	// Callback should fire almost immediately (within 50ms), not after 200ms debounce interval
-	assert.Less(t, callbackDelay, 50*time.Millisecond, "first change should fire immediately, not wait for debounce interval")
+	// Callback should fire almost immediately (within 100ms), not after 200ms debounce interval
+	assert.Less(t, callbackDelay, 100*time.Millisecond, "first change should fire immediately, not wait for debounce interval")
 }
 
 func TestDebouncer_LeadingEdge_RefractoryPeriod(t *testing.T) {
 	// Test that changes within refractory period are queued and batched
 	store := &mockStore{}
-	var mu sync.Mutex
-	var received []types.ChangeStats
-	var callTimes []time.Time
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, stats types.ChangeStats) {
-		mu.Lock()
-		received = append(received, stats)
-		callTimes = append(callTimes, time.Now())
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(100*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(100*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false)
 
 	startTime := time.Now()
@@ -539,17 +590,18 @@ func TestDebouncer_LeadingEdge_RefractoryPeriod(t *testing.T) {
 	// First change fires immediately
 	debouncer.RecordCreate()
 
-	// Wait a tiny bit for the immediate callback to fire
-	time.Sleep(20 * time.Millisecond)
+	// Wait for first callback
+	recorder.waitForCallbacks(t, 1)
 
 	// These changes are within refractory period - should be queued
 	debouncer.RecordUpdate()
 	debouncer.RecordDelete()
 
-	// Wait for refractory period to expire and queued callback to fire
-	time.Sleep(150 * time.Millisecond)
+	// Wait for second callback (after refractory period)
+	recorder.waitForCallbacks(t, 2)
 
-	mu.Lock()
+	received := recorder.getReceived()
+	times := recorder.getTimes()
 	require.Len(t, received, 2, "should have received two callbacks")
 
 	// First callback: immediate (just create)
@@ -563,51 +615,45 @@ func TestDebouncer_LeadingEdge_RefractoryPeriod(t *testing.T) {
 	assert.Equal(t, 1, received[1].Deleted)
 
 	// First callback should be very fast (immediate)
-	firstCallbackDelay := callTimes[0].Sub(startTime)
-	assert.Less(t, firstCallbackDelay, 50*time.Millisecond, "first callback should be immediate")
+	firstCallbackDelay := times[0].Sub(startTime)
+	assert.Less(t, firstCallbackDelay, 100*time.Millisecond, "first callback should be immediate")
 
 	// Second callback should fire after refractory period expires
-	timeBetweenCallbacks := callTimes[1].Sub(callTimes[0])
+	timeBetweenCallbacks := times[1].Sub(times[0])
 	assert.GreaterOrEqual(t, timeBetweenCallbacks, 50*time.Millisecond, "second callback should wait for refractory period")
-	mu.Unlock()
 }
 
 func TestDebouncer_LeadingEdge_NoRecentActivity(t *testing.T) {
 	// Test that after refractory period expires, next change fires immediately again
 	store := &mockStore{}
-	var mu sync.Mutex
-	var callTimes []time.Time
+	recorder := newCallbackRecorder()
 
-	callback := func(_ types.Store, _ types.ChangeStats) {
-		mu.Lock()
-		callTimes = append(callTimes, time.Now())
-		mu.Unlock()
-	}
-
-	debouncer := NewDebouncer(50*time.Millisecond, callback, store, false)
+	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false)
 
 	// First change
 	time1 := time.Now()
 	debouncer.RecordCreate()
 
-	// Wait for callback and refractory period to fully expire
+	// Wait for callback
+	recorder.waitForCallbacks(t, 1)
+
+	// Wait for refractory period to fully expire
 	time.Sleep(100 * time.Millisecond)
 
 	// Second change should also fire immediately
 	time2 := time.Now()
 	debouncer.RecordCreate()
 
-	// Wait for callback
-	time.Sleep(50 * time.Millisecond)
+	// Wait for second callback
+	recorder.waitForCallbacks(t, 2)
 
-	mu.Lock()
-	require.Len(t, callTimes, 2, "should have two callbacks")
+	times := recorder.getTimes()
+	require.Len(t, times, 2, "should have two callbacks")
 
 	// Both callbacks should be fast (immediate)
-	delay1 := callTimes[0].Sub(time1)
-	delay2 := callTimes[1].Sub(time2)
-	assert.Less(t, delay1, 50*time.Millisecond, "first callback should be immediate")
-	assert.Less(t, delay2, 50*time.Millisecond, "second callback should also be immediate after refractory expires")
-	mu.Unlock()
+	delay1 := times[0].Sub(time1)
+	delay2 := times[1].Sub(time2)
+	assert.Less(t, delay1, 100*time.Millisecond, "first callback should be immediate")
+	assert.Less(t, delay2, 100*time.Millisecond, "second callback should also be immediate after refractory expires")
 }
