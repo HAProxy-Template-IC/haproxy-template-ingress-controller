@@ -517,9 +517,16 @@ func (dc *DebugClient) GetGeneralFileContent(ctx context.Context, fileName strin
 	}
 
 	// The struct field is GeneralFiles (not general_files) - Go JSON serialization uses struct field names
-	generalFiles, ok := files["GeneralFiles"].([]interface{})
+	// Note: When Go slice is nil, JSON marshals as null, which unmarshals to nil interface{}.
+	// Check for nil explicitly before type assertion.
+	generalFilesRaw := files["GeneralFiles"]
+	if generalFilesRaw == nil {
+		// No auxiliary files rendered yet - return file not found
+		return "", fmt.Errorf("file %s not found in auxiliary files (no files rendered yet)", fileName)
+	}
+	generalFiles, ok := generalFilesRaw.([]interface{})
 	if !ok {
-		return "", fmt.Errorf("GeneralFiles field not found or wrong type")
+		return "", fmt.Errorf("GeneralFiles field has unexpected type %T", generalFilesRaw)
 	}
 
 	for _, file := range generalFiles {
