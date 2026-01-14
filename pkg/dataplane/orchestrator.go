@@ -14,6 +14,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/enterprise"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
@@ -1062,21 +1063,98 @@ func (o *orchestrator) compareCRTListFiles(ctx context.Context, crtlistFiles []a
 }
 
 // executeRuntimeOperations executes runtime-eligible operations without transaction.
+// Uses version caching to minimize GetVersion calls: fetches version once at start,
+// then passes it to each operation and increments after success.
+//
+// Performance optimization: Without caching, each server update calls GetVersion(),
+// resulting in 2N HTTP calls for N operations. With caching, only N+1 calls are made
+// (1 initial GetVersion + N update calls), cutting runtime in half.
+//
+// Correctness: On 409 version conflict, the function re-fetches the version and retries.
 // Returns applied operations, reload count, and error.
 func (o *orchestrator) executeRuntimeOperations(
 	ctx context.Context,
 	operations []comparator.Operation,
 ) (appliedOps []AppliedOperation, reloadCount int, err error) {
-	for _, op := range operations {
-		if execErr := op.Execute(ctx, o.client, ""); execErr != nil {
-			return nil, reloadCount, fmt.Errorf("runtime operation failed: %w", execErr)
+	if len(operations) == 0 {
+		return nil, 0, nil
+	}
+
+	// Fetch version once at start for caching
+	version, err := o.client.GetVersion(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get initial version: %w", err)
+	}
+
+	for i, op := range operations {
+		// All runtime operations are server updates (checked by areAllOperationsRuntimeEligible)
+		serverOp, ok := op.(*sections.ServerUpdateOp)
+		if !ok {
+			// Fallback for unexpected operation types - use standard Execute
+			if execErr := op.Execute(ctx, o.client, ""); execErr != nil {
+				return nil, reloadCount, fmt.Errorf("runtime operation %d failed: %w", i, execErr)
+			}
+			// Check if this operation triggered a reload
+			if tracker, ok := op.(sections.RuntimeReloadTracker); ok && tracker.TriggeredReload() {
+				reloadCount++
+			}
+			continue
 		}
-		// Check if this operation triggered a reload
-		if tracker, ok := op.(sections.RuntimeReloadTracker); ok && tracker.TriggeredReload() {
+
+		// Execute with cached version and retry on conflict
+		reloaded, execErr := o.executeServerUpdateWithRetry(ctx, serverOp, &version)
+		if execErr != nil {
+			return nil, reloadCount, fmt.Errorf("runtime operation %d failed: %w", i, execErr)
+		}
+		if reloaded {
 			reloadCount++
 		}
 	}
+
 	return convertOperationsToApplied(operations), reloadCount, nil
+}
+
+// executeServerUpdateWithRetry executes a server update with version caching and retry on 409.
+// On success, increments the version for the next operation.
+// On 409 conflict, re-fetches the version and retries up to maxRetries times.
+func (o *orchestrator) executeServerUpdateWithRetry(
+	ctx context.Context,
+	op *sections.ServerUpdateOp,
+	version *int64,
+) (reloadTriggered bool, err error) {
+	const maxRetries = 3
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		reloaded, err := executors.ServerUpdateWithReloadTracking(
+			ctx, o.client, op.BackendName(), op.ServerName(), op.Server(), "", *version)
+
+		if err == nil {
+			// Success - increment version for next operation
+			*version++
+			return reloaded, nil
+		}
+
+		// Check for version conflict
+		var conflictErr *client.VersionConflictError
+		if !errors.As(err, &conflictErr) {
+			// Not a version conflict - return the error
+			return false, err
+		}
+
+		// Re-fetch version and retry
+		o.logger.Debug("Version conflict during runtime operation, retrying",
+			"attempt", attempt+1,
+			"expected_version", conflictErr.ExpectedVersion,
+			"actual_version", conflictErr.ActualVersion)
+
+		newVersion, fetchErr := o.client.GetVersion(ctx)
+		if fetchErr != nil {
+			return false, fmt.Errorf("failed to re-fetch version after conflict: %w", fetchErr)
+		}
+		*version = newVersion
+	}
+
+	return false, fmt.Errorf("server update failed after %d retries due to version conflicts", maxRetries)
 }
 
 // executeConfigOperations executes configuration operations with retry logic.
