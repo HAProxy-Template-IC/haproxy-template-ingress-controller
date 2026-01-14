@@ -316,10 +316,22 @@ func TestRegistry_Status_WithHealthCheck(t *testing.T) {
 	registry := NewRegistry()
 
 	comp := &healthyComponent{
-		mockComponent: mockComponent{name: "healthy-comp"},
+		mockComponent: mockComponent{name: "healthy-comp", startedChan: make(chan struct{})},
 		healthy:       true,
 	}
 	registry.Register(comp)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// Start the component so it's Running (HealthCheck is only called for Running components)
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- registry.StartAll(ctx, false)
+	}()
+
+	// Wait for component to start
+	require.True(t, comp.WaitStarted(200*time.Millisecond), "component should have started")
 
 	status := registry.Status()
 
@@ -334,6 +346,9 @@ func TestRegistry_Status_WithHealthCheck(t *testing.T) {
 	info = status["healthy-comp"]
 	require.NotNil(t, info.Healthy)
 	assert.False(t, *info.Healthy)
+
+	cancel()
+	<-errChan
 }
 
 func TestRegistry_IsHealthy(t *testing.T) {
@@ -341,37 +356,79 @@ func TestRegistry_IsHealthy(t *testing.T) {
 		registry := NewRegistry()
 
 		comp := &healthyComponent{
-			mockComponent: mockComponent{name: "comp"},
+			mockComponent: mockComponent{name: "comp", startedChan: make(chan struct{})},
 			healthy:       true,
 		}
 		registry.Register(comp)
 
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		// Start the component (HealthCheck is only called for Running components)
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- registry.StartAll(ctx, false)
+		}()
+
+		require.True(t, comp.WaitStarted(200*time.Millisecond), "component should have started")
+
 		assert.True(t, registry.IsHealthy())
+
+		cancel()
+		<-errChan
 	})
 
 	t.Run("critical unhealthy", func(t *testing.T) {
 		registry := NewRegistry()
 
 		comp := &healthyComponent{
-			mockComponent: mockComponent{name: "comp"},
+			mockComponent: mockComponent{name: "comp", startedChan: make(chan struct{})},
 			healthy:       false,
 		}
 		registry.Register(comp, Criticality(CriticalityCritical))
 
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		// Start the component (HealthCheck is only called for Running components)
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- registry.StartAll(ctx, false)
+		}()
+
+		require.True(t, comp.WaitStarted(200*time.Millisecond), "component should have started")
+
 		assert.False(t, registry.IsHealthy())
+
+		cancel()
+		<-errChan
 	})
 
 	t.Run("optional unhealthy", func(t *testing.T) {
 		registry := NewRegistry()
 
 		comp := &healthyComponent{
-			mockComponent: mockComponent{name: "comp"},
+			mockComponent: mockComponent{name: "comp", startedChan: make(chan struct{})},
 			healthy:       false,
 		}
 		registry.Register(comp, Criticality(CriticalityOptional))
 
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		// Start the component (HealthCheck is only called for Running components)
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- registry.StartAll(ctx, false)
+		}()
+
+		require.True(t, comp.WaitStarted(200*time.Millisecond), "component should have started")
+
 		// Optional component being unhealthy shouldn't affect overall health
 		assert.True(t, registry.IsHealthy())
+
+		cancel()
+		<-errChan
 	})
 
 	t.Run("critical failed", func(t *testing.T) {
@@ -854,6 +911,164 @@ func indexOf(slice []string, s string) int {
 		}
 	}
 	return -1
+}
+
+// trackingHealthComponent tracks whether HealthCheck was called.
+type trackingHealthComponent struct {
+	mockComponent
+	healthCalled bool
+	healthy      bool
+	mu           sync.Mutex
+}
+
+func (c *trackingHealthComponent) HealthCheck() error {
+	c.mu.Lock()
+	c.healthCalled = true
+	c.mu.Unlock()
+	if !c.healthy {
+		return errors.New("component unhealthy")
+	}
+	return nil
+}
+
+func (c *trackingHealthComponent) wasHealthCheckCalled() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.healthCalled
+}
+
+func (c *trackingHealthComponent) resetHealthCheck() {
+	c.mu.Lock()
+	c.healthCalled = false
+	c.mu.Unlock()
+}
+
+func TestRegistry_Status_SkipsHealthCheckForStandbyComponents(t *testing.T) {
+	registry := NewRegistry()
+
+	// Create a leader-only component with health check
+	comp := &trackingHealthComponent{
+		mockComponent: mockComponent{name: "leader-comp"},
+		healthy:       false, // Would return error if called
+	}
+	registry.Register(comp, LeaderOnly())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// Start without being leader - component should be in Standby
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- registry.StartAll(ctx, false)
+	}()
+
+	// Give StartAll time to set status to Standby
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify component is in Standby
+	status := registry.Status()
+	require.Equal(t, StatusStandby, status["leader-comp"].Status, "component should be in Standby")
+
+	// HealthCheck should NOT have been called for Standby component
+	assert.False(t, comp.wasHealthCheckCalled(), "HealthCheck should not be called for Standby components")
+
+	// info.Healthy should be nil (not set)
+	assert.Nil(t, status["leader-comp"].Healthy, "Healthy should be nil for Standby components")
+
+	cancel()
+	<-errChan
+}
+
+func TestRegistry_Status_CallsHealthCheckForRunningComponents(t *testing.T) {
+	registry := NewRegistry()
+
+	// Create an all-replica component with health check
+	comp := &trackingHealthComponent{
+		mockComponent: mockComponent{name: "running-comp", startedChan: make(chan struct{})},
+		healthy:       true,
+	}
+	registry.Register(comp)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// Start the component
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- registry.StartAll(ctx, false)
+	}()
+
+	// Wait for component to start
+	require.True(t, comp.WaitStarted(200*time.Millisecond), "component should have started")
+
+	// Reset the health check tracking
+	comp.resetHealthCheck()
+
+	// Get status - should call HealthCheck for running component
+	status := registry.Status()
+	require.Equal(t, StatusRunning, status["running-comp"].Status, "component should be Running")
+
+	// HealthCheck SHOULD have been called for running component
+	assert.True(t, comp.wasHealthCheckCalled(), "HealthCheck should be called for Running components")
+
+	// info.Healthy should be set
+	require.NotNil(t, status["running-comp"].Healthy, "Healthy should be set for Running components")
+	assert.True(t, *status["running-comp"].Healthy, "Healthy should be true")
+
+	cancel()
+	<-errChan
+}
+
+func TestRegistry_Status_SkipsHealthCheckForPendingComponents(t *testing.T) {
+	registry := NewRegistry()
+
+	// Create a component with health check that would fail
+	comp := &trackingHealthComponent{
+		mockComponent: mockComponent{name: "pending-comp"},
+		healthy:       false,
+	}
+	registry.Register(comp)
+
+	// Don't start - component stays in Pending status
+
+	// Get status - should NOT call HealthCheck for pending component
+	status := registry.Status()
+	require.Equal(t, StatusPending, status["pending-comp"].Status, "component should be Pending")
+
+	// HealthCheck should NOT have been called for Pending component
+	assert.False(t, comp.wasHealthCheckCalled(), "HealthCheck should not be called for Pending components")
+
+	// info.Healthy should be nil (not set)
+	assert.Nil(t, status["pending-comp"].Healthy, "Healthy should be nil for Pending components")
+}
+
+func TestRegistry_IsHealthy_SkipsStandbyComponents(t *testing.T) {
+	registry := NewRegistry()
+
+	// Create a leader-only component with health check that would return unhealthy
+	comp := &trackingHealthComponent{
+		mockComponent: mockComponent{name: "leader-comp"},
+		healthy:       false, // Would make IsHealthy return false if called
+	}
+	registry.Register(comp, LeaderOnly(), Criticality(CriticalityCritical))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// Start without being leader - component should be in Standby
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- registry.StartAll(ctx, false)
+	}()
+
+	// Give StartAll time to set status to Standby
+	time.Sleep(50 * time.Millisecond)
+
+	// IsHealthy should return true because Standby components' health is not checked
+	assert.True(t, registry.IsHealthy(), "IsHealthy should return true when critical component is in Standby")
+
+	cancel()
+	<-errChan
 }
 
 func TestRegistry_Build(t *testing.T) {

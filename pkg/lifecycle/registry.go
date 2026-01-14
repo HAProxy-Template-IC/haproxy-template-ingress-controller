@@ -408,10 +408,13 @@ func (r *Registry) Status() map[string]ComponentInfo {
 			info.Error = comp.lastError.Error()
 		}
 
-		// Check health if supported (released lock briefly for health check)
-		if checker, ok := comp.component.(HealthChecker); ok {
-			healthy := checker.HealthCheck() == nil
-			info.Healthy = &healthy
+		// Check health if supported, but only for running components.
+		// Components in StatusStandby or StatusPending cannot meaningfully report health.
+		if comp.status == StatusRunning {
+			if checker, ok := comp.component.(HealthChecker); ok {
+				healthy := checker.HealthCheck() == nil
+				info.Healthy = &healthy
+			}
 		}
 
 		result[info.Name] = info
@@ -433,11 +436,14 @@ func (r *Registry) IsHealthy() bool {
 			}
 		}
 
-		// Check health if supported
-		if checker, ok := comp.component.(HealthChecker); ok {
-			if err := checker.HealthCheck(); err != nil {
-				if comp.config.criticality == CriticalityCritical {
-					return false
+		// Check health if supported, but only for running components.
+		// Components in StatusStandby or StatusPending cannot meaningfully report health.
+		if comp.status == StatusRunning {
+			if checker, ok := comp.component.(HealthChecker); ok {
+				if err := checker.HealthCheck(); err != nil {
+					if comp.config.criticality == CriticalityCritical {
+						return false
+					}
 				}
 			}
 		}
