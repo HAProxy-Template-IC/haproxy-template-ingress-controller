@@ -897,66 +897,86 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 	// Compress if content exceeds threshold
 	result := p.compressIfNeeded(mapFile.Content, req.CompressionThreshold, "HAProxyMapFile/"+name)
 
-	mapFileResource := &haproxyv1alpha1.HAProxyMapFile{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: req.TemplateConfigNamespace,
-			Labels: map[string]string{
-				"haproxy-haptic.org/runtime-config": owner.Name,
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         "haproxy-haptic.org/v1alpha1",
-					Kind:               "HAProxyCfg",
-					Name:               owner.Name,
-					UID:                owner.UID,
-					Controller:         boolPtr(true),
-					BlockOwnerDeletion: boolPtr(true),
-				},
-			},
-		},
-		Spec: haproxyv1alpha1.HAProxyMapFileSpec{
-			MapName:    filepath.Base(mapFile.Path),
-			Path:       mapFile.Path,
-			Entries:    result.content,
-			Checksum:   checksum,
-			Compressed: result.compressed,
+	// Build spec and labels once (these don't change between retries)
+	spec := haproxyv1alpha1.HAProxyMapFileSpec{
+		MapName:    filepath.Base(mapFile.Path),
+		Path:       mapFile.Path,
+		Entries:    result.content,
+		Checksum:   checksum,
+		Compressed: result.compressed,
+	}
+	labels := map[string]string{
+		"haproxy-haptic.org/runtime-config": owner.Name,
+	}
+	ownerRefs := []metav1.OwnerReference{
+		{
+			APIVersion:         "haproxy-haptic.org/v1alpha1",
+			Kind:               "HAProxyCfg",
+			Name:               owner.Name,
+			UID:                owner.UID,
+			Controller:         boolPtr(true),
+			BlockOwnerDeletion: boolPtr(true),
 		},
 	}
 
-	// Try to get existing resource
-	existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyMapFiles(req.TemplateConfigNamespace).
-		Get(ctx, name, metav1.GetOptions{})
-
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to get existing map file: %w", err)
-		}
-
-		// Create new resource
-		created, err := p.crdClient.HaproxyTemplateICV1alpha1().
+	var resultName string
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get existing resource (must be inside retry loop for fresh resourceVersion)
+		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyMapFiles(req.TemplateConfigNamespace).
-			Create(ctx, mapFileResource, metav1.CreateOptions{})
+			Get(ctx, name, metav1.GetOptions{})
+
 		if err != nil {
-			return "", fmt.Errorf("failed to create map file: %w", err)
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to get existing map file: %w", err)
+			}
+
+			// Create new resource
+			mapFileResource := &haproxyv1alpha1.HAProxyMapFile{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            name,
+					Namespace:       req.TemplateConfigNamespace,
+					Labels:          labels,
+					OwnerReferences: ownerRefs,
+				},
+				Spec: spec,
+			}
+
+			created, createErr := p.crdClient.HaproxyTemplateICV1alpha1().
+				HAProxyMapFiles(req.TemplateConfigNamespace).
+				Create(ctx, mapFileResource, metav1.CreateOptions{})
+			if createErr != nil {
+				// If AlreadyExists, another reconciler created it - retry to update
+				if apierrors.IsAlreadyExists(createErr) {
+					return createErr
+				}
+				return fmt.Errorf("failed to create map file: %w", createErr)
+			}
+
+			resultName = created.Name
+			return nil
 		}
 
-		return created.Name, nil
-	}
+		// Update existing resource with fresh copy
+		existing.Spec = spec
+		existing.Labels = labels
 
-	// Update existing resource
-	existing.Spec = mapFileResource.Spec
-	existing.Labels = mapFileResource.Labels
+		updated, updateErr := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyMapFiles(req.TemplateConfigNamespace).
+			Update(ctx, existing, metav1.UpdateOptions{})
+		if updateErr != nil {
+			return fmt.Errorf("failed to update map file: %w", updateErr)
+		}
 
-	updated, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyMapFiles(req.TemplateConfigNamespace).
-		Update(ctx, existing, metav1.UpdateOptions{})
+		resultName = updated.Name
+		return nil
+	})
+
 	if err != nil {
-		return "", fmt.Errorf("failed to update map file: %w", err)
+		return "", err
 	}
 
-	return updated.Name, nil
+	return resultName, nil
 }
 
 // createOrUpdateSSLSecret creates or updates a Secret for SSL certificates.
@@ -1039,66 +1059,86 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 	// Compress if content exceeds threshold
 	result := p.compressIfNeeded(generalFile.Content, req.CompressionThreshold, "HAProxyGeneralFile/"+name)
 
-	generalFileResource := &haproxyv1alpha1.HAProxyGeneralFile{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: req.TemplateConfigNamespace,
-			Labels: map[string]string{
-				"haproxy-haptic.org/runtime-config": owner.Name,
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         "haproxy-haptic.org/v1alpha1",
-					Kind:               "HAProxyCfg",
-					Name:               owner.Name,
-					UID:                owner.UID,
-					Controller:         boolPtr(true),
-					BlockOwnerDeletion: boolPtr(true),
-				},
-			},
-		},
-		Spec: haproxyv1alpha1.HAProxyGeneralFileSpec{
-			FileName:   generalFile.Filename,
-			Path:       generalFile.Path,
-			Content:    result.content,
-			Checksum:   checksum,
-			Compressed: result.compressed,
+	// Build spec and labels once (these don't change between retries)
+	spec := haproxyv1alpha1.HAProxyGeneralFileSpec{
+		FileName:   generalFile.Filename,
+		Path:       generalFile.Path,
+		Content:    result.content,
+		Checksum:   checksum,
+		Compressed: result.compressed,
+	}
+	labels := map[string]string{
+		"haproxy-haptic.org/runtime-config": owner.Name,
+	}
+	ownerRefs := []metav1.OwnerReference{
+		{
+			APIVersion:         "haproxy-haptic.org/v1alpha1",
+			Kind:               "HAProxyCfg",
+			Name:               owner.Name,
+			UID:                owner.UID,
+			Controller:         boolPtr(true),
+			BlockOwnerDeletion: boolPtr(true),
 		},
 	}
 
-	// Try to get existing resource
-	existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyGeneralFiles(req.TemplateConfigNamespace).
-		Get(ctx, name, metav1.GetOptions{})
-
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to get existing general file: %w", err)
-		}
-
-		// Create new resource
-		created, err := p.crdClient.HaproxyTemplateICV1alpha1().
+	var resultName string
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get existing resource (must be inside retry loop for fresh resourceVersion)
+		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyGeneralFiles(req.TemplateConfigNamespace).
-			Create(ctx, generalFileResource, metav1.CreateOptions{})
+			Get(ctx, name, metav1.GetOptions{})
+
 		if err != nil {
-			return "", fmt.Errorf("failed to create general file: %w", err)
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to get existing general file: %w", err)
+			}
+
+			// Create new resource
+			generalFileResource := &haproxyv1alpha1.HAProxyGeneralFile{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            name,
+					Namespace:       req.TemplateConfigNamespace,
+					Labels:          labels,
+					OwnerReferences: ownerRefs,
+				},
+				Spec: spec,
+			}
+
+			created, createErr := p.crdClient.HaproxyTemplateICV1alpha1().
+				HAProxyGeneralFiles(req.TemplateConfigNamespace).
+				Create(ctx, generalFileResource, metav1.CreateOptions{})
+			if createErr != nil {
+				// If AlreadyExists, another reconciler created it - retry to update
+				if apierrors.IsAlreadyExists(createErr) {
+					return createErr
+				}
+				return fmt.Errorf("failed to create general file: %w", createErr)
+			}
+
+			resultName = created.Name
+			return nil
 		}
 
-		return created.Name, nil
-	}
+		// Update existing resource with fresh copy
+		existing.Spec = spec
+		existing.Labels = labels
 
-	// Update existing resource
-	existing.Spec = generalFileResource.Spec
-	existing.Labels = generalFileResource.Labels
+		updated, updateErr := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyGeneralFiles(req.TemplateConfigNamespace).
+			Update(ctx, existing, metav1.UpdateOptions{})
+		if updateErr != nil {
+			return fmt.Errorf("failed to update general file: %w", updateErr)
+		}
 
-	updated, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyGeneralFiles(req.TemplateConfigNamespace).
-		Update(ctx, existing, metav1.UpdateOptions{})
+		resultName = updated.Name
+		return nil
+	})
+
 	if err != nil {
-		return "", fmt.Errorf("failed to update general file: %w", err)
+		return "", err
 	}
 
-	return updated.Name, nil
+	return resultName, nil
 }
 
 // createOrUpdateCRTListFile creates or updates a HAProxyCRTListFile resource.
@@ -1109,66 +1149,86 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 	// Compress if content exceeds threshold
 	result := p.compressIfNeeded(crtListFile.Content, req.CompressionThreshold, "HAProxyCRTListFile/"+name)
 
-	crtListResource := &haproxyv1alpha1.HAProxyCRTListFile{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: req.TemplateConfigNamespace,
-			Labels: map[string]string{
-				"haproxy-haptic.org/runtime-config": owner.Name,
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         "haproxy-haptic.org/v1alpha1",
-					Kind:               "HAProxyCfg",
-					Name:               owner.Name,
-					UID:                owner.UID,
-					Controller:         boolPtr(true),
-					BlockOwnerDeletion: boolPtr(true),
-				},
-			},
-		},
-		Spec: haproxyv1alpha1.HAProxyCRTListFileSpec{
-			ListName:   filepath.Base(crtListFile.Path),
-			Path:       crtListFile.Path,
-			Entries:    result.content,
-			Checksum:   checksum,
-			Compressed: result.compressed,
+	// Build spec and labels once (these don't change between retries)
+	spec := haproxyv1alpha1.HAProxyCRTListFileSpec{
+		ListName:   filepath.Base(crtListFile.Path),
+		Path:       crtListFile.Path,
+		Entries:    result.content,
+		Checksum:   checksum,
+		Compressed: result.compressed,
+	}
+	labels := map[string]string{
+		"haproxy-haptic.org/runtime-config": owner.Name,
+	}
+	ownerRefs := []metav1.OwnerReference{
+		{
+			APIVersion:         "haproxy-haptic.org/v1alpha1",
+			Kind:               "HAProxyCfg",
+			Name:               owner.Name,
+			UID:                owner.UID,
+			Controller:         boolPtr(true),
+			BlockOwnerDeletion: boolPtr(true),
 		},
 	}
 
-	// Try to get existing resource
-	existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCRTListFiles(req.TemplateConfigNamespace).
-		Get(ctx, name, metav1.GetOptions{})
-
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to get existing crt-list file: %w", err)
-		}
-
-		// Create new resource
-		created, err := p.crdClient.HaproxyTemplateICV1alpha1().
+	var resultName string
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get existing resource (must be inside retry loop for fresh resourceVersion)
+		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyCRTListFiles(req.TemplateConfigNamespace).
-			Create(ctx, crtListResource, metav1.CreateOptions{})
+			Get(ctx, name, metav1.GetOptions{})
+
 		if err != nil {
-			return "", fmt.Errorf("failed to create crt-list file: %w", err)
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to get existing crt-list file: %w", err)
+			}
+
+			// Create new resource
+			crtListResource := &haproxyv1alpha1.HAProxyCRTListFile{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            name,
+					Namespace:       req.TemplateConfigNamespace,
+					Labels:          labels,
+					OwnerReferences: ownerRefs,
+				},
+				Spec: spec,
+			}
+
+			created, createErr := p.crdClient.HaproxyTemplateICV1alpha1().
+				HAProxyCRTListFiles(req.TemplateConfigNamespace).
+				Create(ctx, crtListResource, metav1.CreateOptions{})
+			if createErr != nil {
+				// If AlreadyExists, another reconciler created it - retry to update
+				if apierrors.IsAlreadyExists(createErr) {
+					return createErr
+				}
+				return fmt.Errorf("failed to create crt-list file: %w", createErr)
+			}
+
+			resultName = created.Name
+			return nil
 		}
 
-		return created.Name, nil
-	}
+		// Update existing resource with fresh copy
+		existing.Spec = spec
+		existing.Labels = labels
 
-	// Update existing resource
-	existing.Spec = crtListResource.Spec
-	existing.Labels = crtListResource.Labels
+		updated, updateErr := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCRTListFiles(req.TemplateConfigNamespace).
+			Update(ctx, existing, metav1.UpdateOptions{})
+		if updateErr != nil {
+			return fmt.Errorf("failed to update crt-list file: %w", updateErr)
+		}
 
-	updated, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCRTListFiles(req.TemplateConfigNamespace).
-		Update(ctx, existing, metav1.UpdateOptions{})
+		resultName = updated.Name
+		return nil
+	})
+
 	if err != nil {
-		return "", fmt.Errorf("failed to update crt-list file: %w", err)
+		return "", err
 	}
 
-	return updated.Name, nil
+	return resultName, nil
 }
 
 // updateRuntimeConfigStatus updates the HAProxyCfg status with child resource references.
@@ -1422,15 +1482,28 @@ func (p *Publisher) cleanupCRTListFilePodReference(ctx context.Context, namespac
 // Helper functions
 
 // addOrUpdatePodStatus adds or updates a pod in the deployment status list.
-// Returns the updated slice. This is a simple helper for auxiliary file types
-// (MapFile, GeneralFile, CRTListFile) that don't need the complex logic
-// used by HAProxyCfg's updateOrAppendPodStatus.
+// Returns the updated slice. This helper is used for auxiliary file types
+// (MapFile, GeneralFile, CRTListFile) and includes safeguards to ensure
+// deployedAt is always set (required field in CRD schema).
 func addOrUpdatePodStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podStatus *haproxyv1alpha1.PodDeploymentStatus) []haproxyv1alpha1.PodDeploymentStatus {
 	for i := range pods {
 		if pods[i].PodName == podStatus.PodName {
+			// Preserve existing deployedAt if new one is zero (safeguard)
+			// This handles drift checks where no operations were performed
+			if podStatus.DeployedAt.IsZero() && !pods[i].DeployedAt.IsZero() {
+				podStatus.DeployedAt = pods[i].DeployedAt
+			}
+			// Use lastCheckedAt as fallback if deployedAt still zero
+			if podStatus.DeployedAt.IsZero() && podStatus.LastCheckedAt != nil {
+				podStatus.DeployedAt = *podStatus.LastCheckedAt
+			}
 			pods[i] = *podStatus
 			return pods
 		}
+	}
+	// For new pods, ensure deployedAt is set (required field)
+	if podStatus.DeployedAt.IsZero() && podStatus.LastCheckedAt != nil {
+		podStatus.DeployedAt = *podStatus.LastCheckedAt
 	}
 	return append(pods, *podStatus)
 }
