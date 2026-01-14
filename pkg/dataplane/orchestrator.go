@@ -363,12 +363,8 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 //
 // Uses the same auxiliary file sync and reload verification as the fine-grained path.
 func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string, diff *comparator.ConfigDiff, auxDiffs *auxiliaryFileDiffs, opts *SyncOptions, startTime time.Time, version int64, mode SyncMode, auxFilesAlreadySynced bool) (*SyncResult, error) {
-	// Log at appropriate level based on mode
-	if mode == SyncModeRawFallback {
-		o.logger.Warn("Executing raw configuration push (fallback)")
-	} else {
-		o.logger.Info("Executing raw configuration push", "reason", mode)
-	}
+	// Log at debug level - raw pushes are normal operational behavior
+	o.logger.Debug("Executing raw configuration push", "mode", mode)
 
 	// Phase 1: Sync auxiliary files BEFORE pushing raw config (same as fine-grained sync)
 	// Files must exist before HAProxy validates the configuration.
@@ -451,7 +447,7 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 		result.ReloadVerified = true
 	}
 
-	o.logger.Info("Raw configuration push completed successfully",
+	o.logger.Debug("Raw configuration push completed successfully",
 		"duration", time.Since(startTime),
 		"reload_id", reloadID,
 		"reload_verified", result.ReloadVerified)

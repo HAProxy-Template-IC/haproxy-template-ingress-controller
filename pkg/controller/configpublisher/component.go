@@ -743,7 +743,7 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		return
 	}
 
-	c.logger.Info("runtime configuration published successfully",
+	c.logger.Debug("runtime configuration published successfully",
 		"runtime_config_name", result.RuntimeConfigName,
 		"runtime_config_namespace", result.RuntimeConfigNamespace,
 		"checksum", checksumHex,
