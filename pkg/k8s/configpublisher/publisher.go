@@ -33,6 +33,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 )
 
 // Publisher publishes HAProxy runtime configuration as Kubernetes resources.
@@ -178,13 +179,39 @@ func (p *Publisher) publishAuxiliaryFiles(
 // - HAProxyCfg.status.deployedToPods.
 // - All child HAProxyMapFile.status.deployedToPods.
 // - (Secrets don't have deployment tracking).
+//
+// Uses retry-on-conflict to handle concurrent status updates from multiple
+// reconciliation cycles, which can cause 409 Conflict errors due to Kubernetes
+// optimistic concurrency control.
 func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *DeploymentStatusUpdate) error {
 	p.logger.Debug("updating deployment status",
 		"runtimeConfig", update.RuntimeConfigName,
 		"pod", update.PodName,
 	)
 
-	// Update HAProxyCfg status
+	// Track auxiliary files for later updates (populated inside retry loop)
+	var auxFiles *haproxyv1alpha1.AuxiliaryFileReferences
+
+	// Update HAProxyCfg status with retry-on-conflict
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		return p.updateRuntimeConfigDeploymentStatus(ctx, update, &auxFiles)
+	})
+	if err != nil {
+		return err
+	}
+
+	// Build pod status for auxiliary file updates (outside retry loop)
+	podStatus := buildPodStatus(update)
+
+	// Update all child auxiliary files
+	p.updateAuxiliaryFileDeploymentStatus(ctx, auxFiles, &podStatus)
+
+	return nil
+}
+
+// updateRuntimeConfigDeploymentStatus updates the HAProxyCfg status with pod deployment info.
+// This is the retry-able portion of UpdateDeploymentStatus.
+func (p *Publisher) updateRuntimeConfigDeploymentStatus(ctx context.Context, update *DeploymentStatusUpdate, auxFilesOut **haproxyv1alpha1.AuxiliaryFileReferences) error {
 	runtimeConfig, err := p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(update.RuntimeConfigNamespace).
 		Get(ctx, update.RuntimeConfigName, metav1.GetOptions{})
@@ -197,6 +224,9 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 		}
 		return fmt.Errorf("failed to get runtime config: %w", err)
 	}
+
+	// Store auxiliary files reference for updates after main status update
+	*auxFilesOut = runtimeConfig.Status.AuxiliaryFiles
 
 	// Build pod status from update
 	podStatus := buildPodStatus(update)
@@ -215,42 +245,41 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 		return fmt.Errorf("failed to update runtime config status: %w", err)
 	}
 
-	// Update all child map files
-	if runtimeConfig.Status.AuxiliaryFiles != nil {
-		for _, mapFileRef := range runtimeConfig.Status.AuxiliaryFiles.MapFiles {
-			if err := p.updateMapFileDeploymentStatus(ctx, mapFileRef.Namespace, mapFileRef.Name, &podStatus); err != nil {
-				p.logger.Warn("failed to update map file deployment status",
-					"mapFile", mapFileRef.Name,
-					"error", err,
-				)
-				// Non-blocking - continue with other map files
-			}
-		}
+	return nil
+}
 
-		// Update all child general files
-		for _, generalFileRef := range runtimeConfig.Status.AuxiliaryFiles.GeneralFiles {
-			if err := p.updateGeneralFileDeploymentStatus(ctx, generalFileRef.Namespace, generalFileRef.Name, &podStatus); err != nil {
-				p.logger.Warn("failed to update general file deployment status",
-					"generalFile", generalFileRef.Name,
-					"error", err,
-				)
-				// Non-blocking - continue with other general files
-			}
-		}
+// updateAuxiliaryFileDeploymentStatus updates deployment status on all auxiliary files.
+func (p *Publisher) updateAuxiliaryFileDeploymentStatus(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, podStatus *haproxyv1alpha1.PodDeploymentStatus) {
+	if auxFiles == nil {
+		return
+	}
 
-		// Update all child crt-list files
-		for _, crtListFileRef := range runtimeConfig.Status.AuxiliaryFiles.CRTListFiles {
-			if err := p.updateCRTListFileDeploymentStatus(ctx, crtListFileRef.Namespace, crtListFileRef.Name, &podStatus); err != nil {
-				p.logger.Warn("failed to update crt-list file deployment status",
-					"crtListFile", crtListFileRef.Name,
-					"error", err,
-				)
-				// Non-blocking - continue with other crt-list files
-			}
+	for _, mapFileRef := range auxFiles.MapFiles {
+		if err := p.updateMapFileDeploymentStatus(ctx, mapFileRef.Namespace, mapFileRef.Name, podStatus); err != nil {
+			p.logger.Warn("failed to update map file deployment status",
+				"mapFile", mapFileRef.Name,
+				"error", err,
+			)
 		}
 	}
 
-	return nil
+	for _, generalFileRef := range auxFiles.GeneralFiles {
+		if err := p.updateGeneralFileDeploymentStatus(ctx, generalFileRef.Namespace, generalFileRef.Name, podStatus); err != nil {
+			p.logger.Warn("failed to update general file deployment status",
+				"generalFile", generalFileRef.Name,
+				"error", err,
+			)
+		}
+	}
+
+	for _, crtListFileRef := range auxFiles.CRTListFiles {
+		if err := p.updateCRTListFileDeploymentStatus(ctx, crtListFileRef.Namespace, crtListFileRef.Name, podStatus); err != nil {
+			p.logger.Warn("failed to update crt-list file deployment status",
+				"crtListFile", crtListFileRef.Name,
+				"error", err,
+			)
+		}
+	}
 }
 
 // CleanupPodReferences removes a terminated pod from all deployment status lists.
@@ -295,6 +324,8 @@ func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanu
 //
 // The namespace parameter ensures namespace-scoped operations. The controller
 // should only manage CRDs in its own namespace.
+//
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace string, runningPodNames []string) error {
 	runningSet := make(map[string]struct{}, len(runningPodNames))
 	for _, name := range runningPodNames {
@@ -311,50 +342,94 @@ func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace strin
 	}
 
 	for i := range runtimeConfigs.Items {
-		cfg := &runtimeConfigs.Items[i]
+		listedCfg := &runtimeConfigs.Items[i]
 
-		// Find ALL stale pods in one pass
-		var stalePods []string
-		newDeployedToPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(cfg.Status.DeployedToPods))
-		for i := range cfg.Status.DeployedToPods {
-			pod := &cfg.Status.DeployedToPods[i]
-			if _, exists := runningSet[pod.PodName]; !exists {
-				stalePods = append(stalePods, pod.PodName)
-			} else {
-				newDeployedToPods = append(newDeployedToPods, *pod)
-			}
-		}
+		// Track auxiliary files for cleanup after main update
+		var auxFiles *haproxyv1alpha1.AuxiliaryFileReferences
 
-		if len(stalePods) == 0 {
-			continue
-		}
-
-		p.logger.Info("removing stale pod entries from HAProxyCfg status",
-			"name", cfg.Name,
-			"namespace", cfg.Namespace,
-			"stale_pods", stalePods,
-		)
-
-		// Update status once with all stale pods removed
-		cfg.Status.DeployedToPods = newDeployedToPods
-		_, err := p.crdClient.HaproxyTemplateICV1alpha1().
-			HAProxyCfgs(cfg.Namespace).
-			UpdateStatus(ctx, cfg, metav1.UpdateOptions{})
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			return p.reconcileSingleRuntimeConfigStatus(ctx, listedCfg, runningSet, &auxFiles)
+		})
 		if err != nil {
 			p.logger.Warn("failed to reconcile HAProxyCfg status",
-				"name", cfg.Name,
+				"name", listedCfg.Name,
 				"error", err,
 			)
 		}
 
 		// Also clean up auxiliary file status (map files, general files, crt-list files)
 		// Use batched cleanup to minimize API calls (one update per file vs one per pod)
-		if cfg.Status.AuxiliaryFiles != nil {
-			p.reconcileAuxiliaryFilePods(ctx, cfg.Status.AuxiliaryFiles, runningSet)
+		if auxFiles != nil {
+			p.reconcileAuxiliaryFilePods(ctx, auxFiles, runningSet)
 		}
 	}
 
 	return nil
+}
+
+// reconcileSingleRuntimeConfigStatus reconciles the DeployedToPods status for a single HAProxyCfg.
+// It fetches a fresh copy, filters out stale pods, and updates the status.
+// auxFilesOut is populated with auxiliary files reference for cleanup after update.
+func (p *Publisher) reconcileSingleRuntimeConfigStatus(
+	ctx context.Context,
+	listedCfg *haproxyv1alpha1.HAProxyCfg,
+	runningSet map[string]struct{},
+	auxFilesOut **haproxyv1alpha1.AuxiliaryFileReferences,
+) error {
+	// Fetch fresh copy of the resource
+	cfg, err := p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs(listedCfg.Namespace).
+		Get(ctx, listedCfg.Name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // Resource deleted
+		}
+		return fmt.Errorf("failed to get runtime config: %w", err)
+	}
+
+	// Find ALL stale pods in one pass
+	stalePods, newDeployedToPods := p.filterStalePods(cfg.Status.DeployedToPods, runningSet)
+	if len(stalePods) == 0 {
+		return nil
+	}
+
+	p.logger.Info("removing stale pod entries from HAProxyCfg status",
+		"name", cfg.Name,
+		"namespace", cfg.Namespace,
+		"stale_pods", stalePods,
+	)
+
+	// Store auxiliary files reference for cleanup after update
+	*auxFilesOut = cfg.Status.AuxiliaryFiles
+
+	// Update status once with all stale pods removed
+	cfg.Status.DeployedToPods = newDeployedToPods
+	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs(cfg.Namespace).
+		UpdateStatus(ctx, cfg, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update status: %w", err)
+	}
+
+	return nil
+}
+
+// filterStalePods separates stale pods from running pods.
+// Returns the list of stale pod names and the filtered list of running pods.
+func (p *Publisher) filterStalePods(
+	deployedToPods []haproxyv1alpha1.PodDeploymentStatus,
+	runningSet map[string]struct{},
+) (stalePods []string, runningPods []haproxyv1alpha1.PodDeploymentStatus) {
+	runningPods = make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(deployedToPods))
+	for i := range deployedToPods {
+		pod := &deployedToPods[i]
+		if _, exists := runningSet[pod.PodName]; !exists {
+			stalePods = append(stalePods, pod.PodName)
+		} else {
+			runningPods = append(runningPods, *pod)
+		}
+	}
+	return stalePods, runningPods
 }
 
 // DeleteRuntimeConfig deletes a HAProxyCfg resource.
@@ -380,18 +455,43 @@ func (p *Publisher) DeleteRuntimeConfig(ctx context.Context, namespace, name str
 }
 
 // cleanupRuntimeConfigPodReference removes pod reference from a single HAProxyCfg.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, cleanup *PodCleanupRequest) {
-	// Remove pod from deployedToPods list
-	newDeployedToPods, removed := p.removePodFromList(runtimeConfig.Status.DeployedToPods, cleanup)
-	if !removed {
-		return // Pod not in this runtime config
-	}
+	// Track auxiliary files for cleanup after main update
+	var auxFiles *haproxyv1alpha1.AuxiliaryFileReferences
 
-	runtimeConfig.Status.DeployedToPods = newDeployedToPods
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Fetch fresh copy of the resource
+		current, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCfgs(runtimeConfig.Namespace).
+			Get(ctx, runtimeConfig.Name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil // Resource deleted, nothing to clean up
+			}
+			return fmt.Errorf("failed to get runtime config: %w", err)
+		}
 
-	_, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs(runtimeConfig.Namespace).
-		UpdateStatus(ctx, runtimeConfig, metav1.UpdateOptions{})
+		// Remove pod from deployedToPods list
+		newDeployedToPods, removed := p.removePodFromList(current.Status.DeployedToPods, cleanup)
+		if !removed {
+			return nil // Pod not in this runtime config
+		}
+
+		// Store auxiliary files reference for cleanup after update
+		auxFiles = current.Status.AuxiliaryFiles
+
+		current.Status.DeployedToPods = newDeployedToPods
+
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCfgs(current.Namespace).
+			UpdateStatus(ctx, current, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update runtime config status: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
 		p.logger.Warn("failed to update runtime config status",
 			"name", runtimeConfig.Name,
@@ -402,7 +502,9 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 	}
 
 	// Clean up auxiliary files (map files, general files, crt-list files)
-	p.cleanupAuxiliaryFilePodReferences(ctx, runtimeConfig.Status.AuxiliaryFiles, cleanup)
+	if auxFiles != nil {
+		p.cleanupAuxiliaryFilePodReferences(ctx, auxFiles, cleanup)
+	}
 }
 
 // removePodFromList removes a pod from the deployment status list.
@@ -480,132 +582,141 @@ func (p *Publisher) reconcileAuxiliaryFilePods(ctx context.Context, auxFiles *ha
 }
 
 // reconcileMapFilePods removes all stale pods from a map file in one update.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) reconcileMapFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
-	mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyMapFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyMapFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to get map file: %w", err)
+		}
+
+		// Filter to keep only running pods
+		newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(mapFile.Status.DeployedToPods))
+		var removed []string
+		for i := range mapFile.Status.DeployedToPods {
+			pod := &mapFile.Status.DeployedToPods[i]
+			if _, exists := runningSet[pod.PodName]; exists {
+				newPods = append(newPods, *pod)
+			} else {
+				removed = append(removed, pod.PodName)
+			}
+		}
+
+		if len(removed) == 0 {
 			return nil
 		}
-		return fmt.Errorf("failed to get map file: %w", err)
-	}
 
-	// Filter to keep only running pods
-	newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(mapFile.Status.DeployedToPods))
-	var removed []string
-	for i := range mapFile.Status.DeployedToPods {
-		pod := &mapFile.Status.DeployedToPods[i]
-		if _, exists := runningSet[pod.PodName]; exists {
-			newPods = append(newPods, *pod)
-		} else {
-			removed = append(removed, pod.PodName)
+		p.logger.Debug("removing stale pods from map file",
+			"name", name,
+			"removed_pods", removed,
+		)
+
+		mapFile.Status.DeployedToPods = newPods
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyMapFiles(namespace).
+			UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update map file status: %w", err)
 		}
-	}
-
-	if len(removed) == 0 {
 		return nil
-	}
-
-	p.logger.Debug("removing stale pods from map file",
-		"name", name,
-		"removed_pods", removed,
-	)
-
-	mapFile.Status.DeployedToPods = newPods
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyMapFiles(namespace).
-		UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update map file status: %w", err)
-	}
-	return nil
+	})
 }
 
 // reconcileGeneralFilePods removes all stale pods from a general file in one update.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) reconcileGeneralFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
-	generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyGeneralFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyGeneralFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to get general file: %w", err)
+		}
+
+		// Filter to keep only running pods
+		newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(generalFile.Status.DeployedToPods))
+		var removed []string
+		for i := range generalFile.Status.DeployedToPods {
+			pod := &generalFile.Status.DeployedToPods[i]
+			if _, exists := runningSet[pod.PodName]; exists {
+				newPods = append(newPods, *pod)
+			} else {
+				removed = append(removed, pod.PodName)
+			}
+		}
+
+		if len(removed) == 0 {
 			return nil
 		}
-		return fmt.Errorf("failed to get general file: %w", err)
-	}
 
-	// Filter to keep only running pods
-	newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(generalFile.Status.DeployedToPods))
-	var removed []string
-	for i := range generalFile.Status.DeployedToPods {
-		pod := &generalFile.Status.DeployedToPods[i]
-		if _, exists := runningSet[pod.PodName]; exists {
-			newPods = append(newPods, *pod)
-		} else {
-			removed = append(removed, pod.PodName)
+		p.logger.Debug("removing stale pods from general file",
+			"name", name,
+			"removed_pods", removed,
+		)
+
+		generalFile.Status.DeployedToPods = newPods
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyGeneralFiles(namespace).
+			UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update general file status: %w", err)
 		}
-	}
-
-	if len(removed) == 0 {
 		return nil
-	}
-
-	p.logger.Debug("removing stale pods from general file",
-		"name", name,
-		"removed_pods", removed,
-	)
-
-	generalFile.Status.DeployedToPods = newPods
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyGeneralFiles(namespace).
-		UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update general file status: %w", err)
-	}
-	return nil
+	})
 }
 
 // reconcileCRTListFilePods removes all stale pods from a crt-list file in one update.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) reconcileCRTListFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
-	crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCRTListFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCRTListFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to get crt-list file: %w", err)
+		}
+
+		// Filter to keep only running pods
+		newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(crtListFile.Status.DeployedToPods))
+		var removed []string
+		for i := range crtListFile.Status.DeployedToPods {
+			pod := &crtListFile.Status.DeployedToPods[i]
+			if _, exists := runningSet[pod.PodName]; exists {
+				newPods = append(newPods, *pod)
+			} else {
+				removed = append(removed, pod.PodName)
+			}
+		}
+
+		if len(removed) == 0 {
 			return nil
 		}
-		return fmt.Errorf("failed to get crt-list file: %w", err)
-	}
 
-	// Filter to keep only running pods
-	newPods := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(crtListFile.Status.DeployedToPods))
-	var removed []string
-	for i := range crtListFile.Status.DeployedToPods {
-		pod := &crtListFile.Status.DeployedToPods[i]
-		if _, exists := runningSet[pod.PodName]; exists {
-			newPods = append(newPods, *pod)
-		} else {
-			removed = append(removed, pod.PodName)
+		p.logger.Debug("removing stale pods from crt-list file",
+			"name", name,
+			"removed_pods", removed,
+		)
+
+		crtListFile.Status.DeployedToPods = newPods
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCRTListFiles(namespace).
+			UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update crt-list file status: %w", err)
 		}
-	}
-
-	if len(removed) == 0 {
 		return nil
-	}
-
-	p.logger.Debug("removing stale pods from crt-list file",
-		"name", name,
-		"removed_pods", removed,
-	)
-
-	crtListFile.Status.DeployedToPods = newPods
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCRTListFiles(namespace).
-		UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update crt-list file status: %w", err)
-	}
-	return nil
+	})
 }
 
 // createOrUpdateRuntimeConfig creates or updates the HAProxyCfg resource.
@@ -1132,162 +1243,180 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 }
 
 // updateMapFileDeploymentStatus updates a map file's deployment status.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
-	mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyMapFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil // Map file might have been deleted
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyMapFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil // Map file might have been deleted
+			}
+			return fmt.Errorf("failed to get map file: %w", err)
 		}
-		return fmt.Errorf("failed to get map file: %w", err)
-	}
 
-	mapFile.Status.DeployedToPods = addOrUpdatePodStatus(mapFile.Status.DeployedToPods, podStatus)
+		mapFile.Status.DeployedToPods = addOrUpdatePodStatus(mapFile.Status.DeployedToPods, podStatus)
 
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyMapFiles(namespace).
-		UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update map file status: %w", err)
-	}
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyMapFiles(namespace).
+			UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update map file status: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // updateGeneralFileDeploymentStatus updates a general file's deployment status.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
-	generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyGeneralFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil // General file might have been deleted
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyGeneralFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil // General file might have been deleted
+			}
+			return fmt.Errorf("failed to get general file: %w", err)
 		}
-		return fmt.Errorf("failed to get general file: %w", err)
-	}
 
-	generalFile.Status.DeployedToPods = addOrUpdatePodStatus(generalFile.Status.DeployedToPods, podStatus)
+		generalFile.Status.DeployedToPods = addOrUpdatePodStatus(generalFile.Status.DeployedToPods, podStatus)
 
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyGeneralFiles(namespace).
-		UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update general file status: %w", err)
-	}
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyGeneralFiles(namespace).
+			UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update general file status: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // updateCRTListFileDeploymentStatus updates a crt-list file's deployment status.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) updateCRTListFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
-	crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCRTListFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil // CRT list file might have been deleted
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCRTListFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil // CRT list file might have been deleted
+			}
+			return fmt.Errorf("failed to get crt-list file: %w", err)
 		}
-		return fmt.Errorf("failed to get crt-list file: %w", err)
-	}
 
-	crtListFile.Status.DeployedToPods = addOrUpdatePodStatus(crtListFile.Status.DeployedToPods, podStatus)
+		crtListFile.Status.DeployedToPods = addOrUpdatePodStatus(crtListFile.Status.DeployedToPods, podStatus)
 
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCRTListFiles(namespace).
-		UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update crt-list file status: %w", err)
-	}
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCRTListFiles(namespace).
+			UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update crt-list file status: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // cleanupMapFilePodReference removes a pod from a map file's deployment status.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) cleanupMapFilePodReference(ctx context.Context, namespace, name string, cleanup PodCleanupRequest) error {
-	mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyMapFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil // Map file might have been deleted
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyMapFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil // Map file might have been deleted
+			}
+			return fmt.Errorf("failed to get map file: %w", err)
 		}
-		return fmt.Errorf("failed to get map file: %w", err)
-	}
 
-	newPods, removed := removePodFromStatus(mapFile.Status.DeployedToPods, cleanup.PodName)
-	if !removed {
-		return nil // Pod not in this map file
-	}
+		newPods, removed := removePodFromStatus(mapFile.Status.DeployedToPods, cleanup.PodName)
+		if !removed {
+			return nil // Pod not in this map file
+		}
 
-	mapFile.Status.DeployedToPods = newPods
+		mapFile.Status.DeployedToPods = newPods
 
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyMapFiles(namespace).
-		UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update map file status: %w", err)
-	}
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyMapFiles(namespace).
+			UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update map file status: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // cleanupGeneralFilePodReference removes a pod from a general file's deployment status.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) cleanupGeneralFilePodReference(ctx context.Context, namespace, name string, cleanup PodCleanupRequest) error {
-	generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyGeneralFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil // General file might have been deleted
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyGeneralFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil // General file might have been deleted
+			}
+			return fmt.Errorf("failed to get general file: %w", err)
 		}
-		return fmt.Errorf("failed to get general file: %w", err)
-	}
 
-	newPods, removed := removePodFromStatus(generalFile.Status.DeployedToPods, cleanup.PodName)
-	if !removed {
-		return nil // Pod not in this general file
-	}
+		newPods, removed := removePodFromStatus(generalFile.Status.DeployedToPods, cleanup.PodName)
+		if !removed {
+			return nil // Pod not in this general file
+		}
 
-	generalFile.Status.DeployedToPods = newPods
+		generalFile.Status.DeployedToPods = newPods
 
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyGeneralFiles(namespace).
-		UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update general file status: %w", err)
-	}
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyGeneralFiles(namespace).
+			UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update general file status: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // cleanupCRTListFilePodReference removes a pod from a crt-list file's deployment status.
+// Uses retry-on-conflict to handle concurrent updates.
 func (p *Publisher) cleanupCRTListFilePodReference(ctx context.Context, namespace, name string, cleanup PodCleanupRequest) error {
-	crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCRTListFiles(namespace).
-		Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil // CRT list file might have been deleted
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCRTListFiles(namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil // CRT list file might have been deleted
+			}
+			return fmt.Errorf("failed to get crt-list file: %w", err)
 		}
-		return fmt.Errorf("failed to get crt-list file: %w", err)
-	}
 
-	newPods, removed := removePodFromStatus(crtListFile.Status.DeployedToPods, cleanup.PodName)
-	if !removed {
-		return nil // Pod not in this crt-list file
-	}
+		newPods, removed := removePodFromStatus(crtListFile.Status.DeployedToPods, cleanup.PodName)
+		if !removed {
+			return nil // Pod not in this crt-list file
+		}
 
-	crtListFile.Status.DeployedToPods = newPods
+		crtListFile.Status.DeployedToPods = newPods
 
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCRTListFiles(namespace).
-		UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update crt-list file status: %w", err)
-	}
+		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCRTListFiles(namespace).
+			UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update crt-list file status: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // Helper functions

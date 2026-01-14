@@ -45,10 +45,10 @@ const (
 	// previous work is being processed, the old pending work is replaced.
 	publishWorkChannelSize = 1
 
-	// statusWorkChannelSize is the buffer size for pod status update work.
-	// Larger buffer (100) to handle pod status updates during deployment rollouts
-	// and high-frequency reconciliation cycles triggered by EndpointSlice changes.
-	statusWorkChannelSize = 100
+	// statusWorkTriggerSize is the buffer size for the status work trigger channel.
+	// A size of 1 is sufficient since we use a separate map for coalescing.
+	// The trigger just wakes up the worker to process pending updates.
+	statusWorkTriggerSize = 1
 )
 
 // renderedConfigEntry holds cached rendered config data indexed by correlation ID.
@@ -123,7 +123,15 @@ type Component struct {
 	// newer work replaces older pending work when the worker is busy.
 	publishWork          chan *publishWorkItem
 	validationFailedWork chan *validationFailedWorkItem
-	statusWork           chan *statusWorkItem
+
+	// Status update coalescing.
+	// Instead of queueing every status update individually, we coalesce updates
+	// for the same pod. When multiple updates arrive for the same pod before the
+	// worker processes them, only the latest update is applied. This prevents
+	// channel overflow during high-frequency reconciliation cycles.
+	statusWorkPending   map[string]*statusWorkItem // Key: namespace/runtimeConfig/podName
+	statusWorkPendingMu sync.Mutex
+	statusWorkTrigger   chan struct{} // Signals worker to process pending updates
 
 	// lastPublishedChecksum tracks the checksum of the last successfully published config.
 	// Used to skip redundant CRD updates when config content is unchanged.
@@ -153,7 +161,8 @@ func New(
 		subscriptionReady:    make(chan struct{}),
 		publishWork:          make(chan *publishWorkItem, publishWorkChannelSize),
 		validationFailedWork: make(chan *validationFailedWorkItem, publishWorkChannelSize),
-		statusWork:           make(chan *statusWorkItem, statusWorkChannelSize),
+		statusWorkPending:    make(map[string]*statusWorkItem),
+		statusWorkTrigger:    make(chan struct{}, statusWorkTriggerSize),
 	}
 }
 
@@ -470,11 +479,12 @@ func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) 
 	}
 }
 
-// handleConfigAppliedToPod queues a pod status update for async processing.
+// handleConfigAppliedToPod queues a pod status update for async processing with coalescing.
 //
-// This method is non-blocking - it queues work for the statusWorker instead of
-// making K8S API calls directly. This prevents the event loop from blocking on
-// slow API calls, allowing the component to keep up with event volume.
+// This method is non-blocking - it stores work in a map for the statusWorker instead of
+// queueing it directly. When multiple updates arrive for the same pod before the worker
+// processes them, only the latest update is applied. This prevents channel overflow
+// during high-frequency reconciliation cycles.
 func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEvent) {
 	c.logger.Debug("queuing deployment status update for pod",
 		"runtime_config_name", event.RuntimeConfigName,
@@ -485,20 +495,26 @@ func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEve
 		"is_drift_check", event.IsDriftCheck,
 	)
 
-	// Queue work for async processing
+	// Build a unique key for this pod's status update.
+	// Format: namespace/runtimeConfigName/podName
+	key := fmt.Sprintf("%s/%s/%s", event.RuntimeConfigNamespace, event.RuntimeConfigName, event.PodName)
+
 	workItem := &statusWorkItem{
 		event: event,
 	}
 
+	// Store (or replace) the pending update for this pod.
+	// This provides natural coalescing - newer updates replace older ones.
+	c.statusWorkPendingMu.Lock()
+	c.statusWorkPending[key] = workItem
+	c.statusWorkPendingMu.Unlock()
+
+	// Signal the worker to wake up and process pending updates.
+	// Non-blocking send - if signal is already pending, no need to add another.
 	select {
-	case c.statusWork <- workItem:
-		// Work queued successfully
+	case c.statusWorkTrigger <- struct{}{}:
 	default:
-		// Channel full - log and skip (status updates are less critical)
-		c.logger.Warn("status work channel full, skipping pod status update",
-			"runtime_config_name", event.RuntimeConfigName,
-			"pod_name", event.PodName,
-		)
+		// Worker already has a pending signal, no need to add another
 	}
 }
 
@@ -831,15 +847,46 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 	c.mu.Unlock()
 }
 
-// statusWorker processes pod status update work items asynchronously.
+// statusWorker processes pod status update work items asynchronously with coalescing.
+//
+// Instead of processing each update as it arrives, this worker waits for a trigger
+// signal and then processes all pending updates at once. This ensures that when
+// multiple updates arrive for the same pod, only the latest one is applied.
 func (c *Component) statusWorker(ctx context.Context) {
 	for {
 		select {
-		case work := <-c.statusWork:
-			c.processStatusWork(work)
+		case <-c.statusWorkTrigger:
+			// Drain all pending work items and process them
+			c.processAllPendingStatusWork()
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// processAllPendingStatusWork drains the pending status work map and processes all items.
+// This is called when the worker receives a trigger signal.
+func (c *Component) processAllPendingStatusWork() {
+	// Take a snapshot of pending work and clear the map atomically.
+	// This allows new updates to accumulate while we process these.
+	c.statusWorkPendingMu.Lock()
+	if len(c.statusWorkPending) == 0 {
+		c.statusWorkPendingMu.Unlock()
+		return
+	}
+
+	// Take ownership of the pending map and create a new empty one
+	pendingWork := c.statusWorkPending
+	c.statusWorkPending = make(map[string]*statusWorkItem)
+	c.statusWorkPendingMu.Unlock()
+
+	// Process all pending work items
+	c.logger.Debug("processing coalesced status updates",
+		"pending_count", len(pendingWork),
+	)
+
+	for _, work := range pendingWork {
+		c.processStatusWork(work)
 	}
 }
 
