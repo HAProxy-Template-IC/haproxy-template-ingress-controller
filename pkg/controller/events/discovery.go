@@ -21,6 +21,8 @@ import "time"
 // -----------------------------------------------------------------------------
 
 // HAProxyPodsDiscoveredEvent is published when HAProxy pods are discovered or updated.
+// This event is always coalescible since it represents endpoint state where only the
+// latest set of endpoints matters.
 type HAProxyPodsDiscoveredEvent struct {
 	// Endpoints is the list of discovered HAProxy Dataplane API endpoints.
 	Endpoints []interface{}
@@ -47,6 +49,11 @@ func NewHAProxyPodsDiscoveredEvent(endpoints []interface{}, count int) *HAProxyP
 
 func (e *HAProxyPodsDiscoveredEvent) EventType() string    { return EventTypeHAProxyPodsDiscovered }
 func (e *HAProxyPodsDiscoveredEvent) Timestamp() time.Time { return e.timestamp }
+
+// Coalescible returns true because endpoint discovery events represent state
+// where only the latest set of endpoints matters. Older discoveries can be
+// safely skipped during high-frequency pod churn (scaling, rolling updates).
+func (e *HAProxyPodsDiscoveredEvent) Coalescible() bool { return true }
 
 // HAProxyPodAddedEvent is published when a new HAProxy pod is discovered.
 type HAProxyPodAddedEvent struct {

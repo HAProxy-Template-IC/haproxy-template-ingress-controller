@@ -61,6 +61,25 @@ type Event interface {
 	Timestamp() time.Time
 }
 
+// CoalescibleEvent is an optional interface for events that support coalescing.
+// Events implementing this interface can be safely skipped when a newer event
+// of the same type is available in the queue.
+//
+// This interface follows the Interface Segregation Principle - only events that
+// need coalescing implement it, keeping the base Event interface minimal.
+//
+// The Coalescible() method is set by the event emitter (not derived from event
+// fields), following the Single Responsibility Principle - the emitter knows
+// the context and decides whether this specific event instance can be coalesced.
+type CoalescibleEvent interface {
+	Event
+	// Coalescible returns true if this event can be safely skipped when a newer
+	// event of the same type is available. The emitter sets this based on context:
+	// - true: "state update" events where only the latest matters
+	// - false: "command" events that must be processed individually
+	Coalescible() bool
+}
+
 // subscriber represents a universal subscription to the event bus.
 type subscriber struct {
 	ch         chan Event

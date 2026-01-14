@@ -172,7 +172,7 @@ defaults
 	time.Sleep(testutil.StartupDelay)
 
 	// Trigger reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	// Wait for rendered event
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
@@ -236,7 +236,7 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
@@ -310,7 +310,7 @@ func TestRenderer_EmptyStores(t *testing.T) {
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
@@ -368,7 +368,7 @@ func TestRenderer_MultipleStores(t *testing.T) {
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
@@ -454,7 +454,7 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Trigger first reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("first"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("first", true))
 
 	// Wait for first render
 	_ = testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.EventTimeout)
@@ -463,7 +463,7 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	ingressStore.items = append(ingressStore.items, map[string]interface{}{"name": "ing2"})
 
 	// Trigger second reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("second"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("second", true))
 
 	// Wait for second render
 	secondEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.EventTimeout)
@@ -612,7 +612,7 @@ frontend test
 			go renderer.Start(ctx)
 			time.Sleep(testutil.StartupDelay)
 
-			bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+			bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 			renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 			require.NotNil(t, renderedEvent)
@@ -674,7 +674,7 @@ frontend test
 	time.Sleep(testutil.StartupDelay)
 
 	// Trigger rendering
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	// Wait for rendered event
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
@@ -773,7 +773,7 @@ func TestRenderer_WithPostProcessors(t *testing.T) {
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, renderedEvent)
@@ -826,7 +826,7 @@ frontend fe1
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, renderedEvent)
@@ -1061,7 +1061,7 @@ func TestRenderer_ReconciliationCoalescing_LatestWins(t *testing.T) {
 	// Publish multiple reconciliation triggers rapidly
 	// The renderer should coalesce these and process fewer events
 	for i := 0; i < 5; i++ {
-		bus.Publish(events.NewReconciliationTriggeredEvent("batch_test"))
+		bus.Publish(events.NewReconciliationTriggeredEvent("batch_test", true))
 	}
 
 	// Wait for at least one render to complete
@@ -1101,7 +1101,7 @@ func TestRenderer_TriggerReasonPropagation(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish trigger with specific reason
-	bus.Publish(events.NewReconciliationTriggeredEvent("drift_prevention"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("drift_prevention", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 
@@ -1163,7 +1163,7 @@ func TestRenderer_WithHTTPStoreComponent(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Trigger reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("http_test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("http_test", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, renderedEvent)
@@ -1204,7 +1204,7 @@ func TestRenderer_WithoutHTTPStoreComponent(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Trigger reconciliation - should succeed without HTTP store
-	bus.Publish(events.NewReconciliationTriggeredEvent("no_http_store_test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("no_http_store_test", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, renderedEvent)
@@ -1262,7 +1262,7 @@ func TestRenderer_HTTPStoreContextAvailability(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Trigger reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("context_test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("context_test", true))
 
 	renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, renderedEvent)

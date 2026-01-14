@@ -28,11 +28,20 @@ import "time"
 // This event starts a new correlation chain. Downstream events (TemplateRenderedEvent,
 // ValidationCompletedEvent, DeploymentScheduledEvent, etc.) should propagate
 // the correlation ID to enable end-to-end tracing.
+//
+// This event implements CoalescibleEvent. The coalescible flag is set by the emitter
+// (Reconciler) based on the trigger context:
+//   - coalescible=true for state updates (debounce_timer, resource_change)
+//   - coalescible=false for commands (index_synchronized, drift_prevention)
 type ReconciliationTriggeredEvent struct {
 	// Reason describes why reconciliation was triggered.
 	// Examples: "debounce_timer", "config_change", "manual_trigger"
 	Reason    string
 	timestamp time.Time
+
+	// coalescible indicates if this event can be safely skipped when a newer
+	// event of the same type is available. Set by the emitter (Reconciler).
+	coalescible bool
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -40,13 +49,18 @@ type ReconciliationTriggeredEvent struct {
 
 // NewReconciliationTriggeredEvent creates a new ReconciliationTriggeredEvent.
 //
+// The coalescible parameter is set by the emitter based on trigger context:
+//   - true for state updates where only the latest matters (debounce_timer, resource_change)
+//   - false for commands that must be processed (index_synchronized, drift_prevention)
+//
 // Use WithNewCorrelation() to start a new correlation chain:
 //
-//	event := events.NewReconciliationTriggeredEvent("config_change",
+//	event := events.NewReconciliationTriggeredEvent("config_change", true,
 //	    events.WithNewCorrelation())
-func NewReconciliationTriggeredEvent(reason string, opts ...CorrelationOption) *ReconciliationTriggeredEvent {
+func NewReconciliationTriggeredEvent(reason string, coalescible bool, opts ...CorrelationOption) *ReconciliationTriggeredEvent {
 	return &ReconciliationTriggeredEvent{
 		Reason:      reason,
+		coalescible: coalescible,
 		timestamp:   time.Now(),
 		Correlation: NewCorrelation(opts...),
 	}
@@ -54,6 +68,10 @@ func NewReconciliationTriggeredEvent(reason string, opts ...CorrelationOption) *
 
 func (e *ReconciliationTriggeredEvent) EventType() string    { return EventTypeReconciliationTriggered }
 func (e *ReconciliationTriggeredEvent) Timestamp() time.Time { return e.timestamp }
+
+// Coalescible returns true if this event can be safely skipped when a newer
+// event of the same type is available. This implements the CoalescibleEvent interface.
+func (e *ReconciliationTriggeredEvent) Coalescible() bool { return e.coalescible }
 
 // ReconciliationStartedEvent is published when the Executor begins a reconciliation cycle.
 //

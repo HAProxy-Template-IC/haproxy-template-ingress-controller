@@ -101,11 +101,13 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		0,                 // aux file count
 		100,               // duration ms
 		"",                // trigger reason
+		true,              // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
 
 	// Step 3: Publish ValidationCompletedEvent to trigger publishing (with matching correlation ID)
 	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
+		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
 
@@ -443,6 +445,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 		0,
 		100,
 		"",
+		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
 
@@ -458,6 +461,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	// Step 4: Now publish ValidationCompletedEvent - should NOT publish config
 	// because cached state was cleared (with matching correlation ID)
 	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
+		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
 
@@ -531,6 +535,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 		0,
 		100,
 		"",
+		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
 

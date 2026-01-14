@@ -72,6 +72,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 		2,                           // auxFileCount
 		50,                          // durationMs
 		"",                          // triggerReason
+		true,                        // coalescible
 	)
 
 	scheduler.handleTemplateRendered(event)
@@ -101,7 +102,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "")
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", true)
 
 		scheduler.handleValidationCompleted(ctx, event)
 
@@ -119,7 +120,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "")
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", true)
 
 		// Should not panic when no config available
 		scheduler.handleValidationCompleted(ctx, event)
@@ -136,7 +137,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "")
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", true)
 
 		scheduler.handleValidationCompleted(ctx, event)
 
@@ -406,7 +407,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.pendingDeployment = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, []interface{}{}, "test", "test-correlation-id")
+		scheduler.scheduleOrQueue(ctx, "config", nil, []interface{}{}, "test", "test-correlation-id", true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -421,8 +422,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.pendingDeployment = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, []interface{}{}, "first", "correlation-1")
-		scheduler.scheduleOrQueue(ctx, "config2", nil, []interface{}{}, "second", "correlation-2")
+		scheduler.scheduleOrQueue(ctx, "config1", nil, []interface{}{}, "first", "correlation-1", true)
+		scheduler.scheduleOrQueue(ctx, "config2", nil, []interface{}{}, "second", "correlation-2", true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -451,6 +452,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 			2,                           // auxFileCount
 			50,                          // durationMs
 			"",                          // triggerReason
+			true,                        // coalescible
 		)
 
 		scheduler.handleEvent(ctx, event)
@@ -466,7 +468,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.lastRenderedConfig = "global\n"
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "")
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", true)
 
 		scheduler.handleEvent(ctx, event)
 
@@ -699,6 +701,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 		[]interface{}{dataplane.Endpoint{URL: "http://localhost:5555"}},
 		"test-rate-limit",
 		"correlation-456",
+		true, // coalescible
 	)
 
 	// Wait for deployment scheduled event
@@ -744,6 +747,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 			[]interface{}{},
 			"test-cancel",
 			"correlation-789",
+			true, // coalescible
 		)
 		close(done)
 	}()
@@ -789,6 +793,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 		[]interface{}{},
 		"test-compute-runtime",
 		"correlation-compute",
+		true, // coalescible
 	)
 
 	// Wait for deployment scheduled event
@@ -831,6 +836,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 		[]interface{}{},
 		"first",
 		"correlation-1",
+		true, // coalescible
 	)
 
 	// Add pending deployment while first is being rate limited

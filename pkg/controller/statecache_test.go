@@ -214,6 +214,7 @@ func TestStateCache_HandleTemplateRendered(t *testing.T) {
 		1,
 		100,
 		"",
+		true, // coalescible
 	))
 
 	// Allow time for event processing
@@ -275,7 +276,7 @@ func TestStateCache_HandleReconciliationTriggered(t *testing.T) {
 	bus.Start()
 
 	// Publish reconciliation triggered event
-	bus.Publish(events.NewReconciliationTriggeredEvent("config_change"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("config_change", true))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -325,11 +326,11 @@ func TestStateCache_HandleValidationCompleted(t *testing.T) {
 
 	// First set rendered config (validation stores this as validated config)
 	testConfig := "global\n  daemon\n"
-	bus.Publish(events.NewTemplateRenderedEvent(testConfig, testConfig, nil, nil, nil, 0, 100, ""))
+	bus.Publish(events.NewTemplateRenderedEvent(testConfig, testConfig, nil, nil, nil, 0, 100, "", true))
 	time.Sleep(50 * time.Millisecond)
 
 	// Publish validation completed event
-	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150, ""))
+	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150, "", true))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -716,8 +717,8 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 	bus.Start()
 
 	// Set up some pipeline state
-	bus.Publish(events.NewTemplateRenderedEvent("config", "config", nil, nil, nil, 0, 100, ""))
-	bus.Publish(events.NewValidationCompletedEvent(nil, 50, ""))
+	bus.Publish(events.NewTemplateRenderedEvent("config", "config", nil, nil, nil, 0, 100, "", true))
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", true))
 	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
@@ -736,7 +737,7 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 	assert.NotEmpty(t, status.Deployment.FailedEndpoints)
 
 	// Trigger new reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("config_change"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("config_change", true))
 
 	time.Sleep(50 * time.Millisecond)
 

@@ -54,6 +54,9 @@ func (e *ValidationStartedEvent) Timestamp() time.Time { return e.timestamp }
 // Validation is performed locally using the HAProxy binary. Endpoints are not involved.
 //
 // This event propagates the correlation ID from ValidationStartedEvent.
+//
+// This event implements CoalescibleEvent. The coalescible flag is propagated from
+// TemplateRenderedEvent to enable coalescing throughout the reconciliation pipeline.
 type ValidationCompletedEvent struct {
 	Warnings   []string // Non-fatal warnings from HAProxy validation
 	DurationMs int64
@@ -64,6 +67,10 @@ type ValidationCompletedEvent struct {
 	// Used by DeploymentScheduler to determine fallback behavior on validation failure.
 	TriggerReason string
 
+	// coalescible indicates if this event can be safely skipped when a newer
+	// event of the same type is available. Propagated from TemplateRenderedEvent.
+	coalescible bool
+
 	timestamp time.Time
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -73,11 +80,14 @@ type ValidationCompletedEvent struct {
 // NewValidationCompletedEvent creates a new ValidationCompletedEvent.
 // Performs defensive copy of the warnings slice.
 //
+// The coalescible parameter should be propagated from TemplateRenderedEvent.Coalescible()
+// to enable coalescing throughout the reconciliation pipeline.
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewValidationCompletedEvent(warnings, durationMs, triggerReason,
+//	event := events.NewValidationCompletedEvent(warnings, durationMs, triggerReason, render.Coalescible(),
 //	    events.PropagateCorrelation(startedEvent))
-func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerReason string, opts ...CorrelationOption) *ValidationCompletedEvent {
+func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerReason string, coalescible bool, opts ...CorrelationOption) *ValidationCompletedEvent {
 	// Defensive copy of warnings slice
 	var warningsCopy []string
 	if len(warnings) > 0 {
@@ -89,6 +99,7 @@ func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerRea
 		Warnings:      warningsCopy,
 		DurationMs:    durationMs,
 		TriggerReason: triggerReason,
+		coalescible:   coalescible,
 		timestamp:     time.Now(),
 		Correlation:   NewCorrelation(opts...),
 	}
@@ -96,6 +107,10 @@ func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerRea
 
 func (e *ValidationCompletedEvent) EventType() string    { return EventTypeValidationCompleted }
 func (e *ValidationCompletedEvent) Timestamp() time.Time { return e.timestamp }
+
+// Coalescible returns true if this event can be safely skipped when a newer
+// event of the same type is available. This implements the CoalescibleEvent interface.
+func (e *ValidationCompletedEvent) Coalescible() bool { return e.coalescible }
 
 // ValidationFailedEvent is published when local configuration validation fails.
 //

@@ -205,6 +205,9 @@ func (e *DeploymentCompletedEvent) Timestamp() time.Time { return e.timestamp }
 // Consumed by: Deployer component.
 //
 // This event propagates the correlation ID from ValidationCompletedEvent.
+//
+// This event implements CoalescibleEvent. The coalescible flag is propagated from
+// ValidationCompletedEvent to enable coalescing throughout the reconciliation pipeline.
 type DeploymentScheduledEvent struct {
 	// Config is the rendered HAProxy configuration to deploy.
 	Config string
@@ -229,6 +232,10 @@ type DeploymentScheduledEvent struct {
 	// Examples: "config_validation", "pod_discovery", "drift_prevention"
 	Reason string
 
+	// coalescible indicates if this event can be safely skipped when a newer
+	// event of the same type is available. Propagated from ValidationCompletedEvent.
+	coalescible bool
+
 	timestamp time.Time
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -238,11 +245,14 @@ type DeploymentScheduledEvent struct {
 // NewDeploymentScheduledEvent creates a new DeploymentScheduledEvent.
 // Performs defensive copy of endpoints slice.
 //
+// The coalescible parameter should be propagated from ValidationCompletedEvent.Coalescible()
+// to enable coalescing throughout the reconciliation pipeline.
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentScheduledEvent(config, auxFiles, endpoints, name, ns, reason,
+//	event := events.NewDeploymentScheduledEvent(config, auxFiles, endpoints, name, ns, reason, validation.Coalescible(),
 //	    events.PropagateCorrelation(validationEvent))
-func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason string, opts ...CorrelationOption) *DeploymentScheduledEvent {
+func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
 	// Defensive copy of endpoints slice
 	var endpointsCopy []interface{}
 	if len(endpoints) > 0 {
@@ -257,6 +267,7 @@ func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints 
 		RuntimeConfigName:      runtimeConfigName,
 		RuntimeConfigNamespace: runtimeConfigNamespace,
 		Reason:                 reason,
+		coalescible:            coalescible,
 		timestamp:              time.Now(),
 		Correlation:            NewCorrelation(opts...),
 	}
@@ -264,6 +275,10 @@ func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints 
 
 func (e *DeploymentScheduledEvent) EventType() string    { return EventTypeDeploymentScheduled }
 func (e *DeploymentScheduledEvent) Timestamp() time.Time { return e.timestamp }
+
+// Coalescible returns true if this event can be safely skipped when a newer
+// event of the same type is available. This implements the CoalescibleEvent interface.
+func (e *DeploymentScheduledEvent) Coalescible() bool { return e.coalescible }
 
 // DriftPreventionTriggeredEvent is published when the drift prevention monitor.
 // detects that no deployment has occurred within the configured interval and

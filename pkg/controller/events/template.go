@@ -33,6 +33,9 @@ import "time"
 // - Validation version with pending HTTP content (for testing new content before promotion).
 //
 // This event propagates the correlation ID from ReconciliationTriggeredEvent.
+//
+// This event implements CoalescibleEvent. The coalescible flag is propagated from
+// ReconciliationTriggeredEvent to enable coalescing throughout the reconciliation pipeline.
 type TemplateRenderedEvent struct {
 	// HAProxyConfig is the rendered main HAProxy configuration for production deployment.
 	// Contains absolute paths like /etc/haproxy/maps/host.map for HAProxy pods.
@@ -71,6 +74,10 @@ type TemplateRenderedEvent struct {
 	// Used by downstream components (e.g., DeploymentScheduler) to determine fallback behavior.
 	TriggerReason string
 
+	// coalescible indicates if this event can be safely skipped when a newer
+	// event of the same type is available. Propagated from ReconciliationTriggeredEvent.
+	coalescible bool
+
 	timestamp time.Time
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -80,9 +87,12 @@ type TemplateRenderedEvent struct {
 // NewTemplateRenderedEvent creates a new TemplateRenderedEvent.
 // Performs defensive copy of the haproxyConfig strings.
 //
+// The coalescible parameter should be propagated from ReconciliationTriggeredEvent.Coalescible()
+// to enable coalescing throughout the reconciliation pipeline.
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewTemplateRenderedEvent(..., triggerReason,
+//	event := events.NewTemplateRenderedEvent(..., triggerReason, trigger.Coalescible(),
 //	    events.PropagateCorrelation(triggeredEvent))
 func NewTemplateRenderedEvent(
 	haproxyConfig string,
@@ -93,6 +103,7 @@ func NewTemplateRenderedEvent(
 	auxFileCount int,
 	durationMs int64,
 	triggerReason string,
+	coalescible bool,
 	opts ...CorrelationOption,
 ) *TemplateRenderedEvent {
 	// Calculate config sizes
@@ -110,6 +121,7 @@ func NewTemplateRenderedEvent(
 		AuxiliaryFileCount:       auxFileCount,
 		DurationMs:               durationMs,
 		TriggerReason:            triggerReason,
+		coalescible:              coalescible,
 		timestamp:                time.Now(),
 		Correlation:              NewCorrelation(opts...),
 	}
@@ -117,6 +129,10 @@ func NewTemplateRenderedEvent(
 
 func (e *TemplateRenderedEvent) EventType() string    { return EventTypeTemplateRendered }
 func (e *TemplateRenderedEvent) Timestamp() time.Time { return e.timestamp }
+
+// Coalescible returns true if this event can be safely skipped when a newer
+// event of the same type is available. This implements the CoalescibleEvent interface.
+func (e *TemplateRenderedEvent) Coalescible() bool { return e.coalescible }
 
 // TemplateRenderFailedEvent is published when template rendering fails.
 //

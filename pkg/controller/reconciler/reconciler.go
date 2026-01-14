@@ -406,20 +406,52 @@ func (r *Reconciler) getDebounceTimerChan() <-chan time.Time {
 // reconciliation pipeline (Renderer → Validator → Scheduler → Deployer) enabling
 // end-to-end tracing of all events in a single reconciliation cycle.
 //
+// The coalescible flag is set based on the trigger reason:
+//   - true for state updates (debounce_timer, resource_change, http_resource_change)
+//   - false for commands that must be processed (index_synchronized, drift_prevention, etc.)
+//
 // This also updates lastTriggerTime to start a new refractory period.
 func (r *Reconciler) triggerReconciliation(reason string) {
 	// Update last trigger time for refractory period tracking
 	r.lastTriggerTime = time.Now()
 
+	// Determine coalescibility based on trigger reason
+	// State updates (only latest matters) are coalescible
+	// Commands (must be processed) are not coalescible
+	coalescible := isCoalescibleReason(reason)
+
 	// Create event with new correlation ID to trace this reconciliation cycle
-	event := events.NewReconciliationTriggeredEvent(reason, events.WithNewCorrelation())
+	event := events.NewReconciliationTriggeredEvent(reason, coalescible, events.WithNewCorrelation())
 
 	r.logger.Debug("Triggering reconciliation",
 		"reason", reason,
+		"coalescible", coalescible,
 		"correlation_id", event.CorrelationID())
 
 	r.eventBus.Publish(event)
 	r.pendingTrigger = false
+}
+
+// isCoalescibleReason determines if a trigger reason produces coalescible events.
+// Coalescible events can be safely skipped when a newer event of the same type is available.
+//
+// State updates (coalescible=true):
+//   - debounce_timer: Timer expired after batching changes
+//   - resource_change: Resource changed (immediate trigger)
+//   - http_resource_change: HTTP content changed
+//
+// Commands (coalescible=false):
+//   - index_synchronized: Initial sync complete - must process
+//   - http_resource_accepted: HTTP content promoted - must deploy
+//   - drift_prevention: Drift prevention cycle - must enforce
+//   - became_leader: Leadership acquired - must initialize
+func isCoalescibleReason(reason string) bool {
+	switch reason {
+	case "debounce_timer", "resource_change", "http_resource_change":
+		return true
+	default:
+		return false
+	}
 }
 
 // cleanup performs cleanup when the component is shutting down.

@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -157,11 +158,46 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 	}
 }
 
-// handleDeploymentScheduled handles deployment scheduled events.
+// handleDeploymentScheduled implements "latest wins" coalescing for deployment scheduled events.
 //
-// This executes the deployment to all specified endpoints in parallel.
-// Defensive: drops duplicate events if a deployment is already in progress.
+// When multiple coalescible DeploymentScheduledEvents arrive while deployment is in progress,
+// intermediate events are superseded - only the latest pending event is processed.
+// This prevents queue backlog where deployments can't keep up with high-frequency validation.
+//
+// Non-coalescible events (e.g., from drift_prevention, validation_fallback) are always
+// processed and never skipped.
+//
+// Uses the centralized coalesce.DrainLatest utility for consistent behavior across components.
 func (c *Component) handleDeploymentScheduled(ctx context.Context, event *events.DeploymentScheduledEvent) {
+	// Process current event
+	c.performDeployment(ctx, event)
+
+	// After deployment completes, drain the event channel for any pending coalescible events.
+	// Since the event loop is single-threaded, events buffer in eventChan while performDeployment executes.
+	// We process only the latest coalescible event.
+	for {
+		latest, supersededCount := coalesce.DrainLatest[*events.DeploymentScheduledEvent](
+			c.eventChan,
+			func(e busevents.Event) { c.handleEvent(ctx, e) }, // Handle non-coalescible events
+		)
+		if latest == nil {
+			return
+		}
+
+		if supersededCount > 0 {
+			c.logger.Debug("Coalesced deployment scheduled events",
+				"superseded_count", supersededCount,
+				"processing", latest.CorrelationID())
+		}
+		c.performDeployment(ctx, latest)
+	}
+}
+
+// performDeployment executes a single deployment.
+// This method is called by handleDeploymentScheduled after coalescing logic.
+//
+// Defensive: drops duplicate events if a deployment is already in progress.
+func (c *Component) performDeployment(ctx context.Context, event *events.DeploymentScheduledEvent) {
 	// Track processing for health check stall detection
 	c.healthTracker.StartProcessing()
 	defer c.healthTracker.EndProcessing()
