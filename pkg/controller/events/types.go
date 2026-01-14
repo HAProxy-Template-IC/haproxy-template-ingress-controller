@@ -110,6 +110,7 @@ const (
 	EventTypeInstanceDeployed         = "instance.deployed"
 	EventTypeInstanceDeploymentFailed = "instance.deployment.failed"
 	EventTypeDeploymentCompleted      = "deployment.completed"
+	EventTypeDeploymentCancelRequest  = "deployment.cancel.request"
 	EventTypeDriftPreventionTriggered = "drift.prevention.triggered"
 
 	// Storage event types.
