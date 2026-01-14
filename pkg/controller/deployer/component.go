@@ -56,6 +56,7 @@ const (
 //
 // Event subscriptions:
 //   - DeploymentScheduledEvent: Execute deployment to specified endpoints
+//   - DeploymentCancelRequestEvent: Cancel in-progress deployment
 //
 // The component publishes deployment result events for observability.
 type Component struct {
@@ -78,6 +79,12 @@ type Component struct {
 	// subscriptionReady is closed when the component has subscribed to events.
 	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
 	subscriptionReady chan struct{}
+
+	// Deployment cancellation support
+	cancelMu            sync.Mutex
+	activeCorrelationID string             // Correlation ID of active deployment
+	activeCancelFunc    context.CancelFunc // Cancel function for active deployment
+	deploymentDone      chan struct{}      // Signals when deployment goroutine completes
 }
 
 // New creates a new Deployer component.
@@ -131,8 +138,10 @@ func (c *Component) SubscriptionReady() <-chan struct{} {
 func (c *Component) Start(ctx context.Context) error {
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
-	// Only needs DeploymentScheduledEvent - typed subscription reduces buffer pressure.
-	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, EventBufferSize, events.EventTypeDeploymentScheduled)
+	// Subscribe to both DeploymentScheduledEvent and DeploymentCancelRequestEvent.
+	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, EventBufferSize,
+		events.EventTypeDeploymentScheduled,
+		events.EventTypeDeploymentCancelRequest)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	close(c.subscriptionReady)
@@ -146,6 +155,8 @@ func (c *Component) Start(ctx context.Context) error {
 
 		case <-ctx.Done():
 			c.logger.Info("Deployer shutting down", "reason", ctx.Err())
+			// Cancel any active deployment on shutdown
+			c.cancelActiveDeployment("shutdown")
 			return nil
 		}
 	}
@@ -153,8 +164,11 @@ func (c *Component) Start(ctx context.Context) error {
 
 // handleEvent processes events from the EventBus.
 func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
-	if e, ok := event.(*events.DeploymentScheduledEvent); ok {
+	switch e := event.(type) {
+	case *events.DeploymentScheduledEvent:
 		c.handleDeploymentScheduled(ctx, e)
+	case *events.DeploymentCancelRequestEvent:
+		c.handleDeploymentCancelRequest(e)
 	}
 }
 
@@ -215,14 +229,36 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 	}
 	// Note: flag will be cleared by deployToEndpoints after deployment completes
 
+	// Create cancellable context for this deployment
+	deployCtx, cancel := context.WithCancel(ctx)
+
+	// Store cancel function so it can be called on timeout
+	c.cancelMu.Lock()
+	c.activeCorrelationID = correlationID
+	c.activeCancelFunc = cancel
+	c.deploymentDone = make(chan struct{})
+	c.cancelMu.Unlock()
+
+	// Ensure we clean up cancel state when deployment completes
+	defer func() {
+		c.cancelMu.Lock()
+		c.activeCorrelationID = ""
+		c.activeCancelFunc = nil
+		if c.deploymentDone != nil {
+			close(c.deploymentDone)
+			c.deploymentDone = nil
+		}
+		c.cancelMu.Unlock()
+	}()
+
 	c.logger.Debug("Deployment scheduled, starting execution",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
 		"config_bytes", len(event.Config),
 		"correlation_id", correlationID)
 
-	// Execute deployment with correlation
-	c.deployToEndpoints(ctx, event.Config, event.AuxiliaryFiles, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, correlationID)
+	// Execute deployment with cancellable context
+	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, correlationID)
 }
 
 // convertEndpoints converts []interface{} to []dataplane.Endpoint.
@@ -382,6 +418,17 @@ func (c *Component) processEndpointDeployment(
 	correlationID string,
 	state *deploymentState,
 ) {
+	// Check if context is already cancelled (e.g., timeout fired)
+	if ctx.Err() != nil {
+		c.logger.Debug("Skipping endpoint deployment - context cancelled",
+			"endpoint", ep.URL,
+			"pod", ep.PodName,
+			"error", ctx.Err(),
+			"correlation_id", correlationID)
+		atomic.AddInt32(&state.failureCount, 1)
+		return
+	}
+
 	instanceStart := time.Now()
 	syncResult, err := c.deployToSingleEndpoint(ctx, config, auxFiles, ep)
 	durationMs := time.Since(instanceStart).Milliseconds()
@@ -600,4 +647,59 @@ func (c *Component) convertSyncResultToMetadata(result *dataplane.SyncResult) *e
 // Returns nil when idle (not processing) - idle is always healthy for event-driven components.
 func (c *Component) HealthCheck() error {
 	return c.healthTracker.Check()
+}
+
+// handleDeploymentCancelRequest cancels an in-progress deployment if the correlation ID matches.
+func (c *Component) handleDeploymentCancelRequest(event *events.DeploymentCancelRequestEvent) {
+	correlationID := event.CorrelationID()
+
+	c.cancelMu.Lock()
+	defer c.cancelMu.Unlock()
+
+	// Check if there's an active deployment with matching correlation ID
+	if c.activeCorrelationID == "" || c.activeCancelFunc == nil {
+		c.logger.Debug("Received cancel request but no deployment in progress",
+			"requested_correlation_id", correlationID,
+			"reason", event.Reason)
+		return
+	}
+
+	if c.activeCorrelationID != correlationID {
+		c.logger.Debug("Received cancel request but correlation ID does not match",
+			"requested_correlation_id", correlationID,
+			"active_correlation_id", c.activeCorrelationID,
+			"reason", event.Reason)
+		return
+	}
+
+	c.logger.Info("Cancelling in-progress deployment",
+		"correlation_id", correlationID,
+		"reason", event.Reason)
+
+	// Cancel the deployment context
+	c.activeCancelFunc()
+}
+
+// cancelActiveDeployment cancels any active deployment regardless of correlation ID.
+// Used for graceful shutdown.
+func (c *Component) cancelActiveDeployment(reason string) {
+	c.cancelMu.Lock()
+	defer c.cancelMu.Unlock()
+
+	if c.activeCancelFunc == nil {
+		return
+	}
+
+	c.logger.Info("Cancelling active deployment",
+		"correlation_id", c.activeCorrelationID,
+		"reason", reason)
+
+	c.activeCancelFunc()
+
+	// Wait for deployment to complete if deploymentDone channel exists
+	if c.deploymentDone != nil {
+		c.cancelMu.Unlock()
+		<-c.deploymentDone
+		c.cancelMu.Lock()
+	}
 }

@@ -89,12 +89,13 @@ type DeploymentScheduler struct {
 	templateConfigNamespace string        // Namespace from ConfigValidatedEvent.TemplateConfig
 
 	// Deployment scheduling and rate limiting
-	schedulerMutex        sync.Mutex
-	deploymentInProgress  bool
-	deploymentStartTime   time.Time // When the current deployment started
-	pendingDeployment     *scheduledDeployment
-	lastDeploymentEndTime time.Time // When the last deployment completed
-	deploymentTimeout     time.Duration
+	schedulerMutex                sync.Mutex
+	deploymentInProgress          bool
+	deploymentStartTime           time.Time // When the current deployment started
+	activeDeploymentCorrelationID string    // Correlation ID of the active deployment (for cancellation)
+	pendingDeployment             *scheduledDeployment
+	lastDeploymentEndTime         time.Time // When the last deployment completed
+	deploymentTimeout             time.Duration
 
 	// Cache for deployment optimization - skip if config unchanged
 	lastDeployedConfigHash string    // SHA-256 hash of last successfully deployed config
@@ -505,6 +506,7 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 	// Mark deployment as complete and clear start time
 	s.deploymentInProgress = false
 	s.deploymentStartTime = time.Time{}
+	s.activeDeploymentCorrelationID = ""
 	s.lastDeploymentEndTime = time.Now()
 
 	// Check if there's a pending deployment to process
@@ -560,9 +562,10 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 		return
 	}
 
-	// Mark as in-progress, track start time, and unlock before scheduling
+	// Mark as in-progress, track start time and correlation ID, and unlock before scheduling
 	s.deploymentInProgress = true
 	s.deploymentStartTime = time.Now()
+	s.activeDeploymentCorrelationID = correlationID
 	s.schedulerMutex.Unlock()
 
 	// Schedule deployment asynchronously to avoid blocking event loop
@@ -608,6 +611,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 				timer.Stop()
 				s.schedulerMutex.Lock()
 				s.deploymentInProgress = false
+				s.activeDeploymentCorrelationID = ""
 				s.schedulerMutex.Unlock()
 				s.logger.Info("Deployment scheduling cancelled during rate limit sleep",
 					"reason", reason)
@@ -671,6 +675,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	case <-ctx.Done():
 		s.schedulerMutex.Lock()
 		s.deploymentInProgress = false // Shutdown case - safe to clear
+		s.activeDeploymentCorrelationID = ""
 		s.schedulerMutex.Unlock()
 		s.logger.Info("Deployment scheduling cancelled, discarding pending deployment",
 			"reason", pending.reason)
@@ -726,6 +731,7 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	// Clear deployment state to prevent stale deployments
 	s.deploymentInProgress = false
 	s.deploymentStartTime = time.Time{}
+	s.activeDeploymentCorrelationID = ""
 	s.pendingDeployment = nil
 
 	// Clear deployment cache - new leader should verify config state
@@ -742,8 +748,9 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 // checkDeploymentTimeout checks if the current deployment has exceeded the timeout.
 //
 // If a deployment is in progress and has exceeded the configured timeout, this method
-// resets the stuck state and triggers a new reconciliation. This is a safety net for
-// race conditions during leadership transitions where DeploymentCompletedEvent may be lost.
+// publishes a cancellation event to stop the running deployment, resets the stuck state,
+// and triggers a new reconciliation. This is a safety net for race conditions during
+// leadership transitions where DeploymentCompletedEvent may be lost.
 func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 	s.schedulerMutex.Lock()
 	if !s.deploymentInProgress {
@@ -751,6 +758,7 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 		return
 	}
 	startTime := s.deploymentStartTime
+	activeCorrelationID := s.activeDeploymentCorrelationID
 	pending := s.pendingDeployment
 	s.schedulerMutex.Unlock()
 
@@ -764,13 +772,24 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 		return
 	}
 
-	s.logger.Warn("Deployment timeout - resetting stuck state",
+	s.logger.Warn("Deployment timeout - cancelling and resetting stuck state",
 		"duration_ms", elapsed.Milliseconds(),
-		"timeout_ms", s.deploymentTimeout.Milliseconds())
+		"timeout_ms", s.deploymentTimeout.Milliseconds(),
+		"correlation_id", activeCorrelationID)
+
+	// Publish cancellation event to stop the running deployment
+	// This must be done BEFORE resetting state so the deployer can match the correlation ID
+	if activeCorrelationID != "" {
+		s.eventBus.Publish(events.NewDeploymentCancelRequestEvent(
+			"deployment_timeout",
+			events.WithCorrelation(activeCorrelationID, activeCorrelationID),
+		))
+	}
 
 	s.schedulerMutex.Lock()
 	s.deploymentInProgress = false
 	s.deploymentStartTime = time.Time{}
+	s.activeDeploymentCorrelationID = ""
 	s.pendingDeployment = nil
 	s.schedulerMutex.Unlock()
 
@@ -785,7 +804,7 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 
 	// Trigger a new reconciliation to recover from the stuck state
 	// Timeout recovery is NOT coalescible - it must be processed to recover from stuck state
-	s.eventBus.Publish(events.NewReconciliationTriggeredEvent("deployment_timeout_recovery", false))
+	s.eventBus.Publish(events.NewReconciliationTriggeredEvent("deployment_timeout_recovery", false, events.WithNewCorrelation()))
 }
 
 // HealthCheck implements the lifecycle.HealthChecker interface.

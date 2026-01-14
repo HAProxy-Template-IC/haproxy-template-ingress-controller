@@ -280,6 +280,33 @@ func (e *DeploymentScheduledEvent) Timestamp() time.Time { return e.timestamp }
 // event of the same type is available. This implements the CoalescibleEvent interface.
 func (e *DeploymentScheduledEvent) Coalescible() bool { return e.coalescible }
 
+// DeploymentCancelRequestEvent is published when the scheduler requests cancellation
+// of an in-progress deployment (e.g., due to timeout).
+//
+// Published by: DeploymentScheduler (on timeout)
+// Consumed by: Deployer (to cancel running deployment)
+//
+// The CorrelationID must match the deployment being cancelled.
+type DeploymentCancelRequestEvent struct {
+	// Reason describes why the deployment is being cancelled.
+	Reason string
+
+	timestamp time.Time
+	Correlation
+}
+
+// NewDeploymentCancelRequestEvent creates a new DeploymentCancelRequestEvent.
+func NewDeploymentCancelRequestEvent(reason string, opts ...CorrelationOption) *DeploymentCancelRequestEvent {
+	return &DeploymentCancelRequestEvent{
+		Reason:      reason,
+		timestamp:   time.Now(),
+		Correlation: NewCorrelation(opts...),
+	}
+}
+
+func (e *DeploymentCancelRequestEvent) EventType() string    { return EventTypeDeploymentCancelRequest }
+func (e *DeploymentCancelRequestEvent) Timestamp() time.Time { return e.timestamp }
+
 // DriftPreventionTriggeredEvent is published when the drift prevention monitor.
 // detects that no deployment has occurred within the configured interval and
 // triggers a deployment to prevent configuration drift.

@@ -221,14 +221,15 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawInitial, false)
 	}
 
-	// Use StructuralOperations() for threshold check - this excludes server UPDATE operations
-	// which are runtime-eligible and don't require HAProxy reload.
-	// This prevents unnecessary reloads when many EndpointSlice changes accumulate.
-	structuralOps := diff.Summary.StructuralOperations()
-	if opts.RawPushThreshold > 0 && structuralOps > opts.RawPushThreshold {
-		o.logger.Info("Using raw push due to high structural change count",
-			"structural_changes", structuralOps,
-			"total_changes", diff.Summary.TotalOperations(),
+	// Use TotalOperations() for threshold check - this includes all operations including
+	// runtime-eligible server UPDATEs. While server UPDATEs don't require HAProxy reload,
+	// they are processed sequentially and can take a long time for large deployments.
+	// A raw push (single reload) is faster than processing 100+ individual operations.
+	totalOps := diff.Summary.TotalOperations()
+	if opts.RawPushThreshold > 0 && totalOps > opts.RawPushThreshold {
+		o.logger.Info("Using raw push due to high change count",
+			"total_changes", totalOps,
+			"structural_changes", diff.Summary.StructuralOperations(),
 			"threshold", opts.RawPushThreshold)
 		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawThreshold, false)
 	}
