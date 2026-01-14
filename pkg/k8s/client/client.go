@@ -96,6 +96,12 @@ func New(cfg Config) (*Client, error) {
 		}
 	}
 
+	// Configure rate limiter for high-frequency CRD operations
+	// Default values (QPS=5, Burst=10) are too conservative for controllers
+	// that update multiple CRDs per reconciliation cycle
+	restConfig.QPS = 50
+	restConfig.Burst = 100
+
 	// Create clientset
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
