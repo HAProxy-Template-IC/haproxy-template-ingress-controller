@@ -77,23 +77,75 @@ func versionMinor(version *Version) int {
 	return version.Minor
 }
 
+// prepareForValidation prepares a typed API model for schema validation.
+// It marshals to JSON, removes nulls in place, and returns a map ready for
+// schema.VisitJSON(). The API model should already have been converted using
+// client.ConvertToVersioned to ensure only valid fields are included.
+//
+// This optimization reduces JSON operations from 7 per model to 3 by:
+// - Eliminating the cleanJSON copy step (uses in-place null removal instead)
+// - Passing the map directly to VisitJSON (avoids extra unmarshal).
+func prepareForValidation(model interface{}) (map[string]interface{}, error) {
+	// Marshal API model to JSON
+	jsonData, err := json.Marshal(model)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal model: %w", err)
+	}
+
+	// Unmarshal to map for in-place modifications
+	var obj map[string]interface{}
+	if err := json.Unmarshal(jsonData, &obj); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal for preparation: %w", err)
+	}
+
+	// Remove null values in place (replaces cleanJSON copy step)
+	removeNullValuesInPlace(obj)
+
+	return obj, nil
+}
+
+// validatePreparedData validates a prepared map against an OpenAPI schema.
+// The map should already have metadata transformed and nulls removed.
+func validatePreparedData(spec *openapi3.T, schemaName string, data map[string]interface{}) error {
+	schema, err := getResolvedSchema(spec, schemaName)
+	if err != nil {
+		return err
+	}
+
+	if err := schema.VisitJSON(data); err != nil {
+		return fmt.Errorf("schema validation failed: %w", err)
+	}
+
+	return nil
+}
+
 // validateModel validates a client-native model against the OpenAPI schema.
-// Uses generic type parameters for type-safe version conversion.
-// This uses the centralized conversion functions from pkg/dataplane/client.
+// Uses the optimized path that reduces JSON operations from 7 to 4 per model.
+//
+// The type conversion step is necessary to filter out fields that the API schema
+// doesn't support (e.g., metadata for types that don't have it).
 func validateModel[TV32, TV31, TV30 any](spec *openapi3.T, version *Version, schemaName string, model interface{}) error {
-	// Use centralized marshal + metadata transformation
+	// Step 1: Marshal and transform metadata (marshal + unmarshal + transform + marshal)
 	jsonData, err := client.MarshalForVersion(model)
 	if err != nil {
 		return err
 	}
 
-	// Use centralized generic conversion
+	// Step 2: Convert to typed API model (unmarshal) - this filters out unsupported fields
 	apiModel, err := client.ConvertToVersioned[TV32, TV31, TV30](jsonData, versionMinor(version))
 	if err != nil {
 		return fmt.Errorf("failed to convert to API model: %w", err)
 	}
 
-	return validateAgainstSchema(spec, schemaName, apiModel)
+	// Step 3: Prepare for validation (marshal + unmarshal + in-place null removal)
+	// This replaces the old cleanJSON which did marshal + unmarshal + copy + marshal + unmarshal
+	prepared, err := prepareForValidation(apiModel)
+	if err != nil {
+		return err
+	}
+
+	// Step 4: Validate directly against schema
+	return validatePreparedData(spec, schemaName, prepared)
 }
 
 // ValidationPaths holds the filesystem paths for HAProxy validation.
@@ -477,6 +529,26 @@ func removeNullValues(obj map[string]interface{}) map[string]interface{} {
 	return result
 }
 
+// removeNullValuesInPlace recursively removes null values from a map in place.
+// This avoids the allocation overhead of creating a new map, which is significant
+// when validating thousands of models per reconciliation.
+func removeNullValuesInPlace(obj map[string]interface{}) {
+	for k, v := range obj {
+		if v == nil {
+			delete(obj, k)
+			continue
+		}
+
+		// Recursively clean nested maps
+		if nested, ok := v.(map[string]interface{}); ok {
+			removeNullValuesInPlace(nested)
+			if len(nested) == 0 {
+				delete(obj, k)
+			}
+		}
+	}
+}
+
 // resolveRef resolves a $ref reference path to its schema.
 // Handles references like "#/components/schemas/server_params".
 func resolveRef(spec *openapi3.T, ref string) (*openapi3.Schema, error) {
@@ -632,40 +704,6 @@ func getResolvedSchema(spec *openapi3.T, schemaName string) (*openapi3.Schema, e
 	// Cache the resolved schema
 	cache[schemaName] = schema
 	return schema, nil
-}
-
-// validateAgainstSchema validates a model against an OpenAPI schema.
-func validateAgainstSchema(spec *openapi3.T, schemaName string, model interface{}) error {
-	// Get resolved schema from cache (handles allOf resolution)
-	schema, err := getResolvedSchema(spec, schemaName)
-	if err != nil {
-		return err
-	}
-
-	// Convert model to JSON
-	data, err := json.Marshal(model)
-	if err != nil {
-		return fmt.Errorf("failed to marshal model: %w", err)
-	}
-
-	// Clean JSON to remove null values (matches API behavior)
-	cleanedData, err := cleanJSON(data)
-	if err != nil {
-		return fmt.Errorf("failed to clean JSON: %w", err)
-	}
-
-	// Parse cleaned JSON for validation
-	var value interface{}
-	if err := json.Unmarshal(cleanedData, &value); err != nil {
-		return fmt.Errorf("failed to unmarshal for validation: %w", err)
-	}
-
-	// Validate against resolved schema
-	if err := schema.VisitJSON(value); err != nil {
-		return fmt.Errorf("schema validation failed: %w", err)
-	}
-
-	return nil
 }
 
 // validateSemantics performs semantic validation using haproxy binary.

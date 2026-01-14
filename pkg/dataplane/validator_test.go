@@ -1163,3 +1163,133 @@ func TestGetResolvedSchema_NotFound(t *testing.T) {
 		t.Error("getResolvedSchema() should return error for non-existent schema")
 	}
 }
+
+// TestRemoveNullValuesInPlace tests in-place null removal.
+func TestRemoveNullValuesInPlace(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    map[string]interface{}
+		expected map[string]interface{}
+	}{
+		{
+			name:     "empty map",
+			input:    map[string]interface{}{},
+			expected: map[string]interface{}{},
+		},
+		{
+			name: "remove null values",
+			input: map[string]interface{}{
+				"name":    "test",
+				"value":   nil,
+				"enabled": true,
+			},
+			expected: map[string]interface{}{
+				"name":    "test",
+				"enabled": true,
+			},
+		},
+		{
+			name: "nested null removal",
+			input: map[string]interface{}{
+				"name": "test",
+				"nested": map[string]interface{}{
+					"keep":   "value",
+					"remove": nil,
+				},
+			},
+			expected: map[string]interface{}{
+				"name": "test",
+				"nested": map[string]interface{}{
+					"keep": "value",
+				},
+			},
+		},
+		{
+			name: "remove empty nested map",
+			input: map[string]interface{}{
+				"name": "test",
+				"nested": map[string]interface{}{
+					"remove": nil,
+				},
+			},
+			expected: map[string]interface{}{
+				"name": "test",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			removeNullValuesInPlace(tt.input)
+
+			// Compare JSON representations for easier debugging
+			inputJSON, _ := json.Marshal(tt.input)
+			expectedJSON, _ := json.Marshal(tt.expected)
+
+			if !bytes.Equal(inputJSON, expectedJSON) {
+				t.Errorf("removeNullValuesInPlace() = %s, want %s", inputJSON, expectedJSON)
+			}
+		})
+	}
+}
+
+// TestPrepareForValidation tests the combined preparation function.
+// Note: prepareForValidation now receives API models with already-transformed metadata
+// (from client.ConvertToVersioned), so it only marshals/unmarshals and removes nulls.
+func TestPrepareForValidation(t *testing.T) {
+	// Test with a simple struct - metadata transformation is now done earlier in the flow
+	type testModel struct {
+		Name    string `json:"name"`
+		Address string `json:"address"`
+		Port    *int   `json:"port,omitempty"`
+	}
+
+	port := 8080
+	model := testModel{
+		Name:    "server1",
+		Address: "127.0.0.1",
+		Port:    &port,
+	}
+
+	prepared, err := prepareForValidation(model)
+	if err != nil {
+		t.Fatalf("prepareForValidation() error = %v", err)
+	}
+
+	// Verify basic fields are present
+	if prepared["name"] != "server1" {
+		t.Errorf("prepareForValidation() name = %v, want server1", prepared["name"])
+	}
+
+	if prepared["address"] != "127.0.0.1" {
+		t.Errorf("prepareForValidation() address = %v, want 127.0.0.1", prepared["address"])
+	}
+
+	// Verify port is present (non-nil pointer should be included)
+	if prepared["port"] != float64(8080) {
+		t.Errorf("prepareForValidation() port = %v, want 8080", prepared["port"])
+	}
+}
+
+// TestPrepareForValidation_RemovesNulls tests that nulls are removed.
+func TestPrepareForValidation_RemovesNulls(t *testing.T) {
+	type testModel struct {
+		Name    string  `json:"name"`
+		Address *string `json:"address"`
+	}
+
+	model := testModel{
+		Name:    "server1",
+		Address: nil,
+	}
+
+	prepared, err := prepareForValidation(model)
+	if err != nil {
+		t.Fatalf("prepareForValidation() error = %v", err)
+	}
+
+	// Verify null field was removed
+	if _, exists := prepared["address"]; exists {
+		t.Error("prepareForValidation() should remove null address field")
+	}
+}
