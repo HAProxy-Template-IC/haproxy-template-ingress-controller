@@ -724,19 +724,43 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 	name := p.generateRuntimeConfigName(req.TemplateConfigName) + req.NameSuffix
 	runtimeConfig := p.buildRuntimeConfig(name, req)
 
-	// Try to get existing resource
-	existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs(req.TemplateConfigNamespace).
-		Get(ctx, name, metav1.GetOptions{})
+	var result *haproxyv1alpha1.HAProxyCfg
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get existing resource (must be inside retry loop for fresh resourceVersion)
+		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCfgs(req.TemplateConfigNamespace).
+			Get(ctx, name, metav1.GetOptions{})
+
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to get existing runtime config: %w", err)
+			}
+			// Create new resource
+			created, createErr := p.createRuntimeConfig(ctx, req, runtimeConfig)
+			if createErr != nil {
+				// If AlreadyExists, another reconciler created it - retry to update
+				if apierrors.IsAlreadyExists(createErr) {
+					return createErr
+				}
+				return createErr
+			}
+			result = created
+			return nil
+		}
+
+		// Update existing resource with fresh copy
+		updated, updateErr := p.updateRuntimeConfig(ctx, req, existing, runtimeConfig)
+		if updateErr != nil {
+			return updateErr
+		}
+		result = updated
+		return nil
+	})
 
 	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("failed to get existing runtime config: %w", err)
-		}
-		return p.createRuntimeConfig(ctx, req, runtimeConfig)
+		return nil, err
 	}
-
-	return p.updateRuntimeConfig(ctx, req, existing, runtimeConfig)
+	return result, nil
 }
 
 // buildRuntimeConfig constructs a HAProxyCfg resource from the request.
