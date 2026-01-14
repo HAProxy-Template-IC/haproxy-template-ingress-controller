@@ -54,6 +54,16 @@ var (
 	specErrV32    error
 )
 
+// Resolved schema caches - avoids repeated allOf resolution during validation.
+// Each validation call was creating new merged schema objects, causing massive
+// memory allocation churn. These caches store resolved schemas per spec version.
+var (
+	resolvedSchemaCacheV30 = make(map[string]*openapi3.Schema)
+	resolvedSchemaCacheV31 = make(map[string]*openapi3.Schema)
+	resolvedSchemaCacheV32 = make(map[string]*openapi3.Schema)
+	resolvedSchemaMu       sync.RWMutex
+)
+
 // =============================================================================
 // Version-aware Model Conversion (using centralized client converters)
 // =============================================================================
@@ -568,24 +578,68 @@ func deduplicateRequired(required []string) []string {
 	return unique
 }
 
-// validateAgainstSchema validates a model against an OpenAPI schema.
-func validateAgainstSchema(spec *openapi3.T, schemaName string, model interface{}) error {
+// selectSchemaCache returns the appropriate cache for the given spec.
+func selectSchemaCache(spec *openapi3.T) map[string]*openapi3.Schema {
+	switch spec {
+	case cachedSpecV32:
+		return resolvedSchemaCacheV32
+	case cachedSpecV31:
+		return resolvedSchemaCacheV31
+	default:
+		return resolvedSchemaCacheV30
+	}
+}
+
+// getResolvedSchema returns a cached resolved schema, resolving and caching if needed.
+// This eliminates repeated allOf resolution for the same schema, which was causing
+// massive memory allocation churn (100+ GB per 6 minutes in production).
+func getResolvedSchema(spec *openapi3.T, schemaName string) (*openapi3.Schema, error) {
+	cache := selectSchemaCache(spec)
+
+	// Fast path: check if already cached (read lock)
+	resolvedSchemaMu.RLock()
+	if cached, ok := cache[schemaName]; ok {
+		resolvedSchemaMu.RUnlock()
+		return cached, nil
+	}
+	resolvedSchemaMu.RUnlock()
+
+	// Slow path: resolve and cache (write lock)
+	resolvedSchemaMu.Lock()
+	defer resolvedSchemaMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if cached, ok := cache[schemaName]; ok {
+		return cached, nil
+	}
+
 	// Get the schema from the spec
 	schemaRef, ok := spec.Components.Schemas[schemaName]
 	if !ok {
-		return fmt.Errorf("schema %s not found in OpenAPI spec", schemaName)
+		return nil, fmt.Errorf("schema %s not found in OpenAPI spec", schemaName)
 	}
 
-	// Resolve allOf composition if present
-	// kin-openapi's VisitJSON doesn't properly merge allOf schemas before
-	// checking additionalProperties: false, so we manually resolve them.
+	// Resolve allOf if present
 	schema := schemaRef.Value
 	if len(schema.AllOf) > 0 {
-		var err error
-		schema, err = resolveAllOf(spec, schema)
+		resolved, err := resolveAllOf(spec, schema)
 		if err != nil {
-			return fmt.Errorf("failed to resolve allOf: %w", err)
+			return nil, fmt.Errorf("failed to resolve allOf for %s: %w", schemaName, err)
 		}
+		schema = resolved
+	}
+
+	// Cache the resolved schema
+	cache[schemaName] = schema
+	return schema, nil
+}
+
+// validateAgainstSchema validates a model against an OpenAPI schema.
+func validateAgainstSchema(spec *openapi3.T, schemaName string, model interface{}) error {
+	// Get resolved schema from cache (handles allOf resolution)
+	schema, err := getResolvedSchema(spec, schemaName)
+	if err != nil {
+		return err
 	}
 
 	// Convert model to JSON
