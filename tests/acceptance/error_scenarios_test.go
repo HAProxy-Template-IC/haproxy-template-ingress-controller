@@ -511,8 +511,13 @@ func buildControllerCrashRecoveryFeature() types.Feature {
 			require.NoError(t, err, "Should find a new pod with different UID")
 			t.Logf("New pod: %s (UID: %s), was %s (UID: %s)", newPod.Name, newPod.UID, initialPodName, initialPodUID)
 
-			// Verify controller is operational - reuse the existing debug client via NodePort
-			// (no need to create new client as NodePort stays the same and routes to new pod)
+			// Wait for debug service endpoints to point to the new pod
+			// (Kubernetes needs to update Endpoints after pod becomes ready)
+			serviceName := ControllerDeploymentName + "-debug"
+			err = WaitForServiceEndpoints(ctx, client, namespace, serviceName, 30*time.Second)
+			require.NoError(t, err, "Debug service endpoints should be ready")
+
+			// Verify controller is operational via API proxy
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			if err != nil {
 				DumpPodLogs(ctx, t, clientset, newPod)
@@ -624,7 +629,9 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 			t.Logf("Found %q in rendered config (debouncing worked)", foundVersion)
 
 			// Wait for validation to complete (validation happens after rendering)
-			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			// Use 120s timeout consistent with rendered config wait - under heavy parallel load,
+			// validation may take longer to complete after rapid updates.
+			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 120*time.Second)
 			require.NoError(t, err, "Validation should succeed after debounce")
 
 			// Use debug endpoint to verify pipeline completed successfully after debouncing

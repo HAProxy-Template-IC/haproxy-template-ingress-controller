@@ -262,6 +262,11 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
 
+			// Wait for controller config to be ready before checking auxiliary files
+			t.Log("Waiting for controller config to be ready...")
+			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
+			require.NoError(t, err)
+
 			// Wait for initial config to be loaded
 			t.Log("Waiting for initial blocklist content...")
 			err = debugClient.WaitForAuxFileContains(ctx, "blocked-ips.acl", "192.168.1.0/24", 60*time.Second)

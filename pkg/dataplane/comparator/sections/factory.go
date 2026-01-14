@@ -1326,10 +1326,24 @@ func (op *ServerUpdateOp) TriggeredReload() bool {
 	return op.reloadTriggered
 }
 
+// BackendName returns the name of the backend containing this server.
+// Used by the orchestrator for direct executor calls with version caching.
+func (op *ServerUpdateOp) BackendName() string { return op.backendName }
+
+// ServerName returns the name of the server being updated.
+// Used by the orchestrator for direct executor calls with version caching.
+func (op *ServerUpdateOp) ServerName() string { return op.server.Name }
+
+// Server returns the server model being updated.
+// Used by the orchestrator for direct executor calls with version caching.
+func (op *ServerUpdateOp) Server() *models.Server { return op.server }
+
 // Execute performs the server update operation.
 // When txID is empty (runtime execution), it tracks whether the operation triggered a reload.
 func (op *ServerUpdateOp) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	reloaded, err := executors.ServerUpdateWithReloadTracking(ctx, c, op.backendName, op.server.Name, op.server, txID)
+	// Pass 0 for version to let ServerUpdateWithReloadTracking fetch the current version.
+	// The orchestrator uses direct executor calls with version caching for better performance.
+	reloaded, err := executors.ServerUpdateWithReloadTracking(ctx, c, op.backendName, op.server.Name, op.server, txID, 0)
 	op.reloadTriggered = reloaded
 	return err
 }

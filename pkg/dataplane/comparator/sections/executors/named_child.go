@@ -309,16 +309,24 @@ func ServerCreate(backendName string) func(ctx context.Context, c *client.Datapl
 // When txID is non-empty, it uses the Configuration API with transaction.
 func ServerUpdate(backendName string) func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, childName string, model *models.Server) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, _ string, childName string, model *models.Server) error {
-		_, err := ServerUpdateWithReloadTracking(ctx, c, backendName, childName, model, txID)
+		// Pass 0 for version to let ServerUpdateWithReloadTracking fetch the current version
+		_, err := ServerUpdateWithReloadTracking(ctx, c, backendName, childName, model, txID, 0)
 		return err
 	}
 }
 
 // ServerUpdateWithReloadTracking updates a server and returns whether the operation triggered a reload.
 // This is the primary entry point for server updates that need to track reload status.
-// When txID is empty, it uses version-based update via runtime API.
-// When txID is non-empty, it uses the Configuration API with transaction (always reloads on commit).
-func ServerUpdateWithReloadTracking(ctx context.Context, c *client.DataplaneClient, backendName, childName string, model *models.Server, txID string) (reloadTriggered bool, err error) {
+//
+// Parameters:
+//   - txID: When non-empty, uses Configuration API with transaction (always reloads on commit).
+//   - version: When txID is empty and version > 0, uses provided version (for version caching).
+//     When txID is empty and version == 0, fetches version from API (backward compatible).
+//
+// Version caching optimization: The orchestrator can fetch the version once and pass it to
+// multiple ServerUpdateWithReloadTracking calls, incrementing after each successful operation.
+// This reduces API calls from 2N to N+1 for N server updates.
+func ServerUpdateWithReloadTracking(ctx context.Context, c *client.DataplaneClient, backendName, childName string, model *models.Server, txID string, version int64) (reloadTriggered bool, err error) {
 	if txID != "" {
 		// Transaction-based updates always trigger reload on commit
 		// The reload is tracked at transaction commit level, not here
@@ -326,11 +334,14 @@ func ServerUpdateWithReloadTracking(ctx context.Context, c *client.DataplaneClie
 		return false, err
 	}
 
-	version64, err := c.GetVersion(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to get configuration version: %w", err)
+	// Use provided version or fetch if not provided (backward compatible)
+	if version == 0 {
+		version, err = c.GetVersion(ctx)
+		if err != nil {
+			return false, fmt.Errorf("failed to get configuration version: %w", err)
+		}
 	}
-	return serverUpdateWithVersion(ctx, c, backendName, childName, model, version64)
+	return serverUpdateWithVersion(ctx, c, backendName, childName, model, version)
 }
 
 // serverUpdateWithTransaction updates a server using a transaction.
@@ -372,6 +383,10 @@ func serverUpdateWithTransaction(ctx context.Context, c *client.DataplaneClient,
 
 // serverUpdateWithVersion updates a server using version-based update.
 // Returns whether the update triggered a reload (202 status) and any error.
+//
+// Version conflict handling: When a 409 Conflict occurs (version mismatch), this function
+// returns a *client.VersionConflictError that callers can use to retry with a fresh version.
+// This enables version caching in the orchestrator while maintaining correctness.
 func serverUpdateWithVersion(ctx context.Context, c *client.DataplaneClient, backendName, childName string, model *models.Server, version64 int64) (reloadTriggered bool, err error) {
 	clientset := c.Clientset()
 
@@ -411,6 +426,16 @@ func serverUpdateWithVersion(ctx context.Context, c *client.DataplaneClient, bac
 		return false, err
 	}
 	defer resp.Body.Close()
+
+	// Handle 409 Conflict with proper error type for retry logic in orchestrator
+	// This enables version caching: orchestrator can retry with fresh version on conflict
+	if resp.StatusCode == http.StatusConflict {
+		actualVersion := resp.Header.Get("Configuration-Version")
+		return false, &client.VersionConflictError{
+			ExpectedVersion: version64,
+			ActualVersion:   actualVersion,
+		}
+	}
 
 	// Check if the update triggered a reload (202 = reload, 200 = runtime change)
 	reloadTriggered = resp.StatusCode == http.StatusAccepted
