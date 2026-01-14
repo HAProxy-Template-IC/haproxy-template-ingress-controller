@@ -94,7 +94,8 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 
 	// Update HAProxyCfg status with child resource references
 	if err := p.updateRuntimeConfigStatus(ctx, runtimeConfig, result); err != nil {
-		p.logger.Warn("failed to update runtime config status",
+		p.logger.Debug("status update conflict (will retry on next reconciliation)",
+			"type", "runtime_config_status",
 			"name", runtimeConfig.Name,
 			"error", err,
 		)
@@ -124,7 +125,8 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for _, mapFile := range req.AuxiliaryFiles.MapFiles {
 		mapFileName, err := p.createOrUpdateMapFile(ctx, req, runtimeConfig, mapFile)
 		if err != nil {
-			p.logger.Warn("failed to create/update map file",
+			p.logger.Debug("auxiliary file update conflict (will retry on next reconciliation)",
+				"type", "map_file",
 				"name", mapFile.Path,
 				"error", err,
 			)
@@ -137,7 +139,8 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for _, cert := range req.AuxiliaryFiles.SSLCertificates {
 		secretName, err := p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, cert)
 		if err != nil {
-			p.logger.Warn("failed to create/update SSL secret",
+			p.logger.Debug("auxiliary file update conflict (will retry on next reconciliation)",
+				"type", "ssl_secret",
 				"path", cert.Path,
 				"error", err,
 			)
@@ -150,7 +153,8 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for _, generalFile := range req.AuxiliaryFiles.GeneralFiles {
 		generalFileName, err := p.createOrUpdateGeneralFile(ctx, req, runtimeConfig, generalFile)
 		if err != nil {
-			p.logger.Warn("failed to create/update general file",
+			p.logger.Debug("auxiliary file update conflict (will retry on next reconciliation)",
+				"type", "general_file",
 				"name", generalFile.Filename,
 				"error", err,
 			)
@@ -163,7 +167,8 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for _, crtListFile := range req.AuxiliaryFiles.CRTListFiles {
 		crtListFileName, err := p.createOrUpdateCRTListFile(ctx, req, runtimeConfig, crtListFile)
 		if err != nil {
-			p.logger.Warn("failed to create/update crt-list file",
+			p.logger.Debug("auxiliary file update conflict (will retry on next reconciliation)",
+				"type", "crt_list_file",
 				"path", crtListFile.Path,
 				"error", err,
 			)
@@ -256,8 +261,9 @@ func (p *Publisher) updateAuxiliaryFileDeploymentStatus(ctx context.Context, aux
 
 	for _, mapFileRef := range auxFiles.MapFiles {
 		if err := p.updateMapFileDeploymentStatus(ctx, mapFileRef.Namespace, mapFileRef.Name, podStatus); err != nil {
-			p.logger.Warn("failed to update map file deployment status",
-				"mapFile", mapFileRef.Name,
+			p.logger.Debug("deployment status update conflict (will retry on next reconciliation)",
+				"type", "map_file",
+				"name", mapFileRef.Name,
 				"error", err,
 			)
 		}
@@ -265,8 +271,9 @@ func (p *Publisher) updateAuxiliaryFileDeploymentStatus(ctx context.Context, aux
 
 	for _, generalFileRef := range auxFiles.GeneralFiles {
 		if err := p.updateGeneralFileDeploymentStatus(ctx, generalFileRef.Namespace, generalFileRef.Name, podStatus); err != nil {
-			p.logger.Warn("failed to update general file deployment status",
-				"generalFile", generalFileRef.Name,
+			p.logger.Debug("deployment status update conflict (will retry on next reconciliation)",
+				"type", "general_file",
+				"name", generalFileRef.Name,
 				"error", err,
 			)
 		}
@@ -274,8 +281,9 @@ func (p *Publisher) updateAuxiliaryFileDeploymentStatus(ctx context.Context, aux
 
 	for _, crtListFileRef := range auxFiles.CRTListFiles {
 		if err := p.updateCRTListFileDeploymentStatus(ctx, crtListFileRef.Namespace, crtListFileRef.Name, podStatus); err != nil {
-			p.logger.Warn("failed to update crt-list file deployment status",
-				"crtListFile", crtListFileRef.Name,
+			p.logger.Debug("deployment status update conflict (will retry on next reconciliation)",
+				"type", "crt_list_file",
+				"name", crtListFileRef.Name,
 				"error", err,
 			)
 		}
@@ -493,7 +501,8 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 		return nil
 	})
 	if err != nil {
-		p.logger.Warn("failed to update runtime config status",
+		p.logger.Debug("status update conflict during cleanup (will retry on next reconciliation)",
+			"type", "runtime_config_status",
 			"name", runtimeConfig.Name,
 			"error", err,
 		)
@@ -852,7 +861,8 @@ func (p *Publisher) updateCreatedStatus(ctx context.Context, req *PublishRequest
 		HAProxyCfgs(req.TemplateConfigNamespace).
 		UpdateStatus(ctx, created, metav1.UpdateOptions{})
 	if err != nil {
-		p.logger.Warn("failed to update runtime config status after creation",
+		p.logger.Debug("status update conflict after creation (will retry on next reconciliation)",
+			"type", "runtime_config_status",
 			"name", created.Name,
 			"error", err,
 		)
@@ -906,7 +916,8 @@ func (p *Publisher) updateExistingStatus(ctx context.Context, req *PublishReques
 		HAProxyCfgs(req.TemplateConfigNamespace).
 		UpdateStatus(ctx, updated, metav1.UpdateOptions{})
 	if err != nil {
-		p.logger.Warn("failed to update runtime config status",
+		p.logger.Debug("status update conflict (will retry on next reconciliation)",
+			"type", "runtime_config_status",
 			"name", updated.Name,
 			"error", err,
 		)
