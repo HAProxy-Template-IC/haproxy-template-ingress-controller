@@ -1428,7 +1428,8 @@ func setupReconciliation(
 	// Trigger initial reconciliation to bootstrap the pipeline
 	// This ensures at least one reconciliation cycle runs even with 0 resources
 	// A new correlation ID is generated to trace this initial reconciliation cycle
-	initialReconciliation := events.NewReconciliationTriggeredEvent("initial_sync_complete", events.WithNewCorrelation())
+	// Initial sync is NOT coalescible - it must be processed to establish initial state
+	initialReconciliation := events.NewReconciliationTriggeredEvent("initial_sync_complete", false, events.WithNewCorrelation())
 	bus.Publish(initialReconciliation)
 	logger.Debug("Published initial reconciliation trigger (buffered until EventBus.Start())",
 		"correlation_id", initialReconciliation.CorrelationID())

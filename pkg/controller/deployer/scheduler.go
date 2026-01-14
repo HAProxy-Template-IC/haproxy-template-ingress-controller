@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -50,6 +51,7 @@ type scheduledDeployment struct {
 	endpoints     []interface{}
 	reason        string
 	correlationID string // Correlation ID for event tracing
+	coalescible   bool   // Whether this deployment can be coalesced (skipped if newer available)
 }
 
 // DeploymentScheduler implements deployment scheduling with rate limiting.
@@ -78,6 +80,7 @@ type DeploymentScheduler struct {
 	lastValidatedConfig     string        // Last validated HAProxy config
 	lastValidatedAux        interface{}   // Last validated auxiliary files
 	lastCorrelationID       string        // Correlation ID from last validation event
+	lastCoalescible         bool          // Coalescibility flag from last validation event
 	currentEndpoints        []interface{} // Current HAProxy pod endpoints
 	hasValidConfig          bool          // Whether we have a validated config to deploy
 	runtimeConfigName       string        // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
@@ -343,6 +346,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	s.lastValidatedConfig = config
 	s.lastValidatedAux = auxFiles
 	s.lastCorrelationID = correlationID
+	s.lastCoalescible = event.Coalescible()
 	s.hasValidConfig = true
 	s.mu.Unlock()
 
@@ -380,20 +384,47 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	}
 
 	// Schedule deployment to current endpoints (or queue if deployment in progress)
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "config_validation", correlationID)
+	// Propagate coalescibility from validation event through the deployment pipeline
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "config_validation", correlationID, event.Coalescible())
 }
 
-// handlePodsDiscovered handles HAProxy pod discovery/changes.
+// handlePodsDiscovered handles HAProxy pod discovery/changes with coalescing.
 //
 // This schedules deployment of the last validated configuration to the new set of endpoints.
 // This is called when HAProxy pods are added/removed/updated without config changes.
+//
+// After processing the initial event, it drains the event channel for any additional
+// coalescible HAProxyPodsDiscoveredEvents and processes only the latest one. This prevents
+// queue buildup during high-frequency pod churn (scaling events, rolling updates).
 func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *events.HAProxyPodsDiscoveredEvent) {
+	s.performPodsDiscovered(ctx, event)
+
+	// After processing completes, drain for latest coalescible event
+	for {
+		latest, supersededCount := coalesce.DrainLatest[*events.HAProxyPodsDiscoveredEvent](
+			s.eventChan,
+			func(e busevents.Event) { s.handleEvent(ctx, e) },
+		)
+		if latest == nil {
+			return
+		}
+		if supersededCount > 0 {
+			s.logger.Debug("Coalesced HAProxy pods discovered events",
+				"superseded_count", supersededCount)
+		}
+		s.performPodsDiscovered(ctx, latest)
+	}
+}
+
+// performPodsDiscovered executes the actual pod discovery handling logic.
+func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *events.HAProxyPodsDiscoveredEvent) {
 	s.mu.Lock()
 	s.currentEndpoints = event.Endpoints
 	endpointCount := len(event.Endpoints)
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
 	correlationID := s.lastCorrelationID
+	coalescible := s.lastCoalescible
 	hasValidConfig := s.hasValidConfig
 	s.mu.Unlock()
 
@@ -411,8 +442,8 @@ func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *e
 	}
 
 	// Schedule deployment of last validated config to new endpoints (or queue if in progress)
-	// Use the correlation ID from the last validation for traceability
-	s.scheduleOrQueue(ctx, config, auxFiles, event.Endpoints, "pod_discovery", correlationID)
+	// Use the correlation ID and coalescibility from the last validation for traceability
+	s.scheduleOrQueue(ctx, config, auxFiles, event.Endpoints, "pod_discovery", correlationID, coalescible)
 }
 
 // handleValidationFailed handles validation failure events.
@@ -452,7 +483,8 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	}
 
 	// Schedule fallback deployment with last known good config
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "validation_fallback", correlationID)
+	// Fallback deployments are NOT coalescible - they must execute to ensure consistency
+	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "validation_fallback", correlationID, false)
 }
 
 // handleDeploymentCompleted handles deployment completion events.
@@ -488,7 +520,7 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 
 		// Use scheduleOrQueue for proper mutex management and goroutine control
 		// This ensures only one scheduling goroutine runs at a time
-		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.endpoints, pending.reason, pending.correlationID)
+		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.endpoints, pending.reason, pending.correlationID, pending.coalescible)
 		return
 	}
 
@@ -506,6 +538,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 	endpoints []interface{},
 	reason string,
 	correlationID string,
+	coalescible bool,
 ) {
 	s.schedulerMutex.Lock()
 
@@ -517,6 +550,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 			endpoints:     endpoints,
 			reason:        reason,
 			correlationID: correlationID,
+			coalescible:   coalescible,
 		}
 		s.schedulerMutex.Unlock()
 		s.logger.Debug("Deployment in progress, queued for later",
@@ -533,7 +567,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 
 	// Schedule deployment asynchronously to avoid blocking event loop
 	// This allows new events to be received and queued while we handle rate limiting
-	go s.scheduleWithRateLimitUnlocked(ctx, config, auxFiles, endpoints, reason, correlationID)
+	go s.scheduleWithRateLimitUnlocked(ctx, config, auxFiles, endpoints, reason, correlationID, coalescible)
 }
 
 // scheduleWithRateLimitUnlocked schedules a deployment, enforcing rate limiting.
@@ -547,6 +581,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	endpoints []interface{},
 	reason string,
 	correlationID string,
+	coalescible bool,
 ) {
 	// Get last deployment time for rate limiting
 	s.schedulerMutex.Lock()
@@ -608,7 +643,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		"correlation_id", correlationID)
 
 	s.eventBus.Publish(events.NewDeploymentScheduledEvent(
-		config, auxFiles, endpoints, runtimeConfigName, runtimeConfigNamespace, reason,
+		config, auxFiles, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, coalescible,
 		events.WithCorrelation(correlationID, correlationID),
 	))
 
@@ -650,7 +685,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 
 	// Recursive: schedule pending (we're still marked as in-progress)
 	s.scheduleWithRateLimitUnlocked(ctx, pending.config, pending.auxFiles,
-		pending.endpoints, pending.reason, pending.correlationID)
+		pending.endpoints, pending.reason, pending.correlationID, pending.coalescible)
 }
 
 // handleConfigPublished handles ConfigPublishedEvent by caching runtime config metadata.
@@ -745,11 +780,12 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 			"reason", pending.reason+"_timeout_retry",
 			"correlation_id", pending.correlationID)
 		s.scheduleOrQueue(ctx, pending.config, pending.auxFiles,
-			pending.endpoints, pending.reason+"_timeout_retry", pending.correlationID)
+			pending.endpoints, pending.reason+"_timeout_retry", pending.correlationID, pending.coalescible)
 	}
 
 	// Trigger a new reconciliation to recover from the stuck state
-	s.eventBus.Publish(events.NewReconciliationTriggeredEvent("deployment_timeout_recovery"))
+	// Timeout recovery is NOT coalescible - it must be processed to recover from stuck state
+	s.eventBus.Publish(events.NewReconciliationTriggeredEvent("deployment_timeout_recovery", false))
 }
 
 // HealthCheck implements the lifecycle.HealthChecker interface.

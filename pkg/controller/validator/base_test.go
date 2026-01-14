@@ -513,7 +513,7 @@ func TestBaseValidator_IgnoresOtherEvents(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Publish some non-validation events
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
 
 	// These should be ignored, so the handler should not be called

@@ -249,7 +249,7 @@ func TestLeaderEvents(t *testing.T) {
 // TestReconciliationEvents tests reconciliation.go event types.
 func TestReconciliationEvents(t *testing.T) {
 	t.Run("ReconciliationTriggeredEvent", func(t *testing.T) {
-		event := NewReconciliationTriggeredEvent("config_change")
+		event := NewReconciliationTriggeredEvent("config_change", true)
 		require.NotNil(t, event)
 		assert.Equal(t, "config_change", event.Reason)
 		assert.Equal(t, EventTypeReconciliationTriggered, event.EventType())
@@ -257,7 +257,7 @@ func TestReconciliationEvents(t *testing.T) {
 	})
 
 	t.Run("ReconciliationTriggeredEvent_WithNewCorrelation", func(t *testing.T) {
-		event := NewReconciliationTriggeredEvent("config_change", WithNewCorrelation())
+		event := NewReconciliationTriggeredEvent("config_change", true, WithNewCorrelation())
 		require.NotNil(t, event)
 		assert.NotEmpty(t, event.CorrelationID())
 		assert.NotEmpty(t, event.EventID())
@@ -458,6 +458,7 @@ func TestTemplateEvents(t *testing.T) {
 			5,
 			100,
 			"resource_change",
+			true, // coalescible
 		)
 		require.NotNil(t, event)
 		assert.Equal(t, "haproxy config", event.HAProxyConfig)
@@ -474,7 +475,7 @@ func TestTemplateEvents(t *testing.T) {
 	})
 
 	t.Run("TemplateRenderedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0, "",
+		event := NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0, "", true,
 			WithCorrelation("corr-123", "cause-456"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
@@ -519,7 +520,7 @@ func TestValidationEvents(t *testing.T) {
 
 	t.Run("ValidationCompletedEvent", func(t *testing.T) {
 		warnings := []string{"warning1", "warning2"}
-		event := NewValidationCompletedEvent(warnings, 50, "config_change")
+		event := NewValidationCompletedEvent(warnings, 50, "config_change", true)
 		require.NotNil(t, event)
 		assert.Equal(t, warnings, event.Warnings)
 		assert.Equal(t, int64(50), event.DurationMs)
@@ -530,7 +531,7 @@ func TestValidationEvents(t *testing.T) {
 
 	t.Run("ValidationCompletedEvent_DefensiveCopy", func(t *testing.T) {
 		warnings := []string{"warning1"}
-		event := NewValidationCompletedEvent(warnings, 50, "")
+		event := NewValidationCompletedEvent(warnings, 50, "", true)
 
 		// Modify original
 		warnings[0] = "modified"
@@ -540,7 +541,7 @@ func TestValidationEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationCompletedEvent_EmptyWarnings", func(t *testing.T) {
-		event := NewValidationCompletedEvent(nil, 50, "")
+		event := NewValidationCompletedEvent(nil, 50, "", true)
 		require.NotNil(t, event)
 		assert.Nil(t, event.Warnings)
 	})
@@ -730,6 +731,7 @@ func TestDeploymentEvents(t *testing.T) {
 			"my-config",
 			"default",
 			"config_validation",
+			true, // coalescible
 		)
 		require.NotNil(t, event)
 		assert.Equal(t, "haproxy config", event.Config)
@@ -744,7 +746,7 @@ func TestDeploymentEvents(t *testing.T) {
 
 	t.Run("DeploymentScheduledEvent_DefensiveCopy", func(t *testing.T) {
 		endpoints := []interface{}{"ep1"}
-		event := NewDeploymentScheduledEvent("cfg", nil, endpoints, "n", "ns", "r")
+		event := NewDeploymentScheduledEvent("cfg", nil, endpoints, "n", "ns", "r", true)
 
 		// Modify original
 		endpoints[0] = "modified"
@@ -754,7 +756,7 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentScheduledEvent_WithCorrelation", func(t *testing.T) {
-		event := NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r",
+		event := NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r", true,
 			WithCorrelation("corr", "cause"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr", event.CorrelationID())
@@ -1050,7 +1052,7 @@ func TestCorrelation(t *testing.T) {
 
 	t.Run("PropagateCorrelation_FromCorrelatedEvent", func(t *testing.T) {
 		// Create a source event with correlation
-		sourceEvent := NewReconciliationTriggeredEvent("test", WithNewCorrelation())
+		sourceEvent := NewReconciliationTriggeredEvent("test", true, WithNewCorrelation())
 		sourceCorrelationID := sourceEvent.CorrelationID()
 		sourceEventID := sourceEvent.EventID()
 
@@ -1084,7 +1086,7 @@ func TestCorrelation(t *testing.T) {
 
 	t.Run("PropagateCorrelation_ChainPropagation", func(t *testing.T) {
 		// Simulate a chain: Event1 -> Event2 -> Event3
-		event1 := NewReconciliationTriggeredEvent("start", WithNewCorrelation())
+		event1 := NewReconciliationTriggeredEvent("start", true, WithNewCorrelation())
 
 		event2 := NewReconciliationStartedEvent("middle",
 			PropagateCorrelation(event1))
@@ -1139,7 +1141,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"BecameLeader", NewBecameLeaderEvent("id")},
 		{"LostLeadership", NewLostLeadershipEvent("id", "reason")},
 		{"NewLeaderObserved", NewNewLeaderObservedEvent("id", false)},
-		{"ReconciliationTriggered", NewReconciliationTriggeredEvent("reason")},
+		{"ReconciliationTriggered", NewReconciliationTriggeredEvent("reason", true)},
 		{"ReconciliationStarted", NewReconciliationStartedEvent("trigger")},
 		{"ReconciliationCompleted", NewReconciliationCompletedEvent(0)},
 		{"ReconciliationFailed", NewReconciliationFailedEvent("error", "phase")},
@@ -1155,11 +1157,11 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},
 		// Template events
-		{"TemplateRendered", NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0, "")},
+		{"TemplateRendered", NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0, "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		// Validation events
 		{"ValidationStarted", NewValidationStartedEvent()},
-		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "")},
+		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", true)},
 		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
 		{"ValidationTestsStarted", NewValidationTestsStartedEvent(0)},
 		{"ValidationTestsCompleted", NewValidationTestsCompletedEvent(0, 0, 0, 0)},
@@ -1169,7 +1171,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"InstanceDeployed", NewInstanceDeployedEvent(nil, 0, false)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
 		{"DeploymentCompleted", NewDeploymentCompletedEvent(DeploymentResult{})},
-		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r")},
+		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r", true)},
 		{"DriftPreventionTriggered", NewDriftPreventionTriggeredEvent(0)},
 		// Discovery events
 		{"HAProxyPodsDiscovered", NewHAProxyPodsDiscoveredEvent(nil, 0)},

@@ -248,7 +248,7 @@ func TestRingBuffer_FindByCorrelationID(t *testing.T) {
 	rb := NewRingBuffer(10)
 
 	// Add events with correlation using real controller events
-	event1 := ctlevents.NewReconciliationTriggeredEvent("test", ctlevents.WithNewCorrelation())
+	event1 := ctlevents.NewReconciliationTriggeredEvent("test", true, ctlevents.WithNewCorrelation())
 	correlationID := event1.CorrelationID()
 	rb.Add(event1)
 
@@ -257,7 +257,7 @@ func TestRingBuffer_FindByCorrelationID(t *testing.T) {
 	rb.Add(event2)
 
 	// Add event with different correlation
-	event3 := ctlevents.NewReconciliationTriggeredEvent("other", ctlevents.WithNewCorrelation())
+	event3 := ctlevents.NewReconciliationTriggeredEvent("other", true, ctlevents.WithNewCorrelation())
 	rb.Add(event3)
 
 	// Add non-correlated event (mockEvent doesn't implement CorrelatedEvent)

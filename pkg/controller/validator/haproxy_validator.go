@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -67,6 +68,7 @@ type HAProxyValidatorComponent struct {
 	lastValidationDurationMs int64
 	lastCorrelationID        string // Correlation ID from triggering event
 	lastTriggerReason        string // Reason from ReconciliationTriggeredEvent (e.g., "drift_prevention")
+	lastCoalescible          bool   // Coalescibility flag from TemplateRenderedEvent
 	hasValidationResult      bool
 
 	// Config hash cache to skip re-validating identical failed configs
@@ -154,9 +156,44 @@ func (v *HAProxyValidatorComponent) handleEvent(event busevents.Event) {
 	}
 }
 
-// handleTemplateRendered validates the rendered HAProxy configuration.
-// Propagates correlation ID and trigger reason from the triggering event to validation events.
+// handleTemplateRendered implements "latest wins" coalescing for template rendered events.
+//
+// When multiple coalescible TemplateRenderedEvents arrive while validation is in progress,
+// intermediate events are superseded - only the latest pending event is processed.
+// This prevents queue backlog where validation can't keep up with high-frequency renders.
+//
+// Non-coalescible events (e.g., from drift_prevention) are always processed and never skipped.
+//
+// Uses the centralized coalesce.DrainLatest utility for consistent behavior across components.
 func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.TemplateRenderedEvent) {
+	// Process current event
+	v.performValidation(event)
+
+	// After validation completes, drain the event channel for any pending coalescible events.
+	// Since the event loop is single-threaded, events buffer in eventChan while performValidation executes.
+	// We process only the latest coalescible event, handling other event types normally.
+	for {
+		latest, supersededCount := coalesce.DrainLatest[*events.TemplateRenderedEvent](
+			v.eventChan,
+			v.handleEvent, // Handle non-coalescible and other event types
+		)
+		if latest == nil {
+			return
+		}
+
+		if supersededCount > 0 {
+			v.logger.Debug("Coalesced template rendered events",
+				"superseded_count", supersededCount,
+				"processing", latest.CorrelationID())
+		}
+		v.performValidation(latest)
+	}
+}
+
+// performValidation validates the rendered HAProxy configuration.
+// Propagates correlation ID and trigger reason from the triggering event to validation events.
+// This method is called by handleTemplateRendered after coalescing logic.
+func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRenderedEvent) {
 	startTime := time.Now()
 	correlationID := event.CorrelationID()
 	triggerReason := event.TriggerReason
@@ -268,6 +305,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 	v.lastValidationDurationMs = durationMs
 	v.lastCorrelationID = correlationID
 	v.lastTriggerReason = triggerReason
+	v.lastCoalescible = event.Coalescible()
 	v.hasValidationResult = true
 	v.lastConfigHash = ""        // Clear cache - new valid config
 	v.lastValidationErrors = nil // Clear cached errors
@@ -277,6 +315,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 		[]string{}, // No warnings
 		durationMs,
 		triggerReason,
+		event.Coalescible(),
 		events.PropagateCorrelation(event),
 	))
 }
@@ -296,6 +335,7 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 	durationMs := v.lastValidationDurationMs
 	correlationID := v.lastCorrelationID
 	triggerReason := v.lastTriggerReason
+	coalescible := v.lastCoalescible
 	v.mu.RUnlock()
 
 	if !hasResult {
@@ -308,13 +348,15 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 			"warnings", len(warnings),
 			"duration_ms", durationMs,
 			"correlation_id", correlationID,
-			"trigger_reason", triggerReason)
+			"trigger_reason", triggerReason,
+			"coalescible", coalescible)
 
 		// Re-publish with original correlation ID so the deployment can be traced
 		v.eventBus.Publish(events.NewValidationCompletedEvent(
 			warnings,
 			durationMs,
 			triggerReason,
+			coalescible,
 			events.WithCorrelation(correlationID, correlationID),
 		))
 	} else {

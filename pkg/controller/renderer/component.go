@@ -32,6 +32,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
@@ -351,72 +352,49 @@ func (c *Component) createPathResolvers(env *validationEnvironment) (production,
 
 // handleReconciliationTriggered implements "latest wins" coalescing for reconciliation events.
 //
-// When multiple ReconciliationTriggeredEvents arrive while rendering is in progress,
+// When multiple coalescible ReconciliationTriggeredEvents arrive while rendering is in progress,
 // intermediate events are superseded - only the latest pending trigger is processed.
 // This prevents queue backlog where measured reconciliation times grow progressively
 // when events arrive faster than they can be processed.
 //
+// Non-coalescible events (e.g., initial_sync, drift_prevention) are always processed and
+// never skipped, even if newer events are available.
+//
 // Since the event loop is single-threaded, events buffer in eventChan during rendering.
-// After each render completes, we drain the channel to find the latest trigger and
-// process only that one, skipping intermediate triggers.
+// After each render completes, we drain the channel to find the latest coalescible trigger
+// and process only that one, skipping intermediate coalescible triggers.
 //
 // Pattern:
 //
-//	t=0:     Trigger #1 → Render starts (takes ~3s)
-//	t=500:   Trigger #2 → Buffers in eventChan
-//	t=1000:  Trigger #3 → Buffers in eventChan
+//	t=0:     Trigger #1 (coalescible) → Render starts (takes ~3s)
+//	t=500:   Trigger #2 (coalescible) → Buffers in eventChan
+//	t=1000:  Trigger #3 (coalescible) → Buffers in eventChan
 //	t=3000:  #1 done → Drain channel, find #3 (latest), skip #2
 //	t=6000:  #3 done
 //
-// This follows the same pattern as DeploymentScheduler.
+// Uses the centralized coalesce.DrainLatest utility for consistent behavior across components.
 func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTriggeredEvent) {
 	// Process current event
 	c.performRender(event)
 
-	// After rendering completes, drain the event channel for any pending reconciliation triggers.
+	// After rendering completes, drain the event channel for any pending coalescible triggers.
 	// Since the event loop is single-threaded, events buffer in eventChan while performRender executes.
-	// We process only the latest trigger (coalescing), handling other event types normally.
+	// We process only the latest coalescible trigger, handling other event types normally.
 	for {
-		latest := c.drainReconciliationTriggers()
+		latest, supersededCount := coalesce.DrainLatest[*events.ReconciliationTriggeredEvent](
+			c.eventChan,
+			c.handleEvent, // Handle non-coalescible and other event types
+		)
 		if latest == nil {
 			return
 		}
 
-		c.logger.Debug("Processing coalesced reconciliation trigger",
-			"correlation_id", latest.CorrelationID(),
-			"reason", latest.Reason)
-		c.performRender(latest)
-	}
-}
-
-// drainReconciliationTriggers non-blocking drains the event channel for ReconciliationTriggeredEvents,
-// returning only the latest one. Other event types (e.g., BecameLeaderEvent) are handled inline.
-func (c *Component) drainReconciliationTriggers() *events.ReconciliationTriggeredEvent {
-	var latest *events.ReconciliationTriggeredEvent
-	supersededCount := 0
-
-	for {
-		select {
-		case event := <-c.eventChan:
-			switch ev := event.(type) {
-			case *events.ReconciliationTriggeredEvent:
-				if latest != nil {
-					supersededCount++
-				}
-				latest = ev
-			default:
-				// Handle non-reconciliation events normally
-				c.handleEvent(event)
-			}
-		default:
-			// No more events in channel
-			if supersededCount > 0 {
-				c.logger.Debug("Coalesced reconciliation triggers",
-					"superseded_count", supersededCount,
-					"processing", latest.CorrelationID())
-			}
-			return latest
+		if supersededCount > 0 {
+			c.logger.Debug("Coalesced reconciliation triggers",
+				"superseded_count", supersededCount,
+				"processing", latest.CorrelationID())
 		}
+		c.performRender(latest)
 	}
 }
 
@@ -527,7 +505,7 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 	// Update checksum before publishing
 	c.lastRenderedChecksum = checksumHex
 
-	// Publish success event with both rendered configs, propagating correlation
+	// Publish success event with both rendered configs, propagating correlation and coalescibility
 	c.eventBus.Publish(events.NewTemplateRenderedEvent(
 		productionResult.haproxyConfig,
 		validationResult.haproxyConfig,
@@ -537,6 +515,7 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 		auxFileCount,
 		durationMs,
 		event.Reason,
+		event.Coalescible(),
 		events.PropagateCorrelation(event),
 	))
 }

@@ -54,6 +54,7 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 		"test-runtime-config",
 		"test-namespace",
 		"test",
+		true, // coalescible
 	)
 
 	// Publish event
@@ -163,6 +164,7 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 		"test-runtime-config",
 		"test-namespace",
 		"test",
+		true, // coalescible
 	))
 
 	// Wait for event processing
@@ -348,6 +350,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 			"test-runtime-config",
 			"test-namespace",
 			"test",
+			true, // coalescible
 		)
 		// Should not panic when receiving valid event with no endpoints
 		deployer.handleEvent(ctx, event)
@@ -370,6 +373,7 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 		"test-runtime-config",
 		"test-namespace",
 		"test",
+		true, // coalescible
 	)
 
 	// Process first event - should set flag
@@ -406,6 +410,7 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 		"test-runtime-config",
 		"test-namespace",
 		"duplicate",
+		true, // coalescible
 	)
 
 	// This should be rejected (flag was already set)

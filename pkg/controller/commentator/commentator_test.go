@@ -299,7 +299,7 @@ func TestEventCommentator_GenerateInsight_ReconciliationEvents(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	t.Run("ReconciliationTriggeredEvent", func(t *testing.T) {
-		event := events.NewReconciliationTriggeredEvent("config_change")
+		event := events.NewReconciliationTriggeredEvent("config_change", true)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -349,7 +349,7 @@ func TestEventCommentator_GenerateInsight_TemplateEvents(t *testing.T) {
 		// haproxyConfig, validationHAProxyConfig, validationPaths, auxiliaryFiles, validationAuxiliaryFiles, auxFileCount, durationMs, triggerReason
 		// ConfigBytes is calculated from len(haproxyConfig)
 		haproxyConfig := "test haproxy config content"
-		event := events.NewTemplateRenderedEvent(haproxyConfig, "validation-config", nil, nil, nil, 3, 50, "")
+		event := events.NewTemplateRenderedEvent(haproxyConfig, "validation-config", nil, nil, nil, 3, 50, "", true)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -778,7 +778,7 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationCompletedEvent without warnings", func(t *testing.T) {
-		event := events.NewValidationCompletedEvent(nil, 150, "")
+		event := events.NewValidationCompletedEvent(nil, 150, "", true)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -788,7 +788,7 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationCompletedEvent with warnings", func(t *testing.T) {
-		event := events.NewValidationCompletedEvent([]string{"warning1", "warning2"}, 200, "")
+		event := events.NewValidationCompletedEvent([]string{"warning1", "warning2"}, 200, "", true)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -1017,7 +1017,7 @@ func TestEventCommentator_ReconciliationCorrelation(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Create a new triggered event
-	triggeredEvent := events.NewReconciliationTriggeredEvent("resource_change")
+	triggeredEvent := events.NewReconciliationTriggeredEvent("resource_change", true)
 
 	// Generate insight should mention previous reconciliation
 	insight, _ := ec.generateInsight(triggeredEvent)
@@ -1046,7 +1046,7 @@ func TestEventCommentator_AppendCorrelation(t *testing.T) {
 
 	t.Run("adds all correlation fields for CorrelatedEvent", func(t *testing.T) {
 		// Create event with correlation
-		event := events.NewReconciliationTriggeredEvent("test", events.WithNewCorrelation())
+		event := events.NewReconciliationTriggeredEvent("test", true, events.WithNewCorrelation())
 		eventID := event.EventID()
 		correlationID := event.CorrelationID()
 
@@ -1064,7 +1064,7 @@ func TestEventCommentator_AppendCorrelation(t *testing.T) {
 
 	t.Run("adds only event_id when no correlation", func(t *testing.T) {
 		// Create event without correlation - still gets event_id
-		event := events.NewReconciliationTriggeredEvent("test")
+		event := events.NewReconciliationTriggeredEvent("test", true)
 		eventID := event.EventID()
 
 		// Start with base attrs
@@ -1108,7 +1108,7 @@ func TestEventCommentator_FindByCorrelationID(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	// Add events with correlation
-	event1 := events.NewReconciliationTriggeredEvent("test", events.WithNewCorrelation())
+	event1 := events.NewReconciliationTriggeredEvent("test", true, events.WithNewCorrelation())
 	correlationID := event1.CorrelationID()
 	ec.ringBuffer.Add(event1)
 
@@ -1117,7 +1117,7 @@ func TestEventCommentator_FindByCorrelationID(t *testing.T) {
 	ec.ringBuffer.Add(event2)
 
 	// Add event with different correlation
-	event3 := events.NewReconciliationTriggeredEvent("other", events.WithNewCorrelation())
+	event3 := events.NewReconciliationTriggeredEvent("other", true, events.WithNewCorrelation())
 	ec.ringBuffer.Add(event3)
 
 	// Find by correlation ID

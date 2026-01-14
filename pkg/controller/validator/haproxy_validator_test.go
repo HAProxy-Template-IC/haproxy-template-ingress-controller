@@ -120,7 +120,7 @@ backend servers
 	time.Sleep(50 * time.Millisecond)
 
 	// Trigger reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	// Wait for validation completed event
 	// Use longer timeout for race detector (which makes execution 2-10x slower)
@@ -206,7 +206,7 @@ backend servers
 
 	time.Sleep(50 * time.Millisecond)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	// Wait for validation failed event
 	// Use longer timeout for race detector (which makes execution 2-10x slower)
@@ -291,7 +291,7 @@ backend servers
 
 	time.Sleep(50 * time.Millisecond)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	// Wait for validation completed event
 	// Use longer timeout for race detector (which makes execution 2-10x slower)
@@ -383,12 +383,12 @@ backend servers
 	time.Sleep(50 * time.Millisecond)
 
 	// First reconciliation should produce validation
-	bus.Publish(events.NewReconciliationTriggeredEvent("first"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("first", true))
 	assert.True(t, waitForValidation(eventChan, 10*time.Second), "First reconciliation should produce validation")
 
 	// Second reconciliation with identical content should be deduplicated (no validation event).
 	// The renderer skips emitting TemplateRenderedEvent when content checksum matches.
-	bus.Publish(events.NewReconciliationTriggeredEvent("second"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("second", true))
 	assert.False(t, waitForValidation(eventChan, 200*time.Millisecond), "Identical content should be deduplicated")
 }
 
@@ -528,6 +528,7 @@ backend servers
 		0,                           // auxFileCount
 		100,                         // durationMs
 		"initial",                   // triggerReason
+		true,                        // coalescible
 	))
 
 	// Wait for first validation
@@ -614,7 +615,7 @@ backend servers
 	time.Sleep(50 * time.Millisecond)
 
 	// Trigger a reconciliation that will fail validation
-	bus.Publish(events.NewReconciliationTriggeredEvent("initial"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("initial", true))
 
 	// Wait for validation failure
 	timeout := time.After(10 * time.Second)
@@ -682,7 +683,8 @@ func TestHAProxyValidator_InvalidValidationPaths(t *testing.T) {
 		&dataplane.AuxiliaryFiles{}, // Valid validation aux files
 		0,
 		0,
-		"", // triggerReason
+		"",   // triggerReason
+		true, // coalescible
 	)
 	bus.Publish(event)
 
@@ -732,7 +734,8 @@ func TestHAProxyValidator_InvalidAuxiliaryFiles(t *testing.T) {
 		"invalid-aux-files-type",     // Invalid ValidationAuxiliaryFiles type
 		0,
 		0,
-		"", // triggerReason
+		"",   // triggerReason
+		true, // coalescible
 	)
 	bus.Publish(event)
 

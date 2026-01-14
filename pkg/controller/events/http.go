@@ -23,6 +23,8 @@ import "time"
 // HTTPResourceUpdatedEvent is published when HTTP resource content has changed.
 // This triggers a reconciliation cycle with the new content as "pending".
 // The content must pass validation before being promoted to "accepted".
+// This event is always coalescible since it represents content state where only
+// the latest content for a URL matters.
 type HTTPResourceUpdatedEvent struct {
 	URL             string // The URL that was refreshed
 	ContentChecksum string // SHA256 checksum of new content
@@ -42,6 +44,11 @@ func NewHTTPResourceUpdatedEvent(url, checksum string, size int) *HTTPResourceUp
 
 func (e *HTTPResourceUpdatedEvent) EventType() string    { return EventTypeHTTPResourceUpdated }
 func (e *HTTPResourceUpdatedEvent) Timestamp() time.Time { return e.timestamp }
+
+// Coalescible returns true because HTTP resource update events represent state
+// where only the latest content matters. If the same URL updates multiple times
+// before reconciliation completes, older updates can be safely skipped.
+func (e *HTTPResourceUpdatedEvent) Coalescible() bool { return true }
 
 // HTTPResourceAcceptedEvent is published when pending HTTP content passes validation.
 // The content has been promoted from "pending" to "accepted" state.
