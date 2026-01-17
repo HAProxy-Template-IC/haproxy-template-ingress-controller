@@ -283,10 +283,11 @@ spec:
                       type: integer
                     deployedAt:
                       description: |-
-                        DeployedAt is the timestamp when configuration was last changed on this pod.
+                        DeployedAt is the timestamp when configuration was last successfully
+                        synchronized to this pod.
 
-                        This is only updated when actual operations are performed (TotalOperations > 0).
-                        To see when config was last verified (including no-op checks), use LastCheckedAt.
+                        Updated when actual operations are performed (TotalOperations > 0) or when
+                        drift prevention verifies configuration matches expected state.
                       format: date-time
                       type: string
                     fallbackUsed:
@@ -296,15 +297,6 @@ spec:
                         When true, indicates that incremental sync failed and a full raw configuration
                         push was used instead. Frequent fallbacks may indicate sync logic issues.
                       type: boolean
-                    lastCheckedAt:
-                      description: |-
-                        LastCheckedAt is the timestamp of the last successful sync operation.
-
-                        Updated on every successful sync (reconciliation or drift-prevention),
-                        regardless of whether operations were performed. Use this to verify
-                        when the config was last checked against HAProxy's current state.
-                      format: date-time
-                      type: string
                     lastError:
                       description: |-
                         LastError contains the error message from the most recent failed sync attempt.

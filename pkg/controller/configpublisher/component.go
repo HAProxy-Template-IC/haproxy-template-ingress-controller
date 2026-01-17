@@ -909,7 +909,6 @@ func (c *Component) processStatusWork(work *statusWorkItem) {
 		RuntimeConfigName:      event.RuntimeConfigName,
 		RuntimeConfigNamespace: event.RuntimeConfigNamespace,
 		PodName:                event.PodName,
-		LastCheckedAt:          &timestamp,
 		Checksum:               event.Checksum,
 		IsDriftCheck:           event.IsDriftCheck,
 	}

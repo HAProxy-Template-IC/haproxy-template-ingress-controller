@@ -838,24 +838,17 @@ type PodDeploymentStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	PodName string `json:"podName"`
 
-	// DeployedAt is the timestamp when configuration was last changed on this pod.
+	// DeployedAt is the timestamp when configuration was last successfully
+	// synchronized to this pod.
 	//
-	// This is only updated when actual operations are performed (TotalOperations > 0).
-	// To see when config was last verified (including no-op checks), use LastCheckedAt.
+	// Updated when actual operations are performed (TotalOperations > 0) or when
+	// drift prevention verifies configuration matches expected state.
 	// +kubebuilder:validation:Required
 	DeployedAt metav1.Time `json:"deployedAt"`
 
 	// Checksum of the configuration deployed to this pod.
 	// +optional
 	Checksum string `json:"checksum,omitempty"`
-
-	// LastCheckedAt is the timestamp of the last successful sync operation.
-	//
-	// Updated on every successful sync (reconciliation or drift-prevention),
-	// regardless of whether operations were performed. Use this to verify
-	// when the config was last checked against HAProxy's current state.
-	// +optional
-	LastCheckedAt *metav1.Time `json:"lastCheckedAt,omitempty"`
 
 	// LastReloadAt is the timestamp when HAProxy was last reloaded for this pod.
 	//

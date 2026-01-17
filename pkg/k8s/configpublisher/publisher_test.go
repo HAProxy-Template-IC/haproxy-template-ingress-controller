@@ -884,23 +884,20 @@ func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 // TestAddOrUpdatePodStatus_PreservesDeployedAt tests that existing deployedAt is preserved when new one is zero.
 func TestAddOrUpdatePodStatus_PreservesDeployedAt(t *testing.T) {
 	existingTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-	lastCheckedTime := metav1.NewTime(time.Now())
 
 	existing := []haproxyv1alpha1.PodDeploymentStatus{
 		{
-			PodName:       "haproxy-0",
-			DeployedAt:    existingTime,
-			LastCheckedAt: &lastCheckedTime,
-			Checksum:      "old-checksum",
+			PodName:    "haproxy-0",
+			DeployedAt: existingTime,
+			Checksum:   "old-checksum",
 		},
 	}
 
 	// Update with zero DeployedAt (simulates drift check with no operations)
 	newStatus := &haproxyv1alpha1.PodDeploymentStatus{
-		PodName:       "haproxy-0",
-		DeployedAt:    metav1.Time{}, // Zero value
-		LastCheckedAt: &lastCheckedTime,
-		Checksum:      "new-checksum",
+		PodName:    "haproxy-0",
+		DeployedAt: metav1.Time{}, // Zero value
+		Checksum:   "new-checksum",
 	}
 
 	result := addOrUpdatePodStatus(existing, newStatus)
@@ -910,57 +907,6 @@ func TestAddOrUpdatePodStatus_PreservesDeployedAt(t *testing.T) {
 	assert.Equal(t, "new-checksum", result[0].Checksum)
 	// DeployedAt should be preserved from existing
 	assert.Equal(t, existingTime, result[0].DeployedAt, "existing deployedAt should be preserved")
-}
-
-// TestAddOrUpdatePodStatus_UsesLastCheckedAtFallback tests that lastCheckedAt is used when deployedAt is zero
-// and no existing deployedAt exists.
-func TestAddOrUpdatePodStatus_UsesLastCheckedAtFallback(t *testing.T) {
-	lastCheckedTime := metav1.NewTime(time.Now())
-
-	// Existing pod with zero DeployedAt (edge case)
-	existing := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:       "haproxy-0",
-			DeployedAt:    metav1.Time{}, // Zero value
-			LastCheckedAt: nil,
-			Checksum:      "old-checksum",
-		},
-	}
-
-	// Update with zero DeployedAt but valid LastCheckedAt
-	newStatus := &haproxyv1alpha1.PodDeploymentStatus{
-		PodName:       "haproxy-0",
-		DeployedAt:    metav1.Time{}, // Zero value
-		LastCheckedAt: &lastCheckedTime,
-		Checksum:      "new-checksum",
-	}
-
-	result := addOrUpdatePodStatus(existing, newStatus)
-
-	require.Len(t, result, 1)
-	// DeployedAt should fall back to LastCheckedAt
-	assert.Equal(t, lastCheckedTime, result[0].DeployedAt, "deployedAt should fall back to lastCheckedAt")
-}
-
-// TestAddOrUpdatePodStatus_NewPodGetsDeployedAt tests that new pods get deployedAt set from lastCheckedAt.
-func TestAddOrUpdatePodStatus_NewPodGetsDeployedAt(t *testing.T) {
-	lastCheckedTime := metav1.NewTime(time.Now())
-
-	existing := []haproxyv1alpha1.PodDeploymentStatus{}
-
-	// New pod with zero DeployedAt but valid LastCheckedAt
-	newStatus := &haproxyv1alpha1.PodDeploymentStatus{
-		PodName:       "haproxy-0",
-		DeployedAt:    metav1.Time{}, // Zero value
-		LastCheckedAt: &lastCheckedTime,
-		Checksum:      "checksum",
-	}
-
-	result := addOrUpdatePodStatus(existing, newStatus)
-
-	require.Len(t, result, 1)
-	// DeployedAt should be set from LastCheckedAt
-	assert.Equal(t, lastCheckedTime, result[0].DeployedAt, "new pod should get deployedAt from lastCheckedAt")
 }
 
 // TestAddOrUpdatePodStatus_UpdatesExistingPod tests that existing pod is updated, not appended.

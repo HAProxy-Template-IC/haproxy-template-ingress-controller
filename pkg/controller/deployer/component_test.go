@@ -440,3 +440,64 @@ func TestComponent_ConvertEndpoints_InvalidType(t *testing.T) {
 	assert.Equal(t, "http://localhost:5555", endpoints[0].URL)
 	assert.Equal(t, "http://localhost:5556", endpoints[1].URL)
 }
+
+// TestComponent_isNoOpDriftCheck tests the helper function that determines
+// whether a drift check made meaningful changes that warrant publishing ConfigAppliedToPodEvent.
+func TestComponent_isNoOpDriftCheck(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	deployer := createTestDeployer(bus)
+
+	tests := []struct {
+		name       string
+		syncResult *dataplane.SyncResult
+		expected   bool
+	}{
+		{
+			name:       "nil sync result - skip",
+			syncResult: nil,
+			expected:   true,
+		},
+		{
+			name: "with operations - do not skip",
+			syncResult: &dataplane.SyncResult{
+				Details: dataplane.DiffDetails{
+					TotalOperations: 5,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "with reload - do not skip",
+			syncResult: &dataplane.SyncResult{
+				ReloadTriggered: true,
+				Details:         dataplane.DiffDetails{},
+			},
+			expected: false,
+		},
+		{
+			name: "no operations no reload - skip",
+			syncResult: &dataplane.SyncResult{
+				ReloadTriggered: false,
+				Details: dataplane.DiffDetails{
+					TotalOperations: 0,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "zero value details - skip",
+			syncResult: &dataplane.SyncResult{
+				ReloadTriggered: false,
+				Details:         dataplane.DiffDetails{},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deployer.isNoOpDriftCheck(tt.syncResult)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}

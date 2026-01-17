@@ -678,8 +678,9 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	assert.Equal(t, 2, pod.LastOperationSummary.BackendsAdded)
 }
 
-// TestComponent_ConfigAppliedToPodEvent_DriftCheck tests drift check handling.
-func TestComponent_ConfigAppliedToPodEvent_DriftCheck(t *testing.T) {
+// TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges tests drift checks that detected changes.
+// Note: No-op drift checks are filtered at the Deployer level and never publish ConfigAppliedToPodEvent.
+func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -712,7 +713,7 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Publish ConfigAppliedToPodEvent as drift check (no operations)
+	// Publish ConfigAppliedToPodEvent as drift check WITH operations (drift detected)
 	eventBus.Publish(events.NewConfigAppliedToPodEvent(
 		"test-config-haproxycfg",
 		"default",
@@ -720,22 +721,29 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck(t *testing.T) {
 		"haproxy-ns",
 		"checksum-drift",
 		true, // isDriftCheck
-		nil,  // no syncMetadata for drift check with no changes
+		&events.SyncMetadata{
+			SyncDuration: 100 * time.Millisecond,
+			OperationCounts: events.OperationCounts{
+				TotalAPIOperations: 1, // Drift was corrected
+				ServersAdded:       1,
+			},
+		},
 	))
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify deployment status was updated
+	// Verify deployment status WAS updated (drift with changes should update)
 	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
 		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
 
 	require.NoError(t, err)
-	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1, "drift check with changes should update status")
 
 	pod := runtimeConfig.Status.DeployedToPods[0]
 	assert.Equal(t, "haproxy-pod-drift", pod.PodName)
-	assert.NotNil(t, pod.LastCheckedAt, "LastCheckedAt should always be set")
+	assert.NotNil(t, pod.LastOperationSummary, "operation summary should be recorded")
+	assert.Equal(t, 1, pod.LastOperationSummary.TotalAPIOperations)
 }
 
 // TestComponent_ConfigAppliedToPodEvent_WithError tests error handling in sync metadata.

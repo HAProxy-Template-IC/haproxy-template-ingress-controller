@@ -20,6 +20,8 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 ### Changed
 
 - **Parallel Dataplane API operations**: Execute operations in parallel within each priority group, reducing sync time from sequential (~10-20s) to parallel (~sub-second) for large deployments
+- **Reduced CRD API load**: Skip status updates for no-op drift checks, reducing Kubernetes API calls by 95%+ during drift prevention
+- **Removed `lastCheckedAt` field**: Removed from `PodDeploymentStatus` in all CRDs (HAProxyCfg, HAProxyMapFile, HAProxyGeneralFile, HAProxyCRTListFile) to eliminate unnecessary status updates
 
 ### Fixed
 
