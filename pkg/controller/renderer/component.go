@@ -24,7 +24,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -37,13 +36,14 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -82,8 +82,8 @@ type Component struct {
 	eventChan          <-chan busevents.Event // Subscribed in Start() for leader-only pattern
 	engine             templating.Engine
 	config             *config.Config
-	stores             map[string]types.Store
-	haproxyPodStore    types.Store               // HAProxy controller pods store for pod-maxconn calculations
+	stores             map[string]stores.Store
+	haproxyPodStore    stores.Store              // HAProxy controller pods store for pod-maxconn calculations
 	httpStoreComponent *httpstore.Component      // HTTP resource store for dynamic HTTP content fetching
 	currentConfigStore *currentconfigstore.Store // Current deployed HAProxy config for slot preservation
 	logger             *slog.Logger
@@ -129,16 +129,16 @@ type Component struct {
 func New(
 	eventBus *busevents.EventBus,
 	cfg *config.Config,
-	stores map[string]types.Store,
-	haproxyPodStore types.Store,
+	storeMap map[string]stores.Store,
+	haproxyPodStore stores.Store,
 	currentConfigStore *currentconfigstore.Store,
 	capabilities dataplane.Capabilities,
 	logger *slog.Logger,
 ) (*Component, error) {
 	// Log stores received during initialization
 	logger.Debug("Creating renderer component",
-		"store_count", len(stores))
-	for resourceTypeName := range stores {
+		"store_count", len(storeMap))
+	for resourceTypeName := range storeMap {
 		logger.Debug("Renderer received store",
 			"resource_type", resourceTypeName)
 	}
@@ -169,7 +169,7 @@ func New(
 		eventBus:           eventBus,
 		engine:             engine,
 		config:             cfg,
-		stores:             stores,
+		stores:             storeMap,
 		haproxyPodStore:    haproxyPodStore,
 		currentConfigStore: currentConfigStore,
 		logger:             logger.With("component", ComponentName),
@@ -266,90 +266,6 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	}
 }
 
-// validationEnvironment holds temporary paths for validation rendering.
-type validationEnvironment struct {
-	tmpDir     string
-	mapsDir    string
-	sslDir     string
-	generalDir string
-	configFile string
-}
-
-// setupValidationEnvironment creates temporary validation directories.
-func (c *Component) setupValidationEnvironment() (*validationEnvironment, func(), error) {
-	tmpDir, err := os.MkdirTemp("", "haproxy-validate-*")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create temp directory: %w", err)
-	}
-
-	env := &validationEnvironment{
-		tmpDir:     tmpDir,
-		mapsDir:    filepath.Join(tmpDir, "maps"),
-		sslDir:     filepath.Join(tmpDir, "certs"),
-		generalDir: filepath.Join(tmpDir, "general"),
-		configFile: filepath.Join(tmpDir, "haproxy.cfg"),
-	}
-
-	for _, dir := range []string{env.mapsDir, env.sslDir, env.generalDir} {
-		if err := os.MkdirAll(dir, 0o750); err != nil {
-			_ = os.RemoveAll(tmpDir)
-			return nil, nil, fmt.Errorf("failed to create validation directory %s: %w", dir, err)
-		}
-	}
-
-	cleanup := func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			c.logger.Warn("Failed to clean up validation temp directory",
-				"path", tmpDir, "error", err)
-		}
-	}
-
-	return env, cleanup, nil
-}
-
-// toPathResolver converts dataplane.ResolvedPaths to templating.PathResolver.
-// This conversion is done in the controller layer to maintain architectural separation
-// between pkg/dataplane and pkg/templating.
-func toPathResolver(r *dataplane.ResolvedPaths) *templating.PathResolver {
-	return &templating.PathResolver{
-		MapsDir:    r.MapsDir,
-		SSLDir:     r.SSLDir,
-		CRTListDir: r.CRTListDir,
-		GeneralDir: r.GeneralDir,
-	}
-}
-
-// createPathResolvers creates production and validation path resolvers.
-// Uses centralized path resolution to ensure CRT-list fallback is handled consistently.
-func (c *Component) createPathResolvers(env *validationEnvironment) (production, validation *templating.PathResolver, validationPaths *dataplane.ValidationPaths) {
-	// Production paths from config
-	productionBase := dataplane.PathConfig{
-		MapsDir:    c.config.Dataplane.MapsDir,
-		SSLDir:     c.config.Dataplane.SSLCertsDir,
-		GeneralDir: c.config.Dataplane.GeneralStorageDir,
-	}
-	productionResolved := dataplane.ResolvePaths(productionBase, c.capabilities)
-	production = toPathResolver(productionResolved)
-
-	// Validation paths from temp environment
-	validationBase := dataplane.PathConfig{
-		MapsDir:    env.mapsDir,
-		SSLDir:     env.sslDir,
-		GeneralDir: env.generalDir,
-		ConfigFile: env.configFile,
-	}
-	validationResolved := dataplane.ResolvePaths(validationBase, c.capabilities)
-	validation = toPathResolver(validationResolved)
-	validationPaths = validationResolved.ToValidationPaths()
-
-	// Set TempDir so validator can clean up the validation temp directory.
-	// Cleanup is done by the validator after validation completes, not here,
-	// to prevent race conditions where cleanup runs before async validation.
-	validationPaths.TempDir = env.tmpDir
-
-	return production, validation, validationPaths
-}
-
 // handleReconciliationTriggered implements "latest wins" coalescing for reconciliation events.
 //
 // When multiple coalescible ReconciliationTriggeredEvents arrive while rendering is in progress,
@@ -399,7 +315,7 @@ func (c *Component) handleReconciliationTriggered(event *events.ReconciliationTr
 }
 
 // performRender renders all templates for a reconciliation event.
-// Renders configuration twice in parallel: once for production deployment, once for validation.
+// Uses single render with relative paths that work with HAProxy's `default-path config`.
 // Propagates correlation ID from the triggering event to the rendered event.
 // This method is called by handleReconciliationTriggered after coalescing logic.
 func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
@@ -413,105 +329,60 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 		"reason", event.Reason,
 		"correlation_id", correlationID)
 
-	// Setup validation environment (sequential - needed by both renders)
-	// Note: We don't call cleanup() here. The validator is responsible for cleaning up
-	// the temp directory after validation completes (via validationPaths.TempDir).
-	// This prevents race conditions where cleanup runs before async validation.
-	setupStart := time.Now()
-	validationEnv, _, err := c.setupValidationEnvironment()
-	if err != nil {
-		c.publishRenderFailure("validation-setup", err)
-		return
+	// Create path resolver with fixed relative paths.
+	// These paths work with HAProxy's `default-path config` directive.
+	// CRT-list files always use the general files directory to avoid triggering
+	// HAProxy reloads when creating CRT-list files through the native API.
+	pathResolver := &templating.PathResolver{
+		MapsDir:    "maps",
+		SSLDir:     "ssl",
+		CRTListDir: "files",
+		GeneralDir: "files",
 	}
 
-	// Create path resolvers (sequential - needed by both renders)
-	productionPathResolver, validationPathResolver, validationPaths := c.createPathResolvers(validationEnv)
-	setupMs := time.Since(setupStart).Milliseconds()
-
-	// Run production and validation renders in parallel
-	var productionResult, validationResult *singleRenderResult
-	var renderErr error
-
-	g, _ := errgroup.WithContext(c.ctx)
-
-	// Production render goroutine
-	g.Go(func() error {
-		result, err := c.renderSingle(productionPathResolver, false)
-		if err != nil {
-			return err
-		}
-		productionResult = result
-		return nil
-	})
-
-	// Validation render goroutine
-	g.Go(func() error {
-		result, err := c.renderSingle(validationPathResolver, true)
-		if err != nil {
-			return err
-		}
-		validationResult = result
-		return nil
-	})
-
-	// Wait for both renders to complete
-	if renderErr = g.Wait(); renderErr != nil {
+	// Render templates
+	result, err := c.renderSingle(pathResolver)
+	if err != nil {
 		// Error already published by renderSingle
 		return
 	}
 
-	// Calculate metrics and log timing breakdown
+	// Calculate metrics
 	durationMs := time.Since(startTime).Milliseconds()
-	auxFileCount := len(productionResult.auxiliaryFiles.MapFiles) +
-		len(productionResult.auxiliaryFiles.GeneralFiles) +
-		len(productionResult.auxiliaryFiles.SSLCertificates)
+	auxFileCount := len(result.auxiliaryFiles.MapFiles) +
+		len(result.auxiliaryFiles.GeneralFiles) +
+		len(result.auxiliaryFiles.SSLCertificates)
 
-	c.logger.Debug("Template rendering completed (parallel)",
+	c.logger.Debug("Template rendering completed",
 		"total_ms", durationMs,
-		"setup_ms", setupMs,
-		"prod_render_ms", productionResult.durationMs,
-		"val_render_ms", validationResult.durationMs,
-		"production_config_bytes", len(productionResult.haproxyConfig),
-		"validation_config_bytes", len(validationResult.haproxyConfig),
+		"render_ms", result.durationMs,
+		"config_bytes", len(result.haproxyConfig),
 		"auxiliary_files", auxFileCount,
 	)
 
-	// Compute checksum on production render (consistent paths across renders)
-	checksumHex := dataplane.ComputeContentChecksum(productionResult.haproxyConfig, productionResult.auxiliaryFiles)
+	// Compute checksum to detect unchanged content
+	checksumHex := dataplane.ComputeContentChecksum(result.haproxyConfig, result.auxiliaryFiles)
 
-	// Check if HTTP store has pending content needing validation.
-	// HTTP store uses two-phase content: pending → accepted.
-	// Production render uses accepted content; validation render includes pending.
-	// We must emit event if pending content exists to trigger validation/promotion.
-	httpStorePending := c.httpStoreComponent != nil &&
-		c.httpStoreComponent.GetStore().HasPendingValidation()
-
-	// Skip publishing only if:
-	// 1. Content unchanged (checksum matches), AND
-	// 2. No HTTP store pending content (which needs validation to promote)
-	if checksumHex == c.lastRenderedChecksum && !httpStorePending {
+	// Skip publishing if rendered content is unchanged.
+	// Note: HTTP content validation is handled separately via ProposalValidation.
+	// When HTTP content is validated and promoted, HTTPStore triggers its own
+	// ReconciliationTriggeredEvent, which will cause a fresh render with the
+	// promoted content. The Renderer no longer needs to know about HTTP pending state.
+	if checksumHex == c.lastRenderedChecksum {
 		c.logger.Debug("skipping template rendered event, content unchanged",
 			"checksum", checksumHex,
 			"trigger_reason", event.Reason,
 		)
-		// Clean up validation temp directory since we're not publishing the event
-		if err := os.RemoveAll(validationEnv.tmpDir); err != nil {
-			c.logger.Warn("failed to clean up validation temp directory",
-				"path", validationEnv.tmpDir, "error", err)
-		}
 		return
 	}
 
 	// Update checksum before publishing
 	c.lastRenderedChecksum = checksumHex
 
-	// Publish success event with both rendered configs, propagating correlation and coalescibility
+	// Publish success event with rendered config, propagating correlation and coalescibility
 	c.eventBus.Publish(events.NewTemplateRenderedEvent(
-		productionResult.haproxyConfig,
-		validationResult.haproxyConfig,
-		validationPaths,
-		productionResult.auxiliaryFiles,
-		validationResult.auxiliaryFiles,
+		result.haproxyConfig,
+		result.auxiliaryFiles,
 		auxFileCount,
 		durationMs,
 		event.Reason,
@@ -520,18 +391,13 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 	))
 }
 
-// renderSingle performs a single render (production or validation) and returns the result.
-// This is called concurrently for production and validation renders.
-func (c *Component) renderSingle(pathResolver *templating.PathResolver, isValidation bool) (*singleRenderResult, error) {
+// renderSingle performs template rendering and returns the result.
+func (c *Component) renderSingle(pathResolver *templating.PathResolver) (*singleRenderResult, error) {
 	renderStart := time.Now()
-	label := "production"
-	if isValidation {
-		label = "validation"
-	}
 
 	// Build rendering context
 	contextStart := time.Now()
-	renderContext, fileRegistry := c.buildRenderingContext(c.ctx, pathResolver, isValidation)
+	renderContext, fileRegistry := c.buildRenderingContext(c.ctx, pathResolver, false)
 	contextMs := time.Since(contextStart).Milliseconds()
 
 	// Render main HAProxy config
@@ -539,17 +405,13 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver, isValida
 	haproxyConfig, err := c.engine.Render("haproxy.cfg", renderContext)
 	mainMs := time.Since(mainStart).Milliseconds()
 	if err != nil {
-		templateName := "haproxy.cfg"
-		if isValidation {
-			templateName = "haproxy.cfg-validation"
-		}
-		c.publishRenderFailure(templateName, err)
+		c.publishRenderFailure("haproxy.cfg", err)
 		return nil, err
 	}
 
 	// Render auxiliary files
 	auxStart := time.Now()
-	staticFiles, err := c.renderAuxiliaryFiles(renderContext)
+	staticFiles, err := c.renderAuxiliaryFiles(c.ctx, renderContext)
 	auxMs := time.Since(auxStart).Milliseconds()
 	if err != nil {
 		// Error already published by renderAuxiliaryFiles
@@ -557,12 +419,11 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver, isValida
 	}
 
 	dynamicFiles := fileRegistry.GetFiles()
-	auxiliaryFiles := MergeAuxiliaryFiles(staticFiles, dynamicFiles)
+	auxiliaryFiles := rendercontext.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
 
 	totalMs := time.Since(renderStart).Milliseconds()
 
 	c.logger.Debug("Render breakdown",
-		"path", label,
 		"context_ms", contextMs,
 		"main_template_ms", mainMs,
 		"aux_files_ms", auxMs,
@@ -577,7 +438,8 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver, isValida
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) in parallel.
-func (c *Component) renderAuxiliaryFiles(renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+// It respects the caller's context for cancellation.
+func (c *Component) renderAuxiliaryFiles(ctx context.Context, renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
 	totalFiles := len(c.config.Maps) + len(c.config.Files) + len(c.config.SSLCertificates)
 	if totalFiles == 0 {
 		return &dataplane.AuxiliaryFiles{}, nil
@@ -587,7 +449,11 @@ func (c *Component) renderAuxiliaryFiles(renderCtx map[string]interface{}) (*dat
 	var mu sync.Mutex
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
-	g, _ := errgroup.WithContext(context.Background())
+	// Create errgroup for parallel rendering. We discard the derived context because:
+	// 1. Template rendering is CPU-bound and doesn't benefit from early cancellation
+	// 2. errgroup still coordinates completion and returns the first error via Wait()
+	// 3. The caller's ctx is available for overall timeout/cancellation if needed
+	g, _ := errgroup.WithContext(ctx)
 
 	// Render map files in parallel
 	for name := range c.config.Maps {
@@ -670,42 +536,6 @@ func (c *Component) publishRenderFailure(templateName string, err error) {
 		formattedError,
 		"", // Stack trace could be added here if needed
 	))
-}
-
-// mergeAuxiliaryFiles merges static (pre-declared) and dynamic (registered during rendering) auxiliary files.
-//
-// The function combines both sets of files into a single AuxiliaryFiles structure.
-// Both static and dynamic files are included in the merged result.
-//
-// Parameters:
-//   - static: Pre-declared auxiliary files from config (templates in config.Maps, config.Files, config.SSLCertificates)
-//   - dynamic: Dynamically registered files from FileRegistry during template rendering
-//
-// Returns:
-//   - Merged AuxiliaryFiles containing all files from both sources
-//
-// MergeAuxiliaryFiles merges static (pre-declared) and dynamic (FileRegistry-registered) auxiliary files.
-// Exported for use by test runner.
-func MergeAuxiliaryFiles(static, dynamic *dataplane.AuxiliaryFiles) *dataplane.AuxiliaryFiles {
-	merged := &dataplane.AuxiliaryFiles{}
-
-	// Merge map files
-	merged.MapFiles = append(merged.MapFiles, static.MapFiles...)
-	merged.MapFiles = append(merged.MapFiles, dynamic.MapFiles...)
-
-	// Merge general files
-	merged.GeneralFiles = append(merged.GeneralFiles, static.GeneralFiles...)
-	merged.GeneralFiles = append(merged.GeneralFiles, dynamic.GeneralFiles...)
-
-	// Merge SSL certificates
-	merged.SSLCertificates = append(merged.SSLCertificates, static.SSLCertificates...)
-	merged.SSLCertificates = append(merged.SSLCertificates, dynamic.SSLCertificates...)
-
-	// Merge CRT-list files
-	merged.CRTListFiles = append(merged.CRTListFiles, static.CRTListFiles...)
-	merged.CRTListFiles = append(merged.CRTListFiles, dynamic.CRTListFiles...)
-
-	return merged
 }
 
 // HealthCheck implements the lifecycle.HealthChecker interface.

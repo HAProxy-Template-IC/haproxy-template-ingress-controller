@@ -59,19 +59,21 @@ func TestResolvePaths(t *testing.T) {
 
 func TestResolvedPaths_ToValidationPaths(t *testing.T) {
 	resolved := &ResolvedPaths{
-		MapsDir:    "/tmp/maps",
-		SSLDir:     "/tmp/ssl",
-		CRTListDir: "/tmp/crtlist",
-		GeneralDir: "/tmp/general",
-		ConfigFile: "/tmp/haproxy.cfg",
+		MapsDir:    "/tmp/haproxy-validate-12345/maps",
+		SSLDir:     "/tmp/haproxy-validate-12345/ssl",
+		CRTListDir: "/tmp/haproxy-validate-12345/crtlist",
+		GeneralDir: "/tmp/haproxy-validate-12345/general",
+		ConfigFile: "/tmp/haproxy-validate-12345/haproxy.cfg",
 	}
 
 	validationPaths := resolved.ToValidationPaths()
 
 	require.NotNil(t, validationPaths)
-	assert.Equal(t, "/tmp/maps", validationPaths.MapsDir)
-	assert.Equal(t, "/tmp/ssl", validationPaths.SSLCertsDir)
-	assert.Equal(t, "/tmp/crtlist", validationPaths.CRTListDir)
-	assert.Equal(t, "/tmp/general", validationPaths.GeneralStorageDir)
-	assert.Equal(t, "/tmp/haproxy.cfg", validationPaths.ConfigFile)
+	// TempDir is derived from ConfigFile's parent directory
+	assert.Equal(t, "/tmp/haproxy-validate-12345", validationPaths.TempDir)
+	assert.Equal(t, "/tmp/haproxy-validate-12345/maps", validationPaths.MapsDir)
+	assert.Equal(t, "/tmp/haproxy-validate-12345/ssl", validationPaths.SSLCertsDir)
+	assert.Equal(t, "/tmp/haproxy-validate-12345/crtlist", validationPaths.CRTListDir)
+	assert.Equal(t, "/tmp/haproxy-validate-12345/general", validationPaths.GeneralStorageDir)
+	assert.Equal(t, "/tmp/haproxy-validate-12345/haproxy.cfg", validationPaths.ConfigFile)
 }

@@ -29,7 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -682,11 +682,11 @@ func TestCreateStoresFromFixtures_HAProxyPods(t *testing.T) {
 		},
 	}
 
-	stores, err := runner.CreateStoresFromFixtures(fixtures)
+	storeMap, err := runner.CreateStoresFromFixtures(fixtures)
 	require.NoError(t, err)
 
 	// Verify haproxy-pods store exists
-	haproxyPodStore := stores["haproxy-pods"]
+	haproxyPodStore := storeMap["haproxy-pods"]
 	require.NotNil(t, haproxyPodStore)
 
 	// Verify pod was added
@@ -772,19 +772,19 @@ func TestCreateStoresFromFixtures_EmptyStoresCreated(t *testing.T) {
 	// Empty fixtures should still create empty stores for all watched resources
 	fixtures := map[string][]interface{}{}
 
-	stores, err := runner.CreateStoresFromFixtures(fixtures)
+	storeMap, err := runner.CreateStoresFromFixtures(fixtures)
 	require.NoError(t, err)
 
 	// All watched resources should have stores
-	assert.Contains(t, stores, "services")
-	assert.Contains(t, stores, "ingresses")
-	assert.Contains(t, stores, "haproxy-pods")
+	assert.Contains(t, storeMap, "services")
+	assert.Contains(t, storeMap, "ingresses")
+	assert.Contains(t, storeMap, "haproxy-pods")
 
 	// Stores should be empty
-	svcs, _ := stores["services"].List()
+	svcs, _ := storeMap["services"].List()
 	assert.Empty(t, svcs)
 
-	ings, _ := stores["ingresses"].List()
+	ings, _ := storeMap["ingresses"].List()
 	assert.Empty(t, ings)
 }
 
@@ -819,11 +819,11 @@ func TestCreateStoresFromFixtures_TypeMetaInference(t *testing.T) {
 		},
 	}
 
-	stores, err := runner.CreateStoresFromFixtures(fixtures)
+	storeMap, err := runner.CreateStoresFromFixtures(fixtures)
 	require.NoError(t, err)
 
 	// Verify service was added
-	svcs, err := stores["services"].List()
+	svcs, err := storeMap["services"].List()
 	require.NoError(t, err)
 	assert.Len(t, svcs, 1)
 
@@ -1481,7 +1481,7 @@ func TestAssertDeterministic(t *testing.T) {
 
 		renderDeps := &RenderDependencies{
 			Engine:          engine,
-			Stores:          make(map[string]types.Store),
+			Stores:          make(map[string]stores.Store),
 			ValidationPaths: validationPaths,
 		}
 
@@ -1533,7 +1533,7 @@ func TestAssertDeterministic(t *testing.T) {
 
 		renderDeps := &RenderDependencies{
 			Engine:          engine,
-			Stores:          make(map[string]types.Store),
+			Stores:          make(map[string]stores.Store),
 			ValidationPaths: validationPaths,
 		}
 

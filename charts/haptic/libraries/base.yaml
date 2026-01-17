@@ -454,7 +454,7 @@ haproxyConfig:
     global
         log stdout len 4096 local0 info
         daemon
-        ca-base /etc/ssl/certs
+        default-path origin {{ pathResolver.GetBaseDir() }}
         crt-base {{ pathResolver.GetPath("", "cert") }}
         tune.ssl.default-dh-param 2048
 

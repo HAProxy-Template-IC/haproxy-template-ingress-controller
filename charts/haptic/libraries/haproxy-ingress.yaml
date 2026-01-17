@@ -587,9 +587,10 @@ templateSnippets:
             {%- if tlsCrt != "" && tlsKey != "" %}
               {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
               {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
-              {%- var crtPath, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+              {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
               {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtPath) %}
+              {#- Use just filename - HAProxy's crt-base directive resolves the full path -#}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtFilename) %}
             {%- else %}
             # Warning: Secret {{ crtNs }}/{{ crtName }} missing 'tls.crt' or 'tls.key' keys
             {%- end %}

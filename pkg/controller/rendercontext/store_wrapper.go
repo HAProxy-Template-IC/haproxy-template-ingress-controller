@@ -20,7 +20,7 @@ import (
 	"log/slog"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -68,7 +68,7 @@ func toString(v interface{}) string {
 // lifetime. Do NOT reuse StoreWrapper instances across reconciliations, as the
 // cached List() results may become stale.
 type StoreWrapper struct {
-	Store        types.Store
+	Store        stores.Store
 	ResourceType string
 	Logger       *slog.Logger
 

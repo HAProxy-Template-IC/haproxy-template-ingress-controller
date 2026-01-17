@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 // HTTPStoreWrapper wraps HTTPStore for template access.
@@ -30,13 +31,14 @@ import (
 //	{{ http.Fetch("https://example.com/data.txt", {"delay": "60s"}) }}
 //	{{ http.Fetch("https://api.example.com/data", {"delay": "5m"}, {"type": "bearer", "token": token}) }}
 //
-// During validation renders, it returns pending content if available.
-// During production renders, it returns accepted content only.
+// The wrapper uses an overlay to determine content retrieval behavior:
+//   - With overlay (validation mode): Returns pending content if available
+//   - Without overlay (production mode): Returns accepted content only
 type HTTPStoreWrapper struct {
-	component    *Component
-	logger       *slog.Logger
-	isValidation bool // True during validation render
-	ctx          context.Context
+	component *Component
+	logger    *slog.Logger
+	overlay   stores.HTTPContentOverlay // nil = production, non-nil = validation
+	ctx       context.Context
 }
 
 // NewHTTPStoreWrapper creates a new HTTPStoreWrapper.
@@ -45,13 +47,17 @@ type HTTPStoreWrapper struct {
 //   - ctx: Context for HTTP requests
 //   - component: The httpstore component for store access and URL registration
 //   - logger: Logger for debug messages
-//   - isValidation: If true, return pending content; if false, return accepted only
-func NewHTTPStoreWrapper(ctx context.Context, component *Component, logger *slog.Logger, isValidation bool) *HTTPStoreWrapper {
+//   - overlay: HTTP overlay for validation mode (nil for production mode)
+//
+// When overlay is provided (validation mode), the wrapper returns pending
+// content if available for URLs in the overlay. When overlay is nil
+// (production mode), only accepted content is returned.
+func NewHTTPStoreWrapper(ctx context.Context, component *Component, logger *slog.Logger, overlay stores.HTTPContentOverlay) *HTTPStoreWrapper {
 	return &HTTPStoreWrapper{
-		component:    component,
-		logger:       logger.With("component", "http-wrapper"),
-		isValidation: isValidation,
-		ctx:          ctx,
+		component: component,
+		logger:    logger.With("component", "http-wrapper"),
+		overlay:   overlay,
+		ctx:       ctx,
 	}
 }
 
@@ -170,20 +176,25 @@ func parseAuthFromArg(arg interface{}) (*httpstore.AuthConfig, error) {
 }
 
 // getCachedContent returns cached content based on render mode.
+//
+// If an overlay is present (validation mode), it uses the overlay's GetContent
+// which returns pending content if available. Without an overlay (production mode),
+// it returns accepted content only from the underlying store.
 func (w *HTTPStoreWrapper) getCachedContent(url string) (string, bool) {
-	store := w.component.GetStore()
-
-	if w.isValidation {
-		if content, ok := store.GetForValidation(url); ok {
-			w.logger.Debug("returning content for validation",
+	// Validation mode: use overlay for content retrieval
+	if w.overlay != nil {
+		if content, ok := w.overlay.GetContent(url); ok {
+			w.logger.Debug("returning content via overlay",
 				"url", url,
-				"size", len(content))
+				"size", len(content),
+				"has_pending", w.overlay.HasPendingURL(url))
 			return content, true
 		}
 		return "", false
 	}
 
-	// Production render - only return accepted content
+	// Production mode: only return accepted content
+	store := w.component.GetStore()
 	if content, ok := store.Get(url); ok {
 		w.logger.Debug("returning accepted content",
 			"url", url,

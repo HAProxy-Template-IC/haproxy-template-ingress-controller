@@ -20,6 +20,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -31,13 +33,23 @@ import (
 // See rendercontext.Builder for the full context structure documentation.
 func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *templating.PathResolver, isValidation bool) (map[string]interface{}, *rendercontext.FileRegistry) {
 	// Create HTTP fetcher if available
+	// The overlay determines content retrieval behavior:
+	// - nil overlay (production mode): returns accepted content only
+	// - HTTPOverlay (validation mode): returns pending content if available
 	var httpFetcher templating.HTTPFetcher
 	if c.httpStoreComponent != nil {
+		var httpOverlay stores.HTTPContentOverlay
+		if isValidation {
+			// Validation mode: create overlay from HTTP store's pending state
+			httpOverlay = purehttpstore.NewHTTPOverlay(c.httpStoreComponent.GetStore())
+		}
+		// Production mode: nil overlay means accepted content only
+
 		httpFetcher = httpstore.NewHTTPStoreWrapper(
 			ctx,
 			c.httpStoreComponent,
 			c.logger,
-			isValidation,
+			httpOverlay,
 		)
 	} else {
 		c.logger.Warn("httpStoreComponent is nil, http.Fetch() will not be available in templates")

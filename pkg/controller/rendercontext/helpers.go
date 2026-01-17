@@ -16,7 +16,7 @@ package rendercontext
 
 import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -29,9 +29,9 @@ import (
 // Returns:
 //   - resourceStores: All stores except haproxy-pods
 //   - haproxyPodStore: The haproxy-pods store, or nil if not present
-func SeparateHAProxyPodStore(stores map[string]types.Store) (resourceStores map[string]types.Store, haproxyPodStore types.Store) {
-	resourceStores = make(map[string]types.Store)
-	for resourceTypeName, store := range stores {
+func SeparateHAProxyPodStore(storeMap map[string]stores.Store) (resourceStores map[string]stores.Store, haproxyPodStore stores.Store) {
+	resourceStores = make(map[string]stores.Store)
+	for resourceTypeName, store := range storeMap {
 		if resourceTypeName == "haproxy-pods" {
 			haproxyPodStore = store
 		} else {
@@ -45,8 +45,11 @@ func SeparateHAProxyPodStore(stores map[string]types.Store) (resourceStores map[
 //
 // This is a convenience function for creating PathResolvers in contexts where
 // ValidationPaths is available (testrunner, dryrunvalidator, benchmark).
+// The TempDir from ValidationPaths becomes the BaseDir used with "default-path origin"
+// in HAProxy's global section to resolve relative paths.
 func PathResolverFromValidationPaths(vp *dataplane.ValidationPaths) *templating.PathResolver {
 	return &templating.PathResolver{
+		BaseDir:    vp.TempDir,
 		MapsDir:    vp.MapsDir,
 		SSLDir:     vp.SSLCertsDir,
 		CRTListDir: vp.CRTListDir,

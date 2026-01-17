@@ -21,10 +21,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// mockStore is a simple mock implementation of types.Store for testing.
+// mockStore is a simple mock implementation of stores.Store for testing.
 type mockStore struct {
 	items []interface{}
 }
@@ -56,20 +56,20 @@ func (m *mockStore) Clear() error {
 func TestSeparateHAProxyPodStore(t *testing.T) {
 	tests := []struct {
 		name                 string
-		stores               map[string]types.Store
+		stores               map[string]stores.Store
 		wantResourceCount    int
 		wantHAProxyPodStore  bool
 		wantResourceStoreKey string
 	}{
 		{
 			name:                "empty stores",
-			stores:              map[string]types.Store{},
+			stores:              map[string]stores.Store{},
 			wantResourceCount:   0,
 			wantHAProxyPodStore: false,
 		},
 		{
 			name: "only resource stores",
-			stores: map[string]types.Store{
+			stores: map[string]stores.Store{
 				"ingresses": &mockStore{},
 				"services":  &mockStore{},
 			},
@@ -78,7 +78,7 @@ func TestSeparateHAProxyPodStore(t *testing.T) {
 		},
 		{
 			name: "only haproxy-pods",
-			stores: map[string]types.Store{
+			stores: map[string]stores.Store{
 				"haproxy-pods": &mockStore{},
 			},
 			wantResourceCount:   0,
@@ -86,7 +86,7 @@ func TestSeparateHAProxyPodStore(t *testing.T) {
 		},
 		{
 			name: "mixed stores",
-			stores: map[string]types.Store{
+			stores: map[string]stores.Store{
 				"ingresses":    &mockStore{},
 				"haproxy-pods": &mockStore{},
 				"services":     &mockStore{},
@@ -117,6 +117,7 @@ func TestSeparateHAProxyPodStore(t *testing.T) {
 
 func TestPathResolverFromValidationPaths(t *testing.T) {
 	validationPaths := &dataplane.ValidationPaths{
+		TempDir:           "/tmp/haproxy-validation-12345",
 		MapsDir:           "/tmp/maps",
 		SSLCertsDir:       "/tmp/certs",
 		CRTListDir:        "/tmp/crt-list",
@@ -126,6 +127,7 @@ func TestPathResolverFromValidationPaths(t *testing.T) {
 	pathResolver := PathResolverFromValidationPaths(validationPaths)
 
 	require.NotNil(t, pathResolver)
+	assert.Equal(t, "/tmp/haproxy-validation-12345", pathResolver.BaseDir)
 	assert.Equal(t, "/tmp/maps", pathResolver.MapsDir)
 	assert.Equal(t, "/tmp/certs", pathResolver.SSLDir)
 	assert.Equal(t, "/tmp/crt-list", pathResolver.CRTListDir)

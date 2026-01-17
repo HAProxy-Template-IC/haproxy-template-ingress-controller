@@ -30,6 +30,9 @@ type AuxiliaryFiles struct {
 	// SSLCertificates contains SSL/TLS certificate files.
 	SSLCertificates []auxiliaryfiles.SSLCertificate
 
+	// SSLCaFiles contains SSL CA certificate files for client/backend certificate verification.
+	SSLCaFiles []auxiliaryfiles.SSLCaFile
+
 	// GeneralFiles contains general-purpose files (error pages, etc.).
 	GeneralFiles []auxiliaryfiles.GeneralFile
 

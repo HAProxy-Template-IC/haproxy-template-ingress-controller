@@ -14,6 +14,8 @@
 
 package dataplane
 
+import "path/filepath"
+
 // PathConfig contains the base directory configuration for HAProxy auxiliary files.
 // These are the raw filesystem paths before capability-based resolution.
 type PathConfig struct {
@@ -79,8 +81,10 @@ func ResolvePaths(base PathConfig, _ Capabilities) *ResolvedPaths {
 
 // ToValidationPaths converts ResolvedPaths to ValidationPaths.
 // Use this when you need ValidationPaths for HAProxy configuration validation.
+// TempDir is derived from ConfigFile's parent directory (e.g., /tmp/validate-xxx/haproxy.cfg -> /tmp/validate-xxx).
 func (r *ResolvedPaths) ToValidationPaths() *ValidationPaths {
 	return &ValidationPaths{
+		TempDir:           filepath.Dir(r.ConfigFile),
 		MapsDir:           r.MapsDir,
 		SSLCertsDir:       r.SSLDir,
 		CRTListDir:        r.CRTListDir,

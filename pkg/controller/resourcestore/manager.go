@@ -172,3 +172,15 @@ func (m *Manager) ResourceCount() int {
 
 	return len(m.stores)
 }
+
+// StoreNames returns the names of all registered stores.
+func (m *Manager) StoreNames() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	names := make([]string, 0, len(m.stores))
+	for name := range m.stores {
+		names = append(names, name)
+	}
+	return names
+}

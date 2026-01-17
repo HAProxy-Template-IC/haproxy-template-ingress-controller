@@ -346,10 +346,10 @@ func TestEventCommentator_GenerateInsight_TemplateEvents(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	t.Run("TemplateRenderedEvent", func(t *testing.T) {
-		// haproxyConfig, validationHAProxyConfig, validationPaths, auxiliaryFiles, validationAuxiliaryFiles, auxFileCount, durationMs, triggerReason
+		// haproxyConfig, auxiliaryFiles, auxFileCount, durationMs, triggerReason
 		// ConfigBytes is calculated from len(haproxyConfig)
 		haproxyConfig := "test haproxy config content"
-		event := events.NewTemplateRenderedEvent(haproxyConfig, "validation-config", nil, nil, nil, 3, 50, "", true)
+		event := events.NewTemplateRenderedEvent(haproxyConfig, nil, 3, 50, "", true)
 
 		insight, attrs := ec.generateInsight(event)
 

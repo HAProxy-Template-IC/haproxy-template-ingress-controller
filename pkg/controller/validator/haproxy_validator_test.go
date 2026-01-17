@@ -29,10 +29,10 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// mockStore implements types.Store for testing.
+// mockStore implements stores.Store for testing.
 type mockStore struct {
 	items []interface{}
 }
@@ -90,7 +90,7 @@ backend servers
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
@@ -100,7 +100,7 @@ backend servers
 	// Create renderer
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	// Create validator
@@ -181,7 +181,7 @@ backend servers
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
@@ -190,7 +190,7 @@ backend servers
 
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
@@ -266,7 +266,7 @@ backend servers
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
@@ -275,7 +275,7 @@ backend servers
 
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
@@ -360,13 +360,13 @@ backend servers
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
 	haproxyPodStore := &mockStore{}
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, nil, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
@@ -497,15 +497,6 @@ backend servers
     server s1 127.0.0.1:8080
 `
 
-	// Create temp directories for validation paths
-	tmpDir := t.TempDir()
-	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:           tmpDir + "/maps",
-		SSLCertsDir:       tmpDir + "/certs",
-		GeneralStorageDir: tmpDir + "/general",
-		ConfigFile:        tmpDir + "/haproxy.cfg",
-	}
-
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
 	eventChan := bus.Subscribe("test-sub", 100)
@@ -521,10 +512,7 @@ backend servers
 	// (The renderer is now leader-only and we're testing the validator in isolation)
 	bus.Publish(events.NewTemplateRenderedEvent(
 		validConfig,                 // haproxyConfig
-		validConfig,                 // validationHAProxyConfig
-		validationPaths,             // validationPaths
 		&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
-		&dataplane.AuxiliaryFiles{}, // validationAuxiliaryFiles
 		0,                           // auxFileCount
 		100,                         // durationMs
 		"initial",                   // triggerReason
@@ -594,12 +582,12 @@ backend servers
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, stores, &mockStore{}, nil, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, storeMap, &mockStore{}, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
@@ -658,57 +646,6 @@ Done:
 	t.Logf("Received %d events after BecameLeaderEvent", eventsReceived)
 }
 
-// TestHAProxyValidator_InvalidValidationPaths tests handling of invalid validation paths type.
-func TestHAProxyValidator_InvalidValidationPaths(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	validatorComponent := NewHAProxyValidator(bus, logger)
-
-	eventChan := bus.Subscribe("test-sub", 100)
-	bus.Start()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go validatorComponent.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
-
-	// Create a TemplateRenderedEvent with invalid ValidationPaths type
-	event := events.NewTemplateRenderedEvent(
-		"haproxy config",
-		"validation config",
-		"invalid-type",              // Invalid ValidationPaths type (should be *dataplane.ValidationPaths)
-		&dataplane.AuxiliaryFiles{}, // Valid auxiliary files
-		&dataplane.AuxiliaryFiles{}, // Valid validation aux files
-		0,
-		0,
-		"",   // triggerReason
-		true, // coalescible
-	)
-	bus.Publish(event)
-
-	// Wait for validation failure due to invalid type
-	timeout := time.After(1 * time.Second)
-	var failedEvent *events.ValidationFailedEvent
-
-	for {
-		select {
-		case event := <-eventChan:
-			if e, ok := event.(*events.ValidationFailedEvent); ok {
-				failedEvent = e
-				goto Done
-			}
-		case <-timeout:
-			t.Fatal("Timeout waiting for ValidationFailedEvent")
-		}
-	}
-
-Done:
-	require.NotNil(t, failedEvent)
-	assert.Contains(t, failedEvent.Errors[0], "failed to extract validation paths")
-}
-
 // TestHAProxyValidator_InvalidAuxiliaryFiles tests handling of invalid auxiliary files type.
 func TestHAProxyValidator_InvalidAuxiliaryFiles(t *testing.T) {
 	bus := busevents.NewEventBus(100)
@@ -725,13 +662,10 @@ func TestHAProxyValidator_InvalidAuxiliaryFiles(t *testing.T) {
 	go validatorComponent.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	// Create a TemplateRenderedEvent with invalid ValidationAuxiliaryFiles type
+	// Create a TemplateRenderedEvent with invalid AuxiliaryFiles type
 	event := events.NewTemplateRenderedEvent(
 		"haproxy config",
-		"validation config",
-		&dataplane.ValidationPaths{}, // Valid paths
-		&dataplane.AuxiliaryFiles{},  // Valid auxiliary files
-		"invalid-aux-files-type",     // Invalid ValidationAuxiliaryFiles type
+		"invalid-aux-files-type", // Invalid AuxiliaryFiles type
 		0,
 		0,
 		"",   // triggerReason
@@ -757,5 +691,5 @@ func TestHAProxyValidator_InvalidAuxiliaryFiles(t *testing.T) {
 
 Done:
 	require.NotNil(t, failedEvent)
-	assert.Contains(t, failedEvent.Errors[0], "failed to extract validation auxiliary files")
+	assert.Contains(t, failedEvent.Errors[0], "failed to extract auxiliary files")
 }

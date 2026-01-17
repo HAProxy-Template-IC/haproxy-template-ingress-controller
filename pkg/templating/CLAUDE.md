@@ -184,6 +184,39 @@ decl["templateSnippets"] = (*[]string)(nil)           // Not &[]string{}
 | `shared` | `*map[string]interface{}` | Cross-template cache |
 | `http` | `*HTTPFetcher` | HTTP store for fetching remote content |
 
+### PathResolver and HAProxy Paths
+
+PathResolver generates file paths for HAProxy auxiliary files (maps, SSL certs, error pages). The paths can be relative or absolute depending on configuration.
+
+**CRITICAL**: For relative paths to work, the HAProxy config **MUST** include `default-path config` in the global section:
+
+```haproxy
+global
+    default-path config
+```
+
+This directive tells HAProxy to resolve relative paths from the **config file's directory**, not from HAProxy's working directory. Without it, HAProxy cannot find files specified with relative paths.
+
+**Path resolution modes:**
+
+| Mode | PathResolver Config | Template Output | When Used |
+|------|---------------------|-----------------|-----------|
+| Relative | `MapsDir: "maps"` | `maps/host.map` | Local validation, production with `default-path config` |
+| Absolute | `MapsDir: "/etc/haproxy/maps"` | `/etc/haproxy/maps/host.map` | Legacy or special cases |
+
+**Template usage:**
+
+```scriggo
+{#- Using PathResolver.GetPath() #}
+errorfile 400 {{ pathResolver.GetPath("400.http", "file") }}
+{#- Output: files/400.http (relative) #}
+
+use_backend %[path,map({{ pathResolver.GetPath("path.map", "map") }})]
+{#- Output: maps/path.map (relative) #}
+```
+
+See `charts/CLAUDE.md` (HAProxy File Path Requirements) for full documentation.
+
 ### Adding New Runtime Variables
 
 1. Declare with nil pointer in `buildScriggoGlobals()`:

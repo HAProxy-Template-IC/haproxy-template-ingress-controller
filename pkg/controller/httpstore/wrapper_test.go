@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 )
 
 func TestNewHTTPStoreWrapper(t *testing.T) {
@@ -31,18 +31,20 @@ func TestNewHTTPStoreWrapper(t *testing.T) {
 	component := New(bus, logger, 0)
 	ctx := context.Background()
 
-	wrapper := NewHTTPStoreWrapper(ctx, component, logger, true)
+	// Create overlay for validation mode
+	overlay := purehttpstore.NewHTTPOverlay(component.GetStore())
+	wrapper := NewHTTPStoreWrapper(ctx, component, logger, overlay)
 
 	require.NotNil(t, wrapper)
 	assert.Equal(t, component, wrapper.component)
-	assert.True(t, wrapper.isValidation)
+	assert.NotNil(t, wrapper.overlay)
 	assert.Equal(t, ctx, wrapper.ctx)
 }
 
 func TestParseArgs_NoArgs(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
 
 	_, err := wrapper.Fetch()
 	require.Error(t, err)
@@ -52,7 +54,7 @@ func TestParseArgs_NoArgs(t *testing.T) {
 func TestParseArgs_InvalidURL(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
 
 	_, err := wrapper.Fetch(12345) // Not a string
 	require.Error(t, err)
@@ -62,7 +64,7 @@ func TestParseArgs_InvalidURL(t *testing.T) {
 func TestParseArgs_InvalidOptions(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
 
 	_, err := wrapper.Fetch("http://example.com", "not-a-map")
 	require.Error(t, err)
@@ -72,7 +74,7 @@ func TestParseArgs_InvalidOptions(t *testing.T) {
 func TestParseArgs_InvalidAuth(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
 
 	_, err := wrapper.Fetch("http://example.com", nil, "not-a-map")
 	require.Error(t, err)
@@ -83,55 +85,55 @@ func TestParseFetchOptions(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   map[string]interface{}
-		want    httpstore.FetchOptions
+		want    purehttpstore.FetchOptions
 		wantErr bool
 	}{
 		{
 			name:  "empty options",
 			input: map[string]interface{}{},
-			want:  httpstore.FetchOptions{},
+			want:  purehttpstore.FetchOptions{},
 		},
 		{
 			name: "delay string",
 			input: map[string]interface{}{
 				"delay": "5m",
 			},
-			want: httpstore.FetchOptions{Delay: 5 * time.Minute},
+			want: purehttpstore.FetchOptions{Delay: 5 * time.Minute},
 		},
 		{
 			name: "timeout string",
 			input: map[string]interface{}{
 				"timeout": "30s",
 			},
-			want: httpstore.FetchOptions{Timeout: 30 * time.Second},
+			want: purehttpstore.FetchOptions{Timeout: 30 * time.Second},
 		},
 		{
 			name: "retries int",
 			input: map[string]interface{}{
 				"retries": 3,
 			},
-			want: httpstore.FetchOptions{Retries: 3},
+			want: purehttpstore.FetchOptions{Retries: 3},
 		},
 		{
 			name: "retries int64",
 			input: map[string]interface{}{
 				"retries": int64(5),
 			},
-			want: httpstore.FetchOptions{Retries: 5},
+			want: purehttpstore.FetchOptions{Retries: 5},
 		},
 		{
 			name: "retries float64",
 			input: map[string]interface{}{
 				"retries": float64(2),
 			},
-			want: httpstore.FetchOptions{Retries: 2},
+			want: purehttpstore.FetchOptions{Retries: 2},
 		},
 		{
 			name: "critical bool",
 			input: map[string]interface{}{
 				"critical": true,
 			},
-			want: httpstore.FetchOptions{Critical: true},
+			want: purehttpstore.FetchOptions{Critical: true},
 		},
 		{
 			name: "all options",
@@ -141,7 +143,7 @@ func TestParseFetchOptions(t *testing.T) {
 				"retries":  5,
 				"critical": true,
 			},
-			want: httpstore.FetchOptions{
+			want: purehttpstore.FetchOptions{
 				Delay:    1 * time.Hour,
 				Timeout:  60 * time.Second,
 				Retries:  5,
@@ -196,13 +198,13 @@ func TestParseAuthConfig(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   map[string]interface{}
-		want    *httpstore.AuthConfig
+		want    *purehttpstore.AuthConfig
 		wantErr bool
 	}{
 		{
 			name:  "empty auth",
 			input: map[string]interface{}{},
-			want:  &httpstore.AuthConfig{},
+			want:  &purehttpstore.AuthConfig{},
 		},
 		{
 			name: "bearer auth",
@@ -210,7 +212,7 @@ func TestParseAuthConfig(t *testing.T) {
 				"type":  "bearer",
 				"token": "my-token",
 			},
-			want: &httpstore.AuthConfig{
+			want: &purehttpstore.AuthConfig{
 				Type:  "bearer",
 				Token: "my-token",
 			},
@@ -222,7 +224,7 @@ func TestParseAuthConfig(t *testing.T) {
 				"username": "user",
 				"password": "pass",
 			},
-			want: &httpstore.AuthConfig{
+			want: &purehttpstore.AuthConfig{
 				Type:     "basic",
 				Username: "user",
 				Password: "pass",
@@ -236,7 +238,7 @@ func TestParseAuthConfig(t *testing.T) {
 					"X-Api-Key": "api-key-value",
 				},
 			},
-			want: &httpstore.AuthConfig{
+			want: &purehttpstore.AuthConfig{
 				Type: "header",
 				Headers: map[string]string{
 					"X-Api-Key": "api-key-value",
@@ -567,22 +569,23 @@ func TestParseOptionsArg_NilArgs(t *testing.T) {
 	// Test with nil second argument
 	opts, err := parseOptionsArg([]interface{}{"http://example.com", nil})
 	require.NoError(t, err)
-	assert.Equal(t, httpstore.FetchOptions{}, opts)
+	assert.Equal(t, purehttpstore.FetchOptions{}, opts)
 }
 
 func TestParseOptionsArg_SingleArg(t *testing.T) {
 	// Test with only URL
 	opts, err := parseOptionsArg([]interface{}{"http://example.com"})
 	require.NoError(t, err)
-	assert.Equal(t, httpstore.FetchOptions{}, opts)
+	assert.Equal(t, purehttpstore.FetchOptions{}, opts)
 }
 
 func TestHTTPStoreWrapper_GetCachedContent_Validation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
 
-	// Create wrapper in validation mode
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, true)
+	// Create wrapper in validation mode with overlay
+	overlay := purehttpstore.NewHTTPOverlay(component.GetStore())
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, overlay)
 
 	// URL not in cache
 	content, ok := wrapper.getCachedContent("http://example.com")
@@ -594,8 +597,8 @@ func TestHTTPStoreWrapper_GetCachedContent_Production(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	component := New(bus, logger, 0)
 
-	// Create wrapper in production mode
-	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, false)
+	// Create wrapper in production mode (nil overlay)
+	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil)
 
 	// URL not in cache
 	content, ok := wrapper.getCachedContent("http://example.com")

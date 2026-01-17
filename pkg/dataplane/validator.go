@@ -873,9 +873,16 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 	}
 
 	// Write general files
+	// Use file.Path when set (contains full relative path like "ssl/ca-bundle.pem" for
+	// CA files). Fall back to file.Filename for backward compatibility with code that
+	// only sets Filename.
 	for _, file := range auxFiles.GeneralFiles {
-		filePath := resolveAuxiliaryFilePath(file.Filename, configDir, paths.GeneralStorageDir)
-		if err := writeFileWithDir(filePath, file.Content, "general file "+file.Filename); err != nil {
+		pathToUse := file.Path
+		if pathToUse == "" {
+			pathToUse = file.Filename
+		}
+		filePath := resolveAuxiliaryFilePath(pathToUse, configDir, paths.GeneralStorageDir)
+		if err := writeFileWithDir(filePath, file.Content, "general file "+pathToUse); err != nil {
 			return err
 		}
 	}
@@ -884,6 +891,14 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 	for _, cert := range auxFiles.SSLCertificates {
 		certPath := resolveAuxiliaryFilePath(cert.Path, configDir, paths.SSLCertsDir)
 		if err := writeFileWithDir(certPath, cert.Content, "SSL certificate "+cert.Path); err != nil {
+			return err
+		}
+	}
+
+	// Write SSL CA files (stored in same directory as SSL certificates)
+	for _, caFile := range auxFiles.SSLCaFiles {
+		caPath := resolveAuxiliaryFilePath(caFile.Path, configDir, paths.SSLCertsDir)
+		if err := writeFileWithDir(caPath, caFile.Content, "SSL CA file "+caFile.Path); err != nil {
 			return err
 		}
 	}

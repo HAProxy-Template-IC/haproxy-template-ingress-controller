@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -113,18 +112,25 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 	return checkCreateResponse(resp, "SSL CA file", name)
 }
 
-// UpdateSSLCaFile updates an existing SSL CA file using text/plain content-type.
+// UpdateSSLCaFile updates an existing SSL CA file using multipart form-data.
 // Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content string) (string, error) {
-	body := bytes.NewReader([]byte(content))
+	if !c.clientset.Capabilities().SupportsSslCaFiles {
+		return "", fmt.Errorf("SSL CA file storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
+	}
+
+	body, contentType, err := buildMultipartFilePayload(name, content)
+	if err != nil {
+		return "", fmt.Errorf("failed to build payload for SSL CA file '%s': %w", name, err)
+	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
 		V32: func(c *v32.Client) (*http.Response, error) {
-			return c.SetCaFileWithBody(ctx, name, "text/plain", body)
+			return c.SetCaFileWithBody(ctx, name, contentType, body)
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
-			return c.SetCaFileWithBody(ctx, name, "text/plain", body)
+			return c.SetCaFileWithBody(ctx, name, contentType, body)
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCaFiles {

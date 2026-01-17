@@ -29,20 +29,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 const (
@@ -54,74 +53,92 @@ const (
 
 	// EventBufferSize is the size of the event subscription buffer.
 	EventBufferSize = 50
+
+	// TestExecutionTimeout is the maximum time allowed for running validation tests.
+	// Tests run sequentially with Workers=1, so this should accommodate multiple tests.
+	TestExecutionTimeout = 60 * time.Second
 )
 
 // Component implements the dry-run validator.
 //
-// It subscribes to WebhookValidationRequest events, simulates resource changes
-// using overlay stores, performs dry-run reconciliation (rendering + validation),
-// and responds with validation results.
+// It subscribes to WebhookValidationRequest events, creates store overlays
+// from admission requests, and delegates validation to ProposalValidator.
+//
+// The component also runs validation tests if configured, which is not
+// handled by ProposalValidator.
 type Component struct {
-	eventBus        *busevents.EventBus
-	eventChan       <-chan busevents.Event // Subscribed in constructor per CLAUDE.md guidelines
-	storeManager    *resourcestore.Manager
-	config          *config.Config
-	engine          templating.Engine
-	validationPaths *dataplane.ValidationPaths
-	testRunner      *testrunner.Runner
-	logger          *slog.Logger
-	capabilities    dataplane.Capabilities // HAProxy/DataPlane API capabilities
+	eventBus          *busevents.EventBus
+	eventChan         <-chan busevents.Event // Subscribed in constructor per CLAUDE.md guidelines
+	proposalValidator *proposalvalidator.Component
+	config            *config.Config
+	testRunner        *testrunner.Runner
+	logger            *slog.Logger
+}
+
+// ComponentConfig contains configuration for creating a DryRunValidator.
+type ComponentConfig struct {
+	// EventBus is the event bus for subscribing to requests and publishing responses.
+	EventBus *busevents.EventBus
+
+	// ProposalValidator is the component that performs render-validate pipeline.
+	ProposalValidator *proposalvalidator.Component
+
+	// Config is the controller configuration containing templates.
+	Config *config.Config
+
+	// Engine is the pre-compiled template engine for rendering validation tests.
+	Engine templating.Engine
+
+	// ValidationPaths is the filesystem paths for HAProxy validation.
+	ValidationPaths *dataplane.ValidationPaths
+
+	// Capabilities is the HAProxy capabilities determined from local version.
+	Capabilities dataplane.Capabilities
+
+	// Logger is the structured logger.
+	Logger *slog.Logger
 }
 
 // New creates a new DryRunValidator component.
 //
 // Parameters:
-//   - eventBus: The EventBus for subscribing to requests and publishing responses
-//   - storeManager: ResourceStoreManager for accessing stores and creating overlays
-//   - cfg: Controller configuration containing templates
-//   - engine: Pre-compiled template engine for rendering
-//   - validationPaths: Filesystem paths for HAProxy validation
-//   - capabilities: HAProxy capabilities determined from local version
-//   - logger: Structured logger
+//   - cfg: Configuration for the component
 //
 // Returns:
 //   - A new Component instance ready to be started
-func New(
-	eventBus *busevents.EventBus,
-	storeManager *resourcestore.Manager,
-	cfg *config.Config,
-	engine templating.Engine,
-	validationPaths *dataplane.ValidationPaths,
-	capabilities dataplane.Capabilities,
-	logger *slog.Logger,
-) *Component {
+func New(cfg *ComponentConfig) *Component {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	// Create test runner for validation tests
 	// Use Workers: 1 for webhook context (sequential execution, faster for small test counts)
-	testRunnerInstance := testrunner.New(
-		cfg,
-		engine,
-		validationPaths,
-		testrunner.Options{
-			Logger:       logger.With("component", "test-runner"),
-			Workers:      1, // Sequential execution in webhook context
-			Capabilities: capabilities,
-		},
-	)
+	var testRunnerInstance *testrunner.Runner
+	if len(cfg.Config.ValidationTests) > 0 {
+		testRunnerInstance = testrunner.New(
+			cfg.Config,
+			cfg.Engine,
+			cfg.ValidationPaths,
+			testrunner.Options{
+				Logger:       logger.With("component", "test-runner"),
+				Workers:      1, // Sequential execution in webhook context
+				Capabilities: cfg.Capabilities,
+			},
+		)
+	}
 
 	// Subscribe to only WebhookValidationRequest events per CLAUDE.md guidelines
 	// This ensures subscription happens before EventBus.Start() and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeWebhookValidationRequestSG)
+	eventChan := cfg.EventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeWebhookValidationRequestSG)
 
 	return &Component{
-		eventBus:        eventBus,
-		eventChan:       eventChan,
-		storeManager:    storeManager,
-		config:          cfg,
-		engine:          engine,
-		validationPaths: validationPaths,
-		testRunner:      testRunnerInstance,
-		logger:          logger.With("component", ComponentName),
-		capabilities:    capabilities,
+		eventBus:          cfg.EventBus,
+		eventChan:         eventChan,
+		proposalValidator: cfg.ProposalValidator,
+		config:            cfg.Config,
+		testRunner:        testRunnerInstance,
+		logger:            logger.With("component", ComponentName),
 	}
 }
 
@@ -161,9 +178,9 @@ func (c *Component) handleEvent(event busevents.Event) {
 //
 // This performs dry-run validation by:
 //  1. Mapping GVK to resource type
-//  2. Creating overlay stores for ALL resources (with the proposed change)
-//  3. Rendering HAProxy configuration using overlay stores
-//  4. Validating the rendered configuration
+//  2. Creating a StoreOverlay from the admission request
+//  3. Delegating to ProposalValidator.ValidateSync() for rendering and validation
+//  4. Running validation tests if configured
 //  5. Publishing a validation response
 func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest) {
 	c.logger.Debug("Processing validation request",
@@ -180,67 +197,43 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 		return
 	}
 
-	// Verify resource store exists
-	if _, exists := c.storeManager.GetStore(resourceType); !exists {
-		c.publishResponse(req.ID, false, fmt.Sprintf("no store registered for %s", resourceType))
-		return
+	// Create StoreOverlay from admission request
+	overlay := c.createOverlay(req.Namespace, req.Name, req.Object, req.Operation, req.ID)
+
+	// Create overlays map with single entry for the affected resource type
+	overlays := map[string]*stores.StoreOverlay{
+		resourceType: overlay,
 	}
 
-	// Create overlay stores for ALL resource types (including the modified one)
-	operation := resourcestore.Operation(req.Operation)
-	overlayStores, err := c.storeManager.CreateOverlayMap(resourceType, req.Namespace, req.Name, req.Object, operation)
-	if err != nil {
-		c.publishResponse(req.ID, false, fmt.Sprintf("failed to create overlay stores: %v", err))
-		return
-	}
-
-	c.logger.Debug("Created overlay stores for dry-run",
+	c.logger.Debug("Created store overlay for dry-run",
 		"request_id", req.ID,
-		"store_count", len(overlayStores))
+		"resource_type", resourceType,
+		"operation", req.Operation)
 
-	// Phase 3: Full dry-run reconciliation
-	// Render HAProxy configuration using overlay stores
-	haproxyConfig, auxiliaryFiles, err := c.renderWithOverlayStores(overlayStores)
-	if err != nil {
-		c.logger.Info("Dry-run rendering failed",
-			"request_id", req.ID,
-			"error", err)
+	// Delegate to ProposalValidator for render-validate pipeline
+	// Use timeout context to prevent validation from hanging indefinitely
+	ctx, cancel := context.WithTimeout(context.Background(), validation.DefaultValidationTimeout)
+	defer cancel()
+	result := c.proposalValidator.ValidateSync(ctx, overlays)
 
-		// Simplify rendering error message for user-facing response
-		// Keep full error in logs for debugging
-		simplified := dataplane.SimplifyRenderingError(err)
-		c.logger.Debug("Simplified rendering error",
-			"request_id", req.ID,
-			"original_length", len(err.Error()),
-			"simplified_length", len(simplified),
-			"simplified", simplified)
-		c.publishResponse(req.ID, false, simplified)
-		return
-	}
-
-	// Validate the rendered configuration
-	// Pass nil version to use default v3.0 schema (safest for validation)
-	// Use strict validation (skipDNSValidation=false) for webhook to catch DNS issues before admission
-	err = dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, c.validationPaths, nil, false)
-	if err != nil {
+	if !result.Valid {
 		c.logger.Info("Dry-run validation failed",
 			"request_id", req.ID,
-			"error", err)
+			"phase", result.Phase,
+			"error", result.Error)
 
 		// Simplify error message for user-facing response
-		// Keep full error in logs for debugging
-		simplified := dataplane.SimplifyValidationError(err)
-		c.logger.Debug("Simplified validation error",
+		simplified := c.simplifyError(result.Phase, result.Error)
+		c.logger.Debug("Simplified error",
 			"request_id", req.ID,
-			"original_length", len(err.Error()),
-			"simplified_length", len(simplified),
+			"phase", result.Phase,
 			"simplified", simplified)
 		c.publishResponse(req.ID, false, simplified)
 		return
 	}
 
 	// Run validation tests if configured
-	if len(c.config.ValidationTests) > 0 {
+	if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
 		if err := c.runValidationTests(req.ID); err != nil {
 			c.publishResponse(req.ID, false, err.Error())
 			return
@@ -250,9 +243,62 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 	c.logger.Debug("Dry-run validation passed",
 		"request_id", req.ID,
 		"resource_type", resourceType,
-		"config_bytes", len(haproxyConfig))
+		"duration_ms", result.DurationMs)
 
 	c.publishResponse(req.ID, true, "")
+}
+
+// createOverlay creates a StoreOverlay from validation parameters.
+//
+// Parameters:
+//   - namespace: Resource namespace
+//   - name: Resource name
+//   - object: The Kubernetes resource object (must be runtime.Object for CREATE/UPDATE)
+//   - operation: Admission operation (CREATE, UPDATE, DELETE)
+//   - requestID: Request ID for logging (can be empty for direct validation)
+func (c *Component) createOverlay(namespace, name string, object interface{}, operation, requestID string) *stores.StoreOverlay {
+	// Handle DELETE first - it doesn't need an object
+	if operation == "DELETE" {
+		return stores.NewStoreOverlayForDelete(namespace, name)
+	}
+
+	// Convert the object to runtime.Object if possible
+	obj, ok := object.(runtime.Object)
+	if !ok {
+		// If not a runtime.Object, return empty overlay
+		// This shouldn't happen for K8s resources but handles edge cases
+		c.logger.Warn("object is not runtime.Object",
+			"request_id", requestID,
+			"type", fmt.Sprintf("%T", object))
+		return stores.NewStoreOverlay()
+	}
+
+	switch operation {
+	case "CREATE":
+		return stores.NewStoreOverlayForCreate(obj)
+	case "UPDATE":
+		return stores.NewStoreOverlayForUpdate(obj)
+	default:
+		c.logger.Warn("unknown operation type",
+			"request_id", requestID,
+			"operation", operation)
+		return stores.NewStoreOverlay()
+	}
+}
+
+// simplifyError simplifies an error message based on the validation phase.
+func (c *Component) simplifyError(phase string, err error) string {
+	if err == nil {
+		return ""
+	}
+	switch phase {
+	case "render":
+		return dataplane.SimplifyRenderingError(err)
+	case "syntax", "schema", "semantic":
+		return dataplane.SimplifyValidationError(err)
+	default:
+		return err.Error()
+	}
 }
 
 // mapGVKToResourceType maps a GVK string to a resource type name.
@@ -277,10 +323,23 @@ func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
 	// Handle common irregular plurals and special cases
 	kindLower := strings.ToLower(kind)
 
-	// Map of irregular plurals and special cases
+	// Map of irregular plurals and special cases for Kubernetes resources.
+	// The default rule (append 's') doesn't work for:
+	// - Words ending in -ss need -es suffix (ingress -> ingresses, not ingresss)
+	// - Words ending in consonant + y need -ies suffix (policy -> policies)
+	// - Words that are already plural (endpoints)
 	irregularPlurals := map[string]string{
-		"ingress":   "ingresses",
-		"endpoints": "endpoints", // Already plural
+		// -ss ending needs -es suffix
+		"ingress":       "ingresses",
+		"ingressclass":  "ingressclasses",
+		"storageclass":  "storageclasses",
+		"priorityclass": "priorityclasses",
+		"runtimeclass":  "runtimeclasses",
+		// -y ending (after consonant) needs -ies suffix
+		"networkpolicy":     "networkpolicies",
+		"podsecuritypolicy": "podsecuritypolicies",
+		// Already plural (no change needed)
+		"endpoints": "endpoints",
 	}
 
 	if plural, ok := irregularPlurals[kindLower]; ok {
@@ -289,103 +348,6 @@ func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
 
 	// Default: add 's' for regular plurals
 	return kindLower + "s", nil
-}
-
-// renderWithOverlayStores renders HAProxy configuration using overlay stores.
-//
-// This replicates the Renderer component's logic but uses overlay stores
-// to simulate the proposed resource changes.
-func (c *Component) renderWithOverlayStores(overlayStores map[string]types.Store) (string, *dataplane.AuxiliaryFiles, error) {
-	// Build rendering context with overlay stores (similar to renderer.Component.buildRenderingContext)
-	renderCtx := c.buildRenderingContext(overlayStores)
-
-	// Render main HAProxy configuration
-	haproxyConfig, err := c.engine.Render("haproxy.cfg", renderCtx)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
-	}
-
-	// Render auxiliary files
-	auxiliaryFiles, err := c.renderAuxiliaryFiles(renderCtx)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to render auxiliary files: %w", err)
-	}
-
-	return haproxyConfig, auxiliaryFiles, nil
-}
-
-// buildRenderingContext builds the template rendering context using overlay stores.
-//
-// This method delegates to the centralized rendercontext.Builder to ensure consistent
-// context creation across all usages (renderer, testrunner, benchmark, dryrunvalidator).
-//
-// The overlay stores contain the simulated resource state including any proposed changes.
-func (c *Component) buildRenderingContext(stores map[string]types.Store) map[string]interface{} {
-	// Create PathResolver from ValidationPaths
-	pathResolver := rendercontext.PathResolverFromValidationPaths(c.validationPaths)
-
-	// Separate haproxy-pods from resource stores (goes in controller namespace)
-	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(stores)
-
-	// Build context using centralized builder
-	// Note: DryRunValidator doesn't have an HTTP fetcher (no network access during validation)
-	builder := rendercontext.NewBuilder(
-		c.config,
-		pathResolver,
-		c.logger,
-		rendercontext.WithStores(resourceStores),
-		rendercontext.WithHAProxyPodStore(haproxyPodStore),
-	)
-
-	renderCtx, _ := builder.Build()
-	return renderCtx
-}
-
-// renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates).
-func (c *Component) renderAuxiliaryFiles(renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
-	auxFiles := &dataplane.AuxiliaryFiles{}
-
-	// Render map files
-	for name := range c.config.Maps {
-		rendered, err := c.engine.Render(name, renderCtx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render map file %s: %w", name, err)
-		}
-
-		auxFiles.MapFiles = append(auxFiles.MapFiles, auxiliaryfiles.MapFile{
-			Path:    name,
-			Content: rendered,
-		})
-	}
-
-	// Render general files
-	for name := range c.config.Files {
-		rendered, err := c.engine.Render(name, renderCtx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render general file %s: %w", name, err)
-		}
-
-		auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
-			Filename: name,
-			Path:     filepath.Join(c.config.Dataplane.GeneralStorageDir, name),
-			Content:  rendered,
-		})
-	}
-
-	// Render SSL certificates
-	for name := range c.config.SSLCertificates {
-		rendered, err := c.engine.Render(name, renderCtx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render SSL certificate %s: %w", name, err)
-		}
-
-		auxFiles.SSLCertificates = append(auxFiles.SSLCertificates, auxiliaryfiles.SSLCertificate{
-			Path:    name,
-			Content: rendered,
-		})
-	}
-
-	return auxFiles, nil
 }
 
 // runValidationTests executes validation tests and returns an error if tests fail.
@@ -399,8 +361,9 @@ func (c *Component) runValidationTests(requestID string) error {
 	// Publish ValidationTestsStartedEvent
 	c.eventBus.Publish(events.NewValidationTestsStartedEvent(len(c.config.ValidationTests)))
 
-	// Run all validation tests
-	ctx := context.Background() // Use background context for test execution
+	// Run all validation tests with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), TestExecutionTimeout)
+	defer cancel()
 	testResults, err := c.testRunner.RunTests(ctx, "")
 	testDuration := time.Since(testStartTime)
 
@@ -487,4 +450,74 @@ func (c *Component) publishResponse(requestID string, allowed bool, reason strin
 			"request_id", requestID,
 			"reason", reason)
 	}
+}
+
+// ValidateDirect performs synchronous dry-run validation without scatter-gather.
+//
+// This method is intended for direct webhook integration, eliminating the
+// event-based scatter-gather pattern for improved performance and simplicity.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - gvk: GroupVersionKind string (e.g., "networking.k8s.io/v1.Ingress")
+//   - namespace: Resource namespace
+//   - name: Resource name
+//   - object: The Kubernetes resource object
+//   - operation: Admission operation (CREATE, UPDATE, DELETE)
+//
+// Returns:
+//   - allowed: Whether the resource passed validation
+//   - reason: Denial reason if not allowed, empty otherwise
+func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object interface{}, operation string) (allowed bool, reason string) {
+	c.logger.Debug("Direct validation request",
+		"gvk", gvk,
+		"namespace", namespace,
+		"name", name,
+		"operation", operation)
+
+	// Map GVK to resource type
+	resourceType, err := c.mapGVKToResourceType(gvk)
+	if err != nil {
+		return false, fmt.Sprintf("unsupported resource type: %v", err)
+	}
+
+	// Create StoreOverlay from parameters
+	overlay := c.createOverlay(namespace, name, object, operation, "direct")
+
+	// Create overlays map with single entry for the affected resource type
+	overlays := map[string]*stores.StoreOverlay{
+		resourceType: overlay,
+	}
+
+	c.logger.Debug("Created store overlay for direct validation",
+		"resource_type", resourceType,
+		"operation", operation)
+
+	// Delegate to ProposalValidator for render-validate pipeline
+	result := c.proposalValidator.ValidateSync(ctx, overlays)
+
+	if !result.Valid {
+		c.logger.Info("Direct validation failed",
+			"gvk", gvk,
+			"phase", result.Phase,
+			"error", result.Error)
+
+		// Simplify error message for user-facing response
+		simplified := c.simplifyError(result.Phase, result.Error)
+		return false, simplified
+	}
+
+	// Run validation tests if configured
+	if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
+		if err := c.runValidationTests("direct"); err != nil {
+			return false, err.Error()
+		}
+	}
+
+	c.logger.Debug("Direct validation passed",
+		"gvk", gvk,
+		"resource_type", resourceType,
+		"duration_ms", result.DurationMs)
+
+	return true, ""
 }

@@ -28,7 +28,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -36,7 +36,7 @@ import (
 // This is used by the deterministic assertion to render again and compare.
 type RenderDependencies struct {
 	Engine          templating.Engine
-	Stores          map[string]types.Store
+	Stores          map[string]stores.Store
 	ValidationPaths *dataplane.ValidationPaths
 	HTTPStore       *FixtureHTTPStoreWrapper
 	CurrentConfig   *parserconfig.StructuredConfig

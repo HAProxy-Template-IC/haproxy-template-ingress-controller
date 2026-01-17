@@ -157,6 +157,9 @@ type DiffDetails struct {
 	SSLCertsAdded        int
 	SSLCertsModified     int
 	SSLCertsDeleted      int
+	SSLCaFilesAdded      int
+	SSLCaFilesModified   int
+	SSLCaFilesDeleted    int
 	GeneralFilesAdded    int
 	GeneralFilesModified int
 	GeneralFilesDeleted  int

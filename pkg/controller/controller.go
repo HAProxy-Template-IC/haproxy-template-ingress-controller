@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -56,16 +57,18 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/discovery"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/executor"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/indextracker"
 	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -81,6 +84,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 const (
@@ -474,9 +478,6 @@ func setupComponents(
 	templateValidator := validator.NewTemplateValidator(bus, logger)
 	jsonpathValidator := validator.NewJSONPathValidator(bus, logger)
 
-	// Create webhook validators (for admission validation)
-	basicWebhookValidator := webhook.NewBasicValidatorComponent(bus, logger)
-
 	// Create config change channel for reinitialization signaling
 	configChangeCh := make(chan *coreconfig.Config, 1)
 
@@ -541,14 +542,6 @@ func setupComponents(
 	g.Go(func() error {
 		if err := jsonpathValidator.Start(gCtx); err != nil {
 			logger.Error("jsonpath validator failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if err := basicWebhookValidator.Start(gCtx); err != nil {
-			logger.Error("basic webhook validator failed", "error", err)
 			cancel()
 			return err
 		}
@@ -960,17 +953,16 @@ func setupCurrentConfigStore(
 // reconciliationComponents holds all reconciliation-related components.
 type reconciliationComponents struct {
 	reconciler          *reconciler.Reconciler
-	renderer            *renderer.Component
-	haproxyValidator    *validator.HAProxyValidatorComponent
-	executor            *executor.Executor
+	coordinator         *reconciler.Coordinator // Orchestrates render-validate pipeline
 	discovery           *discovery.Component
 	deployer            *deployer.Component
 	deploymentScheduler *deployer.DeploymentScheduler
 	driftMonitor        *deployer.DriftPreventionMonitor
 	configPublisher     *ctrlconfigpublisher.Component
-	statusUpdater       *configchange.StatusUpdater // Updates CRD status with validation results
-	httpStore           *httpstore.Component        // HTTP resource fetcher for dynamic content
-	capabilities        dataplane.Capabilities      // HAProxy/DataPlane API capabilities
+	statusUpdater       *configchange.StatusUpdater  // Updates CRD status with validation results
+	httpStore           *httpstore.Component         // HTTP resource fetcher for dynamic content
+	proposalValidator   *proposalvalidator.Component // Validates HTTP content and webhook proposals
+	capabilities        dataplane.Capabilities       // HAProxy/DataPlane API capabilities
 }
 
 // leaderOnlyComponents holds components that only the leader should run.
@@ -988,6 +980,7 @@ func createReconciliationComponents(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
+	storeManager *resourcestore.Manager,
 	bus *busevents.EventBus,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
@@ -1008,18 +1001,10 @@ func createReconciliationComponents(
 		"supports_map_storage", capabilities.SupportsMapStorage,
 		"supports_general_storage", capabilities.SupportsGeneralStorage)
 
-	// Create Renderer with stores from ResourceWatcher
-	stores := resourceWatcher.GetAllStores()
-
 	// Get haproxy-pods store for pod-maxconn calculations in templates
 	haproxyPodStore := resourceWatcher.GetStore("haproxy-pods")
 	if haproxyPodStore == nil {
 		return nil, fmt.Errorf("haproxy-pods store not found (should be auto-injected)")
-	}
-
-	rendererComponent, err := renderer.New(bus, cfg, stores, haproxyPodStore, currentConfigStore, capabilities, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create renderer: %w", err)
 	}
 
 	// Create HTTPStore component for dynamic HTTP content fetching
@@ -1028,14 +1013,69 @@ func createReconciliationComponents(
 	driftInterval := cfg.Dataplane.GetDriftPreventionInterval()
 	httpStoreEvictionMaxAge := 2 * driftInterval
 	httpStoreComponent := httpstore.New(bus, logger, httpStoreEvictionMaxAge)
-	rendererComponent.SetHTTPStoreComponent(httpStoreComponent)
 
-	// Create HAProxy Validator
-	// Validation paths are now created per-render by the Renderer component for parallel validation support
-	haproxyValidatorComponent := validator.NewHAProxyValidator(bus, logger)
+	// Create template engine for the Coordinator's Pipeline
+	// currentConfig is needed for slot preservation during renders
+	additionalDeclarations := map[string]any{
+		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	}
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create template engine for reconciliation: %w", err)
+	}
 
-	// Create Executor
-	executorComponent := executor.New(bus, logger)
+	// Create RenderService with full dependencies for production rendering
+	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
+		Engine:             engine,
+		Config:             cfg,
+		Logger:             logger,
+		Capabilities:       capabilities,
+		HAProxyPodStore:    haproxyPodStore,
+		HTTPStoreComponent: httpStoreComponent,
+		CurrentConfigStore: currentConfigStore,
+	})
+
+	// Create ValidationService with permissive DNS validation for runtime
+	// (servers with unresolvable hostnames start DOWN instead of failing)
+	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
+	validationService := validation.NewValidationService(&validation.ValidationServiceConfig{
+		Logger:            logger,
+		Version:           localVersion,
+		SkipDNSValidation: true, // Permissive for runtime reconciliation
+		BaseDir:           dirConfig.BaseDir,
+		MapsDir:           dirConfig.MapsDir,
+		SSLCertsDir:       dirConfig.SSLCertsDir,
+		GeneralDir:        dirConfig.GeneralDir,
+	})
+
+	// Create Pipeline (composes render + validate)
+	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
+		Renderer:  renderService,
+		Validator: validationService,
+		Logger:    logger,
+	})
+
+	// Create StoreProvider from storeManager for the Coordinator
+	baseStoreProvider := newStoreProviderFromManager(storeManager)
+
+	// Create Coordinator (replaces Executor + Renderer event handling + HAProxyValidator)
+	// The Coordinator calls Pipeline.Execute() directly and publishes events for downstream components
+	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
+		EventBus:      bus,
+		Pipeline:      pipelineInstance,
+		StoreProvider: baseStoreProvider,
+		Logger:        logger,
+	})
+
+	// Create ProposalValidator (handles validation of HTTP content and webhook proposals)
+	// This is an all-replica component because HTTPStore (all-replica) depends on it to
+	// validate HTTP content before promotion. Webhook validation also uses this component.
+	proposalValidatorComponent := proposalvalidator.New(&proposalvalidator.ComponentConfig{
+		EventBus:          bus,
+		Pipeline:          pipelineInstance,
+		BaseStoreProvider: baseStoreProvider,
+		Logger:            logger,
+	})
 
 	// Create Deployer with maxParallel and rawPushThreshold from config
 	deployerComponent := deployer.New(bus, logger, cfg.Dataplane.MaxParallel, cfg.Dataplane.RawPushThreshold)
@@ -1076,18 +1116,19 @@ func createReconciliationComponents(
 	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, bus, logger)
 
 	// Register components with the lifecycle registry using builder pattern
-	// Renderer and DriftMonitor are leader-only to avoid multi-replica race conditions.
+	// Coordinator is leader-only because it performs rendering (state changes).
+	// DriftMonitor is leader-only to avoid multi-replica race conditions.
 	// StatusUpdater is leader-only to avoid API conflicts from concurrent updates.
+	// ProposalValidator is all-replica because HTTPStore depends on it for HTTP content validation.
 	registry.Build().
 		AllReplica(
 			reconcilerComponent,
-			haproxyValidatorComponent,
-			executorComponent,
 			discoveryComponent,
 			httpStoreComponent,
+			proposalValidatorComponent,
 		).
 		LeaderOnly(
-			rendererComponent,
+			coordinatorComponent,
 			driftMonitorComponent,
 			deployerComponent,
 			deploymentSchedulerComponent,
@@ -1098,9 +1139,7 @@ func createReconciliationComponents(
 
 	return &reconciliationComponents{
 		reconciler:          reconcilerComponent,
-		renderer:            rendererComponent,
-		haproxyValidator:    haproxyValidatorComponent,
-		executor:            executorComponent,
+		coordinator:         coordinatorComponent,
 		discovery:           discoveryComponent,
 		deployer:            deployerComponent,
 		deploymentScheduler: deploymentSchedulerComponent,
@@ -1108,6 +1147,7 @@ func createReconciliationComponents(
 		configPublisher:     configPublisherComponent,
 		statusUpdater:       statusUpdaterComponent,
 		httpStore:           httpStoreComponent,
+		proposalValidator:   proposalValidatorComponent,
 		capabilities:        capabilities,
 	}, nil
 }
@@ -1279,7 +1319,6 @@ func setupWebhook(
 	cfg *coreconfig.Config,
 	webhookCerts *WebhookCertificates,
 	k8sClient *client.Client,
-	bus *busevents.EventBus,
 	dryrunValidator *dryrunvalidator.Component, // Pre-created validator (may be nil)
 	logger *slog.Logger,
 	metricsRecorder webhook.MetricsRecorder,
@@ -1296,12 +1335,6 @@ func setupWebhook(
 	logger.Info("Webhook validation enabled",
 		"rule_count", len(rules))
 
-	// Start DryRunValidator if provided (tracked by errgroup for graceful shutdown)
-	if dryrunValidator != nil {
-		startInErrGroup(errGroup, iterCtx, logger, cancel, "dry-run validator", dryrunValidator.Start)
-		logger.Info("Dry-run validator started")
-	}
-
 	// Create RESTMapper for resolving resource kinds from GVR
 	// This uses the Kubernetes API discovery to get authoritative mappings
 	logger.Debug("Creating RESTMapper for resource kind resolution")
@@ -1310,17 +1343,17 @@ func setupWebhook(
 		memory.NewMemCacheClient(discoveryClient),
 	)
 
-	// Create webhook component with certificate data from Kubernetes API
+	// Create webhook component with DryRunValidator for direct validation (no scatter-gather)
 	// Certificates are fetched from Secret via Kubernetes API and passed directly to component
 	webhookComponent := webhook.New(
-		bus,
 		logger,
 		&webhook.Config{
-			Port:    9443, // Default webhook port
-			Path:    "/validate",
-			Rules:   rules,
-			CertPEM: webhookCerts.CertPEM,
-			KeyPEM:  webhookCerts.KeyPEM,
+			Port:            9443, // Default webhook port
+			Path:            "/validate",
+			Rules:           rules,
+			CertPEM:         webhookCerts.CertPEM,
+			KeyPEM:          webhookCerts.KeyPEM,
+			DryRunValidator: dryrunValidator, // Direct validation, nil = fail-open
 		},
 		mapper,
 		metricsRecorder,
@@ -1365,7 +1398,7 @@ func createDryRunValidator(
 		return nil, fmt.Errorf("failed to create template engine for dry-run validation: %w", err)
 	}
 
-	// Create validation paths
+	// Create validation paths (still needed for validation tests)
 	validationPaths := &dataplane.ValidationPaths{
 		MapsDir:           cfg.Dataplane.MapsDir,
 		SSLCertsDir:       cfg.Dataplane.SSLCertsDir,
@@ -1373,17 +1406,67 @@ func createDryRunValidator(
 		ConfigFile:        cfg.Dataplane.ConfigFile,
 	}
 
+	// Create base store provider from resourcestore.Manager
+	baseStoreProvider := newStoreProviderFromManager(storeManager)
+
+	// Create RenderService (pure service for rendering)
+	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
+		Engine:       engine,
+		Config:       cfg,
+		Logger:       logger,
+		Capabilities: capabilities,
+		// Note: No HTTPStoreComponent, HAProxyPodStore, or CurrentConfigStore
+		// DryRunValidator operates on proposed changes without HTTP fetching or current config
+	})
+
+	// Create ValidationService (pure service for validation)
+	// Use strict DNS validation for webhook (catch DNS issues before admission)
+	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
+	validationService := validation.NewValidationService(&validation.ValidationServiceConfig{
+		Logger:            logger,
+		SkipDNSValidation: false, // Strict mode for webhook validation
+		BaseDir:           dirConfig.BaseDir,
+		MapsDir:           dirConfig.MapsDir,
+		SSLCertsDir:       dirConfig.SSLCertsDir,
+		GeneralDir:        dirConfig.GeneralDir,
+	})
+
+	// Create Pipeline (composes render + validate)
+	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
+		Renderer:  renderService,
+		Validator: validationService,
+		Logger:    logger,
+	})
+
+	// Create ProposalValidator in sync-only mode (only ValidateSync() is used for webhook)
+	// This avoids duplicate event subscriptions since the main ProposalValidator
+	// in createReconciliationComponents handles async HTTP content validation events.
+	proposalValidatorInstance := proposalvalidator.New(&proposalvalidator.ComponentConfig{
+		EventBus:          bus,
+		Pipeline:          pipelineInstance,
+		BaseStoreProvider: baseStoreProvider,
+		Logger:            logger,
+		SyncOnly:          true, // Webhook only uses ValidateSync(), no event subscription
+	})
+
 	// Create DryRunValidator (subscribes in constructor)
-	return dryrunvalidator.New(bus, storeManager, cfg, engine, validationPaths, capabilities, logger), nil
+	return dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
+		EventBus:          bus,
+		ProposalValidator: proposalValidatorInstance,
+		Config:            cfg,
+		Engine:            engine,
+		ValidationPaths:   validationPaths,
+		Capabilities:      capabilities,
+		Logger:            logger,
+	}), nil
 }
 
 // setupReconciliation creates and starts the reconciliation components (Stage 5).
 //
 // The Reconciler debounces resource changes and triggers reconciliation events.
-// The Renderer subscribes to reconciliation events and renders HAProxy configuration.
-// The HAProxyValidator validates rendered configurations using syntax and semantic checks.
-// The Executor subscribes to reconciliation events and orchestrates pure components
-// (Renderer, Validator, Deployer) to perform the reconciliation workflow.
+// The Coordinator orchestrates the render-validate pipeline by calling Pipeline.Execute()
+// directly and publishing events (TemplateRenderedEvent, ValidationCompletedEvent) for
+// downstream components like DeploymentScheduler.
 //
 // All components are started after initial resource synchronization to ensure we
 // have a complete view of the cluster state before beginning reconciliation cycles.
@@ -1397,6 +1480,7 @@ func setupReconciliation(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
+	storeManager *resourcestore.Manager,
 	bus *busevents.EventBus,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
@@ -1404,7 +1488,7 @@ func setupReconciliation(
 	errGroup *errgroup.Group,
 ) (*reconciliationComponents, error) {
 	// Create all components
-	components, err := createReconciliationComponents(cfg, k8sClient, resourceWatcher, currentConfigStore, bus, registry, logger)
+	components, err := createReconciliationComponents(cfg, k8sClient, resourceWatcher, currentConfigStore, storeManager, bus, registry, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -1621,7 +1705,7 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, setup.Bus, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
+	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, setup.StoreManager, setup.Bus, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
 	if err != nil {
 		return err
 	}
@@ -1658,7 +1742,7 @@ func runIteration(
 	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
 	if webhook.HasWebhookEnabled(cfg) {
 		logger.Info("Stage 7: Setting up webhook validation")
-		setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, setup.Bus, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
+		setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
 	}
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
@@ -1736,8 +1820,8 @@ func registerResourceStores(
 	logger *slog.Logger,
 ) {
 	logger.Debug("Registering resource stores with ResourceStoreManager")
-	stores := resourceWatcher.GetAllStores()
-	for resourceType, store := range stores {
+	k8sStores := resourceWatcher.GetAllStores()
+	for resourceType, store := range k8sStores {
 		storeManager.RegisterStore(resourceType, store)
 		logger.Debug("Registered store", "resource_type", resourceType)
 	}
@@ -1924,4 +2008,59 @@ func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertif
 		KeyPEM:  keyPEM,
 		Version: resource.GetResourceVersion(),
 	}, nil
+}
+
+// resourceStoreManagerAdapter adapts resourcestore.Manager to stores.StoreProvider.
+//
+// This adapter is needed because resourcestore.Manager uses k8s/types.Store
+// while stores.StoreProvider expects stores.Store. Although both interfaces
+// have identical methods, Go's type system treats them as different types.
+type resourceStoreManagerAdapter struct {
+	manager    *resourcestore.Manager
+	storeNames []string
+}
+
+// GetStore implements stores.StoreProvider.
+func (a *resourceStoreManagerAdapter) GetStore(name string) stores.Store {
+	store, exists := a.manager.GetStore(name)
+	if !exists || store == nil {
+		return nil
+	}
+	// Wrap the types.Store to satisfy stores.Store interface
+	return &stores.TypesStoreAdapter{Inner: store}
+}
+
+// StoreNames implements stores.StoreProvider.
+func (a *resourceStoreManagerAdapter) StoreNames() []string {
+	return a.storeNames
+}
+
+// newStoreProviderFromManager creates a stores.StoreProvider from a resourcestore.Manager.
+// This extracts the pattern used in multiple places to avoid duplication.
+func newStoreProviderFromManager(manager *resourcestore.Manager) stores.StoreProvider {
+	return &resourceStoreManagerAdapter{
+		manager:    manager,
+		storeNames: manager.StoreNames(),
+	}
+}
+
+// validationDirConfig contains directory configuration derived from dataplane settings.
+// This struct centralizes the directory name extraction to avoid repetition.
+type validationDirConfig struct {
+	BaseDir     string // Parent directory (e.g., /etc/haproxy)
+	MapsDir     string // Relative maps directory name (e.g., maps)
+	SSLCertsDir string // Relative SSL certs directory name (e.g., ssl)
+	GeneralDir  string // Relative general files directory name (e.g., general)
+}
+
+// extractValidationDirConfig derives directory names from dataplane configuration.
+// The BaseDir is the parent of MapsDir, and individual directory names are extracted
+// using filepath.Base() to get just the directory name component.
+func extractValidationDirConfig(dataplaneConfig *coreconfig.DataplaneConfig) validationDirConfig {
+	return validationDirConfig{
+		BaseDir:     filepath.Dir(dataplaneConfig.MapsDir),
+		MapsDir:     filepath.Base(dataplaneConfig.MapsDir),
+		SSLCertsDir: filepath.Base(dataplaneConfig.SSLCertsDir),
+		GeneralDir:  filepath.Base(dataplaneConfig.GeneralStorageDir),
+	}
 }

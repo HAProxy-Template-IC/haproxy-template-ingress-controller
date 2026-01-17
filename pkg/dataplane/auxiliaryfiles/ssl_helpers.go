@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
@@ -28,20 +29,96 @@ func (o *sslStorageOps[T]) GetContent(ctx context.Context, id string) (string, e
 }
 
 func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) (string, error) {
-	reloadID, err := o.create(ctx, id, content)
-	if err != nil && strings.Contains(err.Error(), "already exists") {
-		// File already exists, fall back to update instead of failing.
-		return o.Update(ctx, id, content)
+	// Normalize to filename only - DataPlane API expects just the filename,
+	// not a path with directory components like "ssl/filename.pem".
+	name := filepath.Base(id)
+	reloadID, err := o.create(ctx, name, content)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			// File already exists, fall back to update instead of failing.
+			return o.Update(ctx, id, content)
+		}
+		// HAProxy's runtime SSL CA endpoint can return 500 errors even when the
+		// operation actually succeeds. The file creation is asynchronous, so we
+		// need to verify the file exists (with retries to handle async creation).
+		// Note: We only check existence, not content, because the API returns
+		// metadata/fingerprint instead of raw certificate content.
+		if strings.Contains(err.Error(), "500") {
+			if o.verifyExistsWithRetry(ctx, name) {
+				slog.Debug("SSL CA file create returned 500 but file exists, treating as success",
+					"file", name)
+				return "", nil
+			}
+		}
 	}
 	return reloadID, err
 }
 
 func (o *sslStorageOps[T]) Update(ctx context.Context, id, content string) (string, error) {
-	return o.update(ctx, id, content)
+	// Normalize to filename only - DataPlane API expects just the filename.
+	name := filepath.Base(id)
+	reloadID, err := o.update(ctx, name, content)
+	if err != nil {
+		// HAProxy's runtime SSL CA endpoint can return 500 errors even when the
+		// operation actually succeeds. Verify that the file still exists.
+		// Note: We only check existence, not content, because the API returns
+		// metadata/fingerprint instead of raw certificate content.
+		if strings.Contains(err.Error(), "500") {
+			if o.verifyExistsWithRetry(ctx, name) {
+				slog.Debug("SSL CA file update returned 500 but file exists, treating as success",
+					"file", name)
+				return "", nil
+			}
+		}
+	}
+	return reloadID, err
+}
+
+// verifyExistsWithRetry checks if a file exists in storage with retries.
+// This is used as a workaround for HAProxy runtime API returning 500 errors
+// even when the operation actually succeeds. File creation is asynchronous,
+// so we retry a few times to allow the operation to complete.
+// We only check existence, not content, because the API returns metadata/
+// fingerprint format instead of raw certificate content.
+func (o *sslStorageOps[T]) verifyExistsWithRetry(ctx context.Context, name string) bool {
+	const maxRetries = 3
+	const retryDelay = 500 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(retryDelay):
+			}
+		}
+
+		files, err := o.getAll(ctx)
+		if err != nil {
+			slog.Debug("SSL storage verification: failed to list files",
+				"attempt", attempt+1,
+				"error", err)
+			continue
+		}
+
+		for _, f := range files {
+			if f == name {
+				return true
+			}
+		}
+
+		slog.Debug("SSL storage verification: file not found yet",
+			"file", name,
+			"attempt", attempt+1)
+	}
+
+	return false
 }
 
 func (o *sslStorageOps[T]) Delete(ctx context.Context, id string) error {
-	return o.delete(ctx, id)
+	// Normalize to filename only - DataPlane API expects just the filename.
+	name := filepath.Base(id)
+	return o.delete(ctx, name)
 }
 
 // sslStorageConfig holds configuration for SSL storage file comparison/sync operations.

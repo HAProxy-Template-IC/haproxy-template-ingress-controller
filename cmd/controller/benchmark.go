@@ -30,7 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -192,7 +192,7 @@ func runSingleTestBenchmark(
 	}
 
 	// Create stores from fixtures
-	stores, err := createStoresForBenchmark(cfg, engine, fixtures)
+	storeMap, err := createStoresForBenchmark(cfg, engine, fixtures)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create fixture stores: %w", err)
 	}
@@ -201,7 +201,7 @@ func runSingleTestBenchmark(
 	httpStore := createHTTPStoreForBenchmark(httpFixtures, logger)
 
 	// Build render context
-	renderCtx := buildBenchmarkContext(cfg, stores, validationPaths, httpStore, logger)
+	renderCtx := buildBenchmarkContext(cfg, storeMap, validationPaths, httpStore, logger)
 
 	// Warm up (one render to eliminate any JIT effects)
 	_, err = renderAllFiles(engine, cfg, renderCtx)
@@ -359,7 +359,7 @@ func sortedCertKeys(certs map[string]config.SSLCertificate) []string {
 }
 
 // createStoresForBenchmark creates resource stores from test fixtures.
-func createStoresForBenchmark(cfg *config.Config, engine templating.Engine, fixtures map[string][]interface{}) (map[string]types.Store, error) {
+func createStoresForBenchmark(cfg *config.Config, engine templating.Engine, fixtures map[string][]interface{}) (map[string]stores.Store, error) {
 	// Create a minimal runner just to use its fixture processing
 	runner := testrunner.New(cfg, engine, nil, testrunner.Options{})
 	return runner.CreateStoresFromFixtures(fixtures)
@@ -377,7 +377,7 @@ func createHTTPStoreForBenchmark(httpFixtures []config.HTTPResourceFixture, logg
 // context creation across all usages (renderer, testrunner, benchmark, dryrunvalidator).
 func buildBenchmarkContext(
 	cfg *config.Config,
-	stores map[string]types.Store,
+	storeMap map[string]stores.Store,
 	validationPaths *dataplane.ValidationPaths,
 	httpStore *testrunner.FixtureHTTPStoreWrapper,
 	logger *slog.Logger,
@@ -386,7 +386,7 @@ func buildBenchmarkContext(
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
 	// Separate haproxy-pods from resource stores (goes in controller namespace)
-	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(stores)
+	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(storeMap)
 
 	// Build context using centralized builder
 	builder := rendercontext.NewBuilder(

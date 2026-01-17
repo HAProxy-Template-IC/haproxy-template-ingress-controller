@@ -1,1 +1,1 @@
-Please review the changes in this branch thoroughly regarding bugs, violations of the DRY principe and code smells.
+Please review the changes in this branch thoroughly regarding bugs, violations of the DRY and SOLID principles and code smells.

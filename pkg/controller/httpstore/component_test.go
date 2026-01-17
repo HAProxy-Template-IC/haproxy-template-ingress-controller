@@ -613,8 +613,14 @@ func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	pendingURLs := store.GetPendingURLs()
 	require.Len(t, pendingURLs, 1, "should have one URL with pending content")
 
-	// Publish ValidationCompletedEvent
-	bus.Publish(events.NewValidationCompletedEvent(nil, 0, "", true))
+	// Set a known pendingValidationID to simulate the component having triggered validation
+	testRequestID := "test-validation-request-id"
+	component.mu.Lock()
+	component.pendingValidationID = testRequestID
+	component.mu.Unlock()
+
+	// Publish ProposalValidationCompletedEvent with matching request ID
+	bus.Publish(events.NewProposalValidationCompletedEvent(testRequestID, 100))
 
 	// Wait for and verify HTTPResourceAcceptedEvent
 	timeout := time.After(2 * time.Second)
@@ -679,8 +685,14 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 
-	// Publish ValidationFailedEvent
-	bus.Publish(events.NewValidationFailedEvent([]string{"validation failed: bad content"}, 0, ""))
+	// Set a known pendingValidationID to simulate the component having triggered validation
+	testRequestID := "test-validation-request-id"
+	component.mu.Lock()
+	component.pendingValidationID = testRequestID
+	component.mu.Unlock()
+
+	// Publish ProposalValidationFailedEvent with matching request ID
+	bus.Publish(events.NewProposalValidationFailedEvent(testRequestID, "validation", nil, 100))
 
 	// Wait for HTTPResourceRejectedEvent
 	timeout := time.After(2 * time.Second)

@@ -13,7 +13,7 @@ Work in this package when:
 
 **DO NOT** work here for:
 
-- Reconciliation orchestration → Use `pkg/controller/executor`
+- Render-validate pipeline → Use `pkg/controller/pipeline`
 - Template rendering → Use `pkg/controller/renderer`
 - Deployment → Use `pkg/controller/deployer`
 
@@ -134,5 +134,6 @@ go reconciler.Start(ctx)
 
 ## Resources
 
-- Executor: `pkg/controller/executor/CLAUDE.md`
+- Coordinator (in this package): Orchestrates the render-validate pipeline
+- Pipeline: `pkg/controller/pipeline/pipeline.go`
 - Events: `pkg/controller/events/CLAUDE.md`

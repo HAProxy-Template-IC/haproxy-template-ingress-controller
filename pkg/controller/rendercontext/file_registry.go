@@ -45,7 +45,7 @@ type FileRegistry struct {
 
 // registeredFile tracks a dynamically-registered file.
 type registeredFile struct {
-	Type     string // "cert", "map", "file", or "crt-list"
+	Type     string // "cert", "map", "file", "crt-list"
 	Filename string // Base filename
 	Content  string // File content
 	Path     string // Predicted full path
@@ -214,6 +214,7 @@ func MergeAuxiliaryFiles(static, dynamic *dataplane.AuxiliaryFiles) *dataplane.A
 		MapFiles:        append(static.MapFiles, dynamic.MapFiles...),
 		GeneralFiles:    append(static.GeneralFiles, dynamic.GeneralFiles...),
 		SSLCertificates: append(static.SSLCertificates, dynamic.SSLCertificates...),
+		SSLCaFiles:      append(static.SSLCaFiles, dynamic.SSLCaFiles...),
 		CRTListFiles:    append(static.CRTListFiles, dynamic.CRTListFiles...),
 	}
 }
