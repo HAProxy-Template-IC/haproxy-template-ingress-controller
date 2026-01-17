@@ -130,10 +130,6 @@ type DeploymentStatusUpdate struct {
 	// or an actual sync operation (POST/PUT/DELETE).
 	IsDriftCheck bool
 
-	// LastCheckedAt is the timestamp of the last successful sync operation.
-	// Set on every successful sync regardless of whether operations were performed.
-	LastCheckedAt *time.Time
-
 	// LastReloadAt is the timestamp when HAProxy was last reloaded.
 	// Only set when a reload was triggered.
 	LastReloadAt *time.Time

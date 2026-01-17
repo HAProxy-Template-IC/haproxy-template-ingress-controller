@@ -844,10 +844,6 @@ func (in *OperationSummary) DeepCopy() *OperationSummary {
 func (in *PodDeploymentStatus) DeepCopyInto(out *PodDeploymentStatus) {
 	*out = *in
 	in.DeployedAt.DeepCopyInto(&out.DeployedAt)
-	if in.LastCheckedAt != nil {
-		in, out := &in.LastCheckedAt, &out.LastCheckedAt
-		*out = (*in).DeepCopy()
-	}
 	if in.LastReloadAt != nil {
 		in, out := &in.LastReloadAt, &out.LastReloadAt
 		*out = (*in).DeepCopy()

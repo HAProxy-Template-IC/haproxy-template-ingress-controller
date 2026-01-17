@@ -1528,17 +1528,9 @@ func addOrUpdatePodStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podStatus 
 			if podStatus.DeployedAt.IsZero() && !pods[i].DeployedAt.IsZero() {
 				podStatus.DeployedAt = pods[i].DeployedAt
 			}
-			// Use lastCheckedAt as fallback if deployedAt still zero
-			if podStatus.DeployedAt.IsZero() && podStatus.LastCheckedAt != nil {
-				podStatus.DeployedAt = *podStatus.LastCheckedAt
-			}
 			pods[i] = *podStatus
 			return pods
 		}
-	}
-	// For new pods, ensure deployedAt is set (required field)
-	if podStatus.DeployedAt.IsZero() && podStatus.LastCheckedAt != nil {
-		podStatus.DeployedAt = *podStatus.LastCheckedAt
 	}
 	return append(pods, *podStatus)
 }
@@ -1588,13 +1580,6 @@ func updateOrAppendPodStatus(
 	}
 
 	// Pod not found - append new entry
-	// Ensure deployedAt is set for first-time pod
-	if podStatus.DeployedAt.IsZero() && podStatus.LastCheckedAt != nil {
-		// Safeguard: use LastCheckedAt if deployedAt not set
-		// (shouldn't happen in practice - first sync always has operations)
-		podStatus.DeployedAt = *podStatus.LastCheckedAt
-	}
-
 	return append(pods, *podStatus)
 }
 
@@ -1603,12 +1588,6 @@ func buildPodStatus(update *DeploymentStatusUpdate) haproxyv1alpha1.PodDeploymen
 	podStatus := haproxyv1alpha1.PodDeploymentStatus{
 		PodName:  update.PodName,
 		Checksum: update.Checksum,
-	}
-
-	// Set LastCheckedAt - always set on every successful sync
-	if update.LastCheckedAt != nil {
-		checkedTime := metav1.NewTime(*update.LastCheckedAt)
-		podStatus.LastCheckedAt = &checkedTime
 	}
 
 	// Set DeployedAt only when operations > 0 (actual changes made)
