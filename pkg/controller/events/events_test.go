@@ -447,14 +447,9 @@ func TestHTTPEvents(t *testing.T) {
 func TestTemplateEvents(t *testing.T) {
 	t.Run("TemplateRenderedEvent", func(t *testing.T) {
 		auxFiles := map[string]string{"file1": "content1"}
-		valAuxFiles := map[string]string{"file2": "content2"}
-		valPaths := "/tmp/validation"
 		event := NewTemplateRenderedEvent(
 			"haproxy config",
-			"validation config",
-			valPaths,
 			auxFiles,
-			valAuxFiles,
 			5,
 			100,
 			"resource_change",
@@ -462,20 +457,16 @@ func TestTemplateEvents(t *testing.T) {
 		)
 		require.NotNil(t, event)
 		assert.Equal(t, "haproxy config", event.HAProxyConfig)
-		assert.Equal(t, "validation config", event.ValidationHAProxyConfig)
-		assert.Equal(t, valPaths, event.ValidationPaths)
 		assert.Equal(t, auxFiles, event.AuxiliaryFiles)
-		assert.Equal(t, valAuxFiles, event.ValidationAuxiliaryFiles)
 		assert.Equal(t, 5, event.AuxiliaryFileCount)
 		assert.Equal(t, int64(100), event.DurationMs)
 		assert.Equal(t, len("haproxy config"), event.ConfigBytes)
-		assert.Equal(t, len("validation config"), event.ValidationConfigBytes)
 		assert.Equal(t, EventTypeTemplateRendered, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
 
 	t.Run("TemplateRenderedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0, "", true,
+		event := NewTemplateRenderedEvent("cfg", nil, 0, 0, "", true,
 			WithCorrelation("corr-123", "cause-456"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
@@ -1157,7 +1148,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},
 		// Template events
-		{"TemplateRendered", NewTemplateRenderedEvent("cfg", "val", nil, nil, nil, 0, 0, "", true)},
+		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, 0, 0, "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		// Validation events
 		{"ValidationStarted", NewValidationStartedEvent()},

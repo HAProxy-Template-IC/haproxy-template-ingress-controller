@@ -165,8 +165,10 @@ func TestFileRegistry_GetFiles(t *testing.T) {
 	require.Len(t, files.SSLCertificates, 1)
 	assert.Equal(t, "cert content", files.SSLCertificates[0].Content)
 
+	// GeneralFiles includes only "file" type files
 	require.Len(t, files.GeneralFiles, 1)
 	assert.Equal(t, "file content", files.GeneralFiles[0].Content)
+	assert.Equal(t, "config.txt", files.GeneralFiles[0].Filename)
 
 	require.Len(t, files.CRTListFiles, 1)
 	assert.Equal(t, "crt-list content", files.CRTListFiles[0].Content)

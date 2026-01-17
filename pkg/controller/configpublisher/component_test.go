@@ -94,14 +94,11 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	testHAProxyConfig := "global\n  daemon\n\ndefaults\n  mode http\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
-		testHAProxyConfig, // validation config
-		nil,               // validation paths
-		nil,               // auxiliary files
-		nil,               // validation auxiliary files
-		0,                 // aux file count
-		100,               // duration ms
-		"",                // trigger reason
-		true,              // coalescible
+		nil,  // auxiliary files
+		0,    // aux file count
+		100,  // duration ms
+		"",   // trigger reason
+		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
 
@@ -438,9 +435,6 @@ func TestComponent_LostLeadership(t *testing.T) {
 	testHAProxyConfig := "global\n  daemon\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
-		testHAProxyConfig,
-		nil,
-		nil,
 		nil,
 		0,
 		100,
@@ -528,9 +522,6 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	testHAProxyConfig := "global\n  daemon\n  maxconn invalid\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
-		testHAProxyConfig,
-		nil,
-		nil,
 		nil,
 		0,
 		100,

@@ -57,6 +57,9 @@ type AuxiliaryFiles struct {
 	// SSLCertificates contains SSL certificates to sync to HAProxy SSL storage
 	SSLCertificates []auxiliaryfiles.SSLCertificate
 
+	// SSLCaFiles contains SSL CA certificate files for client/backend certificate verification
+	SSLCaFiles []auxiliaryfiles.SSLCaFile
+
 	// MapFiles contains map files for backend routing and other map-based features
 	MapFiles []auxiliaryfiles.MapFile
 

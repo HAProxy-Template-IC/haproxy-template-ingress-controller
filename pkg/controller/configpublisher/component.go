@@ -621,7 +621,9 @@ func (c *Component) convertAuxiliaryFiles(dataplaneFiles *dataplane.AuxiliaryFil
 	return &configpublisher.AuxiliaryFiles{
 		MapFiles:        dataplaneFiles.MapFiles,
 		SSLCertificates: dataplaneFiles.SSLCertificates,
+		SSLCaFiles:      dataplaneFiles.SSLCaFiles,
 		GeneralFiles:    dataplaneFiles.GeneralFiles,
+		CRTListFiles:    dataplaneFiles.CRTListFiles,
 	}
 }
 

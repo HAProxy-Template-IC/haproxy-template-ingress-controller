@@ -255,87 +255,98 @@ Snippets use numeric prefixes (e.g., `backends-500-ingress`) to control executio
 
 ## HAProxy File Path Requirements
 
-**CRITICAL**: HAProxy **requires absolute paths** to locate auxiliary files (maps, error pages, SSL certificates).
+### The `default-path config` Directive
 
-### The Problem with Relative Paths
-
-HAProxy does **NOT** work with relative file paths. When HAProxy validates or loads a configuration file, it resolves paths relative to its **working directory**, not relative to the configuration file location.
-
-**Example of what DOESN'T work:**
+**CRITICAL**: The base.yaml template **MUST** include `default-path config` in the global section for relative paths to work.
 
 ```haproxy
-errorfile 400 general/400.http          # WRONG - HAProxy can't find this
-use_backend %[path,map(maps/path.map)]   # WRONG - HAProxy can't find this
+global
+    default-path config
+    # ... other global settings
 ```
 
-When HAProxy runs `haproxy -c -f /tmp/haproxy.cfg`, it looks for `general/400.http` relative to its current working directory (likely `/`), not relative to `/tmp/`.
+This directive tells HAProxy to resolve relative paths from the **configuration file's directory**, not from HAProxy's working directory. Without it, relative paths fail.
 
-### The Correct Approach: Absolute Paths
+**Location in templates**: `charts/haptic/libraries/base.yaml` (line 456)
 
-HAProxy requires absolute paths:
+### How Path Resolution Works
 
-**Production (in HAProxy Dataplane pods):**
+**With `default-path config` (our approach):**
 
 ```haproxy
-errorfile 400 /etc/haproxy/general/400.http       # CORRECT
-use_backend %[path,map(/etc/haproxy/maps/path.map)]  # CORRECT
+# Config file at: /tmp/haproxy-validate-12345/haproxy.cfg
+# Files at: /tmp/haproxy-validate-12345/files/400.http
+
+global
+    default-path config
+
+defaults
+    errorfile 400 files/400.http    # Resolves to /tmp/haproxy-validate-12345/files/400.http
 ```
 
-**Validation (in controller temp directories):**
+HAProxy resolves `files/400.http` relative to the config file location (`/tmp/haproxy-validate-12345/`).
+
+**Without `default-path config` (broken):**
 
 ```haproxy
-errorfile 400 /tmp/haproxy-validate-12345/general/400.http    # CORRECT
-use_backend %[path,map(/tmp/haproxy-validate-12345/maps/path.map)]  # CORRECT
+# HAProxy resolves paths from its working directory (usually /)
+errorfile 400 files/400.http    # Looks for /files/400.http - NOT FOUND!
 ```
 
-### Dual-PathResolver Pattern
+### Single Render with Relative Paths
 
-The codebase implements a dual-PathResolver pattern to handle both production and validation:
+The codebase uses **relative paths** that work everywhere:
 
-**Production PathResolver** (Renderer component):
+1. **RenderService** uses PathResolver with relative paths: `maps/`, `ssl/`, `files/`
+2. **Templates** render paths like `files/400.http`, `maps/host.map`
+3. **ValidationService** writes files to temp directory matching this structure
+4. **HAProxy validation** runs with config in temp dir, `default-path config` resolves correctly
+5. **DataPlane API deployment** handles path mapping to production locations
 
-- Created once during component initialization
-- Uses production paths: `/etc/haproxy/maps`, `/etc/haproxy/certs`, `/etc/haproxy/general`
-- Files exist in HAProxy Dataplane containers
-- See: `pkg/controller/renderer/component.go:113`
+### PathResolver Configuration
 
-**Validation PathResolver** (Testrunner):
+PathResolver is configured with **relative paths** in `pkg/controller/renderer/service.go`:
 
-- Created per-test during validation
-- Uses temp paths: `/tmp/haproxy-validate-12345/maps`, `/tmp/haproxy-validate-12345/certs`
-- Files written to controller container's temp directories
-- Isolated per test for parallel execution
-- See: `pkg/controller/testrunner/runner.go:736`
+```go
+pathResolver := &templating.PathResolver{
+    MapsDir:    "maps",
+    SSLDir:     "ssl",
+    CRTListDir: "ssl",
+    GeneralDir: "files",
+}
+```
 
-### Why This Separation Matters
-
-The controller container has `readOnlyRootFilesystem: true` for security. It cannot write to `/etc/haproxy/` during validation. Therefore:
-
-1. **Production rendering** uses `/etc/haproxy/` paths (for deployment to HAProxy pods)
-2. **Validation rendering** uses `/tmp/haproxy-validate-*/` paths (for controller validation)
-
-Both use **absolute paths** because HAProxy requires them.
-
-### Template Implementation
-
-Templates use `pathResolver.GetPath()` to generate absolute paths:
+Templates use `pathResolver.GetPath()`:
 
 ```scriggo
-{#- Template example -#}
 errorfile 400 {{ pathResolver.GetPath("400.http", "file") }}
+{#- Output: files/400.http #}
 
-{#- Production output: -#}
-errorfile 400 /etc/haproxy/general/400.http
-
-{#- Validation output: -#}
-errorfile 400 /tmp/haproxy-validate-12345/general/400.http
+use_backend %[path,map({{ pathResolver.GetPath("path.map", "map") }})]
+{#- Output: maps/path.map #}
 ```
 
-The PathResolver is passed via rendering context and resolves names to absolute paths based on the configured directories.
+### ValidationService Directory Structure
+
+The ValidationService creates a temp directory structure matching PathResolver:
+
+```
+/tmp/haproxy-validation-xxx/
+├── haproxy.cfg          # Rendered config with relative paths
+├── maps/
+│   └── host.map
+├── ssl/
+│   └── cert.pem
+└── files/
+    ├── 400.http
+    └── 504.http
+```
+
+HAProxy runs with this directory as the config location, and `default-path config` resolves all relative paths correctly.
 
 ### Common Pitfall
 
-**DO NOT** assume HAProxy works like most other tools that resolve paths relative to the config file location. This assumption has caused bugs multiple times. Always use absolute paths through PathResolver.
+**DO NOT** remove `default-path config` from base.yaml. Without it, HAProxy cannot find auxiliary files during validation. This directive is essential for the relative-path architecture to work.
 
 ## Development Workflow
 

@@ -47,17 +47,17 @@ const (
 // It manages:
 //   - Refresh timers for URLs with delay > 0
 //   - Event publishing when content changes
-//   - Pending content promotion/rejection based on validation results
+//   - Pending content promotion/rejection based on proposal validation results
 //   - Periodic eviction of unused cache entries
 //
 // Event subscriptions:
-//   - ValidationCompletedEvent: Promote pending content to accepted
-//   - ValidationFailedEvent: Reject pending content
+//   - ProposalValidationCompletedEvent: Check if our validation, promote/reject pending
 //
 // Event publications:
-//   - HTTPResourceUpdatedEvent: When refreshed content differs from accepted
+//   - ProposalValidationRequestedEvent: When refreshed content differs from accepted
 //   - HTTPResourceAcceptedEvent: When pending content is promoted
 //   - HTTPResourceRejectedEvent: When pending content is rejected
+//   - ReconciliationTriggeredEvent: After successful validation promotion
 type Component struct {
 	eventBus  *busevents.EventBus
 	eventChan <-chan busevents.Event
@@ -72,6 +72,9 @@ type Component struct {
 
 	// Eviction configuration
 	evictionInterval time.Duration // How often to run eviction (0 = disabled)
+
+	// Pending validation request tracking
+	pendingValidationID string // ID of pending validation request (empty if none)
 }
 
 // New creates a new HTTPStore event adapter component.
@@ -88,11 +91,10 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.
 		logger = slog.Default()
 	}
 
-	// Subscribe to only the event types we handle during construction per CLAUDE.md guidelines
-	// This reduces buffer pressure by filtering at the EventBus level
+	// Subscribe to ProposalValidationCompleted events for HTTP content validation.
+	// We handle both valid and invalid results via the same event type (Valid field).
 	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
-		events.EventTypeValidationCompleted,
-		events.EventTypeValidationFailed,
+		events.EventTypeProposalValidationCompleted,
 	)
 
 	return &Component{
@@ -154,23 +156,41 @@ func (c *Component) Start(ctx context.Context) error {
 
 // handleEvent processes events from the EventBus.
 func (c *Component) handleEvent(event busevents.Event) {
-	switch e := event.(type) {
-	case *events.ValidationCompletedEvent:
-		c.handleValidationCompleted(e)
-
-	case *events.ValidationFailedEvent:
-		c.handleValidationFailed(e)
+	if e, ok := event.(*events.ProposalValidationCompletedEvent); ok {
+		c.handleProposalValidationCompleted(e)
 	}
 }
 
-// handleValidationCompleted promotes all pending HTTP content to accepted.
-func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent) {
+// handleProposalValidationCompleted handles validation completion for HTTP content.
+// Only processes events that match our pending validation request ID.
+func (c *Component) handleProposalValidationCompleted(event *events.ProposalValidationCompletedEvent) {
+	// Atomically check and clear pending request ID to prevent race conditions.
+	// This ensures that between checking the ID and clearing it, no other goroutine
+	// can modify pendingValidationID.
+	c.mu.Lock()
+	pendingID := c.pendingValidationID
+	if pendingID == "" || event.RequestID != pendingID {
+		c.mu.Unlock()
+		return
+	}
+	c.pendingValidationID = ""
+	c.mu.Unlock()
+
+	if event.Valid {
+		c.handleValidationSuccess()
+	} else {
+		c.handleValidationFailure(event.Phase, event.Error)
+	}
+}
+
+// handleValidationSuccess promotes all pending HTTP content and triggers reconciliation.
+func (c *Component) handleValidationSuccess() {
 	pendingURLs := c.store.GetPendingURLs()
 	if len(pendingURLs) == 0 {
 		return
 	}
 
-	c.logger.Info("validation completed, promoting pending HTTP content",
+	c.logger.Info("HTTP content validation succeeded, promoting pending content",
 		"url_count", len(pendingURLs))
 
 	for _, url := range pendingURLs {
@@ -187,23 +207,28 @@ func (c *Component) handleValidationCompleted(_ *events.ValidationCompletedEvent
 			))
 		}
 	}
+
+	// Trigger reconciliation with the newly accepted content.
+	// This is coalescible since multiple HTTP content changes can be batched.
+	c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_validated", true))
 }
 
-// handleValidationFailed rejects all pending HTTP content.
-func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) {
+// handleValidationFailure rejects all pending HTTP content.
+func (c *Component) handleValidationFailure(phase, errMsg string) {
 	pendingURLs := c.store.GetPendingURLs()
 	if len(pendingURLs) == 0 {
 		return
 	}
 
-	c.logger.Warn("validation failed, rejecting pending HTTP content",
+	c.logger.Warn("HTTP content validation failed, rejecting pending content",
 		"url_count", len(pendingURLs),
-		"errors", event.Errors)
+		"phase", phase,
+		"error", errMsg)
 
-	// Format reason from validation errors
+	// Format reason from validation error
 	reason := "validation failed"
-	if len(event.Errors) > 0 {
-		reason = event.Errors[0]
+	if errMsg != "" {
+		reason = errMsg
 	}
 
 	for _, url := range pendingURLs {
@@ -291,21 +316,48 @@ func (c *Component) refreshURL(url string) {
 		c.mu.Unlock()
 	}
 
-	// If content changed, publish event to trigger reconciliation
+	// If content changed, trigger proposal validation before accepting
 	if changed {
-		entry := c.store.GetEntry(url)
-		if entry != nil {
-			c.logger.Info("HTTP content changed, triggering reconciliation",
-				"url", url,
-				"new_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...")
-
-			c.eventBus.Publish(events.NewHTTPResourceUpdatedEvent(
-				url,
-				entry.PendingChecksum,
-				len(entry.PendingContent),
-			))
-		}
+		c.triggerProposalValidation(url)
 	}
+}
+
+// triggerProposalValidation publishes a ProposalValidationRequestedEvent with HTTPOverlay.
+// This validates the pending HTTP content before promoting it to accepted.
+func (c *Component) triggerProposalValidation(changedURL string) {
+	entry := c.store.GetEntry(changedURL)
+	if entry == nil {
+		return
+	}
+
+	c.logger.Info("HTTP content changed, triggering proposal validation",
+		"url", changedURL,
+		"new_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...")
+
+	// Create HTTPOverlay with current pending state
+	httpOverlay := httpstore.NewHTTPOverlay(c.store)
+
+	// Create validation request with HTTP overlay (no K8s overlays)
+	req := events.NewProposalValidationRequestedEvent(
+		nil,         // no K8s overlays
+		httpOverlay, // HTTP overlay with pending content
+		"httpstore",
+		changedURL,
+	)
+
+	// Track this request so we can handle the response
+	c.mu.Lock()
+	c.pendingValidationID = req.ID
+	c.mu.Unlock()
+
+	c.eventBus.Publish(req)
+
+	// Also publish HTTPResourceUpdatedEvent for observability
+	c.eventBus.Publish(events.NewHTTPResourceUpdatedEvent(
+		changedURL,
+		entry.PendingChecksum,
+		len(entry.PendingContent),
+	))
 }
 
 // stopAllRefreshers stops all refresh timers.

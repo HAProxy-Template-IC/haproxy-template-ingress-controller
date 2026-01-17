@@ -46,7 +46,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -487,7 +487,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 2. Create resource stores from merged fixtures
-	stores, err := r.CreateStoresFromFixtures(fixtures)
+	fixtureStores, err := r.CreateStoresFromFixtures(fixtures)
 	if err != nil {
 		result.Passed = false
 		result.RenderError = fmt.Sprintf("failed to create fixture stores: %v", err)
@@ -526,7 +526,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	haproxyConfig, auxiliaryFiles, includeStats, err := r.renderWithStores(engine, stores, validationPaths, httpStore, currentConfig, test.ExtraContext)
+	haproxyConfig, auxiliaryFiles, includeStats, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.ExtraContext)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -548,12 +548,12 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 6. Build template context for JSONPath assertions
-	templateContext := r.buildRenderingContext(stores, validationPaths, httpStore, currentConfig)
+	templateContext := r.buildRenderingContext(fixtureStores, validationPaths, httpStore, currentConfig)
 
 	// 7. Create render dependencies for deterministic assertion (if needed)
 	renderDeps := &RenderDependencies{
 		Engine:          engine,
-		Stores:          stores,
+		Stores:          fixtureStores,
 		ValidationPaths: validationPaths,
 		HTTPStore:       httpStore,
 		CurrentConfig:   currentConfig,
@@ -643,9 +643,9 @@ func hasRenderingErrorAssertions(assertions []config.ValidationAssertion) bool {
 // When profileIncludes is enabled, it returns timing statistics for included templates.
 // The currentConfig parameter enables slot-aware server assignment testing (nil for first deployment).
 // The testExtraContext parameter allows test-specific extraContext values to override global ones.
-func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]interface{}) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
+func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]interface{}) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
 	// Build rendering context with fixture stores
-	renderCtx := r.buildRenderingContext(stores, validationPaths, httpStore, currentConfig)
+	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig)
 
 	// Merge test-specific extraContext (overrides global extraContext values)
 	// IMPORTANT: Make a copy to avoid modifying the shared config map which would
@@ -712,12 +712,12 @@ func (r *Runner) renderWithStores(engine templating.Engine, stores map[string]ty
 //   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
 //   - Separates haproxy-pods store from resource stores
 //   - Accepts optional currentConfig for slot-aware server assignment testing
-func (r *Runner) buildRenderingContext(stores map[string]types.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig) map[string]interface{} {
+func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig) map[string]interface{} {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
 	// Separate haproxy-pods from resource stores (goes in controller namespace)
-	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(stores)
+	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(storeMap)
 	if haproxyPodStore != nil {
 		r.logger.Log(context.Background(), logging.LevelTrace, "wrapping haproxy-pods store for rendering context")
 	}

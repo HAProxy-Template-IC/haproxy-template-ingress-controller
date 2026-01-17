@@ -24,7 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 // MergeFixtures deep merges global fixtures with test fixtures by resource identity.
@@ -167,8 +167,8 @@ func buildResourceIdentity(resourceType string, resource *unstructured.Unstructu
 //   - error if fixture processing fails
 //
 //nolint:revive // Complexity acceptable for fixture processing with indexing and type inference
-func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (map[string]types.Store, error) {
-	stores := make(map[string]types.Store)
+func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (map[string]stores.Store, error) {
+	storeMap := make(map[string]stores.Store)
 
 	// PHASE 1: Create empty stores for ALL watched resources
 	// This ensures templates can safely reference any watched resource type
@@ -181,12 +181,12 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 		if numKeys < 1 {
 			numKeys = 1
 		}
-		stores[resourceType] = store.NewMemoryStore(numKeys)
+		storeMap[resourceType] = store.NewMemoryStore(numKeys)
 	}
 
 	// Create store for haproxy-pods (special controller metadata, not a watched resource)
 	r.logger.Log(context.Background(), logging.LevelTrace, "Creating empty store for haproxy-pods (controller metadata)")
-	stores["haproxy-pods"] = store.NewMemoryStore(2) // namespace + name keys
+	storeMap["haproxy-pods"] = store.NewMemoryStore(2) // namespace + name keys
 
 	// PHASE 2: Populate stores with fixture data
 	for resourceType, resources := range fixtures {
@@ -196,7 +196,7 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 
 		// Handle haproxy-pods specially (controller metadata, not a watched resource)
 		if resourceType == "haproxy-pods" {
-			storeInstance := stores["haproxy-pods"]
+			storeInstance := storeMap["haproxy-pods"]
 
 			for i, resourceObj := range resources {
 				resourceMap, ok := resourceObj.(map[string]interface{})
@@ -245,7 +245,7 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 		}
 
 		// Get the existing empty store created in Phase 1
-		storeInstance := stores[resourceType]
+		storeInstance := storeMap[resourceType]
 
 		// Add all fixture resources to the store
 		for i, resourceObj := range resources {
@@ -287,5 +287,5 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 		}
 	}
 
-	return stores, nil
+	return storeMap, nil
 }

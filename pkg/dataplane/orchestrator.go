@@ -237,7 +237,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 
 	// Step 8: Attempt fine-grained sync with retry logic (pass pre-computed diffs)
 	// The function returns whether Phase 1 (aux files) completed successfully
-	result, auxFilesSynced, err := o.attemptFineGrainedSyncWithDiffs(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
+	result, auxFilesSynced, err := o.attemptFineGrainedSyncWithDiffs(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
 
 	// Step 9: If fine-grained sync failed and fallback is enabled, try raw config push
 	if err != nil && opts.FallbackToRaw {
@@ -265,12 +265,13 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	opts *SyncOptions,
 	fileDiff *auxiliaryfiles.FileDiff,
 	sslDiff *auxiliaryfiles.SSLCertificateDiff,
+	caFileDiff *auxiliaryfiles.SSLCaFileDiff,
 	mapDiff *auxiliaryfiles.MapFileDiff,
 	crtlistDiff *auxiliaryfiles.CRTListDiff,
 	startTime time.Time,
 ) (*SyncResult, bool, error) {
 	// Phase 1: Sync auxiliary files (pre-config) using pre-computed diffs
-	auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, fileDiff, sslDiff, mapDiff)
+	auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
 	if err != nil {
 		return nil, false, err
 	}
@@ -291,12 +292,13 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	}
 
 	// Phase 3: Delete obsolete files AFTER successful config sync
-	o.deleteObsoleteFilesPostConfig(ctx, fileDiff, sslDiff, mapDiff)
+	o.deleteObsoleteFilesPostConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
 
 	// Build result
 	auxDiffs := &auxiliaryFileDiffs{
 		fileDiff:    fileDiff,
 		sslDiff:     sslDiff,
+		caFileDiff:  caFileDiff,
 		mapDiff:     mapDiff,
 		crtlistDiff: crtlistDiff,
 	}
@@ -372,7 +374,7 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 	// Files must exist before HAProxy validates the configuration.
 	// Skip if aux files were already synced in the failed fine-grained sync attempt.
 	if !auxFilesAlreadySynced {
-		auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.mapDiff)
+		auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff)
 		if err != nil {
 			return nil, err
 		}
@@ -615,6 +617,13 @@ func addAuxiliaryFileCounts(details *DiffDetails, auxDiffs *auxiliaryFileDiffs) 
 		details.SSLCertsDeleted = len(auxDiffs.sslDiff.ToDelete)
 	}
 
+	// SSL CA files
+	if auxDiffs.caFileDiff != nil {
+		details.SSLCaFilesAdded = len(auxDiffs.caFileDiff.ToCreate)
+		details.SSLCaFilesModified = len(auxDiffs.caFileDiff.ToUpdate)
+		details.SSLCaFilesDeleted = len(auxDiffs.caFileDiff.ToDelete)
+	}
+
 	// Map files
 	if auxDiffs.mapDiff != nil {
 		details.MapsAdded = len(auxDiffs.mapDiff.ToCreate)
@@ -633,6 +642,7 @@ func auxDiffsToOperations(auxDiffs *auxiliaryFileDiffs) []AppliedOperation {
 	var ops []AppliedOperation
 	ops = append(ops, fileDiffToOperations(auxDiffs.fileDiff)...)
 	ops = append(ops, sslDiffToOperations(auxDiffs.sslDiff)...)
+	ops = append(ops, caFileDiffToOperations(auxDiffs.caFileDiff)...)
 	ops = append(ops, mapDiffToOperations(auxDiffs.mapDiff)...)
 	ops = append(ops, crtlistDiffToOperations(auxDiffs.crtlistDiff)...)
 	return ops
@@ -699,6 +709,39 @@ func sslDiffToOperations(diff *auxiliaryfiles.SSLCertificateDiff) []AppliedOpera
 			Section:     "ssl-cert",
 			Resource:    path,
 			Description: "Deleted SSL certificate " + path,
+		})
+	}
+	return ops
+}
+
+// caFileDiffToOperations converts SSL CA file diffs to AppliedOperations.
+func caFileDiffToOperations(diff *auxiliaryfiles.SSLCaFileDiff) []AppliedOperation {
+	if diff == nil {
+		return nil
+	}
+	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
+	for _, c := range diff.ToCreate {
+		ops = append(ops, AppliedOperation{
+			Type:        "create",
+			Section:     "ssl-ca",
+			Resource:    c.Path,
+			Description: "Created SSL CA file " + c.Path,
+		})
+	}
+	for _, c := range diff.ToUpdate {
+		ops = append(ops, AppliedOperation{
+			Type:        "update",
+			Section:     "ssl-ca",
+			Resource:    c.Path,
+			Description: "Updated SSL CA file " + c.Path,
+		})
+	}
+	for _, path := range diff.ToDelete {
+		ops = append(ops, AppliedOperation{
+			Type:        "delete",
+			Section:     "ssl-ca",
+			Resource:    path,
+			Description: "Deleted SSL CA file " + path,
 		})
 	}
 	return ops
@@ -794,7 +837,7 @@ func (o *orchestrator) areAllOperationsRuntimeEligible(operations []comparator.O
 
 // deleteObsoleteFilesPostConfig deletes obsolete auxiliary files AFTER successful config sync.
 // Errors are logged as warnings but do not fail the sync since config is already applied.
-func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDiff *auxiliaryfiles.FileDiff, sslDiff *auxiliaryfiles.SSLCertificateDiff, mapDiff *auxiliaryfiles.MapFileDiff) {
+func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDiff *auxiliaryfiles.FileDiff, sslDiff *auxiliaryfiles.SSLCertificateDiff, caFileDiff *auxiliaryfiles.SSLCaFileDiff, mapDiff *auxiliaryfiles.MapFileDiff) {
 	// Delete general files
 	if fileDiff != nil && len(fileDiff.ToDelete) > 0 {
 		o.logger.Info("Deleting obsolete general files", "count", len(fileDiff.ToDelete))
@@ -826,6 +869,23 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 			o.logger.Warn("Failed to delete obsolete SSL certificates", "error", err, "certificates", sslDiff.ToDelete)
 		} else {
 			o.logger.Info("Obsolete SSL certificates deleted successfully")
+		}
+	}
+
+	// Delete SSL CA files
+	if caFileDiff != nil && len(caFileDiff.ToDelete) > 0 {
+		o.logger.Info("Deleting obsolete SSL CA files", "count", len(caFileDiff.ToDelete))
+
+		postConfigCA := &auxiliaryfiles.SSLCaFileDiff{
+			ToCreate: nil,
+			ToUpdate: nil,
+			ToDelete: caFileDiff.ToDelete,
+		}
+
+		if _, err := auxiliaryfiles.SyncSSLCaFiles(ctx, o.client, postConfigCA); err != nil {
+			o.logger.Warn("Failed to delete obsolete SSL CA files", "error", err, "ca_files", caFileDiff.ToDelete)
+		} else {
+			o.logger.Info("Obsolete SSL CA files deleted successfully")
 		}
 	}
 
@@ -902,13 +962,14 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 }
 
 // compareAuxiliaryFiles compares all auxiliary file types in parallel.
-// Returns file diffs for general files, SSL certificates, map files, and crt-list files.
+// Returns file diffs for general files, SSL certificates, SSL CA files, map files, and crt-list files.
 func (o *orchestrator) compareAuxiliaryFiles(
 	ctx context.Context,
 	auxFiles *AuxiliaryFiles,
-) (*auxiliaryfiles.FileDiff, *auxiliaryfiles.SSLCertificateDiff, *auxiliaryfiles.MapFileDiff, *auxiliaryfiles.CRTListDiff, error) {
+) (*auxiliaryFileDiffs, error) {
 	var fileDiff *auxiliaryfiles.FileDiff
 	var sslDiff *auxiliaryfiles.SSLCertificateDiff
+	var caFileDiff *auxiliaryfiles.SSLCaFileDiff
 	var mapDiff *auxiliaryfiles.MapFileDiff
 	var crtlistDiff *auxiliaryfiles.CRTListDiff
 
@@ -938,6 +999,13 @@ func (o *orchestrator) compareAuxiliaryFiles(
 		return err
 	})
 
+	// Compare SSL CA files
+	g.Go(func() error {
+		var err error
+		caFileDiff, err = o.compareSSLCaFiles(gCtx, auxFiles.SSLCaFiles)
+		return err
+	})
+
 	// Compare map files
 	g.Go(func() error {
 		var err error
@@ -954,7 +1022,7 @@ func (o *orchestrator) compareAuxiliaryFiles(
 
 	// Wait for all auxiliary file comparisons to complete
 	if err := g.Wait(); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 
 	// Clear CRT-list ToDelete - deletion is handled by unified general files comparison.
@@ -963,7 +1031,13 @@ func (o *orchestrator) compareAuxiliaryFiles(
 		crtlistDiff.ToDelete = nil
 	}
 
-	return fileDiff, sslDiff, mapDiff, crtlistDiff, nil
+	return &auxiliaryFileDiffs{
+		fileDiff:    fileDiff,
+		sslDiff:     sslDiff,
+		caFileDiff:  caFileDiff,
+		mapDiff:     mapDiff,
+		crtlistDiff: crtlistDiff,
+	}, nil
 }
 
 // compareGeneralFiles compares current and desired general files (comparison only, no sync).
@@ -1012,6 +1086,31 @@ func (o *orchestrator) compareSSLCertificates(ctx context.Context, sslCerts []au
 	}
 
 	return sslDiff, nil
+}
+
+// compareSSLCaFiles compares current and desired SSL CA files (comparison only, no sync).
+func (o *orchestrator) compareSSLCaFiles(ctx context.Context, caFiles []auxiliaryfiles.SSLCaFile) (*auxiliaryfiles.SSLCaFileDiff, error) {
+	if len(caFiles) == 0 {
+		return &auxiliaryfiles.SSLCaFileDiff{}, nil
+	}
+
+	o.logger.Debug("Comparing SSL CA files", "desired_ca_files", len(caFiles))
+
+	caFileDiff, err := auxiliaryfiles.CompareSSLCaFiles(ctx, o.client, caFiles)
+	if err != nil {
+		return nil, &SyncError{
+			Stage:   "compare_ssl_ca",
+			Message: "failed to compare SSL CA files",
+			Cause:   err,
+			Hints: []string{
+				"Verify Dataplane API is accessible",
+				"Check SSL CA storage permissions",
+				"SSL CA file storage requires DataPlane API v3.2+",
+			},
+		}
+	}
+
+	return caFileDiff, nil
 }
 
 // compareMapFiles compares current and desired map files (comparison only, no sync).
@@ -1252,6 +1351,7 @@ func (o *orchestrator) executeConfigOperations(
 type auxiliaryFileDiffs struct {
 	fileDiff    *auxiliaryfiles.FileDiff
 	sslDiff     *auxiliaryfiles.SSLCertificateDiff
+	caFileDiff  *auxiliaryfiles.SSLCaFileDiff
 	mapDiff     *auxiliaryfiles.MapFileDiff
 	crtlistDiff *auxiliaryfiles.CRTListDiff
 	hasChanges  bool
@@ -1265,26 +1365,22 @@ func (o *orchestrator) checkForChanges(
 	auxFiles *AuxiliaryFiles,
 ) (*auxiliaryFileDiffs, error) {
 	// Compare auxiliary files
-	fileDiff, sslDiff, mapDiff, crtlistDiff, err := o.compareAuxiliaryFiles(ctx, auxFiles)
+	auxDiffs, err := o.compareAuxiliaryFiles(ctx, auxFiles)
 	if err != nil {
 		return nil, err
 	}
 
 	// Check if there are auxiliary file changes
-	hasAuxChanges := (fileDiff != nil && fileDiff.HasChanges()) ||
-		(sslDiff != nil && sslDiff.HasChanges()) ||
-		(mapDiff != nil && mapDiff.HasChanges()) ||
-		(crtlistDiff != nil && crtlistDiff.HasChanges())
+	hasAuxChanges := (auxDiffs.fileDiff != nil && auxDiffs.fileDiff.HasChanges()) ||
+		(auxDiffs.sslDiff != nil && auxDiffs.sslDiff.HasChanges()) ||
+		(auxDiffs.caFileDiff != nil && auxDiffs.caFileDiff.HasChanges()) ||
+		(auxDiffs.mapDiff != nil && auxDiffs.mapDiff.HasChanges()) ||
+		(auxDiffs.crtlistDiff != nil && auxDiffs.crtlistDiff.HasChanges())
 
 	// Check if there are any changes (config OR auxiliary files)
 	if !diff.Summary.HasChanges() && !hasAuxChanges {
-		return &auxiliaryFileDiffs{
-			fileDiff:    fileDiff,
-			sslDiff:     sslDiff,
-			mapDiff:     mapDiff,
-			crtlistDiff: crtlistDiff,
-			hasChanges:  false,
-		}, nil
+		auxDiffs.hasChanges = false
+		return auxDiffs, nil
 	}
 
 	// Log changes
@@ -1298,19 +1394,15 @@ func (o *orchestrator) checkForChanges(
 
 	if hasAuxChanges {
 		o.logger.Debug("auxiliary file changes detected",
-			"general_files", fileDiff != nil && fileDiff.HasChanges(),
-			"ssl_certs", sslDiff != nil && sslDiff.HasChanges(),
-			"maps", mapDiff != nil && mapDiff.HasChanges(),
-			"crtlists", crtlistDiff != nil && crtlistDiff.HasChanges())
+			"general_files", auxDiffs.fileDiff != nil && auxDiffs.fileDiff.HasChanges(),
+			"ssl_certs", auxDiffs.sslDiff != nil && auxDiffs.sslDiff.HasChanges(),
+			"ssl_ca_files", auxDiffs.caFileDiff != nil && auxDiffs.caFileDiff.HasChanges(),
+			"maps", auxDiffs.mapDiff != nil && auxDiffs.mapDiff.HasChanges(),
+			"crtlists", auxDiffs.crtlistDiff != nil && auxDiffs.crtlistDiff.HasChanges())
 	}
 
-	return &auxiliaryFileDiffs{
-		fileDiff:    fileDiff,
-		sslDiff:     sslDiff,
-		mapDiff:     mapDiff,
-		crtlistDiff: crtlistDiff,
-		hasChanges:  true,
-	}, nil
+	auxDiffs.hasChanges = true
+	return auxDiffs, nil
 }
 
 // createNoChangesResult creates a SyncResult for when no changes are detected.
@@ -1389,11 +1481,11 @@ func (o *orchestrator) scheduleAuxiliarySync(
 // Only creates and updates are synced; deletions are deferred until post-config phase.
 // Returns reload IDs from create/update operations that triggered reloads.
 //
-// IMPORTANT: SSL certificates are synced FIRST (synchronously) before other aux files.
+// IMPORTANT: SSL certificates and CA files are synced FIRST (synchronously) before other aux files.
 // This ordering prevents a race condition where CRT-list, map, or general file syncs
-// trigger a HAProxy reload before all SSL certificates are uploaded. When HAProxy reloads,
-// it validates the current config which may reference SSL certs still being uploaded in parallel.
-// By syncing SSL certs first, we ensure they exist before any reload can be triggered.
+// trigger a HAProxy reload before all SSL certificates/CA files are uploaded. When HAProxy reloads,
+// it validates the current config which may reference SSL certs/CA files still being uploaded in parallel.
+// By syncing SSL certs and CA files first, we ensure they exist before any reload can be triggered.
 //
 // NOTE: CRT-list files are NOT synced separately here. They are merged into general files
 // in compareAuxiliaryFiles() for unified storage. The crtlistDiff is used by callers
@@ -1402,6 +1494,7 @@ func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 	ctx context.Context,
 	fileDiff *auxiliaryfiles.FileDiff,
 	sslDiff *auxiliaryfiles.SSLCertificateDiff,
+	caFileDiff *auxiliaryfiles.SSLCaFileDiff,
 	mapDiff *auxiliaryfiles.MapFileDiff,
 ) ([]string, error) {
 	var allReloadIDs []string
@@ -1430,6 +1523,38 @@ func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 					ToDelete: nil,
 				}
 				return auxiliaryfiles.SyncSSLCertificates(ctx, o.client, preConfigSSL)
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		allReloadIDs = append(allReloadIDs, reloadIDs...)
+	}
+
+	// Phase 1a (continued): Sync SSL CA files (synchronously, before other aux files)
+	// CA files must exist before any other aux file sync triggers a reload,
+	// because the HAProxy config may reference these CA files for client verification.
+	if caFileDiff != nil && caFileDiff.HasChanges() {
+		reloadIDs, err := o.syncAuxiliaryFileType(ctx, &auxiliaryFileSyncParams{
+			resourceType: "SSL CA file",
+			creates:      len(caFileDiff.ToCreate),
+			updates:      len(caFileDiff.ToUpdate),
+			deletes:      len(caFileDiff.ToDelete),
+			stage:        "sync_ssl_ca_pre",
+			message:      "failed to sync SSL CA files before config sync",
+			hints: []string{
+				"Check SSL CA storage permissions",
+				"Verify CA certificate contents are valid PEM format",
+				"SSL CA file storage requires DataPlane API v3.2+",
+				"Review error message for specific CA file failures",
+			},
+			syncFunc: func(ctx context.Context) ([]string, error) {
+				preConfigCA := &auxiliaryfiles.SSLCaFileDiff{
+					ToCreate: caFileDiff.ToCreate,
+					ToUpdate: caFileDiff.ToUpdate,
+					ToDelete: nil,
+				}
+				return auxiliaryfiles.SyncSSLCaFiles(ctx, o.client, preConfigCA)
 			},
 		})
 		if err != nil {

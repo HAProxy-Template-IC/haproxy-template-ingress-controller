@@ -16,26 +16,6 @@ package events
 
 import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 
-// GetValidationAuxiliaryFiles returns ValidationAuxiliaryFiles with proper type.
-// Returns nil, false if the type assertion fails.
-//
-// This method provides type-safe access to the ValidationAuxiliaryFiles field,
-// avoiding the need for manual type assertions in consumer code.
-func (e *TemplateRenderedEvent) GetValidationAuxiliaryFiles() (*dataplane.AuxiliaryFiles, bool) {
-	aux, ok := e.ValidationAuxiliaryFiles.(*dataplane.AuxiliaryFiles)
-	return aux, ok
-}
-
-// GetValidationPaths returns ValidationPaths with proper type.
-// Returns nil, false if the type assertion fails.
-//
-// This method provides type-safe access to the ValidationPaths field,
-// avoiding the need for manual type assertions in consumer code.
-func (e *TemplateRenderedEvent) GetValidationPaths() (*dataplane.ValidationPaths, bool) {
-	paths, ok := e.ValidationPaths.(*dataplane.ValidationPaths)
-	return paths, ok
-}
-
 // GetAuxiliaryFiles returns AuxiliaryFiles with proper type.
 // Returns nil, false if the type assertion fails.
 //

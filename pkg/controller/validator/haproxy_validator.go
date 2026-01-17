@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -193,31 +194,13 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 // performValidation validates the rendered HAProxy configuration.
 // Propagates correlation ID and trigger reason from the triggering event to validation events.
 // This method is called by handleTemplateRendered after coalescing logic.
+//
+// The validator creates its own temp directory for validation. The config uses relative paths
+// (maps/, ssl/, files/) that work with HAProxy's `default-path config` directive.
 func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRenderedEvent) {
 	startTime := time.Now()
 	correlationID := event.CorrelationID()
 	triggerReason := event.TriggerReason
-
-	// Extract validation paths first to get TempDir for cleanup.
-	// The renderer creates a temp directory for each render cycle, and the validator
-	// is responsible for cleaning it up after validation completes.
-	validationPaths, ok := event.GetValidationPaths()
-	if !ok {
-		v.publishValidationFailure(
-			[]string{"failed to extract validation paths from event"},
-			time.Since(startTime).Milliseconds(),
-			correlationID,
-			triggerReason,
-			"", // Don't cache infrastructure errors
-		)
-		return
-	}
-
-	// Defer cleanup of the validation temp directory.
-	// This ensures cleanup happens regardless of how the function exits (success, failure, or cache skip).
-	// The renderer creates the temp directory but delegates cleanup to the validator to prevent
-	// race conditions where cleanup runs before async validation.
-	defer v.cleanupValidationTempDir(validationPaths.TempDir)
 
 	// Compute config hash to detect identical configs
 	configHash := v.computeConfigHash(event.HAProxyConfig)
@@ -255,13 +238,11 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 		events.PropagateCorrelation(event),
 	))
 
-	// Extract validation auxiliary files from event
-	// These contain pending HTTP content (for testing new content before promotion)
-	// Uses typed accessor method for compile-time type safety
-	auxiliaryFiles, ok := event.GetValidationAuxiliaryFiles()
+	// Extract auxiliary files from event
+	auxiliaryFiles, ok := event.GetAuxiliaryFiles()
 	if !ok {
 		v.publishValidationFailure(
-			[]string{"failed to extract validation auxiliary files from event"},
+			[]string{"failed to extract auxiliary files from event"},
 			time.Since(startTime).Milliseconds(),
 			correlationID,
 			triggerReason,
@@ -270,11 +251,40 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 		return
 	}
 
-	// Validate configuration using validation config and paths from event
-	// Use ValidationHAProxyConfig (rendered with temp paths) instead of HAProxyConfig (production paths)
+	// Create isolated temp directory for validation
+	// The config uses relative paths (maps/, ssl/, files/) that we create as subdirectories
+	tempDir, err := os.MkdirTemp("", "haproxy-validation-*")
+	if err != nil {
+		v.publishValidationFailure(
+			[]string{"failed to create temp directory: " + err.Error()},
+			time.Since(startTime).Milliseconds(),
+			correlationID,
+			triggerReason,
+			"", // Don't cache infrastructure errors
+		)
+		return
+	}
+
+	// Ensure cleanup happens regardless of validation outcome
+	defer v.cleanupValidationTempDir(tempDir)
+
+	// Build validation paths matching the relative subdirectories used in the config.
+	// CRTListDir uses "files" because CRT-list files are always stored in general
+	// file storage to avoid triggering HAProxy reloads (see pkg/dataplane/auxiliaryfiles/crtlist.go).
+	validationPaths := &dataplane.ValidationPaths{
+		TempDir:           tempDir,
+		MapsDir:           filepath.Join(tempDir, "maps"),
+		SSLCertsDir:       filepath.Join(tempDir, "ssl"),
+		CRTListDir:        filepath.Join(tempDir, "files"),
+		GeneralStorageDir: filepath.Join(tempDir, "files"),
+		ConfigFile:        filepath.Join(tempDir, "haproxy.cfg"),
+	}
+
+	// Validate configuration using the single HAProxy config
+	// Config uses relative paths that match the validation subdirectories
 	// Pass nil version to use default v3.0 schema (safest for validation)
 	// Use permissive validation (skipDNSValidation=true) to prevent blocking when DNS fails at runtime
-	err := dataplane.ValidateConfiguration(event.ValidationHAProxyConfig, auxiliaryFiles, validationPaths, nil, true)
+	err = dataplane.ValidateConfiguration(event.HAProxyConfig, auxiliaryFiles, validationPaths, nil, true)
 	if err != nil {
 		// Simplify error message for user-facing output
 		// Keep full error in logs for debugging

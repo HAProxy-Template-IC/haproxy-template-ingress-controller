@@ -30,10 +30,9 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
@@ -56,10 +55,10 @@ const (
 // It coordinates the pure webhook library server with the event-driven controller architecture.
 type Component struct {
 	// Dependencies
-	eventBus   *busevents.EventBus
-	logger     *slog.Logger
-	metrics    MetricsRecorder
-	restMapper meta.RESTMapper
+	logger          *slog.Logger
+	metrics         MetricsRecorder
+	restMapper      meta.RESTMapper
+	dryRunValidator DryRunValidator
 
 	// Webhook library components
 	server *webhook.Server
@@ -77,6 +76,12 @@ type Component struct {
 type MetricsRecorder interface {
 	RecordWebhookRequest(gvk, result string, durationSeconds float64)
 	RecordWebhookValidation(gvk, result string)
+}
+
+// DryRunValidator defines the interface for dry-run validation.
+// This allows the webhook to validate resources without scatter-gather events.
+type DryRunValidator interface {
+	ValidateDirect(ctx context.Context, gvk, namespace, name string, object interface{}, operation string) (allowed bool, reason string)
 }
 
 // Config configures the webhook component.
@@ -100,12 +105,15 @@ type Config struct {
 	// Rules defines which resources the webhook validates.
 	// Used for registering validators by GVK.
 	Rules []webhook.WebhookRule
+
+	// DryRunValidator performs dry-run validation of resources.
+	// If nil, validation is skipped (fail-open).
+	DryRunValidator DryRunValidator
 }
 
 // New creates a new webhook component.
 //
 // Parameters:
-//   - eventBus: EventBus for publishing webhook events
 //   - logger: Structured logger
 //   - config: Component configuration (must include CertPEM and KeyPEM)
 //   - restMapper: RESTMapper for resolving resource kinds from GVR
@@ -113,7 +121,7 @@ type Config struct {
 //
 // Returns:
 //   - A new Component instance ready to be started
-func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config, restMapper meta.RESTMapper, metrics MetricsRecorder) *Component {
+func New(logger *slog.Logger, config *Config, restMapper meta.RESTMapper, metrics MetricsRecorder) *Component {
 	// Apply defaults
 	if config.Port == 0 {
 		config.Port = DefaultWebhookPort
@@ -123,11 +131,11 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config, rest
 	}
 
 	return &Component{
-		eventBus:   eventBus,
-		logger:     logger.With("component", ComponentName),
-		config:     *config,
-		restMapper: restMapper,
-		metrics:    metrics,
+		logger:          logger.With("component", ComponentName),
+		config:          *config,
+		restMapper:      restMapper,
+		metrics:         metrics,
+		dryRunValidator: config.DryRunValidator,
 	}
 }
 
@@ -308,10 +316,9 @@ func (c *Component) buildGVK(apiGroup, version, kind string) string {
 
 // createResourceValidator creates a ValidationFunc for a specific GVK.
 //
-// This validator uses the scatter-gather pattern to coordinate multiple
-// validators (BasicValidator, DryRunValidator) via the EventBus.
-//
-// All validators must allow for the resource to be admitted (AND logic).
+// This validator performs:
+// 1. Basic structural validation (metadata checks)
+// 2. Dry-run validation via DryRunValidator (render + HAProxy validation).
 func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 	return func(valCtx *webhook.ValidationContext) (bool, string, error) {
 		start := time.Now()
@@ -322,44 +329,51 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			"namespace", valCtx.Namespace,
 			"name", valCtx.Name)
 
-		// Create validation request with actual operation from context
-		req := events.NewWebhookValidationRequest(
-			gvk,
-			valCtx.Namespace,
-			valCtx.Name,
-			valCtx.Object,
-			valCtx.Operation,
-		)
-
-		// Use scatter-gather to collect validation results from all validators
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		result, err := c.eventBus.Request(ctx, req, busevents.RequestOptions{
-			Timeout:            5 * time.Second,
-			ExpectedResponders: []string{"basic", "dryrun"},
-		})
-
-		// Handle timeout or error
-		if err != nil {
-			c.logger.Error("Validation request failed",
+		// Basic structural validation (inline - previously done by BasicValidatorComponent)
+		if err := c.validateBasicStructure(valCtx.Object); err != nil {
+			c.logger.Info("Basic validation failed",
 				"gvk", gvk,
-				"operation", valCtx.Operation,
 				"namespace", valCtx.Namespace,
 				"name", valCtx.Name,
 				"error", err)
 
 			duration := time.Since(start).Seconds()
 			if c.metrics != nil {
-				c.metrics.RecordWebhookRequest(gvk, "error", duration)
-				c.metrics.RecordWebhookValidation(gvk, "error")
+				c.metrics.RecordWebhookRequest(gvk, "denied", duration)
+				c.metrics.RecordWebhookValidation(gvk, "denied")
 			}
 
-			return false, "validation timeout or internal error", nil
+			return false, err.Error(), nil
 		}
 
-		// Aggregate responses: ALL must allow for overall allow
-		allowed, reason := c.aggregateResponses(result.Responses)
+		// Dry-run validation (direct call - no scatter-gather)
+		if c.dryRunValidator == nil {
+			// Fail-open if no validator configured
+			c.logger.Warn("No dry-run validator configured, allowing resource",
+				"gvk", gvk,
+				"namespace", valCtx.Namespace,
+				"name", valCtx.Name)
+
+			duration := time.Since(start).Seconds()
+			if c.metrics != nil {
+				c.metrics.RecordWebhookRequest(gvk, "allowed", duration)
+				c.metrics.RecordWebhookValidation(gvk, "allowed")
+			}
+
+			return true, "", nil
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		allowed, reason := c.dryRunValidator.ValidateDirect(
+			ctx,
+			gvk,
+			valCtx.Namespace,
+			valCtx.Name,
+			valCtx.Object,
+			valCtx.Operation,
+		)
 
 		// Record metrics
 		duration := time.Since(start).Seconds()
@@ -385,30 +399,26 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 	}
 }
 
-// aggregateResponses combines validation responses using AND logic.
+// validateBasicStructure performs basic structural validation on a Kubernetes resource.
 //
-// ANY deny = overall deny, ALL allow = overall allow.
+// This check was previously done by BasicValidatorComponent but is now inlined
+// since it's trivial and doesn't warrant a separate component.
 //
-// Returns:
-//   - allowed: true if all validators allowed
-//   - reason: combined denial reasons from all denying validators
-func (c *Component) aggregateResponses(responses []busevents.Response) (allowed bool, reason string) {
-	var denialReasons []string
-
-	for _, resp := range responses {
-		if valResp, ok := resp.(*events.WebhookValidationResponse); ok {
-			if !valResp.Allowed {
-				// Validator denied - collect reason
-				denialReasons = append(denialReasons, fmt.Sprintf("%s: %s", valResp.ValidatorID, valResp.Reason))
-			}
-		}
+// Checks:
+//   - Object is a valid unstructured resource
+//   - Metadata.name or metadata.generateName exists
+func (c *Component) validateBasicStructure(object interface{}) error {
+	obj, ok := object.(*unstructured.Unstructured)
+	if !ok {
+		return fmt.Errorf("invalid object type: %T", object)
 	}
 
-	// If any validator denied, return denied with combined reasons
-	if len(denialReasons) > 0 {
-		return false, fmt.Sprintf("validation failed: %v", denialReasons)
+	name := obj.GetName()
+	generateName := obj.GetGenerateName()
+
+	if name == "" && generateName == "" {
+		return fmt.Errorf("metadata.name or metadata.generateName is required")
 	}
 
-	// All validators allowed
-	return true, ""
+	return nil
 }

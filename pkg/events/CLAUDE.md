@@ -381,8 +381,7 @@ Expected: ~100-500ns per publish with 1 subscriber.
 **Event Consumers:**
 
 - `pkg/controller/commentator` - Logs all events with domain context
-- `pkg/controller/reconciler` - Subscribes to change events
-- `pkg/controller/executor` - Subscribes to reconciliation events
+- `pkg/controller/reconciler` - Debounces changes and orchestrates pipeline execution
 
 **Event Producers:**
 

@@ -15,19 +15,18 @@
 package webhook
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
@@ -38,51 +37,47 @@ func testLogger() *slog.Logger {
 
 func TestComponent_New(t *testing.T) {
 	t.Run("applies default port", func(t *testing.T) {
-		eventBus := busevents.NewEventBus(10)
 		config := &Config{
 			CertPEM: []byte("test-cert"),
 			KeyPEM:  []byte("test-key"),
 		}
 
-		component := New(eventBus, testLogger(), config, nil, nil)
+		component := New(testLogger(), config, nil, nil)
 
 		assert.Equal(t, DefaultWebhookPort, component.config.Port)
 	})
 
 	t.Run("applies default path", func(t *testing.T) {
-		eventBus := busevents.NewEventBus(10)
 		config := &Config{
 			CertPEM: []byte("test-cert"),
 			KeyPEM:  []byte("test-key"),
 		}
 
-		component := New(eventBus, testLogger(), config, nil, nil)
+		component := New(testLogger(), config, nil, nil)
 
 		assert.Equal(t, DefaultWebhookPath, component.config.Path)
 	})
 
 	t.Run("preserves custom port", func(t *testing.T) {
-		eventBus := busevents.NewEventBus(10)
 		config := &Config{
 			Port:    8443,
 			CertPEM: []byte("test-cert"),
 			KeyPEM:  []byte("test-key"),
 		}
 
-		component := New(eventBus, testLogger(), config, nil, nil)
+		component := New(testLogger(), config, nil, nil)
 
 		assert.Equal(t, 8443, component.config.Port)
 	})
 
 	t.Run("preserves custom path", func(t *testing.T) {
-		eventBus := busevents.NewEventBus(10)
 		config := &Config{
 			Path:    "/custom-validate",
 			CertPEM: []byte("test-cert"),
 			KeyPEM:  []byte("test-key"),
 		}
 
-		component := New(eventBus, testLogger(), config, nil, nil)
+		component := New(testLogger(), config, nil, nil)
 
 		assert.Equal(t, "/custom-validate", component.config.Path)
 	})
@@ -136,89 +131,14 @@ func TestComponent_buildGVK(t *testing.T) {
 	}
 }
 
-func TestComponent_aggregateResponses(t *testing.T) {
-	component := &Component{}
-
-	t.Run("all validators allow", func(t *testing.T) {
-		responses := []busevents.Response{
-			events.NewWebhookValidationResponse("req1", "basic", true, ""),
-			events.NewWebhookValidationResponse("req1", "dryrun", true, ""),
-		}
-
-		allowed, reason := component.aggregateResponses(responses)
-
-		assert.True(t, allowed)
-		assert.Empty(t, reason)
-	})
-
-	t.Run("one validator denies", func(t *testing.T) {
-		responses := []busevents.Response{
-			events.NewWebhookValidationResponse("req1", "basic", true, ""),
-			events.NewWebhookValidationResponse("req1", "dryrun", false, "invalid config"),
-		}
-
-		allowed, reason := component.aggregateResponses(responses)
-
-		assert.False(t, allowed)
-		assert.Contains(t, reason, "dryrun")
-		assert.Contains(t, reason, "invalid config")
-	})
-
-	t.Run("all validators deny", func(t *testing.T) {
-		responses := []busevents.Response{
-			events.NewWebhookValidationResponse("req1", "basic", false, "missing name"),
-			events.NewWebhookValidationResponse("req1", "dryrun", false, "invalid config"),
-		}
-
-		allowed, reason := component.aggregateResponses(responses)
-
-		assert.False(t, allowed)
-		assert.Contains(t, reason, "basic")
-		assert.Contains(t, reason, "dryrun")
-		assert.Contains(t, reason, "missing name")
-		assert.Contains(t, reason, "invalid config")
-	})
-
-	t.Run("empty responses allows", func(t *testing.T) {
-		responses := []busevents.Response{}
-
-		allowed, reason := component.aggregateResponses(responses)
-
-		assert.True(t, allowed)
-		assert.Empty(t, reason)
-	})
-
-	t.Run("ignores non-validation responses", func(t *testing.T) {
-		// Create a non-WebhookValidationResponse event
-		responses := []busevents.Response{
-			events.NewWebhookValidationResponse("req1", "basic", true, ""),
-			&otherResponse{}, // This should be ignored
-		}
-
-		allowed, reason := component.aggregateResponses(responses)
-
-		assert.True(t, allowed)
-		assert.Empty(t, reason)
-	})
-}
-
-// otherResponse implements busevents.Response for testing.
-type otherResponse struct{}
-
-func (o *otherResponse) EventType() string    { return "test.other" }
-func (o *otherResponse) Timestamp() time.Time { return time.Now() }
-func (o *otherResponse) RequestID() string    { return "other" }
-func (o *otherResponse) Responder() string    { return "test" }
-
 func TestComponent_New_WithMetrics(t *testing.T) {
-	eventBus := busevents.NewEventBus(10)
 	metrics := &mockMetricsRecorder{}
 	config := &Config{
 		CertPEM: []byte("test-cert"),
 		KeyPEM:  []byte("test-key"),
 	}
 
-	component := New(eventBus, testLogger(), config, nil, metrics)
+	component := New(testLogger(), config, nil, metrics)
 
 	require.NotNil(t, component.metrics)
 }
@@ -242,13 +162,12 @@ func (m *mockMetricsRecorder) RecordWebhookValidation(gvk, result string) {
 // =============================================================================
 
 func TestComponent_Start_MissingCertificate(t *testing.T) {
-	eventBus := busevents.NewEventBus(10)
 	config := &Config{
 		// CertPEM is empty
 		KeyPEM: []byte("test-key"),
 	}
 
-	component := New(eventBus, testLogger(), config, nil, nil)
+	component := New(testLogger(), config, nil, nil)
 
 	ctx := t.Context()
 	err := component.Start(ctx)
@@ -258,13 +177,12 @@ func TestComponent_Start_MissingCertificate(t *testing.T) {
 }
 
 func TestComponent_Start_MissingKey(t *testing.T) {
-	eventBus := busevents.NewEventBus(10)
 	config := &Config{
 		CertPEM: []byte("test-cert"),
 		// KeyPEM is empty
 	}
 
-	component := New(eventBus, testLogger(), config, nil, nil)
+	component := New(testLogger(), config, nil, nil)
 
 	ctx := t.Context()
 	err := component.Start(ctx)
@@ -278,13 +196,12 @@ func TestComponent_Start_MissingKey(t *testing.T) {
 // =============================================================================
 
 func TestComponent_RegisterValidator_BeforeServerCreated(t *testing.T) {
-	eventBus := busevents.NewEventBus(10)
 	config := &Config{
 		CertPEM: []byte("test-cert"),
 		KeyPEM:  []byte("test-key"),
 	}
 
-	component := New(eventBus, testLogger(), config, nil, nil)
+	component := New(testLogger(), config, nil, nil)
 
 	// Server is nil at this point, should log warning but not panic
 	component.RegisterValidator("v1.ConfigMap", func(_ *webhook.ValidationContext) (bool, string, error) {
@@ -300,7 +217,6 @@ func TestComponent_RegisterValidator_BeforeServerCreated(t *testing.T) {
 // =============================================================================
 
 func TestComponent_resolveKind_Success(t *testing.T) {
-	eventBus := busevents.NewEventBus(10)
 	config := &Config{
 		CertPEM: []byte("test-cert"),
 		KeyPEM:  []byte("test-key"),
@@ -313,7 +229,7 @@ func TestComponent_resolveKind_Success(t *testing.T) {
 		},
 	}
 
-	component := New(eventBus, testLogger(), config, mapper, nil)
+	component := New(testLogger(), config, mapper, nil)
 
 	t.Run("ingress resource", func(t *testing.T) {
 		kind, err := component.resolveKind("networking.k8s.io", "v1", "ingresses")
@@ -329,7 +245,6 @@ func TestComponent_resolveKind_Success(t *testing.T) {
 }
 
 func TestComponent_resolveKind_Error(t *testing.T) {
-	eventBus := busevents.NewEventBus(10)
 	config := &Config{
 		CertPEM: []byte("test-cert"),
 		KeyPEM:  []byte("test-key"),
@@ -339,7 +254,7 @@ func TestComponent_resolveKind_Error(t *testing.T) {
 		kindForResults: map[string]string{}, // Empty - no mappings
 	}
 
-	component := New(eventBus, testLogger(), config, mapper, nil)
+	component := New(testLogger(), config, mapper, nil)
 
 	_, err := component.resolveKind("unknown", "v1", "unknowns")
 	require.Error(t, err)
@@ -404,8 +319,6 @@ func (m *mockRESTMapper) ResourceSingularizer(string) (string, error) {
 
 func TestComponent_registerValidators(t *testing.T) {
 	t.Run("registers validators for all rules", func(t *testing.T) {
-		eventBus := busevents.NewEventBus(10)
-
 		mapper := &mockRESTMapper{
 			kindForResults: map[string]string{
 				"networking.k8s.io/v1/ingresses": "Ingress",
@@ -430,7 +343,7 @@ func TestComponent_registerValidators(t *testing.T) {
 			},
 		}
 
-		component := New(eventBus, testLogger(), config, mapper, nil)
+		component := New(testLogger(), config, mapper, nil)
 
 		// Create server so validators can be registered
 		component.server = webhook.NewServer(&webhook.ServerConfig{
@@ -448,8 +361,6 @@ func TestComponent_registerValidators(t *testing.T) {
 	})
 
 	t.Run("skips rules with RESTMapper errors", func(t *testing.T) {
-		eventBus := busevents.NewEventBus(10)
-
 		// Empty mapper that will return errors for all lookups
 		mapper := &mockRESTMapper{
 			kindForResults: map[string]string{},
@@ -467,7 +378,7 @@ func TestComponent_registerValidators(t *testing.T) {
 			},
 		}
 
-		component := New(eventBus, testLogger(), config, mapper, nil)
+		component := New(testLogger(), config, mapper, nil)
 
 		// Create server
 		component.server = webhook.NewServer(&webhook.ServerConfig{
@@ -482,8 +393,6 @@ func TestComponent_registerValidators(t *testing.T) {
 	})
 
 	t.Run("handles empty rules", func(t *testing.T) {
-		eventBus := busevents.NewEventBus(10)
-
 		mapper := &mockRESTMapper{
 			kindForResults: map[string]string{},
 		}
@@ -494,7 +403,7 @@ func TestComponent_registerValidators(t *testing.T) {
 			Rules:   []webhook.WebhookRule{}, // Empty rules
 		}
 
-		component := New(eventBus, testLogger(), config, mapper, nil)
+		component := New(testLogger(), config, mapper, nil)
 
 		// Create server
 		component.server = webhook.NewServer(&webhook.ServerConfig{
@@ -510,109 +419,178 @@ func TestComponent_registerValidators(t *testing.T) {
 }
 
 // =============================================================================
+// Mock DryRunValidator
+// =============================================================================
+
+// mockDryRunValidator is a mock implementation of DryRunValidator.
+type mockDryRunValidator struct {
+	allowed bool
+	reason  string
+}
+
+func (m *mockDryRunValidator) ValidateDirect(_ context.Context, _, _, _ string, _ interface{}, _ string) (allowed bool, reason string) {
+	return m.allowed, m.reason
+}
+
+// =============================================================================
 // createResourceValidator() Tests
 // =============================================================================
 
-// mockValidationResponse defines the response a mock responder should send.
-type mockValidationResponse struct {
-	responderID string
-	allowed     bool
-	message     string
-}
-
-// startMockResponder starts a goroutine that responds to validation requests.
-// Returns a done channel that closes when the responder finishes.
-func startMockResponder(eventBus *busevents.EventBus, eventChan <-chan busevents.Event, responses []mockValidationResponse) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for event := range eventChan {
-			req, ok := event.(*events.WebhookValidationRequest)
-			if !ok {
-				continue
-			}
-			for _, resp := range responses {
-				eventBus.Publish(events.NewWebhookValidationResponse(
-					req.RequestID(),
-					resp.responderID,
-					resp.allowed,
-					resp.message,
-				))
-			}
-			return // Exit after handling the request
-		}
-	}()
-	return done
-}
-
 func TestComponent_createResourceValidator_ReturnsFunction(t *testing.T) {
-	eventBus := busevents.NewEventBus(100)
 	config := &Config{
 		CertPEM: []byte("test-cert"),
 		KeyPEM:  []byte("test-key"),
 	}
-	component := New(eventBus, testLogger(), config, nil, nil)
+	component := New(testLogger(), config, nil, nil)
 
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	require.NotNil(t, validator)
 }
 
-func TestComponent_createResourceValidator_Timeout(t *testing.T) {
-	eventBus := busevents.NewEventBus(100)
-	eventBus.Start()
-
+func TestComponent_createResourceValidator_NilDryRunValidator(t *testing.T) {
 	config := &Config{
 		CertPEM: []byte("test-cert"),
 		KeyPEM:  []byte("test-key"),
+		// DryRunValidator is nil - fail-open behavior
 	}
-	component := New(eventBus, testLogger(), config, nil, nil)
+	component := New(testLogger(), config, nil, nil)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
-	// Call validator - no responders so it will timeout
+	// Create a valid unstructured object
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-config")
+
 	valCtx := &webhook.ValidationContext{
 		Operation: "CREATE",
 		Namespace: "default",
 		Name:      "test",
-		Object:    nil,
+		Object:    obj,
 	}
 
 	allowed, reason, err := validator(valCtx)
 
-	// Should fail due to timeout (no responders)
+	// Should allow (fail-open) when no DryRunValidator configured
+	assert.True(t, allowed)
+	assert.Empty(t, reason)
+	assert.NoError(t, err)
+}
+
+func TestComponent_createResourceValidator_BasicValidationFails(t *testing.T) {
+	config := &Config{
+		CertPEM: []byte("test-cert"),
+		KeyPEM:  []byte("test-key"),
+	}
+	component := New(testLogger(), config, nil, nil)
+	validator := component.createResourceValidator("v1.ConfigMap")
+
+	// Create an invalid object (no name or generateName)
+	obj := &unstructured.Unstructured{}
+	// Don't set name or generateName
+
+	valCtx := &webhook.ValidationContext{
+		Operation: "CREATE",
+		Namespace: "default",
+		Name:      "test",
+		Object:    obj,
+	}
+
+	allowed, reason, err := validator(valCtx)
+
+	// Should deny due to basic validation failure
 	assert.False(t, allowed)
-	assert.Contains(t, reason, "timeout")
+	assert.Contains(t, reason, "metadata.name or metadata.generateName is required")
+	assert.NoError(t, err)
+}
+
+func TestComponent_createResourceValidator_DryRunValidatorAllows(t *testing.T) {
+	dryRunValidator := &mockDryRunValidator{
+		allowed: true,
+		reason:  "",
+	}
+	config := &Config{
+		CertPEM:         []byte("test-cert"),
+		KeyPEM:          []byte("test-key"),
+		DryRunValidator: dryRunValidator,
+	}
+	component := New(testLogger(), config, nil, nil)
+	validator := component.createResourceValidator("v1.ConfigMap")
+
+	// Create a valid unstructured object
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-config")
+
+	valCtx := &webhook.ValidationContext{
+		Operation: "CREATE",
+		Namespace: "default",
+		Name:      "test",
+		Object:    obj,
+	}
+
+	allowed, reason, err := validator(valCtx)
+
+	assert.True(t, allowed)
+	assert.Empty(t, reason)
+	assert.NoError(t, err)
+}
+
+func TestComponent_createResourceValidator_DryRunValidatorDenies(t *testing.T) {
+	dryRunValidator := &mockDryRunValidator{
+		allowed: false,
+		reason:  "invalid configuration: HAProxy check failed",
+	}
+	config := &Config{
+		CertPEM:         []byte("test-cert"),
+		KeyPEM:          []byte("test-key"),
+		DryRunValidator: dryRunValidator,
+	}
+	component := New(testLogger(), config, nil, nil)
+	validator := component.createResourceValidator("v1.ConfigMap")
+
+	// Create a valid unstructured object
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-config")
+
+	valCtx := &webhook.ValidationContext{
+		Operation: "UPDATE",
+		Namespace: "test-ns",
+		Name:      "my-config",
+		Object:    obj,
+	}
+
+	allowed, reason, err := validator(valCtx)
+
+	assert.False(t, allowed)
+	assert.Contains(t, reason, "invalid configuration")
 	assert.NoError(t, err)
 }
 
 func TestComponent_createResourceValidator_MetricsOnSuccess(t *testing.T) {
-	eventBus := busevents.NewEventBus(100)
+	dryRunValidator := &mockDryRunValidator{
+		allowed: true,
+		reason:  "",
+	}
 	metrics := &mockMetricsRecorder{}
 	config := &Config{
-		CertPEM: []byte("test-cert"),
-		KeyPEM:  []byte("test-key"),
+		CertPEM:         []byte("test-cert"),
+		KeyPEM:          []byte("test-key"),
+		DryRunValidator: dryRunValidator,
 	}
-	component := New(eventBus, testLogger(), config, nil, metrics)
+	component := New(testLogger(), config, nil, metrics)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
-	// Subscribe mock responder BEFORE starting EventBus (per project pattern)
-	eventChan := eventBus.Subscribe("test-sub", 10)
-	eventBus.Start()
-
-	done := startMockResponder(eventBus, eventChan, []mockValidationResponse{
-		{responderID: "basic", allowed: true, message: ""},
-		{responderID: "dryrun", allowed: true, message: ""},
-	})
+	// Create a valid unstructured object
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-config")
 
 	valCtx := &webhook.ValidationContext{
 		Operation: "CREATE",
 		Namespace: "default",
 		Name:      "test",
-		Object:    nil,
+		Object:    obj,
 	}
 
 	allowed, reason, err := validator(valCtx)
-	<-done
 
 	assert.True(t, allowed)
 	assert.Empty(t, reason)
@@ -622,38 +600,73 @@ func TestComponent_createResourceValidator_MetricsOnSuccess(t *testing.T) {
 }
 
 func TestComponent_createResourceValidator_MetricsOnDenial(t *testing.T) {
-	eventBus := busevents.NewEventBus(100)
+	dryRunValidator := &mockDryRunValidator{
+		allowed: false,
+		reason:  "invalid configuration",
+	}
 	metrics := &mockMetricsRecorder{}
 	config := &Config{
-		CertPEM: []byte("test-cert"),
-		KeyPEM:  []byte("test-key"),
+		CertPEM:         []byte("test-cert"),
+		KeyPEM:          []byte("test-key"),
+		DryRunValidator: dryRunValidator,
 	}
-	component := New(eventBus, testLogger(), config, nil, metrics)
+	component := New(testLogger(), config, nil, metrics)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
-	// Subscribe mock responder BEFORE starting EventBus (per project pattern)
-	eventChan := eventBus.Subscribe("test-sub", 10)
-	eventBus.Start()
-
-	done := startMockResponder(eventBus, eventChan, []mockValidationResponse{
-		{responderID: "basic", allowed: true, message: ""},
-		{responderID: "dryrun", allowed: false, message: "invalid configuration"},
-	})
+	// Create a valid unstructured object
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-config")
 
 	valCtx := &webhook.ValidationContext{
 		Operation: "UPDATE",
 		Namespace: "test-ns",
 		Name:      "my-config",
-		Object:    nil,
+		Object:    obj,
 	}
 
 	allowed, reason, err := validator(valCtx)
-	<-done
 
 	assert.False(t, allowed)
-	assert.Contains(t, reason, "dryrun")
 	assert.Contains(t, reason, "invalid configuration")
 	assert.NoError(t, err)
 	assert.Greater(t, metrics.requestsRecorded, 0)
 	assert.Greater(t, metrics.validationsRecorded, 0)
+}
+
+// =============================================================================
+// validateBasicStructure() Tests
+// =============================================================================
+
+func TestComponent_validateBasicStructure(t *testing.T) {
+	component := &Component{}
+
+	t.Run("valid object with name", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		obj.SetName("test-resource")
+
+		err := component.validateBasicStructure(obj)
+		assert.NoError(t, err)
+	})
+
+	t.Run("valid object with generateName", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		obj.SetGenerateName("test-resource-")
+
+		err := component.validateBasicStructure(obj)
+		assert.NoError(t, err)
+	})
+
+	t.Run("invalid object - no name or generateName", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+
+		err := component.validateBasicStructure(obj)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "metadata.name or metadata.generateName is required")
+	})
+
+	t.Run("invalid object type", func(t *testing.T) {
+		err := component.validateBasicStructure("not an unstructured object")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid object type")
+	})
 }

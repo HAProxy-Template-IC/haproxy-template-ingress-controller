@@ -56,47 +56,65 @@ func sanitizeStorageName(name string) string {
 	return sanitizedBase + ext
 }
 
-// PathResolver resolves auxiliary file names to absolute paths based on file type.
-// This is used via the GetPath method in templates to automatically construct absolute paths
+// PathResolver resolves auxiliary file names to paths based on file type.
+// This is used via the GetPath method in templates to construct paths
 // for HAProxy auxiliary files (maps, SSL certificates, crt-list files, general files).
+//
+// The paths are relative (maps/, ssl/, files/) and rely on HAProxy's
+// "default-path origin <BaseDir>" directive to resolve to absolute locations.
+// This enables the same rendered config to work for both local validation
+// and DataPlane API deployment.
 type PathResolver struct {
-	// MapsDir is the absolute path to the HAProxy maps directory.
-	// Default: /etc/haproxy/maps
+	// BaseDir is the absolute base path for HAProxy auxiliary files.
+	// This is used with "default-path origin" in HAProxy's global section
+	// to resolve relative paths regardless of where the config file is located.
+	// Example: "/etc/haproxy"
+	BaseDir string
+
+	// MapsDir is the relative path to the HAProxy maps directory.
+	// Example: "maps"
 	MapsDir string
 
-	// SSLDir is the absolute path to the HAProxy SSL certificates directory.
-	// Default: /etc/haproxy/ssl
+	// SSLDir is the relative path to the HAProxy SSL certificates directory.
+	// Example: "ssl"
 	SSLDir string
 
-	// CRTListDir is the absolute path to the HAProxy crt-list files directory.
-	// Default: /etc/haproxy/ssl (same as SSL certificates)
+	// CRTListDir is the relative path to the HAProxy crt-list files directory.
+	// Example: "ssl"
 	CRTListDir string
 
-	// GeneralDir is the absolute path to the HAProxy general files directory.
-	// Default: /etc/haproxy/general
+	// GeneralDir is the relative path to the HAProxy general files directory.
+	// Example: "files"
 	GeneralDir string
 }
 
-// GetPath resolves a filename to its absolute path based on the file type.
+// GetBaseDir returns the BaseDir field for use in templates.
+// This method exists because Scriggo runtime variables (declared with nil pointers)
+// support method calls but may not support direct field access.
+func (pr *PathResolver) GetBaseDir() string {
+	return pr.BaseDir
+}
+
+// GetPath resolves a filename to a full path based on the file type.
 //
 // This method is called from templates via the pathResolver context variable:
 //
-//	{{ pathResolver.GetPath("host.map", "map") }}              → /etc/haproxy/maps/host.map
-//	{{ pathResolver.GetPath("504.http", "file") }}             → /etc/haproxy/general/504.http
-//	{{ pathResolver.GetPath("cert.pem", "cert") }}             → /etc/haproxy/ssl/cert.pem
-//	{{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} → /etc/haproxy/ssl/certificate-list.txt
-//	{{ pathResolver.GetPath("", "cert") }}                     → /etc/haproxy/ssl (directory only)
+//	{{ pathResolver.GetPath("host.map", "map") }}              → maps/host.map (relative) or /etc/haproxy/maps/host.map (absolute)
+//	{{ pathResolver.GetPath("504.http", "file") }}             → files/504.http (relative) or /etc/haproxy/general/504.http (absolute)
+//	{{ pathResolver.GetPath("cert.pem", "cert") }}             → ssl/cert.pem (relative) or /etc/haproxy/ssl/cert.pem (absolute)
+//	{{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} → ssl/certificate-list.txt (relative)
+//	{{ pathResolver.GetPath("", "cert") }}                     → ssl (directory only)
 //
 // Parameters:
 //   - args[0]: filename (string) - The base filename (without directory path), or empty string for directory only
 //   - args[1]: fileType (string) - File type: "map", "file", "cert", or "crt-list"
 //
 // Returns:
-//   - Absolute path to the file, or base directory if filename is empty
+//   - Path to the file (relative or absolute depending on PathResolver configuration)
 //   - Error if argument count is wrong, arguments are not strings, file type is invalid, or path construction fails
 //
 // Note: The pathResolver must be added to the rendering context for templates to access this method.
-// Different PathResolver instances can be used for production paths vs validation paths.
+// Relative paths work with HAProxy's working directory resolution during validation.
 func (pr *PathResolver) GetPath(args ...interface{}) (interface{}, error) {
 	// Validate argument count
 	if len(args) != 2 {
@@ -144,10 +162,10 @@ func (pr *PathResolver) GetPath(args ...interface{}) (interface{}, error) {
 		filenameStr = sanitizeStorageName(filenameStr)
 	}
 
-	// Construct absolute path
-	absolutePath := filepath.Join(basePath, filenameStr)
+	// Construct full path by joining base directory with filename
+	fullPath := filepath.Join(basePath, filenameStr)
 
-	return absolutePath, nil
+	return fullPath, nil
 }
 
 // convertToString converts any value to its string representation.

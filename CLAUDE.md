@@ -702,6 +702,13 @@ func (c *Component) Start(ctx context.Context) error {
   - Do NOT hide problems behind TODO comments
   - Transparency builds trust
 
+- **FIX ALL test failures, lint errors, and runtime warnings/errors immediately**
+  - Do NOT speculate about whether your changes caused the issue
+  - Do NOT dismiss issues as "pre-existing" or "unrelated"
+  - If tests fail or logs show warnings/errors after your changes, fix them
+  - The dev environment must work correctly with no errors before task completion
+  - Run the full test suite and verify dev environment logs are clean
+
 **Example of UNACCEPTABLE behavior:**
 
 1. Test fails because routes are in wrong order

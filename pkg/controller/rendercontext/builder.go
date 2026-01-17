@@ -37,7 +37,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -50,8 +50,8 @@ type Builder struct {
 	logger       *slog.Logger
 
 	// Optional dependencies (set via options)
-	stores          map[string]types.Store
-	haproxyPodStore types.Store
+	stores          map[string]stores.Store
+	haproxyPodStore stores.Store
 	httpFetcher     templating.HTTPFetcher
 	capabilities    *dataplane.Capabilities
 	currentConfig   *parserconfig.StructuredConfig
@@ -62,15 +62,15 @@ type Option func(*Builder)
 
 // WithStores sets the resource stores for the template context.
 // Each store is wrapped in a StoreWrapper to provide template-friendly methods.
-func WithStores(stores map[string]types.Store) Option {
+func WithStores(storeMap map[string]stores.Store) Option {
 	return func(b *Builder) {
-		b.stores = stores
+		b.stores = storeMap
 	}
 }
 
 // WithHAProxyPodStore sets the HAProxy pod store for controller.haproxy_pods.
 // This enables templates to access HAProxy pod count for calculations.
-func WithHAProxyPodStore(store types.Store) Option {
+func WithHAProxyPodStore(store stores.Store) Option {
 	return func(b *Builder) {
 		b.haproxyPodStore = store
 	}
@@ -194,7 +194,7 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 
 	// Add capabilities if provided
 	if b.capabilities != nil {
-		templateContext["capabilities"] = capabilitiesToMap(b.capabilities)
+		templateContext["capabilities"] = CapabilitiesToMap(b.capabilities)
 	}
 
 	// Add current config if provided (NOT added when nil - Scriggo panics with nil pointer initializers)
@@ -260,11 +260,12 @@ func MergeExtraContextInto(renderCtx map[string]interface{}, cfg *config.Config)
 	}
 }
 
-// capabilitiesToMap converts the Capabilities struct to a template-friendly map.
+// CapabilitiesToMap converts the Capabilities struct to a template-friendly map.
 //
+// CapabilitiesToMap converts a Capabilities struct to a map for template use.
 // The map uses snake_case keys matching the Capabilities struct field names
 // (e.g., "supports_waf" for SupportsWAF) for consistency with template conventions.
-func capabilitiesToMap(caps *dataplane.Capabilities) map[string]interface{} {
+func CapabilitiesToMap(caps *dataplane.Capabilities) map[string]interface{} {
 	if caps == nil {
 		return map[string]interface{}{}
 	}

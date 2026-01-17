@@ -31,12 +31,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-// mockStore implements types.Store for testing.
+// mockStore implements stores.Store for testing.
 type mockStore struct {
 	items []interface{}
 }
@@ -85,19 +84,19 @@ func TestNew_Success(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
 	haproxyPodStore := &mockStore{}
 
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, haproxyPodStore, nil, defaultCapabilities(), logger)
 
 	require.NoError(t, err)
 	assert.NotNil(t, renderer)
 	assert.NotNil(t, renderer.engine)
 	assert.Equal(t, cfg, renderer.config)
-	assert.Equal(t, stores, renderer.stores)
+	assert.Equal(t, storeMap, renderer.stores)
 }
 
 // TestNew_InvalidTemplate tests renderer creation with invalid template syntax.
@@ -110,13 +109,13 @@ func TestNew_InvalidTemplate(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
 	haproxyPodStore := &mockStore{}
 
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, haproxyPodStore, nil, defaultCapabilities(), logger)
 
 	assert.Error(t, err)
 	assert.Nil(t, renderer)
@@ -153,11 +152,11 @@ defaults
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": ingressStore,
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Subscribe to events
@@ -220,11 +219,11 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": ingressStore,
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -265,14 +264,14 @@ func TestRenderer_RenderFailure(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
 	haproxyPodStore := &mockStore{}
 
 	// With Scriggo, undefined functions are caught at compile time, so renderer creation fails
-	_, err := New(bus, cfg, stores, haproxyPodStore, nil, defaultCapabilities(), logger)
+	_, err := New(bus, cfg, storeMap, haproxyPodStore, nil, defaultCapabilities(), logger)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "undefined")
 }
@@ -294,11 +293,11 @@ func TestRenderer_EmptyStores(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{items: []interface{}{}}, // Empty store
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -335,7 +334,7 @@ func TestRenderer_MultipleStores(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{
 			items: []interface{}{
 				map[string]interface{}{"kind": "Ingress"},
@@ -356,7 +355,7 @@ func TestRenderer_MultipleStores(t *testing.T) {
 		},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -388,13 +387,13 @@ func TestRenderer_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
 	haproxyPodStore := &mockStore{}
 
-	renderer, err := New(bus, cfg, stores, haproxyPodStore, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, haproxyPodStore, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	bus.Start()
@@ -437,11 +436,11 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": ingressStore,
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -482,7 +481,7 @@ func TestBuildRenderingContext(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{
 			items: []interface{}{
 				map[string]interface{}{"name": "ing1"},
@@ -496,7 +495,7 @@ func TestBuildRenderingContext(t *testing.T) {
 		},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Build context
@@ -592,7 +591,7 @@ frontend test
 				},
 			}
 
-			stores := map[string]types.Store{
+			storeMap := map[string]stores.Store{
 				"ingresses": &mockStore{},
 			}
 
@@ -600,7 +599,7 @@ frontend test
 			assert.Equal(t, tt.expectCrtListSupported, capabilities.SupportsCrtList, "SupportsCrtList mismatch")
 			assert.Equal(t, tt.expectMapSupported, capabilities.SupportsMapStorage, "SupportsMapStorage mismatch")
 
-			renderer, err := New(bus, cfg, stores, &mockStore{}, nil, capabilities, logger)
+			renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, capabilities, logger)
 			require.NoError(t, err)
 
 			eventChan := bus.Subscribe("test-sub", 50)
@@ -617,15 +616,16 @@ frontend test
 			renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 			require.NotNil(t, renderedEvent)
 
+			// Now using relative paths (resolved by HAProxy via default-path config)
 			if tt.expectSSLDir {
-				assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list /etc/haproxy/ssl/certificate-list.txt",
-					"CRT-list should use SSL directory")
-				assert.NotContains(t, renderedEvent.HAProxyConfig, "crt-list /etc/haproxy/files/certificate-list.txt",
+				assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list ssl/certificate-list.txt",
+					"CRT-list should use SSL directory (relative path)")
+				assert.NotContains(t, renderedEvent.HAProxyConfig, "crt-list files/certificate-list.txt",
 					"CRT-list should NOT use general files directory")
 			} else {
-				assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list /etc/haproxy/files/certificate-list.txt",
-					"CRT-list should fall back to general files directory")
-				assert.NotContains(t, renderedEvent.HAProxyConfig, "crt-list /etc/haproxy/ssl/certificate-list.txt",
+				assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list files/certificate-list.txt",
+					"CRT-list should fall back to general files directory (relative path)")
+				assert.NotContains(t, renderedEvent.HAProxyConfig, "crt-list ssl/certificate-list.txt",
 					"CRT-list should NOT use SSL directory")
 			}
 		})
@@ -655,11 +655,11 @@ frontend test
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Get the path resolver from the engine
@@ -681,10 +681,11 @@ frontend test
 
 	require.NotNil(t, renderedEvent)
 
-	// CRITICAL: Verify that pathResolver.GetPath("crt-list") returns the full path, not just the filename
-	// CRT-list files are stored as general files to avoid reload on create (native CRT-list API triggers reload)
-	assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list /etc/haproxy/files/certificate-list.txt",
-		"pathResolver.GetPath('certificate-list.txt', 'crt-list') should return full path with directory prefix")
+	// CRITICAL: Verify that pathResolver.GetPath("crt-list") returns a relative path with directory prefix
+	// Now using relative paths (resolved by HAProxy via default-path config)
+	// CRT-list files always use files/ directory to avoid HAProxy reload on create
+	assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list files/certificate-list.txt",
+		"pathResolver.GetPath('certificate-list.txt', 'crt-list') should return relative path with directory prefix")
 
 	// Ensure it doesn't contain just the filename (which is what happens when CRTListDir is empty)
 	assert.NotContains(t, renderedEvent.HAProxyConfig, "crt-list certificate-list.txt",
@@ -701,11 +702,11 @@ func TestRenderer_Name(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	assert.Equal(t, ComponentName, renderer.Name())
@@ -722,11 +723,11 @@ func TestRenderer_SetHTTPStoreComponent(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Initially nil
@@ -757,11 +758,11 @@ func TestRenderer_WithPostProcessors(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -810,11 +811,11 @@ frontend fe1
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -982,50 +983,6 @@ func TestExtractPostProcessorConfigs(t *testing.T) {
 	assert.Equal(t, templating.PostProcessorType("trim"), ppConfigs["cert1.pem"][0].Type)
 }
 
-// TestMergeAuxiliaryFiles tests merging static and dynamic auxiliary files.
-func TestMergeAuxiliaryFiles(t *testing.T) {
-	static := &dataplane.AuxiliaryFiles{
-		MapFiles: []auxiliaryfiles.MapFile{
-			{Path: "static-map.map", Content: "static"},
-		},
-		GeneralFiles: []auxiliaryfiles.GeneralFile{
-			{Filename: "static-file.http", Content: "static"},
-		},
-		SSLCertificates: []auxiliaryfiles.SSLCertificate{
-			{Path: "static-cert.pem", Content: "static"},
-		},
-		CRTListFiles: []auxiliaryfiles.CRTListFile{
-			{Path: "static-crtlist.txt", Content: "static"},
-		},
-	}
-
-	dynamic := &dataplane.AuxiliaryFiles{
-		MapFiles: []auxiliaryfiles.MapFile{
-			{Path: "dynamic-map.map", Content: "dynamic"},
-		},
-		GeneralFiles: []auxiliaryfiles.GeneralFile{
-			{Filename: "dynamic-file.http", Content: "dynamic"},
-		},
-		SSLCertificates: []auxiliaryfiles.SSLCertificate{
-			{Path: "dynamic-cert.pem", Content: "dynamic"},
-		},
-		CRTListFiles: []auxiliaryfiles.CRTListFile{
-			{Path: "dynamic-crtlist.txt", Content: "dynamic"},
-		},
-	}
-
-	merged := MergeAuxiliaryFiles(static, dynamic)
-
-	assert.Len(t, merged.MapFiles, 2)
-	assert.Len(t, merged.GeneralFiles, 2)
-	assert.Len(t, merged.SSLCertificates, 2)
-	assert.Len(t, merged.CRTListFiles, 2)
-
-	// Verify static files come first
-	assert.Equal(t, "static-map.map", merged.MapFiles[0].Path)
-	assert.Equal(t, "dynamic-map.map", merged.MapFiles[1].Path)
-}
-
 // ============================================================================
 // Reconciliation Coalescing Tests
 // ============================================================================
@@ -1042,11 +999,11 @@ func TestRenderer_ReconciliationCoalescing_LatestWins(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe("test-sub", 100)
@@ -1084,11 +1041,11 @@ func TestRenderer_TriggerReasonPropagation(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -1140,11 +1097,11 @@ func TestRenderer_WithHTTPStoreComponent(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Create and set HTTP store component
@@ -1184,11 +1141,11 @@ func TestRenderer_WithoutHTTPStoreComponent(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Do NOT set HTTP store component - it should remain nil
@@ -1240,11 +1197,11 @@ func TestRenderer_HTTPStoreContextAvailability(t *testing.T) {
 		},
 	}
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 
-	renderer, err := New(bus, cfg, stores, &mockStore{}, nil, defaultCapabilities(), logger)
+	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
 	require.NoError(t, err)
 
 	// Set HTTP store component

@@ -24,7 +24,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -46,7 +46,7 @@ func TestBuilder_WithOptions(t *testing.T) {
 	pathResolver := &templating.PathResolver{}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 	}
 	haproxyPodStore := &mockStore{}
@@ -56,7 +56,7 @@ func TestBuilder_WithOptions(t *testing.T) {
 		cfg,
 		pathResolver,
 		logger,
-		WithStores(stores),
+		WithStores(storeMap),
 		WithHAProxyPodStore(haproxyPodStore),
 		WithCapabilities(capabilities),
 	)
@@ -107,12 +107,12 @@ func TestBuilder_Build_WithStores(t *testing.T) {
 	pathResolver := &templating.PathResolver{}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	stores := map[string]types.Store{
+	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{},
 		"services":  &mockStore{},
 	}
 
-	builder := NewBuilder(cfg, pathResolver, logger, WithStores(stores))
+	builder := NewBuilder(cfg, pathResolver, logger, WithStores(storeMap))
 	ctx, _ := builder.Build()
 
 	resources := ctx["resources"].(map[string]templating.ResourceStore)

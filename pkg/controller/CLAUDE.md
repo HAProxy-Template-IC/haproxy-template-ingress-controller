@@ -33,15 +33,15 @@ pkg/controller/
 ├── configloader/         # ConfigMap parsing and loading
 ├── credentialsloader/    # Secret parsing and loading
 ├── events/               # Domain event type catalog (~50 types)
-├── executor/             # Reconciliation orchestrator (Stage 5)
-│   ├── executor.go      # Orchestrates Renderer, Validator, Deployer
-│   └── executor_test.go # Event flow and orchestration tests
 ├── indextracker/         # Index synchronization tracker
 ├── leaderelection/       # Leader election event adapter
 │   └── component.go     # Wraps pure leader election, publishes events
-├── reconciler/           # Reconciliation debouncer (Stage 5)
+├── pipeline/             # Render-validate pipeline (pure service)
+│   └── pipeline.go      # Composes renderer + validator services
+├── reconciler/           # Reconciliation coordination (Stage 5)
 │   ├── reconciler.go    # Debounces changes, triggers reconciliation
-│   └── reconciler_test.go
+│   ├── coordinator.go   # Orchestrates pipeline execution
+│   └── *_test.go        # Tests
 ├── resourcewatcher/      # Resource watcher lifecycle management
 ├── validator/            # Config validation components
 │   ├── basic.go         # Structural validation
@@ -411,42 +411,43 @@ func (r *Reconciler) Start(ctx context.Context) error {
 - Filters initial sync events to prevent premature reconciliation
 - Publishes ReconciliationTriggeredEvent
 
-### executor/ - Reconciliation Orchestrator
+### Coordinator (reconciler/coordinator.go) - Pipeline Orchestrator
 
-Observes and reports on reconciliation cycles via event subscriptions (Stage 5 component 2):
+Orchestrates the render-validate pipeline directly (Stage 5 component 2):
 
 ```go
-// pkg/controller/executor/executor.go
-type Executor struct {
-    eventBus  *busevents.EventBus
-    eventChan <-chan busevents.Event  // Subscribed in constructor
-    logger    *slog.Logger
+// pkg/controller/reconciler/coordinator.go
+type Coordinator struct {
+    eventBus      *busevents.EventBus
+    eventChan     <-chan busevents.Event  // Subscribed in constructor
+    pipeline      PipelineExecutor
+    storeProvider stores.StoreProvider
+    logger        *slog.Logger
 }
 
-func (e *Executor) handleEvent(event busevents.Event) {
-    switch ev := event.(type) {
-    case *events.ReconciliationTriggeredEvent:
-        e.handleReconciliationTriggered(ev)
-    case *events.TemplateRenderedEvent:
-        e.handleTemplateRendered(ev)
-    case *events.TemplateRenderFailedEvent:
-        e.handleTemplateRenderFailed(ev)
-    case *events.ValidationCompletedEvent:
-        e.handleValidationCompleted(ev)
-    case *events.ValidationFailedEvent:
-        e.handleValidationFailed(ev)
+func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *events.ReconciliationTriggeredEvent) {
+    // Publish reconciliation started
+    c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason))
+
+    // Execute pipeline directly (synchronous call)
+    result, err := c.pipeline.Execute(ctx, c.storeProvider)
+    if err != nil {
+        c.handlePipelineFailure(err, event, startTime)
+        return
     }
+
+    // Publish success events for downstream components
+    c.handlePipelineSuccess(result, event, startTime)
 }
 ```
 
 **Implementation:**
 
-- Subscribes in constructor (before EventBus.Start())
-- Observes ReconciliationTriggeredEvent and publishes ReconciliationStartedEvent
-- Observes TemplateRenderedEvent/TemplateRenderFailedEvent from Renderer
-- Observes ValidationCompletedEvent/ValidationFailedEvent from Validator
-- Publishes ReconciliationCompletedEvent or ReconciliationFailedEvent based on pipeline outcome
-- Logs detailed information at each stage for observability
+- Subscribes to ReconciliationTriggeredEvent in constructor
+- Calls Pipeline.Execute() synchronously (no event-driven render/validate flow)
+- Publishes TemplateRenderedEvent + ValidationCompletedEvent for downstream components
+- Publishes ReconciliationCompletedEvent or ReconciliationFailedEvent based on outcome
+- Uses structured PipelineError for phase detection via errors.As()
 
 ## Staged Startup Pattern
 
@@ -479,10 +480,10 @@ func (c *Controller) Run(ctx context.Context) error {
 
     // Stage 5: Reconciliation
     log.Info("Stage 5: Reconciliation components")
-    reconciler := reconciler.New(c.eventBus)
-    executor := executor.New(c.eventBus, config)
-    go reconciler.Run(ctx)
-    go executor.Run(ctx)
+    rec := reconciler.New(c.eventBus, logger, nil)
+    coordinator := reconciler.NewCoordinator(c.eventBus, pipeline, storeProvider, logger)
+    go rec.Start(ctx)
+    go coordinator.Start(ctx)
 
     log.Info("Controller fully operational")
 

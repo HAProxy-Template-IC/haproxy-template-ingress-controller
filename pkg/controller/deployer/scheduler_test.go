@@ -65,10 +65,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 
 	event := events.NewTemplateRenderedEvent(
 		"global\n  daemon\n",        // haproxyConfig
-		"",                          // validationHAProxyConfig
-		nil,                         // validationPaths
 		&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
-		&dataplane.AuxiliaryFiles{}, // validationAuxiliaryFiles
 		2,                           // auxFileCount
 		50,                          // durationMs
 		"",                          // triggerReason
@@ -445,10 +442,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 	t.Run("routes TemplateRenderedEvent", func(t *testing.T) {
 		event := events.NewTemplateRenderedEvent(
 			"global\n  daemon\n",        // haproxyConfig
-			"",                          // validationHAProxyConfig
-			nil,                         // validationPaths
 			&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
-			&dataplane.AuxiliaryFiles{}, // validationAuxiliaryFiles
 			2,                           // auxFileCount
 			50,                          // durationMs
 			"",                          // triggerReason
