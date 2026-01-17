@@ -297,7 +297,6 @@ func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level 
 		events.EventTypeTemplateRenderFailed,
 		events.EventTypeValidationFailed,
 		events.EventTypeInstanceDeploymentFailed,
-		events.EventTypeStorageSyncFailed,
 		events.EventTypeWebhookValidationError,
 		events.EventTypeConfigInvalid:
 		return slog.LevelError
@@ -311,9 +310,7 @@ func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level 
 	// Info level - lifecycle and completion events
 	// Note: ReconciliationCompleted and ValidationCompleted are demoted to DEBUG
 	// because DeploymentCompletedEvent now produces a consolidated summary
-	case events.EventTypeControllerStarted,
-		events.EventTypeControllerShutdown,
-		events.EventTypeConfigValidated,
+	case events.EventTypeConfigValidated,
 		events.EventTypeIndexSynchronized,
 		events.EventTypeLeaderElectionStarted,
 		events.EventTypeBecameLeader,
@@ -348,15 +345,6 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 	}
 
 	switch e := event.(type) {
-	// Lifecycle Events
-	case *events.ControllerStartedEvent:
-		return fmt.Sprintf("Controller started successfully with config %s", e.ConfigVersion),
-			append(attrs, "config_version", e.ConfigVersion, "secret_version", e.SecretVersion)
-
-	case *events.ControllerShutdownEvent:
-		return fmt.Sprintf("Controller shutting down: %s", e.Reason),
-			append(attrs, "reason", e.Reason)
-
 	// Configuration Events
 	case *events.ConfigParsedEvent:
 		return fmt.Sprintf("Configuration parsed successfully (version %s)", e.Version),
@@ -631,19 +619,6 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 
 		return "Reconciliation", attrs
 
-	// Storage Events
-	case *events.StorageSyncStartedEvent:
-		return fmt.Sprintf("Auxiliary file sync started: %s phase to %d instances", e.Phase, len(e.Endpoints)),
-			append(attrs, "phase", e.Phase, "instance_count", len(e.Endpoints))
-
-	case *events.StorageSyncCompletedEvent:
-		return fmt.Sprintf("Auxiliary file sync completed: %s phase (%dms)", e.Phase, e.DurationMs),
-			append(attrs, "phase", e.Phase, "duration_ms", e.DurationMs)
-
-	case *events.StorageSyncFailedEvent:
-		return fmt.Sprintf("Auxiliary file sync failed: %s phase: %s", e.Phase, e.Error),
-			append(attrs, "phase", e.Phase, "error", e.Error)
-
 	// HAProxy Pod Events
 	case *events.HAProxyPodsDiscoveredEvent:
 		// Correlate: was this a change?
@@ -655,14 +630,6 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		}
 		return fmt.Sprintf("HAProxy pods discovered: %d instances%s", e.Count, changeInfo),
 			append(attrs, "count", e.Count)
-
-	case *events.HAProxyPodAddedEvent:
-		return "HAProxy pod added to cluster",
-			attrs
-
-	case *events.HAProxyPodRemovedEvent:
-		return "HAProxy pod removed from cluster",
-			attrs
 
 	case *events.HAProxyPodTerminatedEvent:
 		return fmt.Sprintf("HAProxy pod terminated: %s/%s", e.PodNamespace, e.PodName),

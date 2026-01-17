@@ -145,42 +145,6 @@ func DrainChannel(eventChan <-chan busevents.Event) {
 	}
 }
 
-// ComponentStopTest tests that a component stops cleanly when Stop() is called.
-// This is a common pattern across controller components.
-//
-// The startFunc should start the component in blocking mode (e.g., component.Start(ctx)).
-// The stopFunc should trigger the component to stop (e.g., component.Stop()).
-//
-// Example:
-//
-//	testutil.ComponentStopTest(t, bus,
-//	    func(ctx context.Context) { component.Start(ctx) },
-//	    func() { component.Stop() })
-func ComponentStopTest(t *testing.T, bus *busevents.EventBus, startFunc, stopFunc func()) {
-	t.Helper()
-	bus.Start()
-
-	done := make(chan struct{})
-	go func() {
-		startFunc()
-		close(done)
-	}()
-
-	// Give component time to start
-	time.Sleep(StartupDelay)
-
-	// Trigger stop
-	stopFunc()
-
-	// Verify component stopped
-	select {
-	case <-done:
-		// Success - component stopped
-	case <-time.After(LongTimeout):
-		t.Fatal("timeout waiting for component to stop")
-	}
-}
-
 // RunComponentStartStop tests that a component starts and stops cleanly.
 // This reduces boilerplate for the common test pattern in controller components.
 //
@@ -250,32 +214,6 @@ func RunComponentContextCancel(t *testing.T, bus *busevents.EventBus, startFunc 
 	}
 }
 
-// CreateTestSecret creates an unstructured Secret for testing.
-// This is a common fixture used by multiple loader components.
-//
-// Example:
-//
-//	secret := testutil.CreateTestSecret("test-secret", "test-ns", "12345", map[string]interface{}{
-//	    "username": "admin",
-//	    "password": "secret",
-//	})
-func CreateTestSecret(name, namespace, resourceVersion string, data map[string]interface{}) *unstructured.Unstructured {
-	secret := &unstructured.Unstructured{}
-	secret.SetKind("Secret")
-	secret.SetAPIVersion("v1")
-	secret.SetName(name)
-	secret.SetNamespace(namespace)
-	secret.SetResourceVersion(resourceVersion)
-
-	if data != nil {
-		if err := unstructured.SetNestedField(secret.Object, data, "data"); err != nil {
-			panic(err)
-		}
-	}
-
-	return secret
-}
-
 // CreateTestSecretWithTLS creates an unstructured TLS Secret for testing.
 // The cert and key are base64-encoded as Kubernetes expects for Secret data.
 //
@@ -337,33 +275,6 @@ func CreateTestSecretWithStringData(name, namespace, resourceVersion string, dat
 	}
 
 	return secret
-}
-
-// CreateTestConfigMap creates an unstructured ConfigMap for testing.
-//
-// Example:
-//
-//	cm := testutil.CreateTestConfigMap("my-config", "default", "12345",
-//	    map[string]string{"key": "value"})
-func CreateTestConfigMap(name, namespace, resourceVersion string, data map[string]string) *unstructured.Unstructured {
-	cm := &unstructured.Unstructured{}
-	cm.SetKind("ConfigMap")
-	cm.SetAPIVersion("v1")
-	cm.SetName(name)
-	cm.SetNamespace(namespace)
-	cm.SetResourceVersion(resourceVersion)
-
-	if data != nil {
-		dataMap := make(map[string]interface{})
-		for k, v := range data {
-			dataMap[k] = v
-		}
-		if err := unstructured.SetNestedField(cm.Object, dataMap, "data"); err != nil {
-			panic(err)
-		}
-	}
-
-	return cm
 }
 
 // ValidHAProxyConfigTemplate is a minimal valid HAProxy configuration template

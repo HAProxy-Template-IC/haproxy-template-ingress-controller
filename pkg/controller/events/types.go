@@ -44,14 +44,12 @@
 //
 // Events are organized into separate files by category:
 //
-//   - lifecycle.go:           System startup and shutdown events
 //   - config.go:              ConfigMap/Secret changes and validation events
 //   - resource.go:            Kubernetes resource indexing and synchronization events
 //   - reconciliation.go:      Template rendering and deployment cycle events
 //   - template.go:            Template rendering operation events
 //   - validation.go:          Configuration validation (syntax and semantics) events
 //   - deployment.go:          HAProxy configuration deployment events
-//   - storage.go:             Auxiliary file synchronization events
 //   - discovery.go:           HAProxy pod discovery events
 //   - credentials.go:         Credentials loading and validation events
 //   - leader.go:              Leader election events
@@ -67,10 +65,6 @@ package events
 // -----------------------------------------------------------------------------
 
 const (
-	// Lifecycle event types.
-	EventTypeControllerStarted  = "controller.started"
-	EventTypeControllerShutdown = "controller.shutdown"
-
 	// Configuration event types.
 	EventTypeConfigParsed             = "config.parsed"
 	EventTypeConfigValidationRequest  = "config.validation.request"
@@ -113,15 +107,8 @@ const (
 	EventTypeDeploymentCancelRequest  = "deployment.cancel.request"
 	EventTypeDriftPreventionTriggered = "drift.prevention.triggered"
 
-	// Storage event types.
-	EventTypeStorageSyncStarted   = "storage.sync.started"
-	EventTypeStorageSyncCompleted = "storage.sync.completed"
-	EventTypeStorageSyncFailed    = "storage.sync.failed"
-
 	// HAProxy pod event types.
 	EventTypeHAProxyPodsDiscovered = "haproxy.pods.discovered"
-	EventTypeHAProxyPodAdded       = "haproxy.pod.added"
-	EventTypeHAProxyPodRemoved     = "haproxy.pod.removed"
 	EventTypeHAProxyPodTerminated  = "haproxy.pod.terminated"
 
 	// Config publishing event types.

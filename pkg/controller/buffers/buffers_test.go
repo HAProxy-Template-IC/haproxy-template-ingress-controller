@@ -20,16 +20,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCalculateSize_Bounds(t *testing.T) {
+func Test_calculateSize_Bounds(t *testing.T) {
 	// With any multiplier, result should be within bounds
-	size := CalculateSize(1.0)
+	size := calculateSize(1.0)
 	assert.GreaterOrEqual(t, size, BaseSize, "size should be at least BaseSize")
 	assert.LessOrEqual(t, size, MaxSize, "size should be at most MaxSize")
 }
 
-func TestCalculateSize_MultiplierScales(t *testing.T) {
-	size1 := CalculateSize(1.0)
-	size2 := CalculateSize(2.0)
+func Test_calculateSize_MultiplierScales(t *testing.T) {
+	size1 := calculateSize(1.0)
+	size2 := calculateSize(2.0)
 
 	// size2 should be >= size1 (may be equal if at bounds)
 	assert.GreaterOrEqual(t, size2, size1, "higher multiplier should give >= size")

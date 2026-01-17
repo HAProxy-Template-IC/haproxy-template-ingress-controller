@@ -175,7 +175,7 @@ func TestConfigLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	time.Sleep(testutil.DebounceWait)
 
 	// Publish a different event type
-	bus.Publish(events.NewControllerStartedEvent("v1", "v2"))
+	bus.Publish(events.NewBecameLeaderEvent("test-pod"))
 
 	// Should not receive ConfigParsedEvent
 	testutil.AssertNoEvent[*events.ConfigParsedEvent](t, eventChan, testutil.NoEventTimeout)

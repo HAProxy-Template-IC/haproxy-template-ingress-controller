@@ -34,13 +34,13 @@ const (
 	bytesPerSlot = 1024 * 1024
 )
 
-// CalculateSize returns a buffer size scaled by available memory.
+// calculateSize returns a buffer size scaled by available memory.
 //
 // The multiplier adjusts the base calculation - use higher values for
 // components that can tolerate larger buffers (like observability).
 //
 // When GOMEMLIMIT is not set or very low, returns BaseSize * multiplier.
-func CalculateSize(multiplier float64) int {
+func calculateSize(multiplier float64) int {
 	// Query current GOMEMLIMIT without changing it
 	// Returns math.MaxInt64 if not set
 	memLimit := debug.SetMemoryLimit(-1)
@@ -72,7 +72,7 @@ func clamp(size int) int {
 // Uses a 2x multiplier since these components can tolerate larger buffers
 // and occasional drops are acceptable.
 func Observability() int {
-	return CalculateSize(2.0)
+	return calculateSize(2.0)
 }
 
 // Critical returns buffer size for business-critical components.
@@ -80,5 +80,5 @@ func Observability() int {
 // Uses a 1x multiplier - these components need reliable delivery
 // but don't need oversized buffers.
 func Critical() int {
-	return CalculateSize(1.0)
+	return calculateSize(1.0)
 }

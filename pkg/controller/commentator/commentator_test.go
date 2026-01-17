@@ -75,11 +75,6 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 			want:  slog.LevelError,
 		},
 		{
-			name:  "storage sync failed is error",
-			event: mockEvent{eventType: events.EventTypeStorageSyncFailed},
-			want:  slog.LevelError,
-		},
-		{
 			name:  "webhook validation error is error",
 			event: mockEvent{eventType: events.EventTypeWebhookValidationError},
 			want:  slog.LevelError,
@@ -108,16 +103,6 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 
 		// Info level events
-		{
-			name:  "controller started is info",
-			event: mockEvent{eventType: events.EventTypeControllerStarted},
-			want:  slog.LevelInfo,
-		},
-		{
-			name:  "controller shutdown is info",
-			event: mockEvent{eventType: events.EventTypeControllerShutdown},
-			want:  slog.LevelInfo,
-		},
 		{
 			name:  "config validated is info",
 			event: mockEvent{eventType: events.EventTypeConfigValidated},
@@ -223,33 +208,6 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
-}
-
-func TestEventCommentator_GenerateInsight_LifecycleEvents(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	t.Run("ControllerStartedEvent", func(t *testing.T) {
-		event := events.NewControllerStartedEvent("v1.0.0", "s1.0.0")
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Controller started")
-		assert.Contains(t, insight, "v1.0.0")
-		assertContainsAttr(t, attrs, "config_version", "v1.0.0")
-		assertContainsAttr(t, attrs, "secret_version", "s1.0.0")
-	})
-
-	t.Run("ControllerShutdownEvent", func(t *testing.T) {
-		event := events.NewControllerShutdownEvent("context canceled")
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "shutting down")
-		assert.Contains(t, insight, "context canceled")
-		assertContainsAttr(t, attrs, "reason", "context canceled")
-	})
 }
 
 func TestEventCommentator_GenerateInsight_ConfigurationEvents(t *testing.T) {
@@ -519,7 +477,7 @@ func TestEventCommentator_ProcessEvent(t *testing.T) {
 	logger := slog.Default()
 	ec := NewEventCommentator(bus, logger, 100)
 
-	event := events.NewControllerStartedEvent("v1", "s1")
+	event := events.NewConfigParsedEvent(nil, nil, "v1", "s1")
 
 	// Process event
 	ec.processEvent(event)
@@ -527,7 +485,7 @@ func TestEventCommentator_ProcessEvent(t *testing.T) {
 	// Verify it was added to ring buffer
 	assert.Equal(t, 1, ec.ringBuffer.Size())
 
-	foundEvents := ec.ringBuffer.FindByType(events.EventTypeControllerStarted)
+	foundEvents := ec.ringBuffer.FindByType(events.EventTypeConfigParsed)
 	require.Len(t, foundEvents, 1)
 }
 
@@ -552,7 +510,7 @@ func TestEventCommentator_StartStop(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Publish an event
-	bus.Publish(events.NewControllerStartedEvent("v1", "s1"))
+	bus.Publish(events.NewConfigParsedEvent(nil, nil, "v1", "s1"))
 
 	// Give it time to process
 	time.Sleep(50 * time.Millisecond)
@@ -839,45 +797,6 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	})
 }
 
-func TestEventCommentator_GenerateInsight_StorageEvents(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	t.Run("StorageSyncStartedEvent", func(t *testing.T) {
-		endpoints := []interface{}{"pod1", "pod2"}
-		event := events.NewStorageSyncStartedEvent("maps", endpoints)
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Auxiliary file sync started")
-		assert.Contains(t, insight, "maps phase")
-		assert.Contains(t, insight, "2 instances")
-		assertContainsAttr(t, attrs, "phase", "maps")
-	})
-
-	t.Run("StorageSyncCompletedEvent", func(t *testing.T) {
-		event := events.NewStorageSyncCompletedEvent("maps", nil, 300)
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Auxiliary file sync completed")
-		assert.Contains(t, insight, "maps phase")
-		assertContainsAttr(t, attrs, "duration_ms", int64(300))
-	})
-
-	t.Run("StorageSyncFailedEvent", func(t *testing.T) {
-		event := events.NewStorageSyncFailedEvent("maps", "connection refused")
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Auxiliary file sync failed")
-		assert.Contains(t, insight, "maps phase")
-		assert.Contains(t, insight, "connection refused")
-		assertContainsAttr(t, attrs, "error", "connection refused")
-	})
-}
-
 func TestEventCommentator_GenerateInsight_HAProxyPodEvents(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.Default()
@@ -892,22 +811,6 @@ func TestEventCommentator_GenerateInsight_HAProxyPodEvents(t *testing.T) {
 		assert.Contains(t, insight, "HAProxy pods discovered")
 		assert.Contains(t, insight, "3 instances")
 		assertContainsAttr(t, attrs, "count", 3)
-	})
-
-	t.Run("HAProxyPodAddedEvent", func(t *testing.T) {
-		event := events.NewHAProxyPodAddedEvent("pod-123")
-
-		insight, _ := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "HAProxy pod added")
-	})
-
-	t.Run("HAProxyPodRemovedEvent", func(t *testing.T) {
-		event := events.NewHAProxyPodRemovedEvent("pod-123")
-
-		insight, _ := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "HAProxy pod removed")
 	})
 
 	t.Run("HAProxyPodTerminatedEvent", func(t *testing.T) {
@@ -1080,7 +983,7 @@ func TestEventCommentator_AppendCorrelation(t *testing.T) {
 
 	t.Run("skips non-CorrelatedEvent", func(t *testing.T) {
 		// Create event that does not implement CorrelatedEvent
-		event := events.NewControllerStartedEvent("v1", "s1")
+		event := events.NewConfigParsedEvent(nil, nil, "v1", "s1")
 
 		// Start with base attrs
 		attrs := []any{"event_type", "test"}
@@ -1143,9 +1046,9 @@ func TestEventCommentator_FindRecent(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	// Add some events
-	event1 := events.NewControllerStartedEvent("v1", "s1")
-	event2 := events.NewConfigParsedEvent(nil, nil, "v1", "s1")
-	event3 := events.NewConfigValidatedEvent(nil, nil, "v1", "s1")
+	event1 := events.NewConfigParsedEvent(nil, nil, "v1", "s1")
+	event2 := events.NewConfigValidatedEvent(nil, nil, "v1", "s1")
+	event3 := events.NewConfigInvalidEvent("v1", nil, nil)
 
 	ec.ringBuffer.Add(event1)
 	time.Sleep(10 * time.Millisecond)
@@ -1157,8 +1060,8 @@ func TestEventCommentator_FindRecent(t *testing.T) {
 	found := ec.FindRecent(2)
 	assert.Len(t, found, 2)
 	// Newest first
-	assert.Equal(t, events.EventTypeConfigValidated, found[0].EventType())
-	assert.Equal(t, events.EventTypeConfigParsed, found[1].EventType())
+	assert.Equal(t, events.EventTypeConfigInvalid, found[0].EventType())
+	assert.Equal(t, events.EventTypeConfigValidated, found[1].EventType())
 
 	// Find more than available
 	found = ec.FindRecent(10)
