@@ -24,26 +24,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
-// TestLifecycleEvents tests lifecycle.go event types.
-func TestLifecycleEvents(t *testing.T) {
-	t.Run("ControllerStartedEvent", func(t *testing.T) {
-		event := NewControllerStartedEvent("config-v1", "secret-v2")
-		require.NotNil(t, event)
-		assert.Equal(t, "config-v1", event.ConfigVersion)
-		assert.Equal(t, "secret-v2", event.SecretVersion)
-		assert.Equal(t, EventTypeControllerStarted, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("ControllerShutdownEvent", func(t *testing.T) {
-		event := NewControllerShutdownEvent("graceful shutdown")
-		require.NotNil(t, event)
-		assert.Equal(t, "graceful shutdown", event.Reason)
-		assert.Equal(t, EventTypeControllerShutdown, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-}
-
 // TestConfigEvents tests config.go event types.
 func TestConfigEvents(t *testing.T) {
 	t.Run("ConfigParsedEvent", func(t *testing.T) {
@@ -324,50 +304,6 @@ func TestCredentialsEvents(t *testing.T) {
 		assert.Equal(t, "v1", event.SecretVersion)
 		assert.Equal(t, "missing field", event.Error)
 		assert.Equal(t, EventTypeCredentialsInvalid, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-}
-
-// TestStorageEvents tests storage.go event types.
-func TestStorageEvents(t *testing.T) {
-	t.Run("StorageSyncStartedEvent", func(t *testing.T) {
-		endpoints := []interface{}{"endpoint1", "endpoint2"}
-		event := NewStorageSyncStartedEvent("pre-config", endpoints)
-		require.NotNil(t, event)
-		assert.Equal(t, "pre-config", event.Phase)
-		assert.Len(t, event.Endpoints, 2)
-		assert.Equal(t, EventTypeStorageSyncStarted, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("StorageSyncStartedEvent_DefensiveCopy", func(t *testing.T) {
-		endpoints := []interface{}{"endpoint1"}
-		event := NewStorageSyncStartedEvent("config", endpoints)
-
-		// Modify original slice
-		endpoints[0] = "modified"
-
-		// Event should have original value
-		assert.Equal(t, "endpoint1", event.Endpoints[0])
-	})
-
-	t.Run("StorageSyncCompletedEvent", func(t *testing.T) {
-		stats := map[string]int{"files": 5}
-		event := NewStorageSyncCompletedEvent("config", stats, 100)
-		require.NotNil(t, event)
-		assert.Equal(t, "config", event.Phase)
-		assert.Equal(t, stats, event.Stats)
-		assert.Equal(t, int64(100), event.DurationMs)
-		assert.Equal(t, EventTypeStorageSyncCompleted, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("StorageSyncFailedEvent", func(t *testing.T) {
-		event := NewStorageSyncFailedEvent("post-config", "connection refused")
-		require.NotNil(t, event)
-		assert.Equal(t, "post-config", event.Phase)
-		assert.Equal(t, "connection refused", event.Error)
-		assert.Equal(t, EventTypeStorageSyncFailed, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
 }
@@ -793,22 +729,6 @@ func TestDiscoveryEvents(t *testing.T) {
 		assert.Equal(t, 0, event.Count)
 	})
 
-	t.Run("HAProxyPodAddedEvent", func(t *testing.T) {
-		event := NewHAProxyPodAddedEvent("endpoint1")
-		require.NotNil(t, event)
-		assert.Equal(t, "endpoint1", event.Endpoint)
-		assert.Equal(t, EventTypeHAProxyPodAdded, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("HAProxyPodRemovedEvent", func(t *testing.T) {
-		event := NewHAProxyPodRemovedEvent("endpoint1")
-		require.NotNil(t, event)
-		assert.Equal(t, "endpoint1", event.Endpoint)
-		assert.Equal(t, EventTypeHAProxyPodRemoved, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
 	t.Run("HAProxyPodTerminatedEvent", func(t *testing.T) {
 		event := NewHAProxyPodTerminatedEvent("pod-1", "default")
 		require.NotNil(t, event)
@@ -1117,8 +1037,6 @@ func TestTimestampNotZero(t *testing.T) {
 			Timestamp() time.Time
 		}
 	}{
-		{"ControllerStarted", NewControllerStartedEvent("v1", "v2")},
-		{"ControllerShutdown", NewControllerShutdownEvent("reason")},
 		{"ConfigParsed", NewConfigParsedEvent(nil, nil, "v1", "v2")},
 		{"ConfigValidationRequest", NewConfigValidationRequest(nil, "v1")},
 		{"ConfigValidationResponse", NewConfigValidationResponse("req", "validator", true, nil)},
@@ -1139,9 +1057,6 @@ func TestTimestampNotZero(t *testing.T) {
 		{"SecretResourceChanged", NewSecretResourceChangedEvent(nil)},
 		{"CredentialsUpdated", NewCredentialsUpdatedEvent(nil, "v1")},
 		{"CredentialsInvalid", NewCredentialsInvalidEvent("v1", "error")},
-		{"StorageSyncStarted", NewStorageSyncStartedEvent("phase", nil)},
-		{"StorageSyncCompleted", NewStorageSyncCompletedEvent("phase", nil, 0)},
-		{"StorageSyncFailed", NewStorageSyncFailedEvent("phase", "error")},
 		{"CertResourceChanged", NewCertResourceChangedEvent(nil)},
 		{"CertParsed", NewCertParsedEvent(nil, nil, "v1")},
 		{"HTTPResourceUpdated", NewHTTPResourceUpdatedEvent("url", "checksum", 0)},
@@ -1166,8 +1081,6 @@ func TestTimestampNotZero(t *testing.T) {
 		{"DriftPreventionTriggered", NewDriftPreventionTriggeredEvent(0)},
 		// Discovery events
 		{"HAProxyPodsDiscovered", NewHAProxyPodsDiscoveredEvent(nil, 0)},
-		{"HAProxyPodAdded", NewHAProxyPodAddedEvent(nil)},
-		{"HAProxyPodRemoved", NewHAProxyPodRemovedEvent(nil)},
 		{"HAProxyPodTerminated", NewHAProxyPodTerminatedEvent("name", "ns")},
 		// Publishing events
 		{"ConfigPublished", NewConfigPublishedEvent("n", "ns", 0, 0)},

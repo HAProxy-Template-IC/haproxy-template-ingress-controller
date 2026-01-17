@@ -55,40 +55,6 @@ func (e *HAProxyPodsDiscoveredEvent) Timestamp() time.Time { return e.timestamp 
 // safely skipped during high-frequency pod churn (scaling, rolling updates).
 func (e *HAProxyPodsDiscoveredEvent) Coalescible() bool { return true }
 
-// HAProxyPodAddedEvent is published when a new HAProxy pod is discovered.
-type HAProxyPodAddedEvent struct {
-	Endpoint  interface{}
-	timestamp time.Time
-}
-
-// NewHAProxyPodAddedEvent creates a new HAProxyPodAddedEvent.
-func NewHAProxyPodAddedEvent(endpoint interface{}) *HAProxyPodAddedEvent {
-	return &HAProxyPodAddedEvent{
-		Endpoint:  endpoint,
-		timestamp: time.Now(),
-	}
-}
-
-func (e *HAProxyPodAddedEvent) EventType() string    { return EventTypeHAProxyPodAdded }
-func (e *HAProxyPodAddedEvent) Timestamp() time.Time { return e.timestamp }
-
-// HAProxyPodRemovedEvent is published when an HAProxy pod is removed.
-type HAProxyPodRemovedEvent struct {
-	Endpoint  interface{}
-	timestamp time.Time
-}
-
-// NewHAProxyPodRemovedEvent creates a new HAProxyPodRemovedEvent.
-func NewHAProxyPodRemovedEvent(endpoint interface{}) *HAProxyPodRemovedEvent {
-	return &HAProxyPodRemovedEvent{
-		Endpoint:  endpoint,
-		timestamp: time.Now(),
-	}
-}
-
-func (e *HAProxyPodRemovedEvent) EventType() string    { return EventTypeHAProxyPodRemoved }
-func (e *HAProxyPodRemovedEvent) Timestamp() time.Time { return e.timestamp }
-
 // HAProxyPodTerminatedEvent is published when an HAProxy pod terminates.
 //
 // This triggers cleanup of the pod from all runtime config status fields.

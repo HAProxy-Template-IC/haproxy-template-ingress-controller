@@ -67,13 +67,3 @@ func ConvertToVersioned[TV32, TV31, TV30 any](jsonData []byte, versionMinor int)
 		return &m, nil
 	}
 }
-
-// VersionMinorFromPtr extracts the minor version from a Version-like struct pointer.
-// Returns 0 (v3.0) if version is nil, which is the safest default.
-// This is a helper for callers that have a version pointer.
-func VersionMinorFromPtr(versionMinor *int) int {
-	if versionMinor == nil {
-		return 0
-	}
-	return *versionMinor
-}

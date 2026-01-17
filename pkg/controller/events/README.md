@@ -19,18 +19,6 @@ import "haptic/pkg/controller/events"
 
 ## Event Categories
 
-### Lifecycle Events
-
-```go
-const (
-    EventTypeControllerStarted  = "controller.started"
-    EventTypeControllerShutdown = "controller.shutdown"
-)
-```
-
-- **ControllerStartedEvent** - Controller initialization complete
-- **ControllerShutdownEvent** - Controller shutting down
-
 ### Configuration Events
 
 ```go
@@ -126,14 +114,12 @@ const (
 ```go
 const (
     EventTypeHAProxyPodsDiscovered = "haproxy.pods.discovered"
-    EventTypeHAProxyPodAdded       = "haproxy.pod.added"
-    EventTypeHAProxyPodRemoved     = "haproxy.pod.removed"
+    EventTypeHAProxyPodTerminated  = "haproxy.pod.terminated"
 )
 ```
 
 - **HAProxyPodsDiscoveredEvent** - HAProxy pods discovered
-- **HAProxyPodAddedEvent** - New HAProxy pod added
-- **HAProxyPodRemovedEvent** - HAProxy pod removed
+- **HAProxyPodTerminatedEvent** - HAProxy pod terminated
 
 ## Usage
 
