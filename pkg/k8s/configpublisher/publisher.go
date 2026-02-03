@@ -1355,11 +1355,16 @@ func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace
 		// Save original status for comparison (deep copy to avoid aliasing issues)
 		originalStatus := copyPodStatuses(mapFile.Status.DeployedToPods)
 
-		// Use the file's own checksum instead of the main config checksum.
-		// This prevents unnecessary status updates when only the main config changes
-		// but this auxiliary file's content remains the same.
-		auxPodStatus := *podStatus
-		auxPodStatus.Checksum = mapFile.Spec.Checksum
+		// Build minimal status for auxiliary files - only tracks PodName, Checksum,
+		// DeployedAt, and error fields. Does not inherit main config metrics like
+		// SyncDuration, LastOperationSummary, VersionConflictRetries, etc.
+		existingStatus := findPodStatus(mapFile.Status.DeployedToPods, podStatus.PodName)
+		auxPodStatus := buildAuxiliaryFilePodStatus(
+			podStatus.PodName,
+			mapFile.Spec.Checksum,
+			existingStatus,
+			podStatus.DeployedAt.Time,
+		)
 
 		mapFile.Status.DeployedToPods = addOrUpdatePodStatus(mapFile.Status.DeployedToPods, &auxPodStatus)
 
@@ -1397,11 +1402,16 @@ func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, names
 		// Save original status for comparison (deep copy to avoid aliasing issues)
 		originalStatus := copyPodStatuses(generalFile.Status.DeployedToPods)
 
-		// Use the file's own checksum instead of the main config checksum.
-		// This prevents unnecessary status updates when only the main config changes
-		// but this auxiliary file's content remains the same.
-		auxPodStatus := *podStatus
-		auxPodStatus.Checksum = generalFile.Spec.Checksum
+		// Build minimal status for auxiliary files - only tracks PodName, Checksum,
+		// DeployedAt, and error fields. Does not inherit main config metrics like
+		// SyncDuration, LastOperationSummary, VersionConflictRetries, etc.
+		existingStatus := findPodStatus(generalFile.Status.DeployedToPods, podStatus.PodName)
+		auxPodStatus := buildAuxiliaryFilePodStatus(
+			podStatus.PodName,
+			generalFile.Spec.Checksum,
+			existingStatus,
+			podStatus.DeployedAt.Time,
+		)
 
 		generalFile.Status.DeployedToPods = addOrUpdatePodStatus(generalFile.Status.DeployedToPods, &auxPodStatus)
 
@@ -1439,11 +1449,16 @@ func (p *Publisher) updateCRTListFileDeploymentStatus(ctx context.Context, names
 		// Save original status for comparison (deep copy to avoid aliasing issues)
 		originalStatus := copyPodStatuses(crtListFile.Status.DeployedToPods)
 
-		// Use the file's own checksum instead of the main config checksum.
-		// This prevents unnecessary status updates when only the main config changes
-		// but this auxiliary file's content remains the same.
-		auxPodStatus := *podStatus
-		auxPodStatus.Checksum = crtListFile.Spec.Checksum
+		// Build minimal status for auxiliary files - only tracks PodName, Checksum,
+		// DeployedAt, and error fields. Does not inherit main config metrics like
+		// SyncDuration, LastOperationSummary, VersionConflictRetries, etc.
+		existingStatus := findPodStatus(crtListFile.Status.DeployedToPods, podStatus.PodName)
+		auxPodStatus := buildAuxiliaryFilePodStatus(
+			podStatus.PodName,
+			crtListFile.Spec.Checksum,
+			existingStatus,
+			podStatus.DeployedAt.Time,
+		)
 
 		crtListFile.Status.DeployedToPods = addOrUpdatePodStatus(crtListFile.Status.DeployedToPods, &auxPodStatus)
 
@@ -1695,6 +1710,52 @@ func operationSummaryEqual(a, b *haproxyv1alpha1.OperationSummary) bool {
 		a.FrontendsAdded == b.FrontendsAdded &&
 		a.FrontendsRemoved == b.FrontendsRemoved &&
 		a.FrontendsModified == b.FrontendsModified
+}
+
+// findPodStatus finds a pod's status in a slice by name.
+// Returns nil if not found.
+func findPodStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podName string) *haproxyv1alpha1.PodDeploymentStatus {
+	for i := range pods {
+		if pods[i].PodName == podName {
+			return &pods[i]
+		}
+	}
+	return nil
+}
+
+// buildAuxiliaryFilePodStatus constructs a minimal PodDeploymentStatus for auxiliary files.
+// Only tracks: PodName, Checksum, DeployedAt, and error fields.
+// Preserves existing status when checksum hasn't changed, avoiding unnecessary updates.
+func buildAuxiliaryFilePodStatus(
+	podName string,
+	fileChecksum string,
+	existingStatus *haproxyv1alpha1.PodDeploymentStatus,
+	deployedAt time.Time,
+) haproxyv1alpha1.PodDeploymentStatus {
+	// Handle zero deployedAt (drift check with no operations)
+	newDeployedAt := metav1.NewTime(deployedAt)
+	if deployedAt.IsZero() && existingStatus != nil {
+		newDeployedAt = existingStatus.DeployedAt
+	}
+
+	// Checksum unchanged - preserve existing status entirely
+	if existingStatus != nil && existingStatus.Checksum == fileChecksum {
+		return haproxyv1alpha1.PodDeploymentStatus{
+			PodName:           podName,
+			Checksum:          fileChecksum,
+			DeployedAt:        existingStatus.DeployedAt,
+			LastError:         existingStatus.LastError,
+			ConsecutiveErrors: existingStatus.ConsecutiveErrors,
+			LastErrorAt:       existingStatus.LastErrorAt,
+		}
+	}
+
+	// Checksum changed or new pod - new deployment
+	return haproxyv1alpha1.PodDeploymentStatus{
+		PodName:    podName,
+		Checksum:   fileChecksum,
+		DeployedAt: newDeployedAt,
+	}
 }
 
 // addOrUpdatePodStatus adds or updates a pod in the deployment status list.
