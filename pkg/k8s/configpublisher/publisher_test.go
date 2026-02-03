@@ -1488,3 +1488,247 @@ func TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum(t *testing.T) {
 		assert.Equal(t, crtListFileChecksum, crtListFile.Status.DeployedToPods[0].Checksum, "crt-list file checksum should remain unchanged")
 	})
 }
+
+// TestAuxiliaryFileStatus_NoUpdateWhenChecksumUnchanged verifies that auxiliary file
+// status is not updated when the file's checksum hasn't changed, even when main config
+// metrics (SyncDuration, LastOperationSummary, etc.) are different.
+func TestAuxiliaryFileStatus_NoUpdateWhenChecksumUnchanged(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config with a map file
+	result, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.MapFileNames, 1)
+	mapFileName := result.MapFileNames[0]
+
+	// Initial deployment
+	deployTime := time.Now()
+	syncDuration := 100 * time.Millisecond
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             deployTime,
+		Checksum:               "main-config-checksum-v1",
+		SyncDuration:           &syncDuration,
+		OperationSummary: &OperationSummary{
+			TotalAPIOperations: 10,
+			BackendsAdded:      2,
+		},
+	})
+	require.NoError(t, err)
+
+	// Get the map file's resource version after initial deployment
+	mapFileV1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, mapFileName, metav1.GetOptions{})
+	require.NoError(t, err)
+	initialResourceVersion := mapFileV1.ResourceVersion
+
+	// Update with different main config metrics (but same auxiliary file checksum)
+	newSyncDuration := 200 * time.Millisecond
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             time.Now(), // Different time
+		Checksum:               "main-config-checksum-v1",
+		SyncDuration:           &newSyncDuration, // Different duration
+		OperationSummary: &OperationSummary{
+			TotalAPIOperations: 20, // Different operation count
+			BackendsAdded:      5,
+		},
+	})
+	require.NoError(t, err)
+
+	// Verify map file resource version didn't change (no update occurred)
+	mapFileV2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, mapFileName, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, initialResourceVersion, mapFileV2.ResourceVersion,
+		"map file resource version should not change when checksum is unchanged")
+}
+
+// TestAuxiliaryFileStatus_UpdateWhenChecksumChanges verifies that auxiliary file
+// status IS updated when the file's checksum changes.
+func TestAuxiliaryFileStatus_UpdateWhenChecksumChanges(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config with a map file
+	result, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.MapFileNames, 1)
+	mapFileName := result.MapFileNames[0]
+
+	// Initial deployment
+	initialDeployTime := time.Now()
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             initialDeployTime,
+		Checksum:               "main-config-checksum-v1",
+	})
+	require.NoError(t, err)
+
+	// Verify initial status
+	mapFileV1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, mapFileName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, mapFileV1.Status.DeployedToPods, 1)
+	initialStatusChecksum := mapFileV1.Status.DeployedToPods[0].Checksum
+	initialDeployedAt := mapFileV1.Status.DeployedToPods[0].DeployedAt
+
+	// Update the map file spec with different checksum (simulating content change)
+	mapFileV1.Spec.Entries = "example.com backend2\n" // Changed content
+	mapFileV1.Spec.Checksum = "new-map-file-checksum"
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Update(ctx, mapFileV1, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	// Update deployment status - the file's spec checksum changed, so status should update
+	newDeployTime := time.Now().Add(time.Second)
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             newDeployTime,
+		Checksum:               "main-config-checksum-v1",
+	})
+	require.NoError(t, err)
+
+	// Verify status was updated with new checksum
+	mapFileV2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, mapFileName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, mapFileV2.Status.DeployedToPods, 1)
+
+	assert.NotEqual(t, initialStatusChecksum, mapFileV2.Status.DeployedToPods[0].Checksum,
+		"map file status checksum should be updated when spec checksum changes")
+	assert.Equal(t, "new-map-file-checksum", mapFileV2.Status.DeployedToPods[0].Checksum)
+
+	// DeployedAt should also be updated (new deployment)
+	assert.NotEqual(t, initialDeployedAt, mapFileV2.Status.DeployedToPods[0].DeployedAt,
+		"DeployedAt should be updated when checksum changes")
+}
+
+// TestAuxiliaryFileStatus_DoesNotInheritMainConfigMetrics verifies that auxiliary file
+// status does not include main config metrics like SyncDuration, LastOperationSummary, etc.
+func TestAuxiliaryFileStatus_DoesNotInheritMainConfigMetrics(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config with all three auxiliary file types
+	result, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			MapFiles:     []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
+			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "/etc/haproxy/lua/script.lua", Content: "-- lua script\n"}},
+			CRTListFiles: []auxiliaryfiles.CRTListFile{{Path: "/etc/haproxy/ssl/crt-list.txt", Content: "default.pem\n"}},
+		},
+	})
+	require.NoError(t, err)
+
+	// Deploy with all main config metrics populated
+	syncDuration := 500 * time.Millisecond
+	reloadTime := time.Now()
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             time.Now(),
+		Checksum:               "main-config-checksum-v1",
+		SyncDuration:           &syncDuration,
+		LastReloadAt:           &reloadTime,
+		LastReloadID:           "reload-123",
+		VersionConflictRetries: 3,
+		FallbackUsed:           true,
+		OperationSummary: &OperationSummary{
+			TotalAPIOperations: 100,
+			BackendsAdded:      10,
+			ServersAdded:       50,
+		},
+	})
+	require.NoError(t, err)
+
+	// Verify main config has all metrics
+	mainConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, mainConfig.Status.DeployedToPods, 1)
+	mainStatus := mainConfig.Status.DeployedToPods[0]
+	assert.NotNil(t, mainStatus.SyncDuration, "main config should have SyncDuration")
+	assert.NotNil(t, mainStatus.LastReloadAt, "main config should have LastReloadAt")
+	assert.NotNil(t, mainStatus.LastOperationSummary, "main config should have LastOperationSummary")
+	assert.Equal(t, 3, mainStatus.VersionConflictRetries, "main config should have VersionConflictRetries")
+	assert.True(t, mainStatus.FallbackUsed, "main config should have FallbackUsed")
+
+	// Verify map file does NOT have main config metrics
+	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, mapFile.Status.DeployedToPods, 1)
+	mapStatus := mapFile.Status.DeployedToPods[0]
+	assert.Nil(t, mapStatus.SyncDuration, "auxiliary file should NOT have SyncDuration")
+	assert.Nil(t, mapStatus.LastReloadAt, "auxiliary file should NOT have LastReloadAt")
+	assert.Nil(t, mapStatus.LastOperationSummary, "auxiliary file should NOT have LastOperationSummary")
+	assert.Equal(t, 0, mapStatus.VersionConflictRetries, "auxiliary file should NOT have VersionConflictRetries")
+	assert.False(t, mapStatus.FallbackUsed, "auxiliary file should NOT have FallbackUsed")
+	// But it should have the essential fields
+	assert.NotEmpty(t, mapStatus.PodName)
+	assert.NotEmpty(t, mapStatus.Checksum)
+	assert.False(t, mapStatus.DeployedAt.IsZero())
+
+	// Verify general file does NOT have main config metrics
+	generalFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").Get(ctx, result.GeneralFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, generalFile.Status.DeployedToPods, 1)
+	generalStatus := generalFile.Status.DeployedToPods[0]
+	assert.Nil(t, generalStatus.SyncDuration, "auxiliary file should NOT have SyncDuration")
+	assert.Nil(t, generalStatus.LastReloadAt, "auxiliary file should NOT have LastReloadAt")
+	assert.Nil(t, generalStatus.LastOperationSummary, "auxiliary file should NOT have LastOperationSummary")
+	assert.Equal(t, 0, generalStatus.VersionConflictRetries, "auxiliary file should NOT have VersionConflictRetries")
+	assert.False(t, generalStatus.FallbackUsed, "auxiliary file should NOT have FallbackUsed")
+
+	// Verify CRT list file does NOT have main config metrics
+	crtListFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default").Get(ctx, result.CRTListFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, crtListFile.Status.DeployedToPods, 1)
+	crtStatus := crtListFile.Status.DeployedToPods[0]
+	assert.Nil(t, crtStatus.SyncDuration, "auxiliary file should NOT have SyncDuration")
+	assert.Nil(t, crtStatus.LastReloadAt, "auxiliary file should NOT have LastReloadAt")
+	assert.Nil(t, crtStatus.LastOperationSummary, "auxiliary file should NOT have LastOperationSummary")
+	assert.Equal(t, 0, crtStatus.VersionConflictRetries, "auxiliary file should NOT have VersionConflictRetries")
+	assert.False(t, crtStatus.FallbackUsed, "auxiliary file should NOT have FallbackUsed")
+}
