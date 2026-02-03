@@ -289,3 +289,102 @@ func TestStore_MultipleUpdates(t *testing.T) {
 	store.Update(resource)
 	assert.NotNil(t, store.Get())
 }
+
+func TestStore_SkipsParsingWhenContentUnchanged(t *testing.T) {
+	logger := newTestLogger()
+	store, err := New(logger)
+	require.NoError(t, err)
+
+	// First update should parse and set config
+	resource := newHAProxyCfgResource(validHAProxyConfig)
+	store.Update(resource)
+	config1 := store.Get()
+	require.NotNil(t, config1, "config should be set after first update")
+
+	// Capture the content hash after first update
+	store.mu.RLock()
+	hash1 := store.contentHash
+	store.mu.RUnlock()
+	require.NotEmpty(t, hash1, "content hash should be set")
+
+	// Second update with same content should skip parsing (hash check)
+	// but return the same config pointer
+	store.Update(resource)
+	config2 := store.Get()
+	require.NotNil(t, config2, "config should still be set after second update")
+
+	// Hash should remain the same
+	store.mu.RLock()
+	hash2 := store.contentHash
+	store.mu.RUnlock()
+	assert.Equal(t, hash1, hash2, "hash should remain unchanged for identical content")
+
+	// The config pointer should be the same (no re-parse occurred)
+	assert.Same(t, config1, config2, "config pointer should be same when content unchanged")
+}
+
+func TestStore_ReparseWhenContentChanges(t *testing.T) {
+	logger := newTestLogger()
+	store, err := New(logger)
+	require.NoError(t, err)
+
+	// First update
+	resource1 := newHAProxyCfgResource(validHAProxyConfig)
+	store.Update(resource1)
+	config1 := store.Get()
+	require.NotNil(t, config1, "config should be set after first update")
+
+	store.mu.RLock()
+	hash1 := store.contentHash
+	store.mu.RUnlock()
+
+	// Second update with different content
+	differentConfig := `global
+    daemon
+
+defaults
+    mode http
+
+backend different-backend
+    server srv2 127.0.0.2:9090
+`
+	resource2 := newHAProxyCfgResource(differentConfig)
+	store.Update(resource2)
+	config2 := store.Get()
+	require.NotNil(t, config2, "config should be set after second update")
+
+	store.mu.RLock()
+	hash2 := store.contentHash
+	store.mu.RUnlock()
+
+	// Hash should change
+	assert.NotEqual(t, hash1, hash2, "hash should change for different content")
+
+	// Config should be different (re-parsed)
+	assert.NotSame(t, config1, config2, "config pointer should be different after content change")
+	assert.NotEqual(t, config1.Backends[0].Name, config2.Backends[0].Name,
+		"backend names should be different")
+}
+
+func TestStore_ClearResetsHash(t *testing.T) {
+	logger := newTestLogger()
+	store, err := New(logger)
+	require.NoError(t, err)
+
+	// Set config and hash
+	resource := newHAProxyCfgResource(validHAProxyConfig)
+	store.Update(resource)
+
+	store.mu.RLock()
+	hashBefore := store.contentHash
+	store.mu.RUnlock()
+	require.NotEmpty(t, hashBefore, "hash should be set")
+
+	// Clear config
+	store.Update(nil)
+
+	store.mu.RLock()
+	hashAfter := store.contentHash
+	store.mu.RUnlock()
+	assert.Empty(t, hashAfter, "hash should be cleared after Update(nil)")
+}
