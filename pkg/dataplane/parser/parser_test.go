@@ -1150,6 +1150,109 @@ log-forward forward2
 	}
 }
 
+// TestParseFromString_CacheHit verifies the parsed config cache works.
+func TestParseFromString_CacheHit(t *testing.T) {
+	config := `
+global
+    daemon
+
+defaults
+    mode http
+
+backend web
+    server s1 127.0.0.1:8080
+`
+
+	p1, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	p2, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// Get initial cache stats
+	hitsBefore, _ := CacheStats()
+
+	// First parse - cache miss
+	conf1, err := p1.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("First ParseFromString() failed: %v", err)
+	}
+
+	// Second parse with different parser - should hit cache
+	conf2, err := p2.ParseFromString(config)
+	if err != nil {
+		t.Fatalf("Second ParseFromString() failed: %v", err)
+	}
+
+	// Get final cache stats
+	hitsAfter, _ := CacheStats()
+
+	// Verify cache hit occurred
+	if hitsAfter <= hitsBefore {
+		t.Errorf("Expected cache hit, but hits didn't increase: before=%d, after=%d", hitsBefore, hitsAfter)
+	}
+
+	// Verify both results are identical (same pointer due to cache)
+	if conf1 != conf2 {
+		t.Error("Expected cached result to return same pointer")
+	}
+
+	// Verify the parsed content is correct
+	if len(conf2.Backends) != 1 {
+		t.Errorf("Expected 1 backend, got: %d", len(conf2.Backends))
+	}
+}
+
+// TestParseFromString_CacheMissOnDifferentConfig verifies cache miss for different configs.
+func TestParseFromString_CacheMissOnDifferentConfig(t *testing.T) {
+	config1 := `
+global
+    daemon
+
+backend web1
+    server s1 127.0.0.1:8080
+`
+
+	config2 := `
+global
+    daemon
+
+backend web2
+    server s2 127.0.0.1:8081
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// First config
+	conf1, err := p.ParseFromString(config1)
+	if err != nil {
+		t.Fatalf("First ParseFromString() failed: %v", err)
+	}
+
+	// Different config - should NOT hit cache
+	conf2, err := p.ParseFromString(config2)
+	if err != nil {
+		t.Fatalf("Second ParseFromString() failed: %v", err)
+	}
+
+	// Results should be different
+	if conf1 == conf2 {
+		t.Error("Expected different configs to return different results")
+	}
+
+	// Verify content is different
+	if conf1.Backends[0].Name == conf2.Backends[0].Name {
+		t.Error("Expected different backend names")
+	}
+}
+
 // TestStructuredConfig_AllFieldsPresent verifies all StructuredConfig fields can be populated.
 func TestStructuredConfig_AllFieldsPresent(t *testing.T) {
 	// Create instance and verify all fields are accessible

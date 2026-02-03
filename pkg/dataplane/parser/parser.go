@@ -9,10 +9,13 @@
 package parser
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	parser "github.com/haproxytech/client-native/v6/config-parser"
 	"github.com/haproxytech/client-native/v6/configuration"
@@ -38,6 +41,60 @@ import (
 // variable has a //nolint:gochecknoglobals comment indicating awareness but no fix.
 // Consider checking for updates in newer versions or filing an upstream issue.
 var parserMutex sync.Mutex
+
+// parsedConfigCache provides a content-based cache for parsed configurations.
+// This dramatically reduces allocations when the same configuration is parsed
+// multiple times (e.g., when syncing to N endpoints with the same desired config).
+//
+// The cache stores only the most recently parsed config, which is sufficient
+// because sync operations typically parse the same desired config N times
+// (once per endpoint) before moving to a new config.
+//
+// IMPORTANT: The cached StructuredConfig is already normalized (metadata fields
+// flattened) and MUST NOT be mutated. Callers should not call NormalizeConfigMetadata
+// on cached configs - they are already normalized during caching.
+type parsedConfigCache struct {
+	mu        sync.RWMutex
+	hash      string
+	config    *StructuredConfig
+	hitCount  atomic.Int64
+	missCount atomic.Int64
+}
+
+var configCache = &parsedConfigCache{}
+
+// get returns a cached parsed config if the hash matches, nil otherwise.
+func (c *parsedConfigCache) get(hash string) *StructuredConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.hash == hash && c.config != nil {
+		c.hitCount.Add(1)
+		return c.config
+	}
+	return nil
+}
+
+// set stores a parsed config in the cache.
+func (c *parsedConfigCache) set(hash string, config *StructuredConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.hash = hash
+	c.config = config
+}
+
+// CacheStats returns the current cache hit/miss statistics.
+// Useful for debugging and metrics.
+func CacheStats() (hits, misses int64) {
+	return configCache.hitCount.Load(), configCache.missCount.Load()
+}
+
+// hashConfig computes a SHA256 hash of the configuration string.
+func hashConfig(config string) string {
+	h := sha256.Sum256([]byte(config))
+	return hex.EncodeToString(h[:])
+}
 
 // Parser wraps client-native's config-parser for parsing HAProxy configurations.
 type Parser struct {
@@ -91,10 +148,23 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 		return nil, fmt.Errorf("configuration string is empty")
 	}
 
+	// Check cache first (fast path - no mutex needed for cache check)
+	// This dramatically reduces allocations when syncing the same desired config
+	// to multiple endpoints.
+	hash := hashConfig(config)
+	if cached := configCache.get(hash); cached != nil {
+		return cached, nil
+	}
+
 	// Lock to prevent concurrent access to client-native parser
 	// (protects against upstream race condition in DefaultSectionName global variable)
 	parserMutex.Lock()
 	defer parserMutex.Unlock()
+
+	// Double-check cache after acquiring lock (another goroutine may have parsed)
+	if cached := configCache.get(hash); cached != nil {
+		return cached, nil
+	}
 
 	// Parse directly from string - NO file I/O
 	// This keeps all config data in memory as required
@@ -108,6 +178,15 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract configuration: %w", err)
 	}
+
+	// Normalize metadata before caching to ensure cached configs are immutable.
+	// This prevents data races when multiple goroutines retrieve the same cached
+	// config and try to normalize it concurrently.
+	NormalizeConfigMetadata(conf)
+
+	// Cache the result for future requests with the same config
+	configCache.set(hash, conf)
+	configCache.missCount.Add(1)
 
 	return conf, nil
 }

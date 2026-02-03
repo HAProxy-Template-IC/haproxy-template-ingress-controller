@@ -477,10 +477,8 @@ func (o *orchestrator) diff(ctx context.Context, desiredConfig string) (*DiffRes
 		return nil, NewParseError("current", snippet, err)
 	}
 
-	// Normalize metadata format in current config to ensure consistent comparison.
-	// The API stores comments as JSON (nested format), but templates produce flat format.
-	// This normalization converts nested back to flat for accurate comparison.
-	parser.NormalizeConfigMetadata(currentConfig)
+	// Note: Normalization of metadata format is now done automatically by the parser
+	// during caching. Both currentConfig and desiredParsed are pre-normalized.
 
 	// Step 3: Parse desired configuration
 	desiredParsed, err := o.parser.ParseFromString(desiredConfig)
@@ -927,10 +925,8 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 		return nil, NewParseError("current", snippet, err)
 	}
 
-	// Normalize metadata format in current config to ensure consistent comparison.
-	// The API stores comments as JSON (nested format), but templates produce flat format.
-	// This normalization converts nested back to flat for accurate comparison.
-	parser.NormalizeConfigMetadata(currentConfig)
+	// Note: Normalization of metadata format is now done automatically by the parser
+	// during caching. Both currentConfig and desiredParsed are pre-normalized.
 
 	// Parse desired configuration
 	o.logger.Debug("Parsing desired configuration")
