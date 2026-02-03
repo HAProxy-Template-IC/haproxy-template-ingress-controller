@@ -1381,3 +1381,110 @@ func TestPodStatusesEqual_IdenticalWithAllFields(t *testing.T) {
 
 	assert.True(t, podStatusesEqual(a, b), "identical statuses with all fields should be equal")
 }
+
+// TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum verifies that auxiliary files
+// (MapFiles, GeneralFiles, CRTListFiles) use their own spec.checksum instead of the main
+// config checksum. This prevents unnecessary status updates when only the main config
+// changes but auxiliary file content remains the same.
+func TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config with auxiliary files
+	result, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			MapFiles:     []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
+			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "/etc/haproxy/lua/script.lua", Content: "-- lua script\n"}},
+			CRTListFiles: []auxiliaryfiles.CRTListFile{{Path: "/etc/haproxy/ssl/crt-list.txt", Content: "default.pem\n"}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.MapFileNames, 1)
+	require.Len(t, result.GeneralFileNames, 1)
+	require.Len(t, result.CRTListFileNames, 1)
+
+	// Get the checksums stored in the auxiliary file specs
+	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	mapFileChecksum := mapFile.Spec.Checksum
+
+	generalFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").Get(ctx, result.GeneralFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	generalFileChecksum := generalFile.Spec.Checksum
+
+	crtListFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default").Get(ctx, result.CRTListFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	crtListFileChecksum := crtListFile.Spec.Checksum
+
+	// Verify the checksums are different from the main config checksum
+	assert.NotEqual(t, "main-config-checksum-v1", mapFileChecksum)
+	assert.NotEqual(t, "main-config-checksum-v1", generalFileChecksum)
+	assert.NotEqual(t, "main-config-checksum-v1", crtListFileChecksum)
+
+	t.Run("initial deployment uses file-specific checksums", func(t *testing.T) {
+		err := publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+			RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
+			PodName: "haproxy-0", DeployedAt: time.Now(), Checksum: "main-config-checksum-v1",
+		})
+		require.NoError(t, err)
+
+		// Verify main config status uses the main config checksum
+		runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		require.NoError(t, err)
+		require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+		assert.Equal(t, "main-config-checksum-v1", runtimeConfig.Status.DeployedToPods[0].Checksum)
+
+		// Verify auxiliary files use their own checksums
+		mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+		require.NoError(t, err)
+		require.Len(t, mapFile.Status.DeployedToPods, 1)
+		assert.Equal(t, mapFileChecksum, mapFile.Status.DeployedToPods[0].Checksum, "map file should use its own checksum")
+
+		generalFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").Get(ctx, result.GeneralFileNames[0], metav1.GetOptions{})
+		require.NoError(t, err)
+		require.Len(t, generalFile.Status.DeployedToPods, 1)
+		assert.Equal(t, generalFileChecksum, generalFile.Status.DeployedToPods[0].Checksum, "general file should use its own checksum")
+
+		crtListFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default").Get(ctx, result.CRTListFileNames[0], metav1.GetOptions{})
+		require.NoError(t, err)
+		require.Len(t, crtListFile.Status.DeployedToPods, 1)
+		assert.Equal(t, crtListFileChecksum, crtListFile.Status.DeployedToPods[0].Checksum, "crt-list file should use its own checksum")
+	})
+
+	t.Run("main config change does not update auxiliary file checksums", func(t *testing.T) {
+		// Simulate main config change (new checksum) but auxiliary files unchanged
+		err := publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+			RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
+			PodName: "haproxy-0", DeployedAt: time.Now(), Checksum: "main-config-checksum-v2",
+		})
+		require.NoError(t, err)
+
+		// Main config status should have updated checksum
+		runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, "main-config-checksum-v2", runtimeConfig.Status.DeployedToPods[0].Checksum)
+
+		// Auxiliary files should still have their original checksums
+		mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, mapFileChecksum, mapFile.Status.DeployedToPods[0].Checksum, "map file checksum should remain unchanged")
+
+		generalFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").Get(ctx, result.GeneralFileNames[0], metav1.GetOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, generalFileChecksum, generalFile.Status.DeployedToPods[0].Checksum, "general file checksum should remain unchanged")
+
+		crtListFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default").Get(ctx, result.CRTListFileNames[0], metav1.GetOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, crtListFileChecksum, crtListFile.Status.DeployedToPods[0].Checksum, "crt-list file checksum should remain unchanged")
+	})
+}
