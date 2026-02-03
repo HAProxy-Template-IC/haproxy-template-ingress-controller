@@ -915,9 +915,17 @@ func (c *Component) processStatusWork(work *statusWorkItem) {
 
 	// Extract sync metadata if available
 	if event.SyncMetadata != nil {
-		// Only set deployedAt when actual operations were performed
+		// Only set deployedAt when actual operations were performed successfully
 		if event.SyncMetadata.Error == "" && event.SyncMetadata.OperationCounts.TotalAPIOperations > 0 {
 			update.DeployedAt = timestamp
+		}
+
+		// Set performance metrics when actual work happened (operations performed or error occurred)
+		// Skip only for drift checks that found no drift (no operations, no error)
+		if event.SyncMetadata.OperationCounts.TotalAPIOperations > 0 || event.SyncMetadata.Error != "" {
+			update.SyncDuration = &event.SyncMetadata.SyncDuration
+			update.VersionConflictRetries = event.SyncMetadata.VersionConflictRetries
+			update.FallbackUsed = event.SyncMetadata.FallbackUsed
 		}
 
 		// Set reload information if reload was triggered
@@ -925,11 +933,6 @@ func (c *Component) processStatusWork(work *statusWorkItem) {
 			update.LastReloadAt = &timestamp
 			update.LastReloadID = event.SyncMetadata.ReloadID
 		}
-
-		// Copy performance metrics
-		update.SyncDuration = &event.SyncMetadata.SyncDuration
-		update.VersionConflictRetries = event.SyncMetadata.VersionConflictRetries
-		update.FallbackUsed = event.SyncMetadata.FallbackUsed
 
 		// Copy operation summary
 		if event.SyncMetadata.OperationCounts.TotalAPIOperations > 0 {

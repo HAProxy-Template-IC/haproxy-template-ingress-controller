@@ -746,6 +746,100 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 	assert.Equal(t, 1, pod.LastOperationSummary.TotalAPIOperations)
 }
 
+// TestComponent_ConfigAppliedToPodEvent_DriftCheck_NoChanges tests that drift checks with no changes
+// do not update performance metrics like SyncDuration. This prevents status updates when no actual
+// deployment occurred.
+func TestComponent_ConfigAppliedToPodEvent_DriftCheck_NoChanges(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Setup
+	k8sClient := k8sfake.NewClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
+	component := New(publisher, eventBus, testLogger())
+
+	// Start event bus and component
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Give component time to subscribe
+	time.Sleep(100 * time.Millisecond)
+
+	// First create a runtime config with existing pod status (simulating previous deployment)
+	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       "test-uid-no-drift",
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "checksum-no-drift",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles:          nil,
+	})
+	require.NoError(t, err)
+
+	// Create initial pod status with known SyncDuration
+	initialSyncDuration := 200 * time.Millisecond
+	initialUpdate := &configpublisher.DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-pod-no-drift",
+		Checksum:               "checksum-no-drift",
+		DeployedAt:             time.Now(),
+		SyncDuration:           &initialSyncDuration,
+	}
+	err = publisher.UpdateDeploymentStatus(ctx, initialUpdate)
+	require.NoError(t, err)
+
+	// Verify initial state
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+	assert.Equal(t, initialSyncDuration, runtimeConfig.Status.DeployedToPods[0].SyncDuration.Duration)
+
+	// Publish ConfigAppliedToPodEvent as drift check with NO operations (no drift detected)
+	// This simulates a drift check that confirmed the config is in sync
+	newSyncDuration := 50 * time.Millisecond
+	eventBus.Publish(events.NewConfigAppliedToPodEvent(
+		"test-config-haproxycfg",
+		"default",
+		"haproxy-pod-no-drift",
+		"haproxy-ns",
+		"checksum-no-drift",
+		true, // isDriftCheck
+		&events.SyncMetadata{
+			SyncDuration: newSyncDuration,
+			OperationCounts: events.OperationCounts{
+				TotalAPIOperations: 0, // No drift detected, no operations needed
+			},
+			// No error - this is a successful no-op drift check
+		},
+	))
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify SyncDuration was NOT updated (should remain at initial value)
+	runtimeConfig, err = crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+
+	pod := runtimeConfig.Status.DeployedToPods[0]
+	assert.Equal(t, "haproxy-pod-no-drift", pod.PodName)
+	// SyncDuration should remain at the initial value since no actual operations were performed
+	require.NotNil(t, pod.SyncDuration, "SyncDuration should exist from initial deployment")
+	assert.Equal(t, initialSyncDuration, pod.SyncDuration.Duration,
+		"SyncDuration should not be updated during drift checks with no changes")
+}
+
 // TestComponent_ConfigAppliedToPodEvent_WithError tests error handling in sync metadata.
 func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

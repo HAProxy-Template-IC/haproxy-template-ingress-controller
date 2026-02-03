@@ -1749,6 +1749,16 @@ func updateOrAppendPodStatus(
 			podStatus.DeployedAt = pods[i].DeployedAt
 		}
 
+		// Preserve performance metrics if not being updated (e.g., drift check with no changes)
+		if podStatus.SyncDuration == nil {
+			podStatus.SyncDuration = pods[i].SyncDuration
+		}
+		if podStatus.LastOperationSummary == nil {
+			podStatus.LastOperationSummary = pods[i].LastOperationSummary
+		}
+		// Note: VersionConflictRetries and FallbackUsed are only meaningful when
+		// SyncDuration is set, so they're implicitly preserved when SyncDuration is nil
+
 		// Preserve and update consecutive error count
 		if update.Error != "" {
 			podStatus.ConsecutiveErrors = pods[i].ConsecutiveErrors + 1
