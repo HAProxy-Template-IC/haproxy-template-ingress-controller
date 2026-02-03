@@ -1355,7 +1355,13 @@ func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace
 		// Save original status for comparison (deep copy to avoid aliasing issues)
 		originalStatus := copyPodStatuses(mapFile.Status.DeployedToPods)
 
-		mapFile.Status.DeployedToPods = addOrUpdatePodStatus(mapFile.Status.DeployedToPods, podStatus)
+		// Use the file's own checksum instead of the main config checksum.
+		// This prevents unnecessary status updates when only the main config changes
+		// but this auxiliary file's content remains the same.
+		auxPodStatus := *podStatus
+		auxPodStatus.Checksum = mapFile.Spec.Checksum
+
+		mapFile.Status.DeployedToPods = addOrUpdatePodStatus(mapFile.Status.DeployedToPods, &auxPodStatus)
 
 		// Skip UpdateStatus if the status didn't actually change
 		if podStatusesEqual(originalStatus, mapFile.Status.DeployedToPods) {
@@ -1391,7 +1397,13 @@ func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, names
 		// Save original status for comparison (deep copy to avoid aliasing issues)
 		originalStatus := copyPodStatuses(generalFile.Status.DeployedToPods)
 
-		generalFile.Status.DeployedToPods = addOrUpdatePodStatus(generalFile.Status.DeployedToPods, podStatus)
+		// Use the file's own checksum instead of the main config checksum.
+		// This prevents unnecessary status updates when only the main config changes
+		// but this auxiliary file's content remains the same.
+		auxPodStatus := *podStatus
+		auxPodStatus.Checksum = generalFile.Spec.Checksum
+
+		generalFile.Status.DeployedToPods = addOrUpdatePodStatus(generalFile.Status.DeployedToPods, &auxPodStatus)
 
 		// Skip UpdateStatus if the status didn't actually change
 		if podStatusesEqual(originalStatus, generalFile.Status.DeployedToPods) {
@@ -1427,7 +1439,13 @@ func (p *Publisher) updateCRTListFileDeploymentStatus(ctx context.Context, names
 		// Save original status for comparison (deep copy to avoid aliasing issues)
 		originalStatus := copyPodStatuses(crtListFile.Status.DeployedToPods)
 
-		crtListFile.Status.DeployedToPods = addOrUpdatePodStatus(crtListFile.Status.DeployedToPods, podStatus)
+		// Use the file's own checksum instead of the main config checksum.
+		// This prevents unnecessary status updates when only the main config changes
+		// but this auxiliary file's content remains the same.
+		auxPodStatus := *podStatus
+		auxPodStatus.Checksum = crtListFile.Spec.Checksum
+
+		crtListFile.Status.DeployedToPods = addOrUpdatePodStatus(crtListFile.Status.DeployedToPods, &auxPodStatus)
 
 		// Skip UpdateStatus if the status didn't actually change
 		if podStatusesEqual(originalStatus, crtListFile.Status.DeployedToPods) {
