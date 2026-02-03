@@ -962,3 +962,422 @@ func TestAddOrUpdatePodStatus_AppendsDifferentPod(t *testing.T) {
 	assert.Equal(t, "haproxy-0", result[0].PodName)
 	assert.Equal(t, "haproxy-1", result[1].PodName)
 }
+
+// TestCopyPodStatuses_ReturnsDeepCopy tests that copyPodStatuses creates a deep copy.
+func TestCopyPodStatuses_ReturnsDeepCopy(t *testing.T) {
+	original := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:    "haproxy-0",
+			DeployedAt: metav1.NewTime(time.Now()),
+			Checksum:   "checksum-0",
+		},
+	}
+
+	copied := copyPodStatuses(original)
+
+	// Modify original
+	original[0].Checksum = "modified-checksum"
+
+	// Copy should not be affected
+	assert.Equal(t, "checksum-0", copied[0].Checksum, "copy should not be affected by original modification")
+}
+
+// TestCopyPodStatuses_NilInput tests that copyPodStatuses handles nil input.
+func TestCopyPodStatuses_NilInput(t *testing.T) {
+	copied := copyPodStatuses(nil)
+	assert.Nil(t, copied, "nil input should return nil")
+}
+
+// TestPodStatusesEqual_IdenticalStatuses tests that identical statuses are equal.
+func TestPodStatusesEqual_IdenticalStatuses(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+	reloadAt := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			LastReloadAt: &reloadAt,
+			LastReloadID: "reload-1",
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			LastReloadAt: &reloadAt,
+			LastReloadID: "reload-1",
+		},
+	}
+
+	assert.True(t, podStatusesEqual(a, b), "identical statuses should be equal")
+}
+
+// TestPodStatusesEqual_DifferentChecksum tests that different checksums are not equal.
+func TestPodStatusesEqual_DifferentChecksum(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:    "haproxy-0",
+			DeployedAt: now,
+			Checksum:   "abc123",
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:    "haproxy-0",
+			DeployedAt: now,
+			Checksum:   "different",
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different checksums should not be equal")
+}
+
+// TestPodStatusesEqual_DifferentDeployedAt tests that different deployment times are not equal.
+func TestPodStatusesEqual_DifferentDeployedAt(t *testing.T) {
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:    "haproxy-0",
+			DeployedAt: metav1.NewTime(time.Now()),
+			Checksum:   "abc123",
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:    "haproxy-0",
+			DeployedAt: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+			Checksum:   "abc123",
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different deployment times should not be equal")
+}
+
+// TestPodStatusesEqual_DifferentLength tests that slices with different lengths are not equal.
+func TestPodStatusesEqual_DifferentLength(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{PodName: "haproxy-0", DeployedAt: now, Checksum: "abc123"},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{PodName: "haproxy-0", DeployedAt: now, Checksum: "abc123"},
+		{PodName: "haproxy-1", DeployedAt: now, Checksum: "def456"},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different lengths should not be equal")
+}
+
+// TestPodStatusesEqual_EmptySlices tests that empty slices are equal.
+func TestPodStatusesEqual_EmptySlices(t *testing.T) {
+	a := []haproxyv1alpha1.PodDeploymentStatus{}
+	b := []haproxyv1alpha1.PodDeploymentStatus{}
+
+	assert.True(t, podStatusesEqual(a, b), "empty slices should be equal")
+}
+
+// TestPodStatusesEqual_LastReloadAtNilVsSet tests LastReloadAt comparison.
+func TestPodStatusesEqual_LastReloadAtNilVsSet(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+	reloadAt := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			LastReloadAt: nil, // No reload recorded
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			LastReloadAt: &reloadAt, // Reload recorded
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "nil vs set LastReloadAt should not be equal")
+}
+
+// TestPodStatusesEqual_DifferentSyncDuration tests SyncDuration comparison.
+func TestPodStatusesEqual_DifferentSyncDuration(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+	duration1 := metav1.Duration{Duration: 5 * time.Second}
+	duration2 := metav1.Duration{Duration: 10 * time.Second}
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			SyncDuration: &duration1,
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			SyncDuration: &duration2,
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different SyncDuration should not be equal")
+}
+
+// TestPodStatusesEqual_SyncDurationNilVsSet tests SyncDuration nil comparison.
+func TestPodStatusesEqual_SyncDurationNilVsSet(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+	duration := metav1.Duration{Duration: 5 * time.Second}
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			SyncDuration: nil,
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			SyncDuration: &duration,
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "nil vs set SyncDuration should not be equal")
+}
+
+// TestPodStatusesEqual_DifferentVersionConflictRetries tests VersionConflictRetries comparison.
+func TestPodStatusesEqual_DifferentVersionConflictRetries(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:                "haproxy-0",
+			DeployedAt:             now,
+			Checksum:               "abc123",
+			VersionConflictRetries: 0,
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:                "haproxy-0",
+			DeployedAt:             now,
+			Checksum:               "abc123",
+			VersionConflictRetries: 3,
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different VersionConflictRetries should not be equal")
+}
+
+// TestPodStatusesEqual_DifferentFallbackUsed tests FallbackUsed comparison.
+func TestPodStatusesEqual_DifferentFallbackUsed(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			FallbackUsed: false,
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:      "haproxy-0",
+			DeployedAt:   now,
+			Checksum:     "abc123",
+			FallbackUsed: true,
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different FallbackUsed should not be equal")
+}
+
+// TestPodStatusesEqual_DifferentConsecutiveErrors tests ConsecutiveErrors comparison.
+func TestPodStatusesEqual_DifferentConsecutiveErrors(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:           "haproxy-0",
+			DeployedAt:        now,
+			Checksum:          "abc123",
+			ConsecutiveErrors: 0,
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:           "haproxy-0",
+			DeployedAt:        now,
+			Checksum:          "abc123",
+			ConsecutiveErrors: 5,
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different ConsecutiveErrors should not be equal")
+}
+
+// TestPodStatusesEqual_DifferentLastErrorAt tests LastErrorAt comparison.
+func TestPodStatusesEqual_DifferentLastErrorAt(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+	errorAt1 := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	errorAt2 := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:     "haproxy-0",
+			DeployedAt:  now,
+			Checksum:    "abc123",
+			LastErrorAt: &errorAt1,
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:     "haproxy-0",
+			DeployedAt:  now,
+			Checksum:    "abc123",
+			LastErrorAt: &errorAt2,
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different LastErrorAt should not be equal")
+}
+
+// TestPodStatusesEqual_LastErrorAtNilVsSet tests LastErrorAt nil comparison.
+func TestPodStatusesEqual_LastErrorAtNilVsSet(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+	errorAt := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:     "haproxy-0",
+			DeployedAt:  now,
+			Checksum:    "abc123",
+			LastErrorAt: nil,
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:     "haproxy-0",
+			DeployedAt:  now,
+			Checksum:    "abc123",
+			LastErrorAt: &errorAt,
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "nil vs set LastErrorAt should not be equal")
+}
+
+// TestPodStatusesEqual_DifferentLastOperationSummary tests LastOperationSummary comparison.
+func TestPodStatusesEqual_DifferentLastOperationSummary(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:    "haproxy-0",
+			DeployedAt: now,
+			Checksum:   "abc123",
+			LastOperationSummary: &haproxyv1alpha1.OperationSummary{
+				TotalAPIOperations: 10,
+				BackendsAdded:      2,
+			},
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:    "haproxy-0",
+			DeployedAt: now,
+			Checksum:   "abc123",
+			LastOperationSummary: &haproxyv1alpha1.OperationSummary{
+				TotalAPIOperations: 15,
+				BackendsAdded:      3,
+			},
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "different LastOperationSummary should not be equal")
+}
+
+// TestPodStatusesEqual_LastOperationSummaryNilVsSet tests LastOperationSummary nil comparison.
+func TestPodStatusesEqual_LastOperationSummaryNilVsSet(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:              "haproxy-0",
+			DeployedAt:           now,
+			Checksum:             "abc123",
+			LastOperationSummary: nil,
+		},
+	}
+
+	b := []haproxyv1alpha1.PodDeploymentStatus{
+		{
+			PodName:    "haproxy-0",
+			DeployedAt: now,
+			Checksum:   "abc123",
+			LastOperationSummary: &haproxyv1alpha1.OperationSummary{
+				TotalAPIOperations: 5,
+			},
+		},
+	}
+
+	assert.False(t, podStatusesEqual(a, b), "nil vs set LastOperationSummary should not be equal")
+}
+
+// TestPodStatusesEqual_IdenticalWithAllFields tests that statuses with all fields set are equal.
+func TestPodStatusesEqual_IdenticalWithAllFields(t *testing.T) {
+	now := metav1.NewTime(time.Now())
+	reloadAt := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+	errorAt := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	duration := metav1.Duration{Duration: 5 * time.Second}
+
+	status := haproxyv1alpha1.PodDeploymentStatus{
+		PodName:                "haproxy-0",
+		DeployedAt:             now,
+		Checksum:               "abc123",
+		LastReloadAt:           &reloadAt,
+		LastReloadID:           "reload-1",
+		SyncDuration:           &duration,
+		VersionConflictRetries: 2,
+		FallbackUsed:           true,
+		LastOperationSummary: &haproxyv1alpha1.OperationSummary{
+			TotalAPIOperations: 10,
+			BackendsAdded:      2,
+			BackendsRemoved:    1,
+			ServersAdded:       5,
+		},
+		LastError:         "some error",
+		ConsecutiveErrors: 3,
+		LastErrorAt:       &errorAt,
+	}
+
+	a := []haproxyv1alpha1.PodDeploymentStatus{status}
+	b := []haproxyv1alpha1.PodDeploymentStatus{status}
+
+	assert.True(t, podStatusesEqual(a, b), "identical statuses with all fields should be equal")
+}
