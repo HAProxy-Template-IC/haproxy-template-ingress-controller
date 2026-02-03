@@ -1872,3 +1872,135 @@ func TestRuntimeConfigStatus_UpdateWhenChanged(t *testing.T) {
 	assert.Equal(t, 20, configV2.Status.DeployedToPods[0].LastOperationSummary.TotalAPIOperations,
 		"HAProxyCfg status operation summary should be updated")
 }
+
+// TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged verifies that auxiliary file
+// specs are not updated when the content checksum hasn't changed.
+func TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config with auxiliary files
+	result, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			MapFiles:     []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
+			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "/etc/haproxy/lua/script.lua", Filename: "script.lua", Content: "-- lua script\n"}},
+			CRTListFiles: []auxiliaryfiles.CRTListFile{{Path: "/etc/haproxy/ssl/crt-list.txt", Content: "default.pem\n"}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.MapFileNames, 1)
+	require.Len(t, result.GeneralFileNames, 1)
+	require.Len(t, result.CRTListFileNames, 1)
+
+	// Get initial resource versions
+	mapFile1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	mapFileRV1 := mapFile1.ResourceVersion
+
+	generalFile1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").Get(ctx, result.GeneralFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	generalFileRV1 := generalFile1.ResourceVersion
+
+	crtListFile1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default").Get(ctx, result.CRTListFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	crtListFileRV1 := crtListFile1.ResourceVersion
+
+	// Publish SAME config again (same auxiliary file content)
+	result2, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			MapFiles:     []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
+			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "/etc/haproxy/lua/script.lua", Filename: "script.lua", Content: "-- lua script\n"}},
+			CRTListFiles: []auxiliaryfiles.CRTListFile{{Path: "/etc/haproxy/ssl/crt-list.txt", Content: "default.pem\n"}},
+		},
+	})
+	require.NoError(t, err)
+
+	// Verify resource versions didn't change (no update occurred)
+	mapFile2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result2.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, mapFileRV1, mapFile2.ResourceVersion,
+		"map file resource version should not change when checksum is unchanged")
+
+	generalFile2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").Get(ctx, result2.GeneralFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, generalFileRV1, generalFile2.ResourceVersion,
+		"general file resource version should not change when checksum is unchanged")
+
+	crtListFile2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default").Get(ctx, result2.CRTListFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, crtListFileRV1, crtListFile2.ResourceVersion,
+		"crt-list file resource version should not change when checksum is unchanged")
+}
+
+// TestAuxiliaryFileSpec_UpdateWhenChecksumChanges verifies that auxiliary file
+// specs ARE updated when the content checksum changes.
+func TestAuxiliaryFileSpec_UpdateWhenChecksumChanges(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config with auxiliary files
+	result, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.MapFileNames, 1)
+
+	// Get initial checksum
+	mapFile1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	initialChecksum := mapFile1.Spec.Checksum
+
+	// Publish with DIFFERENT auxiliary file content
+	result2, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+		AuxiliaryFiles: &AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend2\n"}}, // Different content
+		},
+	})
+	require.NoError(t, err)
+
+	// Verify checksum was updated
+	mapFile2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result2.MapFileNames[0], metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotEqual(t, initialChecksum, mapFile2.Spec.Checksum,
+		"map file checksum should change when content changes")
+	assert.Equal(t, "example.com backend2\n", mapFile2.Spec.Entries,
+		"map file entries should be updated with new content")
+}

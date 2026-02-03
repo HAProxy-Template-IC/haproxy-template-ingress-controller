@@ -1001,6 +1001,12 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 			return nil
 		}
 
+		// Skip update if checksum hasn't changed
+		if existing.Spec.Checksum == spec.Checksum {
+			resultName = existing.Name
+			return nil
+		}
+
 		// Update existing resource with fresh copy
 		existing.Spec = spec
 		existing.Labels = labels
@@ -1026,6 +1032,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 // createOrUpdateSSLSecret creates or updates a Secret for SSL certificates.
 func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, cert auxiliaryfiles.SSLCertificate) (string, error) {
 	name := p.generateSecretName(filepath.Base(cert.Path))
+	checksum := calculateChecksum(cert.Content) // Checksum of original content
 
 	// Compress if content exceeds threshold
 	result := p.compressIfNeeded(cert.Content, req.CompressionThreshold, "Secret/"+name)
@@ -1040,6 +1047,7 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 			},
 			Annotations: map[string]string{
 				"haproxy-haptic.org/compressed": strconv.FormatBool(result.compressed),
+				"haproxy-haptic.org/checksum":   checksum,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -1078,6 +1086,11 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 		}
 
 		return created.Name, nil
+	}
+
+	// Skip update if checksum hasn't changed
+	if existing.Annotations != nil && existing.Annotations["haproxy-haptic.org/checksum"] == checksum {
+		return existing.Name, nil
 	}
 
 	// Update existing secret
@@ -1160,6 +1173,12 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 			}
 
 			resultName = created.Name
+			return nil
+		}
+
+		// Skip update if checksum hasn't changed
+		if existing.Spec.Checksum == spec.Checksum {
+			resultName = existing.Name
 			return nil
 		}
 
@@ -1250,6 +1269,12 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 			}
 
 			resultName = created.Name
+			return nil
+		}
+
+		// Skip update if checksum hasn't changed
+		if existing.Spec.Checksum == spec.Checksum {
+			resultName = existing.Name
 			return nil
 		}
 
