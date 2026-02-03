@@ -6,6 +6,8 @@
 package currentconfigstore
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -22,6 +24,7 @@ import (
 type Store struct {
 	mu            sync.RWMutex
 	currentConfig *parserconfig.StructuredConfig
+	contentHash   string         // Hash of last parsed content to skip redundant parsing
 	parser        *parser.Parser // Reused parser instance (DRY)
 	logger        *slog.Logger
 }
@@ -45,15 +48,21 @@ func (s *Store) Get() *parserconfig.StructuredConfig {
 	return s.currentConfig
 }
 
+// clear resets the stored config and hash.
+func (s *Store) clear(reason string) {
+	s.mu.Lock()
+	s.currentConfig = nil
+	s.contentHash = ""
+	s.mu.Unlock()
+	s.logger.Debug(reason)
+}
+
 // Update parses and stores the config from an unstructured HAProxyCfg resource.
 // Pass nil to clear the stored config.
 func (s *Store) Update(resource interface{}) {
 	// Handle both untyped nil and typed nil (e.g., (*unstructured.Unstructured)(nil))
 	if resource == nil {
-		s.mu.Lock()
-		s.currentConfig = nil
-		s.mu.Unlock()
-		s.logger.Debug("current config cleared (no HAProxyCfg)")
+		s.clear("current config cleared (no HAProxyCfg)")
 		return
 	}
 
@@ -65,10 +74,7 @@ func (s *Store) Update(resource interface{}) {
 
 	// Handle typed nil - when interface has type but nil concrete value
 	if u == nil {
-		s.mu.Lock()
-		s.currentConfig = nil
-		s.mu.Unlock()
-		s.logger.Debug("current config cleared (typed nil HAProxyCfg)")
+		s.clear("current config cleared (typed nil HAProxyCfg)")
 		return
 	}
 
@@ -77,14 +83,16 @@ func (s *Store) Update(resource interface{}) {
 		s.logger.Debug("failed to extract spec.content", "error", err)
 	}
 	if !found || content == "" {
-		s.mu.Lock()
-		s.currentConfig = nil
-		s.mu.Unlock()
-		s.logger.Debug("HAProxyCfg has no content")
+		s.clear("HAProxyCfg has no content")
 		return
 	}
 
-	// Check if content is compressed and decompress if needed
+	s.updateWithContent(u, content)
+}
+
+// updateWithContent handles the content parsing and caching logic.
+func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) {
+	// Decompress if needed
 	isCompressed, _, _ := unstructured.NestedBool(u.Object, "spec", "compressed")
 	if isCompressed {
 		decompressed, err := compression.Decompress(content)
@@ -95,6 +103,21 @@ func (s *Store) Update(resource interface{}) {
 		content = decompressed
 	}
 
+	// Compute hash to detect content changes and skip redundant parsing.
+	// This is critical for performance: HAProxyCfg status updates trigger
+	// Update() even when spec.content hasn't changed.
+	hash := sha256.Sum256([]byte(content))
+	hashStr := hex.EncodeToString(hash[:])
+
+	s.mu.RLock()
+	unchanged := s.contentHash == hashStr
+	s.mu.RUnlock()
+
+	if unchanged {
+		s.logger.Debug("current config unchanged, skipping parse")
+		return
+	}
+
 	parsed, err := s.parser.ParseFromString(content)
 	if err != nil {
 		s.logger.Warn("failed to parse current config", "error", err)
@@ -103,6 +126,7 @@ func (s *Store) Update(resource interface{}) {
 
 	s.mu.Lock()
 	s.currentConfig = parsed
+	s.contentHash = hashStr
 	s.mu.Unlock()
 	s.logger.Debug("current config updated", "backends", len(parsed.Backends))
 }
