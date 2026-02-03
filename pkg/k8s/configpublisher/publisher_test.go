@@ -1732,3 +1732,143 @@ func TestAuxiliaryFileStatus_DoesNotInheritMainConfigMetrics(t *testing.T) {
 	assert.Equal(t, 0, crtStatus.VersionConflictRetries, "auxiliary file should NOT have VersionConflictRetries")
 	assert.False(t, crtStatus.FallbackUsed, "auxiliary file should NOT have FallbackUsed")
 }
+
+// TestRuntimeConfigStatus_NoUpdateWhenUnchanged verifies that HAProxyCfg status
+// is not updated when pod deployment status hasn't actually changed.
+func TestRuntimeConfigStatus_NoUpdateWhenUnchanged(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config
+	_, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+	})
+	require.NoError(t, err)
+
+	// Initial deployment
+	deployTime := time.Now()
+	syncDuration := 100 * time.Millisecond
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             deployTime,
+		Checksum:               "main-config-checksum-v1",
+		SyncDuration:           &syncDuration,
+		OperationSummary: &OperationSummary{
+			TotalAPIOperations: 10,
+			BackendsAdded:      2,
+		},
+	})
+	require.NoError(t, err)
+
+	// Get resource version after initial deployment
+	configV1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	initialResourceVersion := configV1.ResourceVersion
+
+	// Update with EXACTLY the same status (same checksum, same deployment time, same metrics)
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             deployTime, // Same time
+		Checksum:               "main-config-checksum-v1",
+		SyncDuration:           &syncDuration, // Same duration
+		OperationSummary: &OperationSummary{
+			TotalAPIOperations: 10,
+			BackendsAdded:      2,
+		},
+	})
+	require.NoError(t, err)
+
+	// Verify resource version didn't change (no update occurred)
+	configV2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, initialResourceVersion, configV2.ResourceVersion,
+		"HAProxyCfg resource version should not change when status is unchanged")
+}
+
+// TestRuntimeConfigStatus_UpdateWhenChanged verifies that HAProxyCfg status
+// IS updated when pod deployment status changes.
+func TestRuntimeConfigStatus_UpdateWhenChanged(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	publisher := New(k8sClient, crdClient, testLogger())
+
+	// Create runtime config
+	_, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "main-config-checksum-v1",
+		RenderedAt:              time.Now(),
+		ValidatedAt:             time.Now(),
+	})
+	require.NoError(t, err)
+
+	// Initial deployment
+	deployTime := time.Now()
+	syncDuration := 100 * time.Millisecond
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             deployTime,
+		Checksum:               "main-config-checksum-v1",
+		SyncDuration:           &syncDuration,
+		OperationSummary: &OperationSummary{
+			TotalAPIOperations: 10,
+			BackendsAdded:      2,
+		},
+	})
+	require.NoError(t, err)
+
+	// Update with DIFFERENT status (new checksum - simulating config change)
+	newDeployTime := time.Now().Add(time.Second)
+	newSyncDuration := 200 * time.Millisecond
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		DeployedAt:             newDeployTime,
+		Checksum:               "main-config-checksum-v2", // Changed checksum
+		SyncDuration:           &newSyncDuration,
+		OperationSummary: &OperationSummary{
+			TotalAPIOperations: 20,
+			BackendsAdded:      5,
+		},
+	})
+	require.NoError(t, err)
+
+	// Verify the status was updated with new values
+	configV2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, configV2.Status.DeployedToPods, 1)
+
+	// Verify checksum was updated
+	assert.Equal(t, "main-config-checksum-v2", configV2.Status.DeployedToPods[0].Checksum,
+		"HAProxyCfg status checksum should be updated")
+
+	// Verify sync duration was updated
+	require.NotNil(t, configV2.Status.DeployedToPods[0].SyncDuration)
+	assert.Equal(t, newSyncDuration, configV2.Status.DeployedToPods[0].SyncDuration.Duration,
+		"HAProxyCfg status sync duration should be updated")
+
+	// Verify operation summary was updated
+	require.NotNil(t, configV2.Status.DeployedToPods[0].LastOperationSummary)
+	assert.Equal(t, 20, configV2.Status.DeployedToPods[0].LastOperationSummary.TotalAPIOperations,
+		"HAProxyCfg status operation summary should be updated")
+}

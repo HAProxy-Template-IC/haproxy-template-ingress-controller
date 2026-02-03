@@ -216,6 +216,7 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 
 // updateRuntimeConfigDeploymentStatus updates the HAProxyCfg status with pod deployment info.
 // This is the retry-able portion of UpdateDeploymentStatus.
+// Skips the UpdateStatus API call if the status would not actually change.
 func (p *Publisher) updateRuntimeConfigDeploymentStatus(ctx context.Context, update *DeploymentStatusUpdate, auxFilesOut **haproxyv1alpha1.AuxiliaryFileReferences) error {
 	runtimeConfig, err := p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(update.RuntimeConfigNamespace).
@@ -233,6 +234,9 @@ func (p *Publisher) updateRuntimeConfigDeploymentStatus(ctx context.Context, upd
 	// Store auxiliary files reference for updates after main status update
 	*auxFilesOut = runtimeConfig.Status.AuxiliaryFiles
 
+	// Save original status for comparison (deep copy to avoid aliasing issues)
+	originalStatus := copyPodStatuses(runtimeConfig.Status.DeployedToPods)
+
 	// Build pod status from update
 	podStatus := buildPodStatus(update)
 
@@ -242,6 +246,11 @@ func (p *Publisher) updateRuntimeConfigDeploymentStatus(ctx context.Context, upd
 		&podStatus,
 		update,
 	)
+
+	// Skip UpdateStatus if the status didn't actually change
+	if podStatusesEqual(originalStatus, runtimeConfig.Status.DeployedToPods) {
+		return nil
+	}
 
 	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(update.RuntimeConfigNamespace).
