@@ -1339,6 +1339,7 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 
 // updateMapFileDeploymentStatus updates a map file's deployment status.
 // Uses retry-on-conflict to handle concurrent updates.
+// Skips the UpdateStatus API call if the status would not actually change.
 func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
@@ -1351,7 +1352,15 @@ func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace
 			return fmt.Errorf("failed to get map file: %w", err)
 		}
 
+		// Save original status for comparison (deep copy to avoid aliasing issues)
+		originalStatus := copyPodStatuses(mapFile.Status.DeployedToPods)
+
 		mapFile.Status.DeployedToPods = addOrUpdatePodStatus(mapFile.Status.DeployedToPods, podStatus)
+
+		// Skip UpdateStatus if the status didn't actually change
+		if podStatusesEqual(originalStatus, mapFile.Status.DeployedToPods) {
+			return nil
+		}
 
 		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyMapFiles(namespace).
@@ -1366,6 +1375,7 @@ func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace
 
 // updateGeneralFileDeploymentStatus updates a general file's deployment status.
 // Uses retry-on-conflict to handle concurrent updates.
+// Skips the UpdateStatus API call if the status would not actually change.
 func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
@@ -1378,7 +1388,15 @@ func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, names
 			return fmt.Errorf("failed to get general file: %w", err)
 		}
 
+		// Save original status for comparison (deep copy to avoid aliasing issues)
+		originalStatus := copyPodStatuses(generalFile.Status.DeployedToPods)
+
 		generalFile.Status.DeployedToPods = addOrUpdatePodStatus(generalFile.Status.DeployedToPods, podStatus)
+
+		// Skip UpdateStatus if the status didn't actually change
+		if podStatusesEqual(originalStatus, generalFile.Status.DeployedToPods) {
+			return nil
+		}
 
 		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyGeneralFiles(namespace).
@@ -1393,6 +1411,7 @@ func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, names
 
 // updateCRTListFileDeploymentStatus updates a crt-list file's deployment status.
 // Uses retry-on-conflict to handle concurrent updates.
+// Skips the UpdateStatus API call if the status would not actually change.
 func (p *Publisher) updateCRTListFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
@@ -1405,7 +1424,15 @@ func (p *Publisher) updateCRTListFileDeploymentStatus(ctx context.Context, names
 			return fmt.Errorf("failed to get crt-list file: %w", err)
 		}
 
+		// Save original status for comparison (deep copy to avoid aliasing issues)
+		originalStatus := copyPodStatuses(crtListFile.Status.DeployedToPods)
+
 		crtListFile.Status.DeployedToPods = addOrUpdatePodStatus(crtListFile.Status.DeployedToPods, podStatus)
+
+		// Skip UpdateStatus if the status didn't actually change
+		if podStatusesEqual(originalStatus, crtListFile.Status.DeployedToPods) {
+			return nil
+		}
 
 		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyCRTListFiles(namespace).
@@ -1515,6 +1542,142 @@ func (p *Publisher) cleanupCRTListFilePodReference(ctx context.Context, namespac
 }
 
 // Helper functions
+
+// copyPodStatuses creates a deep copy of a PodDeploymentStatus slice.
+// This is necessary because Go slice assignment copies only the header, not the underlying array.
+func copyPodStatuses(pods []haproxyv1alpha1.PodDeploymentStatus) []haproxyv1alpha1.PodDeploymentStatus {
+	if pods == nil {
+		return nil
+	}
+	result := make([]haproxyv1alpha1.PodDeploymentStatus, len(pods))
+	copy(result, pods)
+	return result
+}
+
+// podStatusesEqual compares two PodDeploymentStatus slices for equality.
+// Returns true if both slices have the same pods with the same status values.
+// This is used to skip unnecessary UpdateStatus API calls when the status hasn't changed.
+func podStatusesEqual(a, b []haproxyv1alpha1.PodDeploymentStatus) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	// Create map for efficient lookup (using pointers to avoid copying 144-byte structs)
+	statusMap := make(map[string]*haproxyv1alpha1.PodDeploymentStatus, len(a))
+	for i := range a {
+		statusMap[a[i].PodName] = &a[i]
+	}
+
+	for i := range b {
+		podA, exists := statusMap[b[i].PodName]
+		if !exists {
+			return false
+		}
+
+		if !podStatusEqual(podA, &b[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// podStatusEqual compares two individual PodDeploymentStatus structs for equality.
+func podStatusEqual(a, b *haproxyv1alpha1.PodDeploymentStatus) bool {
+	// Compare DeployedAt
+	if !a.DeployedAt.Equal(&b.DeployedAt) {
+		return false
+	}
+
+	// Compare simple fields
+	if a.Checksum != b.Checksum {
+		return false
+	}
+	if a.LastReloadID != b.LastReloadID {
+		return false
+	}
+	if a.LastError != b.LastError {
+		return false
+	}
+	if a.VersionConflictRetries != b.VersionConflictRetries {
+		return false
+	}
+	if a.FallbackUsed != b.FallbackUsed {
+		return false
+	}
+	if a.ConsecutiveErrors != b.ConsecutiveErrors {
+		return false
+	}
+
+	// Compare LastReloadAt (both could be nil)
+	if !metaTimeEqual(a.LastReloadAt, b.LastReloadAt) {
+		return false
+	}
+
+	// Compare LastErrorAt (both could be nil)
+	if !metaTimeEqual(a.LastErrorAt, b.LastErrorAt) {
+		return false
+	}
+
+	// Compare SyncDuration (both could be nil)
+	if !metaDurationEqual(a.SyncDuration, b.SyncDuration) {
+		return false
+	}
+
+	// Compare LastOperationSummary (both could be nil)
+	if !operationSummaryEqual(a.LastOperationSummary, b.LastOperationSummary) {
+		return false
+	}
+
+	return true
+}
+
+// metaTimeEqual compares two *metav1.Time pointers for equality.
+func metaTimeEqual(a, b *metav1.Time) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a != nil && b != nil {
+		if !a.Equal(b) {
+			return false
+		}
+	}
+	return true
+}
+
+// metaDurationEqual compares two *metav1.Duration pointers for equality.
+func metaDurationEqual(a, b *metav1.Duration) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a != nil && b != nil {
+		if a.Duration != b.Duration {
+			return false
+		}
+	}
+	return true
+}
+
+// operationSummaryEqual compares two *OperationSummary pointers for equality.
+func operationSummaryEqual(a, b *haproxyv1alpha1.OperationSummary) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == nil && b == nil {
+		return true
+	}
+	// Both are non-nil, compare all fields
+	return a.TotalAPIOperations == b.TotalAPIOperations &&
+		a.BackendsAdded == b.BackendsAdded &&
+		a.BackendsRemoved == b.BackendsRemoved &&
+		a.BackendsModified == b.BackendsModified &&
+		a.ServersAdded == b.ServersAdded &&
+		a.ServersRemoved == b.ServersRemoved &&
+		a.ServersModified == b.ServersModified &&
+		a.FrontendsAdded == b.FrontendsAdded &&
+		a.FrontendsRemoved == b.FrontendsRemoved &&
+		a.FrontendsModified == b.FrontendsModified
+}
 
 // addOrUpdatePodStatus adds or updates a pod in the deployment status list.
 // Returns the updated slice. This helper is used for auxiliary file types
