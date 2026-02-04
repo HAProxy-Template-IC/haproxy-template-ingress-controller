@@ -327,7 +327,7 @@ func TestStateCache_HandleValidationCompleted(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Publish validation completed event
-	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150, "", true))
+	bus.Publish(events.NewValidationCompletedEvent([]string{"warning1"}, 150, "", nil, true))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -715,7 +715,7 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 
 	// Set up some pipeline state
 	bus.Publish(events.NewTemplateRenderedEvent("config", nil, 0, 100, "", true))
-	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", true))
+	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", nil, true))
 	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,

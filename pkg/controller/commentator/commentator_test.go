@@ -736,7 +736,7 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationCompletedEvent without warnings", func(t *testing.T) {
-		event := events.NewValidationCompletedEvent(nil, 150, "", true)
+		event := events.NewValidationCompletedEvent(nil, 150, "", nil, true)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -746,7 +746,7 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	})
 
 	t.Run("ValidationCompletedEvent with warnings", func(t *testing.T) {
-		event := events.NewValidationCompletedEvent([]string{"warning1", "warning2"}, 200, "", true)
+		event := events.NewValidationCompletedEvent([]string{"warning1", "warning2"}, 200, "", nil, true)
 
 		insight, attrs := ec.generateInsight(event)
 

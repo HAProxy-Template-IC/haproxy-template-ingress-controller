@@ -1,9 +1,15 @@
 package dataplane
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrValidationCacheHit is returned when validation is skipped because the same
+// configuration was already validated successfully. Callers should use the parser
+// cache to obtain the parsed configuration if needed.
+var ErrValidationCacheHit = errors.New("validation cache hit")
 
 // SyncError represents a synchronization failure with actionable context.
 // It provides detailed information about what stage failed and suggestions

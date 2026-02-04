@@ -14,7 +14,11 @@
 
 package events
 
-import "time"
+import (
+	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+)
 
 // -----------------------------------------------------------------------------
 // Deployment Events.
@@ -217,6 +221,13 @@ type DeploymentScheduledEvent struct {
 	// Consumers should type-assert to *dataplane.AuxiliaryFiles.
 	AuxiliaryFiles interface{}
 
+	// ParsedConfig is the pre-parsed desired configuration from validation.
+	// May be nil if validation cache was used.
+	// When non-nil, passed to sync operations to skip redundant parsing.
+	// Type: interface{} to avoid circular dependencies with pkg/dataplane.
+	// Consumers should type-assert to *parser.StructuredConfig.
+	ParsedConfig interface{}
+
 	// Endpoints is the list of HAProxy endpoints to deploy to.
 	Endpoints []interface{}
 
@@ -248,11 +259,14 @@ type DeploymentScheduledEvent struct {
 // The coalescible parameter should be propagated from ValidationCompletedEvent.Coalescible()
 // to enable coalescing throughout the reconciliation pipeline.
 //
+// The parsedConfig parameter contains the pre-parsed desired configuration from validation.
+// Pass nil if validation cache was used or if the parsed config is not available.
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentScheduledEvent(config, auxFiles, endpoints, name, ns, reason, validation.Coalescible(),
+//	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, coalescible,
 //	    events.PropagateCorrelation(validationEvent))
-func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
+func NewDeploymentScheduledEvent(config string, auxFiles interface{}, parsedConfig *parser.StructuredConfig, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
 	// Defensive copy of endpoints slice
 	var endpointsCopy []interface{}
 	if len(endpoints) > 0 {
@@ -263,6 +277,7 @@ func NewDeploymentScheduledEvent(config string, auxFiles interface{}, endpoints 
 	return &DeploymentScheduledEvent{
 		Config:                 config,
 		AuxiliaryFiles:         auxFiles,
+		ParsedConfig:           parsedConfig,
 		Endpoints:              endpointsCopy,
 		RuntimeConfigName:      runtimeConfigName,
 		RuntimeConfigNamespace: runtimeConfigNamespace,

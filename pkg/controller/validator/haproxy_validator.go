@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -284,8 +285,8 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 	// Config uses relative paths that match the validation subdirectories
 	// Pass nil version to use default v3.0 schema (safest for validation)
 	// Use permissive validation (skipDNSValidation=true) to prevent blocking when DNS fails at runtime
-	err = dataplane.ValidateConfiguration(event.HAProxyConfig, auxiliaryFiles, validationPaths, nil, true)
-	if err != nil {
+	parsedConfig, err := dataplane.ValidateConfiguration(event.HAProxyConfig, auxiliaryFiles, validationPaths, nil, true)
+	if err != nil && !errors.Is(err, dataplane.ErrValidationCacheHit) {
 		// Simplify error message for user-facing output
 		// Keep full error in logs for debugging
 		simplified := dataplane.SimplifyValidationError(err)
@@ -303,6 +304,8 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 		)
 		return
 	}
+	// ErrValidationCacheHit means validation was skipped because config was already validated
+	// parsedConfig will be nil in this case - caller should use parser cache if needed
 
 	// Validation succeeded
 	durationMs := time.Since(startTime).Milliseconds()
@@ -325,6 +328,7 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 		[]string{}, // No warnings
 		durationMs,
 		triggerReason,
+		parsedConfig,
 		event.Coalescible(),
 		events.PropagateCorrelation(event),
 	))
@@ -362,10 +366,13 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 			"coalescible", coalescible)
 
 		// Re-publish with original correlation ID so the deployment can be traced
+		// Note: parsedConfig is nil for replayed events since we don't cache the parsed config
+		// This is acceptable as the parser cache will provide the parsed config on cache hit
 		v.eventBus.Publish(events.NewValidationCompletedEvent(
 			warnings,
 			durationMs,
 			triggerReason,
+			nil, // parsedConfig not cached during leadership replay
 			coalescible,
 			events.WithCorrelation(correlationID, correlationID),
 		))
@@ -380,7 +387,7 @@ func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEve
 // publishValidationFailure publishes a validation failure event and caches the failure state.
 // If configHash is provided (non-empty), the hash and errors are cached to skip re-validation
 // of identical failed configs (reduces log spam).
-func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, durationMs int64, correlationID, triggerReason, configHash string) {
+func (v *HAProxyValidatorComponent) publishValidationFailure(errs []string, durationMs int64, correlationID, triggerReason, configHash string) {
 	// Cache validation failure for leadership transition state
 	v.mu.Lock()
 	v.lastValidationSucceeded = false
@@ -391,12 +398,12 @@ func (v *HAProxyValidatorComponent) publishValidationFailure(errors []string, du
 	// Cache config hash and errors to skip re-validation of identical failed configs
 	if configHash != "" {
 		v.lastConfigHash = configHash
-		v.lastValidationErrors = errors
+		v.lastValidationErrors = errs
 	}
 	v.mu.Unlock()
 
 	v.eventBus.Publish(events.NewValidationFailedEvent(
-		errors,
+		errs,
 		durationMs,
 		triggerReason,
 		events.WithCorrelation(correlationID, correlationID),

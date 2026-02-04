@@ -50,6 +50,7 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 	event := events.NewDeploymentScheduledEvent(
 		"test config",
 		nil,
+		nil, // parsedConfig
 		[]interface{}{},
 		"test-runtime-config",
 		"test-namespace",
@@ -82,7 +83,7 @@ func TestDeployToEndpoints_InvalidEndpointType(t *testing.T) {
 	// Invalid endpoint type (string instead of dataplane.Endpoint)
 	invalidEndpoints := []interface{}{"not-an-endpoint"}
 
-	deployer.deployToEndpoints(ctx, config, auxFiles, invalidEndpoints, "test-runtime-config", "default", "test", "test-correlation-id")
+	deployer.deployToEndpoints(ctx, config, auxFiles, nil, invalidEndpoints, "test-runtime-config", "default", "test", "test-correlation-id")
 
 	// Should not crash, just log error and publish completion event with zero endpoints
 	timeout := time.After(100 * time.Millisecond)
@@ -160,6 +161,7 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 	bus.Publish(events.NewDeploymentScheduledEvent(
 		"global\n  daemon\n",
 		&dataplane.AuxiliaryFiles{},
+		nil,             // parsedConfig
 		[]interface{}{}, // no endpoints
 		"test-runtime-config",
 		"test-namespace",
@@ -346,6 +348,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 		event := events.NewDeploymentScheduledEvent(
 			"test config",
 			nil,
+			nil, // parsedConfig
 			[]interface{}{},
 			"test-runtime-config",
 			"test-namespace",
@@ -369,6 +372,7 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 	event := events.NewDeploymentScheduledEvent(
 		"test config",
 		nil,
+		nil, // parsedConfig
 		[]interface{}{},
 		"test-runtime-config",
 		"test-namespace",
@@ -406,6 +410,7 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 	event := events.NewDeploymentScheduledEvent(
 		"test config",
 		nil,
+		nil, // parsedConfig
 		[]interface{}{},
 		"test-runtime-config",
 		"test-namespace",

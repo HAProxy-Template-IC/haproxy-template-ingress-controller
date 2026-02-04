@@ -151,7 +151,7 @@ func TestComponent_ValidationEvents(t *testing.T) {
 	eventBus.Start()
 
 	// Publish validation completed event
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", true))
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -261,7 +261,7 @@ func TestComponent_AllEventTypes(t *testing.T) {
 		Failed:     0,
 		DurationMs: 2000,
 	}))
-	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", true))
+	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
 	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
 		"services": 15,
 	}))
@@ -340,7 +340,7 @@ func TestComponent_HighEventVolume(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		eventBus.Publish(events.NewReconciliationCompletedEvent(int64(i)))
 		if i%10 == 0 {
-			eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", true))
+			eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
 		}
 	}
 

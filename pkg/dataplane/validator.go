@@ -201,9 +201,9 @@ type ValidationPaths struct {
 //     validation (strict, catches DNS issues before resource admission).
 //
 // Returns:
-//   - nil if validation succeeds
-//   - ValidationError with phase information if validation fails
-func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) error {
+//   - *parser.StructuredConfig: The pre-parsed configuration from syntax validation (nil on cache hit or error)
+//   - error: nil if validation succeeds, ValidationError with phase information if validation fails
+func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error) {
 	// Check validation cache first - skip validation if same config already validated
 	configHash := hashValidationInput(mainConfig)
 	auxHash := hashAuxFiles(auxFiles)
@@ -211,7 +211,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 
 	if isValidationCached(configHash, auxHash, versionHash) {
 		slog.Debug("validation cache hit, skipping validation")
-		return nil
+		return nil, ErrValidationCacheHit // Cache hit - caller should use parser cache if parsed config needed
 	}
 
 	// Timing variables for phase breakdown
@@ -224,7 +224,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	parsedConfig, err := validateSyntax(mainConfig)
 	syntaxMs = time.Since(syntaxStart).Milliseconds()
 	if err != nil {
-		return &ValidationError{
+		return nil, &ValidationError{
 			Phase:   "syntax",
 			Message: "configuration has syntax errors",
 			Cause:   err,
@@ -234,7 +234,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	// Phase 1.5: API schema validation with OpenAPI spec
 	schemaStart := time.Now()
 	if err := validateAPISchema(parsedConfig, version); err != nil {
-		return &ValidationError{
+		return nil, &ValidationError{
 			Phase:   "schema",
 			Message: "configuration violates API schema constraints",
 			Cause:   err,
@@ -245,7 +245,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	// Phase 2: Semantic validation with haproxy binary
 	semanticStart := time.Now()
 	if err := validateSemantics(mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
-		return &ValidationError{
+		return nil, &ValidationError{
 			Phase:   "semantic",
 			Message: "configuration has semantic errors",
 			Cause:   err,
@@ -264,7 +264,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	// Cache successful validation result for future checks
 	cacheValidationResult(configHash, auxHash, versionHash)
 
-	return nil
+	return parsedConfig, nil
 }
 
 // validateSyntax performs syntax validation using client-native parser.

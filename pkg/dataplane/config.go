@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // Endpoint represents HAProxy Dataplane API connection information.
@@ -104,6 +105,12 @@ type SyncOptions struct {
 	// When set to 0, this threshold check is disabled (fine-grained sync always used).
 	// Note: Version 1 (initial state) always triggers raw push regardless of this setting.
 	RawPushThreshold int
+
+	// PreParsedConfig is an optional pre-parsed desired configuration.
+	// If provided, sync skips parsing the desiredConfig string, saving CPU and allocations.
+	// If nil, the config will be parsed normally (backward compatible).
+	// This is typically set by the validation pipeline which already parsed the config.
+	PreParsedConfig *parserconfig.StructuredConfig
 }
 
 // DefaultSyncOptions returns sensible default sync options.

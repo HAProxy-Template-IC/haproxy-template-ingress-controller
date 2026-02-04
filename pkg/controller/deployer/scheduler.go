@@ -28,6 +28,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -48,6 +49,7 @@ const (
 type scheduledDeployment struct {
 	config        string
 	auxFiles      interface{}
+	parsedConfig  interface{} // Pre-parsed desired config (*parser.StructuredConfig)
 	endpoints     []interface{}
 	reason        string
 	correlationID string // Correlation ID for event tracing
@@ -79,6 +81,7 @@ type DeploymentScheduler struct {
 	lastAuxiliaryFiles      interface{}   // Last rendered auxiliary files
 	lastValidatedConfig     string        // Last validated HAProxy config
 	lastValidatedAux        interface{}   // Last validated auxiliary files
+	lastParsedConfig        interface{}   // Pre-parsed desired config (*parser.StructuredConfig)
 	lastCorrelationID       string        // Correlation ID from last validation event
 	lastCoalescible         bool          // Coalescibility flag from last validation event
 	currentEndpoints        []interface{} // Current HAProxy pod endpoints
@@ -330,6 +333,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	s.logger.Debug("Validation completed, preparing deployment",
 		"warnings", len(event.Warnings),
 		"duration_ms", event.DurationMs,
+		"has_parsed_config", event.ParsedConfig != nil,
 		"correlation_id", correlationID)
 
 	// Log warnings if any
@@ -346,6 +350,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	// Cache validated config immediately to prevent race condition
 	s.lastValidatedConfig = config
 	s.lastValidatedAux = auxFiles
+	s.lastParsedConfig = event.ParsedConfig // Cache pre-parsed config for sync optimization
 	s.lastCorrelationID = correlationID
 	s.lastCoalescible = event.Coalescible()
 	s.hasValidConfig = true
@@ -384,9 +389,14 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 		return
 	}
 
+	// Get parsed config for sync optimization
+	s.mu.RLock()
+	parsedConfig := s.lastParsedConfig
+	s.mu.RUnlock()
+
 	// Schedule deployment to current endpoints (or queue if deployment in progress)
 	// Propagate coalescibility from validation event through the deployment pipeline
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "config_validation", correlationID, event.Coalescible())
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "config_validation", correlationID, event.Coalescible())
 }
 
 // handlePodsDiscovered handles HAProxy pod discovery/changes with coalescing.
@@ -424,6 +434,7 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 	endpointCount := len(event.Endpoints)
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
+	parsedConfig := s.lastParsedConfig
 	correlationID := s.lastCorrelationID
 	coalescible := s.lastCoalescible
 	hasValidConfig := s.hasValidConfig
@@ -444,7 +455,7 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 
 	// Schedule deployment of last validated config to new endpoints (or queue if in progress)
 	// Use the correlation ID and coalescibility from the last validation for traceability
-	s.scheduleOrQueue(ctx, config, auxFiles, event.Endpoints, "pod_discovery", correlationID, coalescible)
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, event.Endpoints, "pod_discovery", correlationID, coalescible)
 }
 
 // handleValidationFailed handles validation failure events.
@@ -462,6 +473,7 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	s.mu.RLock()
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
+	parsedConfig := s.lastParsedConfig
 	endpoints := s.currentEndpoints
 	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
@@ -485,7 +497,7 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 
 	// Schedule fallback deployment with last known good config
 	// Fallback deployments are NOT coalescible - they must execute to ensure consistency
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "validation_fallback", correlationID, false)
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "validation_fallback", correlationID, false)
 }
 
 // handleDeploymentCompleted handles deployment completion events.
@@ -522,7 +534,7 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 
 		// Use scheduleOrQueue for proper mutex management and goroutine control
 		// This ensures only one scheduling goroutine runs at a time
-		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.endpoints, pending.reason, pending.correlationID, pending.coalescible)
+		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.parsedConfig, pending.endpoints, pending.reason, pending.correlationID, pending.coalescible)
 		return
 	}
 
@@ -537,6 +549,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 	ctx context.Context,
 	config string,
 	auxFiles interface{},
+	parsedConfig interface{},
 	endpoints []interface{},
 	reason string,
 	correlationID string,
@@ -549,6 +562,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 		s.pendingDeployment = &scheduledDeployment{
 			config:        config,
 			auxFiles:      auxFiles,
+			parsedConfig:  parsedConfig,
 			endpoints:     endpoints,
 			reason:        reason,
 			correlationID: correlationID,
@@ -570,7 +584,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 
 	// Schedule deployment asynchronously to avoid blocking event loop
 	// This allows new events to be received and queued while we handle rate limiting
-	go s.scheduleWithRateLimitUnlocked(ctx, config, auxFiles, endpoints, reason, correlationID, coalescible)
+	go s.scheduleWithRateLimitUnlocked(ctx, config, auxFiles, parsedConfig, endpoints, reason, correlationID, coalescible)
 }
 
 // scheduleWithRateLimitUnlocked schedules a deployment, enforcing rate limiting.
@@ -581,6 +595,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	ctx context.Context,
 	config string,
 	auxFiles interface{},
+	parsedConfig interface{},
 	endpoints []interface{},
 	reason string,
 	correlationID string,
@@ -639,15 +654,24 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 			"template_config_name", templateConfigName)
 	}
 
+	// Type assert parsedConfig to *parser.StructuredConfig for the event constructor
+	var typedParsedConfig *parser.StructuredConfig
+	if parsedConfig != nil {
+		if pc, ok := parsedConfig.(*parser.StructuredConfig); ok {
+			typedParsedConfig = pc
+		}
+	}
+
 	// Publish DeploymentScheduledEvent with correlation
 	s.logger.Debug("Scheduling deployment",
 		"reason", reason,
 		"endpoint_count", len(endpoints),
 		"config_bytes", len(config),
+		"has_parsed_config", typedParsedConfig != nil,
 		"correlation_id", correlationID)
 
 	s.eventBus.Publish(events.NewDeploymentScheduledEvent(
-		config, auxFiles, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, coalescible,
+		config, auxFiles, typedParsedConfig, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, coalescible,
 		events.WithCorrelation(correlationID, correlationID),
 	))
 
@@ -689,7 +713,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		"correlation_id", pending.correlationID)
 
 	// Recursive: schedule pending (we're still marked as in-progress)
-	s.scheduleWithRateLimitUnlocked(ctx, pending.config, pending.auxFiles,
+	s.scheduleWithRateLimitUnlocked(ctx, pending.config, pending.auxFiles, pending.parsedConfig,
 		pending.endpoints, pending.reason, pending.correlationID, pending.coalescible)
 }
 
@@ -798,7 +822,7 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 		s.logger.Info("Processing pending deployment after timeout recovery",
 			"reason", pending.reason+"_timeout_retry",
 			"correlation_id", pending.correlationID)
-		s.scheduleOrQueue(ctx, pending.config, pending.auxFiles,
+		s.scheduleOrQueue(ctx, pending.config, pending.auxFiles, pending.parsedConfig,
 			pending.endpoints, pending.reason+"_timeout_retry", pending.correlationID, pending.coalescible)
 	}
 

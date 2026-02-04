@@ -104,6 +104,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 
 	// Step 3: Publish ValidationCompletedEvent to trigger publishing (with matching correlation ID)
 	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
+		nil,  // parsedConfig
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
@@ -455,6 +456,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	// Step 4: Now publish ValidationCompletedEvent - should NOT publish config
 	// because cached state was cleared (with matching correlation ID)
 	eventBus.Publish(events.NewValidationCompletedEvent(nil, 50, "",
+		nil,  // parsedConfig
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))

@@ -17,6 +17,7 @@ package validation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
 // Default directory paths for HAProxy validation.
@@ -64,6 +66,11 @@ type ValidationResult struct {
 
 	// DurationMs is the total validation duration in milliseconds.
 	DurationMs int64
+
+	// ParsedConfig is the pre-parsed configuration from syntax validation.
+	// May be nil if validation failed or validation cache was used.
+	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
+	ParsedConfig *parser.StructuredConfig
 }
 
 // ErrorMessage returns a user-friendly error message.
@@ -253,8 +260,8 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 	}
 
 	// Run three-phase validation
-	err = dataplane.ValidateConfiguration(validationConfig, auxFiles, paths, s.version, s.skipDNSValidation)
-	if err != nil {
+	parsedConfig, err := dataplane.ValidateConfiguration(validationConfig, auxFiles, paths, s.version, s.skipDNSValidation)
+	if err != nil && !errors.Is(err, dataplane.ErrValidationCacheHit) {
 		// Extract phase from ValidationError if available
 		phase := "unknown"
 		if valErr, ok := err.(*dataplane.ValidationError); ok {
@@ -268,10 +275,13 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 			DurationMs: time.Since(startTime).Milliseconds(),
 		}
 	}
+	// ErrValidationCacheHit means validation was skipped because config was already validated
+	// parsedConfig will be nil in this case - caller should use parser cache if needed
 
 	return &ValidationResult{
-		Valid:      true,
-		DurationMs: time.Since(startTime).Milliseconds(),
+		Valid:        true,
+		DurationMs:   time.Since(startTime).Milliseconds(),
+		ParsedConfig: parsedConfig,
 	}
 }
 
