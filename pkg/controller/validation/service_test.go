@@ -325,3 +325,59 @@ backend http_back
 		assert.True(t, result.Valid, "concurrent validation %d: expected valid config, got error: %v", i, result.Error)
 	}
 }
+
+func TestValidationService_Validate_ParsedConfigPreservesProductionPaths(t *testing.T) {
+	// This test ensures the pre-parsed config optimization returns configs
+	// with production paths, not temp validation paths.
+	//
+	// The validation service replaces "default-path origin /etc/haproxy" with
+	// "default-path origin /tmp/haproxy-validation-XXX" for haproxy -c validation.
+	// The parsed config must contain the ORIGINAL production path, not the temp path,
+	// because downstream components (deployer) use this config for sync operations.
+
+	const productionBaseDir = "/etc/haproxy"
+
+	svc := NewValidationService(&ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+		BaseDir:           productionBaseDir,
+	})
+
+	// Config with default-path origin directive - this is what production configs look like
+	config := `global
+    daemon
+    default-path origin /etc/haproxy
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 50s
+    timeout server 50s
+
+frontend http_front
+    bind *:8080
+    default_backend http_back
+
+backend http_back
+    server srv1 127.0.0.1:80
+`
+
+	result := svc.Validate(context.Background(), config, nil)
+
+	require.NotNil(t, result)
+	require.True(t, result.Valid, "expected valid config, got error: %v", result.Error)
+
+	// Critical assertions for the pre-parsed config optimization
+	require.NotNil(t, result.ParsedConfig, "ParsedConfig should be set for successful validation")
+	require.NotNil(t, result.ParsedConfig.Global, "Global section should be parsed")
+	require.NotNil(t, result.ParsedConfig.Global.DefaultPath, "DefaultPath should be parsed")
+
+	// THE BUG: ParsedConfig.Global.DefaultPath.Path contains "/tmp/haproxy-validation-XXX"
+	// instead of the production path "/etc/haproxy"
+	assert.Equal(t, "origin", result.ParsedConfig.Global.DefaultPath.Type,
+		"DefaultPath type should be 'origin'")
+	assert.Equal(t, productionBaseDir, result.ParsedConfig.Global.DefaultPath.Path,
+		"DefaultPath.Path should contain production path, not temp validation path")
+	assert.NotContains(t, result.ParsedConfig.Global.DefaultPath.Path, "/tmp/",
+		"DefaultPath.Path must NOT contain temp directory path")
+}

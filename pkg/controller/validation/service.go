@@ -17,7 +17,6 @@ package validation
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -183,11 +182,18 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 // Validate validates HAProxy configuration.
 //
 // This method:
-// 1. Creates an isolated temp directory
-// 2. Replaces production baseDir with temp directory in config (for default-path origin)
-// 3. Writes the config and auxiliary files
-// 4. Runs three-phase validation (syntax, schema, semantic)
-// 5. Cleans up the temp directory
+// 1. Parses and validates the ORIGINAL config (syntax + schema) - this produces the ParsedConfig
+// 2. Creates an isolated temp directory
+// 3. Replaces production baseDir with temp directory in config (for default-path origin)
+// 4. Writes the config and auxiliary files
+// 5. Runs semantic validation with haproxy -c using the MODIFIED config
+// 6. Cleans up the temp directory
+// 7. Returns the original ParsedConfig (with production paths)
+//
+// The key insight is that syntax/schema validation doesn't need actual files or temp paths -
+// it just parses the config string. Only semantic validation (haproxy -c) needs temp paths
+// for file I/O. By parsing the original config first, we ensure the returned ParsedConfig
+// contains production paths that downstream components can use.
 //
 // Parameters:
 //   - ctx: Context for cancellation
@@ -195,7 +201,7 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 //   - auxFiles: Auxiliary files (maps, certificates, general files)
 //
 // Returns:
-//   - ValidationResult with success/failure status and timing
+//   - ValidationResult with success/failure status, timing, and ParsedConfig with production paths
 func (s *ValidationService) Validate(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles) *ValidationResult {
 	startTime := time.Now()
 
@@ -209,7 +215,27 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 		}
 	}
 
-	// Create isolated temp directory for this validation
+	// Step 1: Parse and validate the ORIGINAL config (syntax + schema)
+	// This runs syntax validation and API schema validation without needing temp files.
+	// The returned parsedConfig contains production paths (e.g., /etc/haproxy) which
+	// is what downstream components need.
+	parsedConfig, err := dataplane.ValidateSyntaxAndSchema(config, s.version)
+	if err != nil {
+		// Extract phase from ValidationError if available
+		phase := "unknown"
+		if valErr, ok := err.(*dataplane.ValidationError); ok {
+			phase = valErr.Phase
+		}
+
+		return &ValidationResult{
+			Valid:      false,
+			Error:      err,
+			Phase:      phase,
+			DurationMs: time.Since(startTime).Milliseconds(),
+		}
+	}
+
+	// Step 2: Create isolated temp directory for semantic validation
 	tempDir, err := os.MkdirTemp("", "haproxy-validation-*")
 	if err != nil {
 		return &ValidationResult{
@@ -230,10 +256,10 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 		}
 	}()
 
-	// Replace production baseDir with temp directory in config.
+	// Step 3: Create modified config with temp directory paths for semantic validation
 	// The rendered config contains "default-path origin /etc/haproxy" (or similar).
-	// For local validation, we need HAProxy to resolve relative paths from the temp
-	// directory, so we replace the production path with the temp directory path.
+	// For local validation with haproxy -c, we need HAProxy to resolve relative paths
+	// from the temp directory, so we replace the production path with the temp directory path.
 	validationConfig := strings.Replace(config, "default-path origin "+s.baseDir, "default-path origin "+tempDir, 1)
 
 	// Build validation paths using relative subdirectories
@@ -249,7 +275,7 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 		ConfigFile:        filepath.Join(tempDir, "haproxy.cfg"),
 	}
 
-	// Check for context cancellation before running validation
+	// Check for context cancellation before running semantic validation
 	if err := ctx.Err(); err != nil {
 		return &ValidationResult{
 			Valid:      false,
@@ -259,9 +285,10 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 		}
 	}
 
-	// Run three-phase validation
-	parsedConfig, err := dataplane.ValidateConfiguration(validationConfig, auxFiles, paths, s.version, s.skipDNSValidation)
-	if err != nil && !errors.Is(err, dataplane.ErrValidationCacheHit) {
+	// Step 4: Run semantic validation with haproxy -c using the MODIFIED config
+	// This validates that HAProxy can actually load the config with all file references resolved.
+	err = dataplane.ValidateSemantics(validationConfig, auxFiles, paths, s.skipDNSValidation)
+	if err != nil {
 		// Extract phase from ValidationError if available
 		phase := "unknown"
 		if valErr, ok := err.(*dataplane.ValidationError); ok {
@@ -275,9 +302,10 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 			DurationMs: time.Since(startTime).Milliseconds(),
 		}
 	}
-	// ErrValidationCacheHit means validation was skipped because config was already validated
-	// parsedConfig will be nil in this case - caller should use parser cache if needed
 
+	// Step 5: Return the ORIGINAL parsed config (with production paths)
+	// This is the key fix - we return the config parsed from the original string,
+	// not the modified one with temp paths.
 	return &ValidationResult{
 		Valid:        true,
 		DurationMs:   time.Since(startTime).Milliseconds(),
