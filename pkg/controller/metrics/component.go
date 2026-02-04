@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	pkgevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -98,6 +99,9 @@ func (c *Component) Start(ctx context.Context) error {
 		case <-ticker.C:
 			// Update observability drops from EventBus (not exposed via callback)
 			c.metrics.SetObservabilityDrops(c.eventBus.DroppedEventsObservability())
+			// Update parser cache stats
+			hits, misses := parser.CacheStats()
+			c.metrics.UpdateParserCacheStats(hits, misses)
 		case <-ctx.Done():
 			return ctx.Err()
 		}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	parser "github.com/haproxytech/client-native/v6/config-parser"
 	"github.com/haproxytech/client-native/v6/configuration"
@@ -42,46 +43,106 @@ import (
 // Consider checking for updates in newer versions or filing an upstream issue.
 var parserMutex sync.Mutex
 
-// parsedConfigCache provides a content-based cache for parsed configurations.
+// cacheSlot holds a single cached parsed configuration.
+type cacheSlot struct {
+	hash      string
+	config    *StructuredConfig
+	timestamp int64 // Unix nano timestamp for LRU eviction
+}
+
+// parsedConfigCache provides a content-based LRU(2) cache for parsed configurations.
 // This dramatically reduces allocations when the same configuration is parsed
 // multiple times (e.g., when syncing to N endpoints with the same desired config).
 //
-// The cache stores only the most recently parsed config, which is sufficient
-// because sync operations typically parse the same desired config N times
-// (once per endpoint) before moving to a new config.
+// The cache stores the 2 most recently used configs, which prevents cache thrashing
+// during sync operations that alternate between parsing current config (from HAProxy)
+// and desired config (from templates). A single-entry cache would evict one config
+// when parsing the other, causing constant cache misses.
 //
 // IMPORTANT: The cached StructuredConfig is already normalized (metadata fields
 // flattened) and MUST NOT be mutated. Callers should not call NormalizeConfigMetadata
 // on cached configs - they are already normalized during caching.
 type parsedConfigCache struct {
 	mu        sync.RWMutex
-	hash      string
-	config    *StructuredConfig
+	slots     [2]cacheSlot
 	hitCount  atomic.Int64
 	missCount atomic.Int64
 }
 
 var configCache = &parsedConfigCache{}
 
-// get returns a cached parsed config if the hash matches, nil otherwise.
+// get returns a cached parsed config if the hash matches any slot, nil otherwise.
+// On cache hit, updates the slot's timestamp to mark it as most recently used.
 func (c *parsedConfigCache) get(hash string) *StructuredConfig {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
+	// Check both slots for a match
+	for i := range c.slots {
+		if c.slots[i].hash != hash || c.slots[i].config == nil {
+			continue
+		}
 
-	if c.hash == hash && c.config != nil {
-		c.hitCount.Add(1)
-		return c.config
+		c.mu.RUnlock()
+		// Upgrade to write lock to update timestamp
+		c.mu.Lock()
+		// Double-check after lock upgrade (slot may have been evicted)
+		if c.slots[i].hash == hash && c.slots[i].config != nil {
+			c.slots[i].timestamp = time.Now().UnixNano()
+			config := c.slots[i].config
+			c.mu.Unlock()
+			c.hitCount.Add(1)
+			return config
+		}
+		c.mu.Unlock()
+		// Slot was evicted between checks, fall through to return nil
+		return nil
 	}
+	c.mu.RUnlock()
 	return nil
 }
 
-// set stores a parsed config in the cache.
+// set stores a parsed config in the cache, evicting the least recently used entry if full.
 func (c *parsedConfigCache) set(hash string, config *StructuredConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.hash = hash
-	c.config = config
+	now := time.Now().UnixNano()
+
+	// First, check if this hash already exists (update in place)
+	for i := range c.slots {
+		if c.slots[i].hash == hash {
+			c.slots[i].config = config
+			c.slots[i].timestamp = now
+			return
+		}
+	}
+
+	// Find an empty slot or the least recently used slot
+	emptySlot := -1
+	lruSlot := 0
+	oldestTime := c.slots[0].timestamp
+
+	for i := range c.slots {
+		if c.slots[i].config == nil {
+			emptySlot = i
+			break
+		}
+		if c.slots[i].timestamp < oldestTime {
+			oldestTime = c.slots[i].timestamp
+			lruSlot = i
+		}
+	}
+
+	// Use empty slot if available, otherwise evict LRU
+	targetSlot := lruSlot
+	if emptySlot >= 0 {
+		targetSlot = emptySlot
+	}
+
+	c.slots[targetSlot] = cacheSlot{
+		hash:      hash,
+		config:    config,
+		timestamp: now,
+	}
 }
 
 // CacheStats returns the current cache hit/miss statistics.

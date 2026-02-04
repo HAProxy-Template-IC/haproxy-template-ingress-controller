@@ -401,3 +401,34 @@ func TestMetrics_RecordValidationTests(t *testing.T) {
 	assert.Equal(t, 13.0, testutil.ToFloat64(metrics.ValidationTestsPassTotal))
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTestsFailTotal))
 }
+
+// =============================================================================
+// Parser Cache Metrics Tests
+// =============================================================================
+
+func TestMetrics_UpdateParserCacheStats(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Initial state should be 0
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ParserCacheHits))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ParserCacheMisses))
+
+	// First update with cumulative stats
+	metrics.UpdateParserCacheStats(10, 5)
+
+	assert.Equal(t, 10.0, testutil.ToFloat64(metrics.ParserCacheHits))
+	assert.Equal(t, 5.0, testutil.ToFloat64(metrics.ParserCacheMisses))
+
+	// Second update should add the delta
+	metrics.UpdateParserCacheStats(15, 7)
+
+	assert.Equal(t, 15.0, testutil.ToFloat64(metrics.ParserCacheHits))
+	assert.Equal(t, 7.0, testutil.ToFloat64(metrics.ParserCacheMisses))
+
+	// Update with same values should not change counters
+	metrics.UpdateParserCacheStats(15, 7)
+
+	assert.Equal(t, 15.0, testutil.ToFloat64(metrics.ParserCacheHits))
+	assert.Equal(t, 7.0, testutil.ToFloat64(metrics.ParserCacheMisses))
+}
