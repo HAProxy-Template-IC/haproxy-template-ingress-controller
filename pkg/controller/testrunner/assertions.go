@@ -16,6 +16,7 @@ package testrunner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -245,8 +246,10 @@ func (r *Runner) assertHAProxyValid(
 	// Use dataplane.ValidateConfiguration to validate HAProxy config with worker-specific paths
 	// Pass nil version to use default v3.0 schema (safest for validation)
 	// Use strict validation (skipDNSValidation=false) for CLI to catch DNS issues during local validation
-	err := dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
-	failed := err != nil
+	// Ignore returned parsedConfig - CLI validation doesn't need it for sync optimization
+	_, err := dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
+	// ErrValidationCacheHit means the config was already validated successfully, treat as pass
+	failed := err != nil && !errors.Is(err, dataplane.ErrValidationCacheHit)
 	if failed {
 		result.Passed = false
 		simplifiedError := dataplane.SimplifyValidationError(err)

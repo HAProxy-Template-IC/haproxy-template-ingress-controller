@@ -179,7 +179,8 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 	}
 
 	// Step 2-4: Parse and compare configurations
-	diff, err := o.parseAndCompareConfigs(currentConfigStr, desiredConfig)
+	// Pass pre-parsed config if available to avoid redundant parsing
+	diff, err := o.parseAndCompareConfigs(currentConfigStr, desiredConfig, opts.PreParsedConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -912,9 +913,11 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 }
 
 // parseAndCompareConfigs parses both current and desired configurations and compares them.
+// If preParsedDesired is provided, it is used directly instead of parsing desiredConfig,
+// saving CPU and allocations when the desired config was already parsed during validation.
 // Returns the configuration diff or an error if parsing or comparison fails.
-func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig string) (*comparator.ConfigDiff, error) {
-	// Parse current configuration
+func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig string, preParsedDesired *parserconfig.StructuredConfig) (*comparator.ConfigDiff, error) {
+	// Parse current configuration (always needed - fetched from HAProxy pod)
 	o.logger.Debug("Parsing current configuration")
 	currentConfig, err := o.parser.ParseFromString(currentConfigStr)
 	if err != nil {
@@ -928,15 +931,21 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 	// Note: Normalization of metadata format is now done automatically by the parser
 	// during caching. Both currentConfig and desiredParsed are pre-normalized.
 
-	// Parse desired configuration
-	o.logger.Debug("Parsing desired configuration")
-	desiredParsed, err := o.parser.ParseFromString(desiredConfig)
-	if err != nil {
-		snippet := desiredConfig
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
+	// Use pre-parsed desired config if available, otherwise parse
+	var desiredParsed *parserconfig.StructuredConfig
+	if preParsedDesired != nil {
+		o.logger.Debug("Using pre-parsed desired configuration")
+		desiredParsed = preParsedDesired
+	} else {
+		o.logger.Debug("Parsing desired configuration")
+		desiredParsed, err = o.parser.ParseFromString(desiredConfig)
+		if err != nil {
+			snippet := desiredConfig
+			if len(snippet) > 200 {
+				snippet = snippet[:200]
+			}
+			return nil, NewParseError("desired", snippet, err)
 		}
-		return nil, NewParseError("desired", snippet, err)
 	}
 
 	// Compare configurations

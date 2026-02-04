@@ -178,10 +178,12 @@ func (c *Coordinator) handlePipelineSuccess(
 	c.eventBus.Publish(templateEvent)
 
 	// Publish ValidationCompletedEvent to trigger deployment scheduling
+	// Pass ParsedConfig from pipeline result to enable downstream sync optimization
 	validationEvent := events.NewValidationCompletedEvent(
 		nil, // No warnings
 		result.ValidateDurationMs,
 		triggerEvent.Reason,
+		result.ParsedConfig,
 		coalescible,
 		events.PropagateCorrelation(templateEvent),
 	)

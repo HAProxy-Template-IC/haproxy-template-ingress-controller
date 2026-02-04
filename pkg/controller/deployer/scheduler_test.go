@@ -99,7 +99,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", true)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true)
 
 		scheduler.handleValidationCompleted(ctx, event)
 
@@ -117,7 +117,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", true)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true)
 
 		// Should not panic when no config available
 		scheduler.handleValidationCompleted(ctx, event)
@@ -134,7 +134,7 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", true)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true)
 
 		scheduler.handleValidationCompleted(ctx, event)
 
@@ -404,7 +404,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.pendingDeployment = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, []interface{}{}, "test", "test-correlation-id", true)
+		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []interface{}{}, "test", "test-correlation-id", true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -419,8 +419,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.pendingDeployment = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, []interface{}{}, "first", "correlation-1", true)
-		scheduler.scheduleOrQueue(ctx, "config2", nil, []interface{}{}, "second", "correlation-2", true)
+		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []interface{}{}, "first", "correlation-1", true)
+		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []interface{}{}, "second", "correlation-2", true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -462,7 +462,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.lastRenderedConfig = "global\n"
 		scheduler.mu.Unlock()
 
-		event := events.NewValidationCompletedEvent([]string{}, 100, "", true)
+		event := events.NewValidationCompletedEvent([]string{}, 100, "", nil, true)
 
 		scheduler.handleEvent(ctx, event)
 
@@ -692,6 +692,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 		context.Background(),
 		"config",
 		nil,
+		nil,
 		[]interface{}{dataplane.Endpoint{URL: "http://localhost:5555"}},
 		"test-rate-limit",
 		"correlation-456",
@@ -737,6 +738,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 		scheduler.scheduleWithRateLimitUnlocked(
 			ctx,
 			"config",
+			nil,
 			nil,
 			[]interface{}{},
 			"test-cancel",
@@ -784,6 +786,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 		context.Background(),
 		"config",
 		nil,
+		nil,
 		[]interface{}{},
 		"test-compute-runtime",
 		"correlation-compute",
@@ -826,6 +829,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 	go scheduler.scheduleWithRateLimitUnlocked(
 		context.Background(),
 		"config1",
+		nil,
 		nil,
 		[]interface{}{},
 		"first",

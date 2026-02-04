@@ -14,7 +14,11 @@
 
 package events
 
-import "time"
+import (
+	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+)
 
 // -----------------------------------------------------------------------------
 // Validation Events.
@@ -67,6 +71,13 @@ type ValidationCompletedEvent struct {
 	// Used by DeploymentScheduler to determine fallback behavior on validation failure.
 	TriggerReason string
 
+	// ParsedConfig is the pre-parsed desired configuration from syntax validation.
+	// May be nil if validation cache was used.
+	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
+	// Type: interface{} to avoid circular dependencies with pkg/dataplane.
+	// Consumers should type-assert to *parser.StructuredConfig.
+	ParsedConfig interface{}
+
 	// coalescible indicates if this event can be safely skipped when a newer
 	// event of the same type is available. Propagated from TemplateRenderedEvent.
 	coalescible bool
@@ -83,11 +94,14 @@ type ValidationCompletedEvent struct {
 // The coalescible parameter should be propagated from TemplateRenderedEvent.Coalescible()
 // to enable coalescing throughout the reconciliation pipeline.
 //
+// The parsedConfig parameter contains the pre-parsed desired configuration from syntax
+// validation. Pass nil if validation cache was used or if the parsed config is not available.
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewValidationCompletedEvent(warnings, durationMs, triggerReason, render.Coalescible(),
+//	event := events.NewValidationCompletedEvent(warnings, durationMs, triggerReason, parsedConfig, coalescible,
 //	    events.PropagateCorrelation(startedEvent))
-func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerReason string, coalescible bool, opts ...CorrelationOption) *ValidationCompletedEvent {
+func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerReason string, parsedConfig *parser.StructuredConfig, coalescible bool, opts ...CorrelationOption) *ValidationCompletedEvent {
 	// Defensive copy of warnings slice
 	var warningsCopy []string
 	if len(warnings) > 0 {
@@ -99,6 +113,7 @@ func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerRea
 		Warnings:      warningsCopy,
 		DurationMs:    durationMs,
 		TriggerReason: triggerReason,
+		ParsedConfig:  parsedConfig,
 		coalescible:   coalescible,
 		timestamp:     time.Now(),
 		Correlation:   NewCorrelation(opts...),

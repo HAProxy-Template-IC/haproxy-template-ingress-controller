@@ -34,6 +34,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -251,14 +252,23 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		c.cancelMu.Unlock()
 	}()
 
+	// Extract parsed config from event
+	var parsedConfig *parser.StructuredConfig
+	if event.ParsedConfig != nil {
+		if pc, ok := event.ParsedConfig.(*parser.StructuredConfig); ok {
+			parsedConfig = pc
+		}
+	}
+
 	c.logger.Debug("Deployment scheduled, starting execution",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
 		"config_bytes", len(event.Config),
+		"has_parsed_config", parsedConfig != nil,
 		"correlation_id", correlationID)
 
 	// Execute deployment with cancellable context
-	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, correlationID)
+	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, parsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, correlationID)
 }
 
 // convertEndpoints converts []interface{} to []dataplane.Endpoint.
@@ -306,6 +316,7 @@ func (c *Component) deployToEndpoints(
 	ctx context.Context,
 	config string,
 	auxFilesRaw interface{},
+	parsedConfig *parser.StructuredConfig,
 	endpointsRaw []interface{},
 	runtimeConfigName string,
 	runtimeConfigNamespace string,
@@ -360,7 +371,7 @@ func (c *Component) deployToEndpoints(
 		wg.Add(1)
 		go func(ep *dataplane.Endpoint) {
 			defer wg.Done()
-			c.processEndpointDeployment(ctx, ep, config, auxFiles, checksum, reason,
+			c.processEndpointDeployment(ctx, ep, config, auxFiles, parsedConfig, checksum, reason,
 				runtimeConfigName, runtimeConfigNamespace, correlationID, state)
 		}(&endpoints[i])
 	}
@@ -411,6 +422,7 @@ func (c *Component) processEndpointDeployment(
 	ep *dataplane.Endpoint,
 	config string,
 	auxFiles *dataplane.AuxiliaryFiles,
+	parsedConfig *parser.StructuredConfig,
 	checksum string,
 	reason string,
 	runtimeConfigName string,
@@ -430,7 +442,7 @@ func (c *Component) processEndpointDeployment(
 	}
 
 	instanceStart := time.Now()
-	syncResult, err := c.deployToSingleEndpoint(ctx, config, auxFiles, ep)
+	syncResult, err := c.deployToSingleEndpoint(ctx, config, auxFiles, parsedConfig, ep)
 	durationMs := time.Since(instanceStart).Milliseconds()
 
 	// Determine if this is a drift check based on deployment reason
@@ -566,6 +578,7 @@ func (c *Component) deployToSingleEndpoint(
 	ctx context.Context,
 	config string,
 	auxFiles *dataplane.AuxiliaryFiles,
+	parsedConfig *parser.StructuredConfig,
 	endpoint *dataplane.Endpoint,
 ) (*dataplane.SyncResult, error) {
 	// Create client for this endpoint
@@ -580,6 +593,11 @@ func (c *Component) deployToSingleEndpoint(
 	opts.MaxParallel = c.maxParallel
 	opts.RawPushThreshold = c.rawPushThreshold
 
+	// Pass pre-parsed config to skip redundant parsing during sync
+	if parsedConfig != nil {
+		opts.PreParsedConfig = parsedConfig
+	}
+
 	// Sync configuration
 	result, err := client.Sync(ctx, config, auxFiles, opts)
 	if err != nil {
@@ -591,6 +609,7 @@ func (c *Component) deployToSingleEndpoint(
 		"pod", endpoint.PodName,
 		"applied_operations", len(result.AppliedOperations),
 		"reload_triggered", result.ReloadTriggered,
+		"used_preparsed_config", parsedConfig != nil,
 		"duration", result.Duration)
 
 	return result, nil
