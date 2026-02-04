@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	ktypes "k8s.io/apimachinery/pkg/types"
 )
 
@@ -34,14 +33,14 @@ func TestStoreOverlay_IsEmpty(t *testing.T) {
 		{
 			name: "has addition",
 			setup: func(o *StoreOverlay) {
-				o.Additions = append(o.Additions, &corev1.ConfigMap{})
+				o.AddAddition(&corev1.ConfigMap{})
 			},
 			isEmpty: false,
 		},
 		{
 			name: "has modification",
 			setup: func(o *StoreOverlay) {
-				o.Modifications = append(o.Modifications, &corev1.ConfigMap{})
+				o.AddModification(&corev1.ConfigMap{})
 			},
 			isEmpty: false,
 		},
@@ -90,16 +89,36 @@ func TestCompositeStore_List_WithAdditions(t *testing.T) {
 		},
 	}
 
-	overlay := NewStoreOverlay()
-	overlay.Additions = []runtime.Object{cm}
-
+	overlay := NewStoreOverlayForCreate(cm)
 	composite := NewCompositeStore(base, overlay)
 
 	resources, err := composite.List()
 	require.NoError(t, err)
 	assert.Len(t, resources, 2)
 	assert.Contains(t, resources, "resource1")
-	assert.Contains(t, resources, cm)
+
+	// The ConfigMap is pre-converted, but since it's not *unstructured.Unstructured,
+	// it remains as *corev1.ConfigMap (convertOverlayResource only converts unstructured)
+	found := false
+	for _, r := range resources {
+		// Check for typed ConfigMap (test uses typed objects, not unstructured)
+		if typedCM, ok := r.(*corev1.ConfigMap); ok {
+			if typedCM.Name == "new-configmap" && typedCM.Namespace == "default" {
+				found = true
+				break
+			}
+		}
+		// Also check for map in case test changes to use unstructured
+		if m, ok := r.(map[string]interface{}); ok {
+			if metadata, ok := m["metadata"].(map[string]interface{}); ok {
+				if metadata["name"] == "new-configmap" && metadata["namespace"] == "default" {
+					found = true
+					break
+				}
+			}
+		}
+	}
+	assert.True(t, found, "should find the added ConfigMap")
 }
 
 func TestCompositeStore_List_WithDeletions(t *testing.T) {
@@ -153,18 +172,16 @@ func TestCompositeStore_List_WithModifications(t *testing.T) {
 	base := newMockStore()
 	_ = base.Add(original, []string{"default", "cm1"})
 
-	overlay := NewStoreOverlay()
-	overlay.Modifications = []runtime.Object{modified}
-
+	overlay := NewStoreOverlayForUpdate(modified)
 	composite := NewCompositeStore(base, overlay)
 
 	resources, err := composite.List()
 	require.NoError(t, err)
 	assert.Len(t, resources, 1)
 
-	// Should contain modified version, not original
+	// Since tests use typed objects (not unstructured), the result is *corev1.ConfigMap
 	resultCM, ok := resources[0].(*corev1.ConfigMap)
-	require.True(t, ok)
+	require.True(t, ok, "resource should be *corev1.ConfigMap (tests use typed objects)")
 	assert.Equal(t, "modified", resultCM.Data["key"])
 }
 
@@ -197,16 +214,19 @@ func TestCompositeStore_Get_WithAddition(t *testing.T) {
 	}
 
 	base := newMockStore()
-	overlay := NewStoreOverlay()
-	overlay.Additions = []runtime.Object{newCM}
-
+	overlay := NewStoreOverlayForCreate(newCM)
 	composite := NewCompositeStore(base, overlay)
 
 	// Query for the added resource
 	resources, err := composite.Get("default", "new-cm")
 	require.NoError(t, err)
 	assert.Len(t, resources, 1)
-	assert.Equal(t, newCM, resources[0])
+
+	// Since tests use typed objects (not unstructured), the result is *corev1.ConfigMap
+	resultCM, ok := resources[0].(*corev1.ConfigMap)
+	require.True(t, ok, "resource should be *corev1.ConfigMap (tests use typed objects)")
+	assert.Equal(t, "new-cm", resultCM.Name)
+	assert.Equal(t, "default", resultCM.Namespace)
 }
 
 func TestCompositeStore_Get_WithDeletion(t *testing.T) {
@@ -252,17 +272,16 @@ func TestCompositeStore_Get_WithModification(t *testing.T) {
 	base := newMockStore()
 	_ = base.Add(original, []string{"default", "cm1"})
 
-	overlay := NewStoreOverlay()
-	overlay.Modifications = []runtime.Object{modified}
-
+	overlay := NewStoreOverlayForUpdate(modified)
 	composite := NewCompositeStore(base, overlay)
 
 	resources, err := composite.Get("default", "cm1")
 	require.NoError(t, err)
 	assert.Len(t, resources, 1)
 
+	// Since tests use typed objects (not unstructured), the result is *corev1.ConfigMap
 	resultCM, ok := resources[0].(*corev1.ConfigMap)
-	require.True(t, ok)
+	require.True(t, ok, "resource should be *corev1.ConfigMap (tests use typed objects)")
 	assert.Equal(t, "modified", resultCM.Data["key"])
 }
 
@@ -334,16 +353,24 @@ func TestCompositeStore_WithKeyExtractor(t *testing.T) {
 		},
 	}
 
-	overlay := NewStoreOverlay()
-	overlay.Additions = []runtime.Object{newCM}
+	overlay := NewStoreOverlayForCreate(newCM)
 
-	// Key extractor for namespace/name indexing
+	// Key extractor for namespace/name indexing (handles both runtime.Object and map)
 	keyExtractor := func(resource interface{}) ([]string, error) {
+		// Try runtime.Object first (handles typed objects from tests and base store)
 		if accessor, ok := resource.(interface {
 			GetNamespace() string
 			GetName() string
 		}); ok {
 			return []string{accessor.GetNamespace(), accessor.GetName()}, nil
+		}
+		// Handle pre-converted map[string]interface{} (for unstructured resources)
+		if m, ok := resource.(map[string]interface{}); ok {
+			if metadata, ok := m["metadata"].(map[string]interface{}); ok {
+				ns, _ := metadata["namespace"].(string)
+				name, _ := metadata["name"].(string)
+				return []string{ns, name}, nil
+			}
 		}
 		return nil, nil
 	}
@@ -354,7 +381,11 @@ func TestCompositeStore_WithKeyExtractor(t *testing.T) {
 	resources, err := composite.Get("staging", "cm3")
 	require.NoError(t, err)
 	assert.Len(t, resources, 1)
-	assert.Equal(t, newCM, resources[0])
+	// Since tests use typed objects (not unstructured), the result is *corev1.ConfigMap
+	resultCM, ok := resources[0].(*corev1.ConfigMap)
+	require.True(t, ok, "resource should be *corev1.ConfigMap (tests use typed objects)")
+	assert.Equal(t, "cm3", resultCM.Name)
+	assert.Equal(t, "staging", resultCM.Namespace)
 
 	// Query for default/cm1 should find the base resource
 	resources, err = composite.Get("default", "cm1")

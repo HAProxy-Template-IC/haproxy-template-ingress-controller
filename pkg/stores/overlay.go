@@ -14,6 +14,9 @@ var _ ContentOverlay = (*StoreOverlay)(nil)
 //
 // This enables "what if" scenarios: validate configurations with proposed
 // changes without modifying the actual store state.
+//
+// Resources are pre-converted to template-friendly format (floats to ints)
+// at construction time to avoid repeated conversion during Get()/List() calls.
 type StoreOverlay struct {
 	// Additions are new resources to add to the store.
 	Additions []runtime.Object
@@ -24,47 +27,80 @@ type StoreOverlay struct {
 	// Deletions are keys identifying resources to remove.
 	// Uses NamespacedName for consistent key format.
 	Deletions []ktypes.NamespacedName
+
+	// Pre-converted resources for template use (computed once at construction).
+	// These are the template-friendly representations with floats converted to ints.
+	convertedAdditions     []interface{}
+	convertedModifications []interface{}
 }
 
 // NewStoreOverlay creates a new empty StoreOverlay.
 func NewStoreOverlay() *StoreOverlay {
 	return &StoreOverlay{
-		Additions:     make([]runtime.Object, 0),
-		Modifications: make([]runtime.Object, 0),
-		Deletions:     make([]ktypes.NamespacedName, 0),
+		Additions:              make([]runtime.Object, 0),
+		Modifications:          make([]runtime.Object, 0),
+		Deletions:              make([]ktypes.NamespacedName, 0),
+		convertedAdditions:     make([]interface{}, 0),
+		convertedModifications: make([]interface{}, 0),
 	}
 }
 
 // NewStoreOverlayForCreate creates a StoreOverlay for a CREATE operation.
+// The resource is pre-converted to template-friendly format.
 func NewStoreOverlayForCreate(obj runtime.Object) *StoreOverlay {
+	converted := convertOverlayResource(obj)
 	return &StoreOverlay{
-		Additions:     []runtime.Object{obj},
-		Modifications: make([]runtime.Object, 0),
-		Deletions:     make([]ktypes.NamespacedName, 0),
+		Additions:              []runtime.Object{obj},
+		Modifications:          make([]runtime.Object, 0),
+		Deletions:              make([]ktypes.NamespacedName, 0),
+		convertedAdditions:     []interface{}{converted},
+		convertedModifications: make([]interface{}, 0),
 	}
 }
 
 // NewStoreOverlayForUpdate creates a StoreOverlay for an UPDATE operation.
+// The resource is pre-converted to template-friendly format.
 func NewStoreOverlayForUpdate(obj runtime.Object) *StoreOverlay {
+	converted := convertOverlayResource(obj)
 	return &StoreOverlay{
-		Additions:     make([]runtime.Object, 0),
-		Modifications: []runtime.Object{obj},
-		Deletions:     make([]ktypes.NamespacedName, 0),
+		Additions:              make([]runtime.Object, 0),
+		Modifications:          []runtime.Object{obj},
+		Deletions:              make([]ktypes.NamespacedName, 0),
+		convertedAdditions:     make([]interface{}, 0),
+		convertedModifications: []interface{}{converted},
 	}
 }
 
 // NewStoreOverlayForDelete creates a StoreOverlay for a DELETE operation.
 func NewStoreOverlayForDelete(namespace, name string) *StoreOverlay {
 	return &StoreOverlay{
-		Additions:     make([]runtime.Object, 0),
-		Modifications: make([]runtime.Object, 0),
-		Deletions:     []ktypes.NamespacedName{{Namespace: namespace, Name: name}},
+		Additions:              make([]runtime.Object, 0),
+		Modifications:          make([]runtime.Object, 0),
+		Deletions:              []ktypes.NamespacedName{{Namespace: namespace, Name: name}},
+		convertedAdditions:     make([]interface{}, 0),
+		convertedModifications: make([]interface{}, 0),
 	}
 }
 
 // IsEmpty returns true if the overlay contains no changes.
 func (o *StoreOverlay) IsEmpty() bool {
 	return len(o.Additions) == 0 && len(o.Modifications) == 0 && len(o.Deletions) == 0
+}
+
+// AddAddition adds a resource to the additions list and pre-converts it.
+// Use this method instead of directly modifying the Additions field to ensure
+// the pre-converted slice stays in sync.
+func (o *StoreOverlay) AddAddition(obj runtime.Object) {
+	o.Additions = append(o.Additions, obj)
+	o.convertedAdditions = append(o.convertedAdditions, convertOverlayResource(obj))
+}
+
+// AddModification adds a resource to the modifications list and pre-converts it.
+// Use this method instead of directly modifying the Modifications field to ensure
+// the pre-converted slice stays in sync.
+func (o *StoreOverlay) AddModification(obj runtime.Object) {
+	o.Modifications = append(o.Modifications, obj)
+	o.convertedModifications = append(o.convertedModifications, convertOverlayResource(obj))
 }
 
 // CompositeStore wraps a base store with an overlay, providing a unified view
@@ -139,17 +175,17 @@ func (s *CompositeStore) Get(keys ...string) ([]interface{}, error) {
 		}
 	}
 
-	// Add modifications that match the keys (converted for template use)
-	for _, mod := range s.overlay.Modifications {
+	// Add modifications that match the keys (use pre-converted resources)
+	for i, mod := range s.overlay.Modifications {
 		if s.matchesKeys(mod, keys) {
-			filtered = append(filtered, convertOverlayResource(mod))
+			filtered = append(filtered, s.overlay.convertedModifications[i])
 		}
 	}
 
-	// Add additions that match the keys (converted for template use)
-	for _, add := range s.overlay.Additions {
+	// Add additions that match the keys (use pre-converted resources)
+	for i, add := range s.overlay.Additions {
 		if s.matchesKeys(add, keys) {
-			filtered = append(filtered, convertOverlayResource(add))
+			filtered = append(filtered, s.overlay.convertedAdditions[i])
 		}
 	}
 
@@ -172,11 +208,11 @@ func (s *CompositeStore) List() ([]interface{}, error) {
 		}
 	}
 
-	// Add all modifications
-	result = append(result, toInterfaceSlice(s.overlay.Modifications)...)
+	// Add all modifications (use pre-converted resources)
+	result = append(result, s.overlay.convertedModifications...)
 
-	// Add all additions
-	result = append(result, toInterfaceSlice(s.overlay.Additions)...)
+	// Add all additions (use pre-converted resources)
+	result = append(result, s.overlay.convertedAdditions...)
 
 	return result, nil
 }
@@ -341,15 +377,4 @@ func convertFloatsToInts(data interface{}) interface{} {
 	default:
 		return v
 	}
-}
-
-// toInterfaceSlice converts a slice of runtime.Object to []interface{}.
-// Each object is converted to ensure consistency with the pre-converted maps
-// stored in the base store (floats converted to ints for template use).
-func toInterfaceSlice(objects []runtime.Object) []interface{} {
-	result := make([]interface{}, len(objects))
-	for i, obj := range objects {
-		result[i] = convertOverlayResource(obj)
-	}
-	return result
 }

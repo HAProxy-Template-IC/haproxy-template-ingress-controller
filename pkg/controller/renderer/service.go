@@ -67,6 +67,10 @@ type RenderService struct {
 	// capabilities defines which features are available for the local HAProxy version.
 	capabilities dataplane.Capabilities
 
+	// capabilitiesMap is the pre-computed map representation of capabilities.
+	// Cached at construction time to avoid creating the same map on every render.
+	capabilitiesMap map[string]interface{}
+
 	// Optional dependencies for building render context
 	haproxyPodStore    stores.Store
 	httpStoreComponent *httpstore.Component
@@ -133,12 +137,17 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		GeneralDir: generalDir,
 	}
 
+	// Pre-compute capabilities map to avoid creating it on every render.
+	// Capabilities never change during controller lifetime.
+	capabilitiesMap := rendercontext.CapabilitiesToMap(&cfg.Capabilities)
+
 	return &RenderService{
 		engine:             cfg.Engine,
 		config:             cfg.Config,
 		pathResolver:       pathResolver,
 		logger:             cfg.Logger,
 		capabilities:       cfg.Capabilities,
+		capabilitiesMap:    capabilitiesMap,
 		haproxyPodStore:    cfg.HAProxyPodStore,
 		httpStoreComponent: cfg.HTTPStoreComponent,
 		currentConfigStore: cfg.CurrentConfigStore,
@@ -229,7 +238,8 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	renderContext["controller"] = controller
 
 	// Add capabilities at top level (not inside controller)
-	renderContext["capabilities"] = rendercontext.CapabilitiesToMap(&s.capabilities)
+	// Use pre-computed map to avoid creating it on every render
+	renderContext["capabilities"] = s.capabilitiesMap
 
 	// Add dataplane config at top level
 	renderContext["dataplane"] = s.config.Dataplane

@@ -54,6 +54,7 @@ type Builder struct {
 	haproxyPodStore stores.Store
 	httpFetcher     templating.HTTPFetcher
 	capabilities    *dataplane.Capabilities
+	capabilitiesMap map[string]interface{} // Pre-computed capabilities map
 	currentConfig   *parserconfig.StructuredConfig
 }
 
@@ -86,9 +87,21 @@ func WithHTTPFetcher(fetcher templating.HTTPFetcher) Option {
 
 // WithCapabilities sets the HAProxy capabilities for conditional template generation.
 // If nil, no capabilities map is added to the context.
+// Note: For better performance, use WithCapabilitiesMap with a pre-computed map
+// when the same capabilities are used across multiple renders.
 func WithCapabilities(caps *dataplane.Capabilities) Option {
 	return func(b *Builder) {
 		b.capabilities = caps
+	}
+}
+
+// WithCapabilitiesMap sets a pre-computed capabilities map for the template context.
+// This is more efficient than WithCapabilities when the same capabilities map is
+// used across multiple renders, as it avoids recreating the map each time.
+// Takes precedence over WithCapabilities if both are set.
+func WithCapabilitiesMap(capMap map[string]interface{}) Option {
+	return func(b *Builder) {
+		b.capabilitiesMap = capMap
 	}
 }
 
@@ -193,7 +206,10 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 	}
 
 	// Add capabilities if provided
-	if b.capabilities != nil {
+	// Pre-computed map takes precedence over capabilities struct
+	if b.capabilitiesMap != nil {
+		templateContext["capabilities"] = b.capabilitiesMap
+	} else if b.capabilities != nil {
 		templateContext["capabilities"] = CapabilitiesToMap(b.capabilities)
 	}
 
