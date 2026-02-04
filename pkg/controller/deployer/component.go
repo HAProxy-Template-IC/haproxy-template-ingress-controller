@@ -531,12 +531,13 @@ func (c *Component) handleEndpointSuccess(
 	))
 
 	// Publish ConfigAppliedToPodEvent (for runtime config status updates)
-	// Skip for no-op drift checks to reduce Kubernetes API load
+	// Skip for no-op deployments to reduce Kubernetes API load
 	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
-		if isDriftCheck && c.isNoOpDriftCheck(syncResult) {
-			c.logger.Debug("Skipping ConfigAppliedToPodEvent for no-op drift check",
+		if c.isNoOpDeployment(syncResult) {
+			c.logger.Debug("Skipping ConfigAppliedToPodEvent for no-op deployment",
 				"pod", ep.PodName,
-				"endpoint", ep.URL)
+				"endpoint", ep.URL,
+				"is_drift_check", isDriftCheck)
 		} else {
 			syncMetadata := c.convertSyncResultToMetadata(syncResult)
 			c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
@@ -730,13 +731,17 @@ func (c *Component) cancelActiveDeployment(reason string) {
 	}
 }
 
-// isNoOpDriftCheck returns true if this drift check made no meaningful changes
+// isNoOpDeployment returns true if this deployment made no meaningful changes
 // that warrant publishing a ConfigAppliedToPodEvent.
 //
 // We skip event publishing when ALL of the following are true:
 //   - No operations were performed (TotalOperations=0)
 //   - No HAProxy reload was triggered.
-func (c *Component) isNoOpDriftCheck(syncResult *dataplane.SyncResult) bool {
+//
+// This applies to both drift checks and regular reconciliation-triggered deployments.
+// If HAProxy state is unchanged (no operations, no reload), there's no need to
+// update RuntimeConfig status, regardless of what triggered the deployment.
+func (c *Component) isNoOpDeployment(syncResult *dataplane.SyncResult) bool {
 	if syncResult == nil {
 		return true
 	}
