@@ -113,32 +113,54 @@ func (idx *Indexer) FilterFields(resource interface{}) error {
 	return idx.filter.Filter(resource)
 }
 
-// Process is a convenience method that filters fields and extracts keys in one call.
+// ProcessResult contains the results of processing a resource for storage.
+type ProcessResult struct {
+	// Keys are the index keys for store lookups.
+	Keys []string
+
+	// ConvertedResource is the resource with floats converted to ints,
+	// ready for use in templates. This is stored instead of the original
+	// unstructured.Unstructured to avoid conversion on every access.
+	ConvertedResource map[string]interface{}
+}
+
+// Process filters fields, extracts keys, and converts the resource for template use.
 //
 // This is the most common usage pattern: filter the resource to reduce memory,
-// then extract keys for indexing.
+// extract keys for indexing, and convert for template access.
 //
 // Returns:
-//   - Extracted index keys
-//   - An error if either operation fails
+//   - ProcessResult containing index keys and converted resource
+//   - An error if any operation fails
 //
-// The resource is modified in-place by field filtering.
+// The original resource is modified in-place by field filtering.
 //
 // Example:
 //
-//	keys, err := indexer.Process(ingress)
+//	result, err := indexer.Process(ingress)
 //	if err != nil {
 //	    return err
 //	}
-//	store.Add(ingress, keys)
-func (idx *Indexer) Process(resource interface{}) ([]string, error) {
+//	store.Add(result.ConvertedResource, result.Keys)
+func (idx *Indexer) Process(resource interface{}) (*ProcessResult, error) {
 	// Filter fields first to reduce memory
 	if err := idx.FilterFields(resource); err != nil {
 		return nil, err
 	}
 
 	// Extract index keys
-	return idx.ExtractKeys(resource)
+	keys, err := idx.ExtractKeys(resource)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert resource (floats to ints) for template use
+	converted := ConvertResource(resource)
+
+	return &ProcessResult{
+		Keys:              keys,
+		ConvertedResource: converted,
+	}, nil
 }
 
 // NumKeys returns the number of index keys this indexer extracts.

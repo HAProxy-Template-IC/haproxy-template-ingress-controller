@@ -22,7 +22,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // mockStoreWithError is a mock store that returns errors.
@@ -55,7 +54,7 @@ func (m *mockStoreWithError) Clear() error {
 	return nil
 }
 
-// mockStoreWithItems returns unstructured items.
+// mockStoreWithItems returns pre-converted map items (as stores now contain).
 type mockStoreWithItems struct {
 	items []interface{}
 }
@@ -92,6 +91,18 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+// createResourceMap creates a pre-converted resource map (as stores now contain).
+func createResourceMap(name string) map[string]interface{} {
+	return map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": "default",
+		},
+	}
+}
+
 func TestStoreWrapper_List_Empty(t *testing.T) {
 	store := &mockStoreWithItems{items: []interface{}{}}
 	wrapper := &StoreWrapper{
@@ -105,14 +116,9 @@ func TestStoreWrapper_List_Empty(t *testing.T) {
 }
 
 func TestStoreWrapper_List_WithItems(t *testing.T) {
-	// Create unstructured items
-	item1 := &unstructured.Unstructured{}
-	item1.SetName("item1")
-	item1.SetNamespace("default")
-
-	item2 := &unstructured.Unstructured{}
-	item2.SetName("item2")
-	item2.SetNamespace("default")
+	// Create pre-converted resource maps (as stores now contain)
+	item1 := createResourceMap("item1")
+	item2 := createResourceMap("item2")
 
 	store := &mockStoreWithItems{items: []interface{}{item1, item2}}
 	wrapper := &StoreWrapper{
@@ -124,30 +130,10 @@ func TestStoreWrapper_List_WithItems(t *testing.T) {
 	result := wrapper.List()
 	require.Len(t, result, 2)
 
-	// Verify items are unwrapped to maps
+	// Items are already maps, returned as-is
 	m1, ok := result[0].(map[string]interface{})
-	require.True(t, ok, "item should be unwrapped to map")
+	require.True(t, ok, "item should be a map")
 	assert.Equal(t, "item1", m1["metadata"].(map[string]interface{})["name"])
-}
-
-func TestStoreWrapper_List_Caching(t *testing.T) {
-	store := &mockStoreWithItems{items: []interface{}{}}
-
-	wrapper := &StoreWrapper{
-		Store:        store,
-		ResourceType: "test",
-		Logger:       testLogger(),
-	}
-
-	// First call
-	wrapper.List()
-	assert.True(t, wrapper.ListCached)
-
-	// Second call should use cache
-	wrapper.List()
-
-	// The ListCached flag confirms caching is active
-	assert.True(t, wrapper.ListCached)
 }
 
 func TestStoreWrapper_List_Error(t *testing.T) {
@@ -163,8 +149,7 @@ func TestStoreWrapper_List_Error(t *testing.T) {
 }
 
 func TestStoreWrapper_Fetch(t *testing.T) {
-	item := &unstructured.Unstructured{}
-	item.SetName("test-item")
+	item := createResourceMap("test-item")
 
 	store := &mockStoreWithItems{items: []interface{}{item}}
 	wrapper := &StoreWrapper{
@@ -190,8 +175,7 @@ func TestStoreWrapper_Fetch_Error(t *testing.T) {
 }
 
 func TestStoreWrapper_GetSingle(t *testing.T) {
-	item := &unstructured.Unstructured{}
-	item.SetName("single-item")
+	item := createResourceMap("single-item")
 
 	store := &mockStoreWithItems{items: []interface{}{item}}
 	wrapper := &StoreWrapper{
@@ -221,10 +205,8 @@ func TestStoreWrapper_GetSingle_NotFound(t *testing.T) {
 }
 
 func TestStoreWrapper_GetSingle_Ambiguous(t *testing.T) {
-	item1 := &unstructured.Unstructured{}
-	item1.SetName("item1")
-	item2 := &unstructured.Unstructured{}
-	item2.SetName("item2")
+	item1 := createResourceMap("item1")
+	item2 := createResourceMap("item2")
 
 	store := &mockStoreWithItems{items: []interface{}{item1, item2}}
 	wrapper := &StoreWrapper{
@@ -235,50 +217,4 @@ func TestStoreWrapper_GetSingle_Ambiguous(t *testing.T) {
 
 	result := wrapper.GetSingle("default", "ambiguous")
 	assert.Nil(t, result, "should return nil for ambiguous lookup")
-}
-
-func TestConvertFloatsToInts(t *testing.T) {
-	tests := []struct {
-		name  string
-		input interface{}
-		want  interface{}
-	}{
-		{
-			name:  "float64 whole number",
-			input: float64(80),
-			want:  int64(80),
-		},
-		{
-			name:  "float64 with fraction",
-			input: float64(3.14),
-			want:  float64(3.14),
-		},
-		{
-			name:  "string unchanged",
-			input: "hello",
-			want:  "hello",
-		},
-		{
-			name:  "int unchanged",
-			input: 42,
-			want:  42,
-		},
-		{
-			name:  "nested map",
-			input: map[string]interface{}{"port": float64(8080), "name": "web"},
-			want:  map[string]interface{}{"port": int64(8080), "name": "web"},
-		},
-		{
-			name:  "nested slice",
-			input: []interface{}{float64(1), float64(2), float64(3)},
-			want:  []interface{}{int64(1), int64(2), int64(3)},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := convertFloatsToInts(tt.input)
-			assert.Equal(t, tt.want, got)
-		})
-	}
 }

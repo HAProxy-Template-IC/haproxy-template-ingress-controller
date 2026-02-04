@@ -292,8 +292,8 @@ func (w *Watcher) handleUpdate(oldObj, newObj interface{}) {
 
 // processAdd adds a resource to the store and records the change.
 func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
-	// Process resource (filter fields and extract keys)
-	keys, err := w.indexer.Process(resource)
+	// Process resource (filter fields, extract keys, convert for templates)
+	result, err := w.indexer.Process(resource)
 	if err != nil {
 		w.logger.Error("failed to process resource for indexing",
 			"gvr", w.config.GVR.String(),
@@ -303,13 +303,13 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 		return
 	}
 
-	// Add to store
-	if err := w.store.Add(resource, keys); err != nil {
+	// Add converted resource to store
+	if err := w.store.Add(result.ConvertedResource, result.Keys); err != nil {
 		w.logger.Error("failed to add resource to store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
-			"keys", keys,
+			"keys", result.Keys,
 			"error", err)
 		return
 	}
@@ -320,8 +320,8 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 
 // processUpdate updates a resource in the store and records the change.
 func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
-	// Process resource (filter fields and extract keys)
-	keys, err := w.indexer.Process(resource)
+	// Process resource (filter fields, extract keys, convert for templates)
+	result, err := w.indexer.Process(resource)
 	if err != nil {
 		w.logger.Error("failed to process resource for indexing",
 			"gvr", w.config.GVR.String(),
@@ -331,13 +331,13 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 		return
 	}
 
-	// Update in store
-	if err := w.store.Update(resource, keys); err != nil {
+	// Update converted resource in store
+	if err := w.store.Update(result.ConvertedResource, result.Keys); err != nil {
 		w.logger.Error("failed to update resource in store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
-			"keys", keys,
+			"keys", result.Keys,
 			"error", err)
 		return
 	}

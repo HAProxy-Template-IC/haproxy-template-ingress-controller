@@ -356,6 +356,65 @@ func TestDiscovery_DiscoverEndpoints_StoreListError(t *testing.T) {
 	assert.Nil(t, endpoints)
 }
 
+// TestDiscovery_DiscoverEndpoints_MapResources tests discovery with map[string]interface{} resources.
+// This is the actual format stored in production after float-to-int conversion.
+func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
+	// Create pod as map[string]interface{} (production format after conversion)
+	pod := map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Pod",
+		"metadata": map[string]interface{}{
+			"name":      "haproxy-0",
+			"namespace": "default",
+		},
+		"spec": map[string]interface{}{
+			"containers": []interface{}{
+				map[string]interface{}{
+					"name": "dataplane",
+					"ports": []interface{}{
+						map[string]interface{}{
+							"containerPort": int64(5555),
+						},
+					},
+				},
+			},
+		},
+		"status": map[string]interface{}{
+			"podIP": "10.0.0.1",
+			"phase": "Running",
+			"containerStatuses": []interface{}{
+				map[string]interface{}{
+					"name":  "dataplane",
+					"ready": true,
+				},
+			},
+		},
+	}
+
+	// Create store and add pod as map (not as *unstructured.Unstructured)
+	podStore := store.NewMemoryStore(2)
+	err := podStore.Add(pod, []string{"default", "haproxy-0"})
+	require.NoError(t, err)
+
+	discovery := createTestDiscovery(5555)
+	credentials := coreconfig.Credentials{
+		DataplaneUsername: "admin",
+		DataplanePassword: "secret",
+	}
+
+	// Discover endpoints
+	endpoints, err := discovery.DiscoverEndpoints(podStore, credentials)
+
+	// Verify
+	require.NoError(t, err)
+	require.Len(t, endpoints, 1)
+	assert.Equal(t, "http://10.0.0.1:5555/v3", endpoints[0].URL)
+	assert.Equal(t, "admin", endpoints[0].Username)
+	assert.Equal(t, "secret", endpoints[0].Password)
+	assert.Equal(t, "haproxy-0", endpoints[0].PodName)
+	assert.Equal(t, "default", endpoints[0].PodNamespace)
+}
+
 // -----------------------------------------------------------------------------
 // Helper Functions
 // -----------------------------------------------------------------------------

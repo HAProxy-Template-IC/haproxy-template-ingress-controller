@@ -222,7 +222,9 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 				// Use namespace + name as keys (matches discovery component indexing)
 				keys := []string{resource.GetNamespace(), resource.GetName()}
 
-				if err := storeInstance.Add(resource, keys); err != nil {
+				// Convert resource for template use (floats to ints)
+				converted := indexer.ConvertResource(resource)
+				if err := storeInstance.Add(converted, keys); err != nil {
 					return nil, fmt.Errorf("failed to add haproxy-pods fixture: %w", err)
 				}
 			}
@@ -281,7 +283,9 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 				return nil, fmt.Errorf("failed to extract index keys from fixture resource: %w", err)
 			}
 
-			if err := storeInstance.Add(resource, keys); err != nil {
+			// Convert resource for template use (floats to ints)
+			converted := indexer.ConvertResource(resource)
+			if err := storeInstance.Add(converted, keys); err != nil {
 				return nil, fmt.Errorf("failed to add fixture resource to %s store: %w", resourceType, err)
 			}
 		}
