@@ -1452,10 +1452,30 @@ func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace
 
 			// Skip if no actual change needed (most common case)
 			if podStatusesEqual(cached.Status.DeployedToPods, newStatuses) {
+				p.logger.Debug("skipping map file status update, no change needed",
+					"name", name,
+					"pod", podStatus.PodName,
+				)
 				return nil
 			}
+			p.logger.Debug("map file status update needed despite cache hit",
+				"name", name,
+				"pod", podStatus.PodName,
+				"cached_pods", len(cached.Status.DeployedToPods),
+				"new_pods", len(newStatuses),
+			)
+		} else {
+			p.logger.Debug("map file cache miss, falling back to API",
+				"name", name,
+				"pod", podStatus.PodName,
+				"error", err,
+			)
 		}
-		// On cache miss or error, fall through to API read
+	} else {
+		p.logger.Debug("map file listers not available",
+			"name", name,
+			"listers_nil", p.listers == nil,
+		)
 	}
 
 	// Need to update - do retry-on-conflict with fresh API reads
