@@ -469,7 +469,8 @@ func validateRuleSlice[T any, TV32, TV31, TV30 any](spec *openapi3.T, version *V
 
 // validateBackendServers validates servers and server templates in a backend.
 func validateBackendServers(spec *openapi3.T, version *Version, backend *models.Backend) []string {
-	var errors []string
+	// Pre-allocate with estimated capacity
+	errors := make([]string, 0, len(backend.Servers)+len(backend.ServerTemplates))
 	for serverName := range backend.Servers {
 		server := backend.Servers[serverName]
 		if err := validateModel[v32.Server, v31.Server, v30.Server](spec, version, "server", &server); err != nil {
@@ -517,7 +518,8 @@ func validateBackendChecks(spec *openapi3.T, version *Version, backend *models.B
 
 // validateFrontendBinds validates bind configurations in a frontend.
 func validateFrontendBinds(spec *openapi3.T, version *Version, frontend *models.Frontend) []string {
-	var errors []string
+	// Pre-allocate with estimated capacity
+	errors := make([]string, 0, len(frontend.Binds))
 	for bindName := range frontend.Binds {
 		bind := frontend.Binds[bindName]
 		if err := validateModel[v32.Bind, v31.Bind, v30.Bind](spec, version, "bind", &bind); err != nil {

@@ -485,7 +485,7 @@ func (p *Parser) extractFrontends() ([]*models.Frontend, error) {
 		// Note: Binds returns slice but fe.Binds is map - conversion needed or use ParseSection
 		binds, _ := configuration.ParseBinds(string(parser.Frontends), sectionName, p.parser)
 		if binds != nil {
-			fe.Binds = make(map[string]models.Bind)
+			fe.Binds = make(map[string]models.Bind, len(binds))
 			for _, bind := range binds {
 				if bind != nil {
 					fe.Binds[bind.Name] = *bind
@@ -563,7 +563,7 @@ func (p *Parser) parseBackendNestedStructures(sectionName string, be *models.Bac
 func (p *Parser) parseBackendServers(sectionName string, be *models.Backend) {
 	servers, _ := configuration.ParseServers(string(parser.Backends), sectionName, p.parser)
 	if servers != nil {
-		be.Servers = make(map[string]models.Server)
+		be.Servers = make(map[string]models.Server, len(servers))
 		for _, server := range servers {
 			if server != nil {
 				be.Servers[server.Name] = *server
@@ -596,7 +596,7 @@ func (p *Parser) parseBackendFiltersAndChecks(sectionName string, be *models.Bac
 func (p *Parser) parseBackendServerTemplates(sectionName string, be *models.Backend) {
 	serverTemplates, _ := configuration.ParseServerTemplates(sectionName, p.parser)
 	if serverTemplates != nil {
-		be.ServerTemplates = make(map[string]models.ServerTemplate)
+		be.ServerTemplates = make(map[string]models.ServerTemplate, len(serverTemplates))
 		for _, template := range serverTemplates {
 			if template != nil {
 				be.ServerTemplates[template.Prefix] = *template
@@ -626,7 +626,7 @@ func (p *Parser) extractPeers() ([]*models.PeerSection, error) {
 		// Convert PeerEntries slice to map
 		peerEntries, _ := configuration.ParsePeerEntries(sectionName, p.parser)
 		if peerEntries != nil {
-			peer.PeerEntries = make(map[string]models.PeerEntry)
+			peer.PeerEntries = make(map[string]models.PeerEntry, len(peerEntries))
 			for _, entry := range peerEntries {
 				if entry != nil {
 					peer.PeerEntries[entry.Name] = *entry
@@ -661,7 +661,7 @@ func (p *Parser) extractResolvers() ([]*models.Resolver, error) {
 		// Convert Nameservers slice to map
 		nameservers, _ := configuration.ParseNameservers(sectionName, p.parser)
 		if nameservers != nil {
-			resolver.Nameservers = make(map[string]models.Nameserver)
+			resolver.Nameservers = make(map[string]models.Nameserver, len(nameservers))
 			for _, ns := range nameservers {
 				if ns != nil {
 					resolver.Nameservers[ns.Name] = *ns
@@ -696,7 +696,7 @@ func (p *Parser) extractMailers() ([]*models.MailersSection, error) {
 		// Convert MailerEntries slice to map
 		mailerEntries, _ := configuration.ParseMailerEntries(sectionName, p.parser)
 		if mailerEntries != nil {
-			mailer.MailerEntries = make(map[string]models.MailerEntry)
+			mailer.MailerEntries = make(map[string]models.MailerEntry, len(mailerEntries))
 			for _, entry := range mailerEntries {
 				if entry != nil {
 					mailer.MailerEntries[entry.Name] = *entry
@@ -817,7 +817,7 @@ func (p *Parser) parseUserlistUsers(sectionName string) map[string]models.User {
 		return nil
 	}
 
-	userMap := make(map[string]models.User)
+	userMap := make(map[string]models.User, len(users))
 	for _, user := range users {
 		if user != nil && user.Username != "" {
 			userMap[user.Username] = *user
@@ -833,7 +833,7 @@ func (p *Parser) parseUserlistGroups(sectionName string) map[string]models.Group
 		return nil
 	}
 
-	groupMap := make(map[string]models.Group)
+	groupMap := make(map[string]models.Group, len(groups))
 	for _, group := range groups {
 		if group != nil && group.Name != "" {
 			groupMap[group.Name] = *group

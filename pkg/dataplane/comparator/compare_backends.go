@@ -12,10 +12,11 @@ import (
 // This is a focused implementation that handles the most common use case:
 // backend and server management. It demonstrates the pattern for other sections.
 func (c *Comparator) compareBackends(current, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
-	var operations []Operation
+	// Pre-allocate with estimated capacity (roughly 2 ops per backend for add/modify + servers)
+	operations := make([]Operation, 0, len(desired.Backends)*2)
 
 	// Build maps for easier comparison
-	currentBackends := make(map[string]*models.Backend)
+	currentBackends := make(map[string]*models.Backend, len(current.Backends))
 	for _, backend := range current.Backends {
 		if backend.Name != "" {
 			currentBackends[backend.Name] = backend
@@ -71,7 +72,10 @@ func (c *Comparator) compareAddedBackends(desiredBackends, currentBackends map[s
 // createNestedBackendOperations creates operations for all nested elements of a new backend.
 // Compares against empty collections to generate create operations for each element.
 func (c *Comparator) createNestedBackendOperations(name string, backend *models.Backend, summary *DiffSummary) []Operation {
-	var operations []Operation
+	// Pre-allocate with estimated capacity based on nested element counts
+	estimatedCap := len(backend.Servers) + len(backend.ServerTemplates) + len(backend.ACLList) +
+		len(backend.HTTPRequestRuleList) + len(backend.HTTPResponseRuleList)
+	operations := make([]Operation, 0, estimatedCap)
 
 	// Create an empty backend to compare against for servers and server templates
 	emptyBackend := &models.Backend{}
@@ -102,7 +106,8 @@ func (c *Comparator) createNestedBackendOperations(name string, backend *models.
 
 // compareModifiedBackends compares modified backends and creates operations for changed nested elements.
 func (c *Comparator) compareModifiedBackends(desiredBackends, currentBackends map[string]*models.Backend, summary *DiffSummary) []Operation {
-	var operations []Operation
+	// Pre-allocate with estimated capacity (assume ~5 ops per modified backend)
+	operations := make([]Operation, 0, len(desiredBackends)*5)
 
 	for name, desiredBackend := range desiredBackends {
 		currentBackend, exists := currentBackends[name]
@@ -183,11 +188,13 @@ func (c *Comparator) compareModifiedBackends(desiredBackends, currentBackends ma
 
 // compareServers compares server configurations within a backend.
 func (c *Comparator) compareServers(backendName string, currentBackend, desiredBackend *models.Backend, summary *DiffSummary) []Operation {
-	var operations []Operation
-
 	// Backend.Servers is already a map[string]models.Server
 	currentServers := currentBackend.Servers
 	desiredServers := desiredBackend.Servers
+
+	// Pre-allocate with capacity for potential changes (add + delete + modify)
+	maxOps := len(currentServers) + len(desiredServers)
+	operations := make([]Operation, 0, maxOps)
 
 	// Find added servers
 	addedOps := c.compareAddedServers(backendName, currentServers, desiredServers, summary)
@@ -206,7 +213,8 @@ func (c *Comparator) compareServers(backendName string, currentBackend, desiredB
 
 // compareAddedServers compares added servers and creates operations for them.
 func (c *Comparator) compareAddedServers(backendName string, currentServers, desiredServers map[string]models.Server, summary *DiffSummary) []Operation {
-	var operations []Operation
+	// Pre-allocate with capacity for potential additions
+	operations := make([]Operation, 0, len(desiredServers))
 
 	for name := range desiredServers {
 		if _, exists := currentServers[name]; !exists {
@@ -224,7 +232,8 @@ func (c *Comparator) compareAddedServers(backendName string, currentServers, des
 
 // compareDeletedServers compares deleted servers and creates operations for them.
 func (c *Comparator) compareDeletedServers(backendName string, currentServers, desiredServers map[string]models.Server, summary *DiffSummary) []Operation {
-	var operations []Operation
+	// Pre-allocate with capacity for potential deletions
+	operations := make([]Operation, 0, len(currentServers))
 
 	for name := range currentServers {
 		if _, exists := desiredServers[name]; !exists {
@@ -242,7 +251,8 @@ func (c *Comparator) compareDeletedServers(backendName string, currentServers, d
 
 // compareModifiedServers compares modified servers and creates operations for them.
 func (c *Comparator) compareModifiedServers(backendName string, currentServers, desiredServers map[string]models.Server, summary *DiffSummary) []Operation {
-	var operations []Operation
+	// Pre-allocate with capacity for potential modifications
+	operations := make([]Operation, 0, len(desiredServers))
 
 	for name := range desiredServers {
 		currentServer, exists := currentServers[name]
