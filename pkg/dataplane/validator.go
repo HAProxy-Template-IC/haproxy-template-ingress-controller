@@ -82,86 +82,6 @@ var validationCache = &validationResultCache{}
 // Version-aware Model Conversion (using centralized client converters)
 // =============================================================================
 
-// versionMinor extracts the minor version from a Version pointer.
-// Returns 0 (v3.0) if version is nil, which is the safest default.
-func versionMinor(version *Version) int {
-	if version == nil {
-		return 0
-	}
-	return version.Minor
-}
-
-// prepareForValidation prepares a typed API model for schema validation.
-// It marshals to JSON, removes nulls in place, and returns a map ready for
-// schema.VisitJSON(). The API model should already have been converted using
-// client.ConvertToVersioned to ensure only valid fields are included.
-//
-// This optimization reduces JSON operations from 7 per model to 3 by:
-// - Eliminating the cleanJSON copy step (uses in-place null removal instead)
-// - Passing the map directly to VisitJSON (avoids extra unmarshal).
-func prepareForValidation(model interface{}) (map[string]interface{}, error) {
-	// Marshal API model to JSON
-	jsonData, err := json.Marshal(model)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal model: %w", err)
-	}
-
-	// Unmarshal to map for in-place modifications
-	var obj map[string]interface{}
-	if err := json.Unmarshal(jsonData, &obj); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal for preparation: %w", err)
-	}
-
-	// Remove null values in place (replaces cleanJSON copy step)
-	removeNullValuesInPlace(obj)
-
-	return obj, nil
-}
-
-// validatePreparedData validates a prepared map against an OpenAPI schema.
-// The map should already have metadata transformed and nulls removed.
-func validatePreparedData(spec *openapi3.T, schemaName string, data map[string]interface{}) error {
-	schema, err := getResolvedSchema(spec, schemaName)
-	if err != nil {
-		return err
-	}
-
-	if err := schema.VisitJSON(data); err != nil {
-		return fmt.Errorf("schema validation failed: %w", err)
-	}
-
-	return nil
-}
-
-// validateModel validates a client-native model against the OpenAPI schema.
-// Uses the optimized path that reduces JSON operations from 7 to 4 per model.
-//
-// The type conversion step is necessary to filter out fields that the API schema
-// doesn't support (e.g., metadata for types that don't have it).
-func validateModel[TV32, TV31, TV30 any](spec *openapi3.T, version *Version, schemaName string, model interface{}) error {
-	// Step 1: Marshal and transform metadata (marshal + unmarshal + transform + marshal)
-	jsonData, err := client.MarshalForVersion(model)
-	if err != nil {
-		return err
-	}
-
-	// Step 2: Convert to typed API model (unmarshal) - this filters out unsupported fields
-	apiModel, err := client.ConvertToVersioned[TV32, TV31, TV30](jsonData, versionMinor(version))
-	if err != nil {
-		return fmt.Errorf("failed to convert to API model: %w", err)
-	}
-
-	// Step 3: Prepare for validation (marshal + unmarshal + in-place null removal)
-	// This replaces the old cleanJSON which did marshal + unmarshal + copy + marshal + unmarshal
-	prepared, err := prepareForValidation(apiModel)
-	if err != nil {
-		return err
-	}
-
-	// Step 4: Validate directly against schema
-	return validatePreparedData(spec, schemaName, prepared)
-}
-
 // ValidationPaths holds the filesystem paths for HAProxy validation.
 // These paths must match the HAProxy Dataplane API server's resource configuration.
 type ValidationPaths struct {
@@ -417,10 +337,10 @@ func validateAPISchema(parsed *parser.StructuredConfig, version *Version) error 
 	var validationErrors []string
 
 	// Validate backend sections
-	validationErrors = append(validationErrors, validateBackendSections(spec, version, parsed.Backends)...)
+	validationErrors = append(validationErrors, validateBackendSections(spec, parsed.Backends)...)
 
 	// Validate frontend sections
-	validationErrors = append(validationErrors, validateFrontendSections(spec, version, parsed.Frontends)...)
+	validationErrors = append(validationErrors, validateFrontendSections(spec, parsed.Frontends)...)
 
 	// If there were any validation errors, return them
 	if len(validationErrors) > 0 {
@@ -432,54 +352,53 @@ func validateAPISchema(parsed *parser.StructuredConfig, version *Version) error 
 }
 
 // validateBackendSections validates all configuration elements within backends.
-func validateBackendSections(spec *openapi3.T, version *Version, backends []*models.Backend) []string {
+func validateBackendSections(spec *openapi3.T, backends []*models.Backend) []string {
 	var errors []string
 	for i := range backends {
 		backend := backends[i]
-		errors = append(errors, validateBackendServers(spec, version, backend)...)
-		errors = append(errors, validateBackendRules(spec, version, backend)...)
-		errors = append(errors, validateBackendChecks(spec, version, backend)...)
+		errors = append(errors, validateBackendServers(spec, backend)...)
+		errors = append(errors, validateBackendRules(spec, backend)...)
+		errors = append(errors, validateBackendChecks(spec, backend)...)
 	}
 	return errors
 }
 
 // validateFrontendSections validates all configuration elements within frontends.
-func validateFrontendSections(spec *openapi3.T, version *Version, frontends []*models.Frontend) []string {
+func validateFrontendSections(spec *openapi3.T, frontends []*models.Frontend) []string {
 	var errors []string
 	for i := range frontends {
 		frontend := frontends[i]
-		errors = append(errors, validateFrontendBinds(spec, version, frontend)...)
-		errors = append(errors, validateFrontendRules(spec, version, frontend)...)
-		errors = append(errors, validateFrontendElements(spec, version, frontend)...)
+		errors = append(errors, validateFrontendBinds(spec, frontend)...)
+		errors = append(errors, validateFrontendRules(spec, frontend)...)
+		errors = append(errors, validateFrontendElements(spec, frontend)...)
 	}
 	return errors
 }
 
-// validateRuleSlice validates a slice of rules using generic type parameters.
-// TV32, TV31, TV30 are the version-specific API types for the rule.
-func validateRuleSlice[T any, TV32, TV31, TV30 any](spec *openapi3.T, version *Version, schemaName, parentName, ruleType string, rules []T) []string {
+// validateSlice validates a slice of models against the OpenAPI schema.
+func validateSlice[T any](spec *openapi3.T, schemaName, parentName, itemType string, items []T) []string {
 	var errors []string
-	for idx, rule := range rules {
-		if err := validateModel[TV32, TV31, TV30](spec, version, schemaName, rule); err != nil {
-			errors = append(errors, fmt.Sprintf("%s, %s %d: %v", parentName, ruleType, idx, err))
+	for idx, item := range items {
+		if err := validateModelOptimized(spec, schemaName, item); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, %s %d: %v", parentName, itemType, idx, err))
 		}
 	}
 	return errors
 }
 
 // validateBackendServers validates servers and server templates in a backend.
-func validateBackendServers(spec *openapi3.T, version *Version, backend *models.Backend) []string {
+func validateBackendServers(spec *openapi3.T, backend *models.Backend) []string {
 	// Pre-allocate with estimated capacity
 	errors := make([]string, 0, len(backend.Servers)+len(backend.ServerTemplates))
 	for serverName := range backend.Servers {
 		server := backend.Servers[serverName]
-		if err := validateModel[v32.Server, v31.Server, v30.Server](spec, version, "server", &server); err != nil {
+		if err := validateModelOptimized(spec, "server", &server); err != nil {
 			errors = append(errors, fmt.Sprintf("backend %s, server %s: %v", backend.Name, serverName, err))
 		}
 	}
 	for templateName := range backend.ServerTemplates {
 		template := backend.ServerTemplates[templateName]
-		if err := validateModel[v32.ServerTemplate, v31.ServerTemplate, v30.ServerTemplate](spec, version, "server_template", &template); err != nil {
+		if err := validateModelOptimized(spec, "server_template", &template); err != nil {
 			errors = append(errors, fmt.Sprintf("backend %s, server template %s: %v", backend.Name, templateName, err))
 		}
 	}
@@ -487,42 +406,41 @@ func validateBackendServers(spec *openapi3.T, version *Version, backend *models.
 }
 
 // validateBackendRules validates various rule types in a backend.
-func validateBackendRules(spec *openapi3.T, version *Version, backend *models.Backend) []string {
+func validateBackendRules(spec *openapi3.T, backend *models.Backend) []string {
 	var errors []string
 	name := "backend " + backend.Name
 
-	errors = append(errors, validateRuleSlice[*models.HTTPRequestRule, v32.HttpRequestRule, v31.HttpRequestRule, v30.HttpRequestRule](spec, version, "http_request_rule", name, "http-request rule", backend.HTTPRequestRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.HTTPResponseRule, v32.HttpResponseRule, v31.HttpResponseRule, v30.HttpResponseRule](spec, version, "http_response_rule", name, "http-response rule", backend.HTTPResponseRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.TCPRequestRule, v32.TcpRequestRule, v31.TcpRequestRule, v30.TcpRequestRule](spec, version, "tcp_request_rule", name, "tcp-request rule", backend.TCPRequestRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.TCPResponseRule, v32.TcpResponseRule, v31.TcpResponseRule, v30.TcpResponseRule](spec, version, "tcp_response_rule", name, "tcp-response rule", backend.TCPResponseRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.HTTPAfterResponseRule, v32.HttpAfterResponseRule, v31.HttpAfterResponseRule, v30.HttpAfterResponseRule](spec, version, "http_after_response_rule", name, "http-after-response rule", backend.HTTPAfterResponseRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.HTTPErrorRule, v32.HttpErrorRule, v31.HttpErrorRule, v30.HttpErrorRule](spec, version, "http_error_rule", name, "http-error rule", backend.HTTPErrorRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.ServerSwitchingRule, v32.ServerSwitchingRule, v31.ServerSwitchingRule, v30.ServerSwitchingRule](spec, version, "server_switching_rule", name, "server switching rule", backend.ServerSwitchingRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.StickRule, v32.StickRule, v31.StickRule, v30.StickRule](spec, version, "stick_rule", name, "stick rule", backend.StickRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_request_rule", name, "http-request rule", backend.HTTPRequestRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_response_rule", name, "http-response rule", backend.HTTPResponseRuleList)...)
+	errors = append(errors, validateSlice(spec, "tcp_request_rule", name, "tcp-request rule", backend.TCPRequestRuleList)...)
+	errors = append(errors, validateSlice(spec, "tcp_response_rule", name, "tcp-response rule", backend.TCPResponseRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_after_response_rule", name, "http-after-response rule", backend.HTTPAfterResponseRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_error_rule", name, "http-error rule", backend.HTTPErrorRuleList)...)
+	errors = append(errors, validateSlice(spec, "server_switching_rule", name, "server switching rule", backend.ServerSwitchingRuleList)...)
+	errors = append(errors, validateSlice(spec, "stick_rule", name, "stick rule", backend.StickRuleList)...)
 
-	errors = append(errors, validateACLList(spec, version, name, backend.ACLList)...)
-	errors = append(errors, validateFilterList(spec, version, name, backend.FilterList)...)
-	errors = append(errors, validateLogTargetList(spec, version, name, backend.LogTargetList)...)
+	errors = append(errors, validateSlice(spec, "acl", name, "ACL", backend.ACLList)...)
+	errors = append(errors, validateSlice(spec, "filter", name, "filter", backend.FilterList)...)
+	errors = append(errors, validateSlice(spec, "log_target", name, "log target", backend.LogTargetList)...)
 	return errors
 }
 
 // validateBackendChecks validates health checks in a backend.
-func validateBackendChecks(spec *openapi3.T, version *Version, backend *models.Backend) []string {
+func validateBackendChecks(spec *openapi3.T, backend *models.Backend) []string {
 	var errors []string
 	name := "backend " + backend.Name
 
-	errors = append(errors, validateRuleSlice[*models.HTTPCheck, v32.HttpCheck, v31.HttpCheck, v30.HttpCheck](spec, version, "http_check", name, "http-check", backend.HTTPCheckList)...)
-	errors = append(errors, validateRuleSlice[*models.TCPCheck, v32.TcpCheck, v31.TcpCheck, v30.TcpCheck](spec, version, "tcp_check", name, "tcp-check", backend.TCPCheckRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_check", name, "http-check", backend.HTTPCheckList)...)
+	errors = append(errors, validateSlice(spec, "tcp_check", name, "tcp-check", backend.TCPCheckRuleList)...)
 	return errors
 }
 
 // validateFrontendBinds validates bind configurations in a frontend.
-func validateFrontendBinds(spec *openapi3.T, version *Version, frontend *models.Frontend) []string {
-	// Pre-allocate with estimated capacity
+func validateFrontendBinds(spec *openapi3.T, frontend *models.Frontend) []string {
 	errors := make([]string, 0, len(frontend.Binds))
 	for bindName := range frontend.Binds {
 		bind := frontend.Binds[bindName]
-		if err := validateModel[v32.Bind, v31.Bind, v30.Bind](spec, version, "bind", &bind); err != nil {
+		if err := validateModelOptimized(spec, "bind", &bind); err != nil {
 			errors = append(errors, fmt.Sprintf("frontend %s, bind %s: %v", frontend.Name, bindName, err))
 		}
 	}
@@ -530,101 +448,30 @@ func validateFrontendBinds(spec *openapi3.T, version *Version, frontend *models.
 }
 
 // validateFrontendRules validates various rule types in a frontend.
-func validateFrontendRules(spec *openapi3.T, version *Version, frontend *models.Frontend) []string {
+func validateFrontendRules(spec *openapi3.T, frontend *models.Frontend) []string {
 	var errors []string
 	name := "frontend " + frontend.Name
 
-	errors = append(errors, validateRuleSlice[*models.HTTPRequestRule, v32.HttpRequestRule, v31.HttpRequestRule, v30.HttpRequestRule](spec, version, "http_request_rule", name, "http-request rule", frontend.HTTPRequestRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.HTTPResponseRule, v32.HttpResponseRule, v31.HttpResponseRule, v30.HttpResponseRule](spec, version, "http_response_rule", name, "http-response rule", frontend.HTTPResponseRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.TCPRequestRule, v32.TcpRequestRule, v31.TcpRequestRule, v30.TcpRequestRule](spec, version, "tcp_request_rule", name, "tcp-request rule", frontend.TCPRequestRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.HTTPAfterResponseRule, v32.HttpAfterResponseRule, v31.HttpAfterResponseRule, v30.HttpAfterResponseRule](spec, version, "http_after_response_rule", name, "http-after-response rule", frontend.HTTPAfterResponseRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.HTTPErrorRule, v32.HttpErrorRule, v31.HttpErrorRule, v30.HttpErrorRule](spec, version, "http_error_rule", name, "http-error rule", frontend.HTTPErrorRuleList)...)
-	errors = append(errors, validateRuleSlice[*models.BackendSwitchingRule, v32.BackendSwitchingRule, v31.BackendSwitchingRule, v30.BackendSwitchingRule](spec, version, "backend_switching_rule", name, "backend switching rule", frontend.BackendSwitchingRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_request_rule", name, "http-request rule", frontend.HTTPRequestRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_response_rule", name, "http-response rule", frontend.HTTPResponseRuleList)...)
+	errors = append(errors, validateSlice(spec, "tcp_request_rule", name, "tcp-request rule", frontend.TCPRequestRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_after_response_rule", name, "http-after-response rule", frontend.HTTPAfterResponseRuleList)...)
+	errors = append(errors, validateSlice(spec, "http_error_rule", name, "http-error rule", frontend.HTTPErrorRuleList)...)
+	errors = append(errors, validateSlice(spec, "backend_switching_rule", name, "backend switching rule", frontend.BackendSwitchingRuleList)...)
 
-	errors = append(errors, validateACLList(spec, version, name, frontend.ACLList)...)
+	errors = append(errors, validateSlice(spec, "acl", name, "ACL", frontend.ACLList)...)
 	return errors
 }
 
 // validateFrontendElements validates other frontend elements (filters, log targets, captures).
-func validateFrontendElements(spec *openapi3.T, version *Version, frontend *models.Frontend) []string {
+func validateFrontendElements(spec *openapi3.T, frontend *models.Frontend) []string {
 	var errors []string
 	name := "frontend " + frontend.Name
 
-	errors = append(errors, validateFilterList(spec, version, name, frontend.FilterList)...)
-	errors = append(errors, validateLogTargetList(spec, version, name, frontend.LogTargetList)...)
-	errors = append(errors, validateRuleSlice[*models.Capture, v32.Capture, v31.Capture, v30.Capture](spec, version, "capture", name, "capture", frontend.CaptureList)...)
+	errors = append(errors, validateSlice(spec, "filter", name, "filter", frontend.FilterList)...)
+	errors = append(errors, validateSlice(spec, "log_target", name, "log target", frontend.LogTargetList)...)
+	errors = append(errors, validateSlice(spec, "capture", name, "capture", frontend.CaptureList)...)
 	return errors
-}
-
-// validateACLList validates ACL configurations.
-func validateACLList(spec *openapi3.T, version *Version, parentName string, aclList []*models.ACL) []string {
-	var errors []string
-	for idx, acl := range aclList {
-		if err := validateModel[v32.Acl, v31.Acl, v30.Acl](spec, version, "acl", acl); err != nil {
-			errors = append(errors, fmt.Sprintf("%s, ACL %d: %v", parentName, idx, err))
-		}
-	}
-	return errors
-}
-
-// validateFilterList validates filter configurations.
-func validateFilterList(spec *openapi3.T, version *Version, parentName string, filterList []*models.Filter) []string {
-	var errors []string
-	for idx, filter := range filterList {
-		if err := validateModel[v32.Filter, v31.Filter, v30.Filter](spec, version, "filter", filter); err != nil {
-			errors = append(errors, fmt.Sprintf("%s, filter %d: %v", parentName, idx, err))
-		}
-	}
-	return errors
-}
-
-// validateLogTargetList validates log target configurations.
-func validateLogTargetList(spec *openapi3.T, version *Version, parentName string, logTargetList []*models.LogTarget) []string {
-	var errors []string
-	for idx, logTarget := range logTargetList {
-		if err := validateModel[v32.LogTarget, v31.LogTarget, v30.LogTarget](spec, version, "log_target", logTarget); err != nil {
-			errors = append(errors, fmt.Sprintf("%s, log target %d: %v", parentName, idx, err))
-		}
-	}
-	return errors
-}
-
-// cleanJSON removes null and empty values from JSON to match API behavior.
-// When Go marshals structs, it includes null fields for nil pointers.
-// The Dataplane API omits these fields, so we remove them before validation
-// to match the actual API request structure.
-func cleanJSON(data []byte) ([]byte, error) {
-	var obj map[string]interface{}
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return nil, err
-	}
-
-	cleaned := removeNullValues(obj)
-	return json.Marshal(cleaned)
-}
-
-// removeNullValues recursively removes null values from maps.
-// This ensures validation matches the actual API behavior where null fields are omitted.
-func removeNullValues(obj map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-	for k, v := range obj {
-		if v == nil {
-			continue // Skip null values
-		}
-
-		// Recursively clean nested maps
-		if nested, ok := v.(map[string]interface{}); ok {
-			cleaned := removeNullValues(nested)
-			if len(cleaned) > 0 {
-				result[k] = cleaned
-			}
-			continue
-		}
-
-		// Keep non-null values
-		result[k] = v
-	}
-	return result
 }
 
 // removeNullValuesInPlace recursively removes null values from a map in place.
@@ -645,6 +492,71 @@ func removeNullValuesInPlace(obj map[string]interface{}) {
 			}
 		}
 	}
+}
+
+// filterToSchemaProperties removes fields from obj that are not defined in the schema.
+// This replaces the typed conversion step (ConvertToVersioned) which filtered fields
+// by unmarshaling into version-specific structs. Working directly with maps is faster.
+//
+// The schema's Properties map contains all valid field names. Any field in obj that
+// doesn't appear in the schema is removed. This ensures validation only checks fields
+// that are valid for the target API version.
+func filterToSchemaProperties(obj map[string]interface{}, schema *openapi3.Schema) {
+	if schema == nil || schema.Properties == nil {
+		return
+	}
+
+	for key := range obj {
+		if _, exists := schema.Properties[key]; !exists {
+			delete(obj, key)
+		}
+	}
+}
+
+// validateModelOptimized validates a client-native model using an optimized pipeline.
+// Reduces JSON operations from 6 to 2 by working directly with maps and filtering
+// based on schema properties instead of using typed intermediate conversion.
+//
+// This function is used for high-volume validation (servers, binds) where the
+// allocation reduction is most impactful.
+//
+// The spec parameter should be the version-specific OpenAPI spec obtained via
+// getSwaggerForVersion(). The version information is encoded in the spec's schema
+// definitions, so no separate version parameter is needed.
+func validateModelOptimized(spec *openapi3.T, schemaName string, model interface{}) error {
+	// Step 1: Marshal model to JSON (1 JSON op)
+	jsonData, err := json.Marshal(model)
+	if err != nil {
+		return fmt.Errorf("failed to marshal model: %w", err)
+	}
+
+	// Step 2: Unmarshal to map (1 JSON op)
+	var obj map[string]interface{}
+	if err := json.Unmarshal(jsonData, &obj); err != nil {
+		return fmt.Errorf("failed to unmarshal model: %w", err)
+	}
+
+	// Step 3: Transform metadata in place (no JSON ops)
+	// This converts client-native flat metadata to API nested format
+	client.TransformMetadataForValidation(obj)
+
+	// Step 4: Get schema and filter to only schema properties (no JSON ops)
+	// This replaces ConvertToVersioned which filtered by unmarshaling to typed structs
+	schema, err := getResolvedSchema(spec, schemaName)
+	if err != nil {
+		return err
+	}
+	filterToSchemaProperties(obj, schema)
+
+	// Step 5: Remove null values in place (no JSON ops)
+	removeNullValuesInPlace(obj)
+
+	// Step 6: Validate against schema
+	if err := schema.VisitJSON(obj); err != nil {
+		return fmt.Errorf("schema validation failed: %w", err)
+	}
+
+	return nil
 }
 
 // resolveRef resolves a $ref reference path to its schema.

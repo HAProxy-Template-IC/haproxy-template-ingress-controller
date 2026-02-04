@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/getkin/kin-openapi/openapi3"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
 
@@ -554,184 +556,6 @@ backend dynamic-servers
 	}
 }
 
-// TestRemoveNullValues tests recursive null value removal from JSON maps.
-func TestRemoveNullValues(t *testing.T) {
-	tests := []struct {
-		name  string
-		input map[string]interface{}
-		want  map[string]interface{}
-	}{
-		{
-			name:  "empty map",
-			input: map[string]interface{}{},
-			want:  map[string]interface{}{},
-		},
-		{
-			name: "no null values",
-			input: map[string]interface{}{
-				"name": "test",
-				"port": 8080,
-			},
-			want: map[string]interface{}{
-				"name": "test",
-				"port": 8080,
-			},
-		},
-		{
-			name: "with null values",
-			input: map[string]interface{}{
-				"name":   "test",
-				"port":   8080,
-				"weight": nil,
-			},
-			want: map[string]interface{}{
-				"name": "test",
-				"port": 8080,
-			},
-		},
-		{
-			name: "nested map with nulls",
-			input: map[string]interface{}{
-				"server": map[string]interface{}{
-					"name":   "srv1",
-					"weight": nil,
-				},
-			},
-			want: map[string]interface{}{
-				"server": map[string]interface{}{
-					"name": "srv1",
-				},
-			},
-		},
-		{
-			name: "empty nested map removed",
-			input: map[string]interface{}{
-				"name": "test",
-				"options": map[string]interface{}{
-					"value": nil,
-				},
-			},
-			want: map[string]interface{}{
-				"name": "test",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := removeNullValues(tt.input)
-			// Compare via JSON marshaling to handle nested maps
-			gotJSON, _ := json.Marshal(got)
-			wantJSON, _ := json.Marshal(tt.want)
-			if !bytes.Equal(gotJSON, wantJSON) {
-				t.Errorf("removeNullValues() = %s, want %s", gotJSON, wantJSON)
-			}
-		})
-	}
-}
-
-// TestCleanJSON tests JSON cleaning functionality.
-func TestCleanJSON(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		want    string
-		wantErr bool
-	}{
-		{
-			name:  "valid JSON without nulls",
-			input: `{"name":"test","port":8080}`,
-			want:  `{"name":"test","port":8080}`,
-		},
-		{
-			name:  "JSON with null values",
-			input: `{"name":"test","weight":null}`,
-			want:  `{"name":"test"}`,
-		},
-		{
-			name:    "invalid JSON",
-			input:   `{"name":`,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := cleanJSON([]byte(tt.input))
-			assertCleanJSONResult(t, got, err, tt.want, tt.wantErr)
-		})
-	}
-}
-
-// assertCleanJSONResult validates the result of cleanJSON.
-func assertCleanJSONResult(t *testing.T, got []byte, err error, want string, wantErr bool) {
-	t.Helper()
-
-	if wantErr {
-		if err == nil {
-			t.Errorf("cleanJSON() expected error, got nil")
-		}
-		return
-	}
-	if err != nil {
-		t.Errorf("cleanJSON() unexpected error: %v", err)
-		return
-	}
-	// Compare by unmarshaling to avoid whitespace differences
-	var gotMap, wantMap map[string]interface{}
-	if err := json.Unmarshal(got, &gotMap); err != nil {
-		t.Errorf("cleanJSON() output is not valid JSON: %v", err)
-		return
-	}
-	if err := json.Unmarshal([]byte(want), &wantMap); err != nil {
-		t.Errorf("test setup error: want is not valid JSON: %v", err)
-		return
-	}
-	if len(gotMap) != len(wantMap) {
-		t.Errorf("cleanJSON() = %s, want %s", got, want)
-	}
-}
-
-// TestVersionMinor tests minor version extraction.
-func TestVersionMinor(t *testing.T) {
-	tests := []struct {
-		name    string
-		version *Version
-		want    int
-	}{
-		{
-			name:    "nil version",
-			version: nil,
-			want:    0,
-		},
-		{
-			name: "version 3.2",
-			version: &Version{
-				Major: 3,
-				Minor: 2,
-			},
-			want: 2,
-		},
-		{
-			name: "version 3.0",
-			version: &Version{
-				Major: 3,
-				Minor: 0,
-			},
-			want: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := versionMinor(tt.version)
-			if got != tt.want {
-				t.Errorf("versionMinor() = %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
 // TestValidationError_Error tests error message formatting.
 func TestValidationError_Error(t *testing.T) {
 	tests := []struct {
@@ -1233,67 +1057,6 @@ func TestRemoveNullValuesInPlace(t *testing.T) {
 	}
 }
 
-// TestPrepareForValidation tests the combined preparation function.
-// Note: prepareForValidation now receives API models with already-transformed metadata
-// (from client.ConvertToVersioned), so it only marshals/unmarshals and removes nulls.
-func TestPrepareForValidation(t *testing.T) {
-	// Test with a simple struct - metadata transformation is now done earlier in the flow
-	type testModel struct {
-		Name    string `json:"name"`
-		Address string `json:"address"`
-		Port    *int   `json:"port,omitempty"`
-	}
-
-	port := 8080
-	model := testModel{
-		Name:    "server1",
-		Address: "127.0.0.1",
-		Port:    &port,
-	}
-
-	prepared, err := prepareForValidation(model)
-	if err != nil {
-		t.Fatalf("prepareForValidation() error = %v", err)
-	}
-
-	// Verify basic fields are present
-	if prepared["name"] != "server1" {
-		t.Errorf("prepareForValidation() name = %v, want server1", prepared["name"])
-	}
-
-	if prepared["address"] != "127.0.0.1" {
-		t.Errorf("prepareForValidation() address = %v, want 127.0.0.1", prepared["address"])
-	}
-
-	// Verify port is present (non-nil pointer should be included)
-	if prepared["port"] != float64(8080) {
-		t.Errorf("prepareForValidation() port = %v, want 8080", prepared["port"])
-	}
-}
-
-// TestPrepareForValidation_RemovesNulls tests that nulls are removed.
-func TestPrepareForValidation_RemovesNulls(t *testing.T) {
-	type testModel struct {
-		Name    string  `json:"name"`
-		Address *string `json:"address"`
-	}
-
-	model := testModel{
-		Name:    "server1",
-		Address: nil,
-	}
-
-	prepared, err := prepareForValidation(model)
-	if err != nil {
-		t.Fatalf("prepareForValidation() error = %v", err)
-	}
-
-	// Verify null field was removed
-	if _, exists := prepared["address"]; exists {
-		t.Error("prepareForValidation() should remove null address field")
-	}
-}
-
 // =============================================================================
 // Validation Cache Tests
 // =============================================================================
@@ -1406,4 +1169,206 @@ func TestValidationCacheMechanism(t *testing.T) {
 	if isValidationCached(configHash, auxHash, "different") {
 		t.Error("isValidationCached() should return false for different version")
 	}
+}
+
+// =============================================================================
+// Optimized Validation Pipeline Tests
+// =============================================================================
+
+// TestFilterToSchemaProperties tests the schema-based field filtering.
+func TestFilterToSchemaProperties(t *testing.T) {
+	tests := []struct {
+		name     string
+		obj      map[string]interface{}
+		props    []string // schema property names
+		expected map[string]interface{}
+	}{
+		{
+			name:     "filters extra fields",
+			obj:      map[string]interface{}{"name": "test", "extra": "value", "address": "127.0.0.1"},
+			props:    []string{"name", "address"},
+			expected: map[string]interface{}{"name": "test", "address": "127.0.0.1"},
+		},
+		{
+			name:     "keeps all valid fields",
+			obj:      map[string]interface{}{"name": "test", "address": "127.0.0.1"},
+			props:    []string{"name", "address", "port"},
+			expected: map[string]interface{}{"name": "test", "address": "127.0.0.1"},
+		},
+		{
+			name:     "removes all fields if none in schema",
+			obj:      map[string]interface{}{"foo": "bar", "baz": "qux"},
+			props:    []string{"name", "address"},
+			expected: map[string]interface{}{},
+		},
+		{
+			name:     "handles empty object",
+			obj:      map[string]interface{}{},
+			props:    []string{"name"},
+			expected: map[string]interface{}{},
+		},
+		{
+			name:     "handles empty schema",
+			obj:      map[string]interface{}{"name": "test"},
+			props:    []string{},
+			expected: map[string]interface{}{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Build a mock schema with the given properties
+			schema := buildMockSchema(tt.props)
+
+			// Apply filter
+			filterToSchemaProperties(tt.obj, schema)
+
+			// Verify result
+			if len(tt.obj) != len(tt.expected) {
+				t.Errorf("filterToSchemaProperties() result has %d keys, want %d", len(tt.obj), len(tt.expected))
+			}
+
+			for key, expectedValue := range tt.expected {
+				if actualValue, exists := tt.obj[key]; !exists {
+					t.Errorf("filterToSchemaProperties() missing expected key %q", key)
+				} else if actualValue != expectedValue {
+					t.Errorf("filterToSchemaProperties() %s = %v, want %v", key, actualValue, expectedValue)
+				}
+			}
+		})
+	}
+}
+
+// TestFilterToSchemaProperties_NilSchema tests that nil schema is handled safely.
+func TestFilterToSchemaProperties_NilSchema(t *testing.T) {
+	obj := map[string]interface{}{"name": "test", "extra": "value"}
+
+	// Should not panic with nil schema
+	filterToSchemaProperties(obj, nil)
+
+	// Object should be unchanged
+	if len(obj) != 2 {
+		t.Error("filterToSchemaProperties(nil) should not modify object")
+	}
+}
+
+// TestValidateModelOptimized_ValidServer tests validation of a valid server model.
+func TestValidateModelOptimized_ValidServer(t *testing.T) {
+	spec, err := getSwaggerForVersion(&Version{Major: 3, Minor: 2})
+	if err != nil {
+		t.Fatalf("Failed to get OpenAPI spec: %v", err)
+	}
+
+	// Valid server model (using models.Server structure)
+	type testServer struct {
+		Name    string `json:"name"`
+		Address string `json:"address"`
+		Port    *int64 `json:"port"`
+	}
+
+	port := int64(8080)
+	server := &testServer{
+		Name:    "server1",
+		Address: "127.0.0.1",
+		Port:    &port,
+	}
+
+	err = validateModelOptimized(spec, "server", server)
+	if err != nil {
+		t.Errorf("validateModelOptimized() unexpected error: %v", err)
+	}
+}
+
+// TestValidateModelOptimized_InvalidSchemaName tests that invalid schema names return errors.
+func TestValidateModelOptimized_InvalidSchemaName(t *testing.T) {
+	spec, err := getSwaggerForVersion(&Version{Major: 3, Minor: 2})
+	if err != nil {
+		t.Fatalf("Failed to get OpenAPI spec: %v", err)
+	}
+
+	type testModel struct {
+		Name string `json:"name"`
+	}
+
+	model := &testModel{Name: "test"}
+
+	// Should error because schema doesn't exist
+	err = validateModelOptimized(spec, "nonexistent_schema_xyz", model)
+	if err == nil {
+		t.Error("validateModelOptimized() expected error for nonexistent schema, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("validateModelOptimized() error should mention 'not found': %v", err)
+	}
+}
+
+// TestValidateModelOptimized_FiltersExtraFields tests that fields not in schema are filtered.
+func TestValidateModelOptimized_FiltersExtraFields(t *testing.T) {
+	spec, err := getSwaggerForVersion(&Version{Major: 3, Minor: 2})
+	if err != nil {
+		t.Fatalf("Failed to get OpenAPI spec: %v", err)
+	}
+
+	// Model with extra fields that don't exist in server schema
+	type testServerWithExtra struct {
+		Name          string `json:"name"`
+		Address       string `json:"address"`
+		NonExistField string `json:"non_exist_field_xyz"`
+	}
+
+	server := &testServerWithExtra{
+		Name:          "server1",
+		Address:       "127.0.0.1",
+		NonExistField: "should be filtered",
+	}
+
+	// Should not error - extra fields are filtered out
+	err = validateModelOptimized(spec, "server", server)
+	if err != nil {
+		t.Errorf("validateModelOptimized() should filter extra fields, not error: %v", err)
+	}
+}
+
+// TestValidateModelOptimized_TransformsMetadata tests metadata transformation.
+func TestValidateModelOptimized_TransformsMetadata(t *testing.T) {
+	spec, err := getSwaggerForVersion(&Version{Major: 3, Minor: 2})
+	if err != nil {
+		t.Fatalf("Failed to get OpenAPI spec: %v", err)
+	}
+
+	// Server with metadata in client-native flat format
+	type testServerWithMetadata struct {
+		Name     string                 `json:"name"`
+		Address  string                 `json:"address"`
+		Metadata map[string]interface{} `json:"metadata"`
+	}
+
+	server := &testServerWithMetadata{
+		Name:    "server1",
+		Address: "127.0.0.1",
+		Metadata: map[string]interface{}{
+			"comment": "test-comment",
+		},
+	}
+
+	// Should not error - metadata should be transformed to nested format
+	err = validateModelOptimized(spec, "server", server)
+	if err != nil {
+		t.Errorf("validateModelOptimized() should transform metadata: %v", err)
+	}
+}
+
+// buildMockSchema creates a mock OpenAPI schema with the given property names.
+func buildMockSchema(propNames []string) *openapi3.Schema {
+	schema := &openapi3.Schema{
+		Properties: make(openapi3.Schemas),
+	}
+
+	for _, name := range propNames {
+		schema.Properties[name] = &openapi3.SchemaRef{
+			Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
+		}
+	}
+
+	return schema
 }
