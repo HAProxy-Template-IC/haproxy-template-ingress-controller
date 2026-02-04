@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
 )
@@ -70,6 +71,10 @@ type Metrics struct {
 	LeaderElectionIsLeader            prometheus.Gauge
 	LeaderElectionTransitionsTotal    prometheus.Counter
 	LeaderElectionTimeAsLeaderSeconds prometheus.Counter
+
+	// Parser cache metrics
+	ParserCacheHits   prometheus.Counter
+	ParserCacheMisses prometheus.Counter
 }
 
 // New creates all controller metrics and registers them with the provided registry.
@@ -250,6 +255,18 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"haptic_leader_election_time_as_leader_seconds_total",
 			"Cumulative time spent as leader in seconds",
 		),
+
+		// Parser cache metrics
+		ParserCacheHits: pkgmetrics.NewCounter(
+			registry,
+			"haptic_parser_cache_hits_total",
+			"Total number of parser cache hits",
+		),
+		ParserCacheMisses: pkgmetrics.NewCounter(
+			registry,
+			"haptic_parser_cache_misses_total",
+			"Total number of parser cache misses",
+		),
 	}
 }
 
@@ -408,4 +425,38 @@ func (m *Metrics) SetObservabilityDrops(count uint64) {
 //   - seconds: Time spent waiting in queue (use time.Duration.Seconds())
 func (m *Metrics) RecordQueueWait(phase string, seconds float64) {
 	m.ReconciliationQueueWait.WithLabelValues(phase).Observe(seconds)
+}
+
+// UpdateParserCacheStats updates parser cache hit/miss counters from cache statistics.
+// This should be called periodically to sync Prometheus metrics with the parser cache stats.
+//
+// Parameters:
+//   - hits: Total cache hits from parser.CacheStats()
+//   - misses: Total cache misses from parser.CacheStats()
+func (m *Metrics) UpdateParserCacheStats(hits, misses int64) {
+	// Since these are counters, we need to track the delta since last update
+	// The parser cache tracks cumulative stats, so we record the current totals
+	// Prometheus counters can handle this via Add() with the delta
+	currentHits := m.getCounterValue(m.ParserCacheHits)
+	currentMisses := m.getCounterValue(m.ParserCacheMisses)
+
+	if float64(hits) > currentHits {
+		m.ParserCacheHits.Add(float64(hits) - currentHits)
+	}
+	if float64(misses) > currentMisses {
+		m.ParserCacheMisses.Add(float64(misses) - currentMisses)
+	}
+}
+
+// getCounterValue extracts the current value from a prometheus Counter.
+// This is used for calculating deltas when syncing from external counters.
+func (m *Metrics) getCounterValue(counter prometheus.Counter) float64 {
+	var metric dto.Metric
+	if err := counter.Write(&metric); err != nil {
+		return 0
+	}
+	if metric.Counter != nil && metric.Counter.Value != nil {
+		return *metric.Counter.Value
+	}
+	return 0
 }

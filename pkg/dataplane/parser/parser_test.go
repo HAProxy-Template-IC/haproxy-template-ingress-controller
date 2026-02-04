@@ -1253,6 +1253,86 @@ backend web2
 	}
 }
 
+// TestParseFromString_LRU2Cache verifies LRU(2) cache behavior - both configs stay cached.
+// This is critical for sync operations that alternate between parsing current and desired configs.
+func TestParseFromString_LRU2Cache(t *testing.T) {
+	config1 := `
+global
+    daemon
+
+backend web1
+    server s1 127.0.0.1:8080
+`
+
+	config2 := `
+global
+    daemon
+
+backend web2
+    server s2 127.0.0.1:8081
+`
+
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// Get initial cache stats
+	hitsBefore, _ := CacheStats()
+
+	// Parse first config (miss)
+	conf1a, err := p.ParseFromString(config1)
+	if err != nil {
+		t.Fatalf("ParseFromString(config1) failed: %v", err)
+	}
+
+	// Parse second config (miss) - with LRU(2), this should NOT evict config1
+	conf2a, err := p.ParseFromString(config2)
+	if err != nil {
+		t.Fatalf("ParseFromString(config2) failed: %v", err)
+	}
+
+	// Get stats after initial parses (should be 2 misses)
+	hitsAfterInitial, _ := CacheStats()
+	initialHits := hitsAfterInitial - hitsBefore
+
+	// Parse first config again - should hit cache (this would fail with single-entry cache)
+	conf1b, err := p.ParseFromString(config1)
+	if err != nil {
+		t.Fatalf("ParseFromString(config1) second time failed: %v", err)
+	}
+
+	// Parse second config again - should also hit cache
+	conf2b, err := p.ParseFromString(config2)
+	if err != nil {
+		t.Fatalf("ParseFromString(config2) second time failed: %v", err)
+	}
+
+	// Get final stats
+	hitsAfterFinal, _ := CacheStats()
+	additionalHits := hitsAfterFinal - hitsAfterInitial
+
+	// Verify cache hits - initial parses should be misses (0 or very low hits)
+	// and subsequent parses should be hits (at least 2)
+	if additionalHits < 2 {
+		t.Errorf("Expected at least 2 cache hits from re-parsing, got %d (initial: %d, final: %d)",
+			additionalHits, initialHits, hitsAfterFinal-hitsBefore)
+	}
+
+	// Verify we got the same pointers back (cache hits return same objects)
+	if conf1a != conf1b {
+		t.Error("Expected config1 re-parse to return cached pointer")
+	}
+	if conf2a != conf2b {
+		t.Error("Expected config2 re-parse to return cached pointer")
+	}
+
+	// Verify the two configs are different from each other
+	if conf1a == conf2a {
+		t.Error("Expected config1 and config2 to be different")
+	}
+}
+
 // TestStructuredConfig_AllFieldsPresent verifies all StructuredConfig fields can be populated.
 func TestStructuredConfig_AllFieldsPresent(t *testing.T) {
 	// Create instance and verify all fields are accessible

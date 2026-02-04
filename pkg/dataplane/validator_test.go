@@ -1293,3 +1293,117 @@ func TestPrepareForValidation_RemovesNulls(t *testing.T) {
 		t.Error("prepareForValidation() should remove null address field")
 	}
 }
+
+// =============================================================================
+// Validation Cache Tests
+// =============================================================================
+
+// TestValidationCacheHelpers tests the validation cache helper functions.
+func TestValidationCacheHelpers(t *testing.T) {
+	t.Run("hashValidationInput", func(t *testing.T) {
+		hash1 := hashValidationInput("config1")
+		hash2 := hashValidationInput("config1")
+		hash3 := hashValidationInput("config2")
+
+		// Same input should produce same hash
+		if hash1 != hash2 {
+			t.Error("hashValidationInput() should produce same hash for same input")
+		}
+
+		// Different input should produce different hash
+		if hash1 == hash3 {
+			t.Error("hashValidationInput() should produce different hash for different input")
+		}
+	})
+
+	t.Run("hashAuxFiles", func(t *testing.T) {
+		// nil aux files should return empty string
+		if hashAuxFiles(nil) != "" {
+			t.Error("hashAuxFiles(nil) should return empty string")
+		}
+
+		aux1 := &AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "test.map", Content: "content1"}},
+		}
+		aux2 := &AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "test.map", Content: "content1"}},
+		}
+		aux3 := &AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "test.map", Content: "content2"}},
+		}
+
+		hash1 := hashAuxFiles(aux1)
+		hash2 := hashAuxFiles(aux2)
+		hash3 := hashAuxFiles(aux3)
+
+		// Same input should produce same hash
+		if hash1 != hash2 {
+			t.Error("hashAuxFiles() should produce same hash for same input")
+		}
+
+		// Different input should produce different hash
+		if hash1 == hash3 {
+			t.Error("hashAuxFiles() should produce different hash for different input")
+		}
+	})
+
+	t.Run("hashVersion", func(t *testing.T) {
+		// nil version
+		if hashVersion(nil) != "nil" {
+			t.Error("hashVersion(nil) should return 'nil'")
+		}
+
+		v30 := &Version{Major: 3, Minor: 0}
+		v31 := &Version{Major: 3, Minor: 1}
+
+		if hashVersion(v30) != "3.0" {
+			t.Errorf("hashVersion(3.0) = %s, want '3.0'", hashVersion(v30))
+		}
+
+		if hashVersion(v31) != "3.1" {
+			t.Errorf("hashVersion(3.1) = %s, want '3.1'", hashVersion(v31))
+		}
+	})
+}
+
+// TestValidationCacheMechanism tests the cache check and store functions.
+func TestValidationCacheMechanism(t *testing.T) {
+	// Clear cache state before test
+	validationCache.mu.Lock()
+	validationCache.lastConfigHash = ""
+	validationCache.lastAuxHash = ""
+	validationCache.lastVersionHash = ""
+	validationCache.mu.Unlock()
+
+	configHash := "config123"
+	auxHash := "aux456"
+	versionHash := "3.2"
+
+	// Initially should not be cached
+	if isValidationCached(configHash, auxHash, versionHash) {
+		t.Error("isValidationCached() should return false for uncached config")
+	}
+
+	// Cache the result
+	cacheValidationResult(configHash, auxHash, versionHash)
+
+	// Now should be cached
+	if !isValidationCached(configHash, auxHash, versionHash) {
+		t.Error("isValidationCached() should return true for cached config")
+	}
+
+	// Different config should not hit cache
+	if isValidationCached("different", auxHash, versionHash) {
+		t.Error("isValidationCached() should return false for different config")
+	}
+
+	// Different aux should not hit cache
+	if isValidationCached(configHash, "different", versionHash) {
+		t.Error("isValidationCached() should return false for different aux")
+	}
+
+	// Different version should not hit cache
+	if isValidationCached(configHash, auxHash, "different") {
+		t.Error("isValidationCached() should return false for different version")
+	}
+}

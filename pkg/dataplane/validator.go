@@ -15,6 +15,8 @@
 package dataplane
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -63,6 +65,18 @@ var (
 	resolvedSchemaCacheV32 = make(map[string]*openapi3.Schema)
 	resolvedSchemaMu       sync.RWMutex
 )
+
+// validationResultCache caches the result of the last successful validation.
+// Since validation is expensive (parsing + schema validation + haproxy -c),
+// we skip it when the same config is validated again.
+type validationResultCache struct {
+	mu              sync.RWMutex
+	lastConfigHash  string
+	lastAuxHash     string
+	lastVersionHash string
+}
+
+var validationCache = &validationResultCache{}
 
 // =============================================================================
 // Version-aware Model Conversion (using centralized client converters)
@@ -172,6 +186,11 @@ type ValidationPaths struct {
 // The validation writes files to the directories specified in paths. Callers must ensure
 // that paths are isolated (e.g., per-worker temp directories) to allow parallel execution.
 //
+// Validation result caching: If the same config (main + aux files + version) has been
+// successfully validated before, the cached result is returned immediately. This is safe
+// because HAProxy config validation is deterministic - the same inputs always produce
+// the same result.
+//
 // Parameters:
 //   - mainConfig: The rendered HAProxy configuration (haproxy.cfg content)
 //   - auxFiles: All auxiliary files (maps, certificates, general files)
@@ -185,6 +204,16 @@ type ValidationPaths struct {
 //   - nil if validation succeeds
 //   - ValidationError with phase information if validation fails
 func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) error {
+	// Check validation cache first - skip validation if same config already validated
+	configHash := hashValidationInput(mainConfig)
+	auxHash := hashAuxFiles(auxFiles)
+	versionHash := hashVersion(version)
+
+	if isValidationCached(configHash, auxHash, versionHash) {
+		slog.Debug("validation cache hit, skipping validation")
+		return nil
+	}
+
 	// Timing variables for phase breakdown
 	var syntaxMs, schemaMs, semanticMs int64
 	startTime := time.Now()
@@ -231,6 +260,9 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 		"schema_ms", schemaMs,
 		"semantic_ms", semanticMs,
 	)
+
+	// Cache successful validation result for future checks
+	cacheValidationResult(configHash, auxHash, versionHash)
 
 	return nil
 }
@@ -1165,4 +1197,85 @@ func extractConfigContext(alertLine string, configLines []string) string {
 	}
 
 	return strings.Join(contextLines, "\n")
+}
+
+// =============================================================================
+// Validation Result Caching
+// =============================================================================
+
+// hashValidationInput computes a SHA256 hash of the main config content.
+func hashValidationInput(config string) string {
+	h := sha256.Sum256([]byte(config))
+	return hex.EncodeToString(h[:])
+}
+
+// hashAuxFiles computes a combined hash of all auxiliary files.
+// The hash includes file paths and contents to detect any changes.
+func hashAuxFiles(auxFiles *AuxiliaryFiles) string {
+	if auxFiles == nil {
+		return ""
+	}
+
+	h := sha256.New()
+
+	// Hash map files
+	for _, f := range auxFiles.MapFiles {
+		h.Write([]byte(f.Path))
+		h.Write([]byte(f.Content))
+	}
+
+	// Hash general files
+	for _, f := range auxFiles.GeneralFiles {
+		h.Write([]byte(f.Path))
+		h.Write([]byte(f.Content))
+	}
+
+	// Hash SSL certificates
+	for _, f := range auxFiles.SSLCertificates {
+		h.Write([]byte(f.Path))
+		h.Write([]byte(f.Content))
+	}
+
+	// Hash SSL CA files
+	for _, f := range auxFiles.SSLCaFiles {
+		h.Write([]byte(f.Path))
+		h.Write([]byte(f.Content))
+	}
+
+	// Hash CRT-list files
+	for _, f := range auxFiles.CRTListFiles {
+		h.Write([]byte(f.Path))
+		h.Write([]byte(f.Content))
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// hashVersion computes a hash string for the version to include in cache key.
+func hashVersion(version *Version) string {
+	if version == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("%d.%d", version.Major, version.Minor)
+}
+
+// isValidationCached checks if the given config combination was already validated successfully.
+func isValidationCached(configHash, auxHash, versionHash string) bool {
+	validationCache.mu.RLock()
+	defer validationCache.mu.RUnlock()
+
+	return validationCache.lastConfigHash == configHash &&
+		validationCache.lastAuxHash == auxHash &&
+		validationCache.lastVersionHash == versionHash &&
+		validationCache.lastConfigHash != "" // Ensure cache is not empty
+}
+
+// cacheValidationResult stores the successful validation result for future checks.
+func cacheValidationResult(configHash, auxHash, versionHash string) {
+	validationCache.mu.Lock()
+	defer validationCache.mu.Unlock()
+
+	validationCache.lastConfigHash = configHash
+	validationCache.lastAuxHash = auxHash
+	validationCache.lastVersionHash = versionHash
 }
