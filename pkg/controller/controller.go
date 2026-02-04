@@ -76,6 +76,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
+	informers "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
@@ -1108,7 +1109,12 @@ func createReconciliationComponents(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CRD clientset: %w", err)
 	}
-	purePublisher := configpublisher.New(k8sClient.Clientset(), crdClientset, logger)
+
+	// Create publisher with informer-backed listers for cached reads
+	purePublisher, err := createConfigPublisher(crdClientset, k8sClient, logger)
+	if err != nil {
+		return nil, err
+	}
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, bus, logger)
 
 	// Create Status Updater (updates HAProxyTemplateConfig CRD status with validation results)
@@ -1150,6 +1156,49 @@ func createReconciliationComponents(
 		proposalValidator:   proposalValidatorComponent,
 		capabilities:        capabilities,
 	}, nil
+}
+
+// createConfigPublisher creates a config publisher with informer-backed listers for cached reads.
+// This significantly reduces API calls by checking cached state before doing status updates.
+func createConfigPublisher(crdClientset versioned.Interface, k8sClient *client.Client, logger *slog.Logger) (*configpublisher.Publisher, error) {
+	// Create shared informer factory for HAProxy CRDs
+	// The informers provide cached reads for status updates, significantly reducing API calls.
+	// We use a 30-second resync period to keep the cache reasonably fresh while minimizing overhead.
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		crdClientset,
+		30*time.Second,
+		informers.WithNamespace(k8sClient.Namespace()),
+	)
+
+	// Initialize informers by calling Lister() - this creates the underlying SharedIndexInformer
+	// The informers won't start watching until Start() is called below
+	haproxyInformers := informerFactory.HaproxyTemplateIC().V1alpha1()
+	listers := &configpublisher.Listers{
+		MapFiles:     haproxyInformers.HAProxyMapFiles().Lister(),
+		GeneralFiles: haproxyInformers.HAProxyGeneralFiles().Lister(),
+		CRTListFiles: haproxyInformers.HAProxyCRTListFiles().Lister(),
+		HAProxyCfgs:  haproxyInformers.HAProxyCfgs().Lister(),
+	}
+
+	// Start informers in background - they'll begin watching and populating the cache
+	// The factory tracks all created informers and starts them together
+	stopCh := make(chan struct{})
+	informerFactory.Start(stopCh)
+
+	// Wait for cache to sync before creating publisher
+	// This ensures listers have initial data before first use
+	logger.Debug("waiting for HAProxy CRD informer caches to sync")
+	syncResult := informerFactory.WaitForCacheSync(stopCh)
+	for informerType, synced := range syncResult {
+		if !synced {
+			close(stopCh)
+			return nil, fmt.Errorf("informer cache sync failed for %v", informerType)
+		}
+	}
+	logger.Debug("HAProxy CRD informer caches synced")
+
+	// Create publisher with listers for cached reads
+	return configpublisher.NewWithListers(k8sClient.Clientset(), crdClientset, listers, logger), nil
 }
 
 // startReconciliationComponents starts all-replica reconciliation components using the lifecycle registry.

@@ -41,10 +41,18 @@ import (
 // This is a pure component (no EventBus dependency) that creates and updates
 // HAProxyCfg, HAProxyMapFile, and Secret resources to expose the
 // actual runtime configuration applied to HAProxy pods.
+//
+// When listers are provided, the Publisher uses informer-backed caches for
+// initial reads, significantly reducing API calls for status updates.
 type Publisher struct {
 	k8sClient kubernetes.Interface
 	crdClient versioned.Interface
 	logger    *slog.Logger
+
+	// listers provide informer-backed cached reads (optional, may be nil).
+	// When set, status updates first check the cache to determine if an update
+	// is needed, avoiding unnecessary API GETs.
+	listers *Listers
 }
 
 // New creates a new Publisher instance.
@@ -52,6 +60,17 @@ func New(k8sClient kubernetes.Interface, crdClient versioned.Interface, logger *
 	return &Publisher{
 		k8sClient: k8sClient,
 		crdClient: crdClient,
+		logger:    logger,
+	}
+}
+
+// NewWithListers creates a Publisher with informer-backed listers for cached reads.
+// This significantly reduces API calls by checking the cache before doing status updates.
+func NewWithListers(k8sClient kubernetes.Interface, crdClient versioned.Interface, listers *Listers, logger *slog.Logger) *Publisher {
+	return &Publisher{
+		k8sClient: k8sClient,
+		crdClient: crdClient,
+		listers:   listers,
 		logger:    logger,
 	}
 }
@@ -188,14 +207,43 @@ func (p *Publisher) publishAuxiliaryFiles(
 // Uses retry-on-conflict to handle concurrent status updates from multiple
 // reconciliation cycles, which can cause 409 Conflict errors due to Kubernetes
 // optimistic concurrency control.
+//
+// When listers are available, first checks the cache to determine if an update
+// is needed, avoiding unnecessary API GETs in most cases.
 func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *DeploymentStatusUpdate) error {
 	p.logger.Debug("updating deployment status",
 		"runtimeConfig", update.RuntimeConfigName,
 		"pod", update.PodName,
 	)
 
-	// Track auxiliary files for later updates (populated inside retry loop)
+	// Track auxiliary files for later updates (populated inside retry loop or from cache)
 	var auxFiles *haproxyv1alpha1.AuxiliaryFileReferences
+
+	// Try cached read first (if listers available) to check if update is needed
+	if p.listers != nil && p.listers.HAProxyCfgs != nil {
+		cached, err := p.listers.HAProxyCfgs.HAProxyCfgs(update.RuntimeConfigNamespace).Get(update.RuntimeConfigName)
+		if err == nil {
+			// Check if update is needed using cached data
+			podStatus := buildPodStatus(update)
+			newStatuses := updateOrAppendPodStatus(
+				copyPodStatuses(cached.Status.DeployedToPods),
+				&podStatus,
+				update,
+			)
+
+			// Skip HAProxyCfg update if no actual change needed
+			if podStatusesEqual(cached.Status.DeployedToPods, newStatuses) {
+				// Still need to update auxiliary files, so get the reference from cache
+				auxFiles = cached.Status.AuxiliaryFiles
+				auxPodStatus := buildPodStatus(update)
+				p.updateAuxiliaryFileDeploymentStatus(ctx, auxFiles, &auxPodStatus)
+				return nil
+			}
+			// Change is needed - still cache the auxFiles reference for use after update
+			auxFiles = cached.Status.AuxiliaryFiles
+		}
+		// On cache miss or error, fall through to API read
+	}
 
 	// Update HAProxyCfg status with retry-on-conflict
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -885,7 +933,17 @@ func (p *Publisher) updateCreatedStatus(ctx context.Context, req *PublishRequest
 }
 
 // updateRuntimeConfig updates an existing HAProxyCfg resource.
+// Skips the update if the checksum is unchanged to avoid unnecessary API calls.
 func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest, existing, runtimeConfig *haproxyv1alpha1.HAProxyCfg) (*haproxyv1alpha1.HAProxyCfg, error) {
+	// Skip update if checksum hasn't changed (content is identical)
+	if existing.Spec.Checksum == runtimeConfig.Spec.Checksum {
+		p.logger.Debug("skipping HAProxyCfg spec update, checksum unchanged",
+			"name", existing.Name,
+			"checksum", existing.Spec.Checksum,
+		)
+		return existing, nil
+	}
+
 	// Update existing resource
 	existing.Spec = runtimeConfig.Spec
 	existing.Labels = runtimeConfig.Labels
@@ -1374,7 +1432,33 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 // updateMapFileDeploymentStatus updates a map file's deployment status.
 // Uses retry-on-conflict to handle concurrent updates.
 // Skips the UpdateStatus API call if the status would not actually change.
+//
+// When listers are available, first checks the cache to determine if an update
+// is needed, avoiding unnecessary API GETs in most cases.
 func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
+	// Try cached read first (if listers available) to check if update is needed
+	if p.listers != nil && p.listers.MapFiles != nil {
+		cached, err := p.listers.MapFiles.HAProxyMapFiles(namespace).Get(name)
+		if err == nil {
+			// Check if update is needed using cached data
+			existingStatus := findPodStatus(cached.Status.DeployedToPods, podStatus.PodName)
+			auxPodStatus := buildAuxiliaryFilePodStatus(
+				podStatus.PodName,
+				cached.Spec.Checksum,
+				existingStatus,
+				podStatus.DeployedAt.Time,
+			)
+			newStatuses := addOrUpdatePodStatus(copyPodStatuses(cached.Status.DeployedToPods), &auxPodStatus)
+
+			// Skip if no actual change needed (most common case)
+			if podStatusesEqual(cached.Status.DeployedToPods, newStatuses) {
+				return nil
+			}
+		}
+		// On cache miss or error, fall through to API read
+	}
+
+	// Need to update - do retry-on-conflict with fresh API reads
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		mapFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyMapFiles(namespace).
@@ -1421,7 +1505,33 @@ func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace
 // updateGeneralFileDeploymentStatus updates a general file's deployment status.
 // Uses retry-on-conflict to handle concurrent updates.
 // Skips the UpdateStatus API call if the status would not actually change.
+//
+// When listers are available, first checks the cache to determine if an update
+// is needed, avoiding unnecessary API GETs in most cases.
 func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
+	// Try cached read first (if listers available) to check if update is needed
+	if p.listers != nil && p.listers.GeneralFiles != nil {
+		cached, err := p.listers.GeneralFiles.HAProxyGeneralFiles(namespace).Get(name)
+		if err == nil {
+			// Check if update is needed using cached data
+			existingStatus := findPodStatus(cached.Status.DeployedToPods, podStatus.PodName)
+			auxPodStatus := buildAuxiliaryFilePodStatus(
+				podStatus.PodName,
+				cached.Spec.Checksum,
+				existingStatus,
+				podStatus.DeployedAt.Time,
+			)
+			newStatuses := addOrUpdatePodStatus(copyPodStatuses(cached.Status.DeployedToPods), &auxPodStatus)
+
+			// Skip if no actual change needed (most common case)
+			if podStatusesEqual(cached.Status.DeployedToPods, newStatuses) {
+				return nil
+			}
+		}
+		// On cache miss or error, fall through to API read
+	}
+
+	// Need to update - do retry-on-conflict with fresh API reads
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		generalFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyGeneralFiles(namespace).
@@ -1468,7 +1578,33 @@ func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, names
 // updateCRTListFileDeploymentStatus updates a crt-list file's deployment status.
 // Uses retry-on-conflict to handle concurrent updates.
 // Skips the UpdateStatus API call if the status would not actually change.
+//
+// When listers are available, first checks the cache to determine if an update
+// is needed, avoiding unnecessary API GETs in most cases.
 func (p *Publisher) updateCRTListFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
+	// Try cached read first (if listers available) to check if update is needed
+	if p.listers != nil && p.listers.CRTListFiles != nil {
+		cached, err := p.listers.CRTListFiles.HAProxyCRTListFiles(namespace).Get(name)
+		if err == nil {
+			// Check if update is needed using cached data
+			existingStatus := findPodStatus(cached.Status.DeployedToPods, podStatus.PodName)
+			auxPodStatus := buildAuxiliaryFilePodStatus(
+				podStatus.PodName,
+				cached.Spec.Checksum,
+				existingStatus,
+				podStatus.DeployedAt.Time,
+			)
+			newStatuses := addOrUpdatePodStatus(copyPodStatuses(cached.Status.DeployedToPods), &auxPodStatus)
+
+			// Skip if no actual change needed (most common case)
+			if podStatusesEqual(cached.Status.DeployedToPods, newStatuses) {
+				return nil
+			}
+		}
+		// On cache miss or error, fall through to API read
+	}
+
+	// Need to update - do retry-on-conflict with fresh API reads
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		crtListFile, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyCRTListFiles(namespace).

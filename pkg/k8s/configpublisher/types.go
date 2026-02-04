@@ -18,9 +18,19 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	listersv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/generated/listers/haproxytemplate/v1alpha1"
 
 	"k8s.io/apimachinery/pkg/types"
 )
+
+// Listers holds the informer-backed listers for cached reads.
+// These avoid direct API calls when checking if updates are needed.
+type Listers struct {
+	MapFiles     listersv1alpha1.HAProxyMapFileLister
+	GeneralFiles listersv1alpha1.HAProxyGeneralFileLister
+	CRTListFiles listersv1alpha1.HAProxyCRTListFileLister
+	HAProxyCfgs  listersv1alpha1.HAProxyCfgLister
+}
 
 // AuxiliaryFiles contains all auxiliary files (maps, certificates, general files, crt-lists).
 type AuxiliaryFiles struct {
