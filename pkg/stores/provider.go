@@ -157,6 +157,20 @@ type Store interface {
 	Clear() error
 }
 
+// ModCounter is an optional interface for stores that track modifications.
+// Stores implementing this interface enable caching layers to detect changes
+// without polling or re-processing all data.
+//
+// The bool return value indicates whether modification tracking is supported.
+// If supported=false, callers MUST NOT cache based on the returned count,
+// as the store may change without the count changing.
+type ModCounter interface {
+	// ModCount returns the modification counter and whether tracking is supported.
+	// The counter is incremented on every mutation (Add, Update, Delete, Clear).
+	// Returns (count, true) if tracking is supported, (0, false) otherwise.
+	ModCount() (uint64, bool)
+}
+
 // GenericStoreGetter is an interface for types that can provide stores by name.
 // It matches the signature of resourcestore.Manager.GetStore().
 type GenericStoreGetter interface {
@@ -232,8 +246,21 @@ func (a *TypesStoreAdapter) Clear() error {
 	return a.Inner.Clear()
 }
 
+// ModCount implements ModCounter by delegating to Inner if it supports ModCount.
+// Returns (0, false) if the inner store does not support modification tracking,
+// which signals to callers that they MUST NOT cache based on the count.
+func (a *TypesStoreAdapter) ModCount() (uint64, bool) {
+	if mc, ok := a.Inner.(interface{ ModCount() (uint64, bool) }); ok {
+		return mc.ModCount()
+	}
+	return 0, false
+}
+
 // Verify TypesStoreAdapter implements Store.
 var _ Store = (*TypesStoreAdapter)(nil)
+
+// Verify TypesStoreAdapter implements ModCounter.
+var _ ModCounter = (*TypesStoreAdapter)(nil)
 
 // NewStoreProviderFromGetter creates a StoreProvider from any type that can get stores by name.
 //
