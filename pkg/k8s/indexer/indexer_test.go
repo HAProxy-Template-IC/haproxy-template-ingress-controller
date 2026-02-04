@@ -146,14 +146,14 @@ func TestProcess(t *testing.T) {
 		},
 	}
 
-	keys, err := indexer.Process(resource)
+	result, err := indexer.Process(resource)
 	if err != nil {
 		t.Fatalf("Process failed: %v", err)
 	}
 
 	// Verify keys were extracted correctly
-	if len(keys) != 2 || keys[0] != "kube-system" || keys[1] != "coredns" {
-		t.Errorf("unexpected keys: %v", keys)
+	if len(result.Keys) != 2 || result.Keys[0] != "kube-system" || result.Keys[1] != "coredns" {
+		t.Errorf("unexpected keys: %v", result.Keys)
 	}
 
 	// Verify managedFields was removed
@@ -379,13 +379,13 @@ func TestProcessWithFilterError(t *testing.T) {
 		},
 	}
 
-	keys, err := idx.Process(resource)
+	result, err := idx.Process(resource)
 	if err != nil {
 		t.Fatalf("Process failed: %v", err)
 	}
 
-	if len(keys) != 1 || keys[0] != "test" {
-		t.Errorf("unexpected keys: %v", keys)
+	if len(result.Keys) != 1 || result.Keys[0] != "test" {
+		t.Errorf("unexpected keys: %v", result.Keys)
 	}
 
 	// Verify the annotation was removed
@@ -599,13 +599,13 @@ func TestFilterWithUnstructured(t *testing.T) {
 		},
 	}
 
-	keys, err := idx.Process(resource)
+	result, err := idx.Process(resource)
 	if err != nil {
 		t.Fatalf("Process failed: %v", err)
 	}
 
-	if len(keys) != 2 || keys[0] != "default" || keys[1] != "test" {
-		t.Errorf("unexpected keys: %v", keys)
+	if len(result.Keys) != 2 || result.Keys[0] != "default" || result.Keys[1] != "test" {
+		t.Errorf("unexpected keys: %v", result.Keys)
 	}
 
 	metadata := resource["metadata"].(map[string]interface{})

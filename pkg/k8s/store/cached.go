@@ -405,8 +405,9 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (interface{}, error) {
 		"duration_ms", fetchDuration.Milliseconds(),
 	)
 
-	// Process resource (field filtering)
-	if err := s.indexer.FilterFields(resource); err != nil {
+	// Process resource (field filtering and conversion)
+	result, err := s.indexer.Process(resource)
+	if err != nil {
 		return nil, &StoreError{
 			Operation: "process",
 			Keys:      []string{ref.namespace, ref.name},
@@ -414,15 +415,15 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (interface{}, error) {
 		}
 	}
 
-	// Update cache
+	// Update cache with converted resource
 	s.mu.Lock()
 	s.cache[cacheKey] = &cacheEntry{
-		resource:  resource,
+		resource:  result.ConvertedResource,
 		expiresAt: time.Now().Add(s.cacheTTL),
 	}
 	s.mu.Unlock()
 
-	return resource, nil
+	return result.ConvertedResource, nil
 }
 
 // Size returns the number of tracked resources in the store.

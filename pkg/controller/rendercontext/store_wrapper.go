@@ -52,35 +52,18 @@ func toString(v interface{}) string {
 	}
 }
 
-// StoreWrapper wraps a types.Store to provide template-friendly methods
+// StoreWrapper wraps a stores.Store to provide template-friendly methods
 // that don't return errors (errors are logged instead).
 //
 // This allows templates to call methods like List() and Get() directly
 // without having to handle Go's multi-return values.
 //
-// The wrapper implements lazy-cached unwrapping:
-//   - List() results are unwrapped once on first call and cached for the reconciliation
-//   - Get() results are unwrapped on-demand (typically small result sets)
-//
-// Lifecycle: StoreWrapper is designed for single-reconciliation use. A new wrapper
-// should be created for each reconciliation cycle via Builder.Build(). The caching
-// behavior assumes the underlying Store contents don't change during the wrapper's
-// lifetime. Do NOT reuse StoreWrapper instances across reconciliations, as the
-// cached List() results may become stale.
+// Resources in stores are already converted (floats to ints) at storage time,
+// so StoreWrapper simply passes through the data without additional processing.
 type StoreWrapper struct {
 	Store        stores.Store
 	ResourceType string
 	Logger       *slog.Logger
-
-	// Lazy cache for List() results
-	CachedList []interface{}
-	ListCached bool
-
-	// PrecomputedList holds pre-unwrapped List() results from the cross-reconciliation cache.
-	// When set, List() returns this directly without unwrapping, providing significant
-	// performance benefits during high-frequency reconciliations where store content
-	// hasn't changed. The slice is immutable and can be safely shared across wrappers.
-	PrecomputedList []interface{}
 }
 
 // List returns all resources in the store.
@@ -91,31 +74,11 @@ type StoreWrapper struct {
 //	  {{ ingress.metadata.name }}
 //	{% endfor %}
 //
-// Resources are unwrapped from unstructured.Unstructured to maps on first call
-// and cached for subsequent calls within the same reconciliation cycle.
-//
-// If PrecomputedList is set (from cross-reconciliation cache), it is returned
-// directly without unwrapping, providing significant performance benefits.
+// Resources are already converted (floats to ints) at storage time,
+// so this method simply returns the store contents directly.
 //
 // If an error occurs, it's logged and an empty slice is returned.
 func (w *StoreWrapper) List() []interface{} {
-	// Return precomputed list if available (cache hit from cross-reconciliation cache)
-	if w.PrecomputedList != nil {
-		w.Logger.Log(context.Background(), logging.LevelTrace, "returning precomputed list",
-			"resource_type", w.ResourceType,
-			"count", len(w.PrecomputedList))
-		return w.PrecomputedList
-	}
-
-	// Return cached result if already unwrapped this reconciliation
-	if w.ListCached {
-		w.Logger.Log(context.Background(), logging.LevelTrace, "returning cached list",
-			"resource_type", w.ResourceType,
-			"count", len(w.CachedList))
-		return w.CachedList
-	}
-
-	// First call - fetch from store
 	items, err := w.Store.List()
 	if err != nil {
 		w.Logger.Warn("failed to list resources from store",
@@ -124,21 +87,11 @@ func (w *StoreWrapper) List() []interface{} {
 		return []interface{}{}
 	}
 
-	w.Logger.Debug("unwrapping and caching list",
+	w.Logger.Log(context.Background(), logging.LevelTrace, "store list called",
 		"resource_type", w.ResourceType,
 		"count", len(items))
 
-	// Unwrap unstructured resources to maps for template access
-	unwrapped := make([]interface{}, len(items))
-	for i, item := range items {
-		unwrapped[i] = UnwrapUnstructured(item)
-	}
-
-	// Cache for subsequent calls
-	w.CachedList = unwrapped
-	w.ListCached = true
-
-	return unwrapped
+	return items
 }
 
 // Fetch performs O(1) indexed lookup using the provided keys.
@@ -185,13 +138,7 @@ func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
 		"keys", keys,
 		"found_count", len(items))
 
-	// Unwrap unstructured resources to maps for template access
-	unwrapped := make([]interface{}, len(items))
-	for i, item := range items {
-		unwrapped[i] = UnwrapUnstructured(item)
-	}
-
-	return unwrapped
+	return items
 }
 
 // GetSingle performs O(1) indexed lookup and expects exactly one matching resource.
@@ -251,79 +198,5 @@ func (w *StoreWrapper) GetSingle(keys ...interface{}) interface{} {
 	}
 
 	// Exactly one resource found
-	return UnwrapUnstructured(items[0])
-}
-
-// UnwrapUnstructured extracts the underlying data map from unstructured.Unstructured.
-//
-// Templates need to access resource fields like ingress.spec.rules, but Kubernetes
-// resources are stored as unstructured.Unstructured objects. This function converts
-// them to plain maps so templates can access fields naturally.
-//
-// It also converts float64 values without fractional parts to int64 for better
-// template rendering (e.g., port 80.0 becomes 80 instead of rendering as "80.0").
-//
-// This function is exported to allow pre-computation of unwrapped lists in the
-// cross-reconciliation cache (RenderService.listCache).
-func UnwrapUnstructured(resource interface{}) interface{} {
-	// Type assert to interface with UnstructuredContent method
-	type unstructuredInterface interface {
-		UnstructuredContent() map[string]interface{}
-	}
-
-	if u, ok := resource.(unstructuredInterface); ok {
-		content := u.UnstructuredContent()
-		return convertFloatsToInts(content)
-	}
-
-	// Not an unstructured object, return as-is
-	return resource
-}
-
-// convertFloatsToInts recursively converts float64 values to int64 where they
-// have no fractional part.
-//
-// This is necessary because JSON unmarshaling converts all numbers to float64
-// when the target type is interface{}. For Kubernetes resources, this causes
-// integer fields like ports (80) to appear as floats (80.0) in templates.
-//
-// The conversion is safe for Kubernetes resources because:
-//   - Integer fields (ports, replicas, counts) won't have fractional parts
-//   - Float fields typically use resource.Quantity (string-based, e.g., "0.5 CPU")
-//   - Converting 3.0 → 3 doesn't break any semantic meaning
-//
-// Examples:
-//   - 80.0 → 80 (port number)
-//   - 3.14 → 3.14 (preserved as-is)
-//   - "string" → "string" (unchanged)
-//   - nested maps/slices processed recursively
-func convertFloatsToInts(data interface{}) interface{} {
-	switch v := data.(type) {
-	case map[string]interface{}:
-		// Recursively process map values
-		result := make(map[string]interface{}, len(v))
-		for k, val := range v {
-			result[k] = convertFloatsToInts(val)
-		}
-		return result
-
-	case []interface{}:
-		// Recursively process slice elements
-		result := make([]interface{}, len(v))
-		for i, val := range v {
-			result[i] = convertFloatsToInts(val)
-		}
-		return result
-
-	case float64:
-		// Convert to int64 if it's a whole number
-		if v == float64(int64(v)) {
-			return int64(v)
-		}
-		return v
-
-	default:
-		// Return other types unchanged
-		return v
-	}
+	return items[0]
 }

@@ -217,6 +217,24 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 	return false, nil
 }
 
+// resourceToPod converts a store resource to *unstructured.Unstructured.
+//
+// Resources in stores may be either:
+//   - *unstructured.Unstructured (legacy format, used in some tests)
+//   - map[string]interface{} (production format after float-to-int conversion)
+//
+// Returns nil if the resource type is not supported.
+func resourceToPod(resource interface{}) *unstructured.Unstructured {
+	switch r := resource.(type) {
+	case *unstructured.Unstructured:
+		return r
+	case map[string]interface{}:
+		return &unstructured.Unstructured{Object: r}
+	default:
+		return nil
+	}
+}
+
 // DiscoverEndpoints discovers HAProxy Dataplane API endpoints from pod resources.
 //
 // This method:
@@ -269,10 +287,10 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 	endpoints := make([]dataplane.Endpoint, 0, len(resources))
 
 	for _, resource := range resources {
-		// Convert to unstructured
-		pod, ok := resource.(*unstructured.Unstructured)
-		if !ok {
-			// Skip non-unstructured resources
+		// Convert resource to unstructured.Unstructured
+		pod := resourceToPod(resource)
+		if pod == nil {
+			// Skip unsupported resource types
 			continue
 		}
 

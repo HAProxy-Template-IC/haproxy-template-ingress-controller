@@ -2,6 +2,7 @@
 package stores
 
 import (
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ktypes "k8s.io/apimachinery/pkg/types"
 )
@@ -138,17 +139,17 @@ func (s *CompositeStore) Get(keys ...string) ([]interface{}, error) {
 		}
 	}
 
-	// Add modifications that match the keys
+	// Add modifications that match the keys (converted for template use)
 	for _, mod := range s.overlay.Modifications {
 		if s.matchesKeys(mod, keys) {
-			filtered = append(filtered, mod)
+			filtered = append(filtered, convertOverlayResource(mod))
 		}
 	}
 
-	// Add additions that match the keys
+	// Add additions that match the keys (converted for template use)
 	for _, add := range s.overlay.Additions {
 		if s.matchesKeys(add, keys) {
-			filtered = append(filtered, add)
+			filtered = append(filtered, convertOverlayResource(add))
 		}
 	}
 
@@ -295,11 +296,60 @@ func (s *CompositeStore) getResourceKey(resource interface{}) *ktypes.Namespaced
 	return nil
 }
 
+// convertOverlayResource converts a runtime.Object to a map for template use.
+// This ensures overlay resources have the same format as pre-converted maps in stores.
+//
+// The conversion extracts the underlying map from unstructured resources and
+// converts float64 values to int64 where they have no fractional part.
+func convertOverlayResource(obj runtime.Object) interface{} {
+	// Extract map from unstructured
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return convertFloatsToInts(u.Object)
+	}
+	return obj
+}
+
+// convertFloatsToInts recursively converts float64 values to int64 where they
+// have no fractional part.
+//
+// This is necessary because JSON unmarshaling converts all numbers to float64
+// when the target type is interface{}. For Kubernetes resources, this causes
+// integer fields like ports (80) to appear as floats (80.0) in templates.
+// HAProxy configuration syntax requires integers (port 80), not floats (port 80.0).
+func convertFloatsToInts(data interface{}) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{}, len(v))
+		for k, val := range v {
+			result[k] = convertFloatsToInts(val)
+		}
+		return result
+
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, val := range v {
+			result[i] = convertFloatsToInts(val)
+		}
+		return result
+
+	case float64:
+		if v == float64(int64(v)) {
+			return int64(v)
+		}
+		return v
+
+	default:
+		return v
+	}
+}
+
 // toInterfaceSlice converts a slice of runtime.Object to []interface{}.
+// Each object is converted to ensure consistency with the pre-converted maps
+// stored in the base store (floats converted to ints for template use).
 func toInterfaceSlice(objects []runtime.Object) []interface{} {
 	result := make([]interface{}, len(objects))
 	for i, obj := range objects {
-		result[i] = obj
+		result[i] = convertOverlayResource(obj)
 	}
 	return result
 }
