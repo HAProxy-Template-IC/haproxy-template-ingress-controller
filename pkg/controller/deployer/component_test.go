@@ -446,9 +446,9 @@ func TestComponent_ConvertEndpoints_InvalidType(t *testing.T) {
 	assert.Equal(t, "http://localhost:5556", endpoints[1].URL)
 }
 
-// TestComponent_isNoOpDriftCheck tests the helper function that determines
-// whether a drift check made meaningful changes that warrant publishing ConfigAppliedToPodEvent.
-func TestComponent_isNoOpDriftCheck(t *testing.T) {
+// TestComponent_isNoOpDeployment tests the helper function that determines
+// whether a deployment made meaningful changes that warrant publishing ConfigAppliedToPodEvent.
+func TestComponent_isNoOpDeployment(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	deployer := createTestDeployer(bus)
 
@@ -501,7 +501,7 @@ func TestComponent_isNoOpDriftCheck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := deployer.isNoOpDriftCheck(tt.syncResult)
+			got := deployer.isNoOpDeployment(tt.syncResult)
 			assert.Equal(t, tt.expected, got)
 		})
 	}
