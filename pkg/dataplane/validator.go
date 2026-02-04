@@ -177,6 +177,70 @@ type ValidationPaths struct {
 	ConfigFile        string
 }
 
+// ValidateSyntaxAndSchema performs syntax and schema validation on HAProxy configuration.
+//
+// This function runs Phase 1 (syntax validation) and Phase 1.5 (API schema validation)
+// but NOT Phase 2 (semantic validation with haproxy binary).
+//
+// Use this when you need to parse the config without needing file I/O or the haproxy binary.
+// The primary use case is when you need to parse the original config (before path modifications)
+// for downstream reuse, while semantic validation is done separately with a modified config.
+//
+// Parameters:
+//   - config: The HAProxy configuration content to validate
+//   - version: HAProxy/DataPlane API version for schema selection (nil uses default v3.0)
+//
+// Returns:
+//   - *parser.StructuredConfig: The parsed configuration
+//   - error: ValidationError with phase information if validation fails
+func ValidateSyntaxAndSchema(config string, version *Version) (*parser.StructuredConfig, error) {
+	// Phase 1: Syntax validation with client-native parser
+	parsedConfig, err := validateSyntax(config)
+	if err != nil {
+		return nil, &ValidationError{
+			Phase:   "syntax",
+			Message: "configuration has syntax errors",
+			Cause:   err,
+		}
+	}
+
+	// Phase 1.5: API schema validation with OpenAPI spec
+	if err := validateAPISchema(parsedConfig, version); err != nil {
+		return nil, &ValidationError{
+			Phase:   "schema",
+			Message: "configuration violates API schema constraints",
+			Cause:   err,
+		}
+	}
+
+	return parsedConfig, nil
+}
+
+// ValidateSemantics performs semantic validation using the haproxy binary (-c flag).
+//
+// This function runs only Phase 2 (semantic validation) and assumes syntax/schema validation
+// has already been done. Use this after ValidateSyntaxAndSchema() when you need to validate
+// a modified config (e.g., with temp paths) separately from parsing.
+//
+// Parameters:
+//   - mainConfig: The HAProxy configuration content (may have modified paths for temp directory)
+//   - auxFiles: All auxiliary files (maps, certificates, general files)
+//   - paths: Filesystem paths for validation (must be isolated for parallel execution)
+//   - skipDNSValidation: If true, adds -dr flag to skip DNS resolution failures
+//
+// Returns:
+//   - error: ValidationError with phase "semantic" if validation fails
+func ValidateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
+	if err := validateSemantics(mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
+		return &ValidationError{
+			Phase:   "semantic",
+			Message: "configuration has semantic errors",
+			Cause:   err,
+		}
+	}
+	return nil
+}
+
 // ValidateConfiguration performs three-phase HAProxy configuration validation.
 //
 // Phase 1: Syntax validation using client-native parser
