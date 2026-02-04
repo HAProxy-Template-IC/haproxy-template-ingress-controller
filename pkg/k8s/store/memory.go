@@ -22,6 +22,7 @@ type MemoryStore struct {
 	numKeys  int                      // Number of index keys
 	allItems []interface{}            // Cache of all items for List()
 	dirty    bool                     // True if allItems needs rebuilding
+	modCount uint64                   // Incremented on every mutation for cache invalidation
 }
 
 // NewMemoryStore creates a new memory-backed store.
@@ -173,6 +174,7 @@ func (s *MemoryStore) Add(resource interface{}, keys []string) error {
 	keyStr := makeKeyString(keys)
 	s.data[keyStr] = append(s.data[keyStr], resource)
 	s.dirty = true
+	s.modCount++
 
 	return nil
 }
@@ -197,6 +199,7 @@ func (s *MemoryStore) Update(resource interface{}, keys []string) error {
 		// No resources with these keys - add new
 		s.data[keyStr] = []interface{}{resource}
 		s.dirty = true
+		s.modCount++
 		return nil
 	}
 
@@ -209,6 +212,7 @@ func (s *MemoryStore) Update(resource interface{}, keys []string) error {
 			resources[i] = resource
 			s.data[keyStr] = resources
 			s.dirty = true
+			s.modCount++
 			return nil
 		}
 	}
@@ -216,6 +220,7 @@ func (s *MemoryStore) Update(resource interface{}, keys []string) error {
 	// Resource not found - append
 	s.data[keyStr] = append(resources, resource)
 	s.dirty = true
+	s.modCount++
 	return nil
 }
 
@@ -240,6 +245,7 @@ func (s *MemoryStore) Delete(keys ...string) error {
 	if _, ok := s.data[keyStr]; ok {
 		delete(s.data, keyStr)
 		s.dirty = true
+		s.modCount++
 	}
 
 	return nil
@@ -253,6 +259,7 @@ func (s *MemoryStore) Clear() error {
 	s.data = make(map[string][]interface{})
 	s.allItems = make([]interface{}, 0)
 	s.dirty = false
+	s.modCount++
 
 	return nil
 }
@@ -267,6 +274,15 @@ func (s *MemoryStore) Size() int {
 		count += len(resources)
 	}
 	return count
+}
+
+// ModCount returns the modification counter and whether tracking is supported.
+// The counter is incremented on every mutation (Add, Update, Delete, Clear).
+// This enables external caching layers to detect store changes without polling.
+func (s *MemoryStore) ModCount() (uint64, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.modCount, true
 }
 
 // Ensure MemoryStore implements types.Store interface.

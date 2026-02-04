@@ -50,6 +50,7 @@ type CachedStore struct {
 	namespace string                      // Namespace for fetching (empty = all)
 	indexer   *indexer.Indexer            // Indexer for processing fetched resources
 	logger    *slog.Logger                // Logger for debug and warning messages
+	modCount  uint64                      // Incremented on every mutation for cache invalidation
 }
 
 // CachedStoreConfig configures a CachedStore.
@@ -226,6 +227,8 @@ func (s *CachedStore) Add(resource interface{}, keys []string) error {
 		expiresAt: time.Now().Add(s.cacheTTL),
 	}
 
+	s.modCount++
+
 	return nil
 }
 
@@ -286,6 +289,8 @@ func (s *CachedStore) Update(resource interface{}, keys []string) error {
 		expiresAt: time.Now().Add(s.cacheTTL),
 	}
 
+	s.modCount++
+
 	return nil
 }
 
@@ -318,6 +323,8 @@ func (s *CachedStore) Delete(keys ...string) error {
 	// Delete the refs entry
 	delete(s.refs, keyStr)
 
+	s.modCount++
+
 	return nil
 }
 
@@ -328,6 +335,7 @@ func (s *CachedStore) Clear() error {
 
 	s.refs = make(map[string][]resourceRef)
 	s.cache = make(map[string]*cacheEntry)
+	s.modCount++
 
 	return nil
 }
@@ -452,6 +460,15 @@ func (s *CachedStore) EvictExpired() int {
 	}
 
 	return evicted
+}
+
+// ModCount returns the modification counter and whether tracking is supported.
+// The counter is incremented on every mutation (Add, Update, Delete, Clear).
+// This enables external caching layers to detect store changes without polling.
+func (s *CachedStore) ModCount() (uint64, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.modCount, true
 }
 
 // Ensure CachedStore implements types.Store interface.

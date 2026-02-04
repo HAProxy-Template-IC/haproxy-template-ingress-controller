@@ -75,6 +75,12 @@ type StoreWrapper struct {
 	// Lazy cache for List() results
 	CachedList []interface{}
 	ListCached bool
+
+	// PrecomputedList holds pre-unwrapped List() results from the cross-reconciliation cache.
+	// When set, List() returns this directly without unwrapping, providing significant
+	// performance benefits during high-frequency reconciliations where store content
+	// hasn't changed. The slice is immutable and can be safely shared across wrappers.
+	PrecomputedList []interface{}
 }
 
 // List returns all resources in the store.
@@ -88,9 +94,20 @@ type StoreWrapper struct {
 // Resources are unwrapped from unstructured.Unstructured to maps on first call
 // and cached for subsequent calls within the same reconciliation cycle.
 //
+// If PrecomputedList is set (from cross-reconciliation cache), it is returned
+// directly without unwrapping, providing significant performance benefits.
+//
 // If an error occurs, it's logged and an empty slice is returned.
 func (w *StoreWrapper) List() []interface{} {
-	// Return cached result if already unwrapped
+	// Return precomputed list if available (cache hit from cross-reconciliation cache)
+	if w.PrecomputedList != nil {
+		w.Logger.Log(context.Background(), logging.LevelTrace, "returning precomputed list",
+			"resource_type", w.ResourceType,
+			"count", len(w.PrecomputedList))
+		return w.PrecomputedList
+	}
+
+	// Return cached result if already unwrapped this reconciliation
 	if w.ListCached {
 		w.Logger.Log(context.Background(), logging.LevelTrace, "returning cached list",
 			"resource_type", w.ResourceType,
@@ -114,7 +131,7 @@ func (w *StoreWrapper) List() []interface{} {
 	// Unwrap unstructured resources to maps for template access
 	unwrapped := make([]interface{}, len(items))
 	for i, item := range items {
-		unwrapped[i] = unwrapUnstructured(item)
+		unwrapped[i] = UnwrapUnstructured(item)
 	}
 
 	// Cache for subsequent calls
@@ -171,7 +188,7 @@ func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
 	// Unwrap unstructured resources to maps for template access
 	unwrapped := make([]interface{}, len(items))
 	for i, item := range items {
-		unwrapped[i] = unwrapUnstructured(item)
+		unwrapped[i] = UnwrapUnstructured(item)
 	}
 
 	return unwrapped
@@ -234,10 +251,10 @@ func (w *StoreWrapper) GetSingle(keys ...interface{}) interface{} {
 	}
 
 	// Exactly one resource found
-	return unwrapUnstructured(items[0])
+	return UnwrapUnstructured(items[0])
 }
 
-// unwrapUnstructured extracts the underlying data map from unstructured.Unstructured.
+// UnwrapUnstructured extracts the underlying data map from unstructured.Unstructured.
 //
 // Templates need to access resource fields like ingress.spec.rules, but Kubernetes
 // resources are stored as unstructured.Unstructured objects. This function converts
@@ -245,7 +262,10 @@ func (w *StoreWrapper) GetSingle(keys ...interface{}) interface{} {
 //
 // It also converts float64 values without fractional parts to int64 for better
 // template rendering (e.g., port 80.0 becomes 80 instead of rendering as "80.0").
-func unwrapUnstructured(resource interface{}) interface{} {
+//
+// This function is exported to allow pre-computation of unwrapped lists in the
+// cross-reconciliation cache (RenderService.listCache).
+func UnwrapUnstructured(resource interface{}) interface{} {
 	// Type assert to interface with UnstructuredContent method
 	type unstructuredInterface interface {
 		UnstructuredContent() map[string]interface{}

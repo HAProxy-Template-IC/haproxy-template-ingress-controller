@@ -50,13 +50,22 @@ type RenderResult struct {
 	AuxFileCount int
 }
 
+// cachedListResult holds the unwrapped List() result for a store.
+// The items slice is immutable after creation and can be safely shared.
+type cachedListResult struct {
+	modCount uint64        // Store modCount when this cache entry was created
+	items    []interface{} // Immutable slice of unwrapped resources
+}
+
 // RenderService is a pure service that transforms stores into HAProxy configuration.
 //
 // This service uses absolute paths from the config's Dataplane settings to ensure
 // rendered configs reference files at the correct locations where DataPlane API
 // stores auxiliary files.
 //
-// The service is stateless and can be called concurrently from multiple goroutines.
+// The service caches unwrapped List() results across reconciliations to avoid
+// repeatedly unwrapping resources when store content hasn't changed. The cache
+// is invalidated based on each store's modification counter.
 type RenderService struct {
 	engine       templating.Engine
 	config       *config.Config
@@ -70,6 +79,11 @@ type RenderService struct {
 	haproxyPodStore    stores.Store
 	httpStoreComponent *httpstore.Component
 	currentConfigStore *currentconfigstore.Store
+
+	// listCache caches unwrapped List() results keyed by store name.
+	// Protected by listCacheMu for concurrent access.
+	listCacheMu sync.RWMutex
+	listCache   map[string]*cachedListResult
 }
 
 // RenderServiceConfig contains configuration for creating a RenderService.
@@ -141,6 +155,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		haproxyPodStore:    cfg.HAProxyPodStore,
 		httpStoreComponent: cfg.HTTPStoreComponent,
 		currentConfigStore: cfg.CurrentConfigStore,
+		listCache:          make(map[string]*cachedListResult),
 	}
 }
 
@@ -192,6 +207,94 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	}, nil
 }
 
+// isValidationMode returns true if the provider is in validation mode (dry-run with overlays).
+// In validation mode, we skip the list cache because overlays may contain proposed changes
+// that aren't reflected in the underlying stores.
+func (s *RenderService) isValidationMode(provider stores.StoreProvider) bool {
+	overlay, ok := provider.(*stores.OverlayStoreProvider)
+	return ok && overlay.IsValidationMode()
+}
+
+// ClearListCache clears the unwrapped List() result cache.
+// This should be called when stores may have been recreated (e.g., on config reload)
+// or when leadership is lost (to ensure fresh state on leadership regain).
+func (s *RenderService) ClearListCache() {
+	s.listCacheMu.Lock()
+	s.listCache = make(map[string]*cachedListResult)
+	s.listCacheMu.Unlock()
+	s.logger.Debug("list cache cleared")
+}
+
+// prepopulateListCache updates the list cache for all stores that support ModCount.
+// This is called before creating StoreWrappers to ensure cache entries are up-to-date.
+// The method holds a write lock during the entire operation to prevent TOCTOU races.
+func (s *RenderService) prepopulateListCache(_ context.Context, provider stores.StoreProvider) {
+	s.listCacheMu.Lock()
+	defer s.listCacheMu.Unlock()
+
+	for _, name := range provider.StoreNames() {
+		store := provider.GetStore(name)
+		if store == nil {
+			continue
+		}
+
+		// Check if store supports ModCount
+		modCounter, ok := store.(stores.ModCounter)
+		if !ok {
+			continue
+		}
+
+		modCount, supported := modCounter.ModCount()
+		if !supported {
+			// Store doesn't support modification tracking - don't cache
+			continue
+		}
+
+		// Check if cache is valid
+		if cached, exists := s.listCache[name]; exists && cached.modCount == modCount {
+			s.logger.Debug("list cache hit",
+				"resource_type", name,
+				"mod_count", modCount)
+			continue
+		}
+
+		// Cache miss: unwrap now while holding lock
+		rawList, err := store.List()
+		if err != nil {
+			s.logger.Warn("failed to list store for cache",
+				"store", name,
+				"error", err)
+			continue
+		}
+
+		// Unwrap unstructured resources to maps
+		items := make([]interface{}, len(rawList))
+		for i, item := range rawList {
+			items[i] = rendercontext.UnwrapUnstructured(item)
+		}
+
+		s.listCache[name] = &cachedListResult{
+			modCount: modCount,
+			items:    items,
+		}
+
+		s.logger.Debug("list cache populated",
+			"resource_type", name,
+			"mod_count", modCount,
+			"items", len(items))
+	}
+}
+
+// getCachedList returns the cached list for a store, or nil if not cached.
+func (s *RenderService) getCachedList(name string) []interface{} {
+	s.listCacheMu.RLock()
+	defer s.listCacheMu.RUnlock()
+	if cached, exists := s.listCache[name]; exists {
+		return cached.items
+	}
+	return nil
+}
+
 // buildRenderingContext constructs the template rendering context from stores.
 func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]interface{}, *rendercontext.FileRegistry) {
 	renderContext := make(map[string]interface{})
@@ -199,16 +302,29 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	// Add path resolver for file path resolution in templates
 	renderContext["pathResolver"] = s.pathResolver
 
+	// Determine if we should use the cache (skip for validation mode)
+	useCache := !s.isValidationMode(provider)
+
+	// Pre-populate cache before creating wrappers (single-threaded, no races)
+	if useCache {
+		s.prepopulateListCache(ctx, provider)
+	}
+
 	// Build resources map from stores
 	resources := make(map[string]templating.ResourceStore)
 	for _, name := range provider.StoreNames() {
 		store := provider.GetStore(name)
 		if store != nil {
-			resources[name] = &rendercontext.StoreWrapper{
+			wrapper := &rendercontext.StoreWrapper{
 				Store:        store,
 				ResourceType: name,
 				Logger:       s.logger,
 			}
+			// Inject precomputed list if cache hit
+			if useCache {
+				wrapper.PrecomputedList = s.getCachedList(name)
+			}
+			resources[name] = wrapper
 		}
 	}
 	renderContext["resources"] = resources
