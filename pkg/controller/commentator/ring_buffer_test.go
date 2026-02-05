@@ -244,6 +244,47 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 	assert.NotNil(t, events)
 }
 
+func TestRingBuffer_Add_StripsLightweightPayloads(t *testing.T) {
+	rb := NewRingBuffer(10)
+
+	// Create a ValidationCompletedEvent with a non-nil ParsedConfig
+	event := ctlevents.NewValidationCompletedEvent(
+		[]string{"warning1"}, 42, "debounce_timer",
+		nil, // parsedConfig - use nil since we can't import parser here easily
+		true,
+		ctlevents.WithNewCorrelation(),
+	)
+
+	// Manually set ParsedConfig to a non-nil value via the exported field
+	event.ParsedConfig = "large-payload-placeholder"
+
+	rb.Add(event)
+
+	// Retrieve the stored event and verify ParsedConfig was stripped
+	recent := rb.FindRecent(1)
+	assert.Len(t, recent, 1)
+
+	stored, ok := recent[0].(*ctlevents.ValidationCompletedEvent)
+	assert.True(t, ok)
+	assert.Nil(t, stored.ParsedConfig, "ParsedConfig should be nil in ring buffer")
+	assert.Equal(t, int64(42), stored.DurationMs, "scalar fields should be preserved")
+	assert.Equal(t, []string{"warning1"}, stored.Warnings, "warnings should be preserved")
+	assert.Equal(t, "debounce_timer", stored.TriggerReason, "trigger reason should be preserved")
+	assert.NotEmpty(t, stored.CorrelationID(), "correlation ID should be preserved")
+}
+
+func TestRingBuffer_Add_PreservesNonLightweightEvents(t *testing.T) {
+	rb := NewRingBuffer(10)
+
+	// mockEvent does not implement LightweightEvent - should be stored as-is
+	event := mockEvent{eventType: "test.event", timestamp: time.Now()}
+	rb.Add(event)
+
+	recent := rb.FindRecent(1)
+	assert.Len(t, recent, 1)
+	assert.Equal(t, "test.event", recent[0].EventType())
+}
+
 func TestRingBuffer_FindByCorrelationID(t *testing.T) {
 	rb := NewRingBuffer(10)
 

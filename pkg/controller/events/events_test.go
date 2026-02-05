@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
@@ -1107,4 +1108,121 @@ func TestTimestampNotZero(t *testing.T) {
 			assert.True(t, !ts.Before(now), "Timestamp should be >= test start time")
 		})
 	}
+}
+
+// TestLightweightEvents tests that heavyweight events implement LightweightEvent
+// and that Lightweight() strips large fields while preserving metadata.
+func TestLightweightEvents(t *testing.T) {
+	t.Run("ValidationCompletedEvent", func(t *testing.T) {
+		event := NewValidationCompletedEvent(
+			[]string{"warn1", "warn2"}, 150, "debounce_timer", nil, true,
+			WithNewCorrelation(),
+		)
+		event.ParsedConfig = "large-parsed-config" // simulate non-nil payload
+
+		// Verify it implements LightweightEvent
+		lw, ok := busevents.Event(event).(busevents.LightweightEvent)
+		require.True(t, ok, "ValidationCompletedEvent should implement LightweightEvent")
+
+		lightweight := lw.Lightweight()
+		stored := lightweight.(*ValidationCompletedEvent)
+
+		// Heavyweight fields stripped
+		assert.Nil(t, stored.ParsedConfig)
+
+		// Metadata preserved
+		assert.Equal(t, event.EventType(), stored.EventType())
+		assert.Equal(t, event.Timestamp(), stored.Timestamp())
+		assert.Equal(t, event.CorrelationID(), stored.CorrelationID())
+		assert.Equal(t, event.DurationMs, stored.DurationMs)
+		assert.Equal(t, event.TriggerReason, stored.TriggerReason)
+		assert.Equal(t, event.Warnings, stored.Warnings)
+		assert.Equal(t, event.Coalescible(), stored.Coalescible())
+
+		// Original unchanged
+		assert.NotNil(t, event.ParsedConfig)
+	})
+
+	t.Run("TemplateRenderedEvent", func(t *testing.T) {
+		event := NewTemplateRenderedEvent(
+			"global\n  maxconn 4096\n", // HAProxyConfig
+			"aux-files-data",           // AuxiliaryFiles
+			3,                          // auxFileCount
+			200,                        // durationMs
+			"config_change",            // triggerReason
+			"abc123",                   // contentChecksum
+			true,                       // coalescible
+			WithNewCorrelation(),
+		)
+
+		lw, ok := busevents.Event(event).(busevents.LightweightEvent)
+		require.True(t, ok, "TemplateRenderedEvent should implement LightweightEvent")
+
+		lightweight := lw.Lightweight()
+		stored := lightweight.(*TemplateRenderedEvent)
+
+		// Heavyweight fields stripped
+		assert.Empty(t, stored.HAProxyConfig)
+		assert.Nil(t, stored.AuxiliaryFiles)
+
+		// Metadata preserved
+		assert.Equal(t, event.EventType(), stored.EventType())
+		assert.Equal(t, event.Timestamp(), stored.Timestamp())
+		assert.Equal(t, event.CorrelationID(), stored.CorrelationID())
+		assert.Equal(t, event.DurationMs, stored.DurationMs)
+		assert.Equal(t, event.ConfigBytes, stored.ConfigBytes)
+		assert.Equal(t, event.AuxiliaryFileCount, stored.AuxiliaryFileCount)
+		assert.Equal(t, event.TriggerReason, stored.TriggerReason)
+		assert.Equal(t, event.ContentChecksum, stored.ContentChecksum)
+		assert.Equal(t, event.Coalescible(), stored.Coalescible())
+
+		// Original unchanged
+		assert.NotEmpty(t, event.HAProxyConfig)
+		assert.NotNil(t, event.AuxiliaryFiles)
+	})
+
+	t.Run("DeploymentScheduledEvent", func(t *testing.T) {
+		endpoints := []interface{}{"ep1", "ep2"}
+		event := NewDeploymentScheduledEvent(
+			"global\n  maxconn 4096\n", // config
+			"aux-files",                // auxFiles
+			nil,                        // parsedConfig
+			endpoints,                  // endpoints
+			"my-config",                // runtimeConfigName
+			"default",                  // runtimeConfigNamespace
+			"config_validation",        // reason
+			"checksum123",              // contentChecksum
+			true,                       // coalescible
+			WithNewCorrelation(),
+		)
+		event.ParsedConfig = "large-parsed-config"
+
+		lw, ok := busevents.Event(event).(busevents.LightweightEvent)
+		require.True(t, ok, "DeploymentScheduledEvent should implement LightweightEvent")
+
+		lightweight := lw.Lightweight()
+		stored := lightweight.(*DeploymentScheduledEvent)
+
+		// Heavyweight fields stripped
+		assert.Empty(t, stored.Config)
+		assert.Nil(t, stored.AuxiliaryFiles)
+		assert.Nil(t, stored.ParsedConfig)
+		assert.Nil(t, stored.Endpoints)
+
+		// Metadata preserved
+		assert.Equal(t, event.EventType(), stored.EventType())
+		assert.Equal(t, event.Timestamp(), stored.Timestamp())
+		assert.Equal(t, event.CorrelationID(), stored.CorrelationID())
+		assert.Equal(t, event.Reason, stored.Reason)
+		assert.Equal(t, event.RuntimeConfigName, stored.RuntimeConfigName)
+		assert.Equal(t, event.RuntimeConfigNamespace, stored.RuntimeConfigNamespace)
+		assert.Equal(t, event.ContentChecksum, stored.ContentChecksum)
+		assert.Equal(t, event.Coalescible(), stored.Coalescible())
+
+		// Original unchanged
+		assert.NotEmpty(t, event.Config)
+		assert.NotNil(t, event.AuxiliaryFiles)
+		assert.NotNil(t, event.ParsedConfig)
+		assert.NotNil(t, event.Endpoints)
+	})
 }

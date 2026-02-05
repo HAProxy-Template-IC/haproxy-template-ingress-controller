@@ -161,6 +161,10 @@ func TestCoordinator_HandleReconciliationTriggered_RenderFailure(t *testing.T) {
 	// Verify ReconciliationStartedEvent
 	_ = testutil.WaitForEvent[*events.ReconciliationStartedEvent](t, eventChan, testutil.EventTimeout)
 
+	// Verify TemplateRenderFailedEvent is published before ReconciliationFailedEvent
+	renderFailedEvent := testutil.WaitForEvent[*events.TemplateRenderFailedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Contains(t, renderFailedEvent.Error, "template error")
+
 	// Verify ReconciliationFailedEvent
 	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Contains(t, failedEvent.Error, "template error")
@@ -203,6 +207,10 @@ func TestCoordinator_HandleReconciliationTriggered_ValidationFailure(t *testing.
 
 	// Verify ReconciliationStartedEvent
 	_ = testutil.WaitForEvent[*events.ReconciliationStartedEvent](t, eventChan, testutil.EventTimeout)
+
+	// Verify ValidationFailedEvent is published before ReconciliationFailedEvent
+	validationFailedEvent := testutil.WaitForEvent[*events.ValidationFailedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Contains(t, validationFailedEvent.Errors, "validation failed in syntax phase: syntax error")
 
 	// Verify ReconciliationFailedEvent
 	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
