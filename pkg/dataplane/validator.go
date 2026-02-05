@@ -37,6 +37,16 @@ import (
 // interfere with each other even though they use isolated temp directories.
 var haproxyCheckMutex sync.Mutex
 
+// syntaxParser is a package-level singleton parser for syntax validation.
+// Uses sync.Once to ensure it's only created once and reused across all calls
+// to validateSyntax(). The parser is already protected by parserMutex in the
+// parser package, so sharing is thread-safe.
+var (
+	syntaxParser     *parser.Parser
+	syntaxParserOnce sync.Once
+	syntaxParserErr  error
+)
+
 // validationResultCache caches the result of the last successful validation.
 // Since validation is expensive (parsing + schema validation + haproxy -c),
 // we skip it when the same config is validated again.
@@ -224,15 +234,19 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 
 // validateSyntax performs syntax validation using client-native parser.
 // Returns the parsed configuration for use in Phase 1.5 (API schema validation).
+// Uses a package-level singleton parser to avoid re-initializing parser internals
+// on every call.
 func validateSyntax(config string) (*parser.StructuredConfig, error) {
-	// Create parser
-	p, err := parser.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create parser: %w", err)
+	// Get or create singleton parser
+	syntaxParserOnce.Do(func() {
+		syntaxParser, syntaxParserErr = parser.New()
+	})
+	if syntaxParserErr != nil {
+		return nil, fmt.Errorf("failed to create parser: %w", syntaxParserErr)
 	}
 
 	// Parse configuration - this validates syntax
-	parsed, err := p.ParseFromString(config)
+	parsed, err := syntaxParser.ParseFromString(config)
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}

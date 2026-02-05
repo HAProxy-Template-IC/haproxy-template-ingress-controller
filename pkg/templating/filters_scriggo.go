@@ -24,11 +24,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"gitlab.com/haproxy-haptic/scriggo/builtin"
 	"gitlab.com/haproxy-haptic/scriggo/native"
 )
+
+// stringBuilderPool pools strings.Builder instances for reuse.
+// Used by scriggoFirstSeen to avoid allocating a new builder on every call.
+var stringBuilderPool = sync.Pool{
+	New: func() interface{} {
+		return &strings.Builder{}
+	},
+}
 
 // buildScriggoGlobals creates the global declarations for Scriggo templates.
 // In Scriggo, filters become regular functions that templates can call.
@@ -570,21 +579,26 @@ func scriggoFirstSeen(env native.Env, parts ...interface{}) bool {
 		return true // No shared context = treat as first time
 	}
 
-	// Build composite key using strings.Builder to avoid intermediate allocations.
-	// Estimate capacity: ~20 chars per part + separators
-	var b strings.Builder
-	b.Grow(len(parts) * 24)
+	// Get pooled builder to avoid allocating a new one on every call.
+	b := stringBuilderPool.Get().(*strings.Builder)
+	b.Reset()
+	b.Grow(len(parts) * 24) // Estimate: ~20 chars per part + separators
 
 	for i, part := range parts {
 		if i > 0 {
 			b.WriteByte('_')
 		}
-		writeToBuilder(&b, part)
+		writeToBuilder(b, part)
 	}
+
+	// Extract key string before returning builder to pool.
+	// b.String() allocates - this is unavoidable since ComputeIfAbsent needs a string key.
+	key := b.String()
+	stringBuilderPool.Put(b)
 
 	// Use ComputeIfAbsent - wasComputed tells us if this is the first occurrence.
 	// The compute function just stores a marker value; what matters is wasComputed.
-	_, wasFirst := shared.ComputeIfAbsent(b.String(), func() interface{} {
+	_, wasFirst := shared.ComputeIfAbsent(key, func() interface{} {
 		return true
 	})
 	return wasFirst
