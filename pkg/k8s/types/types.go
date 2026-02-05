@@ -20,8 +20,8 @@ import (
 const (
 	// DefaultDebounceInterval is the default minimum time between callback invocations.
 	// This value is shared across all components that use debouncing.
-	// Set to 1s to reduce reconciliation frequency during high EndpointSlice churn.
-	DefaultDebounceInterval = 1 * time.Second
+	// Set to 5s to reduce reconciliation frequency and GC pressure during high EndpointSlice churn.
+	DefaultDebounceInterval = 5 * time.Second
 )
 
 // Store defines the interface for storing and retrieving indexed Kubernetes resources.

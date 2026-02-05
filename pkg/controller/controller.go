@@ -490,7 +490,7 @@ func setupComponents(
 		logger,
 		configChangeCh,
 		validators,
-		0, // Use default debounce interval (500ms)
+		0, // Use default debounce interval (5s)
 	)
 
 	// Start components in goroutines with iteration-specific context

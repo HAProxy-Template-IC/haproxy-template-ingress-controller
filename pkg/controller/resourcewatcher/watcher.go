@@ -150,7 +150,7 @@ func New(
 			IgnoreFields:     ignoreFields,
 			StoreType:        determineStoreType(watchedResource.Store),
 			CacheTTL:         cacheTTL,
-			DebounceInterval: 0, // Use default (500ms)
+			DebounceInterval: 0, // Use default (5s)
 
 			// OnChange publishes ResourceIndexUpdatedEvent
 			OnChange: func(store types.Store, changeStats types.ChangeStats) {

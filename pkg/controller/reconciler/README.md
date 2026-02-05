@@ -10,7 +10,7 @@ Stage 5 component that applies debouncing logic to prevent excessive reconciliat
 
 - **Debouncing**: Batches rapid resource changes
 - **Immediate initial sync**: Triggers reconciliation when all resources synced
-- **Configurable interval**: Default 500ms
+- **Configurable interval**: Default 5s
 - **Initial sync filtering**: Ignores initial resource sync events
 
 ## Quick Start
@@ -18,7 +18,7 @@ Stage 5 component that applies debouncing logic to prevent excessive reconciliat
 ```go
 import "haptic/pkg/controller/reconciler"
 
-// Default configuration (500ms debounce)
+// Default configuration (5s debounce)
 reconciler := reconciler.New(bus, logger, nil)
 go reconciler.Start(ctx)
 
@@ -34,9 +34,9 @@ go reconciler.Start(ctx)
 ### Resource Changes (Debounced)
 
 1. ResourceIndexUpdatedEvent received
-2. Debounce timer reset to 500ms
+2. Debounce timer reset to 5s
 3. If another change arrives, timer reset again
-4. When timer expires (no changes for 500ms), publish ReconciliationTriggeredEvent
+4. When timer expires (no changes for 5s), publish ReconciliationTriggeredEvent
 
 ### Index Synchronized (Immediate)
 
@@ -65,7 +65,7 @@ ensuring the first render has a complete view of cluster state.
 
 ```go
 type Config struct {
-    DebounceInterval time.Duration  // Default: 500ms
+    DebounceInterval time.Duration  // Default: 5s
 }
 ```
 
@@ -73,7 +73,7 @@ type Config struct {
 
 ```go
 const (
-    DefaultDebounceInterval = 500 * time.Millisecond
+    DefaultDebounceInterval = 5 * time.Second
     EventBufferSize        = 100
 )
 ```
@@ -81,10 +81,10 @@ const (
 ## Example Timing
 
 ```
-t=0ms:    Resource change → Start 500ms timer
-t=100ms:  Resource change → Reset timer (now expires at t=600ms)
-t=300ms:  Resource change → Reset timer (now expires at t=800ms)
-t=800ms:  Timer expires → Trigger reconciliation
+t=0ms:    Resource change → Start 5s timer
+t=100ms:  Resource change → Reset timer (now expires at t=5100ms)
+t=300ms:  Resource change → Reset timer (now expires at t=5300ms)
+t=5300ms: Timer expires → Trigger reconciliation
 ```
 
 Result: 3 changes batched into 1 reconciliation.
