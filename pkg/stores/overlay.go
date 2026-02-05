@@ -346,7 +346,8 @@ func convertOverlayResource(obj runtime.Object) interface{} {
 }
 
 // convertFloatsToInts recursively converts float64 values to int64 where they
-// have no fractional part.
+// have no fractional part. Mutation is performed in-place since overlay resources
+// are freshly deserialized from admission webhooks and owned by us.
 //
 // This is necessary because JSON unmarshaling converts all numbers to float64
 // when the target type is interface{}. For Kubernetes resources, this causes
@@ -355,18 +356,18 @@ func convertOverlayResource(obj runtime.Object) interface{} {
 func convertFloatsToInts(data interface{}) interface{} {
 	switch v := data.(type) {
 	case map[string]interface{}:
-		result := make(map[string]interface{}, len(v))
+		// Mutate map values in-place (safe: resources are freshly deserialized and owned by us)
 		for k, val := range v {
-			result[k] = convertFloatsToInts(val)
+			v[k] = convertFloatsToInts(val)
 		}
-		return result
+		return v
 
 	case []interface{}:
-		result := make([]interface{}, len(v))
+		// Mutate slice elements in-place
 		for i, val := range v {
-			result[i] = convertFloatsToInts(val)
+			v[i] = convertFloatsToInts(val)
 		}
-		return result
+		return v
 
 	case float64:
 		if v == float64(int64(v)) {
