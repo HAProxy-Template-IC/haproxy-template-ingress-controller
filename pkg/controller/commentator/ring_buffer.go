@@ -13,17 +13,6 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// toLightweight returns a lightweight copy of the event if it implements
-// LightweightEvent, or the original event otherwise. This prevents the
-// ring buffer from retaining heavyweight payloads (parsed configs, full
-// config strings) that can accumulate to gigabytes of retained memory.
-func toLightweight(event busevents.Event) busevents.Event {
-	if lw, ok := event.(busevents.LightweightEvent); ok {
-		return lw.Lightweight()
-	}
-	return event
-}
-
 // Typical capacity: 1000 events (configurable).
 type RingBuffer struct {
 	events   []busevents.Event // Circular buffer (time-ordered)
@@ -71,11 +60,6 @@ func NewRingBuffer(capacity int) *RingBuffer {
 //
 // This operation is O(1) amortized.
 func (rb *RingBuffer) Add(event busevents.Event) {
-	// Strip heavyweight payloads before storing to prevent memory retention.
-	// Events in the ring buffer are only used for correlation, timing, and logging —
-	// they don't need full config strings or parsed config objects.
-	event = toLightweight(event)
-
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 

@@ -16,8 +16,6 @@ package events
 
 import (
 	"time"
-
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // -----------------------------------------------------------------------------
@@ -109,16 +107,6 @@ func (e *TemplateRenderedEvent) Timestamp() time.Time { return e.timestamp }
 // Coalescible returns true if this event can be safely skipped when a newer
 // event of the same type is available. This implements the CoalescibleEvent interface.
 func (e *TemplateRenderedEvent) Coalescible() bool { return e.coalescible }
-
-// Lightweight returns a copy with HAProxyConfig and AuxiliaryFiles removed.
-// Implements the events.LightweightEvent interface to prevent ring buffers
-// from retaining full config strings and auxiliary file data per event.
-func (e *TemplateRenderedEvent) Lightweight() busevents.Event {
-	lightweight := *e
-	lightweight.HAProxyConfig = ""
-	lightweight.AuxiliaryFiles = nil
-	return &lightweight
-}
 
 // TemplateRenderFailedEvent is published when template rendering fails.
 //
