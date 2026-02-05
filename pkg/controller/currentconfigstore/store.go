@@ -22,11 +22,12 @@ import (
 // Store holds the parsed current HAProxy configuration.
 // This is a utility component that can be called directly without events.
 type Store struct {
-	mu            sync.RWMutex
-	currentConfig *parserconfig.StructuredConfig
-	contentHash   string         // Hash of last parsed content to skip redundant parsing
-	parser        *parser.Parser // Reused parser instance (DRY)
-	logger        *slog.Logger
+	mu             sync.RWMutex
+	currentConfig  *parserconfig.StructuredConfig
+	contentHash    string         // Hash of last parsed content to skip redundant parsing
+	lastGeneration int64          // Last seen metadata.generation for fast spec-change detection
+	parser         *parser.Parser // Reused parser instance (DRY)
+	logger         *slog.Logger
 }
 
 // New creates a new CurrentConfigStore.
@@ -92,6 +93,24 @@ func (s *Store) Update(resource interface{}) {
 
 // updateWithContent handles the content parsing and caching logic.
 func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) {
+	// Fast path: Check metadata.generation before decompressing or hashing.
+	// The HAProxyCfg CRD has status subresource enabled, so metadata.generation
+	// only increments on spec changes. Status-only updates (which are frequent)
+	// can be skipped entirely if generation hasn't changed.
+	generation := u.GetGeneration()
+	if generation > 0 {
+		s.mu.RLock()
+		lastGen := s.lastGeneration
+		hasConfig := s.currentConfig != nil
+		s.mu.RUnlock()
+
+		if generation == lastGen && hasConfig {
+			s.logger.Debug("current config unchanged (generation match), skipping parse",
+				"generation", generation)
+			return
+		}
+	}
+
 	// Decompress if needed
 	isCompressed, _, _ := unstructured.NestedBool(u.Object, "spec", "compressed")
 	if isCompressed {
@@ -104,8 +123,7 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	}
 
 	// Compute hash to detect content changes and skip redundant parsing.
-	// This is critical for performance: HAProxyCfg status updates trigger
-	// Update() even when spec.content hasn't changed.
+	// This is a fallback for when generation is 0 (shouldn't happen with CRD subresource).
 	hash := sha256.Sum256([]byte(content))
 	hashStr := hex.EncodeToString(hash[:])
 
@@ -114,7 +132,7 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	s.mu.RUnlock()
 
 	if unchanged {
-		s.logger.Debug("current config unchanged, skipping parse")
+		s.logger.Debug("current config unchanged (hash match), skipping parse")
 		return
 	}
 
@@ -127,6 +145,7 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	s.mu.Lock()
 	s.currentConfig = parsed
 	s.contentHash = hashStr
+	s.lastGeneration = generation
 	s.mu.Unlock()
-	s.logger.Debug("current config updated", "backends", len(parsed.Backends))
+	s.logger.Debug("current config updated", "backends", len(parsed.Backends), "generation", generation)
 }

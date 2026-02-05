@@ -302,7 +302,12 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 	}
 
 	var mu sync.Mutex
-	auxFiles := &dataplane.AuxiliaryFiles{}
+	// Pre-allocate slices with known capacity to avoid grow-from-zero
+	auxFiles := &dataplane.AuxiliaryFiles{
+		MapFiles:        make([]auxiliaryfiles.MapFile, 0, len(s.config.Maps)),
+		GeneralFiles:    make([]auxiliaryfiles.GeneralFile, 0, len(s.config.Files)),
+		SSLCertificates: make([]auxiliaryfiles.SSLCertificate, 0, len(s.config.SSLCertificates)),
+	}
 
 	// Create errgroup for parallel rendering. We discard the derived context because:
 	// 1. Template rendering is CPU-bound and doesn't benefit from early cancellation
