@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -89,7 +90,12 @@ func (r *ValidationResult) ErrorMessage() string {
 // - Runs haproxy -c for semantic validation
 // - Cleans up temp directory after validation
 //
-// The service is stateless and can be called concurrently from multiple goroutines.
+// The service caches the last successful validation result keyed by a content
+// checksum of the config and auxiliary files. When called with unchanged content,
+// it returns the cached ParsedConfig immediately, skipping all validation phases.
+// Only successful validations are cached; failures always trigger a full retry.
+//
+// The service can be called concurrently from multiple goroutines.
 type ValidationService struct {
 	logger *slog.Logger
 
@@ -109,6 +115,12 @@ type ValidationService struct {
 	mapsDir     string
 	sslCertsDir string
 	generalDir  string
+
+	// Validation result cache - skips all validation phases when content unchanged.
+	// Per-instance cache prevents webhook validation from evicting main pipeline cache.
+	cacheMu            sync.RWMutex
+	cachedChecksum     string
+	cachedParsedConfig *parser.StructuredConfig
 }
 
 // ValidationServiceConfig contains configuration for creating a ValidationService.
@@ -215,6 +227,16 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 		}
 	}
 
+	// Check validation cache - skip all phases if content unchanged
+	checksum := dataplane.ComputeContentChecksum(config, auxFiles)
+	if cachedConfig := s.getCachedResult(checksum); cachedConfig != nil {
+		return &ValidationResult{
+			Valid:        true,
+			DurationMs:   time.Since(startTime).Milliseconds(),
+			ParsedConfig: cachedConfig,
+		}
+	}
+
 	// Step 1: Parse and validate the ORIGINAL config (syntax + schema)
 	// This runs syntax validation and API schema validation without needing temp files.
 	// The returned parsedConfig contains production paths (e.g., /etc/haproxy) which
@@ -303,14 +325,31 @@ func (s *ValidationService) Validate(ctx context.Context, config string, auxFile
 		}
 	}
 
-	// Step 5: Return the ORIGINAL parsed config (with production paths)
-	// This is the key fix - we return the config parsed from the original string,
-	// not the modified one with temp paths.
+	// Step 5: Cache successful result and return the ORIGINAL parsed config
+	// (with production paths, not temp paths).
+	s.cacheResult(checksum, parsedConfig)
+
 	return &ValidationResult{
 		Valid:        true,
 		DurationMs:   time.Since(startTime).Milliseconds(),
 		ParsedConfig: parsedConfig,
 	}
+}
+
+func (s *ValidationService) getCachedResult(checksum string) *parser.StructuredConfig {
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+	if s.cachedChecksum != "" && s.cachedChecksum == checksum {
+		return s.cachedParsedConfig
+	}
+	return nil
+}
+
+func (s *ValidationService) cacheResult(checksum string, parsedConfig *parser.StructuredConfig) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	s.cachedChecksum = checksum
+	s.cachedParsedConfig = parsedConfig
 }
 
 // ValidateWithStrictDNS validates configuration with strict DNS checking.
