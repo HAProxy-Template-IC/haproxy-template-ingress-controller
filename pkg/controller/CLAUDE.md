@@ -419,7 +419,7 @@ Orchestrates the render-validate pipeline directly (Stage 5 component 2):
 // pkg/controller/reconciler/coordinator.go
 type Coordinator struct {
     eventBus      *busevents.EventBus
-    eventChan     <-chan busevents.Event  // Subscribed in constructor
+    eventChan     <-chan busevents.Event  // Subscribed in Start() (leader-only pattern)
     pipeline      PipelineExecutor
     storeProvider stores.StoreProvider
     logger        *slog.Logger
@@ -443,7 +443,7 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 
 **Implementation:**
 
-- Subscribes to ReconciliationTriggeredEvent in constructor
+- Subscribes to ReconciliationTriggeredEvent in Start() (leader-only pattern)
 - Calls Pipeline.Execute() synchronously (no event-driven render/validate flow)
 - Publishes TemplateRenderedEvent + ValidationCompletedEvent for downstream components
 - Publishes ReconciliationCompletedEvent or ReconciliationFailedEvent based on outcome

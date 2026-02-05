@@ -61,6 +61,10 @@ type Coordinator struct {
 	pipeline      PipelineExecutor
 	storeProvider stores.StoreProvider
 	logger        *slog.Logger
+
+	// subscriptionReady is closed when the component has subscribed to events.
+	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
+	subscriptionReady chan struct{}
 }
 
 // CoordinatorConfig contains configuration for creating a Coordinator.
@@ -81,6 +85,11 @@ type CoordinatorConfig struct {
 
 // NewCoordinator creates a new ReconciliationCoordinator.
 //
+// Note: eventChan is NOT subscribed here - subscription happens in Start().
+// This is a leader-only component that subscribes when Start() is called
+// (after leadership is acquired). All-replica components replay their state
+// on BecameLeaderEvent to ensure leader-only components receive current state.
+//
 // Parameters:
 //   - cfg: Configuration for the coordinator
 //
@@ -92,19 +101,12 @@ func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 		logger = slog.Default()
 	}
 
-	// Subscribe to ReconciliationTriggeredEvent during construction
-	eventChan := cfg.EventBus.SubscribeTypes(
-		CoordinatorComponentName,
-		CoordinatorEventBufferSize,
-		events.EventTypeReconciliationTriggered,
-	)
-
 	return &Coordinator{
-		eventBus:      cfg.EventBus,
-		eventChan:     eventChan,
-		pipeline:      cfg.Pipeline,
-		storeProvider: cfg.StoreProvider,
-		logger:        logger.With("component", CoordinatorComponentName),
+		eventBus:          cfg.EventBus,
+		pipeline:          cfg.Pipeline,
+		storeProvider:     cfg.StoreProvider,
+		logger:            logger.With("component", CoordinatorComponentName),
+		subscriptionReady: make(chan struct{}),
 	}
 }
 
@@ -113,10 +115,28 @@ func (c *Coordinator) Name() string {
 	return CoordinatorComponentName
 }
 
+// SubscriptionReady returns a channel that is closed when the component has
+// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
+func (c *Coordinator) SubscriptionReady() <-chan struct{} {
+	return c.subscriptionReady
+}
+
 // Start begins the coordinator's event loop.
 //
 // This method blocks until the context is cancelled.
 func (c *Coordinator) Start(ctx context.Context) error {
+	// Subscribe when starting (after leadership acquired).
+	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
+	// All-replica components replay their cached state on BecameLeaderEvent.
+	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(
+		CoordinatorComponentName,
+		CoordinatorEventBufferSize,
+		events.EventTypeReconciliationTriggered,
+	)
+
+	// Signal that subscription is complete for SubscriptionReadySignaler interface.
+	close(c.subscriptionReady)
+
 	c.logger.Debug("reconciliation coordinator starting")
 
 	for {
