@@ -470,7 +470,7 @@ func setupComponents(
 	storeManager := resourcestore.NewManager()
 
 	// Create components
-	eventCommentator := commentator.NewEventCommentator(bus, logger, 1000)
+	eventCommentator := commentator.NewEventCommentator(bus, logger, 500)
 	configLoaderComponent := configloader.NewConfigLoaderComponent(bus, logger)
 	credentialsLoaderComponent := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
 
