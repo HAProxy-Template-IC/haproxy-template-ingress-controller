@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // -----------------------------------------------------------------------------
@@ -306,18 +305,6 @@ func (e *DeploymentScheduledEvent) Timestamp() time.Time { return e.timestamp }
 // Coalescible returns true if this event can be safely skipped when a newer
 // event of the same type is available. This implements the CoalescibleEvent interface.
 func (e *DeploymentScheduledEvent) Coalescible() bool { return e.coalescible }
-
-// Lightweight returns a copy with Config, AuxiliaryFiles, and ParsedConfig removed.
-// Implements the events.LightweightEvent interface to prevent ring buffers
-// from retaining full config strings, auxiliary files, and parsed config data.
-func (e *DeploymentScheduledEvent) Lightweight() busevents.Event {
-	lightweight := *e
-	lightweight.Config = ""
-	lightweight.AuxiliaryFiles = nil
-	lightweight.ParsedConfig = nil
-	lightweight.Endpoints = nil
-	return &lightweight
-}
 
 // DeploymentCancelRequestEvent is published when the scheduler requests cancellation
 // of an in-progress deployment (e.g., due to timeout).
