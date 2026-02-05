@@ -204,7 +204,9 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 					return nil, fmt.Errorf("haproxy-pods fixture at index %d is not a map", i)
 				}
 
-				resource := &unstructured.Unstructured{Object: resourceMap}
+				// Deep-copy the resource to avoid mutating shared fixture data.
+				// Fixtures may be shared across concurrent test workers via global fixtures.
+				resource := (&unstructured.Unstructured{Object: resourceMap}).DeepCopy()
 
 				// Ensure TypeMeta for haproxy-pods (Pod resources)
 				if resource.GetAPIVersion() == "" {
@@ -258,7 +260,9 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 				return nil, fmt.Errorf("fixture resource at index %d in %s is not a map", i, resourceType)
 			}
 
-			resource := &unstructured.Unstructured{Object: resourceMap}
+			// Deep-copy the resource to avoid mutating shared fixture data.
+			// Fixtures may be shared across concurrent test workers via global fixtures.
+			resource := (&unstructured.Unstructured{Object: resourceMap}).DeepCopy()
 
 			// Ensure resource has TypeMeta (some fixtures might omit it)
 			if resource.GetAPIVersion() == "" {

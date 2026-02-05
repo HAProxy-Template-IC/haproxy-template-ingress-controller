@@ -601,22 +601,41 @@ assert_path_rewrite() {
     debug "Testing path rewrite: $description"
     debug "  Host: $host, Request: $request_path, Expected backend path: $expected_path"
 
-    local response
-    if ! response=$(curl -s --max-time 5 -H "Host: $host" "${BASE_URL}${request_path}" 2>&1); then
-        err "$description - Connection failed"
-        return 1
-    fi
+    # Retry logic to handle HAProxy reload race conditions where map files
+    # may not be loaded into the new worker process yet
+    local max_retries=8
+    local retry_delay=2
+    local attempt=1
+    local response=""
+    local last_error=""
 
-    # Check that the echo server received the expected path
-    # The echo server returns the path in the "originalUrl" field (avoid pipe to grep -q which causes SIGPIPE)
-    if [[ "$response" == *"\"originalUrl\":\"${expected_path}\""* ]]; then
-        ok "$description - Path rewritten correctly"
-    else
-        local actual_path=$(echo "$response" | grep -o '"originalUrl":"[^"]*"' | cut -d'"' -f4)
-        err "$description - Path not rewritten. Expected: $expected_path, Got: $actual_path"
-        debug "  Response: ${response:0:500}"
-        return 1
-    fi
+    while [[ $attempt -le $max_retries ]]; do
+        if response=$(curl -s --max-time 5 -H "Host: $host" "${BASE_URL}${request_path}" 2>&1); then
+            # Check that the echo server received the expected path
+            # The echo server returns the path in the "originalUrl" field (avoid pipe to grep -q which causes SIGPIPE)
+            if [[ "$response" == *"\"originalUrl\":\"${expected_path}\""* ]]; then
+                ok "$description - Path rewritten correctly"
+                return 0
+            else
+                local actual_path=$(echo "$response" | grep -o '"originalUrl":"[^"]*"' | cut -d'"' -f4)
+                last_error="Path not rewritten. Expected: $expected_path, Got: $actual_path"
+                debug "  Attempt $attempt/$max_retries: $last_error"
+            fi
+        else
+            last_error="Connection failed"
+            debug "  Attempt $attempt/$max_retries: $last_error"
+        fi
+
+        if [[ $attempt -lt $max_retries ]]; then
+            debug "  Retrying in ${retry_delay}s..."
+            sleep "$retry_delay"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "$description - $last_error"
+    debug "  Response: ${response:0:500}"
+    return 1
 }
 
 # Verify cluster is accessible
