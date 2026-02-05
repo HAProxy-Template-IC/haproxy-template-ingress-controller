@@ -8,9 +8,7 @@ import (
 )
 
 // compareBackends compares backend configurations between current and desired.
-//
-// This is a focused implementation that handles the most common use case:
-// backend and server management. It demonstrates the pattern for other sections.
+// Uses pointer indexes from StructuredConfig for zero-copy iteration over servers and server templates.
 func (c *Comparator) compareBackends(current, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
 	// Pre-allocate with estimated capacity (roughly 2 ops per backend for add/modify + servers)
 	operations := make([]Operation, 0, len(desired.Backends)*2)
@@ -31,7 +29,7 @@ func (c *Comparator) compareBackends(current, desired *parser.StructuredConfig, 
 	}
 
 	// Find added backends
-	addedOps := c.compareAddedBackends(desiredBackends, currentBackends, summary)
+	addedOps := c.compareAddedBackendsWithIndexes(desiredBackends, currentBackends, current, desired, summary)
 	operations = append(operations, addedOps...)
 
 	// Find deleted backends
@@ -43,14 +41,15 @@ func (c *Comparator) compareBackends(current, desired *parser.StructuredConfig, 
 	}
 
 	// Find modified backends
-	modifiedOps := c.compareModifiedBackends(desiredBackends, currentBackends, summary)
+	modifiedOps := c.compareModifiedBackendsWithIndexes(desiredBackends, currentBackends, current, desired, summary)
 	operations = append(operations, modifiedOps...)
 
 	return operations
 }
 
-// compareAddedBackends compares added backends and creates operations for them and their nested elements.
-func (c *Comparator) compareAddedBackends(desiredBackends, currentBackends map[string]*models.Backend, summary *DiffSummary) []Operation {
+// compareAddedBackendsWithIndexes compares added backends and creates operations for them and their nested elements.
+// Uses pointer indexes for zero-copy iteration over servers and server templates.
+func (c *Comparator) compareAddedBackendsWithIndexes(desiredBackends, currentBackends map[string]*models.Backend, _, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
 	// Pre-allocate with estimated capacity (at least one operation per backend)
 	operations := make([]Operation, 0, len(desiredBackends))
 
@@ -61,31 +60,31 @@ func (c *Comparator) compareAddedBackends(desiredBackends, currentBackends map[s
 		operations = append(operations, sections.NewBackendCreate(backend))
 		summary.BackendsAdded = append(summary.BackendsAdded, name)
 
-		// Create operations for all nested elements in the new backend
-		nestedOps := c.createNestedBackendOperations(name, backend, summary)
+		// Create operations for all nested elements in the new backend using pointer indexes
+		nestedOps := c.createNestedBackendOperationsWithIndexes(name, backend, desired.ServerIndex, desired.ServerTemplateIndex, summary)
 		operations = append(operations, nestedOps...)
 	}
 
 	return operations
 }
 
-// createNestedBackendOperations creates operations for all nested elements of a new backend.
-// Compares against empty collections to generate create operations for each element.
-func (c *Comparator) createNestedBackendOperations(name string, backend *models.Backend, summary *DiffSummary) []Operation {
-	// Pre-allocate with estimated capacity based on nested element counts
-	estimatedCap := len(backend.Servers) + len(backend.ServerTemplates) + len(backend.ACLList) +
+// createNestedBackendOperationsWithIndexes creates operations for all nested elements of a new backend.
+// Uses pointer indexes for zero-copy iteration over servers and server templates.
+func (c *Comparator) createNestedBackendOperationsWithIndexes(name string, backend *models.Backend, serverIndex map[string]map[string]*models.Server, serverTemplateIndex map[string]map[string]*models.ServerTemplate, summary *DiffSummary) []Operation {
+	// Pre-allocate with estimated capacity based on nested element counts from indexes
+	desiredServers := serverIndex[name]
+	desiredTemplates := serverTemplateIndex[name]
+	estimatedCap := len(desiredServers) + len(desiredTemplates) + len(backend.ACLList) +
 		len(backend.HTTPRequestRuleList) + len(backend.HTTPResponseRuleList)
 	operations := make([]Operation, 0, estimatedCap)
 
-	// Create an empty backend to compare against for servers and server templates
-	emptyBackend := &models.Backend{}
-	emptyBackend.Name = name
-	emptyBackend.Servers = make(map[string]models.Server)
-	emptyBackend.ServerTemplates = make(map[string]models.ServerTemplate)
+	// Servers - use pointer index for zero-copy iteration
+	emptyServers := make(map[string]*models.Server)
+	operations = append(operations, c.compareServersWithIndex(name, emptyServers, desiredServers, summary)...)
 
-	// Servers and server templates
-	operations = append(operations, c.compareServers(name, emptyBackend, backend, summary)...)
-	operations = append(operations, c.compareServerTemplates(name, emptyBackend, backend)...)
+	// Server templates - use pointer index for zero-copy iteration
+	emptyTemplates := make(map[string]*models.ServerTemplate)
+	operations = append(operations, c.compareServerTemplatesWithIndex(name, emptyTemplates, desiredTemplates)...)
 
 	// ACLs and rules (compare against nil for empty collections)
 	operations = append(operations, c.compareACLs("backend", name, nil, backend.ACLList, summary)...)
@@ -104,8 +103,9 @@ func (c *Comparator) createNestedBackendOperations(name string, backend *models.
 	return operations
 }
 
-// compareModifiedBackends compares modified backends and creates operations for changed nested elements.
-func (c *Comparator) compareModifiedBackends(desiredBackends, currentBackends map[string]*models.Backend, summary *DiffSummary) []Operation {
+// compareModifiedBackendsWithIndexes compares modified backends and creates operations for changed nested elements.
+// Uses pointer indexes for zero-copy iteration over servers and server templates.
+func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, currentBackends map[string]*models.Backend, current, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
 	// Pre-allocate with estimated capacity (assume ~5 ops per modified backend)
 	operations := make([]Operation, 0, len(desiredBackends)*5)
 
@@ -116,8 +116,9 @@ func (c *Comparator) compareModifiedBackends(desiredBackends, currentBackends ma
 		}
 		backendModified := false
 
-		// Compare servers within this backend
-		serverOps := c.compareServers(name, currentBackend, desiredBackend, summary)
+		// Compare servers within this backend using pointer indexes
+		currentServers, desiredServers := getServerIndexes(name, current.ServerIndex, desired.ServerIndex)
+		serverOps := c.compareServersWithIndex(name, currentServers, desiredServers, summary)
 		appendOperationsIfNotEmpty(&operations, serverOps, &backendModified)
 
 		// Compare ACLs within this backend
@@ -168,8 +169,9 @@ func (c *Comparator) compareModifiedBackends(desiredBackends, currentBackends ma
 		tcpCheckOps := c.compareTCPChecks(name, currentBackend.TCPCheckRuleList, desiredBackend.TCPCheckRuleList)
 		appendOperationsIfNotEmpty(&operations, tcpCheckOps, &backendModified)
 
-		// Compare server templates within this backend
-		serverTemplateOps := c.compareServerTemplates(name, currentBackend, desiredBackend)
+		// Compare server templates within this backend using pointer indexes
+		currentTemplates, desiredTemplates := getServerTemplateIndexes(name, current.ServerTemplateIndex, desired.ServerTemplateIndex)
+		serverTemplateOps := c.compareServerTemplatesWithIndex(name, currentTemplates, desiredTemplates)
 		appendOperationsIfNotEmpty(&operations, serverTemplateOps, &backendModified)
 
 		// Compare backend attributes (excluding servers, ACLs, and rules which we already compared)
@@ -186,40 +188,35 @@ func (c *Comparator) compareModifiedBackends(desiredBackends, currentBackends ma
 	return operations
 }
 
-// compareServers compares server configurations within a backend.
-func (c *Comparator) compareServers(backendName string, currentBackend, desiredBackend *models.Backend, summary *DiffSummary) []Operation {
-	// Backend.Servers is already a map[string]models.Server
-	currentServers := currentBackend.Servers
-	desiredServers := desiredBackend.Servers
-
+// compareServersWithIndex compares server configurations within a backend using pointer indexes.
+func (c *Comparator) compareServersWithIndex(backendName string, currentServers, desiredServers map[string]*models.Server, summary *DiffSummary) []Operation {
 	// Pre-allocate with capacity for potential changes (add + delete + modify)
 	maxOps := len(currentServers) + len(desiredServers)
 	operations := make([]Operation, 0, maxOps)
 
 	// Find added servers
-	addedOps := c.compareAddedServers(backendName, currentServers, desiredServers, summary)
+	addedOps := c.compareAddedServersWithIndex(backendName, currentServers, desiredServers, summary)
 	operations = append(operations, addedOps...)
 
 	// Find deleted servers
-	deletedOps := c.compareDeletedServers(backendName, currentServers, desiredServers, summary)
+	deletedOps := c.compareDeletedServersWithIndex(backendName, currentServers, desiredServers, summary)
 	operations = append(operations, deletedOps...)
 
 	// Find modified servers
-	modifiedOps := c.compareModifiedServers(backendName, currentServers, desiredServers, summary)
+	modifiedOps := c.compareModifiedServersWithIndex(backendName, currentServers, desiredServers, summary)
 	operations = append(operations, modifiedOps...)
 
 	return operations
 }
 
-// compareAddedServers compares added servers and creates operations for them.
-func (c *Comparator) compareAddedServers(backendName string, currentServers, desiredServers map[string]models.Server, summary *DiffSummary) []Operation {
+// compareAddedServersWithIndex compares added servers using pointer indexes for zero-copy iteration.
+func (c *Comparator) compareAddedServersWithIndex(backendName string, currentServers, desiredServers map[string]*models.Server, summary *DiffSummary) []Operation {
 	// Pre-allocate with capacity for potential additions
 	operations := make([]Operation, 0, len(desiredServers))
 
-	for name := range desiredServers {
+	for name, server := range desiredServers {
 		if _, exists := currentServers[name]; !exists {
-			server := desiredServers[name]
-			operations = append(operations, sections.NewServerCreate(backendName, &server))
+			operations = append(operations, sections.NewServerCreate(backendName, server))
 			if summary.ServersAdded[backendName] == nil {
 				summary.ServersAdded[backendName] = []string{}
 			}
@@ -230,15 +227,14 @@ func (c *Comparator) compareAddedServers(backendName string, currentServers, des
 	return operations
 }
 
-// compareDeletedServers compares deleted servers and creates operations for them.
-func (c *Comparator) compareDeletedServers(backendName string, currentServers, desiredServers map[string]models.Server, summary *DiffSummary) []Operation {
+// compareDeletedServersWithIndex compares deleted servers using pointer indexes for zero-copy iteration.
+func (c *Comparator) compareDeletedServersWithIndex(backendName string, currentServers, desiredServers map[string]*models.Server, summary *DiffSummary) []Operation {
 	// Pre-allocate with capacity for potential deletions
 	operations := make([]Operation, 0, len(currentServers))
 
-	for name := range currentServers {
+	for name, server := range currentServers {
 		if _, exists := desiredServers[name]; !exists {
-			server := currentServers[name]
-			operations = append(operations, sections.NewServerDelete(backendName, &server))
+			operations = append(operations, sections.NewServerDelete(backendName, server))
 			if summary.ServersDeleted[backendName] == nil {
 				summary.ServersDeleted[backendName] = []string{}
 			}
@@ -249,27 +245,59 @@ func (c *Comparator) compareDeletedServers(backendName string, currentServers, d
 	return operations
 }
 
-// compareModifiedServers compares modified servers and creates operations for them.
-func (c *Comparator) compareModifiedServers(backendName string, currentServers, desiredServers map[string]models.Server, summary *DiffSummary) []Operation {
+// compareModifiedServersWithIndex compares modified servers using pointer indexes for zero-copy iteration.
+func (c *Comparator) compareModifiedServersWithIndex(backendName string, currentServers, desiredServers map[string]*models.Server, summary *DiffSummary) []Operation {
 	// Pre-allocate with capacity for potential modifications
 	operations := make([]Operation, 0, len(desiredServers))
 
-	for name := range desiredServers {
+	for name, desiredServer := range desiredServers {
 		currentServer, exists := currentServers[name]
 		if !exists {
 			continue
 		}
-		desiredServer := desiredServers[name]
 
-		// Compare server attributes
-		// For now, we check if anything changed - future implementation
-		// will do fine-grained attribute comparison
-		if !serversEqual(&currentServer, &desiredServer) {
-			operations = append(operations, sections.NewServerUpdate(backendName, &desiredServer))
+		// Compare server attributes using built-in Equal() method
+		if !serversEqual(currentServer, desiredServer) {
+			operations = append(operations, sections.NewServerUpdate(backendName, desiredServer))
 			if summary.ServersModified[backendName] == nil {
 				summary.ServersModified[backendName] = []string{}
 			}
 			summary.ServersModified[backendName] = append(summary.ServersModified[backendName], name)
+		}
+	}
+
+	return operations
+}
+
+// compareServerTemplatesWithIndex compares server template configurations using pointer indexes for zero-copy iteration.
+func (c *Comparator) compareServerTemplatesWithIndex(backendName string, currentTemplates, desiredTemplates map[string]*models.ServerTemplate) []Operation {
+	// Pre-allocate with capacity for potential changes (add + delete + modify)
+	maxOps := len(currentTemplates) + len(desiredTemplates)
+	operations := make([]Operation, 0, maxOps)
+
+	// Find added server templates
+	for prefix, template := range desiredTemplates {
+		if _, exists := currentTemplates[prefix]; !exists {
+			operations = append(operations, sections.NewServerTemplateCreate(backendName, template))
+		}
+	}
+
+	// Find deleted server templates
+	for prefix, template := range currentTemplates {
+		if _, exists := desiredTemplates[prefix]; !exists {
+			operations = append(operations, sections.NewServerTemplateDelete(backendName, template))
+		}
+	}
+
+	// Find modified server templates
+	for prefix, desiredTemplate := range desiredTemplates {
+		currentTemplate, exists := currentTemplates[prefix]
+		if !exists {
+			continue
+		}
+		// Compare server template attributes using Equal() method
+		if !serverTemplatesEqual(currentTemplate, desiredTemplate) {
+			operations = append(operations, sections.NewServerTemplateUpdate(backendName, desiredTemplate))
 		}
 	}
 
@@ -323,4 +351,30 @@ func backendsEqualWithoutNestedCollections(b1, b2 *models.Backend) bool {
 	b2Copy.ServerTemplates = nil
 
 	return b1Copy.Equal(b2Copy)
+}
+
+// getServerIndexes retrieves server indexes for a backend, returning empty maps if not found.
+func getServerIndexes(backendName string, currentIndex, desiredIndex map[string]map[string]*models.Server) (currentServers, desiredServers map[string]*models.Server) {
+	currentServers = currentIndex[backendName]
+	if currentServers == nil {
+		currentServers = make(map[string]*models.Server)
+	}
+	desiredServers = desiredIndex[backendName]
+	if desiredServers == nil {
+		desiredServers = make(map[string]*models.Server)
+	}
+	return currentServers, desiredServers
+}
+
+// getServerTemplateIndexes retrieves server template indexes for a backend, returning empty maps if not found.
+func getServerTemplateIndexes(backendName string, currentIndex, desiredIndex map[string]map[string]*models.ServerTemplate) (currentTemplates, desiredTemplates map[string]*models.ServerTemplate) {
+	currentTemplates = currentIndex[backendName]
+	if currentTemplates == nil {
+		currentTemplates = make(map[string]*models.ServerTemplate)
+	}
+	desiredTemplates = desiredIndex[backendName]
+	if desiredTemplates == nil {
+		desiredTemplates = make(map[string]*models.ServerTemplate)
+	}
+	return currentTemplates, desiredTemplates
 }

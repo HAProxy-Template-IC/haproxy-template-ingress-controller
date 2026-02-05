@@ -8,18 +8,20 @@ import (
 )
 
 // compareFrontends compares frontend configurations between current and desired.
+// Uses pointer indexes from StructuredConfig for zero-copy iteration over binds.
 func (c *Comparator) compareFrontends(current, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
-	var operations []Operation
+	// Pre-allocate with estimated capacity
+	operations := make([]Operation, 0, len(desired.Frontends)*2)
 
 	// Build maps for easier comparison
-	currentFrontends := make(map[string]*models.Frontend)
+	currentFrontends := make(map[string]*models.Frontend, len(current.Frontends))
 	for _, frontend := range current.Frontends {
 		if frontend.Name != "" {
 			currentFrontends[frontend.Name] = frontend
 		}
 	}
 
-	desiredFrontends := make(map[string]*models.Frontend)
+	desiredFrontends := make(map[string]*models.Frontend, len(desired.Frontends))
 	for _, frontend := range desired.Frontends {
 		if frontend.Name != "" {
 			desiredFrontends[frontend.Name] = frontend
@@ -27,7 +29,7 @@ func (c *Comparator) compareFrontends(current, desired *parser.StructuredConfig,
 	}
 
 	// Find added frontends
-	addedOps := c.compareAddedFrontends(desiredFrontends, currentFrontends, summary)
+	addedOps := c.compareAddedFrontendsWithIndexes(desiredFrontends, currentFrontends, current, desired, summary)
 	operations = append(operations, addedOps...)
 
 	// Find deleted frontends
@@ -39,14 +41,14 @@ func (c *Comparator) compareFrontends(current, desired *parser.StructuredConfig,
 	}
 
 	// Find modified frontends
-	modifiedOps := c.compareModifiedFrontends(desiredFrontends, currentFrontends, summary)
+	modifiedOps := c.compareModifiedFrontendsWithIndexes(desiredFrontends, currentFrontends, current, desired, summary)
 	operations = append(operations, modifiedOps...)
 
 	return operations
 }
 
-// compareAddedFrontends compares added frontends and creates operations for them and their nested elements.
-func (c *Comparator) compareAddedFrontends(desiredFrontends, currentFrontends map[string]*models.Frontend, summary *DiffSummary) []Operation {
+// compareAddedFrontendsWithIndexes compares added frontends using pointer indexes.
+func (c *Comparator) compareAddedFrontendsWithIndexes(desiredFrontends, currentFrontends map[string]*models.Frontend, _, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
 	// Pre-allocate with estimated capacity (at least one operation per frontend)
 	operations := make([]Operation, 0, len(desiredFrontends))
 
@@ -57,59 +59,71 @@ func (c *Comparator) compareAddedFrontends(desiredFrontends, currentFrontends ma
 		operations = append(operations, sections.NewFrontendCreate(frontend))
 		summary.FrontendsAdded = append(summary.FrontendsAdded, name)
 
-		// Also create operations for nested elements in this new frontend
-		// Compare against an empty frontend to get all nested element create operations
-		emptyFrontend := &models.Frontend{}
-		emptyFrontend.Name = name
-
-		// Compare ACLs
-		aclOps := c.compareACLs(parentTypeFrontend, name, emptyFrontend.ACLList, frontend.ACLList, summary)
-		operations = append(operations, aclOps...)
-
-		// Compare HTTP request rules
-		requestRuleOps := c.compareHTTPRequestRules(parentTypeFrontend, name, emptyFrontend.HTTPRequestRuleList, frontend.HTTPRequestRuleList)
-		operations = append(operations, requestRuleOps...)
-
-		// Compare HTTP response rules
-		responseRuleOps := c.compareHTTPResponseRules(parentTypeFrontend, name, emptyFrontend.HTTPResponseRuleList, frontend.HTTPResponseRuleList)
-		operations = append(operations, responseRuleOps...)
-
-		// Compare TCP request rules
-		tcpRequestRuleOps := c.compareTCPRequestRules(parentTypeFrontend, name, emptyFrontend.TCPRequestRuleList, frontend.TCPRequestRuleList)
-		operations = append(operations, tcpRequestRuleOps...)
-
-		// Compare backend switching rules
-		backendSwitchingRuleOps := c.compareBackendSwitchingRules(name, emptyFrontend.BackendSwitchingRuleList, frontend.BackendSwitchingRuleList)
-		operations = append(operations, backendSwitchingRuleOps...)
-
-		// Compare filters
-		filterOps := c.compareFilters(parentTypeFrontend, name, emptyFrontend.FilterList, frontend.FilterList)
-		operations = append(operations, filterOps...)
-
-		// Compare captures
-		captureOps := c.compareCaptures(name, emptyFrontend.CaptureList, frontend.CaptureList)
-		operations = append(operations, captureOps...)
-
-		// Compare log targets
-		logTargetOps := c.compareLogTargets(parentTypeFrontend, name, emptyFrontend.LogTargetList, frontend.LogTargetList)
-		operations = append(operations, logTargetOps...)
-
-		// Compare QUIC initial rules (v3.1+ only)
-		quicInitialRuleOps := c.compareQUICInitialRules(parentTypeFrontend, name, emptyFrontend.QUICInitialRuleList, frontend.QUICInitialRuleList)
-		operations = append(operations, quicInitialRuleOps...)
-
-		// Compare binds
-		emptyBinds := make(map[string]models.Bind)
-		bindOps := c.compareBinds(name, emptyBinds, frontend.Binds)
-		operations = append(operations, bindOps...)
+		// Create operations for all nested elements in the new frontend
+		nestedOps := c.createNestedFrontendOperationsWithIndexes(name, frontend, desired.BindIndex, summary)
+		operations = append(operations, nestedOps...)
 	}
 
 	return operations
 }
 
-// compareModifiedFrontends compares modified frontends and creates operations for changed nested elements.
-func (c *Comparator) compareModifiedFrontends(desiredFrontends, currentFrontends map[string]*models.Frontend, summary *DiffSummary) []Operation {
-	var operations []Operation
+// createNestedFrontendOperationsWithIndexes creates operations for all nested elements of a new frontend.
+// Uses pointer indexes for zero-copy iteration over binds.
+func (c *Comparator) createNestedFrontendOperationsWithIndexes(name string, frontend *models.Frontend, bindIndex map[string]map[string]*models.Bind, summary *DiffSummary) []Operation {
+	// Pre-allocate with estimated capacity based on nested element counts
+	desiredBinds := bindIndex[name]
+	estimatedCap := len(desiredBinds) + len(frontend.ACLList) +
+		len(frontend.HTTPRequestRuleList) + len(frontend.HTTPResponseRuleList)
+	operations := make([]Operation, 0, estimatedCap)
+
+	// Compare ACLs
+	aclOps := c.compareACLs(parentTypeFrontend, name, nil, frontend.ACLList, summary)
+	operations = append(operations, aclOps...)
+
+	// Compare HTTP request rules
+	requestRuleOps := c.compareHTTPRequestRules(parentTypeFrontend, name, nil, frontend.HTTPRequestRuleList)
+	operations = append(operations, requestRuleOps...)
+
+	// Compare HTTP response rules
+	responseRuleOps := c.compareHTTPResponseRules(parentTypeFrontend, name, nil, frontend.HTTPResponseRuleList)
+	operations = append(operations, responseRuleOps...)
+
+	// Compare TCP request rules
+	tcpRequestRuleOps := c.compareTCPRequestRules(parentTypeFrontend, name, nil, frontend.TCPRequestRuleList)
+	operations = append(operations, tcpRequestRuleOps...)
+
+	// Compare backend switching rules
+	backendSwitchingRuleOps := c.compareBackendSwitchingRules(name, nil, frontend.BackendSwitchingRuleList)
+	operations = append(operations, backendSwitchingRuleOps...)
+
+	// Compare filters
+	filterOps := c.compareFilters(parentTypeFrontend, name, nil, frontend.FilterList)
+	operations = append(operations, filterOps...)
+
+	// Compare captures
+	captureOps := c.compareCaptures(name, nil, frontend.CaptureList)
+	operations = append(operations, captureOps...)
+
+	// Compare log targets
+	logTargetOps := c.compareLogTargets(parentTypeFrontend, name, nil, frontend.LogTargetList)
+	operations = append(operations, logTargetOps...)
+
+	// Compare QUIC initial rules (v3.1+ only)
+	quicInitialRuleOps := c.compareQUICInitialRules(parentTypeFrontend, name, nil, frontend.QUICInitialRuleList)
+	operations = append(operations, quicInitialRuleOps...)
+
+	// Compare binds - use pointer index for zero-copy iteration
+	emptyBinds := make(map[string]*models.Bind)
+	bindOps := c.compareBindsWithIndex(name, emptyBinds, desiredBinds)
+	operations = append(operations, bindOps...)
+
+	return operations
+}
+
+// compareModifiedFrontendsWithIndexes compares modified frontends using pointer indexes.
+func (c *Comparator) compareModifiedFrontendsWithIndexes(desiredFrontends, currentFrontends map[string]*models.Frontend, current, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
+	// Pre-allocate with estimated capacity
+	operations := make([]Operation, 0, len(desiredFrontends)*5)
 
 	for name, desiredFrontend := range desiredFrontends {
 		currentFrontend, exists := currentFrontends[name]
@@ -154,12 +168,19 @@ func (c *Comparator) compareModifiedFrontends(desiredFrontends, currentFrontends
 		quicInitialRuleOps := c.compareQUICInitialRules(parentTypeFrontend, name, currentFrontend.QUICInitialRuleList, desiredFrontend.QUICInitialRuleList)
 		appendOperationsIfNotEmpty(&operations, quicInitialRuleOps, &frontendModified)
 
-		// Compare binds within this frontend
-		bindOps := c.compareBinds(name, currentFrontend.Binds, desiredFrontend.Binds)
+		// Compare binds within this frontend using pointer indexes
+		currentBinds := current.BindIndex[name]
+		desiredBinds := desired.BindIndex[name]
+		if currentBinds == nil {
+			currentBinds = make(map[string]*models.Bind)
+		}
+		if desiredBinds == nil {
+			desiredBinds = make(map[string]*models.Bind)
+		}
+		bindOps := c.compareBindsWithIndex(name, currentBinds, desiredBinds)
 		appendOperationsIfNotEmpty(&operations, bindOps, &frontendModified)
 
 		// Compare frontend attributes (excluding ACLs, rules, and binds which we already compared)
-		// Create copies to compare without nested collections
 		if !frontendsEqualWithoutNestedCollections(currentFrontend, desiredFrontend) {
 			operations = append(operations, sections.NewFrontendUpdate(desiredFrontend))
 			frontendModified = true
@@ -204,37 +225,35 @@ func frontendsEqualWithoutNestedCollections(f1, f2 *models.Frontend) bool {
 	return f1Copy.Equal(f2Copy)
 }
 
-// compareBinds compares bind configurations within a frontend.
-// Binds are identified by their name (Name field in the map key).
-func (c *Comparator) compareBinds(frontendName string, currentBinds, desiredBinds map[string]models.Bind) []Operation {
-	var operations []Operation
+// compareBindsWithIndex compares bind configurations within a frontend using pointer indexes.
+func (c *Comparator) compareBindsWithIndex(frontendName string, currentBinds, desiredBinds map[string]*models.Bind) []Operation {
+	// Pre-allocate with capacity for potential changes
+	maxOps := len(currentBinds) + len(desiredBinds)
+	operations := make([]Operation, 0, maxOps)
 
 	// Find added binds
-	for name := range desiredBinds {
+	for name, bind := range desiredBinds {
 		if _, exists := currentBinds[name]; !exists {
-			bind := desiredBinds[name]
-			operations = append(operations, sections.NewBindFrontendCreate(frontendName, name, &bind))
+			operations = append(operations, sections.NewBindFrontendCreate(frontendName, name, bind))
 		}
 	}
 
 	// Find deleted binds
-	for name := range currentBinds {
+	for name, bind := range currentBinds {
 		if _, exists := desiredBinds[name]; !exists {
-			bind := currentBinds[name]
-			operations = append(operations, sections.NewBindFrontendDelete(frontendName, name, &bind))
+			operations = append(operations, sections.NewBindFrontendDelete(frontendName, name, bind))
 		}
 	}
 
 	// Find modified binds
-	for name := range desiredBinds {
+	for name, desiredBind := range desiredBinds {
 		currentBind, exists := currentBinds[name]
 		if !exists {
 			continue
 		}
-		desiredBind := desiredBinds[name]
 		// Compare using built-in Equal() method
-		if !currentBind.Equal(desiredBind) {
-			operations = append(operations, sections.NewBindFrontendUpdate(frontendName, name, &desiredBind))
+		if !currentBind.Equal(*desiredBind) {
+			operations = append(operations, sections.NewBindFrontendUpdate(frontendName, name, desiredBind))
 		}
 	}
 

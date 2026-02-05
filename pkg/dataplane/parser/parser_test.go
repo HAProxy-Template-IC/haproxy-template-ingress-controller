@@ -218,9 +218,9 @@ backend web
 		t.Errorf("Expected frontend name='http-in', got: %q", fe.Name)
 	}
 
-	// Verify binds (slice-to-map conversion)
-	if len(fe.Binds) != 2 {
-		t.Errorf("Expected 2 binds, got: %d", len(fe.Binds))
+	// Verify binds (using BindIndex for zero-copy iteration)
+	if len(conf.BindIndex[fe.Name]) != 2 {
+		t.Errorf("Expected 2 binds, got: %d", len(conf.BindIndex[fe.Name]))
 	}
 
 	// Verify ACLs
@@ -295,26 +295,27 @@ backend web-servers
 		t.Errorf("Expected balance algorithm='roundrobin', got: %v", be.Balance)
 	}
 
-	// Verify servers (slice-to-map conversion)
-	// Note: server-template doesn't create individual server entries
-	if len(be.Servers) != 3 {
-		t.Errorf("Expected 3 servers, got: %d", len(be.Servers))
+	// Verify servers (using ServerIndex for zero-copy iteration)
+	serverIndex := conf.ServerIndex[be.Name]
+	if len(serverIndex) != 3 {
+		t.Errorf("Expected 3 servers, got: %d", len(serverIndex))
 	}
 
 	// Verify specific servers exist
-	if _, ok := be.Servers["web1"]; !ok {
+	if _, ok := serverIndex["web1"]; !ok {
 		t.Error("Server 'web1' not found")
 	}
-	if _, ok := be.Servers["web2"]; !ok {
+	if _, ok := serverIndex["web2"]; !ok {
 		t.Error("Server 'web2' not found")
 	}
-	if _, ok := be.Servers["web3"]; !ok {
+	if _, ok := serverIndex["web3"]; !ok {
 		t.Error("Server 'web3' not found")
 	}
 
-	// Verify server-template (slice-to-map conversion)
-	if len(be.ServerTemplates) != 1 {
-		t.Errorf("Expected 1 server template, got: %d", len(be.ServerTemplates))
+	// Verify server-template (using ServerTemplateIndex for zero-copy iteration)
+	templateIndex := conf.ServerTemplateIndex[be.Name]
+	if len(templateIndex) != 1 {
+		t.Errorf("Expected 1 server template, got: %d", len(templateIndex))
 	}
 
 	// Verify ACLs
@@ -366,19 +367,20 @@ peers mycluster
 		t.Errorf("Expected peers name='mycluster', got: %q", peer.Name)
 	}
 
-	// Verify peer entries (slice-to-map conversion)
-	if len(peer.PeerEntries) != 3 {
-		t.Errorf("Expected 3 peer entries, got: %d", len(peer.PeerEntries))
+	// Verify peer entries (using PeerEntryIndex for zero-copy iteration)
+	peerEntryIndex := conf.PeerEntryIndex[peer.Name]
+	if len(peerEntryIndex) != 3 {
+		t.Errorf("Expected 3 peer entries, got: %d", len(peerEntryIndex))
 	}
 
 	// Verify specific peers exist
-	if _, ok := peer.PeerEntries["peer1"]; !ok {
+	if _, ok := peerEntryIndex["peer1"]; !ok {
 		t.Error("Peer 'peer1' not found")
 	}
-	if _, ok := peer.PeerEntries["peer2"]; !ok {
+	if _, ok := peerEntryIndex["peer2"]; !ok {
 		t.Error("Peer 'peer2' not found")
 	}
-	if _, ok := peer.PeerEntries["peer3"]; !ok {
+	if _, ok := peerEntryIndex["peer3"]; !ok {
 		t.Error("Peer 'peer3' not found")
 	}
 }
@@ -418,16 +420,17 @@ resolvers mydns
 		t.Errorf("Expected resolver name='mydns', got: %q", resolver.Name)
 	}
 
-	// Verify nameservers (slice-to-map conversion)
-	if len(resolver.Nameservers) != 2 {
-		t.Errorf("Expected 2 nameservers, got: %d", len(resolver.Nameservers))
+	// Verify nameservers (using NameserverIndex for zero-copy iteration)
+	nameserverIndex := conf.NameserverIndex[resolver.Name]
+	if len(nameserverIndex) != 2 {
+		t.Errorf("Expected 2 nameservers, got: %d", len(nameserverIndex))
 	}
 
 	// Verify specific nameservers exist
-	if _, ok := resolver.Nameservers["dns1"]; !ok {
+	if _, ok := nameserverIndex["dns1"]; !ok {
 		t.Error("Nameserver 'dns1' not found")
 	}
-	if _, ok := resolver.Nameservers["dns2"]; !ok {
+	if _, ok := nameserverIndex["dns2"]; !ok {
 		t.Error("Nameserver 'dns2' not found")
 	}
 }
@@ -465,16 +468,17 @@ mailers mymailers
 		t.Errorf("Expected mailers name='mymailers', got: %q", mailer.Name)
 	}
 
-	// Verify mailer entries (slice-to-map conversion)
-	if len(mailer.MailerEntries) != 2 {
-		t.Errorf("Expected 2 mailer entries, got: %d", len(mailer.MailerEntries))
+	// Verify mailer entries (using MailerEntryIndex for zero-copy iteration)
+	mailerEntryIndex := conf.MailerEntryIndex[mailer.Name]
+	if len(mailerEntryIndex) != 2 {
+		t.Errorf("Expected 2 mailer entries, got: %d", len(mailerEntryIndex))
 	}
 
 	// Verify specific mailers exist
-	if _, ok := mailer.MailerEntries["smtp1"]; !ok {
+	if _, ok := mailerEntryIndex["smtp1"]; !ok {
 		t.Error("Mailer 'smtp1' not found")
 	}
-	if _, ok := mailer.MailerEntries["smtp2"]; !ok {
+	if _, ok := mailerEntryIndex["smtp2"]; !ok {
 		t.Error("Mailer 'smtp2' not found")
 	}
 }
@@ -736,32 +740,34 @@ userlist myusers
 		t.Errorf("Expected userlist name='myusers', got: %q", userlist.Name)
 	}
 
-	// Verify users were parsed
-	if len(userlist.Users) != 3 {
-		t.Errorf("Expected 3 users, got: %d", len(userlist.Users))
+	// Verify users were parsed (using UserIndex for zero-copy iteration)
+	userIndex := conf.UserIndex[userlist.Name]
+	if len(userIndex) != 3 {
+		t.Errorf("Expected 3 users, got: %d", len(userIndex))
 	}
 
 	// Verify specific users exist
-	if _, ok := userlist.Users["admin1"]; !ok {
+	if _, ok := userIndex["admin1"]; !ok {
 		t.Error("User 'admin1' not found")
 	}
-	if _, ok := userlist.Users["admin2"]; !ok {
+	if _, ok := userIndex["admin2"]; !ok {
 		t.Error("User 'admin2' not found")
 	}
-	if _, ok := userlist.Users["user1"]; !ok {
+	if _, ok := userIndex["user1"]; !ok {
 		t.Error("User 'user1' not found")
 	}
 
-	// Verify groups were parsed
-	if len(userlist.Groups) != 2 {
-		t.Errorf("Expected 2 groups, got: %d", len(userlist.Groups))
+	// Verify groups were parsed (using GroupIndex for zero-copy iteration)
+	groupIndex := conf.GroupIndex[userlist.Name]
+	if len(groupIndex) != 2 {
+		t.Errorf("Expected 2 groups, got: %d", len(groupIndex))
 	}
 
 	// Verify specific groups exist
-	if _, ok := userlist.Groups["admins"]; !ok {
+	if _, ok := groupIndex["admins"]; !ok {
 		t.Error("Group 'admins' not found")
 	}
-	if _, ok := userlist.Groups["readers"]; !ok {
+	if _, ok := groupIndex["readers"]; !ok {
 		t.Error("Group 'readers' not found")
 	}
 }

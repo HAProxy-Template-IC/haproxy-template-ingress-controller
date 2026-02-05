@@ -134,46 +134,6 @@ func (c *Comparator) compareTCPChecks(backendName string, currentChecks, desired
 	return operations
 }
 
-// compareServerTemplates compares server template configurations within a backend.
-func (c *Comparator) compareServerTemplates(backendName string, currentBackend, desiredBackend *models.Backend) []Operation {
-	var operations []Operation
-
-	// Backend.ServerTemplates is already a map[string]models.ServerTemplate
-	currentTemplates := currentBackend.ServerTemplates
-	desiredTemplates := desiredBackend.ServerTemplates
-
-	// Find added server templates
-	for prefix := range desiredTemplates {
-		if _, exists := currentTemplates[prefix]; !exists {
-			template := desiredTemplates[prefix]
-			operations = append(operations, sections.NewServerTemplateCreate(backendName, &template))
-		}
-	}
-
-	// Find deleted server templates
-	for prefix := range currentTemplates {
-		if _, exists := desiredTemplates[prefix]; !exists {
-			template := currentTemplates[prefix]
-			operations = append(operations, sections.NewServerTemplateDelete(backendName, &template))
-		}
-	}
-
-	// Find modified server templates
-	for prefix := range desiredTemplates {
-		currentTemplate, exists := currentTemplates[prefix]
-		if !exists {
-			continue
-		}
-		desiredTemplate := desiredTemplates[prefix]
-		// Compare server template attributes using Equal() method
-		if !serverTemplatesEqual(&currentTemplate, &desiredTemplate) {
-			operations = append(operations, sections.NewServerTemplateUpdate(backendName, &desiredTemplate))
-		}
-	}
-
-	return operations
-}
-
 // serverTemplatesEqual checks if two server templates are equal.
 // Uses the HAProxy models' built-in Equal() method to compare ALL attributes.
 func serverTemplatesEqual(t1, t2 *models.ServerTemplate) bool {

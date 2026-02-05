@@ -110,6 +110,15 @@ func (p *Parser) extractConfiguration(parsed *ConfiguredParsers) (*StructuredCon
 	conf := &StructuredConfig{
 		EEFrontends: make(map[string]*parserconfig.EEFrontendData),
 		EEBackends:  make(map[string]*parserconfig.EEBackendData),
+		// Initialize pointer-based indexes for zero-copy iteration
+		ServerIndex:         make(map[string]map[string]*models.Server),
+		ServerTemplateIndex: make(map[string]map[string]*models.ServerTemplate),
+		BindIndex:           make(map[string]map[string]*models.Bind),
+		PeerEntryIndex:      make(map[string]map[string]*models.PeerEntry),
+		NameserverIndex:     make(map[string]map[string]*models.Nameserver),
+		MailerEntryIndex:    make(map[string]map[string]*models.MailerEntry),
+		UserIndex:           make(map[string]map[string]*models.User),
+		GroupIndex:          make(map[string]map[string]*models.Group),
 	}
 
 	// Extract CE sections from client-native parser (complete field extraction)
@@ -129,7 +138,7 @@ func (p *Parser) extractConfiguration(parsed *ConfiguredParsers) (*StructuredCon
 
 // extractCESections extracts standard CE sections from the client-native parser.
 // This uses client-native's configuration.Parse* functions for complete field extraction,
-// ensuring feature parity with the CE parser.
+// ensuring feature parity with the CE parser. Builds pointer indexes for zero-copy iteration.
 func (p *Parser) extractCESections(conf *StructuredConfig) error {
 	// Extract global
 	global, err := p.extractGlobal()
@@ -145,27 +154,17 @@ func (p *Parser) extractCESections(conf *StructuredConfig) error {
 	}
 	conf.Defaults = defaults
 
-	// Extract frontends
-	frontends, err := p.extractFrontends()
-	if err != nil {
-		return fmt.Errorf("failed to extract frontends: %w", err)
-	}
-	conf.Frontends = frontends
+	// Extract frontends with pointer indexes
+	p.extractFrontendsWithIndexes(conf)
 
-	// Extract backends
-	backends, err := p.extractBackends()
-	if err != nil {
-		return fmt.Errorf("failed to extract backends: %w", err)
-	}
-	conf.Backends = backends
+	// Extract backends with pointer indexes
+	p.extractBackendsWithIndexes(conf)
 
-	// Extract peer and service discovery sections
-	if err := p.extractPeerAndDiscoverySections(conf); err != nil {
-		return err
-	}
+	// Extract peer and service discovery sections with pointer indexes
+	p.extractPeerAndDiscoverySectionsWithIndexes(conf)
 
-	// Extract service sections
-	if err := p.extractServiceSections(conf); err != nil {
+	// Extract service sections with pointer indexes
+	if err := p.extractServiceSectionsWithIndexes(conf); err != nil {
 		return err
 	}
 
@@ -237,12 +236,12 @@ func (p *Parser) extractDefaults() ([]*models.Defaults, error) {
 	return defaults, nil
 }
 
-// extractFrontends extracts all frontend sections using client-native's Parse* functions.
+// extractFrontendsWithIndexes extracts all frontend sections and builds pointer indexes.
 // This handles ALL frontend fields (80+ fields) and nested structures.
-func (p *Parser) extractFrontends() ([]*models.Frontend, error) {
+func (p *Parser) extractFrontendsWithIndexes(conf *StructuredConfig) {
 	sections, err := p.ceParser.SectionsGet(clientparser.Frontends)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	frontends := make([]*models.Frontend, 0, len(sections))
@@ -258,14 +257,16 @@ func (p *Parser) extractFrontends() ([]*models.Frontend, error) {
 		// Parse nested structures
 		fe.ACLList, _ = configuration.ParseACLs(clientparser.Frontends, sectionName, p.ceParser)
 
+		// Parse binds and build pointer index for zero-copy iteration.
 		binds, _ := configuration.ParseBinds(string(clientparser.Frontends), sectionName, p.ceParser)
 		if binds != nil {
-			fe.Binds = make(map[string]models.Bind)
+			bindIndex := make(map[string]*models.Bind, len(binds))
 			for _, bind := range binds {
 				if bind != nil {
-					fe.Binds[bind.Name] = *bind
+					bindIndex[bind.Name] = bind // Store pointer directly, no copy
 				}
 			}
+			conf.BindIndex[sectionName] = bindIndex
 		}
 
 		fe.HTTPRequestRuleList, _ = configuration.ParseHTTPRequestRules(string(clientparser.Frontends), sectionName, p.ceParser)
@@ -282,15 +283,15 @@ func (p *Parser) extractFrontends() ([]*models.Frontend, error) {
 		frontends = append(frontends, fe)
 	}
 
-	return frontends, nil
+	conf.Frontends = frontends
 }
 
-// extractBackends extracts all backend sections using client-native's Parse* functions.
+// extractBackendsWithIndexes extracts all backend sections and builds pointer indexes.
 // This handles ALL backend fields (100+ fields) and nested structures.
-func (p *Parser) extractBackends() ([]*models.Backend, error) {
+func (p *Parser) extractBackendsWithIndexes(conf *StructuredConfig) {
 	sections, err := p.ceParser.SectionsGet(clientparser.Backends)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	backends := make([]*models.Backend, 0, len(sections))
@@ -303,28 +304,31 @@ func (p *Parser) extractBackends() ([]*models.Backend, error) {
 		}
 		be.Name = sectionName
 
-		// Parse nested structures
-		p.parseBackendNestedStructures(sectionName, be)
+		// Parse nested structures with pointer indexes
+		p.parseBackendNestedStructuresWithIndexes(sectionName, be, conf)
 
 		backends = append(backends, be)
 	}
 
-	return backends, nil
+	conf.Backends = backends
 }
 
-// parseBackendNestedStructures parses all nested structures for a backend.
-func (p *Parser) parseBackendNestedStructures(sectionName string, be *models.Backend) {
-	// Parse ACLs and servers
+// parseBackendNestedStructuresWithIndexes parses all nested structures for a backend
+// and builds pointer indexes for servers and server templates.
+func (p *Parser) parseBackendNestedStructuresWithIndexes(sectionName string, be *models.Backend, conf *StructuredConfig) {
+	// Parse ACLs
 	be.ACLList, _ = configuration.ParseACLs(clientparser.Backends, sectionName, p.ceParser)
 
+	// Parse servers and build pointer index for zero-copy iteration.
 	servers, _ := configuration.ParseServers(string(clientparser.Backends), sectionName, p.ceParser)
 	if servers != nil {
-		be.Servers = make(map[string]models.Server)
+		serverIndex := make(map[string]*models.Server, len(servers))
 		for _, server := range servers {
 			if server != nil {
-				be.Servers[server.Name] = *server
+				serverIndex[server.Name] = server // Store pointer directly, no copy
 			}
 		}
+		conf.ServerIndex[sectionName] = serverIndex
 	}
 
 	// Parse HTTP/TCP rules
@@ -343,46 +347,32 @@ func (p *Parser) parseBackendNestedStructures(sectionName string, be *models.Bac
 	be.HTTPCheckList, _ = configuration.ParseHTTPChecks(string(clientparser.Backends), sectionName, p.ceParser)
 	be.TCPCheckRuleList, _ = configuration.ParseTCPChecks(string(clientparser.Backends), sectionName, p.ceParser)
 
-	// Parse server templates
+	// Parse server templates and build pointer index for zero-copy iteration.
 	serverTemplates, _ := configuration.ParseServerTemplates(sectionName, p.ceParser)
 	if serverTemplates != nil {
-		be.ServerTemplates = make(map[string]models.ServerTemplate)
+		templateIndex := make(map[string]*models.ServerTemplate, len(serverTemplates))
 		for _, template := range serverTemplates {
 			if template != nil {
-				be.ServerTemplates[template.Prefix] = *template
+				templateIndex[template.Prefix] = template // Store pointer directly, no copy
 			}
 		}
+		conf.ServerTemplateIndex[sectionName] = templateIndex
 	}
 }
 
-// extractPeerAndDiscoverySections extracts peer and service discovery sections.
-func (p *Parser) extractPeerAndDiscoverySections(conf *StructuredConfig) error {
-	peers, err := p.extractPeers()
-	if err != nil {
-		return fmt.Errorf("failed to extract peers: %w", err)
-	}
-	conf.Peers = peers
-
-	resolvers, err := p.extractResolvers()
-	if err != nil {
-		return fmt.Errorf("failed to extract resolvers: %w", err)
-	}
-	conf.Resolvers = resolvers
-
-	mailers, err := p.extractMailers()
-	if err != nil {
-		return fmt.Errorf("failed to extract mailers: %w", err)
-	}
-	conf.Mailers = mailers
-
-	return nil
+// extractPeerAndDiscoverySectionsWithIndexes extracts peer and service discovery sections
+// and builds pointer indexes for nested entries.
+func (p *Parser) extractPeerAndDiscoverySectionsWithIndexes(conf *StructuredConfig) {
+	p.extractPeersWithIndexes(conf)
+	p.extractResolversWithIndexes(conf)
+	p.extractMailersWithIndexes(conf)
 }
 
-// extractPeers extracts all peers sections.
-func (p *Parser) extractPeers() ([]*models.PeerSection, error) {
+// extractPeersWithIndexes extracts all peers sections and builds pointer indexes.
+func (p *Parser) extractPeersWithIndexes(conf *StructuredConfig) {
 	sections, err := p.ceParser.SectionsGet(clientparser.Peers)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	peers := make([]*models.PeerSection, 0, len(sections))
@@ -395,27 +385,29 @@ func (p *Parser) extractPeers() ([]*models.PeerSection, error) {
 		}
 		peer.Name = sectionName
 
+		// Parse peer entries and build pointer index for zero-copy iteration.
 		peerEntries, _ := configuration.ParsePeerEntries(sectionName, p.ceParser)
 		if peerEntries != nil {
-			peer.PeerEntries = make(map[string]models.PeerEntry)
+			entryIndex := make(map[string]*models.PeerEntry, len(peerEntries))
 			for _, entry := range peerEntries {
 				if entry != nil {
-					peer.PeerEntries[entry.Name] = *entry
+					entryIndex[entry.Name] = entry // Store pointer directly, no copy
 				}
 			}
+			conf.PeerEntryIndex[sectionName] = entryIndex
 		}
 
 		peers = append(peers, peer)
 	}
 
-	return peers, nil
+	conf.Peers = peers
 }
 
-// extractResolvers extracts all resolvers sections.
-func (p *Parser) extractResolvers() ([]*models.Resolver, error) {
+// extractResolversWithIndexes extracts all resolvers sections and builds pointer indexes.
+func (p *Parser) extractResolversWithIndexes(conf *StructuredConfig) {
 	sections, err := p.ceParser.SectionsGet(clientparser.Resolvers)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	resolvers := make([]*models.Resolver, 0, len(sections))
@@ -428,27 +420,29 @@ func (p *Parser) extractResolvers() ([]*models.Resolver, error) {
 			continue
 		}
 
+		// Parse nameservers and build pointer index for zero-copy iteration.
 		nameservers, _ := configuration.ParseNameservers(sectionName, p.ceParser)
 		if nameservers != nil {
-			resolver.Nameservers = make(map[string]models.Nameserver)
+			nsIndex := make(map[string]*models.Nameserver, len(nameservers))
 			for _, ns := range nameservers {
 				if ns != nil {
-					resolver.Nameservers[ns.Name] = *ns
+					nsIndex[ns.Name] = ns // Store pointer directly, no copy
 				}
 			}
+			conf.NameserverIndex[sectionName] = nsIndex
 		}
 
 		resolvers = append(resolvers, resolver)
 	}
 
-	return resolvers, nil
+	conf.Resolvers = resolvers
 }
 
-// extractMailers extracts all mailers sections.
-func (p *Parser) extractMailers() ([]*models.MailersSection, error) {
+// extractMailersWithIndexes extracts all mailers sections and builds pointer indexes.
+func (p *Parser) extractMailersWithIndexes(conf *StructuredConfig) {
 	sections, err := p.ceParser.SectionsGet(clientparser.Mailers)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	mailers := make([]*models.MailersSection, 0, len(sections))
@@ -461,24 +455,26 @@ func (p *Parser) extractMailers() ([]*models.MailersSection, error) {
 			continue
 		}
 
+		// Parse mailer entries and build pointer index for zero-copy iteration.
 		mailerEntries, _ := configuration.ParseMailerEntries(sectionName, p.ceParser)
 		if mailerEntries != nil {
-			mailer.MailerEntries = make(map[string]models.MailerEntry)
+			entryIndex := make(map[string]*models.MailerEntry, len(mailerEntries))
 			for _, entry := range mailerEntries {
 				if entry != nil {
-					mailer.MailerEntries[entry.Name] = *entry
+					entryIndex[entry.Name] = entry // Store pointer directly, no copy
 				}
 			}
+			conf.MailerEntryIndex[sectionName] = entryIndex
 		}
 
 		mailers = append(mailers, mailer)
 	}
 
-	return mailers, nil
+	conf.Mailers = mailers
 }
 
-// extractServiceSections extracts service sections (caches, rings, http-errors, userlists).
-func (p *Parser) extractServiceSections(conf *StructuredConfig) error {
+// extractServiceSectionsWithIndexes extracts service sections and builds pointer indexes.
+func (p *Parser) extractServiceSectionsWithIndexes(conf *StructuredConfig) error {
 	caches, err := p.extractCaches()
 	if err != nil {
 		return fmt.Errorf("failed to extract caches: %w", err)
@@ -497,11 +493,7 @@ func (p *Parser) extractServiceSections(conf *StructuredConfig) error {
 	}
 	conf.HTTPErrors = httpErrors
 
-	userlists, err := p.extractUserlists()
-	if err != nil {
-		return fmt.Errorf("failed to extract userlists: %w", err)
-	}
-	conf.Userlists = userlists
+	p.extractUserlistsWithIndexes(conf)
 
 	return nil
 }
@@ -573,67 +565,39 @@ func (p *Parser) extractHTTPErrors() ([]*models.HTTPErrorsSection, error) {
 	return httpErrors, nil
 }
 
-// extractUserlists extracts all userlist sections.
-func (p *Parser) extractUserlists() ([]*models.Userlist, error) {
+// extractUserlistsWithIndexes extracts all userlist sections and builds pointer indexes.
+func (p *Parser) extractUserlistsWithIndexes(conf *StructuredConfig) {
 	sections, err := p.ceParser.SectionsGet(clientparser.UserList)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	userlists := make([]*models.Userlist, 0, len(sections))
 	for _, sectionName := range sections {
-		userlist, err := p.extractSingleUserlist(sectionName)
-		if err != nil {
+		userlist := &models.Userlist{}
+		userlist.Name = sectionName
+
+		if err := configuration.ParseSection(&userlist.UserlistBase, clientparser.UserList, sectionName, p.ceParser); err != nil {
 			slog.Warn("Failed to parse userlist section", "section", sectionName, "error", err)
 			continue
 		}
+
+		// Parse users and build pointer index for zero-copy iteration.
+		users, _ := configuration.ParseUsers(sectionName, p.ceParser)
+		if userIndex := parserconfig.BuildUserIndex(users); userIndex != nil {
+			conf.UserIndex[sectionName] = userIndex
+		}
+
+		// Parse groups and build pointer index for zero-copy iteration.
+		groups, _ := configuration.ParseGroups(sectionName, p.ceParser)
+		if groupIndex := parserconfig.BuildGroupIndex(groups); groupIndex != nil {
+			conf.GroupIndex[sectionName] = groupIndex
+		}
+
 		userlists = append(userlists, userlist)
 	}
 
-	return userlists, nil
-}
-
-// extractSingleUserlist extracts a single userlist section by name.
-func (p *Parser) extractSingleUserlist(sectionName string) (*models.Userlist, error) {
-	userlist := &models.Userlist{}
-	userlist.Name = sectionName
-
-	if err := configuration.ParseSection(&userlist.UserlistBase, clientparser.UserList, sectionName, p.ceParser); err != nil {
-		return nil, err
-	}
-
-	p.populateUserlistUsers(userlist, sectionName)
-	p.populateUserlistGroups(userlist, sectionName)
-
-	return userlist, nil
-}
-
-// populateUserlistUsers parses and populates users in a userlist.
-func (p *Parser) populateUserlistUsers(userlist *models.Userlist, sectionName string) {
-	users, err := configuration.ParseUsers(sectionName, p.ceParser)
-	if err != nil || users == nil {
-		return
-	}
-	userlist.Users = make(map[string]models.User)
-	for _, user := range users {
-		if user != nil && user.Username != "" {
-			userlist.Users[user.Username] = *user
-		}
-	}
-}
-
-// populateUserlistGroups parses and populates groups in a userlist.
-func (p *Parser) populateUserlistGroups(userlist *models.Userlist, sectionName string) {
-	groups, err := configuration.ParseGroups(sectionName, p.ceParser)
-	if err != nil || groups == nil {
-		return
-	}
-	userlist.Groups = make(map[string]models.Group)
-	for _, group := range groups {
-		if group != nil && group.Name != "" {
-			userlist.Groups[group.Name] = *group
-		}
-	}
+	conf.Userlists = userlists
 }
 
 // extractProgramSections extracts program and application sections.

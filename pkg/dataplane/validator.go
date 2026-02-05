@@ -300,16 +300,17 @@ func getCachedValidatorForVersion(version *Version) *validators.CachedValidator 
 //
 // Uses zero-allocation generated validators instead of the generic kin-openapi
 // validator to eliminate the ~25GB allocation overhead from JSON conversions.
+// Uses pointer indexes from StructuredConfig for zero-copy iteration over nested elements.
 func validateAPISchema(parsed *parser.StructuredConfig, version *Version) error {
 	cv := getCachedValidatorForVersion(version)
 
 	var validationErrors []string
 
-	// Validate backend sections
-	validationErrors = append(validationErrors, validateBackendSectionsGenerated(cv, parsed.Backends)...)
+	// Validate backend sections using pointer indexes
+	validationErrors = append(validationErrors, validateBackendSectionsGenerated(cv, parsed.Backends, parsed.ServerIndex, parsed.ServerTemplateIndex)...)
 
-	// Validate frontend sections
-	validationErrors = append(validationErrors, validateFrontendSectionsGenerated(cv, parsed.Frontends)...)
+	// Validate frontend sections using pointer indexes
+	validationErrors = append(validationErrors, validateFrontendSectionsGenerated(cv, parsed.Frontends, parsed.BindIndex)...)
 
 	if len(validationErrors) > 0 {
 		return fmt.Errorf("API schema validation failed:\n  - %s",
@@ -320,11 +321,12 @@ func validateAPISchema(parsed *parser.StructuredConfig, version *Version) error 
 }
 
 // validateBackendSectionsGenerated validates backend sections using generated validators.
-func validateBackendSectionsGenerated(cv *validators.CachedValidator, backends []*models.Backend) []string {
+// Uses pointer indexes for zero-copy iteration over servers and server templates.
+func validateBackendSectionsGenerated(cv *validators.CachedValidator, backends []*models.Backend, serverIndex map[string]map[string]*models.Server, serverTemplateIndex map[string]map[string]*models.ServerTemplate) []string {
 	var errors []string
 	for i := range backends {
 		backend := backends[i]
-		errors = append(errors, validateBackendServersGenerated(cv, backend)...)
+		errors = append(errors, validateBackendServersGenerated(cv, backend.Name, serverIndex, serverTemplateIndex)...)
 		errors = append(errors, validateBackendRulesGenerated(cv, backend)...)
 		errors = append(errors, validateBackendChecksGenerated(cv, backend)...)
 	}
@@ -332,11 +334,12 @@ func validateBackendSectionsGenerated(cv *validators.CachedValidator, backends [
 }
 
 // validateFrontendSectionsGenerated validates frontend sections using generated validators.
-func validateFrontendSectionsGenerated(cv *validators.CachedValidator, frontends []*models.Frontend) []string {
+// Uses pointer indexes for zero-copy iteration over binds.
+func validateFrontendSectionsGenerated(cv *validators.CachedValidator, frontends []*models.Frontend, bindIndex map[string]map[string]*models.Bind) []string {
 	var errors []string
 	for i := range frontends {
 		frontend := frontends[i]
-		errors = append(errors, validateFrontendBindsGenerated(cv, frontend)...)
+		errors = append(errors, validateFrontendBindsGenerated(cv, frontend.Name, bindIndex)...)
 		errors = append(errors, validateFrontendRulesGenerated(cv, frontend)...)
 		errors = append(errors, validateFrontendElementsGenerated(cv, frontend)...)
 	}
@@ -344,18 +347,23 @@ func validateFrontendSectionsGenerated(cv *validators.CachedValidator, frontends
 }
 
 // validateBackendServersGenerated validates servers and server templates in a backend.
-func validateBackendServersGenerated(cv *validators.CachedValidator, backend *models.Backend) []string {
-	errors := make([]string, 0, len(backend.Servers)+len(backend.ServerTemplates))
-	for serverName := range backend.Servers {
-		server := backend.Servers[serverName]
-		if err := cv.ValidateServer(&server); err != nil {
-			errors = append(errors, fmt.Sprintf("backend %s, server %s: %v", backend.Name, serverName, err))
+// Uses pointer indexes for zero-copy iteration - servers and templates are already pointers.
+func validateBackendServersGenerated(cv *validators.CachedValidator, backendName string, serverIndex map[string]map[string]*models.Server, serverTemplateIndex map[string]map[string]*models.ServerTemplate) []string {
+	servers := serverIndex[backendName]
+	templates := serverTemplateIndex[backendName]
+	errors := make([]string, 0, len(servers)+len(templates))
+
+	// Validate servers using pointer index - no copies
+	for serverName, server := range servers {
+		if err := cv.ValidateServer(server); err != nil {
+			errors = append(errors, fmt.Sprintf("backend %s, server %s: %v", backendName, serverName, err))
 		}
 	}
-	for templateName := range backend.ServerTemplates {
-		template := backend.ServerTemplates[templateName]
-		if err := cv.ValidateServerTemplate(&template); err != nil {
-			errors = append(errors, fmt.Sprintf("backend %s, server template %s: %v", backend.Name, templateName, err))
+
+	// Validate server templates using pointer index - no copies
+	for templateName, template := range templates {
+		if err := cv.ValidateServerTemplate(template); err != nil {
+			errors = append(errors, fmt.Sprintf("backend %s, server template %s: %v", backendName, templateName, err))
 		}
 	}
 	return errors
@@ -462,12 +470,15 @@ func validateBackendChecksGenerated(cv *validators.CachedValidator, backend *mod
 }
 
 // validateFrontendBindsGenerated validates bind configurations in a frontend.
-func validateFrontendBindsGenerated(cv *validators.CachedValidator, frontend *models.Frontend) []string {
-	errors := make([]string, 0, len(frontend.Binds))
-	for bindName := range frontend.Binds {
-		bind := frontend.Binds[bindName]
-		if err := cv.ValidateBind(&bind); err != nil {
-			errors = append(errors, fmt.Sprintf("frontend %s, bind %s: %v", frontend.Name, bindName, err))
+// Uses pointer indexes for zero-copy iteration - binds are already pointers.
+func validateFrontendBindsGenerated(cv *validators.CachedValidator, frontendName string, bindIndex map[string]map[string]*models.Bind) []string {
+	binds := bindIndex[frontendName]
+	errors := make([]string, 0, len(binds))
+
+	// Validate binds using pointer index - no copies
+	for bindName, bind := range binds {
+		if err := cv.ValidateBind(bind); err != nil {
+			errors = append(errors, fmt.Sprintf("frontend %s, bind %s: %v", frontendName, bindName, err))
 		}
 	}
 	return errors

@@ -231,11 +231,11 @@ func TestGroupEqual(t *testing.T) {
 	}
 }
 
-func TestGroupsEqual(t *testing.T) {
+func TestGroupsEqualWithIndex(t *testing.T) {
 	tests := []struct {
 		name     string
-		g1       map[string]models.Group
-		g2       map[string]models.Group
+		g1       map[string]*models.Group
+		g2       map[string]*models.Group
 		expected bool
 	}{
 		{
@@ -246,19 +246,19 @@ func TestGroupsEqual(t *testing.T) {
 		},
 		{
 			name:     "both empty",
-			g1:       map[string]models.Group{},
-			g2:       map[string]models.Group{},
+			g1:       map[string]*models.Group{},
+			g2:       map[string]*models.Group{},
 			expected: true,
 		},
 		{
 			name: "same groups users in different order",
-			g1: map[string]models.Group{
+			g1: map[string]*models.Group{
 				"authenticated-users": {
 					Name:  "authenticated-users",
 					Users: "alice,bob,charlie",
 				},
 			},
-			g2: map[string]models.Group{
+			g2: map[string]*models.Group{
 				"authenticated-users": {
 					Name:  "authenticated-users",
 					Users: "charlie,alice,bob",
@@ -268,20 +268,20 @@ func TestGroupsEqual(t *testing.T) {
 		},
 		{
 			name: "different groups",
-			g1: map[string]models.Group{
+			g1: map[string]*models.Group{
 				"group1": {Name: "group1", Users: "user1"},
 			},
-			g2: map[string]models.Group{
+			g2: map[string]*models.Group{
 				"group2": {Name: "group2", Users: "user1"},
 			},
 			expected: false,
 		},
 		{
 			name: "different group count",
-			g1: map[string]models.Group{
+			g1: map[string]*models.Group{
 				"group1": {Name: "group1", Users: "user1"},
 			},
-			g2: map[string]models.Group{
+			g2: map[string]*models.Group{
 				"group1": {Name: "group1", Users: "user1"},
 				"group2": {Name: "group2", Users: "user2"},
 			},
@@ -291,7 +291,7 @@ func TestGroupsEqual(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := groupsEqual(tt.g1, tt.g2)
+			result := groupsEqualWithIndex(tt.g1, tt.g2)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

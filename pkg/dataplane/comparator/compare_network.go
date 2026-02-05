@@ -8,6 +8,7 @@ import (
 )
 
 // compareResolvers compares resolver sections between current and desired configurations.
+// Uses pointer indexes for zero-copy iteration over nameservers.
 func (c *Comparator) compareResolvers(current, desired *parser.StructuredConfig) []Operation {
 	operations := make([]Operation, 0, len(desired.Resolvers))
 
@@ -36,15 +37,10 @@ func (c *Comparator) compareResolvers(current, desired *parser.StructuredConfig)
 
 		operations = append(operations, sections.NewResolverCreate(resolver))
 
-		// Also create nameserver entries for this new resolver section
-		// Compare against an empty resolver section to get all nameserver create operations
-		emptyResolver := &models.Resolver{}
-		emptyResolver.Name = name
-		emptyResolver.Nameservers = make(map[string]models.Nameserver)
-		nameserverOps := c.compareNameservers(name, emptyResolver, resolver)
-		if len(nameserverOps) > 0 {
-			operations = append(operations, nameserverOps...)
-		}
+		// Also create nameserver entries for this new resolver section using pointer index
+		desiredNameservers := desired.NameserverIndex[name]
+		nameserverOps := c.compareNameserversWithIndex(name, nil, desiredNameservers)
+		operations = append(operations, nameserverOps...)
 	}
 
 	// Find deleted resolver sections
@@ -56,17 +52,21 @@ func (c *Comparator) compareResolvers(current, desired *parser.StructuredConfig)
 
 	// Find modified resolver sections
 	for name, desiredResolver := range desiredMap {
-		if currentResolver, exists := currentMap[name]; exists {
-			resolverModified := false
+		currentResolver, exists := currentMap[name]
+		if !exists {
+			continue
+		}
+		resolverModified := false
 
-			// Compare nameserver entries within this resolver section
-			nameserverOps := c.compareNameservers(name, currentResolver, desiredResolver)
-			appendOperationsIfNotEmpty(&operations, nameserverOps, &resolverModified)
+		// Compare nameserver entries within this resolver section using pointer indexes
+		currentNameservers := current.NameserverIndex[name]
+		desiredNameservers := desired.NameserverIndex[name]
+		nameserverOps := c.compareNameserversWithIndex(name, currentNameservers, desiredNameservers)
+		appendOperationsIfNotEmpty(&operations, nameserverOps, &resolverModified)
 
-			// Compare resolver section attributes (excluding nameserver entries which we already compared)
-			if !resolversEqualWithoutNameservers(currentResolver, desiredResolver) {
-				operations = append(operations, sections.NewResolverUpdate(desiredResolver))
-			}
+		// Compare resolver section attributes (excluding nameserver entries which we already compared)
+		if !resolversEqualWithoutNameservers(currentResolver, desiredResolver) {
+			operations = append(operations, sections.NewResolverUpdate(desiredResolver))
 		}
 	}
 
@@ -88,26 +88,41 @@ func resolversEqualWithoutNameservers(r1, r2 *models.Resolver) bool {
 	return r1Copy.Equal(r2Copy)
 }
 
-// compareNameservers compares nameserver configurations within a resolver section.
-func (c *Comparator) compareNameservers(resolverSection string, currentResolver, desiredResolver *models.Resolver) []Operation {
-	return compareMapEntries(
-		currentResolver.Nameservers,
-		desiredResolver.Nameservers,
-		func(entry *models.Nameserver) Operation {
-			return sections.NewNameserverCreate(resolverSection, entry)
-		},
-		func(entry *models.Nameserver) Operation {
-			return sections.NewNameserverDelete(resolverSection, entry)
-		},
-		func(entry *models.Nameserver) Operation {
-			return sections.NewNameserverUpdate(resolverSection, entry)
-		},
-		nameserversEqual,
-	)
-}
+// compareNameserversWithIndex compares nameserver configurations using pointer indexes.
+func (c *Comparator) compareNameserversWithIndex(resolverSection string, currentNameservers, desiredNameservers map[string]*models.Nameserver) []Operation {
+	if currentNameservers == nil {
+		currentNameservers = make(map[string]*models.Nameserver)
+	}
+	if desiredNameservers == nil {
+		desiredNameservers = make(map[string]*models.Nameserver)
+	}
 
-// nameserversEqual checks if two nameserver entries are equal.
-// Uses the HAProxy models' built-in Equal() method to compare ALL attributes.
-func nameserversEqual(n1, n2 *models.Nameserver) bool {
-	return n1.Equal(*n2)
+	var operations []Operation
+
+	// Find added nameservers
+	for name, ns := range desiredNameservers {
+		if _, exists := currentNameservers[name]; !exists {
+			operations = append(operations, sections.NewNameserverCreate(resolverSection, ns))
+		}
+	}
+
+	// Find deleted nameservers
+	for name, ns := range currentNameservers {
+		if _, exists := desiredNameservers[name]; !exists {
+			operations = append(operations, sections.NewNameserverDelete(resolverSection, ns))
+		}
+	}
+
+	// Find modified nameservers
+	for name, desiredNs := range desiredNameservers {
+		currentNs, exists := currentNameservers[name]
+		if !exists {
+			continue
+		}
+		if !currentNs.Equal(*desiredNs) {
+			operations = append(operations, sections.NewNameserverUpdate(resolverSection, desiredNs))
+		}
+	}
+
+	return operations
 }
