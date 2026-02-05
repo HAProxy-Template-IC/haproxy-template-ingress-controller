@@ -243,10 +243,26 @@ func (ec *EventCommentator) computeReconciliationSummary(
 	return summary
 }
 
+// shouldStoreInBuffer determines if an event should be stored in the ring buffer.
+// Heavyweight events containing large payloads are filtered out to reduce memory usage.
+// These events are still logged but not retained in the ring buffer.
+func shouldStoreInBuffer(event busevents.Event) bool {
+	switch event.(type) {
+	case *events.TemplateRenderedEvent,
+		*events.ValidationCompletedEvent,
+		*events.DeploymentScheduledEvent:
+		return false
+	default:
+		return true
+	}
+}
+
 // processEvent handles a single event: adds to buffer and logs with domain insights.
 func (ec *EventCommentator) processEvent(event busevents.Event) {
-	// Add to ring buffer first (for correlation)
-	ec.ringBuffer.Add(event)
+	// Add to ring buffer first (for correlation), filtering heavyweight events
+	if shouldStoreInBuffer(event) {
+		ec.ringBuffer.Add(event)
+	}
 
 	// Generate domain-aware log message with correlation
 	ec.logWithInsight(event)
