@@ -389,6 +389,7 @@ func TestTemplateEvents(t *testing.T) {
 			5,
 			100,
 			"resource_change",
+			"",   // contentChecksum
 			true, // coalescible
 		)
 		require.NotNil(t, event)
@@ -402,7 +403,7 @@ func TestTemplateEvents(t *testing.T) {
 	})
 
 	t.Run("TemplateRenderedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewTemplateRenderedEvent("cfg", nil, 0, 0, "", true,
+		event := NewTemplateRenderedEvent("cfg", nil, 0, 0, "", "", true,
 			WithCorrelation("corr-123", "cause-456"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
@@ -660,6 +661,7 @@ func TestDeploymentEvents(t *testing.T) {
 			"my-config",
 			"default",
 			"config_validation",
+			"",   // contentChecksum
 			true, // coalescible
 		)
 		require.NotNil(t, event)
@@ -675,7 +677,7 @@ func TestDeploymentEvents(t *testing.T) {
 
 	t.Run("DeploymentScheduledEvent_DefensiveCopy", func(t *testing.T) {
 		endpoints := []interface{}{"ep1"}
-		event := NewDeploymentScheduledEvent("cfg", nil, nil, endpoints, "n", "ns", "r", true)
+		event := NewDeploymentScheduledEvent("cfg", nil, nil, endpoints, "n", "ns", "r", "", true)
 
 		// Modify original
 		endpoints[0] = "modified"
@@ -685,7 +687,7 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentScheduledEvent_WithCorrelation", func(t *testing.T) {
-		event := NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", true,
+		event := NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", true,
 			WithCorrelation("corr", "cause"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr", event.CorrelationID())
@@ -1065,7 +1067,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},
 		// Template events
-		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, 0, 0, "", true)},
+		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, 0, 0, "", "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		// Validation events
 		{"ValidationStarted", NewValidationStartedEvent()},
@@ -1079,7 +1081,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"InstanceDeployed", NewInstanceDeployedEvent(nil, 0, false)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
 		{"DeploymentCompleted", NewDeploymentCompletedEvent(DeploymentResult{})},
-		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", true)},
+		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", true)},
 		{"DriftPreventionTriggered", NewDriftPreventionTriggeredEvent(0)},
 		// Discovery events
 		{"HAProxyPodsDiscovered", NewHAProxyPodsDiscoveredEvent(nil, 0)},

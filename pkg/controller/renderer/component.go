@@ -386,6 +386,7 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 		auxFileCount,
 		durationMs,
 		event.Reason,
+		checksumHex,
 		event.Coalescible(),
 		events.PropagateCorrelation(event),
 	))

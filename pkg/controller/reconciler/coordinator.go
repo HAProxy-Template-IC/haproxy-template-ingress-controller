@@ -192,6 +192,7 @@ func (c *Coordinator) handlePipelineSuccess(
 		result.AuxFileCount,
 		result.RenderDurationMs,
 		triggerEvent.Reason,
+		result.ContentChecksum,
 		coalescible,
 		events.PropagateCorrelation(triggerEvent),
 	)

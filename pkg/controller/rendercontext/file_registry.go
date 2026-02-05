@@ -203,18 +203,22 @@ func MergeAuxiliaryFiles(static, dynamic *dataplane.AuxiliaryFiles) *dataplane.A
 	}
 
 	if static == nil {
+		dynamic.Sort()
 		return dynamic
 	}
 
 	if dynamic == nil {
+		static.Sort()
 		return static
 	}
 
-	return &dataplane.AuxiliaryFiles{
+	result := &dataplane.AuxiliaryFiles{
 		MapFiles:        append(static.MapFiles, dynamic.MapFiles...),
 		GeneralFiles:    append(static.GeneralFiles, dynamic.GeneralFiles...),
 		SSLCertificates: append(static.SSLCertificates, dynamic.SSLCertificates...),
 		SSLCaFiles:      append(static.SSLCaFiles, dynamic.SSLCaFiles...),
 		CRTListFiles:    append(static.CRTListFiles, dynamic.CRTListFiles...),
 	}
+	result.Sort()
+	return result
 }

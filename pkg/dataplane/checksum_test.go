@@ -9,11 +9,45 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
 
-func TestComputeContentChecksum_Deterministic(t *testing.T) {
-	// Create auxiliary files in different orders to verify sorting produces same checksum
+func TestAuxiliaryFiles_Sort(t *testing.T) {
+	aux := &AuxiliaryFiles{
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{Filename: "c.http", Content: "content c"},
+			{Filename: "a.http", Content: "content a"},
+			{Filename: "b.http", Content: "content b"},
+		},
+		MapFiles: []auxiliaryfiles.MapFile{
+			{Path: "/maps/b.map", Content: "key2 value2"},
+			{Path: "/maps/a.map", Content: "key1 value1"},
+		},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{
+			{Path: "/certs/b.pem", Content: "cert b"},
+			{Path: "/certs/a.pem", Content: "cert a"},
+		},
+		CRTListFiles: []auxiliaryfiles.CRTListFile{
+			{Path: "/crt-list/b.txt", Content: "list b"},
+			{Path: "/crt-list/a.txt", Content: "list a"},
+		},
+	}
+
+	aux.Sort()
+
+	// Verify sorted order
+	assert.Equal(t, "a.http", aux.GeneralFiles[0].Filename)
+	assert.Equal(t, "b.http", aux.GeneralFiles[1].Filename)
+	assert.Equal(t, "c.http", aux.GeneralFiles[2].Filename)
+	assert.Equal(t, "/maps/a.map", aux.MapFiles[0].Path)
+	assert.Equal(t, "/maps/b.map", aux.MapFiles[1].Path)
+	assert.Equal(t, "/certs/a.pem", aux.SSLCertificates[0].Path)
+	assert.Equal(t, "/certs/b.pem", aux.SSLCertificates[1].Path)
+	assert.Equal(t, "/crt-list/a.txt", aux.CRTListFiles[0].Path)
+	assert.Equal(t, "/crt-list/b.txt", aux.CRTListFiles[1].Path)
+}
+
+func TestComputeContentChecksum_DeterministicAfterSort(t *testing.T) {
 	config := "global\n    daemon\n"
 
-	// Order 1: A, B, C
+	// Create two AuxiliaryFiles in different insertion orders, then Sort both.
 	auxFiles1 := &AuxiliaryFiles{
 		GeneralFiles: []auxiliaryfiles.GeneralFile{
 			{Filename: "a.http", Content: "content a"},
@@ -34,7 +68,6 @@ func TestComputeContentChecksum_Deterministic(t *testing.T) {
 		},
 	}
 
-	// Order 2: C, A, B (different order, same content)
 	auxFiles2 := &AuxiliaryFiles{
 		GeneralFiles: []auxiliaryfiles.GeneralFile{
 			{Filename: "c.http", Content: "content c"},
@@ -55,10 +88,13 @@ func TestComputeContentChecksum_Deterministic(t *testing.T) {
 		},
 	}
 
+	auxFiles1.Sort()
+	auxFiles2.Sort()
+
 	checksum1 := ComputeContentChecksum(config, auxFiles1)
 	checksum2 := ComputeContentChecksum(config, auxFiles2)
 
-	assert.Equal(t, checksum1, checksum2, "Checksums should be identical regardless of file order")
+	assert.Equal(t, checksum1, checksum2, "Checksums should be identical after Sort regardless of original order")
 }
 
 func TestComputeContentChecksum_DifferentContent(t *testing.T) {
@@ -125,6 +161,7 @@ func TestComputeContentChecksum_StableAcrossMultipleCalls(t *testing.T) {
 			{Path: "/maps/hosts.map", Content: "example.com backend1"},
 		},
 	}
+	auxFiles.Sort()
 
 	// Call multiple times to ensure stability
 	checksums := make([]string, 10)

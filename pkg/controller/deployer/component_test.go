@@ -55,6 +55,7 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 		"test-runtime-config",
 		"test-namespace",
 		"test",
+		"",   // contentChecksum
 		true, // coalescible
 	)
 
@@ -83,7 +84,7 @@ func TestDeployToEndpoints_InvalidEndpointType(t *testing.T) {
 	// Invalid endpoint type (string instead of dataplane.Endpoint)
 	invalidEndpoints := []interface{}{"not-an-endpoint"}
 
-	deployer.deployToEndpoints(ctx, config, auxFiles, nil, invalidEndpoints, "test-runtime-config", "default", "test", "test-correlation-id")
+	deployer.deployToEndpoints(ctx, config, auxFiles, nil, invalidEndpoints, "test-runtime-config", "default", "test", "", "test-correlation-id")
 
 	// Should not crash, just log error and publish completion event with zero endpoints
 	timeout := time.After(100 * time.Millisecond)
@@ -166,6 +167,7 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 		"test-runtime-config",
 		"test-namespace",
 		"test",
+		"",   // contentChecksum
 		true, // coalescible
 	))
 
@@ -353,6 +355,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 			"test-runtime-config",
 			"test-namespace",
 			"test",
+			"",   // contentChecksum
 			true, // coalescible
 		)
 		// Should not panic when receiving valid event with no endpoints
@@ -377,6 +380,7 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 		"test-runtime-config",
 		"test-namespace",
 		"test",
+		"",   // contentChecksum
 		true, // coalescible
 	)
 
@@ -415,6 +419,7 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 		"test-runtime-config",
 		"test-namespace",
 		"duplicate",
+		"",   // contentChecksum
 		true, // coalescible
 	)
 

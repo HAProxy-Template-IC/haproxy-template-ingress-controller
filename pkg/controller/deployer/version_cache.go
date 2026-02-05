@@ -8,8 +8,9 @@ import (
 
 // configVersionEntry holds cached config version and parsed config for a single endpoint.
 type configVersionEntry struct {
-	version      int64
-	parsedConfig *parserconfig.StructuredConfig
+	version         int64
+	parsedConfig    *parserconfig.StructuredConfig
+	contentChecksum string // Content checksum from last successful sync
 }
 
 // configVersionCache caches the last-synced config version and parsed config per endpoint URL.
@@ -29,27 +30,28 @@ func newConfigVersionCache() *configVersionCache {
 	}
 }
 
-// get returns the cached version and parsed config for the given endpoint URL.
-// Returns (0, nil) if no cache entry exists.
-func (c *configVersionCache) get(endpointURL string) (int64, *parserconfig.StructuredConfig) {
+// get returns the cached version, parsed config, and content checksum for the given endpoint URL.
+// Returns (0, nil, "") if no cache entry exists.
+func (c *configVersionCache) get(endpointURL string) (version int64, parsedConfig *parserconfig.StructuredConfig, contentChecksum string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	entry, ok := c.entries[endpointURL]
 	if !ok {
-		return 0, nil
+		return 0, nil, ""
 	}
-	return entry.version, entry.parsedConfig
+	return entry.version, entry.parsedConfig, entry.contentChecksum
 }
 
-// set stores the post-sync version and parsed config for the given endpoint URL.
-func (c *configVersionCache) set(endpointURL string, version int64, parsedConfig *parserconfig.StructuredConfig) {
+// set stores the post-sync version, parsed config, and content checksum for the given endpoint URL.
+func (c *configVersionCache) set(endpointURL string, version int64, parsedConfig *parserconfig.StructuredConfig, contentChecksum string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.entries[endpointURL] = &configVersionEntry{
-		version:      version,
-		parsedConfig: parsedConfig,
+		version:         version,
+		parsedConfig:    parsedConfig,
+		contentChecksum: contentChecksum,
 	}
 }
 

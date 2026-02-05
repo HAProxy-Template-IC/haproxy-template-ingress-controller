@@ -72,6 +72,11 @@ func NewPostProcessor(config PostProcessorConfig) (PostProcessor, error) {
 			return nil, fmt.Errorf("regex_replace processor requires 'replace' parameter")
 		}
 
+		// Fast-path: indentation normalization without regex overhead
+		if pattern == "^[ ]+" {
+			return &IndentNormalizerProcessor{indent: replace}, nil
+		}
+
 		return NewRegexReplaceProcessor(pattern, replace)
 
 	default:

@@ -69,6 +69,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 		2,                           // auxFileCount
 		50,                          // durationMs
 		"",                          // triggerReason
+		"",                          // contentChecksum
 		true,                        // coalescible
 	)
 
@@ -446,6 +447,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 			2,                           // auxFileCount
 			50,                          // durationMs
 			"",                          // triggerReason
+			"",                          // contentChecksum
 			true,                        // coalescible
 		)
 

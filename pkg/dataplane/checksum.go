@@ -1,11 +1,9 @@
 package dataplane
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"hash"
-	"slices"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
@@ -14,8 +12,8 @@ import (
 // and all auxiliary files (general files, map files, SSL certificates, CRT-list files).
 //
 // The checksum is used for content deduplication to skip redundant processing when
-// config content hasn't changed. Files are sorted by path/identifier before hashing
-// to ensure deterministic results regardless of collection order.
+// config content hasn't changed. Auxiliary file slices must be pre-sorted (by
+// AuxiliaryFiles.Sort()) to ensure deterministic results regardless of insertion order.
 //
 // Returns a hex-encoded 8-byte (16 character) checksum for brevity.
 func ComputeContentChecksum(haproxyConfig string, auxFiles *AuxiliaryFiles) string {
@@ -24,7 +22,7 @@ func ComputeContentChecksum(haproxyConfig string, auxFiles *AuxiliaryFiles) stri
 	// Hash main config
 	h.Write([]byte(haproxyConfig))
 
-	// Hash auxiliary files in deterministic order
+	// Hash auxiliary files (slices are pre-sorted by AuxiliaryFiles.Sort)
 	if auxFiles != nil {
 		hashGeneralFiles(h, auxFiles.GeneralFiles)
 		hashMapFiles(h, auxFiles.MapFiles)
@@ -36,49 +34,33 @@ func ComputeContentChecksum(haproxyConfig string, auxFiles *AuxiliaryFiles) stri
 	return hex.EncodeToString(checksum[:8]) // First 8 bytes for brevity
 }
 
-// hashGeneralFiles hashes general files in deterministic order (sorted by Filename).
+// hashGeneralFiles hashes general files in order (must be pre-sorted by Filename).
 func hashGeneralFiles(h hash.Hash, files []auxiliaryfiles.GeneralFile) {
-	sorted := slices.Clone(files)
-	slices.SortFunc(sorted, func(a, b auxiliaryfiles.GeneralFile) int {
-		return cmp.Compare(a.Filename, b.Filename)
-	})
-	for _, f := range sorted {
+	for _, f := range files {
 		h.Write([]byte(f.Filename))
 		h.Write([]byte(f.Content))
 	}
 }
 
-// hashMapFiles hashes map files in deterministic order (sorted by Path).
+// hashMapFiles hashes map files in order (must be pre-sorted by Path).
 func hashMapFiles(h hash.Hash, files []auxiliaryfiles.MapFile) {
-	sorted := slices.Clone(files)
-	slices.SortFunc(sorted, func(a, b auxiliaryfiles.MapFile) int {
-		return cmp.Compare(a.Path, b.Path)
-	})
-	for _, f := range sorted {
+	for _, f := range files {
 		h.Write([]byte(f.Path))
 		h.Write([]byte(f.Content))
 	}
 }
 
-// hashSSLCertificates hashes SSL certificates in deterministic order (sorted by Path).
+// hashSSLCertificates hashes SSL certificates in order (must be pre-sorted by Path).
 func hashSSLCertificates(h hash.Hash, files []auxiliaryfiles.SSLCertificate) {
-	sorted := slices.Clone(files)
-	slices.SortFunc(sorted, func(a, b auxiliaryfiles.SSLCertificate) int {
-		return cmp.Compare(a.Path, b.Path)
-	})
-	for _, f := range sorted {
+	for _, f := range files {
 		h.Write([]byte(f.Path))
 		h.Write([]byte(f.Content))
 	}
 }
 
-// hashCRTListFiles hashes CRT-list files in deterministic order (sorted by Path).
+// hashCRTListFiles hashes CRT-list files in order (must be pre-sorted by Path).
 func hashCRTListFiles(h hash.Hash, files []auxiliaryfiles.CRTListFile) {
-	sorted := slices.Clone(files)
-	slices.SortFunc(sorted, func(a, b auxiliaryfiles.CRTListFile) int {
-		return cmp.Compare(a.Path, b.Path)
-	})
-	for _, f := range sorted {
+	for _, f := range files {
 		h.Write([]byte(f.Path))
 		h.Write([]byte(f.Content))
 	}

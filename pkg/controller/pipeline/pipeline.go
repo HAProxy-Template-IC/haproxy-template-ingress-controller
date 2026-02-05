@@ -76,6 +76,11 @@ type PipelineResult struct {
 	// AuxFileCount is the total number of auxiliary files.
 	AuxFileCount int
 
+	// ContentChecksum is the pre-computed content checksum covering config + aux files.
+	// Computed once in the pipeline and propagated through events to downstream consumers,
+	// eliminating redundant hashing across validation, publishing, and deployment.
+	ContentChecksum string
+
 	// RenderDurationMs is the rendering duration in milliseconds.
 	RenderDurationMs int64
 
@@ -173,8 +178,11 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (
 		}
 	}
 
-	// Phase 2: Validate configuration
-	validationResult := p.validator.Validate(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
+	// Compute content checksum once — propagated to all downstream consumers
+	contentChecksum := dataplane.ComputeContentChecksum(renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
+
+	// Phase 2: Validate configuration (pass pre-computed checksum to avoid rehashing)
+	validationResult := p.validator.ValidateWithChecksum(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles, contentChecksum)
 	if !validationResult.Valid {
 		return nil, &PipelineError{
 			Phase:           PhaseValidation,
@@ -187,6 +195,7 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (
 		HAProxyConfig:      renderResult.HAProxyConfig,
 		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
 		AuxFileCount:       renderResult.AuxFileCount,
+		ContentChecksum:    contentChecksum,
 		RenderDurationMs:   renderResult.DurationMs,
 		ValidateDurationMs: validationResult.DurationMs,
 		TotalDurationMs:    time.Since(startTime).Milliseconds(),
@@ -221,13 +230,17 @@ func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreP
 		}
 	}
 
-	// Phase 2: Validate configuration
-	validationResult := p.validator.Validate(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
+	// Compute content checksum once
+	contentChecksum := dataplane.ComputeContentChecksum(renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
+
+	// Phase 2: Validate configuration (pass pre-computed checksum)
+	validationResult := p.validator.ValidateWithChecksum(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles, contentChecksum)
 
 	result := &PipelineResult{
 		HAProxyConfig:      renderResult.HAProxyConfig,
 		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
 		AuxFileCount:       renderResult.AuxFileCount,
+		ContentChecksum:    contentChecksum,
 		RenderDurationMs:   renderResult.DurationMs,
 		ValidateDurationMs: validationResult.DurationMs,
 		TotalDurationMs:    time.Since(startTime).Milliseconds(),

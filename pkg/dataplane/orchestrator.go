@@ -170,7 +170,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 	}
 
 	// Step 5: Compare auxiliary files and check if sync is needed
-	auxDiffs, err := o.checkForChanges(ctx, diff, auxFiles)
+	auxDiffs, err := o.checkForChanges(ctx, diff, auxFiles, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -1441,25 +1441,53 @@ type auxiliaryFileDiffs struct {
 	hasChanges  bool
 }
 
+// anyDiffHasChanges returns true if any auxiliary file type has pending changes.
+func (d *auxiliaryFileDiffs) anyDiffHasChanges() bool {
+	return (d.fileDiff != nil && d.fileDiff.HasChanges()) ||
+		(d.sslDiff != nil && d.sslDiff.HasChanges()) ||
+		(d.caFileDiff != nil && d.caFileDiff.HasChanges()) ||
+		(d.mapDiff != nil && d.mapDiff.HasChanges()) ||
+		(d.crtlistDiff != nil && d.crtlistDiff.HasChanges())
+}
+
+// checksumMatchesLastDeployed returns true if the content checksum matches the
+// last deployed checksum, meaning aux file comparison can be skipped.
+func checksumMatchesLastDeployed(opts *SyncOptions) bool {
+	return opts.ContentChecksum != "" &&
+		opts.LastDeployedChecksum != "" &&
+		opts.ContentChecksum == opts.LastDeployedChecksum
+}
+
 // checkForChanges compares auxiliary files and determines if sync is needed.
 // Returns auxiliary file diffs grouped in a struct and any error.
+//
+// When ContentChecksum and LastDeployedChecksum are both set in opts and match,
+// AND the config diff shows no changes, the expensive auxiliary file comparison
+// (which downloads content from each HAProxy pod via Dataplane API) is skipped
+// entirely. This is safe because the content checksum covers config + all aux
+// file content — a matching checksum means the desired state is identical to
+// what was last successfully deployed.
 func (o *orchestrator) checkForChanges(
 	ctx context.Context,
 	diff *comparator.ConfigDiff,
 	auxFiles *AuxiliaryFiles,
+	opts *SyncOptions,
 ) (*auxiliaryFileDiffs, error) {
+	// Fast path: skip expensive aux file comparison when content hasn't changed.
+	// Both checksums must be non-empty and equal, AND config must have no changes.
+	if !diff.Summary.HasChanges() && checksumMatchesLastDeployed(opts) {
+		o.logger.Debug("Skipping auxiliary file comparison - content checksum unchanged",
+			"checksum", opts.ContentChecksum[:min(8, len(opts.ContentChecksum))])
+		return &auxiliaryFileDiffs{hasChanges: false}, nil
+	}
+
 	// Compare auxiliary files
 	auxDiffs, err := o.compareAuxiliaryFiles(ctx, auxFiles)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if there are auxiliary file changes
-	hasAuxChanges := (auxDiffs.fileDiff != nil && auxDiffs.fileDiff.HasChanges()) ||
-		(auxDiffs.sslDiff != nil && auxDiffs.sslDiff.HasChanges()) ||
-		(auxDiffs.caFileDiff != nil && auxDiffs.caFileDiff.HasChanges()) ||
-		(auxDiffs.mapDiff != nil && auxDiffs.mapDiff.HasChanges()) ||
-		(auxDiffs.crtlistDiff != nil && auxDiffs.crtlistDiff.HasChanges())
+	hasAuxChanges := auxDiffs.anyDiffHasChanges()
 
 	// Check if there are any changes (config OR auxiliary files)
 	if !diff.Summary.HasChanges() && !hasAuxChanges {

@@ -98,6 +98,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		0,    // aux file count
 		100,  // duration ms
 		"",   // trigger reason
+		"",   // contentChecksum
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
@@ -440,6 +441,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 		0,
 		100,
 		"",
+		"",   // contentChecksum
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))
@@ -528,6 +530,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 		0,
 		100,
 		"",
+		"",   // contentChecksum
 		true, // coalescible
 		events.WithCorrelation(correlationID, ""),
 	))

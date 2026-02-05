@@ -56,9 +56,10 @@ const (
 // ValidationCompletedEvent, preventing stale data from being published when
 // events from multiple reconciliation cycles are interleaved.
 type renderedConfigEntry struct {
-	config     string
-	auxFiles   *dataplane.AuxiliaryFiles
-	renderedAt time.Time
+	config          string
+	auxFiles        *dataplane.AuxiliaryFiles
+	contentChecksum string
+	renderedAt      time.Time
 }
 
 // publishWorkItem represents a config publish task for the async worker.
@@ -323,9 +324,10 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 	// Cache the rendered config indexed by correlation ID
 	c.mu.Lock()
 	c.renderedConfigs[correlationID] = &renderedConfigEntry{
-		config:     event.HAProxyConfig,
-		auxFiles:   auxFiles,
-		renderedAt: event.Timestamp(),
+		config:          event.HAProxyConfig,
+		auxFiles:        auxFiles,
+		contentChecksum: event.ContentChecksum,
+		renderedAt:      event.Timestamp(),
 	}
 	c.mu.Unlock()
 }
@@ -688,8 +690,8 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		"correlation_id", work.correlationID,
 	)
 
-	// Generate checksum covering main config and all auxiliary files
-	checksumHex := dataplane.ComputeContentChecksum(work.entry.config, work.entry.auxFiles)
+	// Use pre-computed checksum from pipeline (propagated via TemplateRenderedEvent)
+	checksumHex := work.entry.contentChecksum
 
 	// Skip publish if checksum unchanged (content deduplication).
 	// This prevents redundant CRD updates when config content hasn't changed,
@@ -698,7 +700,7 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 	lastChecksum := c.lastPublishedChecksum
 	c.mu.RUnlock()
 
-	if checksumHex == lastChecksum {
+	if checksumHex != "" && checksumHex == lastChecksum {
 		c.logger.Debug("skipping publish, config unchanged",
 			"checksum", checksumHex,
 			"correlation_id", work.correlationID,
@@ -788,8 +790,8 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 		"correlation_id", work.correlationID,
 	)
 
-	// Generate checksum covering main config and all auxiliary files
-	checksumHex := dataplane.ComputeContentChecksum(work.entry.config, work.entry.auxFiles)
+	// Use pre-computed checksum from pipeline (propagated via TemplateRenderedEvent)
+	checksumHex := work.entry.contentChecksum
 
 	// Convert auxiliary files
 	auxFiles := c.convertAuxiliaryFiles(work.entry.auxFiles)
