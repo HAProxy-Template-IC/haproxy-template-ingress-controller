@@ -24,9 +24,9 @@ Stage 5 component that debounces resource changes and triggers reconciliation ev
 ## Architecture
 
 ```
-ResourceIndexUpdatedEvent → Debounce (100ms default, leading-edge)
+ResourceIndexUpdatedEvent → Debounce (5s default, leading-edge)
 IndexSynchronizedEvent → Immediate Trigger (initial reconciliation)
-HTTPResourceUpdatedEvent → Debounce (100ms default, leading-edge)
+HTTPResourceUpdatedEvent → Debounce (5s default, leading-edge)
 HTTPResourceAcceptedEvent → Immediate Trigger
 DriftPreventionTriggeredEvent → Immediate Trigger
 
@@ -87,14 +87,14 @@ reconciler := reconciler.New(bus, logger, &reconciler.Config{
 })
 ```
 
-The default interval is defined in `pkg/k8s/types.DefaultDebounceInterval` (100ms) and shared across all debouncing components.
+The default interval is defined in `pkg/k8s/types.DefaultDebounceInterval` (5s) and shared across all debouncing components.
 
 ## Common Patterns
 
 ### Default Configuration
 
 ```go
-// Uses types.DefaultDebounceInterval (100ms)
+// Uses types.DefaultDebounceInterval (5s)
 reconciler := reconciler.New(bus, logger, nil)
 go reconciler.Start(ctx)
 ```

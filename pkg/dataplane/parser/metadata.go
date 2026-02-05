@@ -29,31 +29,22 @@ package parser
 // Output (flat):   {"comment": "Pod: echo-server", "custom": "foo"}
 //
 // If the input is already flat, nil, or empty, it returns unchanged (or nil for nil/empty).
+//
+// This function mutates the map in-place to avoid allocating a new map on every call.
+// This is safe because maps come from the client-native parser (freshly allocated per parse)
+// and parsed configs are cached after normalization.
 func NormalizeMetadata(m map[string]interface{}) map[string]interface{} {
 	if len(m) == 0 {
 		return nil
 	}
 
-	result := make(map[string]interface{}, len(m))
 	for key, value := range m {
 		if nested, ok := value.(map[string]interface{}); ok {
-			// Check if this is the API nested format with "value" key
 			if v, hasValue := nested["value"]; hasValue {
-				result[key] = v
-			} else {
-				// Not nested API format (e.g., a complex metadata structure), keep as-is
-				result[key] = value
+				m[key] = v
 			}
-		} else {
-			// Already flat, keep as-is
-			result[key] = value
 		}
 	}
 
-	// Return nil if result is empty to match the flat format behavior
-	if len(result) == 0 {
-		return nil
-	}
-
-	return result
+	return m
 }
