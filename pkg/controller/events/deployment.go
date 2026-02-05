@@ -239,6 +239,12 @@ type DeploymentScheduledEvent struct {
 	// Used for publishing ConfigAppliedToPodEvent after successful deployment.
 	RuntimeConfigNamespace string
 
+	// ContentChecksum is the pre-computed content checksum covering config + aux files.
+	// Propagated from TemplateRenderedEvent to enable aux file comparison caching
+	// in the deployer — when the checksum matches the last-deployed checksum for
+	// an endpoint, the expensive aux file comparison (Dataplane API downloads) is skipped.
+	ContentChecksum string
+
 	// Reason describes why this deployment was scheduled.
 	// Examples: "config_validation", "pod_discovery", "drift_prevention"
 	Reason string
@@ -262,11 +268,15 @@ type DeploymentScheduledEvent struct {
 // The parsedConfig parameter contains the pre-parsed desired configuration from validation.
 // Pass nil if validation cache was used or if the parsed config is not available.
 //
+// The contentChecksum is the pre-computed checksum of config + aux files, propagated from
+// TemplateRenderedEvent. It enables the deployer to skip expensive aux file comparison
+// when the content hasn't changed since the last successful sync to an endpoint.
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, coalescible,
+//	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, contentChecksum, coalescible,
 //	    events.PropagateCorrelation(validationEvent))
-func NewDeploymentScheduledEvent(config string, auxFiles interface{}, parsedConfig *parser.StructuredConfig, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
+func NewDeploymentScheduledEvent(config string, auxFiles interface{}, parsedConfig *parser.StructuredConfig, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
 	// Defensive copy of endpoints slice
 	var endpointsCopy []interface{}
 	if len(endpoints) > 0 {
@@ -281,6 +291,7 @@ func NewDeploymentScheduledEvent(config string, auxFiles interface{}, parsedConf
 		Endpoints:              endpointsCopy,
 		RuntimeConfigName:      runtimeConfigName,
 		RuntimeConfigNamespace: runtimeConfigNamespace,
+		ContentChecksum:        contentChecksum,
 		Reason:                 reason,
 		coalescible:            coalescible,
 		timestamp:              time.Now(),

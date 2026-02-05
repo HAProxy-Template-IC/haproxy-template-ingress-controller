@@ -1,6 +1,8 @@
 package dataplane
 
 import (
+	"cmp"
+	"slices"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
@@ -68,6 +70,27 @@ type AuxiliaryFiles struct {
 	CRTListFiles []auxiliaryfiles.CRTListFile
 }
 
+// Sort sorts all auxiliary file slices in-place by their path/filename.
+// This establishes a deterministic order so that downstream consumers
+// (checksum, diff, etc.) can iterate directly without cloning or sorting.
+func (a *AuxiliaryFiles) Sort() {
+	slices.SortFunc(a.GeneralFiles, func(x, y auxiliaryfiles.GeneralFile) int {
+		return cmp.Compare(x.Filename, y.Filename)
+	})
+	slices.SortFunc(a.SSLCertificates, func(x, y auxiliaryfiles.SSLCertificate) int {
+		return cmp.Compare(x.Path, y.Path)
+	})
+	slices.SortFunc(a.SSLCaFiles, func(x, y auxiliaryfiles.SSLCaFile) int {
+		return cmp.Compare(x.Path, y.Path)
+	})
+	slices.SortFunc(a.MapFiles, func(x, y auxiliaryfiles.MapFile) int {
+		return cmp.Compare(x.Path, y.Path)
+	})
+	slices.SortFunc(a.CRTListFiles, func(x, y auxiliaryfiles.CRTListFile) int {
+		return cmp.Compare(x.Path, y.Path)
+	})
+}
+
 // SyncOptions configures synchronization behavior.
 type SyncOptions struct {
 	// MaxRetries for 409 version conflict errors (default: 3)
@@ -121,6 +144,19 @@ type SyncOptions struct {
 	// CachedConfigVersion is the expected config version on the pod.
 	// Only used when CachedCurrentConfig is also set.
 	CachedConfigVersion int64
+
+	// ContentChecksum is the pre-computed checksum of the desired config + aux files.
+	// When set together with LastDeployedChecksum, the orchestrator skips the
+	// expensive auxiliary file comparison (which downloads content from HAProxy via
+	// Dataplane API) if both checksums match — the desired state hasn't changed
+	// since the last successful sync.
+	ContentChecksum string
+
+	// LastDeployedChecksum is the content checksum from the last successful sync
+	// to this endpoint. When it matches ContentChecksum, auxiliary file comparison
+	// is skipped because the desired state is identical to what was last deployed.
+	// Drift prevention syncs should leave this empty to force comparison.
+	LastDeployedChecksum string
 }
 
 // DefaultSyncOptions returns sensible default sync options.

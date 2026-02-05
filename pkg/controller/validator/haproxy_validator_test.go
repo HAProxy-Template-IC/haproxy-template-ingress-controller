@@ -516,6 +516,7 @@ backend servers
 		0,                           // auxFileCount
 		100,                         // durationMs
 		"initial",                   // triggerReason
+		"",                          // contentChecksum
 		true,                        // coalescible
 	))
 
@@ -669,6 +670,7 @@ func TestHAProxyValidator_InvalidAuxiliaryFiles(t *testing.T) {
 		0,
 		0,
 		"",   // triggerReason
+		"",   // contentChecksum
 		true, // coalescible
 	)
 	bus.Publish(event)

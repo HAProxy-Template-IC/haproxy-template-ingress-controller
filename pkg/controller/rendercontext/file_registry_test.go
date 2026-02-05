@@ -217,8 +217,8 @@ func TestMergeAuxiliaryFiles(t *testing.T) {
 			},
 			want: &dataplane.AuxiliaryFiles{
 				MapFiles: []auxiliaryfiles.MapFile{
-					{Path: "/static.map", Content: "s"},
 					{Path: "/dynamic.map", Content: "d"},
+					{Path: "/static.map", Content: "s"},
 				},
 			},
 		},

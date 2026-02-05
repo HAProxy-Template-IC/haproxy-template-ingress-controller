@@ -277,7 +277,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		"correlation_id", correlationID)
 
 	// Execute deployment with cancellable context
-	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, parsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, correlationID)
+	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, parsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, correlationID)
 }
 
 // convertEndpoints converts []interface{} to []dataplane.Endpoint.
@@ -330,6 +330,7 @@ func (c *Component) deployToEndpoints(
 	runtimeConfigName string,
 	runtimeConfigNamespace string,
 	reason string,
+	contentChecksum string,
 	correlationID string,
 ) {
 	// Clear deployment flag after this function completes (after wg.Wait())
@@ -381,7 +382,7 @@ func (c *Component) deployToEndpoints(
 		go func(ep *dataplane.Endpoint) {
 			defer wg.Done()
 			c.processEndpointDeployment(ctx, ep, config, auxFiles, parsedConfig, checksum, reason,
-				runtimeConfigName, runtimeConfigNamespace, correlationID, state)
+				runtimeConfigName, runtimeConfigNamespace, contentChecksum, correlationID, state)
 		}(&endpoints[i])
 	}
 
@@ -436,6 +437,7 @@ func (c *Component) processEndpointDeployment(
 	reason string,
 	runtimeConfigName string,
 	runtimeConfigNamespace string,
+	contentChecksum string,
 	correlationID string,
 	state *deploymentState,
 ) {
@@ -451,7 +453,7 @@ func (c *Component) processEndpointDeployment(
 	}
 
 	instanceStart := time.Now()
-	syncResult, err := c.deployToSingleEndpoint(ctx, config, auxFiles, parsedConfig, ep)
+	syncResult, err := c.deployToSingleEndpoint(ctx, config, auxFiles, parsedConfig, contentChecksum, reason, ep)
 	durationMs := time.Since(instanceStart).Milliseconds()
 
 	// Determine if this is a drift check based on deployment reason
@@ -589,6 +591,8 @@ func (c *Component) deployToSingleEndpoint(
 	config string,
 	auxFiles *dataplane.AuxiliaryFiles,
 	parsedConfig *parser.StructuredConfig,
+	contentChecksum string,
+	reason string,
 	endpoint *dataplane.Endpoint,
 ) (*dataplane.SyncResult, error) {
 	// Create client for this endpoint
@@ -609,10 +613,18 @@ func (c *Component) deployToSingleEndpoint(
 	}
 
 	// Populate cached current config from version cache (if available)
-	cachedVersion, cachedConfig := c.versionCache.get(endpoint.URL)
+	cachedVersion, cachedConfig, cachedChecksum := c.versionCache.get(endpoint.URL)
 	if cachedConfig != nil {
 		opts.CachedCurrentConfig = cachedConfig
 		opts.CachedConfigVersion = cachedVersion
+	}
+
+	// Pass content checksum for aux file comparison cache.
+	// Drift prevention deployments must always force comparison (bypass cache)
+	// to detect out-of-band changes on the HAProxy pod.
+	opts.ContentChecksum = contentChecksum
+	if reason != events.TriggerReasonDriftPrevention && cachedChecksum != "" {
+		opts.LastDeployedChecksum = cachedChecksum
 	}
 
 	// Sync configuration
@@ -623,9 +635,9 @@ func (c *Component) deployToSingleEndpoint(
 		return nil, fmt.Errorf("sync failed: %w", err)
 	}
 
-	// Update version cache with post-sync state
+	// Update version cache with post-sync state (including content checksum)
 	if result.PostSyncVersion > 0 && parsedConfig != nil {
-		c.versionCache.set(endpoint.URL, result.PostSyncVersion, parsedConfig)
+		c.versionCache.set(endpoint.URL, result.PostSyncVersion, parsedConfig, contentChecksum)
 	}
 
 	c.logger.Debug("sync completed for endpoint",

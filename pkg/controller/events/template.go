@@ -40,6 +40,11 @@ type TemplateRenderedEvent struct {
 	// Consumers should type-assert to *dataplane.AuxiliaryFiles.
 	AuxiliaryFiles interface{}
 
+	// ContentChecksum is the pre-computed content checksum covering config + aux files.
+	// Computed once in the pipeline and propagated to downstream consumers to avoid
+	// redundant hashing in config publisher and deployment scheduler.
+	ContentChecksum string
+
 	// Metrics for observability
 	ConfigBytes        int   // Size of HAProxyConfig
 	AuxiliaryFileCount int   // Number of auxiliary files
@@ -76,12 +81,14 @@ func NewTemplateRenderedEvent(
 	auxFileCount int,
 	durationMs int64,
 	triggerReason string,
+	contentChecksum string,
 	coalescible bool,
 	opts ...CorrelationOption,
 ) *TemplateRenderedEvent {
 	return &TemplateRenderedEvent{
 		HAProxyConfig:      haproxyConfig,
 		AuxiliaryFiles:     auxiliaryFiles,
+		ContentChecksum:    contentChecksum,
 		ConfigBytes:        len(haproxyConfig),
 		AuxiliaryFileCount: auxFileCount,
 		DurationMs:         durationMs,

@@ -79,6 +79,7 @@ type DeploymentScheduler struct {
 	mu                      sync.RWMutex
 	lastRenderedConfig      string        // Last rendered HAProxy config (before validation)
 	lastAuxiliaryFiles      interface{}   // Last rendered auxiliary files
+	lastContentChecksum     string        // Pre-computed content checksum from pipeline
 	lastValidatedConfig     string        // Last validated HAProxy config
 	lastValidatedAux        interface{}   // Last validated auxiliary files
 	lastParsedConfig        interface{}   // Pre-parsed desired config (*parser.StructuredConfig)
@@ -111,35 +112,6 @@ type DeploymentScheduler struct {
 	// subscriptionReady is closed when the component has subscribed to events.
 	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
 	subscriptionReady chan struct{}
-}
-
-// computeDeploymentHash computes a combined hash of config and auxiliary files.
-// Used to detect if deployment can be skipped (config unchanged).
-func computeDeploymentHash(config string, auxFiles interface{}) string {
-	h := sha256.New()
-	h.Write([]byte(config))
-
-	// Include auxiliary files in hash if present
-	if aux, ok := auxFiles.(*dataplane.AuxiliaryFiles); ok && aux != nil {
-		for _, f := range aux.GeneralFiles {
-			h.Write([]byte(f.Filename))
-			h.Write([]byte(f.Content))
-		}
-		for _, f := range aux.SSLCertificates {
-			h.Write([]byte(f.Path))
-			h.Write([]byte(f.Content))
-		}
-		for _, f := range aux.MapFiles {
-			h.Write([]byte(f.Path))
-			h.Write([]byte(f.Content))
-		}
-		for _, f := range aux.CRTListFiles {
-			h.Write([]byte(f.Path))
-			h.Write([]byte(f.Content))
-		}
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // computePodSetHash computes a hash of the current pod endpoints.
@@ -296,6 +268,7 @@ func (s *DeploymentScheduler) handleTemplateRendered(event *events.TemplateRende
 
 	s.lastRenderedConfig = event.HAProxyConfig
 	s.lastAuxiliaryFiles = event.AuxiliaryFiles
+	s.lastContentChecksum = event.ContentChecksum
 
 	s.logger.Debug("cached rendered config for deployment after validation",
 		"config_bytes", event.ConfigBytes,
@@ -366,8 +339,10 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 		return
 	}
 
-	// Compute hashes for cache comparison
-	configHash := computeDeploymentHash(config, auxFiles)
+	// Use pre-computed content checksum from pipeline (propagated via TemplateRenderedEvent)
+	s.mu.RLock()
+	configHash := s.lastContentChecksum
+	s.mu.RUnlock()
 	podSetHash := computePodSetHash(endpoints)
 
 	// Drift prevention deployments must ALWAYS execute (bypass cache)
@@ -506,9 +481,9 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 // caches the deployed config hash for optimization, and processes any
 // pending deployment via scheduleOrQueue.
 func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentCompletedEvent) {
-	// Cache the deployed config hash for future comparison (skip unchanged deployments)
+	// Cache the deployed content checksum for future comparison (skip unchanged deployments)
 	s.mu.Lock()
-	s.lastDeployedConfigHash = computeDeploymentHash(s.lastValidatedConfig, s.lastValidatedAux)
+	s.lastDeployedConfigHash = s.lastContentChecksum
 	s.lastDeployedPodSetHash = computePodSetHash(s.currentEndpoints)
 	s.lastDeployedTime = time.Now()
 	s.mu.Unlock()
@@ -635,12 +610,13 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		}
 	}
 
-	// Get runtime config metadata under lock
+	// Get runtime config metadata and content checksum under lock
 	s.mu.RLock()
 	runtimeConfigName := s.runtimeConfigName
 	runtimeConfigNamespace := s.runtimeConfigNamespace
 	templateConfigName := s.templateConfigName
 	templateConfigNamespace := s.templateConfigNamespace
+	contentChecksum := s.lastContentChecksum
 	s.mu.RUnlock()
 
 	// Compute runtime config name if not set via ConfigPublishedEvent.
@@ -671,7 +647,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		"correlation_id", correlationID)
 
 	s.eventBus.Publish(events.NewDeploymentScheduledEvent(
-		config, auxFiles, typedParsedConfig, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, coalescible,
+		config, auxFiles, typedParsedConfig, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum, coalescible,
 		events.WithCorrelation(correlationID, correlationID),
 	))
 
