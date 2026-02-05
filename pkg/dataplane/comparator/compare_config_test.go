@@ -316,17 +316,22 @@ func TestCompareMailers(t *testing.T) {
 			Mailers: []*models.MailersSection{
 				{
 					MailersSectionBase: models.MailersSectionBase{Name: "my-mailers"},
-					MailerEntries:      map[string]models.MailerEntry{},
 				},
 			},
+			MailerEntryIndex: map[string]map[string]*models.MailerEntry{
+				"my-mailers": {},
+			},
 		}
+		smtp1 := &models.MailerEntry{Name: "smtp1", Address: "mail.example.com", Port: 25}
 		desired := &parser.StructuredConfig{
 			Mailers: []*models.MailersSection{
 				{
 					MailersSectionBase: models.MailersSectionBase{Name: "my-mailers"},
-					MailerEntries: map[string]models.MailerEntry{
-						"smtp1": {Name: "smtp1", Address: "mail.example.com", Port: 25},
-					},
+				},
+			},
+			MailerEntryIndex: map[string]map[string]*models.MailerEntry{
+				"my-mailers": {
+					"smtp1": smtp1,
 				},
 			},
 		}
@@ -394,13 +399,13 @@ func TestMailerEntriesEqual(t *testing.T) {
 	t.Run("equal entries", func(t *testing.T) {
 		e1 := &models.MailerEntry{Name: "smtp", Address: "mail.example.com", Port: 25}
 		e2 := &models.MailerEntry{Name: "smtp", Address: "mail.example.com", Port: 25}
-		assert.True(t, mailerEntriesEqual(e1, e2))
+		assert.True(t, e1.Equal(*e2))
 	})
 
 	t.Run("different address", func(t *testing.T) {
 		e1 := &models.MailerEntry{Name: "smtp", Address: "mail1.example.com"}
 		e2 := &models.MailerEntry{Name: "smtp", Address: "mail2.example.com"}
-		assert.False(t, mailerEntriesEqual(e1, e2))
+		assert.False(t, e1.Equal(*e2))
 	})
 }
 
@@ -447,17 +452,22 @@ func TestComparePeers(t *testing.T) {
 			Peers: []*models.PeerSection{
 				{
 					PeerSectionBase: models.PeerSectionBase{Name: "my-peers"},
-					PeerEntries:     map[string]models.PeerEntry{},
 				},
 			},
+			PeerEntryIndex: map[string]map[string]*models.PeerEntry{
+				"my-peers": {},
+			},
 		}
+		peer1 := &models.PeerEntry{Name: "peer1", Address: ptrStr("192.168.1.1"), Port: ptrInt64(10000)}
 		desired := &parser.StructuredConfig{
 			Peers: []*models.PeerSection{
 				{
 					PeerSectionBase: models.PeerSectionBase{Name: "my-peers"},
-					PeerEntries: map[string]models.PeerEntry{
-						"peer1": {Name: "peer1", Address: ptrStr("192.168.1.1"), Port: ptrInt64(10000)},
-					},
+				},
+			},
+			PeerEntryIndex: map[string]map[string]*models.PeerEntry{
+				"my-peers": {
+					"peer1": peer1,
 				},
 			},
 		}
@@ -507,13 +517,13 @@ func TestPeerEntriesEqual(t *testing.T) {
 	t.Run("equal entries", func(t *testing.T) {
 		e1 := &models.PeerEntry{Name: "peer1", Address: ptrStr("192.168.1.1"), Port: ptrInt64(10000)}
 		e2 := &models.PeerEntry{Name: "peer1", Address: ptrStr("192.168.1.1"), Port: ptrInt64(10000)}
-		assert.True(t, peerEntriesEqual(e1, e2))
+		assert.True(t, e1.Equal(*e2))
 	})
 
 	t.Run("different port", func(t *testing.T) {
 		e1 := &models.PeerEntry{Name: "peer1", Port: ptrInt64(10000)}
 		e2 := &models.PeerEntry{Name: "peer1", Port: ptrInt64(10001)}
-		assert.False(t, peerEntriesEqual(e1, e2))
+		assert.False(t, e1.Equal(*e2))
 	})
 }
 
@@ -1046,10 +1056,10 @@ func TestCompareBinds(t *testing.T) {
 	comp := New()
 
 	t.Run("add new bind", func(t *testing.T) {
-		ops := comp.compareBinds(
+		ops := comp.compareBindsWithIndex(
 			"http-frontend",
-			map[string]models.Bind{},
-			map[string]models.Bind{
+			map[string]*models.Bind{},
+			map[string]*models.Bind{
 				"http-bind": {BindParams: models.BindParams{Name: "http-bind"}},
 			},
 		)
@@ -1058,24 +1068,24 @@ func TestCompareBinds(t *testing.T) {
 	})
 
 	t.Run("delete bind", func(t *testing.T) {
-		ops := comp.compareBinds(
+		ops := comp.compareBindsWithIndex(
 			"http-frontend",
-			map[string]models.Bind{
+			map[string]*models.Bind{
 				"old-bind": {BindParams: models.BindParams{Name: "old-bind"}},
 			},
-			map[string]models.Bind{},
+			map[string]*models.Bind{},
 		)
 		require.NotEmpty(t, ops)
 		assert.Equal(t, sections.OperationDelete, ops[0].Type())
 	})
 
 	t.Run("update bind", func(t *testing.T) {
-		ops := comp.compareBinds(
+		ops := comp.compareBindsWithIndex(
 			"http-frontend",
-			map[string]models.Bind{
+			map[string]*models.Bind{
 				"http-bind": {BindParams: models.BindParams{Name: "http-bind"}, Port: ptrInt64(80)},
 			},
-			map[string]models.Bind{
+			map[string]*models.Bind{
 				"http-bind": {BindParams: models.BindParams{Name: "http-bind"}, Port: ptrInt64(8080)},
 			},
 		)
@@ -1084,10 +1094,10 @@ func TestCompareBinds(t *testing.T) {
 	})
 
 	t.Run("no changes", func(t *testing.T) {
-		binds := map[string]models.Bind{
-			"http-bind": {BindParams: models.BindParams{Name: "http-bind"}},
-		}
-		ops := comp.compareBinds("http-frontend", binds, binds)
+		bind := &models.Bind{BindParams: models.BindParams{Name: "http-bind"}}
+		ops := comp.compareBindsWithIndex("http-frontend",
+			map[string]*models.Bind{"http-bind": bind},
+			map[string]*models.Bind{"http-bind": bind})
 		assert.Empty(t, ops)
 	})
 }
@@ -1381,16 +1391,12 @@ func TestCompareServers(t *testing.T) {
 			ServersModified: make(map[string][]string),
 			ServersDeleted:  make(map[string][]string),
 		}
-		currentBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-		}
-		desiredBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			Servers: map[string]models.Server{
+		ops := comp.compareServersWithIndex("api-backend",
+			map[string]*models.Server{},
+			map[string]*models.Server{
 				"srv1": {Name: "srv1", Address: "127.0.0.1", Port: ptrInt64(8080)},
 			},
-		}
-		ops := comp.compareServers("api-backend", currentBackend, desiredBackend, summary)
+			summary)
 		require.NotEmpty(t, ops)
 		hasCreate := false
 		for _, op := range ops {
@@ -1408,16 +1414,12 @@ func TestCompareServers(t *testing.T) {
 			ServersModified: make(map[string][]string),
 			ServersDeleted:  make(map[string][]string),
 		}
-		currentBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			Servers: map[string]models.Server{
+		ops := comp.compareServersWithIndex("api-backend",
+			map[string]*models.Server{
 				"old-srv": {Name: "old-srv", Address: "10.0.0.1", Port: ptrInt64(80)},
 			},
-		}
-		desiredBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-		}
-		ops := comp.compareServers("api-backend", currentBackend, desiredBackend, summary)
+			map[string]*models.Server{},
+			summary)
 		require.NotEmpty(t, ops)
 		hasDelete := false
 		for _, op := range ops {
@@ -1435,19 +1437,14 @@ func TestCompareServers(t *testing.T) {
 			ServersModified: make(map[string][]string),
 			ServersDeleted:  make(map[string][]string),
 		}
-		currentBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			Servers: map[string]models.Server{
+		ops := comp.compareServersWithIndex("api-backend",
+			map[string]*models.Server{
 				"srv1": {Name: "srv1", Address: "127.0.0.1", Port: ptrInt64(8080)},
 			},
-		}
-		desiredBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			Servers: map[string]models.Server{
+			map[string]*models.Server{
 				"srv1": {Name: "srv1", Address: "127.0.0.1", Port: ptrInt64(8081)},
 			},
-		}
-		ops := comp.compareServers("api-backend", currentBackend, desiredBackend, summary)
+			summary)
 		require.NotEmpty(t, ops)
 		hasUpdate := false
 		for _, op := range ops {
@@ -1465,13 +1462,11 @@ func TestCompareServers(t *testing.T) {
 			ServersModified: make(map[string][]string),
 			ServersDeleted:  make(map[string][]string),
 		}
-		backend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			Servers: map[string]models.Server{
-				"srv1": {Name: "srv1", Address: "127.0.0.1", Port: ptrInt64(8080)},
-			},
-		}
-		ops := comp.compareServers("api-backend", backend, backend, summary)
+		server := &models.Server{Name: "srv1", Address: "127.0.0.1", Port: ptrInt64(8080)}
+		ops := comp.compareServersWithIndex("api-backend",
+			map[string]*models.Server{"srv1": server},
+			map[string]*models.Server{"srv1": server},
+			summary)
 		assert.Empty(t, ops)
 	})
 }
@@ -1649,61 +1644,42 @@ func TestCompareServerTemplates(t *testing.T) {
 	comp := New()
 
 	t.Run("add server template", func(t *testing.T) {
-		currentBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-		}
-		desiredBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			ServerTemplates: map[string]models.ServerTemplate{
+		ops := comp.compareServerTemplatesWithIndex("api-backend",
+			map[string]*models.ServerTemplate{},
+			map[string]*models.ServerTemplate{
 				"srv": {Prefix: "srv", Fqdn: "service.local", NumOrRange: "1-5", Port: ptrInt64(8080)},
-			},
-		}
-		ops := comp.compareServerTemplates("api-backend", currentBackend, desiredBackend)
+			})
 		require.NotEmpty(t, ops)
 		assert.Equal(t, sections.OperationCreate, ops[0].Type())
 	})
 
 	t.Run("delete server template", func(t *testing.T) {
-		currentBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			ServerTemplates: map[string]models.ServerTemplate{
+		ops := comp.compareServerTemplatesWithIndex("api-backend",
+			map[string]*models.ServerTemplate{
 				"srv": {Prefix: "srv", Fqdn: "service.local", NumOrRange: "1-5", Port: ptrInt64(8080)},
 			},
-		}
-		desiredBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-		}
-		ops := comp.compareServerTemplates("api-backend", currentBackend, desiredBackend)
+			map[string]*models.ServerTemplate{})
 		require.NotEmpty(t, ops)
 		assert.Equal(t, sections.OperationDelete, ops[0].Type())
 	})
 
 	t.Run("update server template", func(t *testing.T) {
-		currentBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			ServerTemplates: map[string]models.ServerTemplate{
+		ops := comp.compareServerTemplatesWithIndex("api-backend",
+			map[string]*models.ServerTemplate{
 				"srv": {Prefix: "srv", Fqdn: "service.local", NumOrRange: "1-5", Port: ptrInt64(8080)},
 			},
-		}
-		desiredBackend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			ServerTemplates: map[string]models.ServerTemplate{
+			map[string]*models.ServerTemplate{
 				"srv": {Prefix: "srv", Fqdn: "new-service.local", NumOrRange: "1-10", Port: ptrInt64(8080)},
-			},
-		}
-		ops := comp.compareServerTemplates("api-backend", currentBackend, desiredBackend)
+			})
 		require.NotEmpty(t, ops)
 		assert.Equal(t, sections.OperationUpdate, ops[0].Type())
 	})
 
 	t.Run("no changes", func(t *testing.T) {
-		backend := &models.Backend{
-			BackendBase: models.BackendBase{Name: "api-backend"},
-			ServerTemplates: map[string]models.ServerTemplate{
-				"srv": {Prefix: "srv", Fqdn: "service.local", NumOrRange: "1-5", Port: ptrInt64(8080)},
-			},
-		}
-		ops := comp.compareServerTemplates("api-backend", backend, backend)
+		template := &models.ServerTemplate{Prefix: "srv", Fqdn: "service.local", NumOrRange: "1-5", Port: ptrInt64(8080)}
+		ops := comp.compareServerTemplatesWithIndex("api-backend",
+			map[string]*models.ServerTemplate{"srv": template},
+			map[string]*models.ServerTemplate{"srv": template})
 		assert.Empty(t, ops)
 	})
 }
@@ -2200,17 +2176,22 @@ func TestCompareResolvers(t *testing.T) {
 			Resolvers: []*models.Resolver{
 				{
 					ResolverBase: models.ResolverBase{Name: "mydns"},
-					Nameservers:  make(map[string]models.Nameserver),
 				},
 			},
+			NameserverIndex: map[string]map[string]*models.Nameserver{
+				"mydns": {},
+			},
 		}
+		dns1 := &models.Nameserver{Name: "dns1", Address: ptrString("8.8.8.8"), Port: ptrInt64(53)}
 		desired := &parser.StructuredConfig{
 			Resolvers: []*models.Resolver{
 				{
 					ResolverBase: models.ResolverBase{Name: "mydns"},
-					Nameservers: map[string]models.Nameserver{
-						"dns1": {Name: "dns1", Address: ptrString("8.8.8.8"), Port: ptrInt64(53)},
-					},
+				},
+			},
+			NameserverIndex: map[string]map[string]*models.Nameserver{
+				"mydns": {
+					"dns1": dns1,
 				},
 			},
 		}
@@ -2314,7 +2295,13 @@ func TestCompareModifiedFrontends(t *testing.T) {
 				FrontendBase: models.FrontendBase{Name: "http-frontend", Mode: mode2},
 			},
 		}
-		ops := comp.compareModifiedFrontends(desiredFrontends, currentFrontends, summary)
+		currentConfig := &parser.StructuredConfig{
+			BindIndex: make(map[string]map[string]*models.Bind),
+		}
+		desiredConfig := &parser.StructuredConfig{
+			BindIndex: make(map[string]map[string]*models.Bind),
+		}
+		ops := comp.compareModifiedFrontendsWithIndexes(desiredFrontends, currentFrontends, currentConfig, desiredConfig, summary)
 		require.NotEmpty(t, ops)
 		assert.Equal(t, sections.OperationUpdate, ops[0].Type())
 		assert.Contains(t, summary.FrontendsModified, "http-frontend")
@@ -2336,7 +2323,13 @@ func TestCompareModifiedFrontends(t *testing.T) {
 				ACLList:      models.Acls{{ACLName: "is_api", Criterion: "path_beg", Value: "/api"}},
 			},
 		}
-		ops := comp.compareModifiedFrontends(desiredFrontends, currentFrontends, summary)
+		currentConfig := &parser.StructuredConfig{
+			BindIndex: make(map[string]map[string]*models.Bind),
+		}
+		desiredConfig := &parser.StructuredConfig{
+			BindIndex: make(map[string]map[string]*models.Bind),
+		}
+		ops := comp.compareModifiedFrontendsWithIndexes(desiredFrontends, currentFrontends, currentConfig, desiredConfig, summary)
 		require.NotEmpty(t, ops)
 		assert.Contains(t, summary.FrontendsModified, "http-frontend")
 	})
@@ -2354,7 +2347,13 @@ func TestCompareModifiedFrontends(t *testing.T) {
 		desiredFrontends := map[string]*models.Frontend{
 			"http-frontend": frontend,
 		}
-		ops := comp.compareModifiedFrontends(desiredFrontends, currentFrontends, summary)
+		currentConfig := &parser.StructuredConfig{
+			BindIndex: make(map[string]map[string]*models.Bind),
+		}
+		desiredConfig := &parser.StructuredConfig{
+			BindIndex: make(map[string]map[string]*models.Bind),
+		}
+		ops := comp.compareModifiedFrontendsWithIndexes(desiredFrontends, currentFrontends, currentConfig, desiredConfig, summary)
 		assert.Empty(t, ops)
 	})
 }

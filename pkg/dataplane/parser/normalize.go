@@ -30,32 +30,33 @@ import (
 // updates during comparison.
 //
 // This function walks all models in the config and normalizes their Metadata fields.
+// It uses pointer indexes for zero-copy iteration over nested elements.
 func NormalizeConfigMetadata(config *parserconfig.StructuredConfig) {
 	if config == nil {
 		return
 	}
 
-	// Normalize main sections
-	normalizeFrontendsMetadata(config.Frontends)
-	normalizeBackendsMetadata(config.Backends)
+	// Normalize main sections using pointer indexes
+	normalizeFrontendsMetadataWithIndexes(config.Frontends, config.BindIndex)
+	normalizeBackendsMetadataWithIndexes(config.Backends, config.ServerIndex, config.ServerTemplateIndex)
 	normalizeDefaultsSectionsMetadata(config.Defaults)
 	normalizeGlobalMetadata(config.Global)
 
-	// Normalize other top-level sections
-	normalizeOtherSectionsMetadata(config)
+	// Normalize other top-level sections using pointer indexes
+	normalizeOtherSectionsMetadataWithIndexes(config)
 }
 
-// normalizeFrontendsMetadata normalizes all frontends.
-func normalizeFrontendsMetadata(frontends []*models.Frontend) {
+// normalizeFrontendsMetadataWithIndexes normalizes all frontends using pointer indexes.
+func normalizeFrontendsMetadataWithIndexes(frontends []*models.Frontend, bindIndex map[string]map[string]*models.Bind) {
 	for _, frontend := range frontends {
-		normalizeFrontendMetadata(frontend)
+		normalizeFrontendMetadataWithIndex(frontend, bindIndex)
 	}
 }
 
-// normalizeBackendsMetadata normalizes all backends.
-func normalizeBackendsMetadata(backends []*models.Backend) {
+// normalizeBackendsMetadataWithIndexes normalizes all backends using pointer indexes.
+func normalizeBackendsMetadataWithIndexes(backends []*models.Backend, serverIndex map[string]map[string]*models.Server, serverTemplateIndex map[string]map[string]*models.ServerTemplate) {
 	for _, backend := range backends {
-		normalizeBackendMetadata(backend)
+		normalizeBackendMetadataWithIndexes(backend, serverIndex, serverTemplateIndex)
 	}
 }
 
@@ -76,49 +77,56 @@ func normalizeGlobalMetadata(global *models.Global) {
 	}
 }
 
-// normalizeOtherSectionsMetadata normalizes miscellaneous sections.
-func normalizeOtherSectionsMetadata(config *parserconfig.StructuredConfig) {
-	normalizePeersMetadata(config.Peers)
-	normalizeResolversMetadata(config.Resolvers)
-	normalizeMailersMetadata(config.Mailers)
+// normalizeOtherSectionsMetadataWithIndexes normalizes miscellaneous sections using pointer indexes.
+func normalizeOtherSectionsMetadataWithIndexes(config *parserconfig.StructuredConfig) {
+	normalizePeersMetadataWithIndex(config.Peers, config.PeerEntryIndex)
+	normalizeResolversMetadataWithIndex(config.Resolvers, config.NameserverIndex)
+	normalizeMailersMetadataWithIndex(config.Mailers, config.MailerEntryIndex)
 	normalizeCachesMetadata(config.Caches)
 	normalizeRingsMetadata(config.Rings)
-	normalizeUserlistsMetadata(config.Userlists)
+	normalizeUserlistsMetadataWithIndexes(config.Userlists, config.UserIndex, config.GroupIndex)
 	normalizeProgramsMetadata(config.Programs)
 	normalizeFCGIAppsMetadata(config.FCGIApps)
 	normalizeCrtStoresMetadata(config.CrtStores)
 	normalizeAcmeProvidersMetadata(config.AcmeProviders)
 }
 
-func normalizePeersMetadata(peers []*models.PeerSection) {
+func normalizePeersMetadataWithIndex(peers []*models.PeerSection, peerEntryIndex map[string]map[string]*models.PeerEntry) {
 	for _, peer := range peers {
 		if peer != nil {
-			for _, entry := range peer.PeerEntries {
-				entry.Metadata = NormalizeMetadata(entry.Metadata)
+			// Use pointer index for zero-copy iteration
+			if entries, ok := peerEntryIndex[peer.Name]; ok {
+				for _, entry := range entries {
+					entry.Metadata = NormalizeMetadata(entry.Metadata)
+				}
 			}
 		}
 	}
 }
 
-func normalizeResolversMetadata(resolvers []*models.Resolver) {
+func normalizeResolversMetadataWithIndex(resolvers []*models.Resolver, nameserverIndex map[string]map[string]*models.Nameserver) {
 	for _, resolver := range resolvers {
 		if resolver != nil {
 			resolver.Metadata = NormalizeMetadata(resolver.Metadata)
-			for name := range resolver.Nameservers {
-				ns := resolver.Nameservers[name]
-				ns.Metadata = NormalizeMetadata(ns.Metadata)
-				resolver.Nameservers[name] = ns
+			// Use pointer index for zero-copy iteration
+			if nameservers, ok := nameserverIndex[resolver.Name]; ok {
+				for _, ns := range nameservers {
+					ns.Metadata = NormalizeMetadata(ns.Metadata)
+				}
 			}
 		}
 	}
 }
 
-func normalizeMailersMetadata(mailers []*models.MailersSection) {
+func normalizeMailersMetadataWithIndex(mailers []*models.MailersSection, mailerEntryIndex map[string]map[string]*models.MailerEntry) {
 	for _, mailer := range mailers {
 		if mailer != nil {
 			mailer.Metadata = NormalizeMetadata(mailer.Metadata)
-			for _, entry := range mailer.MailerEntries {
-				entry.Metadata = NormalizeMetadata(entry.Metadata)
+			// Use pointer index for zero-copy iteration
+			if entries, ok := mailerEntryIndex[mailer.Name]; ok {
+				for _, entry := range entries {
+					entry.Metadata = NormalizeMetadata(entry.Metadata)
+				}
 			}
 		}
 	}
@@ -140,15 +148,21 @@ func normalizeRingsMetadata(rings []*models.Ring) {
 	}
 }
 
-func normalizeUserlistsMetadata(userlists []*models.Userlist) {
+func normalizeUserlistsMetadataWithIndexes(userlists []*models.Userlist, userIndex map[string]map[string]*models.User, groupIndex map[string]map[string]*models.Group) {
 	for _, userlist := range userlists {
 		if userlist != nil {
 			userlist.Metadata = NormalizeMetadata(userlist.Metadata)
-			for _, user := range userlist.Users {
-				user.Metadata = NormalizeMetadata(user.Metadata)
+			// Use pointer index for zero-copy iteration
+			if users, ok := userIndex[userlist.Name]; ok {
+				for _, user := range users {
+					user.Metadata = NormalizeMetadata(user.Metadata)
+				}
 			}
-			for _, group := range userlist.Groups {
-				group.Metadata = NormalizeMetadata(group.Metadata)
+			// Use pointer index for zero-copy iteration
+			if groups, ok := groupIndex[userlist.Name]; ok {
+				for _, group := range groups {
+					group.Metadata = NormalizeMetadata(group.Metadata)
+				}
 			}
 		}
 	}
@@ -189,8 +203,9 @@ func normalizeAcmeProvidersMetadata(acmeProviders []*models.AcmeProvider) {
 	}
 }
 
-// normalizeFrontendMetadata normalizes all Metadata fields in a Frontend and its nested collections.
-func normalizeFrontendMetadata(f *models.Frontend) {
+// normalizeFrontendMetadataWithIndex normalizes all Metadata fields in a Frontend and its nested collections.
+// Uses pointer index for binds to avoid copying large structs.
+func normalizeFrontendMetadataWithIndex(f *models.Frontend, bindIndex map[string]map[string]*models.Bind) {
 	if f == nil {
 		return
 	}
@@ -198,11 +213,11 @@ func normalizeFrontendMetadata(f *models.Frontend) {
 	// Frontend itself
 	f.Metadata = NormalizeMetadata(f.Metadata)
 
-	// Binds - use indexing to avoid copying on each iteration
-	for name := range f.Binds {
-		bind := f.Binds[name]
-		bind.Metadata = NormalizeMetadata(bind.Metadata)
-		f.Binds[name] = bind
+	// Binds - use pointer index for zero-copy iteration
+	if binds, ok := bindIndex[f.Name]; ok {
+		for _, bind := range binds {
+			bind.Metadata = NormalizeMetadata(bind.Metadata)
+		}
 	}
 
 	// ACLs
@@ -266,8 +281,9 @@ func normalizeFrontendMetadata(f *models.Frontend) {
 	}
 }
 
-// normalizeBackendMetadata normalizes all Metadata fields in a Backend and its nested collections.
-func normalizeBackendMetadata(b *models.Backend) {
+// normalizeBackendMetadataWithIndexes normalizes all Metadata fields in a Backend and its nested collections.
+// Uses pointer indexes for servers and server templates to avoid copying large structs.
+func normalizeBackendMetadataWithIndexes(b *models.Backend, serverIndex map[string]map[string]*models.Server, serverTemplateIndex map[string]map[string]*models.ServerTemplate) {
 	if b == nil {
 		return
 	}
@@ -275,18 +291,18 @@ func normalizeBackendMetadata(b *models.Backend) {
 	// Backend itself
 	b.Metadata = NormalizeMetadata(b.Metadata)
 
-	// Servers - use indexing to avoid copying on each iteration
-	for name := range b.Servers {
-		server := b.Servers[name]
-		server.Metadata = NormalizeMetadata(server.Metadata)
-		b.Servers[name] = server
+	// Servers - use pointer index for zero-copy iteration
+	if servers, ok := serverIndex[b.Name]; ok {
+		for _, server := range servers {
+			server.Metadata = NormalizeMetadata(server.Metadata)
+		}
 	}
 
-	// Server templates - use indexing to avoid copying on each iteration
-	for name := range b.ServerTemplates {
-		template := b.ServerTemplates[name]
-		template.Metadata = NormalizeMetadata(template.Metadata)
-		b.ServerTemplates[name] = template
+	// Server templates - use pointer index for zero-copy iteration
+	if templates, ok := serverTemplateIndex[b.Name]; ok {
+		for _, template := range templates {
+			template.Metadata = NormalizeMetadata(template.Metadata)
+		}
 	}
 
 	// ACLs

@@ -113,6 +113,43 @@ type StructuredConfig struct {
 	// EEGlobal holds EE-specific directives from the global section.
 	// Contains maxmind-load, maxmind-cache-size, etc.
 	EEGlobal *EEGlobalData
+
+	// ==========================================================================
+	// Pointer-based indexes for zero-copy iteration
+	// ==========================================================================
+	//
+	// These indexes store pointers to nested elements, enabling zero-copy iteration
+	// during comparison and validation. The upstream client-native library uses
+	// value maps (map[string]T) which cause struct copies on every access.
+	// By storing pointers, we avoid copying large structs (e.g., Server is 1504 bytes).
+	//
+	// These indexes are built during parsing and should be used by comparators
+	// and validators instead of the value maps in the parent models.
+	// The value maps in models (e.g., Backend.Servers) remain nil.
+
+	// ServerIndex maps backend name -> server name -> server pointer
+	ServerIndex map[string]map[string]*models.Server
+
+	// ServerTemplateIndex maps backend name -> template prefix -> server template pointer
+	ServerTemplateIndex map[string]map[string]*models.ServerTemplate
+
+	// BindIndex maps frontend name -> bind name -> bind pointer
+	BindIndex map[string]map[string]*models.Bind
+
+	// PeerEntryIndex maps peer section name -> peer entry name -> peer entry pointer
+	PeerEntryIndex map[string]map[string]*models.PeerEntry
+
+	// NameserverIndex maps resolver name -> nameserver name -> nameserver pointer
+	NameserverIndex map[string]map[string]*models.Nameserver
+
+	// MailerEntryIndex maps mailers section name -> mailer entry name -> mailer entry pointer
+	MailerEntryIndex map[string]map[string]*models.MailerEntry
+
+	// UserIndex maps userlist name -> username -> user pointer
+	UserIndex map[string]map[string]*models.User
+
+	// GroupIndex maps userlist name -> group name -> group pointer
+	GroupIndex map[string]map[string]*models.Group
 }
 
 // =============================================================================
@@ -188,4 +225,38 @@ type EEGlobalDirective struct {
 
 	// Comment is the inline comment
 	Comment string
+}
+
+// =============================================================================
+// Index building helpers
+// =============================================================================
+
+// BuildUserIndex builds a pointer index from a slice of users.
+// Returns nil if the input slice is nil.
+func BuildUserIndex(users []*models.User) map[string]*models.User {
+	if users == nil {
+		return nil
+	}
+	index := make(map[string]*models.User, len(users))
+	for _, user := range users {
+		if user != nil && user.Username != "" {
+			index[user.Username] = user
+		}
+	}
+	return index
+}
+
+// BuildGroupIndex builds a pointer index from a slice of groups.
+// Returns nil if the input slice is nil.
+func BuildGroupIndex(groups []*models.Group) map[string]*models.Group {
+	if groups == nil {
+		return nil
+	}
+	index := make(map[string]*models.Group, len(groups))
+	for _, group := range groups {
+		if group != nil && group.Name != "" {
+			index[group.Name] = group
+		}
+	}
+	return index
 }

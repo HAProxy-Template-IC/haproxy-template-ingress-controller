@@ -12,14 +12,15 @@ import (
 )
 
 // compareUserlists compares userlist sections between current and desired configurations.
+// Uses pointer indexes for zero-copy iteration over users and groups.
 func (c *Comparator) compareUserlists(current, desired *parser.StructuredConfig) []Operation {
 	currentMap := buildUserlistMap(current.Userlists)
 	desiredMap := buildUserlistMap(desired.Userlists)
 
 	var operations []Operation
-	operations = append(operations, c.findAddedUserlists(desiredMap, currentMap)...)
+	operations = append(operations, c.findAddedUserlistsWithIndexes(desiredMap, currentMap, desired.UserIndex)...)
 	operations = append(operations, findDeletedUserlists(currentMap, desiredMap)...)
-	operations = append(operations, c.findModifiedUserlists(currentMap, desiredMap)...)
+	operations = append(operations, c.findModifiedUserlistsWithIndexes(currentMap, desiredMap, current.UserIndex, desired.UserIndex, current.GroupIndex, desired.GroupIndex)...)
 
 	return operations
 }
@@ -36,16 +37,19 @@ func buildUserlistMap(userlists []*models.Userlist) map[string]*models.Userlist 
 	return userlistMap
 }
 
-// findAddedUserlists identifies userlist sections that need to be created.
-func (c *Comparator) findAddedUserlists(desired, current map[string]*models.Userlist) []Operation {
+// findAddedUserlistsWithIndexes identifies userlist sections that need to be created.
+// Uses pointer indexes for zero-copy iteration over users.
+func (c *Comparator) findAddedUserlistsWithIndexes(desired, current map[string]*models.Userlist, userIndex map[string]map[string]*models.User) []Operation {
 	var operations []Operation
 	for name, userlist := range desired {
 		if _, exists := current[name]; !exists {
 			operations = append(operations, sections.NewUserlistCreate(userlist))
 			// Explicitly create each user (Dataplane API may not persist users from request body)
-			for _, user := range userlist.Users {
-				userCopy := user
-				operations = append(operations, sections.NewUserCreate(name, &userCopy))
+			// Use pointer index for zero-copy iteration
+			if users, ok := userIndex[name]; ok {
+				for _, user := range users {
+					operations = append(operations, sections.NewUserCreate(name, user))
+				}
 			}
 		}
 	}
@@ -63,8 +67,9 @@ func findDeletedUserlists(current, desired map[string]*models.Userlist) []Operat
 	return operations
 }
 
-// findModifiedUserlists identifies userlist sections that have changed.
-func (c *Comparator) findModifiedUserlists(current, desired map[string]*models.Userlist) []Operation {
+// findModifiedUserlistsWithIndexes identifies userlist sections that have changed.
+// Uses pointer indexes for zero-copy iteration over users and groups.
+func (c *Comparator) findModifiedUserlistsWithIndexes(current, desired map[string]*models.Userlist, currentUserIndex, desiredUserIndex map[string]map[string]*models.User, currentGroupIndex, desiredGroupIndex map[string]map[string]*models.Group) []Operation {
 	var operations []Operation
 	for name, desiredUserlist := range desired {
 		currentUserlist, exists := current[name]
@@ -72,31 +77,28 @@ func (c *Comparator) findModifiedUserlists(current, desired map[string]*models.U
 			continue
 		}
 
-		if userlistMetadataChanged(currentUserlist, desiredUserlist) {
+		if userlistMetadataChangedWithIndexes(name, currentGroupIndex, desiredGroupIndex) {
 			// Recreate entire userlist if metadata changed
 			operations = append(operations,
 				sections.NewUserlistDelete(currentUserlist),
 				sections.NewUserlistCreate(desiredUserlist))
 		} else {
-			// Compare users for fine-grained operations
-			userOps := c.compareUserlistUsers(name, currentUserlist, desiredUserlist)
+			// Compare users for fine-grained operations using pointer indexes
+			userOps := c.compareUserlistUsersWithIndex(name, currentUserIndex, desiredUserIndex)
 			operations = append(operations, userOps...)
 		}
 	}
 	return operations
 }
 
-// userlistMetadataChanged checks if userlist metadata (excluding users and groups) has changed.
-func userlistMetadataChanged(current, desired *models.Userlist) bool {
-	// Compare metadata fields (currently only Name is in UserlistBase)
-	// Users and Groups are compared separately for fine-grained operations
-	// For now, we only check if there are other structural changes
+// userlistMetadataChangedWithIndexes checks if userlist metadata (excluding users) has changed.
+// Uses pointer indexes for group comparison.
+func userlistMetadataChangedWithIndexes(userlistName string, currentGroupIndex, desiredGroupIndex map[string]map[string]*models.Group) bool {
+	// Compare groups from indexes
 	// If groups are present and different, that requires recreating the userlist
-	if !groupsEqual(current.Groups, desired.Groups) {
-		return true
-	}
-
-	return false
+	currentGroups := currentGroupIndex[userlistName]
+	desiredGroups := desiredGroupIndex[userlistName]
+	return !groupsEqualWithIndex(currentGroups, desiredGroups)
 }
 
 // commaSeparatedEqual compares two comma-separated strings order-insensitively.
@@ -180,8 +182,8 @@ func userEqual(u1, u2 models.User) bool {
 	return reflect.DeepEqual(u1.Metadata, u2.Metadata)
 }
 
-// groupsEqual compares two group maps for equality.
-func groupsEqual(g1, g2 map[string]models.Group) bool {
+// groupsEqualWithIndex compares two group pointer maps for equality.
+func groupsEqualWithIndex(g1, g2 map[string]*models.Group) bool {
 	if len(g1) != len(g2) {
 		return false
 	}
@@ -191,7 +193,7 @@ func groupsEqual(g1, g2 map[string]models.Group) bool {
 		if !exists {
 			return false
 		}
-		if !groupEqual(group1, group2) {
+		if !groupEqual(*group1, *group2) {
 			return false
 		}
 	}
@@ -199,27 +201,31 @@ func groupsEqual(g1, g2 map[string]models.Group) bool {
 	return true
 }
 
-// compareUserlistUsers compares users within a userlist and generates fine-grained user operations.
-func (c *Comparator) compareUserlistUsers(userlistName string, current, desired *models.Userlist) []Operation {
+// compareUserlistUsersWithIndex compares users within a userlist using pointer indexes.
+func (c *Comparator) compareUserlistUsersWithIndex(userlistName string, currentUserIndex, desiredUserIndex map[string]map[string]*models.User) []Operation {
 	var operations []Operation
 
-	// Get user maps (they are not pointers in client-native models)
-	currentUsers := current.Users
-	desiredUsers := desired.Users
+	// Get user maps from pointer indexes
+	currentUsers := currentUserIndex[userlistName]
+	desiredUsers := desiredUserIndex[userlistName]
+	if currentUsers == nil {
+		currentUsers = make(map[string]*models.User)
+	}
+	if desiredUsers == nil {
+		desiredUsers = make(map[string]*models.User)
+	}
 
 	// Find added users
 	for username, user := range desiredUsers {
 		if _, exists := currentUsers[username]; !exists {
-			userCopy := user
-			operations = append(operations, sections.NewUserCreate(userlistName, &userCopy))
+			operations = append(operations, sections.NewUserCreate(userlistName, user))
 		}
 	}
 
 	// Find deleted users
 	for username, user := range currentUsers {
 		if _, exists := desiredUsers[username]; !exists {
-			userCopy := user
-			operations = append(operations, sections.NewUserDelete(userlistName, &userCopy))
+			operations = append(operations, sections.NewUserDelete(userlistName, user))
 		}
 	}
 
@@ -231,9 +237,8 @@ func (c *Comparator) compareUserlistUsers(userlistName string, current, desired 
 		}
 
 		// Compare user attributes (password, groups, etc.) with order-insensitive Groups
-		if !userEqual(currentUser, desiredUser) {
-			userCopy := desiredUser
-			operations = append(operations, sections.NewUserUpdate(userlistName, &userCopy))
+		if !userEqual(*currentUser, *desiredUser) {
+			operations = append(operations, sections.NewUserUpdate(userlistName, desiredUser))
 		}
 	}
 

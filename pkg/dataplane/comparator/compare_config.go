@@ -61,6 +61,7 @@ func httpErrorsEqual(h1, h2 *models.HTTPErrorsSection) bool {
 }
 
 // compareMailers compares mailers sections between current and desired configurations.
+// Uses pointer indexes for zero-copy iteration over mailer entries.
 func (c *Comparator) compareMailers(current, desired *parser.StructuredConfig) []Operation {
 	operations := make([]Operation, 0, len(desired.Mailers))
 
@@ -89,15 +90,10 @@ func (c *Comparator) compareMailers(current, desired *parser.StructuredConfig) [
 
 		operations = append(operations, sections.NewMailersSectionCreate(mailers))
 
-		// Also create mailer entries for this new mailers section
-		// Compare against an empty mailers section to get all mailer entry create operations
-		emptyMailers := &models.MailersSection{}
-		emptyMailers.Name = name
-		emptyMailers.MailerEntries = make(map[string]models.MailerEntry)
-		mailerEntryOps := c.compareMailerEntries(name, emptyMailers, mailers)
-		if len(mailerEntryOps) > 0 {
-			operations = append(operations, mailerEntryOps...)
-		}
+		// Also create mailer entries for this new mailers section using pointer index
+		desiredEntries := desired.MailerEntryIndex[name]
+		mailerEntryOps := c.compareMailerEntriesWithIndex(name, nil, desiredEntries)
+		operations = append(operations, mailerEntryOps...)
 	}
 
 	// Find deleted mailers sections
@@ -109,17 +105,21 @@ func (c *Comparator) compareMailers(current, desired *parser.StructuredConfig) [
 
 	// Find modified mailers sections
 	for name, desiredMailers := range desiredMap {
-		if currentMailers, exists := currentMap[name]; exists {
-			mailersModified := false
+		currentMailers, exists := currentMap[name]
+		if !exists {
+			continue
+		}
+		mailersModified := false
 
-			// Compare mailer entries within this mailers section
-			mailerEntryOps := c.compareMailerEntries(name, currentMailers, desiredMailers)
-			appendOperationsIfNotEmpty(&operations, mailerEntryOps, &mailersModified)
+		// Compare mailer entries within this mailers section using pointer indexes
+		currentEntries := current.MailerEntryIndex[name]
+		desiredEntries := desired.MailerEntryIndex[name]
+		mailerEntryOps := c.compareMailerEntriesWithIndex(name, currentEntries, desiredEntries)
+		appendOperationsIfNotEmpty(&operations, mailerEntryOps, &mailersModified)
 
-			// Compare mailers section attributes (excluding mailer entries which we already compared)
-			if !mailersEqualWithoutMailerEntries(currentMailers, desiredMailers) {
-				operations = append(operations, sections.NewMailersSectionUpdate(desiredMailers))
-			}
+		// Compare mailers section attributes (excluding mailer entries which we already compared)
+		if !mailersEqualWithoutMailerEntries(currentMailers, desiredMailers) {
+			operations = append(operations, sections.NewMailersSectionUpdate(desiredMailers))
 		}
 	}
 
@@ -141,31 +141,47 @@ func mailersEqualWithoutMailerEntries(m1, m2 *models.MailersSection) bool {
 	return m1Copy.Equal(m2Copy)
 }
 
-// compareMailerEntries compares mailer entry configurations within a mailers section.
-func (c *Comparator) compareMailerEntries(mailersSection string, currentMailers, desiredMailers *models.MailersSection) []Operation {
-	return compareMapEntries(
-		currentMailers.MailerEntries,
-		desiredMailers.MailerEntries,
-		func(entry *models.MailerEntry) Operation {
-			return sections.NewMailerEntryCreate(mailersSection, entry)
-		},
-		func(entry *models.MailerEntry) Operation {
-			return sections.NewMailerEntryDelete(mailersSection, entry)
-		},
-		func(entry *models.MailerEntry) Operation {
-			return sections.NewMailerEntryUpdate(mailersSection, entry)
-		},
-		mailerEntriesEqual,
-	)
-}
+// compareMailerEntriesWithIndex compares mailer entry configurations using pointer indexes.
+func (c *Comparator) compareMailerEntriesWithIndex(mailersSection string, currentEntries, desiredEntries map[string]*models.MailerEntry) []Operation {
+	if currentEntries == nil {
+		currentEntries = make(map[string]*models.MailerEntry)
+	}
+	if desiredEntries == nil {
+		desiredEntries = make(map[string]*models.MailerEntry)
+	}
 
-// mailerEntriesEqual checks if two mailer entries are equal.
-// Uses the HAProxy models' built-in Equal() method to compare ALL attributes.
-func mailerEntriesEqual(e1, e2 *models.MailerEntry) bool {
-	return e1.Equal(*e2)
+	var operations []Operation
+
+	// Find added entries
+	for name, entry := range desiredEntries {
+		if _, exists := currentEntries[name]; !exists {
+			operations = append(operations, sections.NewMailerEntryCreate(mailersSection, entry))
+		}
+	}
+
+	// Find deleted entries
+	for name, entry := range currentEntries {
+		if _, exists := desiredEntries[name]; !exists {
+			operations = append(operations, sections.NewMailerEntryDelete(mailersSection, entry))
+		}
+	}
+
+	// Find modified entries
+	for name, desiredEntry := range desiredEntries {
+		currentEntry, exists := currentEntries[name]
+		if !exists {
+			continue
+		}
+		if !currentEntry.Equal(*desiredEntry) {
+			operations = append(operations, sections.NewMailerEntryUpdate(mailersSection, desiredEntry))
+		}
+	}
+
+	return operations
 }
 
 // comparePeers compares peer sections between current and desired configurations.
+// Uses pointer indexes for zero-copy iteration over peer entries.
 func (c *Comparator) comparePeers(current, desired *parser.StructuredConfig) []Operation {
 	operations := make([]Operation, 0, len(desired.Peers))
 
@@ -194,15 +210,10 @@ func (c *Comparator) comparePeers(current, desired *parser.StructuredConfig) []O
 
 		operations = append(operations, sections.NewPeerSectionCreate(peer))
 
-		// Also create peer entries for this new peers section
-		// Compare against an empty peers section to get all peer entry create operations
-		emptyPeer := &models.PeerSection{}
-		emptyPeer.Name = name
-		emptyPeer.PeerEntries = make(map[string]models.PeerEntry)
-		peerEntryOps := c.comparePeerEntries(name, emptyPeer, peer)
-		if len(peerEntryOps) > 0 {
-			operations = append(operations, peerEntryOps...)
-		}
+		// Also create peer entries for this new peers section using pointer index
+		desiredEntries := desired.PeerEntryIndex[name]
+		peerEntryOps := c.comparePeerEntriesWithIndex(name, nil, desiredEntries)
+		operations = append(operations, peerEntryOps...)
 	}
 
 	// Find deleted peer sections
@@ -214,17 +225,21 @@ func (c *Comparator) comparePeers(current, desired *parser.StructuredConfig) []O
 
 	// Find modified peer sections
 	for name, desiredPeer := range desiredMap {
-		if currentPeer, exists := currentMap[name]; exists {
-			peerModified := false
+		currentPeer, exists := currentMap[name]
+		if !exists {
+			continue
+		}
+		peerModified := false
 
-			// Compare peer entries within this peers section
-			peerEntryOps := c.comparePeerEntries(name, currentPeer, desiredPeer)
-			appendOperationsIfNotEmpty(&operations, peerEntryOps, &peerModified)
+		// Compare peer entries within this peers section using pointer indexes
+		currentEntries := current.PeerEntryIndex[name]
+		desiredEntries := desired.PeerEntryIndex[name]
+		peerEntryOps := c.comparePeerEntriesWithIndex(name, currentEntries, desiredEntries)
+		appendOperationsIfNotEmpty(&operations, peerEntryOps, &peerModified)
 
-			// Compare peers section attributes (excluding peer entries which we already compared)
-			if !peersEqualWithoutPeerEntries(currentPeer, desiredPeer) {
-				operations = append(operations, sections.NewPeerSectionUpdate(desiredPeer))
-			}
+		// Compare peers section attributes (excluding peer entries which we already compared)
+		if !peersEqualWithoutPeerEntries(currentPeer, desiredPeer) {
+			operations = append(operations, sections.NewPeerSectionUpdate(desiredPeer))
 		}
 	}
 
@@ -246,28 +261,43 @@ func peersEqualWithoutPeerEntries(p1, p2 *models.PeerSection) bool {
 	return p1Copy.Equal(p2Copy)
 }
 
-// comparePeerEntries compares peer entry configurations within a peers section.
-func (c *Comparator) comparePeerEntries(peersSection string, currentPeer, desiredPeer *models.PeerSection) []Operation {
-	return compareMapEntries(
-		currentPeer.PeerEntries,
-		desiredPeer.PeerEntries,
-		func(entry *models.PeerEntry) Operation {
-			return sections.NewPeerEntryCreate(peersSection, entry)
-		},
-		func(entry *models.PeerEntry) Operation {
-			return sections.NewPeerEntryDelete(peersSection, entry)
-		},
-		func(entry *models.PeerEntry) Operation {
-			return sections.NewPeerEntryUpdate(peersSection, entry)
-		},
-		peerEntriesEqual,
-	)
-}
+// comparePeerEntriesWithIndex compares peer entry configurations using pointer indexes.
+func (c *Comparator) comparePeerEntriesWithIndex(peersSection string, currentEntries, desiredEntries map[string]*models.PeerEntry) []Operation {
+	if currentEntries == nil {
+		currentEntries = make(map[string]*models.PeerEntry)
+	}
+	if desiredEntries == nil {
+		desiredEntries = make(map[string]*models.PeerEntry)
+	}
 
-// peerEntriesEqual checks if two peer entries are equal.
-// Uses the HAProxy models' built-in Equal() method to compare ALL attributes.
-func peerEntriesEqual(p1, p2 *models.PeerEntry) bool {
-	return p1.Equal(*p2)
+	var operations []Operation
+
+	// Find added entries
+	for name, entry := range desiredEntries {
+		if _, exists := currentEntries[name]; !exists {
+			operations = append(operations, sections.NewPeerEntryCreate(peersSection, entry))
+		}
+	}
+
+	// Find deleted entries
+	for name, entry := range currentEntries {
+		if _, exists := desiredEntries[name]; !exists {
+			operations = append(operations, sections.NewPeerEntryDelete(peersSection, entry))
+		}
+	}
+
+	// Find modified entries
+	for name, desiredEntry := range desiredEntries {
+		currentEntry, exists := currentEntries[name]
+		if !exists {
+			continue
+		}
+		if !currentEntry.Equal(*desiredEntry) {
+			operations = append(operations, sections.NewPeerEntryUpdate(peersSection, desiredEntry))
+		}
+	}
+
+	return operations
 }
 
 // compareCaches compares cache sections between current and desired configurations.
