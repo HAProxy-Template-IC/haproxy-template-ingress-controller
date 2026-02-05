@@ -157,30 +157,14 @@ func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []s
 func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *SyncOptions, auxFiles *AuxiliaryFiles) (*SyncResult, error) {
 	startTime := time.Now()
 
-	// Step 1: Fetch current configuration from dataplane API (with retry for transient connection errors)
-	o.logger.Debug("Fetching current configuration from dataplane API",
-		"endpoint", o.client.Endpoint.URL)
-
-	// Configure retry for transient connection errors (e.g., dataplane API not yet ready)
-	retryConfig := client.RetryConfig{
-		MaxAttempts: 3,
-		RetryIf:     client.IsConnectionError(),
-		Backoff:     client.BackoffExponential,
-		BaseDelay:   100 * time.Millisecond,
-		Logger:      o.logger.With("operation", "fetch_config"),
-	}
-
-	currentConfigStr, err := client.WithRetry(ctx, retryConfig, func(attempt int) (string, error) {
-		return o.client.GetRawConfiguration(ctx)
-	})
-
+	// Step 1: Fetch current configuration (with optional version cache optimization)
+	currentConfigStr, preParsedCurrent, preCachedVersion, err := o.fetchCurrentConfig(ctx, opts)
 	if err != nil {
-		return nil, NewConnectionError(o.client.Endpoint.URL, err)
+		return nil, err
 	}
 
 	// Step 2-4: Parse and compare configurations
-	// Pass pre-parsed config if available to avoid redundant parsing
-	diff, err := o.parseAndCompareConfigs(currentConfigStr, desiredConfig, opts.PreParsedConfig)
+	diff, err := o.parseAndCompareConfigs(currentConfigStr, desiredConfig, opts.PreParsedConfig, preParsedCurrent)
 	if err != nil {
 		return nil, err
 	}
@@ -193,27 +177,37 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 
 	// Early return if no changes
 	if !auxDiffs.hasChanges {
-		return o.createNoChangesResult(startTime, &diff.Summary), nil
+		result := o.createNoChangesResult(startTime, &diff.Summary)
+		// Capture version for cache: use pre-cached version if available, otherwise fetch
+		if preCachedVersion > 0 {
+			result.PostSyncVersion = preCachedVersion
+		}
+		return result, nil
 	}
 
 	// Step 6: Fetch current config version to determine if raw push should be used
-	// Version 1 indicates initial state - always use raw push regardless of threshold
-	versionRetryConfig := client.RetryConfig{
-		MaxAttempts: 3,
-		RetryIf:     client.IsConnectionError(),
-		Backoff:     client.BackoffExponential,
-		BaseDelay:   100 * time.Millisecond,
-		Logger:      o.logger.With("operation", "fetch_version"),
-	}
+	// Reuse pre-cached version if we already called GetVersion() during cache check
+	var version int64
+	if preCachedVersion > 0 {
+		version = preCachedVersion
+	} else {
+		versionRetryConfig := client.RetryConfig{
+			MaxAttempts: 3,
+			RetryIf:     client.IsConnectionError(),
+			Backoff:     client.BackoffExponential,
+			BaseDelay:   100 * time.Millisecond,
+			Logger:      o.logger.With("operation", "fetch_version"),
+		}
 
-	version, versionErr := client.WithRetry(ctx, versionRetryConfig, func(attempt int) (int64, error) {
-		return o.client.GetVersion(ctx)
-	})
-	if versionErr != nil {
-		// Log warning but don't fail - version check is an optimization, not a requirement
-		o.logger.Warn("Failed to get config version, skipping version-based raw push decision",
-			"error", versionErr)
-		version = -1 // Use -1 to indicate unknown version
+		var versionErr error
+		version, versionErr = client.WithRetry(ctx, versionRetryConfig, func(attempt int) (int64, error) {
+			return o.client.GetVersion(ctx)
+		})
+		if versionErr != nil {
+			o.logger.Warn("Failed to get config version, skipping version-based raw push decision",
+				"error", versionErr)
+			version = -1
+		}
 	}
 
 	// Step 7: Check if raw push should be used instead of fine-grained sync
@@ -348,6 +342,14 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 		result.ReloadVerified = true
 	}
 
+	// Capture post-sync version for caller's cache
+	postVersion, postVersionErr := o.client.GetVersion(ctx)
+	if postVersionErr != nil {
+		o.logger.Debug("Failed to get post-sync version for caching", "error", postVersionErr)
+	} else {
+		result.PostSyncVersion = postVersion
+	}
+
 	o.logger.Debug("fine-grained sync completed",
 		"operations", len(appliedOps),
 		"reload_triggered", reloadTriggered,
@@ -450,6 +452,11 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 			}
 		}
 		result.ReloadVerified = true
+	}
+
+	// Capture post-sync version: raw push increments version by 1
+	if version > 0 {
+		result.PostSyncVersion = version + 1
 	}
 
 	o.logger.Debug("Raw configuration push completed successfully",
@@ -912,20 +919,92 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 	// conflicting delete operations between general files and CRT-lists.
 }
 
-// parseAndCompareConfigs parses both current and desired configurations and compares them.
-// If preParsedDesired is provided, it is used directly instead of parsing desiredConfig,
-// saving CPU and allocations when the desired config was already parsed during validation.
-// Returns the configuration diff or an error if parsing or comparison fails.
-func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig string, preParsedDesired *parserconfig.StructuredConfig) (*comparator.ConfigDiff, error) {
-	// Parse current configuration (always needed - fetched from HAProxy pod)
-	o.logger.Debug("Parsing current configuration")
-	currentConfig, err := o.parser.ParseFromString(currentConfigStr)
-	if err != nil {
-		snippet := currentConfigStr
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
+// fetchCurrentConfig obtains the current HAProxy configuration, either from cache or by fetching.
+//
+// When CachedCurrentConfig is set in opts, it first calls GetVersion() (lightweight ~100 bytes)
+// to check if the pod's config version matches CachedConfigVersion. On match, returns the cached
+// parsed config directly, skipping the expensive GetRawConfiguration() + parse.
+// On mismatch or error, falls through to the full fetch path.
+//
+// Returns:
+//   - currentConfigStr: raw config string (empty when cache hit - not needed)
+//   - preParsedCurrent: pre-parsed current config (non-nil on cache hit)
+//   - preCachedVersion: pod's version from cache check (-1 if not checked, >0 if checked)
+//   - err: connection error if fetch fails
+func (o *orchestrator) fetchCurrentConfig(ctx context.Context, opts *SyncOptions) (currentConfigStr string, preParsedCurrent *parserconfig.StructuredConfig, preCachedVersion int64, err error) {
+	preCachedVersion = -1
+
+	if opts.CachedCurrentConfig != nil {
+		versionRetryConfig := client.RetryConfig{
+			MaxAttempts: 3,
+			RetryIf:     client.IsConnectionError(),
+			Backoff:     client.BackoffExponential,
+			BaseDelay:   100 * time.Millisecond,
+			Logger:      o.logger.With("operation", "version_cache_check"),
 		}
-		return nil, NewParseError("current", snippet, err)
+
+		podVersion, versionErr := client.WithRetry(ctx, versionRetryConfig, func(attempt int) (int64, error) {
+			return o.client.GetVersion(ctx)
+		})
+		if versionErr != nil {
+			o.logger.Warn("Version cache check failed, falling through to full fetch",
+				"error", versionErr)
+		} else {
+			preCachedVersion = podVersion
+			if podVersion == opts.CachedConfigVersion {
+				o.logger.Debug("Config version cache hit, skipping full fetch+parse",
+					"version", podVersion)
+				return "", opts.CachedCurrentConfig, preCachedVersion, nil
+			}
+			o.logger.Debug("Config version cache miss, fetching full config",
+				"cached_version", opts.CachedConfigVersion,
+				"pod_version", podVersion)
+		}
+	}
+
+	// Full fetch path
+	o.logger.Debug("Fetching current configuration from dataplane API",
+		"endpoint", o.client.Endpoint.URL)
+
+	fetchRetryConfig := client.RetryConfig{
+		MaxAttempts: 3,
+		RetryIf:     client.IsConnectionError(),
+		Backoff:     client.BackoffExponential,
+		BaseDelay:   100 * time.Millisecond,
+		Logger:      o.logger.With("operation", "fetch_config"),
+	}
+
+	currentConfigStr, err = client.WithRetry(ctx, fetchRetryConfig, func(attempt int) (string, error) {
+		return o.client.GetRawConfiguration(ctx)
+	})
+	if err != nil {
+		return "", nil, preCachedVersion, NewConnectionError(o.client.Endpoint.URL, err)
+	}
+
+	return currentConfigStr, nil, preCachedVersion, nil
+}
+
+// parseAndCompareConfigs parses both current and desired configurations and compares them.
+// If preParsedDesired is provided, it is used directly instead of parsing desiredConfig.
+// If preParsedCurrent is provided, it is used directly instead of parsing currentConfigStr.
+// Returns the configuration diff or an error if parsing or comparison fails.
+func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig string, preParsedDesired, preParsedCurrent *parserconfig.StructuredConfig) (*comparator.ConfigDiff, error) {
+	// Use pre-parsed current config if available, otherwise parse from string
+	var currentConfig *parserconfig.StructuredConfig
+	var err error
+	if preParsedCurrent != nil {
+		o.logger.Debug("Using cached current configuration")
+		currentConfig = preParsedCurrent
+	} else {
+		o.logger.Debug("Parsing current configuration")
+		currentConfig, err = o.parser.ParseFromString(currentConfigStr)
+		if err != nil {
+			snippet := currentConfigStr
+			if len(snippet) > 200 {
+				snippet = snippet[:200]
+			}
+			return nil, NewParseError("current", snippet, err)
+		}
 	}
 
 	// Note: Normalization of metadata format is now done automatically by the parser

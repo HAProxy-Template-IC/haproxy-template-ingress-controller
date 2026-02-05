@@ -81,6 +81,11 @@ type Component struct {
 	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
 	subscriptionReady chan struct{}
 
+	// versionCache caches the last-synced config version per endpoint URL.
+	// Allows skipping expensive GetRawConfiguration() + parse on subsequent syncs
+	// when the pod's config version hasn't changed.
+	versionCache *configVersionCache
+
 	// Deployment cancellation support
 	cancelMu            sync.Mutex
 	activeCorrelationID string             // Correlation ID of active deployment
@@ -108,6 +113,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel, rawPush
 		logger:            logger.With("component", ComponentName),
 		maxParallel:       maxParallel,
 		rawPushThreshold:  rawPushThreshold,
+		versionCache:      newConfigVersionCache(),
 		healthTracker:     lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 		subscriptionReady: make(chan struct{}),
 	}
@@ -146,6 +152,9 @@ func (c *Component) Start(ctx context.Context) error {
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	close(c.subscriptionReady)
+
+	// Clear version cache on start (handles leadership transitions - fresh state)
+	c.versionCache.clear()
 
 	c.logger.Debug("deployer starting")
 
@@ -599,10 +608,24 @@ func (c *Component) deployToSingleEndpoint(
 		opts.PreParsedConfig = parsedConfig
 	}
 
+	// Populate cached current config from version cache (if available)
+	cachedVersion, cachedConfig := c.versionCache.get(endpoint.URL)
+	if cachedConfig != nil {
+		opts.CachedCurrentConfig = cachedConfig
+		opts.CachedConfigVersion = cachedVersion
+	}
+
 	// Sync configuration
 	result, err := client.Sync(ctx, config, auxFiles, opts)
 	if err != nil {
+		// Invalidate cache on failure - pod state is uncertain
+		c.versionCache.invalidate(endpoint.URL)
 		return nil, fmt.Errorf("sync failed: %w", err)
+	}
+
+	// Update version cache with post-sync state
+	if result.PostSyncVersion > 0 && parsedConfig != nil {
+		c.versionCache.set(endpoint.URL, result.PostSyncVersion, parsedConfig)
 	}
 
 	c.logger.Debug("sync completed for endpoint",
@@ -611,6 +634,8 @@ func (c *Component) deployToSingleEndpoint(
 		"applied_operations", len(result.AppliedOperations),
 		"reload_triggered", result.ReloadTriggered,
 		"used_preparsed_config", parsedConfig != nil,
+		"cache_hit", cachedConfig != nil,
+		"post_sync_version", result.PostSyncVersion,
 		"duration", result.Duration)
 
 	return result, nil

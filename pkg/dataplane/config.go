@@ -111,6 +111,16 @@ type SyncOptions struct {
 	// If nil, the config will be parsed normally (backward compatible).
 	// This is typically set by the validation pipeline which already parsed the config.
 	PreParsedConfig *parserconfig.StructuredConfig
+
+	// CachedCurrentConfig is an optional cached parsed current configuration from a previous sync.
+	// When set together with CachedConfigVersion, the orchestrator calls GetVersion() first
+	// and skips the expensive GetRawConfiguration() + parse if the version matches.
+	// On mismatch or error, falls through to the full fetch+parse path.
+	CachedCurrentConfig *parserconfig.StructuredConfig
+
+	// CachedConfigVersion is the expected config version on the pod.
+	// Only used when CachedCurrentConfig is also set.
+	CachedConfigVersion int64
 }
 
 // DefaultSyncOptions returns sensible default sync options.
