@@ -17,6 +17,7 @@ package validation
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -324,6 +325,183 @@ backend http_back
 		require.NotNil(t, result)
 		assert.True(t, result.Valid, "concurrent validation %d: expected valid config, got error: %v", i, result.Error)
 	}
+}
+
+// validConfig is a minimal valid HAProxy configuration used by cache tests.
+const validConfig = `global
+    daemon
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 50s
+    timeout server 50s
+
+frontend http_front
+    bind *:8080
+    default_backend http_back
+
+backend http_back
+    server srv1 127.0.0.1:80
+`
+
+func TestValidationService_CacheHit(t *testing.T) {
+	svc := NewValidationService(&ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+	})
+
+	// First call: full validation (populates cache)
+	result1 := svc.Validate(context.Background(), validConfig, nil)
+	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
+	require.NotNil(t, result1.ParsedConfig)
+
+	// Second call: same content -> cache hit (should be significantly faster)
+	result2 := svc.Validate(context.Background(), validConfig, nil)
+	require.True(t, result2.Valid)
+	require.NotNil(t, result2.ParsedConfig)
+
+	// Both calls return the same ParsedConfig pointer (cached)
+	assert.Same(t, result1.ParsedConfig, result2.ParsedConfig,
+		"cache hit should return the same ParsedConfig instance")
+}
+
+func TestValidationService_CacheMiss_ConfigChange(t *testing.T) {
+	svc := NewValidationService(&ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+	})
+
+	// First call with config A
+	result1 := svc.Validate(context.Background(), validConfig, nil)
+	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
+
+	// Record cached checksum after first call
+	svc.cacheMu.RLock()
+	checksumAfterFirst := svc.cachedChecksum
+	svc.cacheMu.RUnlock()
+	require.NotEmpty(t, checksumAfterFirst)
+
+	// Second call with different config -> cache miss
+	differentConfig := `global
+    daemon
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 50s
+    timeout server 50s
+
+frontend http_front
+    bind *:9090
+    default_backend http_back
+
+backend http_back
+    server srv1 127.0.0.1:80
+`
+	result2 := svc.Validate(context.Background(), differentConfig, nil)
+	require.True(t, result2.Valid, "second call should succeed: %v", result2.Error)
+
+	svc.cacheMu.RLock()
+	checksumAfterSecond := svc.cachedChecksum
+	svc.cacheMu.RUnlock()
+
+	assert.NotEqual(t, checksumAfterFirst, checksumAfterSecond,
+		"different config should produce a different cached checksum")
+}
+
+func TestValidationService_CacheMiss_AuxFileChange(t *testing.T) {
+	svc := NewValidationService(&ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+	})
+
+	auxFiles1 := &dataplane.AuxiliaryFiles{
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{Filename: "test.txt", Content: "content-v1"},
+		},
+	}
+	auxFiles2 := &dataplane.AuxiliaryFiles{
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{Filename: "test.txt", Content: "content-v2"},
+		},
+	}
+
+	// First call with auxFiles1
+	result1 := svc.Validate(context.Background(), validConfig, auxFiles1)
+	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
+
+	// Record cached checksum after first call
+	svc.cacheMu.RLock()
+	checksumAfterFirst := svc.cachedChecksum
+	svc.cacheMu.RUnlock()
+	require.NotEmpty(t, checksumAfterFirst)
+
+	// Second call with different aux files -> cache miss -> new checksum
+	result2 := svc.Validate(context.Background(), validConfig, auxFiles2)
+	require.True(t, result2.Valid, "second call should succeed: %v", result2.Error)
+
+	svc.cacheMu.RLock()
+	checksumAfterSecond := svc.cachedChecksum
+	svc.cacheMu.RUnlock()
+
+	assert.NotEqual(t, checksumAfterFirst, checksumAfterSecond,
+		"different aux files should produce a different cached checksum")
+}
+
+func TestValidationService_FailureNotCached(t *testing.T) {
+	svc := NewValidationService(&ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+	})
+
+	invalidConfig := `global
+    daemon
+
+defaults
+    invalid_directive foo
+`
+
+	// First call: fails
+	result1 := svc.Validate(context.Background(), invalidConfig, nil)
+	require.False(t, result1.Valid)
+
+	// Second call with same invalid config: should NOT be cached, runs full validation again
+	result2 := svc.Validate(context.Background(), invalidConfig, nil)
+	require.False(t, result2.Valid)
+	assert.NotNil(t, result2.Error)
+
+	// Cache should still be empty (no successful validation)
+	svc.cacheMu.RLock()
+	assert.Empty(t, svc.cachedChecksum, "failed validation should not populate cache")
+	svc.cacheMu.RUnlock()
+}
+
+func TestValidationService_CacheConcurrentAccess(t *testing.T) {
+	svc := NewValidationService(&ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+	})
+
+	// Populate cache
+	result := svc.Validate(context.Background(), validConfig, nil)
+	require.True(t, result.Valid, "initial validation should succeed: %v", result.Error)
+
+	// Concurrent cache hits
+	const concurrency = 10
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			r := svc.Validate(context.Background(), validConfig, nil)
+			assert.True(t, r.Valid)
+			assert.NotNil(t, r.ParsedConfig)
+		}()
+	}
+
+	wg.Wait()
 }
 
 func TestValidationService_Validate_ParsedConfigPreservesProductionPaths(t *testing.T) {
