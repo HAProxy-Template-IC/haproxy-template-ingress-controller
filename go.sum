@@ -675,6 +675,8 @@ gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205164601-26f8e1d6c06d h1:NCg/mnTG
 gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205164601-26f8e1d6c06d/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
 gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205165115-9bf068c6f8ca h1:LK0MvHAMEg9cK4BG1dShLy9bgv+2fYwtPjMMcn74iJc=
 gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205165115-9bf068c6f8ca/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
+gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205234305-2fbb23b357a0 h1:+zpU/bC2GiAzTjn0jvMhyR1+KjGRQpPLppmsjX4ZklY=
+gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205234305-2fbb23b357a0/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
 go-simpler.org/assert v0.9.0 h1:PfpmcSvL7yAnWyChSjOz6Sp6m9j5lyK8Ok9pEL31YkQ=
 go-simpler.org/assert v0.9.0/go.mod h1:74Eqh5eI6vCK6Y5l3PI8ZYFXG4Sa+tkr70OIPJAUr28=
 go-simpler.org/musttag v0.14.0 h1:XGySZATqQYSEV3/YTy+iX+aofbZZllJaqwFWs+RTtSo=

@@ -167,6 +167,10 @@ func New(cfg *PipelineConfig) *Pipeline {
 //   - PipelineResult containing rendered config and validation status
 //   - Error if rendering or validation fails
 func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (*PipelineResult, error) {
+	// Release pooled VMs after rendering to reduce memory footprint from parallel
+	// rendering spikes (go render statements). Runs on both success and failure.
+	defer p.renderer.ClearVMPool()
+
 	startTime := time.Now()
 
 	// Phase 1: Render configuration
@@ -219,6 +223,9 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (
 //   - ValidationResult with validation details (nil if render failed)
 //   - Error if rendering fails (validation failures return non-nil ValidationResult)
 func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreProvider) (*PipelineResult, *validation.ValidationResult, error) {
+	// Release pooled VMs after rendering to reduce memory footprint.
+	defer p.renderer.ClearVMPool()
+
 	startTime := time.Now()
 
 	// Phase 1: Render configuration
@@ -262,6 +269,9 @@ func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreP
 //   - RenderResult from the render service
 //   - Error if rendering fails
 func (p *Pipeline) RenderOnly(ctx context.Context, provider stores.StoreProvider) (*renderer.RenderResult, error) {
+	// Release pooled VMs after rendering to reduce memory footprint.
+	defer p.renderer.ClearVMPool()
+
 	return p.renderer.Render(ctx, provider)
 }
 
