@@ -99,16 +99,17 @@ func buildHTTPStoreValidUpdateFeature() types.Feature {
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
 
-			// Wait for config to be available first (controller needs to start up)
-			t.Log("Waiting for controller config to be ready...")
-			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
+			// Wait for first reconciliation to complete (ensures config is loaded AND auxiliary files rendered)
+			metricsClient, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
+			require.NoError(t, err)
+			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
 			if err != nil {
-				t.Logf("Config not ready: %v", err)
+				t.Logf("Controller not ready: %v", err)
 				pod, podErr := GetControllerPod(ctx, client, namespace)
 				if podErr == nil {
 					DumpPodLogs(ctx, t, clientset, pod)
 				}
-				require.NoError(t, err, "Controller config should be available")
+				require.NoError(t, err, "Controller should complete first reconciliation")
 			}
 
 			// Wait for initial config to be loaded and auxiliary files to contain the initial blocklist
@@ -262,10 +263,11 @@ func buildHTTPStoreInvalidUpdateFeature() types.Feature {
 			debugClient, err := EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
 
-			// Wait for controller config to be ready before checking auxiliary files
-			t.Log("Waiting for controller config to be ready...")
-			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
+			// Wait for first reconciliation to complete (ensures config is loaded AND auxiliary files rendered)
+			metricsClient, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
 			require.NoError(t, err)
+			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
+			require.NoError(t, err, "Controller should complete first reconciliation")
 
 			// Wait for initial config to be loaded
 			t.Log("Waiting for initial blocklist content...")

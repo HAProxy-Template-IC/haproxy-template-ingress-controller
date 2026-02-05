@@ -60,6 +60,12 @@ type SyncResult struct {
 
 	// Message provides additional context about the result
 	Message string
+
+	// PostSyncVersion is the config version on the pod after a successful sync.
+	// Callers can cache this alongside the desired parsed config to skip
+	// redundant GetRawConfiguration() + parse on subsequent syncs when the
+	// pod's version hasn't changed. Zero means version was not captured.
+	PostSyncVersion int64
 }
 
 // UsedRawPush returns true if raw configuration push was used instead of fine-grained sync.
