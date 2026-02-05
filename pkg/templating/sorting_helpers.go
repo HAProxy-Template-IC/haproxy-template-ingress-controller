@@ -140,10 +140,15 @@ func compareValues(a, b interface{}) int {
 		}
 	}
 
-	// Fall back to string comparison
-	strA := fmt.Sprint(a)
-	strB := fmt.Sprint(b)
-	return strings.Compare(strA, strB)
+	// Fast path: direct string comparison (avoids fmt.Sprint allocation)
+	if strA, okA := a.(string); okA {
+		if strB, okB := b.(string); okB {
+			return strings.Compare(strA, strB)
+		}
+	}
+
+	// Fallback: convert to string via fmt.Sprint
+	return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
 }
 
 // getLength returns the length of a value.
