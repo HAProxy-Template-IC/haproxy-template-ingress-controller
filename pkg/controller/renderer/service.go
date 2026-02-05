@@ -373,3 +373,11 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 
 	return auxFiles, nil
 }
+
+// ClearVMPool releases pooled template engine VMs.
+// Call after rendering completes to reduce memory from parallel rendering spikes.
+func (s *RenderService) ClearVMPool() {
+	if s.engine != nil {
+		s.engine.ClearVMPool()
+	}
+}

@@ -71,4 +71,9 @@ type Engine interface {
 	// AppendTraces appends traces from another engine to this engine's trace buffer.
 	// This is useful for aggregating traces from multiple worker engines.
 	AppendTraces(other Engine)
+
+	// ClearVMPool releases pooled VMs to allow garbage collection.
+	// Call after rendering completes to reduce memory from parallel rendering spikes.
+	// No-op for engines that don't use VM pooling.
+	ClearVMPool()
 }

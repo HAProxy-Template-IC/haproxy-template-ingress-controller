@@ -43,11 +43,14 @@ import (
 var parserMutex sync.Mutex
 
 // ParsedConfigCacheSize defines the number of parsed configurations to cache.
-// This value is chosen to accommodate concurrent webhook validations (which can
-// parse multiple different configs simultaneously) plus normal reconciliation
-// (current vs desired config). With 16 slots, even with 10+ concurrent validations,
-// the working set should fit in cache.
-const ParsedConfigCacheSize = 16
+// This value balances memory usage with cache hit rate:
+//   - 1 slot for desired config (rendered template)
+//   - 2 slots for current configs (one per HAProxy pod)
+//   - 1 extra slot for rolling update transitions
+//
+// With 4 slots at ~34 MB each, the cache uses ~136 MB instead of ~544 MB with 16 slots.
+// LRU eviction ensures the most recently used configs are retained.
+const ParsedConfigCacheSize = 4
 
 // cacheSlot holds a single cached parsed configuration.
 type cacheSlot struct {

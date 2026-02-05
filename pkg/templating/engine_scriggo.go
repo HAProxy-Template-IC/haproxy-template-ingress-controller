@@ -558,6 +558,16 @@ func (e *ScriggoEngine) IsProfilingEnabled() bool {
 	return e.profilingEnabled
 }
 
+// ClearVMPool releases pooled Scriggo VMs to allow garbage collection.
+// Call after rendering completes to reduce memory from parallel rendering spikes.
+//
+// This is safe to call at any time - VMs currently in use are not affected
+// (they're held by goroutines, not in the pool). Only pooled VMs waiting for
+// reuse are released.
+func (e *ScriggoEngine) ClearVMPool() {
+	scriggo.ClearVMPool()
+}
+
 // GetProfilingResults returns profiling data from the last render operation.
 // Returns nil if profiling is disabled or no render has occurred.
 // The results contain include/render call records from Scriggo's built-in profiler.
