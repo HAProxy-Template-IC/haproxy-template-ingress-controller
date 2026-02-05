@@ -61,6 +61,25 @@ type Event interface {
 	Timestamp() time.Time
 }
 
+// LightweightEvent is an optional interface for events that carry heavyweight payloads.
+// Events implementing this interface can provide a lightweight copy suitable for
+// long-term retention in buffers (e.g., ring buffers used for event correlation).
+//
+// The Lightweight() method returns a new Event with the same metadata (type, timestamp,
+// correlation IDs, scalar metrics) but with large fields (parsed configs, full config
+// strings, auxiliary files) set to nil/zero. This prevents ring buffers from retaining
+// gigabytes of stale data.
+//
+// This interface follows the Interface Segregation Principle - only events with
+// heavyweight payloads implement it, keeping the base Event interface minimal.
+type LightweightEvent interface {
+	Event
+	// Lightweight returns a copy of this event with heavyweight fields removed.
+	// The returned event must preserve: EventType, Timestamp, correlation IDs,
+	// and scalar metrics (durations, counts, flags).
+	Lightweight() Event
+}
+
 // CoalescibleEvent is an optional interface for events that support coalescing.
 // Events implementing this interface can be safely skipped when a newer event
 // of the same type is available in the queue.

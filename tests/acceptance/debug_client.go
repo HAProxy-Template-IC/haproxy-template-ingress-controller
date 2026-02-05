@@ -133,6 +133,7 @@ func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error
 			strings.Contains(errStr, "no endpoints available") ||
 			strings.Contains(errStr, "connection reset") ||
 			strings.Contains(errStr, "i/o timeout") ||
+			strings.Contains(errStr, "an error on the server") ||
 			strings.Contains(errStr, "EOF") {
 			// Retryable error, continue to next attempt
 			continue

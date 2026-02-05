@@ -221,7 +221,11 @@ func (c *Coordinator) handlePipelineSuccess(
 		"total_ms", totalDuration)
 }
 
-// handlePipelineFailure publishes events for render or validation failure.
+// handlePipelineFailure publishes phase-specific failure events followed by ReconciliationFailedEvent.
+//
+// This ensures downstream components (e.g., StateCache) that subscribe to phase-specific
+// events like ValidationFailedEvent or TemplateRenderFailedEvent receive proper status updates
+// on failure, not just on success.
 func (c *Coordinator) handlePipelineFailure(
 	err error,
 	triggerEvent *events.ReconciliationTriggeredEvent,
@@ -240,6 +244,26 @@ func (c *Coordinator) handlePipelineFailure(
 	var pipelineErr *pipeline.PipelineError
 	if errors.As(err, &pipelineErr) {
 		phase = string(pipelineErr.Phase)
+	}
+
+	// Publish phase-specific failure event before the general ReconciliationFailedEvent.
+	// This mirrors handlePipelineSuccess which publishes TemplateRenderedEvent and
+	// ValidationCompletedEvent before ReconciliationCompletedEvent.
+	switch phase {
+	case string(pipeline.PhaseValidation):
+		c.eventBus.Publish(events.NewValidationFailedEvent(
+			[]string{err.Error()},
+			duration,
+			triggerEvent.Reason,
+			events.PropagateCorrelation(triggerEvent),
+		))
+	default:
+		c.eventBus.Publish(events.NewTemplateRenderFailedEvent(
+			"", // No specific template name available from pipeline
+			err.Error(),
+			"", // No stack trace available from pipeline error
+			events.PropagateCorrelation(triggerEvent),
+		))
 	}
 
 	c.eventBus.Publish(events.NewReconciliationFailedEvent(
