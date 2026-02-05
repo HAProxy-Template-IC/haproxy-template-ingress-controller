@@ -325,7 +325,7 @@ verify: ## Verify dependencies
 
 ## Code generation
 
-generate: generate-crds generate-deepcopy generate-clientset generate-dataplaneapi-all ## Run all code generation
+generate: generate-crds generate-deepcopy generate-clientset generate-dataplaneapi-all generate-validators ## Run all code generation
 
 generate-crds: ## Generate CRD manifests from Go types
 	@echo "Generating CRD manifests..."
@@ -390,6 +390,11 @@ generate-dataplaneapi-v32ee: ## Generate HAProxy Enterprise DataPlane API v3.2 c
 
 generate-dataplaneapi-all: generate-dataplaneapi-v30 generate-dataplaneapi-v31 generate-dataplaneapi-v32 generate-dataplaneapi-v30ee generate-dataplaneapi-v31ee generate-dataplaneapi-v32ee ## Generate all HAProxy DataPlane API versions
 	@echo "✓ All DataPlane API clients generated (Community + Enterprise)"
+
+generate-validators: ## Generate zero-allocation OpenAPI validators
+	@echo "Generating zero-allocation validators..."
+	go run ./cmd/gen-validators
+	@echo "✓ Validators generated in pkg/dataplane/validators/"
 
 ## Cleanup
 

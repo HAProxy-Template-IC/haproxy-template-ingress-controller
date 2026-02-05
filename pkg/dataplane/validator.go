@@ -17,7 +17,6 @@ package dataplane
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,44 +26,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/haproxytech/client-native/v6/models"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	v30 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v30"
-	v31 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31"
-	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/validators"
 )
 
 // haproxyCheckMutex serializes HAProxy validation to work around issues with
 // concurrent haproxy -c execution. Without this, concurrent validations can
 // interfere with each other even though they use isolated temp directories.
 var haproxyCheckMutex sync.Mutex
-
-// Cached OpenAPI specs - parsed once and reused for performance.
-// GetSwagger() parses the embedded spec on every call (~500ms), so caching is critical.
-var (
-	cachedSpecV30 *openapi3.T
-	cachedSpecV31 *openapi3.T
-	cachedSpecV32 *openapi3.T
-	specOnceV30   sync.Once
-	specOnceV31   sync.Once
-	specOnceV32   sync.Once
-	specErrV30    error
-	specErrV31    error
-	specErrV32    error
-)
-
-// Resolved schema caches - avoids repeated allOf resolution during validation.
-// Each validation call was creating new merged schema objects, causing massive
-// memory allocation churn. These caches store resolved schemas per spec version.
-var (
-	resolvedSchemaCacheV30 = make(map[string]*openapi3.Schema)
-	resolvedSchemaCacheV31 = make(map[string]*openapi3.Schema)
-	resolvedSchemaCacheV32 = make(map[string]*openapi3.Schema)
-	resolvedSchemaMu       sync.RWMutex
-)
 
 // validationResultCache caches the result of the last successful validation.
 // Since validation is expensive (parsing + schema validation + haproxy -c),
@@ -269,80 +240,77 @@ func validateSyntax(config string) (*parser.StructuredConfig, error) {
 	return parsed, nil
 }
 
-// getSwaggerForVersion returns the cached OpenAPI spec for the given HAProxy/DataPlane API version.
-// If version is nil, defaults to v3.0 (safest, most compatible).
-// Specs are parsed once and cached for subsequent calls (~500ms → ~0ms after first call).
-func getSwaggerForVersion(version *Version) (*openapi3.T, error) {
+// cachedValidator provides zero-allocation validation with caching.
+// It is initialized lazily on first use.
+var (
+	cachedValidatorV30 *validators.CachedValidator
+	cachedValidatorV31 *validators.CachedValidator
+	cachedValidatorV32 *validators.CachedValidator
+	validatorOnceV30   sync.Once
+	validatorOnceV31   sync.Once
+	validatorOnceV32   sync.Once
+)
+
+// getCachedValidatorForVersion returns the cached validator for a HAProxy version.
+func getCachedValidatorForVersion(version *Version) *validators.CachedValidator {
 	if version == nil {
-		// Default to v3.0 - safest default when version is unknown
-		return getCachedSwaggerV30()
+		// Default to v3.0
+		validatorOnceV30.Do(func() {
+			cachedValidatorV30 = validators.NewCachedValidator(3, 0)
+		})
+		return cachedValidatorV30
 	}
 
-	// Select OpenAPI spec based on major.minor version
 	if version.Major == 3 {
 		switch {
 		case version.Minor >= 2:
-			return getCachedSwaggerV32()
+			validatorOnceV32.Do(func() {
+				cachedValidatorV32 = validators.NewCachedValidator(3, 2)
+			})
+			return cachedValidatorV32
 		case version.Minor >= 1:
-			return getCachedSwaggerV31()
+			validatorOnceV31.Do(func() {
+				cachedValidatorV31 = validators.NewCachedValidator(3, 1)
+			})
+			return cachedValidatorV31
 		default:
-			return getCachedSwaggerV30()
+			validatorOnceV30.Do(func() {
+				cachedValidatorV30 = validators.NewCachedValidator(3, 0)
+			})
+			return cachedValidatorV30
 		}
 	}
 
-	// For versions > 3.x, use the latest available spec
 	if version.Major > 3 {
-		return getCachedSwaggerV32()
+		validatorOnceV32.Do(func() {
+			cachedValidatorV32 = validators.NewCachedValidator(3, 2)
+		})
+		return cachedValidatorV32
 	}
 
-	// For versions < 3.0, use v3.0 as fallback
-	return getCachedSwaggerV30()
-}
-
-// getCachedSwaggerV30 returns the cached v3.0 OpenAPI spec, parsing it on first call.
-func getCachedSwaggerV30() (*openapi3.T, error) {
-	specOnceV30.Do(func() {
-		cachedSpecV30, specErrV30 = v30.GetSwagger()
+	validatorOnceV30.Do(func() {
+		cachedValidatorV30 = validators.NewCachedValidator(3, 0)
 	})
-	return cachedSpecV30, specErrV30
+	return cachedValidatorV30
 }
 
-// getCachedSwaggerV31 returns the cached v3.1 OpenAPI spec, parsing it on first call.
-func getCachedSwaggerV31() (*openapi3.T, error) {
-	specOnceV31.Do(func() {
-		cachedSpecV31, specErrV31 = v31.GetSwagger()
-	})
-	return cachedSpecV31, specErrV31
-}
-
-// getCachedSwaggerV32 returns the cached v3.2 OpenAPI spec, parsing it on first call.
-func getCachedSwaggerV32() (*openapi3.T, error) {
-	specOnceV32.Do(func() {
-		cachedSpecV32, specErrV32 = v32.GetSwagger()
-	})
-	return cachedSpecV32, specErrV32
-}
-
-// validateAPISchema performs API schema validation using OpenAPI spec.
+// validateAPISchema performs API schema validation using generated validators.
 // This validates parsed configuration models against the Dataplane API's OpenAPI
 // schema constraints (patterns, formats, required fields).
+//
+// Uses zero-allocation generated validators instead of the generic kin-openapi
+// validator to eliminate the ~25GB allocation overhead from JSON conversions.
 func validateAPISchema(parsed *parser.StructuredConfig, version *Version) error {
-	// Load OpenAPI specification for the detected version
-	spec, err := getSwaggerForVersion(version)
-	if err != nil {
-		return fmt.Errorf("failed to load OpenAPI spec: %w", err)
-	}
+	cv := getCachedValidatorForVersion(version)
 
-	// Validate all sections that have schema constraints
 	var validationErrors []string
 
 	// Validate backend sections
-	validationErrors = append(validationErrors, validateBackendSections(spec, parsed.Backends)...)
+	validationErrors = append(validationErrors, validateBackendSectionsGenerated(cv, parsed.Backends)...)
 
 	// Validate frontend sections
-	validationErrors = append(validationErrors, validateFrontendSections(spec, parsed.Frontends)...)
+	validationErrors = append(validationErrors, validateFrontendSectionsGenerated(cv, parsed.Frontends)...)
 
-	// If there were any validation errors, return them
 	if len(validationErrors) > 0 {
 		return fmt.Errorf("API schema validation failed:\n  - %s",
 			strings.Join(validationErrors, "\n  - "))
@@ -351,369 +319,236 @@ func validateAPISchema(parsed *parser.StructuredConfig, version *Version) error 
 	return nil
 }
 
-// validateBackendSections validates all configuration elements within backends.
-func validateBackendSections(spec *openapi3.T, backends []*models.Backend) []string {
+// validateBackendSectionsGenerated validates backend sections using generated validators.
+func validateBackendSectionsGenerated(cv *validators.CachedValidator, backends []*models.Backend) []string {
 	var errors []string
 	for i := range backends {
 		backend := backends[i]
-		errors = append(errors, validateBackendServers(spec, backend)...)
-		errors = append(errors, validateBackendRules(spec, backend)...)
-		errors = append(errors, validateBackendChecks(spec, backend)...)
+		errors = append(errors, validateBackendServersGenerated(cv, backend)...)
+		errors = append(errors, validateBackendRulesGenerated(cv, backend)...)
+		errors = append(errors, validateBackendChecksGenerated(cv, backend)...)
 	}
 	return errors
 }
 
-// validateFrontendSections validates all configuration elements within frontends.
-func validateFrontendSections(spec *openapi3.T, frontends []*models.Frontend) []string {
+// validateFrontendSectionsGenerated validates frontend sections using generated validators.
+func validateFrontendSectionsGenerated(cv *validators.CachedValidator, frontends []*models.Frontend) []string {
 	var errors []string
 	for i := range frontends {
 		frontend := frontends[i]
-		errors = append(errors, validateFrontendBinds(spec, frontend)...)
-		errors = append(errors, validateFrontendRules(spec, frontend)...)
-		errors = append(errors, validateFrontendElements(spec, frontend)...)
+		errors = append(errors, validateFrontendBindsGenerated(cv, frontend)...)
+		errors = append(errors, validateFrontendRulesGenerated(cv, frontend)...)
+		errors = append(errors, validateFrontendElementsGenerated(cv, frontend)...)
 	}
 	return errors
 }
 
-// validateSlice validates a slice of models against the OpenAPI schema.
-func validateSlice[T any](spec *openapi3.T, schemaName, parentName, itemType string, items []T) []string {
-	var errors []string
-	for idx, item := range items {
-		if err := validateModelOptimized(spec, schemaName, item); err != nil {
-			errors = append(errors, fmt.Sprintf("%s, %s %d: %v", parentName, itemType, idx, err))
-		}
-	}
-	return errors
-}
-
-// validateBackendServers validates servers and server templates in a backend.
-func validateBackendServers(spec *openapi3.T, backend *models.Backend) []string {
-	// Pre-allocate with estimated capacity
+// validateBackendServersGenerated validates servers and server templates in a backend.
+func validateBackendServersGenerated(cv *validators.CachedValidator, backend *models.Backend) []string {
 	errors := make([]string, 0, len(backend.Servers)+len(backend.ServerTemplates))
 	for serverName := range backend.Servers {
 		server := backend.Servers[serverName]
-		if err := validateModelOptimized(spec, "server", &server); err != nil {
+		if err := cv.ValidateServer(&server); err != nil {
 			errors = append(errors, fmt.Sprintf("backend %s, server %s: %v", backend.Name, serverName, err))
 		}
 	}
 	for templateName := range backend.ServerTemplates {
 		template := backend.ServerTemplates[templateName]
-		if err := validateModelOptimized(spec, "server_template", &template); err != nil {
+		if err := cv.ValidateServerTemplate(&template); err != nil {
 			errors = append(errors, fmt.Sprintf("backend %s, server template %s: %v", backend.Name, templateName, err))
 		}
 	}
 	return errors
 }
 
-// validateBackendRules validates various rule types in a backend.
-func validateBackendRules(spec *openapi3.T, backend *models.Backend) []string {
-	var errors []string
+// validateBackendRulesGenerated validates various rule types in a backend.
+func validateBackendRulesGenerated(cv *validators.CachedValidator, backend *models.Backend) []string {
 	name := "backend " + backend.Name
-
-	errors = append(errors, validateSlice(spec, "http_request_rule", name, "http-request rule", backend.HTTPRequestRuleList)...)
-	errors = append(errors, validateSlice(spec, "http_response_rule", name, "http-response rule", backend.HTTPResponseRuleList)...)
-	errors = append(errors, validateSlice(spec, "tcp_request_rule", name, "tcp-request rule", backend.TCPRequestRuleList)...)
-	errors = append(errors, validateSlice(spec, "tcp_response_rule", name, "tcp-response rule", backend.TCPResponseRuleList)...)
-	errors = append(errors, validateSlice(spec, "http_after_response_rule", name, "http-after-response rule", backend.HTTPAfterResponseRuleList)...)
-	errors = append(errors, validateSlice(spec, "http_error_rule", name, "http-error rule", backend.HTTPErrorRuleList)...)
-	errors = append(errors, validateSlice(spec, "server_switching_rule", name, "server switching rule", backend.ServerSwitchingRuleList)...)
-	errors = append(errors, validateSlice(spec, "stick_rule", name, "stick rule", backend.StickRuleList)...)
-
-	errors = append(errors, validateSlice(spec, "acl", name, "ACL", backend.ACLList)...)
-	errors = append(errors, validateSlice(spec, "filter", name, "filter", backend.FilterList)...)
-	errors = append(errors, validateSlice(spec, "log_target", name, "log target", backend.LogTargetList)...)
+	errors := validateBackendHTTPRules(cv, backend, name)
+	errors = append(errors, validateBackendTCPRules(cv, backend, name)...)
+	errors = append(errors, validateBackendMiscRules(cv, backend, name)...)
 	return errors
 }
 
-// validateBackendChecks validates health checks in a backend.
-func validateBackendChecks(spec *openapi3.T, backend *models.Backend) []string {
+// validateBackendHTTPRules validates HTTP-related rules in a backend.
+func validateBackendHTTPRules(cv *validators.CachedValidator, backend *models.Backend, name string) []string {
 	var errors []string
-	name := "backend " + backend.Name
-
-	errors = append(errors, validateSlice(spec, "http_check", name, "http-check", backend.HTTPCheckList)...)
-	errors = append(errors, validateSlice(spec, "tcp_check", name, "tcp-check", backend.TCPCheckRuleList)...)
+	for idx, rule := range backend.HTTPRequestRuleList {
+		if err := cv.ValidateHTTPRequestRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-request rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, rule := range backend.HTTPResponseRuleList {
+		if err := cv.ValidateHTTPResponseRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-response rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, rule := range backend.HTTPAfterResponseRuleList {
+		if err := cv.ValidateHTTPAfterResponseRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-after-response rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, rule := range backend.HTTPErrorRuleList {
+		if err := cv.ValidateHTTPErrorRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-error rule %d: %v", name, idx, err))
+		}
+	}
 	return errors
 }
 
-// validateFrontendBinds validates bind configurations in a frontend.
-func validateFrontendBinds(spec *openapi3.T, frontend *models.Frontend) []string {
+// validateBackendTCPRules validates TCP-related rules in a backend.
+func validateBackendTCPRules(cv *validators.CachedValidator, backend *models.Backend, name string) []string {
+	var errors []string
+	for idx, rule := range backend.TCPRequestRuleList {
+		if err := cv.ValidateTCPRequestRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, tcp-request rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, rule := range backend.TCPResponseRuleList {
+		if err := cv.ValidateTCPResponseRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, tcp-response rule %d: %v", name, idx, err))
+		}
+	}
+	return errors
+}
+
+// validateBackendMiscRules validates switching rules, ACLs, filters, and log targets.
+func validateBackendMiscRules(cv *validators.CachedValidator, backend *models.Backend, name string) []string {
+	var errors []string
+	for idx, rule := range backend.ServerSwitchingRuleList {
+		if err := cv.ValidateServerSwitchingRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, server switching rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, rule := range backend.StickRuleList {
+		if err := cv.ValidateStickRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, stick rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, acl := range backend.ACLList {
+		if err := cv.ValidateACL(acl); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, ACL %d: %v", name, idx, err))
+		}
+	}
+	for idx, filter := range backend.FilterList {
+		if err := cv.ValidateFilter(filter); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, filter %d: %v", name, idx, err))
+		}
+	}
+	for idx, target := range backend.LogTargetList {
+		if err := cv.ValidateLogTarget(target); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, log target %d: %v", name, idx, err))
+		}
+	}
+	return errors
+}
+
+// validateBackendChecksGenerated validates health checks in a backend.
+func validateBackendChecksGenerated(cv *validators.CachedValidator, backend *models.Backend) []string {
+	var errors []string
+	name := "backend " + backend.Name
+
+	for idx, check := range backend.HTTPCheckList {
+		if err := cv.ValidateHTTPCheck(check); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-check %d: %v", name, idx, err))
+		}
+	}
+	for idx, check := range backend.TCPCheckRuleList {
+		if err := cv.ValidateTCPCheck(check); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, tcp-check %d: %v", name, idx, err))
+		}
+	}
+	return errors
+}
+
+// validateFrontendBindsGenerated validates bind configurations in a frontend.
+func validateFrontendBindsGenerated(cv *validators.CachedValidator, frontend *models.Frontend) []string {
 	errors := make([]string, 0, len(frontend.Binds))
 	for bindName := range frontend.Binds {
 		bind := frontend.Binds[bindName]
-		if err := validateModelOptimized(spec, "bind", &bind); err != nil {
+		if err := cv.ValidateBind(&bind); err != nil {
 			errors = append(errors, fmt.Sprintf("frontend %s, bind %s: %v", frontend.Name, bindName, err))
 		}
 	}
 	return errors
 }
 
-// validateFrontendRules validates various rule types in a frontend.
-func validateFrontendRules(spec *openapi3.T, frontend *models.Frontend) []string {
-	var errors []string
+// validateFrontendRulesGenerated validates various rule types in a frontend.
+func validateFrontendRulesGenerated(cv *validators.CachedValidator, frontend *models.Frontend) []string {
 	name := "frontend " + frontend.Name
-
-	errors = append(errors, validateSlice(spec, "http_request_rule", name, "http-request rule", frontend.HTTPRequestRuleList)...)
-	errors = append(errors, validateSlice(spec, "http_response_rule", name, "http-response rule", frontend.HTTPResponseRuleList)...)
-	errors = append(errors, validateSlice(spec, "tcp_request_rule", name, "tcp-request rule", frontend.TCPRequestRuleList)...)
-	errors = append(errors, validateSlice(spec, "http_after_response_rule", name, "http-after-response rule", frontend.HTTPAfterResponseRuleList)...)
-	errors = append(errors, validateSlice(spec, "http_error_rule", name, "http-error rule", frontend.HTTPErrorRuleList)...)
-	errors = append(errors, validateSlice(spec, "backend_switching_rule", name, "backend switching rule", frontend.BackendSwitchingRuleList)...)
-
-	errors = append(errors, validateSlice(spec, "acl", name, "ACL", frontend.ACLList)...)
+	errors := validateFrontendHTTPRules(cv, frontend, name)
+	errors = append(errors, validateFrontendOtherRules(cv, frontend, name)...)
 	return errors
 }
 
-// validateFrontendElements validates other frontend elements (filters, log targets, captures).
-func validateFrontendElements(spec *openapi3.T, frontend *models.Frontend) []string {
+// validateFrontendHTTPRules validates HTTP-related rules in a frontend.
+func validateFrontendHTTPRules(cv *validators.CachedValidator, frontend *models.Frontend, name string) []string {
 	var errors []string
-	name := "frontend " + frontend.Name
-
-	errors = append(errors, validateSlice(spec, "filter", name, "filter", frontend.FilterList)...)
-	errors = append(errors, validateSlice(spec, "log_target", name, "log target", frontend.LogTargetList)...)
-	errors = append(errors, validateSlice(spec, "capture", name, "capture", frontend.CaptureList)...)
+	for idx, rule := range frontend.HTTPRequestRuleList {
+		if err := cv.ValidateHTTPRequestRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-request rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, rule := range frontend.HTTPResponseRuleList {
+		if err := cv.ValidateHTTPResponseRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-response rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, rule := range frontend.HTTPAfterResponseRuleList {
+		if err := cv.ValidateHTTPAfterResponseRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-after-response rule %d: %v", name, idx, err))
+		}
+	}
+	for idx, rule := range frontend.HTTPErrorRuleList {
+		if err := cv.ValidateHTTPErrorRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, http-error rule %d: %v", name, idx, err))
+		}
+	}
 	return errors
 }
 
-// removeNullValuesInPlace recursively removes null values from a map in place.
-// This avoids the allocation overhead of creating a new map, which is significant
-// when validating thousands of models per reconciliation.
-func removeNullValuesInPlace(obj map[string]interface{}) {
-	for k, v := range obj {
-		if v == nil {
-			delete(obj, k)
-			continue
-		}
-
-		// Recursively clean nested maps
-		if nested, ok := v.(map[string]interface{}); ok {
-			removeNullValuesInPlace(nested)
-			if len(nested) == 0 {
-				delete(obj, k)
-			}
+// validateFrontendOtherRules validates TCP rules, backend switching rules, and ACLs.
+func validateFrontendOtherRules(cv *validators.CachedValidator, frontend *models.Frontend, name string) []string {
+	var errors []string
+	for idx, rule := range frontend.TCPRequestRuleList {
+		if err := cv.ValidateTCPRequestRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, tcp-request rule %d: %v", name, idx, err))
 		}
 	}
-}
-
-// filterToSchemaProperties removes fields from obj that are not defined in the schema.
-// This replaces the typed conversion step (ConvertToVersioned) which filtered fields
-// by unmarshaling into version-specific structs. Working directly with maps is faster.
-//
-// The schema's Properties map contains all valid field names. Any field in obj that
-// doesn't appear in the schema is removed. This ensures validation only checks fields
-// that are valid for the target API version.
-func filterToSchemaProperties(obj map[string]interface{}, schema *openapi3.Schema) {
-	if schema == nil || schema.Properties == nil {
-		return
-	}
-
-	for key := range obj {
-		if _, exists := schema.Properties[key]; !exists {
-			delete(obj, key)
+	for idx, rule := range frontend.BackendSwitchingRuleList {
+		if err := cv.ValidateBackendSwitchingRule(rule); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, backend switching rule %d: %v", name, idx, err))
 		}
 	}
-}
-
-// validateModelOptimized validates a client-native model using an optimized pipeline.
-// Reduces JSON operations from 6 to 2 by working directly with maps and filtering
-// based on schema properties instead of using typed intermediate conversion.
-//
-// This function is used for high-volume validation (servers, binds) where the
-// allocation reduction is most impactful.
-//
-// The spec parameter should be the version-specific OpenAPI spec obtained via
-// getSwaggerForVersion(). The version information is encoded in the spec's schema
-// definitions, so no separate version parameter is needed.
-func validateModelOptimized(spec *openapi3.T, schemaName string, model interface{}) error {
-	// Step 1: Marshal model to JSON (1 JSON op)
-	jsonData, err := json.Marshal(model)
-	if err != nil {
-		return fmt.Errorf("failed to marshal model: %w", err)
-	}
-
-	// Step 2: Unmarshal to map (1 JSON op)
-	var obj map[string]interface{}
-	if err := json.Unmarshal(jsonData, &obj); err != nil {
-		return fmt.Errorf("failed to unmarshal model: %w", err)
-	}
-
-	// Step 3: Transform metadata in place (no JSON ops)
-	// This converts client-native flat metadata to API nested format
-	client.TransformMetadataForValidation(obj)
-
-	// Step 4: Get schema and filter to only schema properties (no JSON ops)
-	// This replaces ConvertToVersioned which filtered by unmarshaling to typed structs
-	schema, err := getResolvedSchema(spec, schemaName)
-	if err != nil {
-		return err
-	}
-	filterToSchemaProperties(obj, schema)
-
-	// Step 5: Remove null values in place (no JSON ops)
-	removeNullValuesInPlace(obj)
-
-	// Step 6: Validate against schema
-	if err := schema.VisitJSON(obj); err != nil {
-		return fmt.Errorf("schema validation failed: %w", err)
-	}
-
-	return nil
-}
-
-// resolveRef resolves a $ref reference path to its schema.
-// Handles references like "#/components/schemas/server_params".
-func resolveRef(spec *openapi3.T, ref string) (*openapi3.Schema, error) {
-	// Only handle component schema references for now
-	const componentsPrefix = "#/components/schemas/"
-	if !strings.HasPrefix(ref, componentsPrefix) {
-		return nil, fmt.Errorf("unsupported $ref format: %s", ref)
-	}
-
-	schemaName := strings.TrimPrefix(ref, componentsPrefix)
-	schemaRef, ok := spec.Components.Schemas[schemaName]
-	if !ok {
-		return nil, fmt.Errorf("schema %s not found", schemaName)
-	}
-
-	return schemaRef.Value, nil
-}
-
-// resolveAllOf recursively resolves allOf composition by merging all referenced schemas.
-// Returns a flattened schema with all properties and required fields combined.
-func resolveAllOf(spec *openapi3.T, schema *openapi3.Schema) (*openapi3.Schema, error) {
-	if len(schema.AllOf) == 0 {
-		return schema, nil
-	}
-
-	merged := createMergedSchema(schema)
-
-	for _, ref := range schema.AllOf {
-		subSchema, err := resolveSchemaRef(spec, ref)
-		if err != nil {
-			return nil, err
-		}
-
-		mergeSchemaProperties(merged, subSchema)
-	}
-
-	merged.Required = deduplicateRequired(merged.Required)
-	return merged, nil
-}
-
-// createMergedSchema initializes a merged schema with base properties.
-func createMergedSchema(schema *openapi3.Schema) *openapi3.Schema {
-	objectType := openapi3.Types{"object"}
-	merged := &openapi3.Schema{
-		Type:       &objectType,
-		Properties: make(openapi3.Schemas),
-		Required:   append([]string{}, schema.Required...),
-	}
-
-	for propName, propSchema := range schema.Properties {
-		merged.Properties[propName] = propSchema
-	}
-
-	return merged
-}
-
-// resolveSchemaRef resolves a schema reference (either $ref or inline).
-func resolveSchemaRef(spec *openapi3.T, ref *openapi3.SchemaRef) (*openapi3.Schema, error) {
-	var subSchema *openapi3.Schema
-
-	if ref.Ref != "" {
-		resolved, err := resolveRef(spec, ref.Ref)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve $ref %s: %w", ref.Ref, err)
-		}
-		subSchema = resolved
-	} else {
-		subSchema = ref.Value
-	}
-
-	// Recursively resolve if schema has allOf
-	if len(subSchema.AllOf) > 0 {
-		return resolveAllOf(spec, subSchema)
-	}
-
-	return subSchema, nil
-}
-
-// mergeSchemaProperties merges properties and required fields from source to target.
-func mergeSchemaProperties(target, source *openapi3.Schema) {
-	for propName, propSchema := range source.Properties {
-		target.Properties[propName] = propSchema
-	}
-	target.Required = append(target.Required, source.Required...)
-}
-
-// deduplicateRequired removes duplicate entries from required fields list.
-func deduplicateRequired(required []string) []string {
-	seen := make(map[string]bool, len(required))
-	unique := make([]string, 0, len(required))
-
-	for _, field := range required {
-		if !seen[field] {
-			seen[field] = true
-			unique = append(unique, field)
+	for idx, acl := range frontend.ACLList {
+		if err := cv.ValidateACL(acl); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, ACL %d: %v", name, idx, err))
 		}
 	}
-
-	return unique
+	return errors
 }
 
-// selectSchemaCache returns the appropriate cache for the given spec.
-func selectSchemaCache(spec *openapi3.T) map[string]*openapi3.Schema {
-	switch spec {
-	case cachedSpecV32:
-		return resolvedSchemaCacheV32
-	case cachedSpecV31:
-		return resolvedSchemaCacheV31
-	default:
-		return resolvedSchemaCacheV30
-	}
-}
+// validateFrontendElementsGenerated validates other frontend elements (filters, log targets, captures).
+func validateFrontendElementsGenerated(cv *validators.CachedValidator, frontend *models.Frontend) []string {
+	var errors []string
+	name := "frontend " + frontend.Name
 
-// getResolvedSchema returns a cached resolved schema, resolving and caching if needed.
-// This eliminates repeated allOf resolution for the same schema, which was causing
-// massive memory allocation churn (100+ GB per 6 minutes in production).
-func getResolvedSchema(spec *openapi3.T, schemaName string) (*openapi3.Schema, error) {
-	cache := selectSchemaCache(spec)
-
-	// Fast path: check if already cached (read lock)
-	resolvedSchemaMu.RLock()
-	if cached, ok := cache[schemaName]; ok {
-		resolvedSchemaMu.RUnlock()
-		return cached, nil
-	}
-	resolvedSchemaMu.RUnlock()
-
-	// Slow path: resolve and cache (write lock)
-	resolvedSchemaMu.Lock()
-	defer resolvedSchemaMu.Unlock()
-
-	// Double-check after acquiring write lock
-	if cached, ok := cache[schemaName]; ok {
-		return cached, nil
-	}
-
-	// Get the schema from the spec
-	schemaRef, ok := spec.Components.Schemas[schemaName]
-	if !ok {
-		return nil, fmt.Errorf("schema %s not found in OpenAPI spec", schemaName)
-	}
-
-	// Resolve allOf if present
-	schema := schemaRef.Value
-	if len(schema.AllOf) > 0 {
-		resolved, err := resolveAllOf(spec, schema)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve allOf for %s: %w", schemaName, err)
+	for idx, filter := range frontend.FilterList {
+		if err := cv.ValidateFilter(filter); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, filter %d: %v", name, idx, err))
 		}
-		schema = resolved
 	}
-
-	// Cache the resolved schema
-	cache[schemaName] = schema
-	return schema, nil
+	for idx, target := range frontend.LogTargetList {
+		if err := cv.ValidateLogTarget(target); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, log target %d: %v", name, idx, err))
+		}
+	}
+	for idx, capture := range frontend.CaptureList {
+		if err := cv.ValidateCapture(capture); err != nil {
+			errors = append(errors, fmt.Sprintf("%s, capture %d: %v", name, idx, err))
+		}
+	}
+	return errors
 }
 
 // validateSemantics performs semantic validation using haproxy binary.
