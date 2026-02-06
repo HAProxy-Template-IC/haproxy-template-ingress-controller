@@ -386,8 +386,6 @@ github.com/kisielk/errcheck v1.9.0 h1:9xt1zI9EBfcYBvdU1nVrzMzzUPUtPKs9bVSIM3TAb3
 github.com/kisielk/errcheck v1.9.0/go.mod h1:kQxWMMVZgIkDq7U8xtG/n2juOjbLgZtedi0D+/VL/i8=
 github.com/kkHAIKE/contextcheck v1.1.6 h1:7HIyRcnyzxL9Lz06NGhiKvenXq7Zw6Q0UQu/ttjfJCE=
 github.com/kkHAIKE/contextcheck v1.1.6/go.mod h1:3dDbMRNBFaq8HFXWC1JyvDSPm43CmE6IuHam8Wr0rkg=
-github.com/klauspost/compress v1.18.0 h1:c/Cqfb0r+Yi+JtIEq73FWXVkRonBlf0CRNYc8Zttxdo=
-github.com/klauspost/compress v1.18.0/go.mod h1:2Pp+KzxcywXVXMr50+X0Q/Lsb43OQHYWRCY2AiWywWQ=
 github.com/klauspost/compress v1.18.2 h1:iiPHWW0YrcFgpBYhsA6D1+fqHssJscY/Tm/y2Uqnapk=
 github.com/klauspost/compress v1.18.2/go.mod h1:R0h/fSBs8DE4ENlcrlib3PsXS61voFxhIs2DeRhCvJ4=
 github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=
@@ -669,12 +667,6 @@ github.com/yuin/goldmark v1.4.1/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 gitlab.com/bosi/decorder v0.4.2 h1:qbQaV3zgwnBZ4zPMhGLW4KZe7A7NwxEhJx39R3shffo=
 gitlab.com/bosi/decorder v0.4.2/go.mod h1:muuhHoaJkA9QLcYHq4Mj8FJUwDZ+EirSHRiaTcTf6T8=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260102183518-1cd8ebeb9a77 h1:qVY7bgaXrNwjP9bR5BLXXfu6oI+zbAa5DOF5UGHk1kM=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260102183518-1cd8ebeb9a77/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205164601-26f8e1d6c06d h1:NCg/mnTG4i3ePvpyW4vb9PLY95Ylvla6zKEVHbXw1ZA=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205164601-26f8e1d6c06d/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205165115-9bf068c6f8ca h1:LK0MvHAMEg9cK4BG1dShLy9bgv+2fYwtPjMMcn74iJc=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205165115-9bf068c6f8ca/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
 gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205234305-2fbb23b357a0 h1:+zpU/bC2GiAzTjn0jvMhyR1+KjGRQpPLppmsjX4ZklY=
 gitlab.com/haproxy-haptic/scriggo v0.0.0-20260205234305-2fbb23b357a0/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
 go-simpler.org/assert v0.9.0 h1:PfpmcSvL7yAnWyChSjOz6Sp6m9j5lyK8Ok9pEL31YkQ=

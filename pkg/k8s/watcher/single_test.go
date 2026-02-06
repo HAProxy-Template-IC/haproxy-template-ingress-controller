@@ -145,15 +145,12 @@ func TestNewSingle(t *testing.T) {
 func TestSingleWatcher_IsSynced(t *testing.T) {
 	// Create scheme and register ConfigMap
 	scheme := runtime.NewScheme()
-	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
-	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
-
 	// Create fake clients with registered GVK
 	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
-			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
 		},
 	)
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
@@ -373,14 +370,11 @@ func TestSingleWatcherConfig_SetDefaults(t *testing.T) {
 // TestSingleWatcher_NoAddCallbacksDuringSync verifies Add events don't trigger callbacks during sync.
 func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 	scheme := runtime.NewScheme()
-	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
-	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
-
 	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
-			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
 		},
 	)
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
@@ -436,14 +430,11 @@ func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 // TestSingleWatcher_NoUpdateCallbacksDuringSync verifies Update events don't trigger callbacks during sync.
 func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 	scheme := runtime.NewScheme()
-	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
-	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
-
 	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
-			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
 		},
 	)
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
@@ -494,14 +485,11 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 // TestSingleWatcher_NoDeleteCallbacksDuringSync verifies Delete events don't trigger callbacks during sync.
 func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 	scheme := runtime.NewScheme()
-	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
-	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
-
 	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
-			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
 		},
 	)
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
@@ -665,14 +653,11 @@ func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
 // TestSingleWatcher_StartIdempotency verifies Start() can be called multiple times safely.
 func TestSingleWatcher_StartIdempotency(t *testing.T) {
 	scheme := runtime.NewScheme()
-	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
-	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
-
 	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
-			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
 		},
 	)
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
@@ -1065,14 +1050,11 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 // after initial sync completes, delivering the current resource from the cache.
 func TestSingleWatcher_OnSyncComplete_CalledAfterSync(t *testing.T) {
 	scheme := runtime.NewScheme()
-	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
-	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
-
 	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
-			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
 		},
 	)
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
@@ -1229,14 +1211,11 @@ func TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource(t *testing.T) {
 // and watcher works correctly when it's not provided.
 func TestSingleWatcher_OnSyncComplete_Optional(t *testing.T) {
 	scheme := runtime.NewScheme()
-	//nolint:govet // unusedwrite: Group field intentionally set to "" for Kubernetes core types
-	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMapList"}
-
 	fakeClientset := kubefake.NewClientset()
 	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme,
 		map[schema.GroupVersionResource]string{
-			{Group: "", Version: "v1", Resource: "configmaps"}: gvk.Kind,
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
 		},
 	)
 	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
