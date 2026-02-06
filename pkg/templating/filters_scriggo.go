@@ -29,6 +29,8 @@ import (
 
 	"gitlab.com/haproxy-haptic/scriggo/builtin"
 	"gitlab.com/haproxy-haptic/scriggo/native"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // stringBuilderPool pools strings.Builder instances for reuse.
@@ -1222,7 +1224,7 @@ func scriggoSanitizeRegex(s interface{}) string {
 //	{% var title = title(resource_type) %}
 func scriggoTitle(s interface{}) string {
 	str := scriggoToString(s)
-	return strings.Title(str) //nolint:staticcheck // strings.Title is deprecated but sufficient for our use
+	return cases.Title(language.English).String(str)
 }
 
 // scriggoDig navigates nested maps using a sequence of keys.

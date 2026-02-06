@@ -5,7 +5,6 @@
 // - Captcha (v3.0+ EE)
 // - WAF Profile (v3.2+ EE)
 // - WAF Global (v3.2+ EE)
-// - UDP LB (v3.0+ EE) - TODO when API support is added
 package sections
 
 import (
@@ -28,10 +27,6 @@ const (
 
 	// PriorityEEWAFProfile is the priority for WAF profile operations.
 	PriorityEEWAFProfile = 15
-
-	// PriorityEEUDPLB is the priority for UDP load balancer operations.
-	// Similar priority to backends/frontends.
-	PriorityEEUDPLB = 30
 )
 
 // =============================================================================
