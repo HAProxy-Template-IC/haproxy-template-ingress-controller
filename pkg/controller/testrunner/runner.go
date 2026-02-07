@@ -670,9 +670,9 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 	var err error
 
 	if r.profileIncludes {
-		haproxyConfig, includeStats, err = engine.RenderWithProfiling("haproxy.cfg", renderCtx)
+		haproxyConfig, includeStats, err = engine.RenderWithProfiling(context.Background(), "haproxy.cfg", renderCtx)
 	} else {
-		haproxyConfig, err = engine.Render("haproxy.cfg", renderCtx)
+		haproxyConfig, err = engine.Render(context.Background(), "haproxy.cfg", renderCtx)
 	}
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
@@ -743,7 +743,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 
 	// Render map files using worker-specific engine
 	for name := range r.config.Maps {
-		rendered, err := engine.Render(name, renderCtx)
+		rendered, err := engine.Render(context.Background(), name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render map file %s: %w", name, err)
 		}
@@ -756,7 +756,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 
 	// Render general files using worker-specific engine
 	for name := range r.config.Files {
-		rendered, err := engine.Render(name, renderCtx)
+		rendered, err := engine.Render(context.Background(), name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render general file %s: %w", name, err)
 		}
@@ -770,7 +770,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 
 	// Render SSL certificates using worker-specific engine
 	for name := range r.config.SSLCertificates {
-		rendered, err := engine.Render(name, renderCtx)
+		rendered, err := engine.Render(context.Background(), name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render SSL certificate %s: %w", name, err)
 		}

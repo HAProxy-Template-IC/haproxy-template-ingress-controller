@@ -103,6 +103,7 @@ func (o *OverlayStore) List() ([]interface{}, error) {
 	}
 
 	result := make([]interface{}, 0, len(baseResources)+1)
+	foundInBase := false
 
 	// Process base store resources
 	for _, resource := range baseResources {
@@ -110,6 +111,8 @@ func (o *OverlayStore) List() ([]interface{}, error) {
 
 		// Check if this is the overlay resource
 		if ns == o.namespace && name == o.name {
+			foundInBase = true
+
 			switch o.operation {
 			case OperationDelete:
 				// Skip deleted resource
@@ -131,21 +134,9 @@ func (o *OverlayStore) List() ([]interface{}, error) {
 		result = append(result, resource)
 	}
 
-	// For CREATE, add the new resource if not already included
-	if o.operation == OperationCreate {
-		// Check if we already included it (shouldn't happen, but be safe)
-		found := false
-		for _, resource := range result {
-			ns, name := extractMetadata(resource)
-			if ns == o.namespace && name == o.name {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			result = append(result, o.object)
-		}
+	// For CREATE, add the new resource if not already found in base store
+	if o.operation == OperationCreate && !foundInBase {
+		result = append(result, o.object)
 	}
 
 	return result, nil

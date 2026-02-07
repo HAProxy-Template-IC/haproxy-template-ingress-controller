@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -41,17 +42,20 @@ type resourceRef struct {
 // Thread-safe for concurrent access.
 type CachedStore struct {
 	mu        sync.RWMutex
-	refs      map[string][]resourceRef    // Composite key -> slice of resource references
-	cache     map[string]*cacheEntry      // Cache key (namespace/name) -> cached resource
-	numKeys   int                         // Number of index keys
-	cacheTTL  time.Duration               // Cache entry TTL
-	client    dynamic.Interface           // Kubernetes dynamic client
-	gvr       schema.GroupVersionResource // Resource type to fetch
-	namespace string                      // Namespace for fetching (empty = all)
-	indexer   *indexer.Indexer            // Indexer for processing fetched resources
-	logger    *slog.Logger                // Logger for debug and warning messages
-	modCount  uint64                      // Incremented on every mutation for cache invalidation
+	refs      map[string][]resourceRef        // Composite key -> slice of resource references
+	cache     *lru.Cache[string, *cacheEntry] // LRU cache: namespace/name -> cached resource
+	numKeys   int                             // Number of index keys
+	cacheTTL  time.Duration                   // Cache entry TTL
+	client    dynamic.Interface               // Kubernetes dynamic client
+	gvr       schema.GroupVersionResource     // Resource type to fetch
+	namespace string                          // Namespace for fetching (empty = all)
+	indexer   *indexer.Indexer                // Indexer for processing fetched resources
+	logger    *slog.Logger                    // Logger for debug and warning messages
+	modCount  uint64                          // Incremented on every mutation for cache invalidation
 }
+
+// DefaultMaxCacheSize is the default maximum number of entries in the LRU cache.
+const DefaultMaxCacheSize = 256
 
 // CachedStoreConfig configures a CachedStore.
 type CachedStoreConfig struct {
@@ -60,6 +64,11 @@ type CachedStoreConfig struct {
 
 	// CacheTTL is the cache entry time-to-live
 	CacheTTL time.Duration
+
+	// MaxCacheSize is the maximum number of entries in the LRU cache.
+	// When exceeded, the least recently used entry is evicted.
+	// Default: 256
+	MaxCacheSize int
 
 	// Client is the Kubernetes dynamic client for fetching resources
 	Client dynamic.Interface
@@ -91,15 +100,23 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 	if cfg.CacheTTL == 0 {
 		cfg.CacheTTL = 2*time.Minute + 10*time.Second
 	}
+	if cfg.MaxCacheSize <= 0 {
+		cfg.MaxCacheSize = DefaultMaxCacheSize
+	}
 
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 
+	cache, err := lru.New[string, *cacheEntry](cfg.MaxCacheSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create LRU cache: %w", err)
+	}
+
 	return &CachedStore{
 		refs:      make(map[string][]resourceRef),
-		cache:     make(map[string]*cacheEntry),
+		cache:     cache,
 		numKeys:   cfg.NumKeys,
 		cacheTTL:  cfg.CacheTTL,
 		client:    cfg.Client,
@@ -222,10 +239,10 @@ func (s *CachedStore) Add(resource interface{}, keys []string) error {
 
 	// Cache the resource using namespace/name as cache key
 	cacheKey := ns + "/" + name
-	s.cache[cacheKey] = &cacheEntry{
+	s.cache.Add(cacheKey, &cacheEntry{
 		resource:  resource,
 		expiresAt: time.Now().Add(s.cacheTTL),
-	}
+	})
 
 	s.modCount++
 
@@ -284,10 +301,10 @@ func (s *CachedStore) Update(resource interface{}, keys []string) error {
 
 	// Update cache using namespace/name as cache key
 	cacheKey := ns + "/" + name
-	s.cache[cacheKey] = &cacheEntry{
+	s.cache.Add(cacheKey, &cacheEntry{
 		resource:  resource,
 		expiresAt: time.Now().Add(s.cacheTTL),
-	}
+	})
 
 	s.modCount++
 
@@ -317,7 +334,7 @@ func (s *CachedStore) Delete(keys ...string) error {
 	// Delete cache entries for all matching resources
 	for _, ref := range refs {
 		cacheKey := ref.namespace + "/" + ref.name
-		delete(s.cache, cacheKey)
+		s.cache.Remove(cacheKey)
 	}
 
 	// Delete the refs entry
@@ -334,7 +351,7 @@ func (s *CachedStore) Clear() error {
 	defer s.mu.Unlock()
 
 	s.refs = make(map[string][]resourceRef)
-	s.cache = make(map[string]*cacheEntry)
+	s.cache.Purge()
 	s.modCount++
 
 	return nil
@@ -344,27 +361,23 @@ func (s *CachedStore) Clear() error {
 func (s *CachedStore) fetchResourceByRef(ref resourceRef) (interface{}, error) {
 	cacheKey := ref.namespace + "/" + ref.name
 
-	// Check cache first
+	// Check cache first using Peek to avoid promoting before TTL check
 	s.mu.RLock()
-	entry, ok := s.cache[cacheKey]
+	entry, ok := s.cache.Peek(cacheKey)
 	now := time.Now()
 	if ok && now.Before(entry.expiresAt) {
-		// Cache hit - upgrade to write lock to reset TTL
+		resource := entry.resource
 		s.mu.RUnlock()
+		// Reset TTL by re-adding with new expiration (Get promotes, but we also need new TTL)
 		s.mu.Lock()
-		// Re-check after acquiring write lock (entry might have been modified)
-		if entry, ok := s.cache[cacheKey]; ok && now.Before(entry.expiresAt) {
-			// Reset TTL by extending expiration time
-			entry.expiresAt = time.Now().Add(s.cacheTTL)
-			resource := entry.resource
-			s.mu.Unlock()
-			return resource, nil
-		}
+		s.cache.Add(cacheKey, &cacheEntry{
+			resource:  resource,
+			expiresAt: time.Now().Add(s.cacheTTL),
+		})
 		s.mu.Unlock()
-		// If we get here, entry was evicted between locks - fall through to fetch from API
-	} else {
-		s.mu.RUnlock()
+		return resource, nil
 	}
+	s.mu.RUnlock()
 
 	// Cache miss - fetch from API using namespace+name
 	var resource *unstructured.Unstructured
@@ -417,10 +430,10 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (interface{}, error) {
 
 	// Update cache with converted resource
 	s.mu.Lock()
-	s.cache[cacheKey] = &cacheEntry{
+	s.cache.Add(cacheKey, &cacheEntry{
 		resource:  result.ConvertedResource,
 		expiresAt: time.Now().Add(s.cacheTTL),
-	}
+	})
 	s.mu.Unlock()
 
 	return result.ConvertedResource, nil
@@ -442,7 +455,7 @@ func (s *CachedStore) Size() int {
 func (s *CachedStore) CacheSize() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.cache)
+	return s.cache.Len()
 }
 
 // EvictExpired removes expired cache entries.
@@ -453,9 +466,11 @@ func (s *CachedStore) EvictExpired() int {
 	now := time.Now()
 	evicted := 0
 
-	for key, entry := range s.cache {
-		if now.After(entry.expiresAt) {
-			delete(s.cache, key)
+	// Use Keys + Peek to avoid promoting entries about to be evicted
+	for _, key := range s.cache.Keys() {
+		entry, ok := s.cache.Peek(key)
+		if ok && now.After(entry.expiresAt) {
+			s.cache.Remove(key)
 			evicted++
 		}
 	}

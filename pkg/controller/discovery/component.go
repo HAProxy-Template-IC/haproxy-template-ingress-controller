@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
@@ -76,13 +77,15 @@ type Component struct {
 	// Subscribed in constructor for proper startup synchronization
 	eventChan <-chan busevents.Event
 
+	// State replay for leadership transitions
+	discoveredReplayer *leadership.StateReplayer[*events.HAProxyPodsDiscoveredEvent]
+
 	// State protected by mutex
 	mu                   sync.RWMutex
 	dataplanePort        int
 	credentials          *coreconfig.Credentials
 	podStore             types.Store
-	lastEndpoints        map[string]string                  // Map of PodName → PodNamespace for tracking removals
-	lastDiscoveredEvent  *events.HAProxyPodsDiscoveredEvent // Cache for state replay on BecameLeaderEvent
+	lastEndpoints        map[string]string // Map of PodName → PodNamespace for tracking removals
 	hasCredentials       bool
 	hasDataplanePort     bool
 	initialSyncComplete  bool // Set when ResourceSyncCompleteEvent for haproxy-pods is received
@@ -137,13 +140,14 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) 
 	)
 
 	return &Component{
-		eventBus:       eventBus,
-		logger:         componentLogger,
-		eventChan:      eventChan,
-		lastEndpoints:  make(map[string]string),
-		localVersion:   localVersion,
-		admittedPods:   make(map[string]*dataplane.Endpoint),
-		pendingRetries: make(map[string]*retryState),
+		eventBus:           eventBus,
+		logger:             componentLogger,
+		eventChan:          eventChan,
+		discoveredReplayer: leadership.NewStateReplayer[*events.HAProxyPodsDiscoveredEvent](eventBus),
+		lastEndpoints:      make(map[string]string),
+		localVersion:       localVersion,
+		admittedPods:       make(map[string]*dataplane.Endpoint),
+		pendingRetries:     make(map[string]*retryState),
 	}, nil
 }
 
@@ -416,12 +420,8 @@ func (c *Component) handleResourceSyncComplete(event *events.ResourceSyncComplet
 // Unlike other event handlers, this does NOT re-run discovery - it re-publishes
 // the cached event to avoid duplicate work and duplicate log messages.
 func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
-	c.mu.RLock()
-	hasEvent := c.lastDiscoveredEvent != nil
-	event := c.lastDiscoveredEvent
-	c.mu.RUnlock()
-
-	if !hasEvent {
+	event, ok := c.discoveredReplayer.Get()
+	if !ok {
 		c.logger.Debug("Became leader but no discovery result available yet, skipping state replay")
 		return
 	}
@@ -429,7 +429,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	c.logger.Info("Became leader, re-publishing last discovered endpoints for deployment scheduler",
 		"endpoint_count", event.Count)
 
-	c.eventBus.Publish(event)
+	c.discoveredReplayer.Replay()
 }
 
 // SetPodStore sets the pod store reference.
@@ -534,10 +534,7 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 
 	// Create event and cache for state replay (used by handleBecameLeader)
 	event := events.NewHAProxyPodsDiscoveredEvent(endpointsInterface, len(admittedEndpoints))
-
-	c.mu.Lock()
-	c.lastDiscoveredEvent = event
-	c.mu.Unlock()
+	c.discoveredReplayer.Cache(event)
 
 	// Publish HAProxyPodsDiscoveredEvent
 	c.eventBus.Publish(event)

@@ -463,7 +463,7 @@ func setupComponents(
 			"buffer_size", info.BufferSize,
 			"subscribed_types", info.EventTypes,
 		)
-		domainMetrics.RecordEventDrop()
+		domainMetrics.RecordEventDrop(info.SubscriberName, info.EventType)
 	})
 
 	// Create ResourceStoreManager for webhook validation

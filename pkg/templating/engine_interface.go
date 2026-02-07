@@ -14,12 +14,16 @@
 
 package templating
 
+import "context"
+
 // Engine defines the interface that all template engines must implement.
 type Engine interface {
 	// Render executes a template with the given context and returns the output.
-	// Returns RenderError if template execution fails, or TemplateNotFoundError
-	// if the template doesn't exist.
-	Render(templateName string, context map[string]interface{}) (string, error)
+	// The ctx parameter is used for cancellation and timeout control.
+	// Returns RenderError if template execution fails, RenderTimeoutError if
+	// the context deadline is exceeded, or TemplateNotFoundError if the
+	// template doesn't exist.
+	Render(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, error)
 
 	// RenderWithProfiling renders a template and returns profiling statistics
 	// for included templates. Useful for performance debugging.
@@ -29,7 +33,7 @@ type Engine interface {
 	//
 	// Stats are aggregated by template name - multiple renders of the same
 	// template are combined into a single IncludeStats entry with count > 1.
-	RenderWithProfiling(templateName string, context map[string]interface{}) (string, []IncludeStats, error)
+	RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, []IncludeStats, error)
 
 	// EngineType returns the type of this engine.
 	EngineType() EngineType

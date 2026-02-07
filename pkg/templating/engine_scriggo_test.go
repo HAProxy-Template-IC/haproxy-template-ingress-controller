@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -78,7 +79,7 @@ func TestScriggoEngine_Render_StaticContent(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("static", nil)
+	output, err := engine.Render(context.Background(), "static", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello, World!\n", output)
 }
@@ -92,7 +93,7 @@ func TestScriggoEngine_Render_TemplateNotFound(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("nonexistent", nil)
+	output, err := engine.Render(context.Background(), "nonexistent", nil)
 
 	assert.Empty(t, output)
 	require.Error(t, err)
@@ -167,7 +168,7 @@ func TestScriggoEngine_RenderWithProfiling(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, stats, err := engine.RenderWithProfiling("greeting", nil)
+	output, stats, err := engine.RenderWithProfiling(context.Background(), "greeting", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello World!\n", output)
 	// Scriggo's RenderWithProfiling returns nil stats (documented limitation)
@@ -191,7 +192,7 @@ func TestScriggoEngine_Tracing(t *testing.T) {
 	assert.True(t, engine.IsTracingEnabled())
 
 	// Render should generate trace
-	_, err = engine.Render("test", nil)
+	_, err = engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 
 	trace := engine.GetTraceOutput()
@@ -207,7 +208,7 @@ func TestScriggoEngine_Tracing(t *testing.T) {
 	assert.False(t, engine.IsTracingEnabled())
 
 	// Render without tracing should not generate trace
-	_, err = engine.Render("test", nil)
+	_, err = engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 
 	trace = engine.GetTraceOutput()
@@ -238,7 +239,7 @@ func TestScriggoEngine_Tracing_Concurrent(t *testing.T) {
 				if j%2 == 0 {
 					tmpl = "test2"
 				}
-				_, err := engine.Render(tmpl, nil)
+				_, err := engine.Render(context.Background(), tmpl, nil)
 				assert.NoError(t, err)
 			}
 		}()
@@ -267,7 +268,7 @@ func TestScriggoEngine_AppendTraces(t *testing.T) {
 	engine2.EnableTracing()
 
 	// Render in engine2
-	_, err = engine2.Render("test", nil)
+	_, err = engine2.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 
 	// Append traces from engine2 to engine1
@@ -346,7 +347,7 @@ func TestScriggoEngine_PostProcessors(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, postProcessorConfigs)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 
 	// Post-processor should replace "foo" with "bar"
@@ -368,7 +369,7 @@ func TestScriggoEngine_CustomFunctions(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, customFunctions, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Result: Hello, World!\n", output)
 }
@@ -448,7 +449,7 @@ func TestScriggoEngine_Render_EmptyContext(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("static", nil)
+	output, err := engine.Render(context.Background(), "static", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello, World!\n", output)
 }
@@ -466,11 +467,11 @@ func TestScriggoEngine_BuiltinFilters(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("strip_test", nil)
+	output, err := engine.Render(context.Background(), "strip_test", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "hello\n", output)
 
-	output, err = engine.Render("trimSpace_test", nil)
+	output, err = engine.Render(context.Background(), "trimSpace_test", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "world\n", output)
 }
@@ -484,7 +485,7 @@ func TestScriggoEngine_B64DecodeFilter(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("decode", nil)
+	output, err := engine.Render(context.Background(), "decode", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello World\n", output)
 }
@@ -536,7 +537,7 @@ func TestScriggoEngine_SharedContextAccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// SharedContext is auto-created by engine when not provided
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	assert.Contains(t, output, "Result: value")
 }
@@ -602,24 +603,24 @@ Secret: {{ secret.(map[string]any)["name"] }}`,
 		"endpoints": endpointStore,
 	}
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources":        resources,
 		"templateSnippets": []string{},
 	}
 
 	// Test List()
-	output, err := engine.Render("list_test", context)
+	output, err := engine.Render(context.Background(), "list_test", templateCtx)
 	require.NoError(t, err)
 	assert.Contains(t, output, "ingress-1")
 	assert.Contains(t, output, "ingress-2")
 
 	// Test GetSingle()
-	output, err = engine.Render("get_test", context)
+	output, err = engine.Render(context.Background(), "get_test", templateCtx)
 	require.NoError(t, err)
 	assert.Contains(t, output, "Secret: my-secret")
 
 	// Test Fetch()
-	output, err = engine.Render("fetch_test", context)
+	output, err = engine.Render(context.Background(), "fetch_test", templateCtx)
 	require.NoError(t, err)
 	assert.Contains(t, output, "endpoint-1")
 	assert.Contains(t, output, "endpoint-2")
@@ -651,12 +652,12 @@ Pod count: {{ len(pods) }}`,
 		"haproxy_pods": podStore,
 	}
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"controller":       controller,
 		"templateSnippets": []string{},
 	}
 
-	output, err := engine.Render("pods_test", context)
+	output, err := engine.Render(context.Background(), "pods_test", templateCtx)
 	require.NoError(t, err)
 	assert.Contains(t, output, "Pod count: 3")
 }
@@ -687,12 +688,12 @@ func TestScriggoEngine_DotNotationMethodCallsOnResourceStore(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources":        resources,
 		"templateSnippets": []string{},
 	}
 
-	output, err := engine.Render("dot_notation_test", context)
+	output, err := engine.Render(context.Background(), "dot_notation_test", templateCtx)
 	require.NoError(t, err)
 	assert.Contains(t, output, "ingress-1")
 	assert.Contains(t, output, "ingress-2")
@@ -746,11 +747,11 @@ count={{ len(analysisMap["backends"].([]any)) }}`,
 		"ingresses": ingressStore,
 	}
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources": resources,
 	}
 
-	output, err := engine.Render("test", context)
+	output, err := engine.Render(context.Background(), "test", templateCtx)
 	require.NoError(t, err, "Failed to render template")
 	assert.Contains(t, output, "wasComputed=true")
 	assert.Contains(t, output, "count=1")
@@ -806,12 +807,12 @@ Output: {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 		"ingresses": ingressStore,
 	}
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources":        resources,
 		"templateSnippets": []string{},
 	}
 
-	output, err := engine.Render("map-path-exact-ingress", context)
+	output, err := engine.Render(context.Background(), "map-path-exact-ingress", templateCtx)
 	require.NoError(t, err)
 	assert.Contains(t, output, "Name: test-ingress")
 	assert.Contains(t, output, "Backend: backend-test-ingress")
@@ -878,12 +879,12 @@ func TestMacroWithRenderGlobInheritContext(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources":        resources,
 		"templateSnippets": []string{"backend-directives-100", "backend-directives-200"},
 	}
 
-	output, err := engine.Render("main", context)
+	output, err := engine.Render(context.Background(), "main", templateCtx)
 	require.NoError(t, err, "render_glob with inherit_context inside macro should not cause nil pointer dereference")
 	assert.Contains(t, output, "# item exists")
 	assert.Contains(t, output, "# opts exists")
@@ -1005,12 +1006,12 @@ backend {{ BackendNameIngress(ingress, path) }}
 		}
 	}
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources":        resources,
 		"templateSnippets": snippetNames,
 	}
 
-	output, err := engine.Render("haproxy.cfg", context)
+	output, err := engine.Render(context.Background(), "haproxy.cfg", templateCtx)
 	require.NoError(t, err, "render_glob with inherit_context inside macro should not cause nil pointer dereference")
 	assert.Contains(t, output, "# backends-ingress")
 	assert.Contains(t, output, "backend ing_default_ing1")
@@ -1114,7 +1115,7 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 	}
 
 	// Full context matching testrunner's buildRenderingContext
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources":        resources,
 		"templateSnippets": snippetNames,
 		"pathResolver":     pathResolver,
@@ -1125,7 +1126,7 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 		// Note: fileRegistry and http are also used but require more complex setup
 	}
 
-	output, err := engine.Render("haproxy.cfg", context)
+	output, err := engine.Render(context.Background(), "haproxy.cfg", templateCtx)
 	require.NoError(t, err, "render_glob with inherit_context inside macro should not cause nil pointer dereference with full context")
 	assert.Contains(t, output, "directive-100-a")
 }
@@ -1149,11 +1150,11 @@ func TestNestedLoopWithSharedGetPassedToFunction(t *testing.T) {
 	require.NoError(t, err)
 
 	shared := NewSharedContext()
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"shared": shared,
 	}
 
-	output, err := engine.Render("main", context)
+	output, err := engine.Render(context.Background(), "main", templateCtx)
 	require.NoError(t, err)
 
 	got := strings.TrimSpace(output)
@@ -1189,11 +1190,11 @@ func TestTripleNestedLoopWithSharedGet(t *testing.T) {
 	require.NoError(t, err)
 
 	shared := NewSharedContext()
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"shared": shared,
 	}
 
-	output, err := engine.Render("main", context)
+	output, err := engine.Render(context.Background(), "main", templateCtx)
 	require.NoError(t, err)
 
 	got := strings.TrimSpace(output)
@@ -1229,7 +1230,7 @@ Count: {{ count }}`,
 	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("main", nil)
+	output, err := engine.Render(context.Background(), "main", nil)
 	require.NoError(t, err)
 
 	got := strings.TrimSpace(output)
@@ -1319,11 +1320,11 @@ Count: {{ count }}`,
 	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources": resources,
 	}
 
-	output, err := engine.Render("main", context)
+	output, err := engine.Render(context.Background(), "main", templateCtx)
 	require.NoError(t, err)
 
 	got := strings.TrimSpace(output)
@@ -1385,11 +1386,11 @@ func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
 	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	context := map[string]interface{}{
+	templateCtx := map[string]interface{}{
 		"resources": resources,
 	}
 
-	output, err := engine.Render("main", context)
+	output, err := engine.Render(context.Background(), "main", templateCtx)
 	require.NoError(t, err)
 
 	got := strings.TrimSpace(output)
@@ -1508,11 +1509,11 @@ func TestNestedLoopWithFilters(t *testing.T) {
 
 			// Create context with SharedContext for first_seen tests
 			shared := NewSharedContext()
-			context := map[string]interface{}{
+			templateCtx := map[string]interface{}{
 				"shared": shared,
 			}
 
-			output, err := engine.Render("test", context)
+			output, err := engine.Render(context.Background(), "test", templateCtx)
 			require.NoError(t, err)
 
 			got := strings.TrimSpace(output)

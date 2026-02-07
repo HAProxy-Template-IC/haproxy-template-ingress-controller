@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +34,7 @@ func TestScriggoProfiling_BasicTiming(t *testing.T) {
 	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "StartMiddleEnd\n", output)
 
@@ -53,7 +54,7 @@ func TestScriggoProfiling_NestedRenders(t *testing.T) {
 	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "ABXCD\n", output)
 
@@ -79,7 +80,7 @@ func TestScriggoProfiling_DisabledNoOverhead(t *testing.T) {
 	engine, err := NewScriggo(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "content\n", output)
 
@@ -99,7 +100,7 @@ func TestScriggoProfiling_Enabled(t *testing.T) {
 
 	assert.True(t, engine.IsProfilingEnabled())
 
-	_, err = engine.Render("main.html", nil)
+	_, err = engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 
 	results := engine.GetProfilingResults()
@@ -118,7 +119,7 @@ func TestScriggoProfiling_WithLoops(t *testing.T) {
 	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "XXX\n", output)
 
@@ -145,7 +146,7 @@ func TestScriggoProfiling_ThreadSafe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := engine.Render("main.html", nil)
+			_, err := engine.Render(context.Background(), "main.html", nil)
 			if err != nil {
 				errors <- err
 			}
@@ -170,14 +171,14 @@ func TestScriggoProfiling_MultipleRenders(t *testing.T) {
 	require.NoError(t, err)
 
 	// First render
-	_, err = engine.Render("main.html", nil)
+	_, err = engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 
 	results1 := engine.GetProfilingResults()
 	require.Len(t, results1, 1)
 
 	// Second render - should have fresh profiling state
-	_, err = engine.Render("main.html", nil)
+	_, err = engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 
 	results2 := engine.GetProfilingResults()
@@ -192,7 +193,7 @@ func TestScriggoProfiling_NoRenders(t *testing.T) {
 	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello World\n", output)
 
@@ -213,7 +214,7 @@ func TestScriggoProfiling_ConditionalRender(t *testing.T) {
 		engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 		require.NoError(t, err)
 
-		output, err := engine.Render("main.html", nil)
+		output, err := engine.Render(context.Background(), "main.html", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "content\n", output)
 
@@ -231,7 +232,7 @@ func TestScriggoProfiling_ConditionalRender(t *testing.T) {
 		engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 		require.NoError(t, err)
 
-		output, err := engine.Render("main.html", nil)
+		output, err := engine.Render(context.Background(), "main.html", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "\n", output)
 
@@ -252,7 +253,7 @@ func TestScriggoProfiling_DeeplyNested(t *testing.T) {
 	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "leaf\n", output)
 
@@ -279,7 +280,7 @@ func TestScriggoProfiling_RenderWithProfiling_ReturnsStats(t *testing.T) {
 	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, stats, err := engine.RenderWithProfiling("main.html", nil)
+	output, stats, err := engine.RenderWithProfiling(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "StartMiddleEnd\n", output)
 
@@ -303,7 +304,7 @@ func TestScriggoProfiling_RenderWithProfiling_AggregatesLoopIterations(t *testin
 	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, stats, err := engine.RenderWithProfiling("main.html", nil)
+	output, stats, err := engine.RenderWithProfiling(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "XXX\n", output)
 
@@ -324,7 +325,7 @@ func TestScriggoProfiling_RenderWithProfiling_DisabledReturnsNil(t *testing.T) {
 	engine, err := NewScriggo(templates, []string{"main.html"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, stats, err := engine.RenderWithProfiling("main.html", nil)
+	output, stats, err := engine.RenderWithProfiling(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "content\n", output)
 	assert.Nil(t, stats) // No stats when profiling disabled
@@ -343,7 +344,7 @@ func TestScriggoTracing_NestedOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	engine.EnableTracing()
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "AXB\n", output)
 
@@ -367,7 +368,7 @@ func TestScriggoTracing_DeeplyNestedOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	engine.EnableTracing()
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "leaf\n", output)
 
@@ -394,7 +395,7 @@ func TestScriggoTracing_NoProfilingFlatOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	engine.EnableTracing()
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "AXB\n", output)
 
@@ -416,7 +417,7 @@ func TestScriggoTracing_LoopWithNesting(t *testing.T) {
 	require.NoError(t, err)
 
 	engine.EnableTracing()
-	output, err := engine.Render("main.html", nil)
+	output, err := engine.Render(context.Background(), "main.html", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "XX\n", output)
 

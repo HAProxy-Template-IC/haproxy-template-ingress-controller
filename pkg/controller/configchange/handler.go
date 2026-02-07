@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -56,16 +57,17 @@ type ConfigChangeHandler struct {
 	validators     []string
 	stopCh         chan struct{}
 
-	// State caching for leader election replay (prevents "late subscriber problem")
-	mu                       sync.RWMutex
-	lastConfigValidatedEvent *events.ConfigValidatedEvent
-	hasValidatedConfig       bool
+	// State replay for leadership transitions (prevents "late subscriber problem")
+	configReplayer *leadership.StateReplayer[*events.ConfigValidatedEvent]
 
 	// Debouncing for reinitialization signals
 	// Coalesces rapid CRD config changes to prevent reinitialization from interrupting renders
 	debounceInterval time.Duration
 	debounceTimer    *time.Timer
 	pendingConfig    *coreconfig.Config
+
+	// Mutex for initialConfigVersion and reinitializationEnabled
+	mu sync.RWMutex
 
 	// Initial config version tracking to prevent infinite reinitialization loop
 	// When a new iteration starts, CRDWatcher triggers onAdd for the existing CRD,
@@ -121,6 +123,7 @@ func NewConfigChangeHandler(
 		logger:           logger.With("component", ComponentName),
 		configChangeCh:   configChangeCh,
 		validators:       validators,
+		configReplayer:   leadership.NewStateReplayer[*events.ConfigValidatedEvent](eventBus),
 		stopCh:           make(chan struct{}),
 		debounceInterval: debounceInterval,
 		debounceTimer:    nil,
@@ -225,10 +228,7 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 		)
 
 		// Cache the event for leadership transition replay
-		h.mu.Lock()
-		h.lastConfigValidatedEvent = validatedEvent
-		h.hasValidatedConfig = true
-		h.mu.Unlock()
+		h.configReplayer.Cache(validatedEvent)
 
 		h.eventBus.Publish(validatedEvent)
 		return
@@ -298,10 +298,7 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 		)
 
 		// Cache the event for leadership transition replay
-		h.mu.Lock()
-		h.lastConfigValidatedEvent = validatedEvent
-		h.hasValidatedConfig = true
-		h.mu.Unlock()
+		h.configReplayer.Cache(validatedEvent)
 
 		// Publish validated event
 		h.eventBus.Publish(validatedEvent)
@@ -321,25 +318,20 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 // This prevents the race condition where reinitialization interrupts in-progress renders,
 // ensuring all config changes are fully rendered before reinitialization starts.
 func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidatedEvent) {
+	// Always cache the event for leadership transition replay
+	h.configReplayer.Cache(event)
+
 	// Skip synthetic bootstrap events (version="initial") - these don't trigger reinitialization
 	if event.Version == "initial" {
-		// Still cache the event for leadership transition replay
-		h.mu.Lock()
-		h.lastConfigValidatedEvent = event
-		h.hasValidatedConfig = true
-		h.mu.Unlock()
-
 		h.logger.Debug("Ignoring synthetic bootstrap ConfigValidatedEvent (version='initial')")
 		return
 	}
 
-	// Cache the event and read state atomically.
-	h.mu.Lock()
-	h.lastConfigValidatedEvent = event
-	h.hasValidatedConfig = true
+	// Read reinitialization state
+	h.mu.RLock()
 	reinitEnabled := h.reinitializationEnabled
 	initialVersion := h.initialConfigVersion
-	h.mu.Unlock()
+	h.mu.RUnlock()
 
 	// During startup (before EnableReinitialization is called), skip all events.
 	// Multiple events occur during startup (watcher sync) that should not trigger
@@ -453,20 +445,15 @@ func (h *ConfigChangeHandler) sendPendingConfig() {
 // This prevents the "late subscriber problem" where leader-only components miss events
 // that were published before they started subscribing.
 func (h *ConfigChangeHandler) handleBecameLeader(_ *events.BecameLeaderEvent) {
-	h.mu.RLock()
-	hasState := h.hasValidatedConfig
-	validatedEvent := h.lastConfigValidatedEvent
-	h.mu.RUnlock()
-
-	if !hasState {
+	event, ok := h.configReplayer.Get()
+	if !ok {
 		h.logger.Debug("Became leader but no validated config available yet, skipping state replay")
 		return
 	}
 
 	h.logger.Debug("Became leader, re-publishing last validated config for leader-only components",
-		"config_version", validatedEvent.Version,
-		"secret_version", validatedEvent.SecretVersion)
+		"config_version", event.Version,
+		"secret_version", event.SecretVersion)
 
-	// Re-publish the last validated event to ensure new leader-only components receive it
-	h.eventBus.Publish(validatedEvent)
+	h.configReplayer.Replay()
 }

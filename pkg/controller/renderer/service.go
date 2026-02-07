@@ -64,6 +64,9 @@ type RenderService struct {
 	pathResolver *templating.PathResolver
 	logger       *slog.Logger
 
+	// renderTimeout is the maximum time allowed for rendering a single template.
+	renderTimeout time.Duration
+
 	// capabilities defines which features are available for the local HAProxy version.
 	capabilities dataplane.Capabilities
 
@@ -146,6 +149,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		config:             cfg.Config,
 		pathResolver:       pathResolver,
 		logger:             cfg.Logger,
+		renderTimeout:      cfg.Config.TemplatingSettings.GetRenderTimeout(),
 		capabilities:       cfg.Capabilities,
 		capabilitiesMap:    capabilitiesMap,
 		haproxyPodStore:    cfg.HAProxyPodStore,
@@ -170,11 +174,18 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvider) (*RenderResult, error) {
 	startTime := time.Now()
 
+	// Apply render timeout if configured
+	if s.renderTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.renderTimeout)
+		defer cancel()
+	}
+
 	// Build rendering context from stores
 	renderContext, fileRegistry := s.buildRenderingContext(ctx, provider)
 
 	// Render main HAProxy config
-	haproxyConfig, err := s.engine.Render("haproxy.cfg", renderContext)
+	haproxyConfig, err := s.engine.Render(ctx, "haproxy.cfg", renderContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
 	}
@@ -318,7 +329,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 	// Render map files in parallel
 	for name := range s.config.Maps {
 		g.Go(func() error {
-			rendered, err := s.engine.Render(name, renderCtx)
+			rendered, err := s.engine.Render(ctx, name, renderCtx)
 			if err != nil {
 				return fmt.Errorf("failed to render map %s: %w", name, err)
 			}
@@ -335,7 +346,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 	// Render general files in parallel
 	for name := range s.config.Files {
 		g.Go(func() error {
-			rendered, err := s.engine.Render(name, renderCtx)
+			rendered, err := s.engine.Render(ctx, name, renderCtx)
 			if err != nil {
 				return fmt.Errorf("failed to render file %s: %w", name, err)
 			}
@@ -353,7 +364,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 	// Render SSL certificates in parallel
 	for name := range s.config.SSLCertificates {
 		g.Go(func() error {
-			rendered, err := s.engine.Render(name, renderCtx)
+			rendered, err := s.engine.Render(ctx, name, renderCtx)
 			if err != nil {
 				return fmt.Errorf("failed to render SSL certificate %s: %w", name, err)
 			}

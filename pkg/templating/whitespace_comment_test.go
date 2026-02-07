@@ -1,6 +1,7 @@
 package templating_test
 
 import (
+	"context"
 	"testing"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -47,7 +48,7 @@ func TestWhitespaceComments(t *testing.T) {
 				t.Fatalf("NewScriggo error: %v", err)
 			}
 
-			output, err := engine.Render("main", nil)
+			output, err := engine.Render(context.Background(), "main", nil)
 			if err != nil {
 				t.Fatalf("Render error: %v", err)
 			}

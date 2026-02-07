@@ -61,6 +61,25 @@ func (e *TemplateNotFoundError) Error() string {
 	return fmt.Sprintf("template '%s' not found", e.TemplateName)
 }
 
+// RenderTimeoutError represents a template rendering that exceeded the context deadline.
+type RenderTimeoutError struct {
+	// TemplateName is the name of the template that timed out
+	TemplateName string
+
+	// Cause is the underlying context error
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *RenderTimeoutError) Error() string {
+	return fmt.Sprintf("template '%s' render timed out: %v", e.TemplateName, e.Cause)
+}
+
+// Unwrap returns the underlying cause for error unwrapping.
+func (e *RenderTimeoutError) Unwrap() error {
+	return e.Cause
+}
+
 // UnsupportedEngineError represents an unsupported template engine type.
 type UnsupportedEngineError struct {
 	// EngineType is the unsupported engine type

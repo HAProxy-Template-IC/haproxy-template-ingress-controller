@@ -255,7 +255,7 @@ func (e *ScriggoEngine) compileTemplates(allTemplates map[string]string, entryPo
 }
 
 // Render executes a template with the given context and returns the output.
-func (e *ScriggoEngine) Render(templateName string, templateContext map[string]interface{}) (string, error) {
+func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, error) {
 	template, exists := e.compiledTemplates[templateName]
 	if !exists {
 		return "", e.templateNotFoundError(templateName)
@@ -285,7 +285,7 @@ func (e *ScriggoEngine) Render(templateName string, templateContext map[string]i
 	}
 
 	// Add render context (globals) for resource accessor functions like first_seen
-	ctx := context.WithValue(context.Background(), RenderContextContextKey, templateContext)
+	ctx = context.WithValue(ctx, RenderContextContextKey, templateContext)
 
 	// Setup run options with profiling and parallelism settings
 	runOpts := &scriggo.RunOptions{
@@ -303,6 +303,9 @@ func (e *ScriggoEngine) Render(templateName string, templateContext map[string]i
 	var output strings.Builder
 	err := template.Run(&output, templateContext, runOpts)
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", &RenderTimeoutError{TemplateName: templateName, Cause: ctx.Err()}
+		}
 		return "", NewRenderError(templateName, err)
 	}
 
@@ -391,8 +394,8 @@ func (e *ScriggoEngine) writeCallTreeTrace(builder *strings.Builder, nodes []*sc
 // When profiling is enabled (via NewScriggoWithProfiling), this method returns
 // aggregated include timing statistics. When profiling is disabled, returns nil
 // for the stats slice.
-func (e *ScriggoEngine) RenderWithProfiling(templateName string, templateContext map[string]interface{}) (string, []IncludeStats, error) {
-	output, err := e.Render(templateName, templateContext)
+func (e *ScriggoEngine) RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, []IncludeStats, error) {
+	output, err := e.Render(ctx, templateName, templateContext)
 	if err != nil {
 		return "", nil, err
 	}

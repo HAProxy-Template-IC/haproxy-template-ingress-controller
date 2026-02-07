@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
@@ -95,7 +96,7 @@ func benchmarkRenderSimple(b *testing.B) {
 
 	var r string
 	for i := 0; i < b.N; i++ {
-		r, _ = engine.Render("simple", ctx)
+		r, _ = engine.Render(context.Background(), "simple", ctx)
 	}
 	benchResultString = r
 }
@@ -131,7 +132,7 @@ server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}
 
 	var r string
 	for i := 0; i < b.N; i++ {
-		r, _ = engine.Render("medium", ctx)
+		r, _ = engine.Render(context.Background(), "medium", ctx)
 	}
 	benchResultString = r
 }
@@ -261,7 +262,7 @@ backend {{ .backend.name }}
 
 	var r string
 	for i := 0; i < b.N; i++ {
-		r, _ = engine.Render("large", ctx)
+		r, _ = engine.Render(context.Background(), "large", ctx)
 	}
 	benchResultString = r
 }
@@ -301,7 +302,7 @@ func benchmarkFilterSortBy(b *testing.B) {
 
 	var r string
 	for i := 0; i < b.N; i++ {
-		r, _ = engine.Render("sort", ctx)
+		r, _ = engine.Render(context.Background(), "sort", ctx)
 	}
 	benchResultString = r
 }
@@ -341,7 +342,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 
 	var r string
 	for i := 0; i < b.N; i++ {
-		r, _ = engine.Render("scale", ctx)
+		r, _ = engine.Render(context.Background(), "scale", ctx)
 	}
 	benchResultString = r
 }
