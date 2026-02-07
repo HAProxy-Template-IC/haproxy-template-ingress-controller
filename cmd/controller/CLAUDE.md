@@ -2,7 +2,7 @@
 
 Development context for the controller application entry point.
 
-**Architecture**: See `/docs/development/design.md` (Startup and Initialization section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (Startup and Initialization section)
 
 ## When to Work Here
 
@@ -710,7 +710,7 @@ spec:
 
 ## Resources
 
-- Architecture: `/docs/development/design.md`
+- Architecture: `/docs/controller/docs/development/design.md`
 - Controller orchestration: `pkg/controller/CLAUDE.md`
 - Configuration: `pkg/core/CLAUDE.md`
 - Helm chart: `charts/haptic/`

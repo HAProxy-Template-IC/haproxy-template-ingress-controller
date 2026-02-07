@@ -50,8 +50,7 @@ func main() {
 ### Constructor
 
 ```go
-func New(engineType EngineType, templates map[string]string) (*TemplateEngine, error)
-func NewWithFilters(engineType EngineType, templates map[string]string, filters map[string]FilterFunc) (*TemplateEngine, error)
+func New(engineType EngineType, templates map[string]string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig) (Engine, error)
 ```
 
 Creates a new engine and compiles all templates. Returns `CompilationError` if any template has syntax errors.
@@ -59,7 +58,7 @@ Creates a new engine and compiles all templates. Returns `CompilationError` if a
 ### Rendering
 
 ```go
-func (e *TemplateEngine) Render(templateName string, context map[string]interface{}) (string, error)
+func (e Engine) Render(templateName string, context map[string]interface{}) (string, error)
 ```
 
 Executes a template with the provided context.
@@ -67,10 +66,10 @@ Executes a template with the provided context.
 ### Helper Methods
 
 ```go
-func (e *TemplateEngine) HasTemplate(name string) bool      // Check existence
-func (e *TemplateEngine) TemplateNames() []string           // List templates
-func (e *TemplateEngine) TemplateCount() int                // Count templates
-func (e *TemplateEngine) GetRawTemplate(name string) (string, error)  // Get source
+func (e Engine) HasTemplate(name string) bool      // Check existence
+func (e Engine) TemplateNames() []string           // List templates
+func (e Engine) TemplateCount() int                // Count templates
+func (e Engine) GetRawTemplate(name string) (string, error)  // Get source
 ```
 
 ### Error Types

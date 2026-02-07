@@ -3,7 +3,7 @@
 Development context for the controller coordination layer.
 
 **API Documentation**: See `pkg/controller/README.md`
-**Architecture**: See `/docs/development/design.md` (Controller Internal Architecture section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (Controller Internal Architecture section)
 
 ## When to Work Here
 
@@ -60,8 +60,8 @@ This package wraps pure components in event adapters to coordinate them:
 Pure Component              Event Adapter
 (pkg/templating)           (pkg/controller/renderer)
      ↓                            ↓
-TemplateEngine  ────wraps──→  RendererComponent
-  .Render()                    - Subscribes to events
+Engine          ────wraps──→  RendererComponent
+  .Render()                    - Subscribes in constructor
                                - Calls .Render()
                                - Publishes result events
 ```
@@ -75,20 +75,27 @@ package renderer
 import (
     "haptic/pkg/controller/events"
     "haptic/pkg/templating"
-    "haptic/pkg/events"
+    busevents "haptic/pkg/events"
 )
 
 type Component struct {
-    engine   *templating.TemplateEngine  // Pure component
-    eventBus *events.EventBus            // Event coordination
+    engine    templating.Engine          // Pure component
+    eventBus  *busevents.EventBus       // Event coordination
+    eventChan <-chan busevents.Event     // Subscribed in constructor
+}
+
+func New(bus *busevents.EventBus, engine templating.Engine) *Component {
+    return &Component{
+        engine:    engine,
+        eventBus:  bus,
+        eventChan: bus.Subscribe(100),  // Subscribe in constructor, before Start()
+    }
 }
 
 func (c *Component) Run(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe(100)
-
     for {
         select {
-        case event := <-eventChan:
+        case event := <-c.eventChan:
             switch e := event.(type) {
             case events.ReconciliationTriggeredEvent:
                 // Extract primitives for pure component
@@ -129,17 +136,22 @@ Pure components contain domain business logic and must be wrapped in event adapt
 - `pkg/dataplane`: HAProxy synchronization
 - `pkg/k8s`: Kubernetes resource watching
 
-Example - Renderer wraps TemplateEngine:
+Example - Renderer wraps Engine:
 
 ```go
 // pkg/controller/renderer/component.go
 type Component struct {
-    engine   *templating.TemplateEngine  // Pure component
-    eventBus *events.EventBus
+    engine    templating.Engine    // Pure component
+    eventBus  *events.EventBus
+    eventChan <-chan events.Event  // Subscribed in constructor
 }
 
-func (c *Component) Run(ctx context.Context) error {
-    // Subscribe to events, call engine methods, publish results
+func New(bus *events.EventBus, engine templating.Engine) *Component {
+    return &Component{
+        engine:    engine,
+        eventBus:  bus,
+        eventChan: bus.Subscribe(100),  // Subscribe in constructor
+    }
 }
 ```
 
@@ -158,7 +170,7 @@ Example - DryRunValidator calls StoreManager directly:
 // pkg/controller/dryrunvalidator/component.go
 type Component struct {
     storeManager *resourcestore.Manager  // Utility component
-    engine       *templating.TemplateEngine  // Pure component (but called directly here - acceptable)
+    engine       templating.Engine            // Pure component (but called directly here - acceptable)
 }
 
 func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest) {
@@ -1097,5 +1109,5 @@ kubectl -n haptic delete pod $LEADER
 - Leader election: `pkg/controller/leaderelection/CLAUDE.md`
 - Leadership transition guidelines: `pkg/controller/LEADER_ONLY_COMPONENTS.md`
 - Metrics component: `pkg/controller/metrics/CLAUDE.md`
-- Architecture: `/docs/development/design.md`
+- Architecture: `/docs/controller/docs/development/design.md`
 - API documentation: `pkg/controller/README.md`

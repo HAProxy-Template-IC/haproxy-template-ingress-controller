@@ -89,7 +89,7 @@ haptic/
 │   │   ├── controller.go    # Event coordination and startup orchestration
 │   │   └── statecache.go    # Event-driven state tracking for debug endpoints
 │   └── templating/          # Template engine library
-│       ├── engine.go        # TemplateEngine with pre-compilation and rendering
+│       ├── engine.go        # Engine interface and ScriggoEngine with pre-compilation and rendering
 │       ├── types.go         # Engine type definitions
 │       ├── errors.go        # Custom error types
 │       ├── loader.go        # Template loading utilities
@@ -265,7 +265,7 @@ Both watchers use the event-driven architecture: changes publish events to Event
 - `pkg/templating`: Low-level template engine library providing template compilation and rendering
   - Pre-compiles templates at initialization for optimal runtime performance
   - Uses Scriggo for Go-native template syntax with dynamic include support
-  - Provides TemplateEngine with Render(templateName, context) API
+  - Provides Engine interface with Render(templateName, context) API
   - Custom error types for compilation, rendering, and template-not-found scenarios
   - Custom filters (b64decode) and context methods (pathResolver) are integrated in controller rendering components
 

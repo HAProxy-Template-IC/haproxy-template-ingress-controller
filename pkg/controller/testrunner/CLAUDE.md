@@ -815,4 +815,4 @@ func TestRunner_RegexMatch(t *testing.T) {
 - User documentation: `docs/validation-tests.md`
 - DryRunValidator pattern: `pkg/controller/dryrunvalidator/CLAUDE.md`
 - StoreWrapper: `pkg/controller/renderer/CLAUDE.md`
-- Architecture: `/docs/development/design.md`
+- Architecture: `/docs/controller/docs/development/design.md`

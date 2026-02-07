@@ -3,7 +3,7 @@
 Development context for HAProxy Dataplane API integration.
 
 **API Documentation**: See `pkg/dataplane/README.md`
-**Architecture**: See `/docs/development/design.md` (Dataplane Integration section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (Dataplane Integration section)
 
 ## When to Work Here
 

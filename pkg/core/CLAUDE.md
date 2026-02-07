@@ -3,7 +3,7 @@
 Development context for core shared functionality.
 
 **API Documentation**: See `pkg/core/README.md`
-**Architecture**: See `/docs/development/design.md` (Core Packages section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (Core Packages section)
 
 ## When to Work Here
 
@@ -648,6 +648,6 @@ if err != nil {
 ## Resources
 
 - API documentation: `pkg/core/README.md`
-- Configuration reference: `/docs/supported-configuration.md`
-- Architecture: `/docs/development/design.md`
+- Configuration reference: `/docs/controller/docs/supported-configuration.md`
+- Architecture: `/docs/controller/docs/development/design.md`
 - slog documentation: <https://pkg.go.dev/log/slog>

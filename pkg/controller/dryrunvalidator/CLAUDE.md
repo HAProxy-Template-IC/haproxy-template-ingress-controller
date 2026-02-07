@@ -225,7 +225,7 @@ The DryRunValidator demonstrates the acceptable pattern of calling pure componen
 
 ```go
 type Component struct {
-    engine       *templating.TemplateEngine  // Pure component - called directly
+    engine       templating.Engine            // Pure component - called directly
     validator    *dataplane.Validator        // Pure component - called directly
     storeManager *resourcestore.Manager      // Utility component - called directly
     eventBus     *busevents.EventBus         // Event coordination

@@ -865,7 +865,7 @@ import (
 
 type Runner struct {
     config  *v1alpha1.HAProxyTemplateConfig
-    engine  *templating.TemplateEngine
+    engine  templating.Engine
     validator *dataplane.Validator
     options Options
 }

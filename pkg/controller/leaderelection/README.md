@@ -303,6 +303,6 @@ GET /debug/vars
 
 ## References
 
-- [Design Document](../../../docs/development/design/leader-election.md)
+- [Design Document](../../../docs/controller/docs/development/design/leader-election.md)
 - [client-go leaderelection](https://pkg.go.dev/k8s.io/client-go/tools/leaderelection)
 - [Kubernetes Coordinated Leader Election](https://kubernetes.io/docs/concepts/cluster-administration/coordinated-leader-election/)

@@ -100,13 +100,8 @@ Packages like `templating`, `k8s`, `dataplane` provide pure business logic:
 package templating
 
 // No event dependencies - pure library
-type TemplateEngine struct {
-    templates map[string]*compiledTemplate
-}
-
-func (e *TemplateEngine) Render(name string, ctx map[string]interface{}) (string, error) {
-    // Pure function - no side effects beyond rendering
-    return e.render(name, ctx)
+type Engine interface {
+    Render(name string, ctx map[string]interface{}) (string, error)
 }
 ```
 
@@ -125,16 +120,23 @@ import (
 
 // Event adapter wraps pure component
 type Component struct {
-    engine   *templating.TemplateEngine  // Pure component
-    eventBus *events.EventBus            // Event coordination
+    engine    templating.Engine    // Pure component
+    eventBus  *events.EventBus    // Event coordination
+    eventChan <-chan events.Event  // Subscribed in constructor
+}
+
+func New(bus *events.EventBus, engine templating.Engine) *Component {
+    return &Component{
+        engine:    engine,
+        eventBus:  bus,
+        eventChan: bus.Subscribe(100),  // Subscribe in constructor, before Start()
+    }
 }
 
 func (c *Component) Run(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe(100)
-
     for {
         select {
-        case event := <-eventChan:
+        case event := <-c.eventChan:
             // Convert event to pure function call
             switch e := event.(type) {
             case ReconciliationTriggeredEvent:
@@ -340,7 +342,7 @@ func (c *Client) ParseConfig(cfg string) (*ParsedConfig, error) { ... }
 
 ```go
 // Step 1: Add to pure library (pkg/templating)
-func (e *TemplateEngine) RegisterFilter(name string, fn FilterFunc) error {
+func (e *ScriggoEngine) RegisterFilter(name string, fn FilterFunc) error {
     // Pure business logic
 }
 
@@ -352,5 +354,5 @@ engine.RegisterFilter("b64decode", base64DecodeFilter)
 
 - Root-level architecture: `/CLAUDE.md`
 - Package-specific context: `pkg/*/CLAUDE.md`
-- Architecture documentation: `/docs/development/design.md`
+- Architecture documentation: `/docs/controller/docs/development/design.md`
 - Package API documentation: `pkg/*/README.md`
