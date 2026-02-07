@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -200,7 +201,7 @@ defaults
 	engine, err := New(EngineTypeScriggo, templates, nil, nil, postProcessorConfigs)
 	require.NoError(t, err)
 
-	output, err := engine.Render("haproxy.cfg", nil)
+	output, err := engine.Render(context.Background(), "haproxy.cfg", nil)
 	require.NoError(t, err)
 
 	// Scriggo adds trailing newline, so include it in expected output
@@ -246,7 +247,7 @@ func TestTemplateEngine_MultiplePostProcessors(t *testing.T) {
 	engine, err := New(EngineTypeScriggo, templates, nil, nil, postProcessorConfigs)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 
 	// Scriggo adds trailing newline
@@ -287,7 +288,7 @@ func TestTemplateEngine_NoPostProcessors(t *testing.T) {
 	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 
 	// Without post-processors, spaces should be preserved (Scriggo adds trailing newline)

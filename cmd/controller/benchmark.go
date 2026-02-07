@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -252,13 +253,13 @@ func renderSingleTemplate(
 	var stats []templating.IncludeStats
 
 	if benchmarkProfileIncludes {
-		_, profileStats, err := engine.RenderWithProfiling(templateName, renderCtx)
+		_, profileStats, err := engine.RenderWithProfiling(context.Background(), templateName, renderCtx)
 		if err != nil {
 			return FileRenderResult{}, nil, err
 		}
 		stats = profileStats
 	} else {
-		_, err := engine.Render(templateName, renderCtx)
+		_, err := engine.Render(context.Background(), templateName, renderCtx)
 		if err != nil {
 			return FileRenderResult{}, nil, err
 		}

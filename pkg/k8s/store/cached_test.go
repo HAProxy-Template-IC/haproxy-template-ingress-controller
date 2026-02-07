@@ -682,7 +682,8 @@ func TestCachedStore_TTLReset(t *testing.T) {
 
 	// Record initial expiration time
 	store.mu.RLock()
-	initialExpiry := store.cache["default/test-cm"].expiresAt
+	entry, _ := store.cache.Peek("default/test-cm")
+	initialExpiry := entry.expiresAt
 	store.mu.RUnlock()
 
 	// Wait a bit
@@ -700,7 +701,8 @@ func TestCachedStore_TTLReset(t *testing.T) {
 
 	// Check that expiration time was extended
 	store.mu.RLock()
-	newExpiry := store.cache["default/test-cm"].expiresAt
+	entry, _ = store.cache.Peek("default/test-cm")
+	newExpiry := entry.expiresAt
 	store.mu.RUnlock()
 
 	if !newExpiry.After(initialExpiry) {
@@ -720,7 +722,7 @@ func TestCachedStore_TTLReset(t *testing.T) {
 
 	// Entry should still be in cache (not expired yet)
 	store.mu.RLock()
-	_, ok := store.cache["default/test-cm"]
+	_, ok := store.cache.Peek("default/test-cm")
 	store.mu.RUnlock()
 
 	if !ok {
@@ -965,7 +967,7 @@ func TestCachedStore_CacheMissLogging(t *testing.T) {
 	}
 
 	// Clear cache to force API fetch
-	store.cache = make(map[string]*cacheEntry)
+	store.cache.Purge()
 
 	// Get resource (should fetch from API and log)
 	results, err := store.Get("default", "test-cm")
@@ -980,5 +982,60 @@ func TestCachedStore_CacheMissLogging(t *testing.T) {
 	// Resource should now be cached
 	if store.CacheSize() != 1 {
 		t.Errorf("expected cache size 1 after fetch, got %d", store.CacheSize())
+	}
+}
+
+// TestCachedStore_LRUEviction verifies that the LRU cache evicts the least recently used
+// entry when the cache exceeds its maximum size.
+func TestCachedStore_LRUEviction(t *testing.T) {
+	scheme := runtime.NewScheme()
+
+	// Create 4 resources but set max cache size to 3
+	resources := []*unstructured.Unstructured{
+		createTestResource("default", "cm-1"),
+		createTestResource("default", "cm-2"),
+		createTestResource("default", "cm-3"),
+		createTestResource("default", "cm-4"),
+	}
+
+	client := fake.NewSimpleDynamicClient(scheme, resources[0], resources[1], resources[2], resources[3])
+	testIndexer := createTestIndexer()
+
+	gvr := schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "configmaps",
+	}
+
+	cfg := &CachedStoreConfig{
+		NumKeys:      2,
+		CacheTTL:     5 * time.Minute,
+		MaxCacheSize: 3, // Only 3 entries fit
+		Client:       client,
+		GVR:          gvr,
+		Namespace:    "",
+		Indexer:      testIndexer,
+	}
+
+	store, err := NewCachedStore(cfg)
+	if err != nil {
+		t.Fatalf("NewCachedStore failed: %v", err)
+	}
+
+	// Add 4 resources - cache should evict the oldest
+	for _, res := range resources {
+		if err := store.Add(res, []string{res.GetNamespace(), res.GetName()}); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+
+	// All 4 refs should exist
+	if store.Size() != 4 {
+		t.Errorf("expected size 4, got %d", store.Size())
+	}
+
+	// But cache should only hold 3 entries (LRU evicted the first)
+	if store.CacheSize() != 3 {
+		t.Errorf("expected cache size 3 (LRU limit), got %d", store.CacheSize())
 	}
 }

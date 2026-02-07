@@ -1,6 +1,7 @@
 package templating
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
@@ -25,7 +26,7 @@ func TestScriggoWhitespaceTrim(t *testing.T) {
 				return
 			}
 
-			output, err := engine.Render("test", nil)
+			output, err := engine.Render(context.Background(), "test", nil)
 			if err != nil {
 				fmt.Printf("%s: Render error: %v\n", tt.name, err)
 				return

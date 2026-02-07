@@ -44,6 +44,46 @@ const (
 	SchedulerEventBufferSize = 50
 )
 
+// deploymentPhase represents the current phase of the deployment scheduler state machine.
+type deploymentPhase int
+
+const (
+	// phaseIdle means no deployment is in progress or pending scheduling.
+	phaseIdle deploymentPhase = iota
+
+	// phaseRateLimiting means a deployment is waiting for the minimum interval to elapse.
+	// The timeout checker should NOT fire during this phase.
+	phaseRateLimiting
+
+	// phaseDeploying means a deployment event has been published and we're waiting for completion.
+	// The timeout checker SHOULD fire if this phase lasts too long.
+	phaseDeploying
+)
+
+// String returns a human-readable representation of the deployment phase.
+func (p deploymentPhase) String() string {
+	switch p {
+	case phaseIdle:
+		return "idle"
+	case phaseRateLimiting:
+		return "rate_limiting"
+	case phaseDeploying:
+		return "deploying"
+	default:
+		return "unknown"
+	}
+}
+
+// schedulerState groups the deployment scheduling state into a single struct.
+// All fields are protected by DeploymentScheduler.schedulerMutex.
+type schedulerState struct {
+	phase                 deploymentPhase
+	activeCorrelationID   string
+	deploymentStartTime   time.Time
+	pending               *scheduledDeployment
+	lastDeploymentEndTime time.Time
+}
+
 // scheduledDeployment represents a deployment that was triggered while another
 // deployment was in progress. Only the latest scheduled deployment is kept (latest wins).
 type scheduledDeployment struct {
@@ -93,13 +133,9 @@ type DeploymentScheduler struct {
 	templateConfigNamespace string        // Namespace from ConfigValidatedEvent.TemplateConfig
 
 	// Deployment scheduling and rate limiting
-	schedulerMutex                sync.Mutex
-	deploymentInProgress          bool
-	deploymentStartTime           time.Time // When the current deployment started
-	activeDeploymentCorrelationID string    // Correlation ID of the active deployment (for cancellation)
-	pendingDeployment             *scheduledDeployment
-	lastDeploymentEndTime         time.Time // When the last deployment completed
-	deploymentTimeout             time.Duration
+	schedulerMutex    sync.Mutex
+	state             schedulerState
+	deploymentTimeout time.Duration
 
 	// Cache for deployment optimization - skip if config unchanged
 	lastDeployedConfigHash string    // SHA-256 hash of last successfully deployed config
@@ -490,16 +526,16 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 
 	s.schedulerMutex.Lock()
 
-	// Mark deployment as complete and clear start time
-	s.deploymentInProgress = false
-	s.deploymentStartTime = time.Time{}
-	s.activeDeploymentCorrelationID = ""
-	s.lastDeploymentEndTime = time.Now()
+	// Transition to idle and record completion time
+	s.state.phase = phaseIdle
+	s.state.deploymentStartTime = time.Time{}
+	s.state.activeCorrelationID = ""
+	s.state.lastDeploymentEndTime = time.Now()
 
 	// Check if there's a pending deployment to process
-	pending := s.pendingDeployment
+	pending := s.state.pending
 	if pending != nil {
-		s.pendingDeployment = nil
+		s.state.pending = nil
 		s.schedulerMutex.Unlock()
 
 		s.logger.Debug("Deployment completed, processing queued deployment",
@@ -532,9 +568,9 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 ) {
 	s.schedulerMutex.Lock()
 
-	if s.deploymentInProgress {
-		// Deployment already in progress - overwrite pending (latest wins)
-		s.pendingDeployment = &scheduledDeployment{
+	if s.state.phase != phaseIdle {
+		// Deployment already in progress (rate limiting or deploying) - overwrite pending (latest wins)
+		s.state.pending = &scheduledDeployment{
 			config:        config,
 			auxFiles:      auxFiles,
 			parsedConfig:  parsedConfig,
@@ -547,14 +583,15 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 		s.logger.Debug("Deployment in progress, queued for later",
 			"reason", reason,
 			"endpoint_count", len(endpoints),
+			"phase", s.state.phase.String(),
 			"correlation_id", correlationID)
 		return
 	}
 
-	// Mark as in-progress, track start time and correlation ID, and unlock before scheduling
-	s.deploymentInProgress = true
-	s.deploymentStartTime = time.Now()
-	s.activeDeploymentCorrelationID = correlationID
+	// Transition to rate limiting phase, track start time and correlation ID
+	s.state.phase = phaseRateLimiting
+	s.state.deploymentStartTime = time.Now()
+	s.state.activeCorrelationID = correlationID
 	s.schedulerMutex.Unlock()
 
 	// Schedule deployment asynchronously to avoid blocking event loop
@@ -578,7 +615,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 ) {
 	// Get last deployment time for rate limiting
 	s.schedulerMutex.Lock()
-	lastDeploymentEnd := s.lastDeploymentEndTime
+	lastDeploymentEnd := s.state.lastDeploymentEndTime
 	s.schedulerMutex.Unlock()
 
 	// Enforce minimum deployment interval (rate limiting)
@@ -600,8 +637,8 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 			case <-ctx.Done():
 				timer.Stop()
 				s.schedulerMutex.Lock()
-				s.deploymentInProgress = false
-				s.activeDeploymentCorrelationID = ""
+				s.state.phase = phaseIdle
+				s.state.activeCorrelationID = ""
 				s.schedulerMutex.Unlock()
 				s.logger.Info("Deployment scheduling cancelled during rate limit sleep",
 					"reason", reason)
@@ -609,6 +646,12 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 			}
 		}
 	}
+
+	// Transition from rate limiting to deploying
+	s.schedulerMutex.Lock()
+	s.state.phase = phaseDeploying
+	s.state.deploymentStartTime = time.Now() // Reset start time to when actual deployment begins
+	s.schedulerMutex.Unlock()
 
 	// Get runtime config metadata and content checksum under lock
 	s.mu.RLock()
@@ -656,26 +699,26 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 
 	// Check for pending deployment and process it
 	s.schedulerMutex.Lock()
-	pending := s.pendingDeployment
-	s.pendingDeployment = nil
+	pending := s.state.pending
+	s.state.pending = nil
 
 	if pending == nil {
-		// No pending work - wait for DeploymentCompletedEvent to mark as done
-		// (deploymentInProgress stays true until handleDeploymentCompleted)
+		// No pending work - wait for DeploymentCompletedEvent to transition to idle
+		// (phase stays phaseDeploying until handleDeploymentCompleted)
 		s.schedulerMutex.Unlock()
 		return
 	}
 
-	// Pending deployment exists - stay in scheduling mode
-	// (deploymentInProgress stays true)
+	// Pending deployment exists - transition back to rate limiting for next cycle
+	s.state.phase = phaseRateLimiting
 	s.schedulerMutex.Unlock()
 
 	// Check context before processing pending
 	select {
 	case <-ctx.Done():
 		s.schedulerMutex.Lock()
-		s.deploymentInProgress = false // Shutdown case - safe to clear
-		s.activeDeploymentCorrelationID = ""
+		s.state.phase = phaseIdle
+		s.state.activeCorrelationID = ""
 		s.schedulerMutex.Unlock()
 		s.logger.Info("Deployment scheduling cancelled, discarding pending deployment",
 			"reason", pending.reason)
@@ -688,7 +731,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		"endpoint_count", len(pending.endpoints),
 		"correlation_id", pending.correlationID)
 
-	// Recursive: schedule pending (we're still marked as in-progress)
+	// Recursive: schedule pending (we're still in non-idle state)
 	s.scheduleWithRateLimitUnlocked(ctx, pending.config, pending.auxFiles, pending.parsedConfig,
 		pending.endpoints, pending.reason, pending.correlationID, pending.coalescible)
 }
@@ -716,23 +759,26 @@ func (s *DeploymentScheduler) handleConfigPublished(event *events.ConfigPublishe
 // potential deadlocks if there's a race condition during shutdown.
 //
 // This prevents scenarios where:
-//   - deploymentInProgress is stuck at true, blocking future deployments
-//   - pendingDeployment contains stale deployments that shouldn't execute
+//   - phase is stuck at non-idle, blocking future deployments
+//   - pending contains stale deployments that shouldn't execute
 func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
 
-	if s.deploymentInProgress || s.pendingDeployment != nil {
+	if s.state.phase != phaseIdle || s.state.pending != nil {
 		s.logger.Info("Lost leadership, clearing deployment state",
-			"deployment_in_progress", s.deploymentInProgress,
-			"has_pending", s.pendingDeployment != nil)
+			"phase", s.state.phase.String(),
+			"has_pending", s.state.pending != nil)
 	}
 
-	// Clear deployment state to prevent stale deployments
-	s.deploymentInProgress = false
-	s.deploymentStartTime = time.Time{}
-	s.activeDeploymentCorrelationID = ""
-	s.pendingDeployment = nil
+	// Transition to idle and clear all transient state
+	s.state.phase = phaseIdle
+	s.state.deploymentStartTime = time.Time{}
+	s.state.activeCorrelationID = ""
+	s.state.pending = nil
+
+	// Note: state.lastDeploymentEndTime is NOT cleared - this historical data is safe to keep
+	// and helps prevent rapid deployments if leadership is quickly reacquired
 
 	// Clear deployment cache - new leader should verify config state
 	s.mu.Lock()
@@ -740,9 +786,6 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	s.lastDeployedPodSetHash = ""
 	s.lastDeployedTime = time.Time{}
 	s.mu.Unlock()
-
-	// Note: lastDeploymentEndTime is NOT cleared - this historical data is safe to keep
-	// and helps prevent rapid deployments if leadership is quickly reacquired
 }
 
 // checkDeploymentTimeout checks if the current deployment has exceeded the timeout.
@@ -753,13 +796,14 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 // leadership transitions where DeploymentCompletedEvent may be lost.
 func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 	s.schedulerMutex.Lock()
-	if !s.deploymentInProgress {
+	// Only check timeout in deploying phase - rate limiting has its own timeout via context
+	if s.state.phase != phaseDeploying {
 		s.schedulerMutex.Unlock()
 		return
 	}
-	startTime := s.deploymentStartTime
-	activeCorrelationID := s.activeDeploymentCorrelationID
-	pending := s.pendingDeployment
+	startTime := s.state.deploymentStartTime
+	activeCorrelationID := s.state.activeCorrelationID
+	pending := s.state.pending
 	s.schedulerMutex.Unlock()
 
 	// Skip if deployment hasn't started yet (startTime is zero)
@@ -787,10 +831,10 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 	}
 
 	s.schedulerMutex.Lock()
-	s.deploymentInProgress = false
-	s.deploymentStartTime = time.Time{}
-	s.activeDeploymentCorrelationID = ""
-	s.pendingDeployment = nil
+	s.state.phase = phaseIdle
+	s.state.deploymentStartTime = time.Time{}
+	s.state.activeCorrelationID = ""
+	s.state.pending = nil
 	s.schedulerMutex.Unlock()
 
 	// If there was a pending deployment, process it now

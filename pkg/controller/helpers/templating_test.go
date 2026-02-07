@@ -15,6 +15,7 @@
 package helpers
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -98,7 +99,7 @@ func TestNewEngineFromConfig_WithGlobalFunctions(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, engine)
 
-	output, err := engine.Render("haproxy.cfg", nil)
+	output, err := engine.Render(context.Background(), "haproxy.cfg", nil)
 	require.NoError(t, err)
 	// Scriggo adds trailing newline
 	assert.Equal(t, "custom_output\n", output)
@@ -190,7 +191,7 @@ func TestNewEngineFromConfig_FiltersRegistered(t *testing.T) {
 	engine, err := NewEngineFromConfig(cfg, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("haproxy.cfg", nil)
+	output, err := engine.Render(context.Background(), "haproxy.cfg", nil)
 	require.NoError(t, err)
 	// Verify both matching hosts are present (whitespace handling can vary)
 	assert.Contains(t, output, "api.example.com")
@@ -212,7 +213,7 @@ func TestNewEngineFromConfig_B64DecodeFilterRegistered(t *testing.T) {
 	engine, err := NewEngineFromConfig(cfg, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("haproxy.cfg", nil)
+	output, err := engine.Render(context.Background(), "haproxy.cfg", nil)
 	require.NoError(t, err)
 	// Scriggo adds trailing newline
 	assert.Equal(t, "test\n", output)

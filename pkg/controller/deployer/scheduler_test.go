@@ -326,7 +326,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 	scheduler.schedulerMutex.Lock()
-	scheduler.deploymentInProgress = true
+	scheduler.state.phase = phaseDeploying
 	scheduler.schedulerMutex.Unlock()
 
 	event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
@@ -340,8 +340,8 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
 
-	assert.False(t, scheduler.deploymentInProgress)
-	assert.False(t, scheduler.lastDeploymentEndTime.IsZero())
+	assert.Equal(t, phaseIdle, scheduler.state.phase)
+	assert.False(t, scheduler.state.lastDeploymentEndTime.IsZero())
 }
 
 // TestDeploymentScheduler_HandleConfigPublished tests config published handling.
@@ -372,8 +372,8 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 
 	// Set up state that should be cleared
 	scheduler.schedulerMutex.Lock()
-	scheduler.deploymentInProgress = true
-	scheduler.pendingDeployment = &scheduledDeployment{
+	scheduler.state.phase = phaseDeploying
+	scheduler.state.pending = &scheduledDeployment{
 		config: "test",
 		reason: "test",
 	}
@@ -386,8 +386,8 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
 
-	assert.False(t, scheduler.deploymentInProgress)
-	assert.Nil(t, scheduler.pendingDeployment)
+	assert.Equal(t, phaseIdle, scheduler.state.phase)
+	assert.Nil(t, scheduler.state.pending)
 }
 
 // TestDeploymentScheduler_ScheduleOrQueue tests queueing behavior.
@@ -401,8 +401,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 
 	t.Run("queues when deployment in progress", func(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
-		scheduler.deploymentInProgress = true
-		scheduler.pendingDeployment = nil
+		scheduler.state.phase = phaseDeploying
+		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
 		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []interface{}{}, "test", "test-correlation-id", true)
@@ -410,14 +410,14 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
 
-		require.NotNil(t, scheduler.pendingDeployment)
-		assert.Equal(t, "test", scheduler.pendingDeployment.reason)
+		require.NotNil(t, scheduler.state.pending)
+		assert.Equal(t, "test", scheduler.state.pending.reason)
 	})
 
 	t.Run("latest wins when queueing", func(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
-		scheduler.deploymentInProgress = true
-		scheduler.pendingDeployment = nil
+		scheduler.state.phase = phaseDeploying
+		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
 		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []interface{}{}, "first", "correlation-1", true)
@@ -426,9 +426,9 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
 
-		require.NotNil(t, scheduler.pendingDeployment)
-		assert.Equal(t, "second", scheduler.pendingDeployment.reason)
-		assert.Equal(t, "config2", scheduler.pendingDeployment.config)
+		require.NotNil(t, scheduler.state.pending)
+		assert.Equal(t, "second", scheduler.state.pending.reason)
+		assert.Equal(t, "config2", scheduler.state.pending.config)
 	})
 }
 
@@ -505,7 +505,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 
 	t.Run("routes LostLeadershipEvent", func(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
-		scheduler.deploymentInProgress = true
+		scheduler.state.phase = phaseDeploying
 		scheduler.schedulerMutex.Unlock()
 
 		event := events.NewLostLeadershipEvent("test-pod", "test")
@@ -515,12 +515,12 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
 
-		assert.False(t, scheduler.deploymentInProgress)
+		assert.Equal(t, phaseIdle, scheduler.state.phase)
 	})
 
 	t.Run("routes DeploymentCompletedEvent", func(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
-		scheduler.deploymentInProgress = true
+		scheduler.state.phase = phaseDeploying
 		scheduler.schedulerMutex.Unlock()
 
 		event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
@@ -534,7 +534,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
 
-		assert.False(t, scheduler.deploymentInProgress)
+		assert.Equal(t, phaseIdle, scheduler.state.phase)
 	})
 
 	t.Run("routes DriftPreventionTriggeredEvent", func(t *testing.T) {
@@ -637,8 +637,8 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 
 	// Set up state with deployment in progress and pending
 	scheduler.schedulerMutex.Lock()
-	scheduler.deploymentInProgress = true
-	scheduler.pendingDeployment = &scheduledDeployment{
+	scheduler.state.phase = phaseDeploying
+	scheduler.state.pending = &scheduledDeployment{
 		config:        "pending-config",
 		auxFiles:      nil,
 		endpoints:     []interface{}{dataplane.Endpoint{URL: "http://localhost:5555"}},
@@ -684,7 +684,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 
 	// Set last deployment time to recent past
 	scheduler.schedulerMutex.Lock()
-	scheduler.lastDeploymentEndTime = time.Now()
+	scheduler.state.lastDeploymentEndTime = time.Now()
 	scheduler.schedulerMutex.Unlock()
 
 	start := time.Now()
@@ -729,8 +729,8 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 
 	// Set last deployment time to recent past
 	scheduler.schedulerMutex.Lock()
-	scheduler.deploymentInProgress = true
-	scheduler.lastDeploymentEndTime = time.Now()
+	scheduler.state.phase = phaseRateLimiting
+	scheduler.state.lastDeploymentEndTime = time.Now()
 	scheduler.schedulerMutex.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -762,10 +762,10 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 		t.Fatal("scheduling should have been cancelled")
 	}
 
-	// deploymentInProgress should be cleared
+	// Phase should be idle after cancellation
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
-	assert.False(t, scheduler.deploymentInProgress)
+	assert.Equal(t, phaseIdle, scheduler.state.phase)
 }
 
 // TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig tests runtime config name computation.
@@ -824,7 +824,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 
 	// Set last deployment time to trigger rate limiting
 	scheduler.schedulerMutex.Lock()
-	scheduler.lastDeploymentEndTime = time.Now()
+	scheduler.state.lastDeploymentEndTime = time.Now()
 	scheduler.schedulerMutex.Unlock()
 
 	// Start first scheduling
@@ -842,7 +842,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 	// Add pending deployment while first is being rate limited
 	time.Sleep(10 * time.Millisecond)
 	scheduler.schedulerMutex.Lock()
-	scheduler.pendingDeployment = &scheduledDeployment{
+	scheduler.state.pending = &scheduledDeployment{
 		config:        "config2",
 		auxFiles:      nil,
 		endpoints:     []interface{}{},
@@ -875,4 +875,57 @@ collectLoop:
 
 	// Should have received at least the first deployment
 	assert.GreaterOrEqual(t, eventsReceived, 1)
+}
+
+// TestDeploymentScheduler_StatePhases tests the state machine phase transitions.
+func TestDeploymentScheduler_StatePhases(t *testing.T) {
+	t.Run("phase string representation", func(t *testing.T) {
+		assert.Equal(t, "idle", phaseIdle.String())
+		assert.Equal(t, "rate_limiting", phaseRateLimiting.String())
+		assert.Equal(t, "deploying", phaseDeploying.String())
+		assert.Equal(t, "unknown", deploymentPhase(99).String())
+	})
+
+	t.Run("initial phase is idle", func(t *testing.T) {
+		bus := testutil.NewTestBus()
+		scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+
+		scheduler.schedulerMutex.Lock()
+		defer scheduler.schedulerMutex.Unlock()
+
+		assert.Equal(t, phaseIdle, scheduler.state.phase)
+	})
+
+	t.Run("timeout only fires in deploying phase", func(t *testing.T) {
+		bus := testutil.NewTestBus()
+		bus.Start()
+		scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+		ctx := context.Background()
+
+		// In rate limiting phase with expired timeout - should NOT fire
+		scheduler.schedulerMutex.Lock()
+		scheduler.state.phase = phaseRateLimiting
+		scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second)
+		scheduler.schedulerMutex.Unlock()
+
+		scheduler.checkDeploymentTimeout(ctx)
+
+		scheduler.schedulerMutex.Lock()
+		// Phase should be unchanged - timeout checker skips rate limiting phase
+		assert.Equal(t, phaseRateLimiting, scheduler.state.phase)
+		scheduler.schedulerMutex.Unlock()
+
+		// In deploying phase with expired timeout - SHOULD fire
+		scheduler.schedulerMutex.Lock()
+		scheduler.state.phase = phaseDeploying
+		scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second)
+		scheduler.state.activeCorrelationID = "test-correlation"
+		scheduler.schedulerMutex.Unlock()
+
+		scheduler.checkDeploymentTimeout(ctx)
+
+		scheduler.schedulerMutex.Lock()
+		assert.Equal(t, phaseIdle, scheduler.state.phase)
+		scheduler.schedulerMutex.Unlock()
+	})
 }

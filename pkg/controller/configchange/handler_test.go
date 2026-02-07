@@ -311,10 +311,7 @@ func TestConfigChangeHandler_StateCaching(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// Initially no cached config
-	handler.mu.RLock()
-	assert.False(t, handler.hasValidatedConfig)
-	assert.Nil(t, handler.lastConfigValidatedEvent)
-	handler.mu.RUnlock()
+	assert.False(t, handler.configReplayer.HasState())
 
 	// Publish ConfigParsedEvent (with no validators, will be immediately validated)
 	testConfig := &coreconfig.Config{}
@@ -322,11 +319,10 @@ func TestConfigChangeHandler_StateCaching(t *testing.T) {
 	time.Sleep(testutil.DebounceWait)
 
 	// Should now have cached config
-	handler.mu.RLock()
-	assert.True(t, handler.hasValidatedConfig)
-	assert.NotNil(t, handler.lastConfigValidatedEvent)
-	assert.Equal(t, "v1", handler.lastConfigValidatedEvent.Version)
-	handler.mu.RUnlock()
+	assert.True(t, handler.configReplayer.HasState())
+	cached, ok := handler.configReplayer.Get()
+	require.True(t, ok)
+	assert.Equal(t, "v1", cached.Version)
 }
 
 func TestConfigChangeHandler_IgnoresOtherEvents(t *testing.T) {

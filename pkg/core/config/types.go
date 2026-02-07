@@ -18,9 +18,14 @@
 // from the Kubernetes ConfigMap and credentials from the Secret.
 package config
 
+import "time"
+
 // DefaultCompressionThreshold is the default minimum size in bytes at which configs are compressed.
 // This matches the CRD kubebuilder default annotation.
 const DefaultCompressionThreshold int64 = 1048576 // 1 MiB
+
+// DefaultRenderTimeout is the default maximum duration for rendering a single template.
+const DefaultRenderTimeout = 30 * time.Second
 
 // Config is the root configuration structure loaded from the ConfigMap.
 type Config struct {
@@ -420,6 +425,10 @@ type TemplatingSettings struct {
 	// Valid values: "scriggo" (default and only supported engine)
 	Engine string `yaml:"engine" json:"engine"`
 
+	// RenderTimeout is the maximum time allowed for rendering a single template.
+	// Uses Go duration format (e.g., "30s", "1m"). Default: "30s"
+	RenderTimeout string `yaml:"render_timeout" json:"renderTimeout"`
+
 	// ExtraContext provides custom variables that are passed to all templates.
 	//
 	// This allows users to add arbitrary data to the template context without
@@ -435,6 +444,16 @@ type TemplatingSettings struct {
 	//
 	// Templates can then reference these variables directly: {{ debug.enabled }}, {{ environment }}, etc.
 	ExtraContext map[string]interface{} `yaml:"extra_context" json:"extraContext"`
+}
+
+// GetRenderTimeout returns the configured render timeout or the default.
+func (t *TemplatingSettings) GetRenderTimeout() time.Duration {
+	if t.RenderTimeout != "" {
+		if d, err := time.ParseDuration(t.RenderTimeout); err == nil {
+			return d
+		}
+	}
+	return DefaultRenderTimeout
 }
 
 // Credentials contains HAProxy Dataplane API credentials.

@@ -380,6 +380,49 @@ func TestMetrics_AddTimeAsLeader(t *testing.T) {
 }
 
 // =============================================================================
+// Event Drop Metrics Tests
+// =============================================================================
+
+func TestMetrics_RecordEventDrop(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Record a drop from reconciler subscriber
+	metrics.RecordEventDrop("reconciler", "ResourceIndexUpdatedEvent")
+
+	// Verify aggregate counters incremented
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.EventsDropped))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.EventsDroppedCritical))
+
+	// Verify per-subscriber counter
+	counter, err := metrics.EventsDroppedBySubscriber.GetMetricWithLabelValues("reconciler", "ResourceIndexUpdatedEvent")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(counter))
+
+	// Record another drop from a different subscriber
+	metrics.RecordEventDrop("deployer", "ReconciliationCompletedEvent")
+
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.EventsDropped))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.EventsDroppedCritical))
+
+	deployer, err := metrics.EventsDroppedBySubscriber.GetMetricWithLabelValues("deployer", "ReconciliationCompletedEvent")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(deployer))
+
+	// Record multiple drops from same subscriber
+	metrics.RecordEventDrop("reconciler", "ResourceIndexUpdatedEvent")
+	metrics.RecordEventDrop("reconciler", "ConfigValidatedEvent")
+
+	reconcilerIndex, err := metrics.EventsDroppedBySubscriber.GetMetricWithLabelValues("reconciler", "ResourceIndexUpdatedEvent")
+	require.NoError(t, err)
+	assert.Equal(t, 2.0, testutil.ToFloat64(reconcilerIndex))
+
+	reconcilerConfig, err := metrics.EventsDroppedBySubscriber.GetMetricWithLabelValues("reconciler", "ConfigValidatedEvent")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(reconcilerConfig))
+}
+
+// =============================================================================
 // Validation Tests Metrics
 // =============================================================================
 

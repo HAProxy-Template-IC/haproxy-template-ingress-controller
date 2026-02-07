@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -630,7 +631,7 @@ count: {{ len(items) }}`,
 			)
 			require.NoError(t, err)
 
-			output, err := engine.Render("test", nil)
+			output, err := engine.Render(context.Background(), "test", nil)
 			require.NoError(t, err)
 			assert.Contains(t, output, tt.expected)
 		})
@@ -660,7 +661,7 @@ func TestScriggo_FailFunction(t *testing.T) {
 		engine, err := NewScriggo(templates, []string{"test"}, nil, customFunctions, nil)
 		require.NoError(t, err)
 
-		_, err = engine.Render("test", nil)
+		_, err = engine.Render(context.Background(), "test", nil)
 
 		// Document current behavior - does error propagate?
 		t.Logf("Error from function: %v", err)
@@ -682,7 +683,7 @@ func TestScriggo_FailFunction(t *testing.T) {
 		engine, err := NewScriggo(templates, []string{"test"}, nil, customFunctions, nil)
 		require.NoError(t, err)
 
-		output, err := engine.Render("test", nil)
+		output, err := engine.Render(context.Background(), "test", nil)
 		t.Logf("Output: %q, Error: %v", output, err)
 
 		// The scriggoFail function uses env.Stop() to halt execution
@@ -719,7 +720,7 @@ func TestScriggo_FailFunction_DirectSignature(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = engine.Render("test", nil)
+	_, err = engine.Render(context.Background(), "test", nil)
 	t.Logf("Direct signature test - Error: %v", err)
 }
 
@@ -801,7 +802,7 @@ b={{ config["b"] }}`,
 			engine, err := NewScriggo(templates, []string{"test"}, nil, nil, nil)
 			require.NoError(t, err)
 
-			output, err := engine.Render("test", nil)
+			output, err := engine.Render(context.Background(), "test", nil)
 			require.NoError(t, err)
 			assert.Contains(t, strings.TrimSpace(output), tt.expected)
 		})
@@ -869,7 +870,7 @@ count={{ len(keys(config)) }}`,
 			engine, err := NewScriggo(templates, []string{"test"}, nil, nil, nil)
 			require.NoError(t, err)
 
-			output, err := engine.Render("test", nil)
+			output, err := engine.Render(context.Background(), "test", nil)
 			require.NoError(t, err)
 			assert.Contains(t, strings.TrimSpace(output), tt.expected)
 		})
@@ -893,7 +894,7 @@ func TestScriggoFirstSeen_Basic(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	// Only first occurrence of each item should be output
 	assert.Equal(t, "FIRST:a FIRST:b FIRST:c", strings.TrimSpace(output))
@@ -915,7 +916,7 @@ func TestScriggoFirstSeen_CompositeKey(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	// Each unique ns/name combination should appear once
 	assert.Contains(t, output, "default/svc1")
@@ -936,7 +937,7 @@ func TestScriggoFirstSeen_EmptyKey(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	// Empty key should always return true (no caching)
 	assert.Contains(t, output, "empty1")
@@ -962,7 +963,7 @@ count={{ len(filtered) }}`,
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	// Items "a" and "c" have "http" attribute (even if empty map)
 	assert.Contains(t, output, "count=2")
@@ -983,7 +984,7 @@ func TestScriggoSelectAttr_EqualTest(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	assert.Contains(t, output, "a")
 	assert.Contains(t, output, "c")
@@ -1005,7 +1006,7 @@ func TestScriggoSelectAttr_NotEqualTest(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	assert.Contains(t, output, "b")
 	assert.NotContains(t, output, "a")
@@ -1029,7 +1030,7 @@ func TestScriggoSelectAttr_InTest(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	assert.Contains(t, output, "a")
 	assert.Contains(t, output, "b")
@@ -1061,7 +1062,7 @@ func TestScriggoJoinKey_Basic(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "default_my-service_80", strings.TrimSpace(output))
 }
@@ -1078,7 +1079,7 @@ func TestScriggoJoinKey_WithVariables(t *testing.T) {
 	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
 	require.NoError(t, err)
 
-	output, err := engine.Render("test", nil)
+	output, err := engine.Render(context.Background(), "test", nil)
 	require.NoError(t, err)
 	assert.Contains(t, output, "kube-system/coredns/53")
 }

@@ -53,9 +53,10 @@ type Metrics struct {
 	// Event metrics
 	EventSubscribers           prometheus.Gauge
 	EventsPublished            prometheus.Counter
-	EventsDropped              prometheus.Counter // Total drops (backwards compatible)
-	EventsDroppedCritical      prometheus.Counter // Drops from critical subscribers (alert-worthy)
-	EventsDroppedObservability prometheus.Gauge   // Drops from observability subscribers (polled, expected)
+	EventsDropped              prometheus.Counter     // Total drops (backwards compatible)
+	EventsDroppedCritical      prometheus.Counter     // Drops from critical subscribers (alert-worthy)
+	EventsDroppedBySubscriber  *prometheus.CounterVec // Drops by subscriber and event type
+	EventsDroppedObservability prometheus.Gauge       // Drops from observability subscribers (polled, expected)
 
 	// Queue wait metrics - time events spend waiting in channels before processing
 	ReconciliationQueueWait *prometheus.HistogramVec
@@ -193,6 +194,12 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_events_dropped_critical_total",
 			"Events dropped from critical subscribers (alert if > 0)",
+		),
+		EventsDroppedBySubscriber: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_events_dropped_by_subscriber_total",
+			"Events dropped per subscriber and event type",
+			[]string{"subscriber", "event_type"},
 		),
 		EventsDroppedObservability: pkgmetrics.NewGauge(
 			registry,
@@ -404,12 +411,17 @@ func (m *Metrics) RecordValidationTests(total, passed, failed int, durationSecon
 }
 
 // RecordEventDrop records an event drop due to full subscriber buffer.
-// This increments the total drop counter for backwards compatibility.
+// This increments both aggregate counters and per-subscriber counters.
 // Call this from the drop callback registered with EventBus.SetDropCallback().
-func (m *Metrics) RecordEventDrop() {
+//
+// Parameters:
+//   - subscriberName: The name of the subscriber that dropped the event
+//   - eventType: The event type that was dropped
+func (m *Metrics) RecordEventDrop(subscriberName, eventType string) {
 	m.EventsDropped.Inc()
 	// Also increment critical drops since onDrop callback is only called for critical subscribers
 	m.EventsDroppedCritical.Inc()
+	m.EventsDroppedBySubscriber.WithLabelValues(subscriberName, eventType).Inc()
 }
 
 // SetObservabilityDrops sets the observability drop gauge from EventBus statistics.

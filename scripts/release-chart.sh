@@ -7,7 +7,8 @@
 # This script:
 # 1. Validates the version format (SemVer)
 # 2. Updates Chart.yaml version
-# 3. Commits changes (tag is created automatically by CI after merge)
+# 3. Updates README helm install version references
+# 4. Commits changes (tag is created automatically by CI after merge)
 #
 # After running this script:
 #   1. Push to a release branch and create an MR
@@ -83,6 +84,11 @@ fi
 echo "Updating Chart.yaml version..."
 sed -i "s/^version:.*/version: $VERSION/" charts/haptic/Chart.yaml
 
+# Update README helm install version references
+echo "Updating README.md helm install versions..."
+sed -i "s|haptic --version [0-9a-z.-]*|haptic --version $VERSION|" README.md
+sed -i "s|haptic --version [0-9a-z.-]*|haptic --version $VERSION|" charts/haptic/README.md
+
 # Show changes
 echo ""
 echo "Changes to be committed:"
@@ -91,7 +97,7 @@ git diff --stat
 # Commit changes (tag created automatically by CI after merge)
 echo ""
 echo "Creating commit..."
-git add charts/haptic/Chart.yaml
+git add charts/haptic/Chart.yaml README.md charts/haptic/README.md
 git commit -m "release: chart v$VERSION"
 
 success ""

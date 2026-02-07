@@ -32,6 +32,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -63,15 +64,13 @@ type HAProxyValidatorComponent struct {
 	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger    *slog.Logger
 
-	// State protected by mutex (for leadership transition replay and config caching)
-	mu                       sync.RWMutex
-	lastValidationSucceeded  bool
-	lastValidationWarnings   []string
-	lastValidationDurationMs int64
-	lastCorrelationID        string // Correlation ID from triggering event
-	lastTriggerReason        string // Reason from ReconciliationTriggeredEvent (e.g., "drift_prevention")
-	lastCoalescible          bool   // Coalescibility flag from TemplateRenderedEvent
-	hasValidationResult      bool
+	// State replay for leadership transitions (only successful validations)
+	validationReplayer *leadership.StateReplayer[*events.ValidationCompletedEvent]
+
+	// State protected by mutex (for config caching)
+	mu                      sync.RWMutex
+	lastValidationSucceeded bool
+	hasValidationResult     bool
 
 	// Config hash cache to skip re-validating identical failed configs
 	// This prevents log spam when the same broken config is re-rendered repeatedly
@@ -103,9 +102,10 @@ func NewHAProxyValidator(
 	)
 
 	return &HAProxyValidatorComponent{
-		eventBus:  eventBus,
-		eventChan: eventChan,
-		logger:    logger,
+		eventBus:           eventBus,
+		eventChan:          eventChan,
+		logger:             logger,
+		validationReplayer: leadership.NewStateReplayer[*events.ValidationCompletedEvent](eventBus),
 	}
 }
 
@@ -310,28 +310,27 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 	// Validation succeeded
 	durationMs := time.Since(startTime).Milliseconds()
 
-	// Cache validation result for leadership transition replay
 	// Clear config hash cache since validation succeeded (new successful config)
 	v.mu.Lock()
 	v.lastValidationSucceeded = true
-	v.lastValidationWarnings = []string{} // No warnings
-	v.lastValidationDurationMs = durationMs
-	v.lastCorrelationID = correlationID
-	v.lastTriggerReason = triggerReason
-	v.lastCoalescible = event.Coalescible()
 	v.hasValidationResult = true
 	v.lastConfigHash = ""        // Clear cache - new valid config
 	v.lastValidationErrors = nil // Clear cached errors
 	v.mu.Unlock()
 
-	v.eventBus.Publish(events.NewValidationCompletedEvent(
+	completedEvent := events.NewValidationCompletedEvent(
 		[]string{}, // No warnings
 		durationMs,
 		triggerReason,
 		parsedConfig,
 		event.Coalescible(),
 		events.PropagateCorrelation(event),
-	))
+	)
+
+	// Cache successful validation for leadership transition replay
+	v.validationReplayer.Cache(completedEvent)
+
+	v.eventBus.Publish(completedEvent)
 }
 
 // handleBecameLeader handles BecameLeaderEvent by re-publishing the last validation result.
@@ -342,58 +341,23 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 // This prevents the "late subscriber problem" where leader-only components miss events
 // that were published before they started subscribing.
 func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEvent) {
-	v.mu.RLock()
-	hasResult := v.hasValidationResult
-	succeeded := v.lastValidationSucceeded
-	warnings := v.lastValidationWarnings
-	durationMs := v.lastValidationDurationMs
-	correlationID := v.lastCorrelationID
-	triggerReason := v.lastTriggerReason
-	coalescible := v.lastCoalescible
-	v.mu.RUnlock()
-
-	if !hasResult {
+	if !v.validationReplayer.HasState() {
 		v.logger.Debug("Became leader but no validation result available yet, skipping state replay")
 		return
 	}
 
-	if succeeded {
-		v.logger.Debug("Became leader, re-publishing last validation result (success) for DeploymentScheduler",
-			"warnings", len(warnings),
-			"duration_ms", durationMs,
-			"correlation_id", correlationID,
-			"trigger_reason", triggerReason,
-			"coalescible", coalescible)
-
-		// Re-publish with original correlation ID so the deployment can be traced
-		// Note: parsedConfig is nil for replayed events since we don't cache the parsed config
-		// This is acceptable as the parser cache will provide the parsed config on cache hit
-		v.eventBus.Publish(events.NewValidationCompletedEvent(
-			warnings,
-			durationMs,
-			triggerReason,
-			nil, // parsedConfig not cached during leadership replay
-			coalescible,
-			events.WithCorrelation(correlationID, correlationID),
-		))
-	} else {
-		v.logger.Debug("Became leader, last validation failed, skipping state replay")
-		// Note: We only replay ValidationCompletedEvent (success), not ValidationFailedEvent.
-		// DeploymentScheduler only acts on successful validation, so replaying failures
-		// would be unnecessary and could cause confusion.
-	}
+	// StateReplayer only caches successful validations (Cache is called only on success)
+	v.logger.Debug("Became leader, re-publishing last validation result (success) for DeploymentScheduler")
+	v.validationReplayer.Replay()
 }
 
 // publishValidationFailure publishes a validation failure event and caches the failure state.
 // If configHash is provided (non-empty), the hash and errors are cached to skip re-validation
 // of identical failed configs (reduces log spam).
 func (v *HAProxyValidatorComponent) publishValidationFailure(errs []string, durationMs int64, correlationID, triggerReason, configHash string) {
-	// Cache validation failure for leadership transition state
+	// Cache validation failure state (not replayed on leadership transition)
 	v.mu.Lock()
 	v.lastValidationSucceeded = false
-	v.lastValidationDurationMs = durationMs
-	v.lastCorrelationID = correlationID
-	v.lastTriggerReason = triggerReason
 	v.hasValidationResult = true
 	// Cache config hash and errors to skip re-validation of identical failed configs
 	if configHash != "" {

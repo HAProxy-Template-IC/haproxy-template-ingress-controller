@@ -403,7 +403,7 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver) (*single
 
 	// Render main HAProxy config
 	mainStart := time.Now()
-	haproxyConfig, err := c.engine.Render("haproxy.cfg", renderContext)
+	haproxyConfig, err := c.engine.Render(c.ctx, "haproxy.cfg", renderContext)
 	mainMs := time.Since(mainStart).Milliseconds()
 	if err != nil {
 		c.publishRenderFailure("haproxy.cfg", err)
@@ -459,7 +459,7 @@ func (c *Component) renderAuxiliaryFiles(ctx context.Context, renderCtx map[stri
 	// Render map files in parallel
 	for name := range c.config.Maps {
 		g.Go(func() error {
-			rendered, err := c.engine.Render(name, renderCtx)
+			rendered, err := c.engine.Render(ctx, name, renderCtx)
 			if err != nil {
 				c.publishRenderFailure(name, err)
 				return err
@@ -477,7 +477,7 @@ func (c *Component) renderAuxiliaryFiles(ctx context.Context, renderCtx map[stri
 	// Render general files in parallel
 	for name := range c.config.Files {
 		g.Go(func() error {
-			rendered, err := c.engine.Render(name, renderCtx)
+			rendered, err := c.engine.Render(ctx, name, renderCtx)
 			if err != nil {
 				c.publishRenderFailure(name, err)
 				return err
@@ -496,7 +496,7 @@ func (c *Component) renderAuxiliaryFiles(ctx context.Context, renderCtx map[stri
 	// Render SSL certificates in parallel
 	for name := range c.config.SSLCertificates {
 		g.Go(func() error {
-			rendered, err := c.engine.Render(name, renderCtx)
+			rendered, err := c.engine.Render(ctx, name, renderCtx)
 			if err != nil {
 				c.publishRenderFailure(name, err)
 				return err
