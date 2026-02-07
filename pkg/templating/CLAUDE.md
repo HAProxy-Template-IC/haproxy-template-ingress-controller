@@ -3,7 +3,7 @@
 Development context for the template engine library.
 
 **API Documentation**: See `pkg/templating/README.md`
-**Architecture**: See `/docs/development/design.md` (Template Engine section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (Template Engine section)
 
 ## Engine
 
@@ -272,7 +272,7 @@ This works because:
 Focus on testing the library API and error handling:
 
 ```go
-func TestTemplateEngine_Render(t *testing.T) {
+func TestEngine_Render(t *testing.T) {
     tests := []struct {
         name     string
         template string
@@ -323,7 +323,7 @@ func TestTemplateEngine_Render(t *testing.T) {
 ### Test Error Handling
 
 ```go
-func TestTemplateEngine_CompilationError(t *testing.T) {
+func TestEngine_CompilationError(t *testing.T) {
     // Invalid template syntax
     templates := map[string]string{
         "invalid": "{% if true %}\n{% end extra text %}",
@@ -339,7 +339,7 @@ func TestTemplateEngine_CompilationError(t *testing.T) {
     assert.NotEmpty(t, compErr.TemplateSnippet)
 }
 
-func TestTemplateEngine_TemplateNotFound(t *testing.T) {
+func TestEngine_TemplateNotFound(t *testing.T) {
     engine, _ := templating.New(templating.EngineTypeScriggo, map[string]string{
         "exists": "content",
     }, nil, nil, nil)
@@ -438,13 +438,13 @@ if err != nil {
 
 ### Ignoring Thread Safety
 
-**Problem**: Assuming TemplateEngine is not thread-safe.
+**Problem**: Assuming Engine is not thread-safe.
 
 ```go
-// Unnecessary - TemplateEngine is already thread-safe
+// Unnecessary - Engine is already thread-safe
 var mu sync.Mutex
 
-func render(engine *templating.TemplateEngine, ctx map[string]interface{}) string {
+func render(engine templating.Engine, ctx map[string]interface{}) string {
     mu.Lock()
     defer mu.Unlock()
     output, _ := engine.Render("template", ctx)
@@ -452,11 +452,11 @@ func render(engine *templating.TemplateEngine, ctx map[string]interface{}) strin
 }
 ```
 
-**Solution**: Use TemplateEngine concurrently without locking.
+**Solution**: Use Engine concurrently without locking.
 
 ```go
 // Good - no lock needed
-func render(engine *templating.TemplateEngine, ctx map[string]interface{}) string {
+func render(engine templating.Engine, ctx map[string]interface{}) string {
     output, _ := engine.Render("template", ctx)
     return output
 }
@@ -586,7 +586,7 @@ type tracingConfig struct {
 **Render method integration:**
 
 ```go
-func (e *TemplateEngine) Render(templateName string, context map[string]interface{}) (string, error) {
+func (e *ScriggoEngine) Render(templateName string, context map[string]interface{}) (string, error) {
     // Take thread-safe snapshot of enabled flag
     e.tracing.mu.Lock()
     tracingEnabled := e.tracing.enabled
@@ -698,7 +698,7 @@ trace := engine.GetTraceOutput()
 **Basic tracing test:**
 
 ```go
-func TestTemplateEngine_Tracing(t *testing.T) {
+func TestEngine_Tracing(t *testing.T) {
     templates := map[string]string{
         "main": "{{ render \"sub\" }}",
         "sub":  "content",
@@ -1001,7 +1001,7 @@ Use the `has_cached`, `get_cached`, `set_cached` functions to cache expensive co
 ### Benchmarking
 
 ```go
-func BenchmarkTemplateEngine_Render(b *testing.B) {
+func BenchmarkEngine_Render(b *testing.B) {
     templates := map[string]string{
         "simple": "Hello {{ name }}!",
         "loop": `{% for _, i := range items %}{{ i }}{% end %}`,

@@ -42,7 +42,7 @@ validationPaths := dataplane.ValidationPaths{
 // 3. Create test runner
 runner := testrunner.New(
     config,                  // *v1alpha1.HAProxyTemplateConfigSpec
-    engine,                  // *templating.TemplateEngine
+    engine,                  // templating.Engine
     validationPaths,         // dataplane.ValidationPaths
     testrunner.Options{
         Logger: logger,      // *slog.Logger (optional)
@@ -101,7 +101,7 @@ Main test runner that executes validation tests.
 ```go
 func New(
     config *v1alpha1.HAProxyTemplateConfigSpec,
-    engine *templating.TemplateEngine,
+    engine templating.Engine,
     validationPaths dataplane.ValidationPaths,
     options Options,
 ) *Runner

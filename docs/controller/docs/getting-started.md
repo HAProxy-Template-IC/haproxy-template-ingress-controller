@@ -23,7 +23,7 @@ Install the controller and HAProxy using Helm:
 ```bash
 # Install from OCI registry (deploys both controller and HAProxy pods)
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0-alpha.1 \
+  --version 0.1.0-alpha.11 \
   --namespace haptic --create-namespace
 ```
 

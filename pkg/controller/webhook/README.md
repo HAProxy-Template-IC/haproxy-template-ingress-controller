@@ -296,4 +296,4 @@ rule.FailurePolicy = &ignore
 
 - Pure webhook library: `pkg/webhook/README.md`
 - Webhook event types: `pkg/controller/events/README.md`
-- Controller architecture: `docs/development/design.md`
+- Controller architecture: `docs/controller/docs/development/design.md`

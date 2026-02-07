@@ -1118,7 +1118,7 @@ package templating
 // Accepts only primitive types - no dependency on config package.
 func ValidateTemplates(templates map[string]string) []error {
     var errors []error
-    engine, err := NewTemplateEngine()
+    engine, err := New()
     if err != nil {
         return []error{err}
     }

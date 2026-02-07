@@ -87,7 +87,7 @@ For a complete walkthrough, see the [Getting Started](getting-started.md) guide 
 ### Install with Helm
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0-alpha.1
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0-alpha.11
 ```
 
 The Helm chart includes template libraries that support Kubernetes Ingress resources out of the box. See the [Helm Chart Documentation](/helm-chart/latest/) for configuration options.

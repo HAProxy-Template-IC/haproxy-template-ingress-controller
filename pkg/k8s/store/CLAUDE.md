@@ -3,7 +3,7 @@
 Development context for Kubernetes resource storage implementations.
 
 **API Documentation**: See `pkg/k8s/store/README.md`
-**Architecture**: See `/docs/development/design.md` (Resource Indexing section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (Resource Indexing section)
 
 ## When to Work Here
 

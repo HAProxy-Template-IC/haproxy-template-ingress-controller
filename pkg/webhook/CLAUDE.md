@@ -3,7 +3,7 @@
 Development context for the admission webhook library.
 
 **API Documentation**: See `pkg/webhook/README.md`
-**Architecture**: See `/docs/development/design.md` (Webhook section - to be added)
+**Architecture**: See `/docs/controller/docs/development/design.md` (Webhook section - to be added)
 
 ## When to Work Here
 

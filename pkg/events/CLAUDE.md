@@ -3,7 +3,7 @@
 Development context for working with event bus infrastructure.
 
 **API Documentation**: See `pkg/events/README.md`
-**Architecture**: See `/docs/development/design.md` (Event-Driven Architecture section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (Event-Driven Architecture section)
 
 ## When to Work Here
 

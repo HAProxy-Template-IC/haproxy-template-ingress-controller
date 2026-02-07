@@ -622,7 +622,7 @@ func main() {
 - [pkg/events/README.md](../events/README.md) - Event bus infrastructure
 - [pkg/core/README.md](../core/README.md) - Configuration parsing and validation
 - [pkg/k8s/README.md](../k8s/README.md) - Kubernetes resource watching
-- [docs/design.md](../../docs/development/design.md) - Complete architecture overview
+- [docs/design.md](../../docs/controller/docs/development/design.md) - Complete architecture overview
 
 ## Testing
 

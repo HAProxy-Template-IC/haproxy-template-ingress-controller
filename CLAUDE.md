@@ -6,7 +6,7 @@ This file contains cross-cutting development context for working on this codebas
 
 Event-driven Kubernetes operator that manages HAProxy configurations through template-driven approaches. Uses pure components wrapped in event adapters for clean separation of concerns.
 
-Architecture documentation: `docs/development/design.md`
+Architecture documentation: `docs/controller/docs/development/design.md`
 
 ## Coding Standards
 
@@ -158,13 +158,8 @@ Business logic should be pure (no event dependencies):
 
 ```go
 // pkg/templating/engine.go - Pure component
-type TemplateEngine struct {
-    // No EventBus dependency
-}
-
-func (e *TemplateEngine) Render(templateName string, context map[string]interface{}) (string, error) {
-    // Pure business logic
-    return e.render(templateName, context)
+type Engine interface {
+    Render(templateName string, context map[string]interface{}) (string, error)
 }
 ```
 
@@ -175,16 +170,23 @@ Only controller package contains event adapters:
 ```go
 // pkg/controller/renderer/renderer.go - Event adapter
 type RendererComponent struct {
-    engine   *templating.TemplateEngine  // Pure component
-    eventBus *events.EventBus
+    engine    templating.Engine     // Pure component
+    eventBus  *events.EventBus
+    eventChan <-chan events.Event   // Subscribed in constructor
+}
+
+func NewRendererComponent(bus *events.EventBus, engine templating.Engine) *RendererComponent {
+    return &RendererComponent{
+        engine:    engine,
+        eventBus:  bus,
+        eventChan: bus.Subscribe(100),  // Subscribe in constructor, before Start()
+    }
 }
 
 func (r *RendererComponent) Run(ctx context.Context) error {
-    eventChan := r.eventBus.Subscribe(100)
-
     for {
         select {
-        case event := <-eventChan:
+        case event := <-r.eventChan:
             if req, ok := event.(ReconciliationTriggeredEvent); ok {
                 // Call pure component
                 output, err := r.engine.Render("haproxy.cfg", req.Context)
@@ -333,7 +335,7 @@ import "haptic/pkg/controller/events"  // Event type catalog
 Test pure components without event infrastructure:
 
 ```go
-func TestTemplateEngine_Render(t *testing.T) {
+func TestEngine_Render(t *testing.T) {
     tests := []struct {
         name     string
         template string
@@ -729,10 +731,10 @@ func (c *Component) Start(ctx context.Context) error {
 
 ## Resources
 
-- Architecture: `docs/development/design.md`
+- Architecture: `docs/controller/docs/development/design.md`
 - Package READMEs: `pkg/*/README.md`
-- Linting guidelines: `docs/development/linting.md`
-- Configuration reference: `docs/supported-configuration.md`
+- Linting guidelines: `docs/controller/docs/development/linting.md`
+- Configuration reference: `docs/controller/docs/supported-configuration.md`
 
 ## Changelog Guidelines
 

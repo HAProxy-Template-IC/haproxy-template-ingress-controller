@@ -400,4 +400,4 @@ func (c *Component) createValidator(gvk string) webhook.ValidationFunc {
 - Pure webhook library: `pkg/webhook/CLAUDE.md`
 - Event types: `pkg/controller/events/CLAUDE.md`
 - Controller patterns: `pkg/controller/CLAUDE.md`
-- Architecture: `/docs/development/design.md`
+- Architecture: `/docs/controller/docs/development/design.md`

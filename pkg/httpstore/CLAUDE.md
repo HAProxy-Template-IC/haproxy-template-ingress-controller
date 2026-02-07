@@ -238,5 +238,5 @@ go test ./pkg/httpstore/... -v -run TestHTTPStore_FetchAndGet
 ## Resources
 
 - Event adapter: `pkg/controller/httpstore/CLAUDE.md`
-- Architecture: `/docs/development/design.md`
+- Architecture: `/docs/controller/docs/development/design.md`
 - Controller integration: `pkg/controller/CLAUDE.md`
