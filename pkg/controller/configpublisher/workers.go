@@ -17,9 +17,9 @@ package configpublisher
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
 
@@ -86,7 +86,7 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 	}
 
 	// Call pure publisher with timeout context
-	publishCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	publishCtx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPILongTimeout)
 	defer cancel()
 
 	result, err := c.publisher.PublishConfig(publishCtx, request)
@@ -177,7 +177,7 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 	}
 
 	// Call pure publisher with timeout context
-	publishCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	publishCtx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPILongTimeout)
 	defer cancel()
 
 	result, err := c.publisher.PublishConfig(publishCtx, request)
@@ -313,7 +313,7 @@ func (c *Component) processStatusWork(work *statusWorkItem) {
 	}
 
 	// Call pure publisher with timeout context
-	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	updateCtx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPITimeout)
 	defer cancel()
 
 	if err := c.publisher.UpdateDeploymentStatus(updateCtx, &update); err != nil {

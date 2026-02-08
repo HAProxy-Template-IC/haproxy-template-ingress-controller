@@ -25,6 +25,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/deployer"
 	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
@@ -133,7 +134,7 @@ func stopLeaderOnlyComponents(components *leaderOnlyComponents, logger *slog.Log
 	components.cancel()
 
 	// Brief pause to allow graceful shutdown
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(timeouts.GracefulStopDelay)
 
 	logger.Info("Leader-only components stopped")
 }

@@ -68,131 +68,48 @@ func ptrStr(s *string) string {
 // unknownIdentifier is the fallback identifier used when a model field is empty.
 const unknownIdentifier = "<unknown>"
 
-// NewBackendCreate creates an operation to create a backend.
-func NewBackendCreate(backend *models.Backend) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"backend",
-		PriorityBackend,
-		backend,
-		IdentityBackend,
-		BackendName,
-		executors.BackendCreate(),
-		DescribeTopLevel(OperationCreate, "backend", backend.Name),
+// Top-level CRUD builders for core sections.
+var (
+	backendOps = NewTopLevelCRUD(
+		"backend", "backend", PriorityBackend, BackendName,
+		executors.BackendCreate(), executors.BackendUpdate(), executors.BackendDelete(),
 	)
-}
+	frontendOps = NewTopLevelCRUD(
+		"frontend", "frontend", PriorityFrontend, FrontendName,
+		executors.FrontendCreate(), executors.FrontendUpdate(), executors.FrontendDelete(),
+	)
+	defaultsOps = NewTopLevelCRUD(
+		"defaults", "defaults section", PriorityDefaults, DefaultsName,
+		executors.DefaultsCreate(), executors.DefaultsUpdate(), executors.DefaultsDelete(),
+	)
+)
+
+// NewBackendCreate creates an operation to create a backend.
+func NewBackendCreate(backend *models.Backend) Operation { return backendOps.Create(backend) }
 
 // NewBackendUpdate creates an operation to update a backend.
-func NewBackendUpdate(backend *models.Backend) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"backend",
-		PriorityBackend,
-		backend,
-		IdentityBackend,
-		BackendName,
-		executors.BackendUpdate(),
-		DescribeTopLevel(OperationUpdate, "backend", backend.Name),
-	)
-}
+func NewBackendUpdate(backend *models.Backend) Operation { return backendOps.Update(backend) }
 
 // NewBackendDelete creates an operation to delete a backend.
-func NewBackendDelete(backend *models.Backend) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"backend",
-		PriorityBackend,
-		backend,
-		NilBackend,
-		BackendName,
-		executors.BackendDelete(),
-		DescribeTopLevel(OperationDelete, "backend", backend.Name),
-	)
-}
+func NewBackendDelete(backend *models.Backend) Operation { return backendOps.Delete(backend) }
 
 // NewFrontendCreate creates an operation to create a frontend.
-func NewFrontendCreate(frontend *models.Frontend) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"frontend",
-		PriorityFrontend,
-		frontend,
-		IdentityFrontend,
-		FrontendName,
-		executors.FrontendCreate(),
-		DescribeTopLevel(OperationCreate, "frontend", frontend.Name),
-	)
-}
+func NewFrontendCreate(frontend *models.Frontend) Operation { return frontendOps.Create(frontend) }
 
 // NewFrontendUpdate creates an operation to update a frontend.
-func NewFrontendUpdate(frontend *models.Frontend) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"frontend",
-		PriorityFrontend,
-		frontend,
-		IdentityFrontend,
-		FrontendName,
-		executors.FrontendUpdate(),
-		DescribeTopLevel(OperationUpdate, "frontend", frontend.Name),
-	)
-}
+func NewFrontendUpdate(frontend *models.Frontend) Operation { return frontendOps.Update(frontend) }
 
 // NewFrontendDelete creates an operation to delete a frontend.
-func NewFrontendDelete(frontend *models.Frontend) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"frontend",
-		PriorityFrontend,
-		frontend,
-		NilFrontend,
-		FrontendName,
-		executors.FrontendDelete(),
-		DescribeTopLevel(OperationDelete, "frontend", frontend.Name),
-	)
-}
+func NewFrontendDelete(frontend *models.Frontend) Operation { return frontendOps.Delete(frontend) }
 
 // NewDefaultsCreate creates an operation to create a defaults section.
-func NewDefaultsCreate(defaults *models.Defaults) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"defaults",
-		PriorityDefaults,
-		defaults,
-		IdentityDefaults,
-		DefaultsName,
-		executors.DefaultsCreate(),
-		DescribeTopLevel(OperationCreate, "defaults section", defaults.Name),
-	)
-}
+func NewDefaultsCreate(defaults *models.Defaults) Operation { return defaultsOps.Create(defaults) }
 
 // NewDefaultsUpdate creates an operation to update a defaults section.
-func NewDefaultsUpdate(defaults *models.Defaults) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"defaults",
-		PriorityDefaults,
-		defaults,
-		IdentityDefaults,
-		DefaultsName,
-		executors.DefaultsUpdate(),
-		DescribeTopLevel(OperationUpdate, "defaults section", defaults.Name),
-	)
-}
+func NewDefaultsUpdate(defaults *models.Defaults) Operation { return defaultsOps.Update(defaults) }
 
 // NewDefaultsDelete creates an operation to delete a defaults section.
-func NewDefaultsDelete(defaults *models.Defaults) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"defaults",
-		PriorityDefaults,
-		defaults,
-		NilDefaults,
-		DefaultsName,
-		executors.DefaultsDelete(),
-		DescribeTopLevel(OperationDelete, "defaults section", defaults.Name),
-	)
-}
+func NewDefaultsDelete(defaults *models.Defaults) Operation { return defaultsOps.Delete(defaults) }
 
 // NewGlobalUpdate creates an operation to update the global section.
 func NewGlobalUpdate(global *models.Global) Operation {
@@ -201,7 +118,7 @@ func NewGlobalUpdate(global *models.Global) Operation {
 		"global",
 		PriorityGlobal,
 		global,
-		IdentityGlobal,
+		Identity[*models.Global],
 		executors.GlobalUpdate(),
 		func() string { return "Update global section" },
 	)

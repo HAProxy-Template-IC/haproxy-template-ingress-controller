@@ -87,7 +87,8 @@ haptic/
 │   │   ├── resourcewatcher/ # Resource watcher lifecycle management
 │   │   ├── validator/       # Config validation (basic, template, jsonpath)
 │   │   ├── controller.go    # Event coordination and startup orchestration
-│   │   └── statecache.go    # Event-driven state tracking for debug endpoints
+│   │   ├── statecache.go           # Event-driven state tracking (event handlers)
+│   │   └── statecache_providers.go # StateProvider read-side methods
 │   └── templating/          # Template engine library
 │       ├── engine.go        # Engine interface and ScriggoEngine with pre-compilation and rendering
 │       ├── types.go         # Engine type definitions
@@ -253,7 +254,7 @@ Both watchers use the event-driven architecture: changes publish events to Event
 - `pkg/controller/renderer`: Template rendering component (Stage 5). Subscribes to ReconciliationTriggeredEvent and renders HAProxy configuration and auxiliary files from templates using the templating engine. Publishes TemplateRenderedEvent with rendered configuration and auxiliary files, or TemplateRenderFailedEvent on rendering errors.
 - `pkg/controller/events`: Domain-specific event type definitions (~50 event types covering complete controller lifecycle including validation events)
 - `pkg/controller/debug`: Controller-specific debug variable implementations for introspection HTTP server. Implements `introspection.Var` interface for controller data including ConfigVar, CredentialsVar (metadata only, not actual passwords), RenderedVar, ResourcesVar, and EventsVar. Provides EventBuffer for independent event tracking separate from EventCommentator. Exposes StateProvider interface for accessing controller state in a thread-safe manner.
-- `pkg/controller/statecache.go`: Event-driven state cache implementing StateProvider interface. Subscribes to validation, rendering, and resource events to maintain current state snapshot in memory with thread-safe RWMutex-protected access. Provides debug endpoints with access to current configuration, credentials (metadata), rendered output, and resource counts without querying EventBus for historical state.
+- `pkg/controller/statecache.go`, `statecache_providers.go`: Event-driven state cache implementing StateProvider interface. Subscribes to validation, rendering, and resource events to maintain current state snapshot in memory with thread-safe RWMutex-protected access. Provides debug endpoints with access to current configuration, credentials (metadata), rendered output, and resource counts without querying EventBus for historical state. Split into event handlers (`statecache.go`) and read-side StateProvider methods (`statecache_providers.go`).
 
 **Testing Infrastructure:**
 

@@ -29,7 +29,7 @@ func NewACLFrontendCreate(frontendName string, acl *models.ACL, index int) Opera
 		frontendName,
 		index,
 		acl,
-		IdentityACL,
+		Identity[*models.ACL],
 		executors.ACLFrontendCreate(),
 		DescribeACL(OperationCreate, acl.ACLName, "frontend", frontendName),
 	)
@@ -44,7 +44,7 @@ func NewACLFrontendUpdate(frontendName string, acl *models.ACL, index int) Opera
 		frontendName,
 		index,
 		acl,
-		IdentityACL,
+		Identity[*models.ACL],
 		executors.ACLFrontendUpdate(),
 		DescribeACL(OperationUpdate, acl.ACLName, "frontend", frontendName),
 	)
@@ -59,7 +59,7 @@ func NewACLFrontendDelete(frontendName string, acl *models.ACL, index int) Opera
 		frontendName,
 		index,
 		acl,
-		NilACL,
+		Nil[*models.ACL],
 		executors.ACLFrontendDelete(),
 		DescribeACL(OperationDelete, acl.ACLName, "frontend", frontendName),
 	)
@@ -74,7 +74,7 @@ func NewACLBackendCreate(backendName string, acl *models.ACL, index int) Operati
 		backendName,
 		index,
 		acl,
-		IdentityACL,
+		Identity[*models.ACL],
 		executors.ACLBackendCreate(),
 		DescribeACL(OperationCreate, acl.ACLName, "backend", backendName),
 	)
@@ -89,7 +89,7 @@ func NewACLBackendUpdate(backendName string, acl *models.ACL, index int) Operati
 		backendName,
 		index,
 		acl,
-		IdentityACL,
+		Identity[*models.ACL],
 		executors.ACLBackendUpdate(),
 		DescribeACL(OperationUpdate, acl.ACLName, "backend", backendName),
 	)
@@ -104,7 +104,7 @@ func NewACLBackendDelete(backendName string, acl *models.ACL, index int) Operati
 		backendName,
 		index,
 		acl,
-		NilACL,
+		Nil[*models.ACL],
 		executors.ACLBackendDelete(),
 		DescribeACL(OperationDelete, acl.ACLName, "backend", backendName),
 	)

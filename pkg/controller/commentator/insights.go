@@ -10,6 +10,14 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
+// Lookback window durations for event correlation in the ring buffer.
+const (
+	validationLookbackWindow     = 30 * time.Second
+	reconciliationLookbackWindow = 5 * time.Minute
+	startEventLookbackWindow     = 1 * time.Minute
+	discoveryLookbackWindow      = 30 * time.Second
+)
+
 // generateInsight creates a contextual message and structured attributes for the event.
 //
 // This applies domain knowledge and uses the ring buffer for event correlation.
@@ -69,7 +77,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 
 	case *events.ConfigValidatedEvent:
 		// Correlate: how long did validation take?
-		validationRequests := ec.ringBuffer.FindByTypeInWindow(events.EventTypeConfigValidationRequest, 30*time.Second)
+		validationRequests := ec.ringBuffer.FindByTypeInWindow(events.EventTypeConfigValidationRequest, validationLookbackWindow)
 		var correlationMsg string
 		if len(validationRequests) > 0 {
 			duration := event.Timestamp().Sub(validationRequests[0].Timestamp())
@@ -153,7 +161,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 	// Reconciliation Events
 	case *events.ReconciliationTriggeredEvent:
 		// Correlate: when was the last reconciliation?
-		recentReconciliations := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationCompleted, 5*time.Minute)
+		recentReconciliations := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationCompleted, reconciliationLookbackWindow)
 		var correlationMsg string
 		if len(recentReconciliations) > 0 {
 			timeSince := event.Timestamp().Sub(recentReconciliations[0].Timestamp())
@@ -168,7 +176,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 
 	case *events.ReconciliationCompletedEvent:
 		// Correlate: find the ReconciliationStartedEvent
-		startEvents := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationStarted, 1*time.Minute)
+		startEvents := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationStarted, startEventLookbackWindow)
 		var phaseInfo string
 		if len(startEvents) > 0 {
 			totalDuration := event.Timestamp().Sub(startEvents[0].Timestamp())
@@ -300,7 +308,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 	// HAProxy Pod Events
 	case *events.HAProxyPodsDiscoveredEvent:
 		// Correlate: was this a change?
-		recentDiscoveries := ec.ringBuffer.FindByTypeInWindow(events.EventTypeHAProxyPodsDiscovered, 30*time.Second)
+		recentDiscoveries := ec.ringBuffer.FindByTypeInWindow(events.EventTypeHAProxyPodsDiscovered, discoveryLookbackWindow)
 		var changeInfo string
 		if len(recentDiscoveries) > 1 {
 			// Compare with previous discovery

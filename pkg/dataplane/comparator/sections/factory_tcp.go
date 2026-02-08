@@ -172,7 +172,7 @@ func NewTCPRequestRuleFrontendCreate(frontendName string, rule *models.TCPReques
 		frontendName,
 		index,
 		rule,
-		IdentityTCPRequestRule,
+		Identity[*models.TCPRequestRule],
 		executors.TCPRequestRuleFrontendCreate(),
 		func() string { return describeTCPRequestRule(OperationCreate, rule, "frontend", frontendName, index) },
 	)
@@ -187,7 +187,7 @@ func NewTCPRequestRuleFrontendUpdate(frontendName string, rule *models.TCPReques
 		frontendName,
 		index,
 		rule,
-		IdentityTCPRequestRule,
+		Identity[*models.TCPRequestRule],
 		executors.TCPRequestRuleFrontendUpdate(),
 		func() string { return describeTCPRequestRule(OperationUpdate, rule, "frontend", frontendName, index) },
 	)
@@ -202,7 +202,7 @@ func NewTCPRequestRuleFrontendDelete(frontendName string, rule *models.TCPReques
 		frontendName,
 		index,
 		rule,
-		NilTCPRequestRule,
+		Nil[*models.TCPRequestRule],
 		executors.TCPRequestRuleFrontendDelete(),
 		func() string { return describeTCPRequestRule(OperationDelete, rule, "frontend", frontendName, index) },
 	)
@@ -217,7 +217,7 @@ func NewTCPRequestRuleBackendCreate(backendName string, rule *models.TCPRequestR
 		backendName,
 		index,
 		rule,
-		IdentityTCPRequestRule,
+		Identity[*models.TCPRequestRule],
 		executors.TCPRequestRuleBackendCreate(),
 		func() string { return describeTCPRequestRule(OperationCreate, rule, "backend", backendName, index) },
 	)
@@ -232,7 +232,7 @@ func NewTCPRequestRuleBackendUpdate(backendName string, rule *models.TCPRequestR
 		backendName,
 		index,
 		rule,
-		IdentityTCPRequestRule,
+		Identity[*models.TCPRequestRule],
 		executors.TCPRequestRuleBackendUpdate(),
 		func() string { return describeTCPRequestRule(OperationUpdate, rule, "backend", backendName, index) },
 	)
@@ -247,7 +247,7 @@ func NewTCPRequestRuleBackendDelete(backendName string, rule *models.TCPRequestR
 		backendName,
 		index,
 		rule,
-		NilTCPRequestRule,
+		Nil[*models.TCPRequestRule],
 		executors.TCPRequestRuleBackendDelete(),
 		func() string { return describeTCPRequestRule(OperationDelete, rule, "backend", backendName, index) },
 	)
@@ -262,7 +262,7 @@ func NewTCPResponseRuleBackendCreate(backendName string, rule *models.TCPRespons
 		backendName,
 		index,
 		rule,
-		IdentityTCPResponseRule,
+		Identity[*models.TCPResponseRule],
 		executors.TCPResponseRuleBackendCreate(),
 		func() string { return describeTCPResponseRule(OperationCreate, rule, backendName, index) },
 	)
@@ -277,7 +277,7 @@ func NewTCPResponseRuleBackendUpdate(backendName string, rule *models.TCPRespons
 		backendName,
 		index,
 		rule,
-		IdentityTCPResponseRule,
+		Identity[*models.TCPResponseRule],
 		executors.TCPResponseRuleBackendUpdate(),
 		func() string { return describeTCPResponseRule(OperationUpdate, rule, backendName, index) },
 	)
@@ -292,7 +292,7 @@ func NewTCPResponseRuleBackendDelete(backendName string, rule *models.TCPRespons
 		backendName,
 		index,
 		rule,
-		NilTCPResponseRule,
+		Nil[*models.TCPResponseRule],
 		executors.TCPResponseRuleBackendDelete(),
 		func() string { return describeTCPResponseRule(OperationDelete, rule, backendName, index) },
 	)
@@ -307,7 +307,7 @@ func NewStickRuleBackendCreate(backendName string, rule *models.StickRule, index
 		backendName,
 		index,
 		rule,
-		IdentityStickRule,
+		Identity[*models.StickRule],
 		executors.StickRuleBackendCreate(),
 		func() string { return describeStickRule(OperationCreate, rule, backendName, index) },
 	)
@@ -322,7 +322,7 @@ func NewStickRuleBackendUpdate(backendName string, rule *models.StickRule, index
 		backendName,
 		index,
 		rule,
-		IdentityStickRule,
+		Identity[*models.StickRule],
 		executors.StickRuleBackendUpdate(),
 		func() string { return describeStickRule(OperationUpdate, rule, backendName, index) },
 	)
@@ -337,7 +337,7 @@ func NewStickRuleBackendDelete(backendName string, rule *models.StickRule, index
 		backendName,
 		index,
 		rule,
-		NilStickRule,
+		Nil[*models.StickRule],
 		executors.StickRuleBackendDelete(),
 		func() string { return describeStickRule(OperationDelete, rule, backendName, index) },
 	)
@@ -352,7 +352,7 @@ func NewHTTPAfterResponseRuleBackendCreate(backendName string, rule *models.HTTP
 		backendName,
 		index,
 		rule,
-		IdentityHTTPAfterResponseRule,
+		Identity[*models.HTTPAfterResponseRule],
 		executors.HTTPAfterResponseRuleBackendCreate(),
 		func() string { return describeHTTPAfterResponseRule(OperationCreate, rule, backendName, index) },
 	)
@@ -367,7 +367,7 @@ func NewHTTPAfterResponseRuleBackendUpdate(backendName string, rule *models.HTTP
 		backendName,
 		index,
 		rule,
-		IdentityHTTPAfterResponseRule,
+		Identity[*models.HTTPAfterResponseRule],
 		executors.HTTPAfterResponseRuleBackendUpdate(),
 		func() string { return describeHTTPAfterResponseRule(OperationUpdate, rule, backendName, index) },
 	)
@@ -382,7 +382,7 @@ func NewHTTPAfterResponseRuleBackendDelete(backendName string, rule *models.HTTP
 		backendName,
 		index,
 		rule,
-		NilHTTPAfterResponseRule,
+		Nil[*models.HTTPAfterResponseRule],
 		executors.HTTPAfterResponseRuleBackendDelete(),
 		func() string { return describeHTTPAfterResponseRule(OperationDelete, rule, backendName, index) },
 	)
@@ -397,7 +397,7 @@ func NewHTTPCheckBackendCreate(backendName string, check *models.HTTPCheck, inde
 		backendName,
 		index,
 		check,
-		IdentityHTTPCheck,
+		Identity[*models.HTTPCheck],
 		executors.HTTPCheckBackendCreate(),
 		func() string { return describeHTTPCheck(OperationCreate, check, backendName, index) },
 	)
@@ -412,7 +412,7 @@ func NewHTTPCheckBackendUpdate(backendName string, check *models.HTTPCheck, inde
 		backendName,
 		index,
 		check,
-		IdentityHTTPCheck,
+		Identity[*models.HTTPCheck],
 		executors.HTTPCheckBackendUpdate(),
 		func() string { return describeHTTPCheck(OperationUpdate, check, backendName, index) },
 	)
@@ -427,7 +427,7 @@ func NewHTTPCheckBackendDelete(backendName string, check *models.HTTPCheck, inde
 		backendName,
 		index,
 		check,
-		NilHTTPCheck,
+		Nil[*models.HTTPCheck],
 		executors.HTTPCheckBackendDelete(),
 		func() string { return describeHTTPCheck(OperationDelete, check, backendName, index) },
 	)
@@ -442,7 +442,7 @@ func NewTCPCheckBackendCreate(backendName string, check *models.TCPCheck, index 
 		backendName,
 		index,
 		check,
-		IdentityTCPCheck,
+		Identity[*models.TCPCheck],
 		executors.TCPCheckBackendCreate(),
 		func() string { return describeTCPCheck(OperationCreate, check, backendName, index) },
 	)
@@ -457,7 +457,7 @@ func NewTCPCheckBackendUpdate(backendName string, check *models.TCPCheck, index 
 		backendName,
 		index,
 		check,
-		IdentityTCPCheck,
+		Identity[*models.TCPCheck],
 		executors.TCPCheckBackendUpdate(),
 		func() string { return describeTCPCheck(OperationUpdate, check, backendName, index) },
 	)
@@ -472,7 +472,7 @@ func NewTCPCheckBackendDelete(backendName string, check *models.TCPCheck, index 
 		backendName,
 		index,
 		check,
-		NilTCPCheck,
+		Nil[*models.TCPCheck],
 		executors.TCPCheckBackendDelete(),
 		func() string { return describeTCPCheck(OperationDelete, check, backendName, index) },
 	)
@@ -487,7 +487,7 @@ func NewCaptureFrontendCreate(frontendName string, capture *models.Capture, inde
 		frontendName,
 		index,
 		capture,
-		IdentityCapture,
+		Identity[*models.Capture],
 		executors.DeclareCaptureFrontendCreate(),
 		func() string { return describeCapture(OperationCreate, capture, frontendName, index) },
 	)
@@ -502,7 +502,7 @@ func NewCaptureFrontendUpdate(frontendName string, capture *models.Capture, inde
 		frontendName,
 		index,
 		capture,
-		IdentityCapture,
+		Identity[*models.Capture],
 		executors.DeclareCaptureFrontendUpdate(),
 		func() string { return describeCapture(OperationUpdate, capture, frontendName, index) },
 	)
@@ -517,7 +517,7 @@ func NewCaptureFrontendDelete(frontendName string, capture *models.Capture, inde
 		frontendName,
 		index,
 		capture,
-		NilCapture,
+		Nil[*models.Capture],
 		executors.DeclareCaptureFrontendDelete(),
 		func() string { return describeCapture(OperationDelete, capture, frontendName, index) },
 	)

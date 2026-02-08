@@ -66,7 +66,7 @@ func NewBindFrontendCreate(frontendName, bindName string, bind *models.Bind) Ope
 		frontendName,
 		bindName,
 		bind,
-		IdentityBind,
+		Identity[*models.Bind],
 		executors.BindFrontendCreate(frontendName),
 		func() string { return describeBindWithSSL(OperationCreate, bind, frontendName) },
 	)
@@ -81,7 +81,7 @@ func NewBindFrontendUpdate(frontendName, bindName string, bind *models.Bind) Ope
 		frontendName,
 		bindName,
 		bind,
-		IdentityBind,
+		Identity[*models.Bind],
 		executors.BindFrontendUpdate(frontendName),
 		func() string { return describeBindWithSSL(OperationUpdate, bind, frontendName) },
 	)
@@ -96,7 +96,7 @@ func NewBindFrontendDelete(frontendName, bindName string, bind *models.Bind) Ope
 		frontendName,
 		bindName,
 		bind,
-		NilBind,
+		Nil[*models.Bind],
 		executors.BindFrontendDelete(frontendName),
 		func() string { return describeBindWithSSL(OperationDelete, bind, frontendName) },
 	)

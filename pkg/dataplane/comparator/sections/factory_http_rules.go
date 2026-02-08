@@ -51,7 +51,7 @@ func NewHTTPRequestRuleFrontendCreate(frontendName string, rule *models.HTTPRequ
 		frontendName,
 		index,
 		rule,
-		IdentityHTTPRequestRule,
+		Identity[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleFrontendCreate(),
 		func() string { return describeHTTPRequestRule(OperationCreate, rule, "frontend", frontendName, index) },
 	)
@@ -66,7 +66,7 @@ func NewHTTPRequestRuleFrontendUpdate(frontendName string, rule *models.HTTPRequ
 		frontendName,
 		index,
 		rule,
-		IdentityHTTPRequestRule,
+		Identity[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleFrontendUpdate(),
 		func() string { return describeHTTPRequestRule(OperationUpdate, rule, "frontend", frontendName, index) },
 	)
@@ -81,7 +81,7 @@ func NewHTTPRequestRuleFrontendDelete(frontendName string, rule *models.HTTPRequ
 		frontendName,
 		index,
 		rule,
-		NilHTTPRequestRule,
+		Nil[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleFrontendDelete(),
 		func() string { return describeHTTPRequestRule(OperationDelete, rule, "frontend", frontendName, index) },
 	)
@@ -96,7 +96,7 @@ func NewHTTPRequestRuleBackendCreate(backendName string, rule *models.HTTPReques
 		backendName,
 		index,
 		rule,
-		IdentityHTTPRequestRule,
+		Identity[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleBackendCreate(),
 		func() string { return describeHTTPRequestRule(OperationCreate, rule, "backend", backendName, index) },
 	)
@@ -111,7 +111,7 @@ func NewHTTPRequestRuleBackendUpdate(backendName string, rule *models.HTTPReques
 		backendName,
 		index,
 		rule,
-		IdentityHTTPRequestRule,
+		Identity[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleBackendUpdate(),
 		func() string { return describeHTTPRequestRule(OperationUpdate, rule, "backend", backendName, index) },
 	)
@@ -126,7 +126,7 @@ func NewHTTPRequestRuleBackendDelete(backendName string, rule *models.HTTPReques
 		backendName,
 		index,
 		rule,
-		NilHTTPRequestRule,
+		Nil[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleBackendDelete(),
 		func() string { return describeHTTPRequestRule(OperationDelete, rule, "backend", backendName, index) },
 	)
@@ -161,7 +161,7 @@ func NewHTTPResponseRuleFrontendCreate(frontendName string, rule *models.HTTPRes
 		frontendName,
 		index,
 		rule,
-		IdentityHTTPResponseRule,
+		Identity[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleFrontendCreate(),
 		func() string { return describeHTTPResponseRule(OperationCreate, rule, "frontend", frontendName) },
 	)
@@ -176,7 +176,7 @@ func NewHTTPResponseRuleFrontendUpdate(frontendName string, rule *models.HTTPRes
 		frontendName,
 		index,
 		rule,
-		IdentityHTTPResponseRule,
+		Identity[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleFrontendUpdate(),
 		func() string { return describeHTTPResponseRule(OperationUpdate, rule, "frontend", frontendName) },
 	)
@@ -191,7 +191,7 @@ func NewHTTPResponseRuleFrontendDelete(frontendName string, rule *models.HTTPRes
 		frontendName,
 		index,
 		rule,
-		NilHTTPResponseRule,
+		Nil[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleFrontendDelete(),
 		func() string { return describeHTTPResponseRule(OperationDelete, rule, "frontend", frontendName) },
 	)
@@ -206,7 +206,7 @@ func NewHTTPResponseRuleBackendCreate(backendName string, rule *models.HTTPRespo
 		backendName,
 		index,
 		rule,
-		IdentityHTTPResponseRule,
+		Identity[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleBackendCreate(),
 		func() string { return describeHTTPResponseRule(OperationCreate, rule, "backend", backendName) },
 	)
@@ -221,7 +221,7 @@ func NewHTTPResponseRuleBackendUpdate(backendName string, rule *models.HTTPRespo
 		backendName,
 		index,
 		rule,
-		IdentityHTTPResponseRule,
+		Identity[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleBackendUpdate(),
 		func() string { return describeHTTPResponseRule(OperationUpdate, rule, "backend", backendName) },
 	)
@@ -236,7 +236,7 @@ func NewHTTPResponseRuleBackendDelete(backendName string, rule *models.HTTPRespo
 		backendName,
 		index,
 		rule,
-		NilHTTPResponseRule,
+		Nil[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleBackendDelete(),
 		func() string { return describeHTTPResponseRule(OperationDelete, rule, "backend", backendName) },
 	)

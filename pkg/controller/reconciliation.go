@@ -17,7 +17,6 @@ package controller
 import (
 	"fmt"
 	"log/slog"
-	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	ctrlconfigpublisher "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
@@ -32,6 +31,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -250,7 +250,7 @@ func createConfigPublisher(crdClientset versioned.Interface, k8sClient *client.C
 	// We use a 30-second resync period to keep the cache reasonably fresh while minimizing overhead.
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
 		crdClientset,
-		30*time.Second,
+		timeouts.InformerResyncPeriod,
 		informers.WithNamespace(k8sClient.Namespace()),
 	)
 

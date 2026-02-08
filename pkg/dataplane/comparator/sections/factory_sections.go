@@ -20,640 +20,292 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
+// Top-level CRUD builders for additional sections.
+var (
+	cacheOps = NewTopLevelCRUD(
+		"cache", "cache", PriorityCache, CacheName,
+		executors.CacheCreate(), executors.CacheUpdate(), executors.CacheDelete(),
+	)
+	httpErrorsOps = NewTopLevelCRUD(
+		"http_errors", "http-errors section", PriorityHTTPErrors, HTTPErrorsSectionName,
+		executors.HTTPErrorsSectionCreate(), executors.HTTPErrorsSectionUpdate(), executors.HTTPErrorsSectionDelete(),
+	)
+	mailersOps = NewTopLevelCRUD(
+		"mailers", "mailers", PriorityMailers, MailersSectionName,
+		executors.MailersSectionCreate(), executors.MailersSectionUpdate(), executors.MailersSectionDelete(),
+	)
+	peerSectionOps = NewTopLevelCRUD(
+		"peers", "peer section", PriorityPeer, PeerSectionName,
+		executors.PeerSectionCreate(), executors.PeerSectionUpdate(), executors.PeerSectionDelete(),
+	)
+	programOps = NewTopLevelCRUD(
+		"program", "program", PriorityProgram, ProgramName,
+		executors.ProgramCreate(), executors.ProgramUpdate(), executors.ProgramDelete(),
+	)
+	resolverOps = NewTopLevelCRUD(
+		"resolver", "resolver", PriorityResolver, ResolverName,
+		executors.ResolverCreate(), executors.ResolverUpdate(), executors.ResolverDelete(),
+	)
+	ringOps = NewTopLevelCRUD(
+		"ring", "ring", PriorityRing, RingName,
+		executors.RingCreate(), executors.RingUpdate(), executors.RingDelete(),
+	)
+	crtStoreOps = NewTopLevelCRUD(
+		"crt_store", "crt-store", PriorityCrtStore, CrtStoreName,
+		executors.CrtStoreCreate(), executors.CrtStoreUpdate(), executors.CrtStoreDelete(),
+	)
+	userlistOps = NewTopLevelCRUD(
+		"userlist", "userlist", PriorityUserlist, UserlistName,
+		executors.UserlistCreate(), executors.UserlistCreate(), executors.UserlistDelete(),
+	)
+	fcgiAppOps = NewTopLevelCRUD(
+		"fcgi_app", "fcgi-app", PriorityFCGIApp, FCGIAppName,
+		executors.FCGIAppCreate(), executors.FCGIAppUpdate(), executors.FCGIAppDelete(),
+	)
+	logProfileOps = NewTopLevelCRUD(
+		"log_profile", "log-profile", PriorityLogProfile, LogProfileName,
+		executors.LogProfileCreate(), executors.LogProfileUpdate(), executors.LogProfileDelete(),
+	)
+	acmeProviderOps = NewTopLevelCRUD(
+		"acme_provider", "acme-provider", PriorityAcmeProvider, AcmeProviderName,
+		executors.AcmeProviderCreate(), executors.AcmeProviderUpdate(), executors.AcmeProviderDelete(),
+	)
+)
+
+// User factory functions (container children of userlist).
+
 // NewUserCreate creates an operation to create a user in a userlist.
 func NewUserCreate(userlistName string, user *models.User) Operation {
-	return NewContainerChildOp(
-		OperationCreate,
-		"user",
-		PriorityUser,
-		userlistName,
-		user,
-		IdentityUser,
-		UserName,
-		executors.UserCreate(userlistName),
-		DescribeContainerChild(OperationCreate, "user", user.Username, "userlist", userlistName),
-	)
+	return NewContainerChildOp(OperationCreate, "user", PriorityUser, userlistName, user,
+		Identity[*models.User], UserName, executors.UserCreate(userlistName),
+		DescribeContainerChild(OperationCreate, "user", user.Username, "userlist", userlistName))
 }
 
 // NewUserUpdate creates an operation to update a user in a userlist.
 func NewUserUpdate(userlistName string, user *models.User) Operation {
-	return NewContainerChildOp(
-		OperationUpdate,
-		"user",
-		PriorityUser,
-		userlistName,
-		user,
-		IdentityUser,
-		UserName,
-		executors.UserUpdate(userlistName),
-		DescribeContainerChild(OperationUpdate, "user", user.Username, "userlist", userlistName),
-	)
+	return NewContainerChildOp(OperationUpdate, "user", PriorityUser, userlistName, user,
+		Identity[*models.User], UserName, executors.UserUpdate(userlistName),
+		DescribeContainerChild(OperationUpdate, "user", user.Username, "userlist", userlistName))
 }
 
 // NewUserDelete creates an operation to delete a user from a userlist.
 func NewUserDelete(userlistName string, user *models.User) Operation {
-	return NewContainerChildOp(
-		OperationDelete,
-		"user",
-		PriorityUser,
-		userlistName,
-		user,
-		NilUser,
-		UserName,
-		executors.UserDelete(userlistName),
-		DescribeContainerChild(OperationDelete, "user", user.Username, "userlist", userlistName),
-	)
+	return NewContainerChildOp(OperationDelete, "user", PriorityUser, userlistName, user,
+		Nil[*models.User], UserName, executors.UserDelete(userlistName),
+		DescribeContainerChild(OperationDelete, "user", user.Username, "userlist", userlistName))
 }
+
+// MailerEntry factory functions (container children of mailers section).
 
 // NewMailerEntryCreate creates an operation to create a mailer entry.
 func NewMailerEntryCreate(mailersName string, entry *models.MailerEntry) Operation {
-	return NewContainerChildOp(
-		OperationCreate,
-		"mailer_entry",
-		PriorityMailerEntry,
-		mailersName,
-		entry,
-		IdentityMailerEntry,
-		MailerEntryName,
-		executors.MailerEntryCreate(mailersName),
-		DescribeContainerChild(OperationCreate, "mailer entry", entry.Name, "mailers section", mailersName),
-	)
+	return NewContainerChildOp(OperationCreate, "mailer_entry", PriorityMailerEntry, mailersName, entry,
+		Identity[*models.MailerEntry], MailerEntryName, executors.MailerEntryCreate(mailersName),
+		DescribeContainerChild(OperationCreate, "mailer entry", entry.Name, "mailers section", mailersName))
 }
 
 // NewMailerEntryUpdate creates an operation to update a mailer entry.
 func NewMailerEntryUpdate(mailersName string, entry *models.MailerEntry) Operation {
-	return NewContainerChildOp(
-		OperationUpdate,
-		"mailer_entry",
-		PriorityMailerEntry,
-		mailersName,
-		entry,
-		IdentityMailerEntry,
-		MailerEntryName,
-		executors.MailerEntryUpdate(mailersName),
-		DescribeContainerChild(OperationUpdate, "mailer entry", entry.Name, "mailers section", mailersName),
-	)
+	return NewContainerChildOp(OperationUpdate, "mailer_entry", PriorityMailerEntry, mailersName, entry,
+		Identity[*models.MailerEntry], MailerEntryName, executors.MailerEntryUpdate(mailersName),
+		DescribeContainerChild(OperationUpdate, "mailer entry", entry.Name, "mailers section", mailersName))
 }
 
 // NewMailerEntryDelete creates an operation to delete a mailer entry.
 func NewMailerEntryDelete(mailersName string, entry *models.MailerEntry) Operation {
-	return NewContainerChildOp(
-		OperationDelete,
-		"mailer_entry",
-		PriorityMailerEntry,
-		mailersName,
-		entry,
-		NilMailerEntry,
-		MailerEntryName,
-		executors.MailerEntryDelete(mailersName),
-		DescribeContainerChild(OperationDelete, "mailer entry", entry.Name, "mailers section", mailersName),
-	)
+	return NewContainerChildOp(OperationDelete, "mailer_entry", PriorityMailerEntry, mailersName, entry,
+		Nil[*models.MailerEntry], MailerEntryName, executors.MailerEntryDelete(mailersName),
+		DescribeContainerChild(OperationDelete, "mailer entry", entry.Name, "mailers section", mailersName))
 }
+
+// PeerEntry factory functions (container children of peer section).
 
 // NewPeerEntryCreate creates an operation to create a peer entry.
 func NewPeerEntryCreate(peerSectionName string, entry *models.PeerEntry) Operation {
-	return NewContainerChildOp(
-		OperationCreate,
-		"peer_entry",
-		PriorityPeerEntry,
-		peerSectionName,
-		entry,
-		IdentityPeerEntry,
-		PeerEntryName,
-		executors.PeerEntryCreate(peerSectionName),
-		DescribeContainerChild(OperationCreate, "peer entry", entry.Name, "peer section", peerSectionName),
-	)
+	return NewContainerChildOp(OperationCreate, "peer_entry", PriorityPeerEntry, peerSectionName, entry,
+		Identity[*models.PeerEntry], PeerEntryName, executors.PeerEntryCreate(peerSectionName),
+		DescribeContainerChild(OperationCreate, "peer entry", entry.Name, "peer section", peerSectionName))
 }
 
 // NewPeerEntryUpdate creates an operation to update a peer entry.
 func NewPeerEntryUpdate(peerSectionName string, entry *models.PeerEntry) Operation {
-	return NewContainerChildOp(
-		OperationUpdate,
-		"peer_entry",
-		PriorityPeerEntry,
-		peerSectionName,
-		entry,
-		IdentityPeerEntry,
-		PeerEntryName,
-		executors.PeerEntryUpdate(peerSectionName),
-		DescribeContainerChild(OperationUpdate, "peer entry", entry.Name, "peer section", peerSectionName),
-	)
+	return NewContainerChildOp(OperationUpdate, "peer_entry", PriorityPeerEntry, peerSectionName, entry,
+		Identity[*models.PeerEntry], PeerEntryName, executors.PeerEntryUpdate(peerSectionName),
+		DescribeContainerChild(OperationUpdate, "peer entry", entry.Name, "peer section", peerSectionName))
 }
 
 // NewPeerEntryDelete creates an operation to delete a peer entry.
 func NewPeerEntryDelete(peerSectionName string, entry *models.PeerEntry) Operation {
-	return NewContainerChildOp(
-		OperationDelete,
-		"peer_entry",
-		PriorityPeerEntry,
-		peerSectionName,
-		entry,
-		NilPeerEntry,
-		PeerEntryName,
-		executors.PeerEntryDelete(peerSectionName),
-		DescribeContainerChild(OperationDelete, "peer entry", entry.Name, "peer section", peerSectionName),
-	)
+	return NewContainerChildOp(OperationDelete, "peer_entry", PriorityPeerEntry, peerSectionName, entry,
+		Nil[*models.PeerEntry], PeerEntryName, executors.PeerEntryDelete(peerSectionName),
+		DescribeContainerChild(OperationDelete, "peer entry", entry.Name, "peer section", peerSectionName))
 }
+
+// Nameserver factory functions (container children of resolver section).
 
 // NewNameserverCreate creates an operation to create a nameserver in a resolver.
 func NewNameserverCreate(resolverName string, nameserver *models.Nameserver) Operation {
-	return NewContainerChildOp(
-		OperationCreate,
-		"nameserver",
-		PriorityNameserver,
-		resolverName,
-		nameserver,
-		IdentityNameserver,
-		NameserverName,
-		executors.NameserverCreate(resolverName),
-		DescribeContainerChild(OperationCreate, "nameserver", nameserver.Name, "resolvers section", resolverName),
-	)
+	return NewContainerChildOp(OperationCreate, "nameserver", PriorityNameserver, resolverName, nameserver,
+		Identity[*models.Nameserver], NameserverName, executors.NameserverCreate(resolverName),
+		DescribeContainerChild(OperationCreate, "nameserver", nameserver.Name, "resolvers section", resolverName))
 }
 
 // NewNameserverUpdate creates an operation to update a nameserver in a resolver.
 func NewNameserverUpdate(resolverName string, nameserver *models.Nameserver) Operation {
-	return NewContainerChildOp(
-		OperationUpdate,
-		"nameserver",
-		PriorityNameserver,
-		resolverName,
-		nameserver,
-		IdentityNameserver,
-		NameserverName,
-		executors.NameserverUpdate(resolverName),
-		DescribeContainerChild(OperationUpdate, "nameserver", nameserver.Name, "resolvers section", resolverName),
-	)
+	return NewContainerChildOp(OperationUpdate, "nameserver", PriorityNameserver, resolverName, nameserver,
+		Identity[*models.Nameserver], NameserverName, executors.NameserverUpdate(resolverName),
+		DescribeContainerChild(OperationUpdate, "nameserver", nameserver.Name, "resolvers section", resolverName))
 }
 
 // NewNameserverDelete creates an operation to delete a nameserver from a resolver.
 func NewNameserverDelete(resolverName string, nameserver *models.Nameserver) Operation {
-	return NewContainerChildOp(
-		OperationDelete,
-		"nameserver",
-		PriorityNameserver,
-		resolverName,
-		nameserver,
-		NilNameserver,
-		NameserverName,
-		executors.NameserverDelete(resolverName),
-		DescribeContainerChild(OperationDelete, "nameserver", nameserver.Name, "resolvers section", resolverName),
-	)
+	return NewContainerChildOp(OperationDelete, "nameserver", PriorityNameserver, resolverName, nameserver,
+		Nil[*models.Nameserver], NameserverName, executors.NameserverDelete(resolverName),
+		DescribeContainerChild(OperationDelete, "nameserver", nameserver.Name, "resolvers section", resolverName))
 }
+
+// Cache factory functions.
 
 // NewCacheCreate creates an operation to create a cache section.
-func NewCacheCreate(cache *models.Cache) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"cache",
-		PriorityCache,
-		cache,
-		IdentityCache,
-		CacheName,
-		executors.CacheCreate(),
-		DescribeTopLevel(OperationCreate, "cache", CacheName(cache)),
-	)
-}
+func NewCacheCreate(cache *models.Cache) Operation { return cacheOps.Create(cache) }
 
 // NewCacheUpdate creates an operation to update a cache section.
-func NewCacheUpdate(cache *models.Cache) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"cache",
-		PriorityCache,
-		cache,
-		IdentityCache,
-		CacheName,
-		executors.CacheUpdate(),
-		DescribeTopLevel(OperationUpdate, "cache", CacheName(cache)),
-	)
-}
+func NewCacheUpdate(cache *models.Cache) Operation { return cacheOps.Update(cache) }
 
 // NewCacheDelete creates an operation to delete a cache section.
-func NewCacheDelete(cache *models.Cache) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"cache",
-		PriorityCache,
-		cache,
-		NilCache,
-		CacheName,
-		executors.CacheDelete(),
-		DescribeTopLevel(OperationDelete, "cache", CacheName(cache)),
-	)
-}
+func NewCacheDelete(cache *models.Cache) Operation { return cacheOps.Delete(cache) }
+
+// HTTPErrorsSection factory functions.
 
 // NewHTTPErrorsSectionCreate creates an operation to create an http-errors section.
 func NewHTTPErrorsSectionCreate(section *models.HTTPErrorsSection) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"http_errors",
-		PriorityHTTPErrors,
-		section,
-		IdentityHTTPErrorsSection,
-		HTTPErrorsSectionName,
-		executors.HTTPErrorsSectionCreate(),
-		DescribeTopLevel(OperationCreate, "http-errors section", section.Name),
-	)
+	return httpErrorsOps.Create(section)
 }
 
 // NewHTTPErrorsSectionUpdate creates an operation to update an http-errors section.
 func NewHTTPErrorsSectionUpdate(section *models.HTTPErrorsSection) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"http_errors",
-		PriorityHTTPErrors,
-		section,
-		IdentityHTTPErrorsSection,
-		HTTPErrorsSectionName,
-		executors.HTTPErrorsSectionUpdate(),
-		DescribeTopLevel(OperationUpdate, "http-errors section", section.Name),
-	)
+	return httpErrorsOps.Update(section)
 }
 
 // NewHTTPErrorsSectionDelete creates an operation to delete an http-errors section.
 func NewHTTPErrorsSectionDelete(section *models.HTTPErrorsSection) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"http_errors",
-		PriorityHTTPErrors,
-		section,
-		NilHTTPErrorsSection,
-		HTTPErrorsSectionName,
-		executors.HTTPErrorsSectionDelete(),
-		DescribeTopLevel(OperationDelete, "http-errors section", section.Name),
-	)
+	return httpErrorsOps.Delete(section)
 }
+
+// MailersSection factory functions.
 
 // NewMailersSectionCreate creates an operation to create a mailers section.
 func NewMailersSectionCreate(section *models.MailersSection) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"mailers",
-		PriorityMailers,
-		section,
-		IdentityMailersSection,
-		MailersSectionName,
-		executors.MailersSectionCreate(),
-		DescribeTopLevel(OperationCreate, "mailers", section.Name),
-	)
+	return mailersOps.Create(section)
 }
 
 // NewMailersSectionUpdate creates an operation to update a mailers section.
 func NewMailersSectionUpdate(section *models.MailersSection) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"mailers",
-		PriorityMailers,
-		section,
-		IdentityMailersSection,
-		MailersSectionName,
-		executors.MailersSectionUpdate(),
-		DescribeTopLevel(OperationUpdate, "mailers", section.Name),
-	)
+	return mailersOps.Update(section)
 }
 
 // NewMailersSectionDelete creates an operation to delete a mailers section.
 func NewMailersSectionDelete(section *models.MailersSection) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"mailers",
-		PriorityMailers,
-		section,
-		NilMailersSection,
-		MailersSectionName,
-		executors.MailersSectionDelete(),
-		DescribeTopLevel(OperationDelete, "mailers", section.Name),
-	)
+	return mailersOps.Delete(section)
 }
 
-// PeerSection Factory Functions
-// Note: Update operations return an error as the API doesn't support direct updates.
+// PeerSection factory functions.
 
 // NewPeerSectionCreate creates an operation to create a peer section.
 func NewPeerSectionCreate(section *models.PeerSection) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"peers",
-		PriorityPeer,
-		section,
-		IdentityPeerSection,
-		PeerSectionName,
-		executors.PeerSectionCreate(),
-		DescribeTopLevel(OperationCreate, "peer section", section.Name),
-	)
+	return peerSectionOps.Create(section)
 }
 
 // NewPeerSectionUpdate creates an operation to update a peer section.
 // Note: This operation will fail at execution time as the HAProxy Dataplane API
 // does not support updating peer sections directly.
 func NewPeerSectionUpdate(section *models.PeerSection) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"peers",
-		PriorityPeer,
-		section,
-		IdentityPeerSection,
-		PeerSectionName,
-		executors.PeerSectionUpdate(),
-		DescribeTopLevel(OperationUpdate, "peer section", section.Name),
-	)
+	return peerSectionOps.Update(section)
 }
 
 // NewPeerSectionDelete creates an operation to delete a peer section.
 func NewPeerSectionDelete(section *models.PeerSection) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"peers",
-		PriorityPeer,
-		section,
-		NilPeerSection,
-		PeerSectionName,
-		executors.PeerSectionDelete(),
-		DescribeTopLevel(OperationDelete, "peer section", section.Name),
-	)
+	return peerSectionOps.Delete(section)
 }
+
+// Program factory functions.
 
 // NewProgramCreate creates an operation to create a program section.
-func NewProgramCreate(program *models.Program) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"program",
-		PriorityProgram,
-		program,
-		IdentityProgram,
-		ProgramName,
-		executors.ProgramCreate(),
-		DescribeTopLevel(OperationCreate, "program", program.Name),
-	)
-}
+func NewProgramCreate(program *models.Program) Operation { return programOps.Create(program) }
 
 // NewProgramUpdate creates an operation to update a program section.
-func NewProgramUpdate(program *models.Program) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"program",
-		PriorityProgram,
-		program,
-		IdentityProgram,
-		ProgramName,
-		executors.ProgramUpdate(),
-		DescribeTopLevel(OperationUpdate, "program", program.Name),
-	)
-}
+func NewProgramUpdate(program *models.Program) Operation { return programOps.Update(program) }
 
 // NewProgramDelete creates an operation to delete a program section.
-func NewProgramDelete(program *models.Program) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"program",
-		PriorityProgram,
-		program,
-		NilProgram,
-		ProgramName,
-		executors.ProgramDelete(),
-		DescribeTopLevel(OperationDelete, "program", program.Name),
-	)
-}
+func NewProgramDelete(program *models.Program) Operation { return programOps.Delete(program) }
+
+// Resolver factory functions.
 
 // NewResolverCreate creates an operation to create a resolver section.
-func NewResolverCreate(resolver *models.Resolver) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"resolver",
-		PriorityResolver,
-		resolver,
-		IdentityResolver,
-		ResolverName,
-		executors.ResolverCreate(),
-		DescribeTopLevel(OperationCreate, "resolver", resolver.Name),
-	)
-}
+func NewResolverCreate(resolver *models.Resolver) Operation { return resolverOps.Create(resolver) }
 
 // NewResolverUpdate creates an operation to update a resolver section.
-func NewResolverUpdate(resolver *models.Resolver) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"resolver",
-		PriorityResolver,
-		resolver,
-		IdentityResolver,
-		ResolverName,
-		executors.ResolverUpdate(),
-		DescribeTopLevel(OperationUpdate, "resolver", resolver.Name),
-	)
-}
+func NewResolverUpdate(resolver *models.Resolver) Operation { return resolverOps.Update(resolver) }
 
 // NewResolverDelete creates an operation to delete a resolver section.
-func NewResolverDelete(resolver *models.Resolver) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"resolver",
-		PriorityResolver,
-		resolver,
-		NilResolver,
-		ResolverName,
-		executors.ResolverDelete(),
-		DescribeTopLevel(OperationDelete, "resolver", resolver.Name),
-	)
-}
+func NewResolverDelete(resolver *models.Resolver) Operation { return resolverOps.Delete(resolver) }
+
+// Ring factory functions.
 
 // NewRingCreate creates an operation to create a ring section.
-func NewRingCreate(ring *models.Ring) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"ring",
-		PriorityRing,
-		ring,
-		IdentityRing,
-		RingName,
-		executors.RingCreate(),
-		DescribeTopLevel(OperationCreate, "ring", ring.Name),
-	)
-}
+func NewRingCreate(ring *models.Ring) Operation { return ringOps.Create(ring) }
 
 // NewRingUpdate creates an operation to update a ring section.
-func NewRingUpdate(ring *models.Ring) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"ring",
-		PriorityRing,
-		ring,
-		IdentityRing,
-		RingName,
-		executors.RingUpdate(),
-		DescribeTopLevel(OperationUpdate, "ring", ring.Name),
-	)
-}
+func NewRingUpdate(ring *models.Ring) Operation { return ringOps.Update(ring) }
 
 // NewRingDelete creates an operation to delete a ring section.
-func NewRingDelete(ring *models.Ring) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"ring",
-		PriorityRing,
-		ring,
-		NilRing,
-		RingName,
-		executors.RingDelete(),
-		DescribeTopLevel(OperationDelete, "ring", ring.Name),
-	)
-}
+func NewRingDelete(ring *models.Ring) Operation { return ringOps.Delete(ring) }
+
+// CrtStore factory functions.
 
 // NewCrtStoreCreate creates an operation to create a crt-store section.
-func NewCrtStoreCreate(crtStore *models.CrtStore) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"crt_store",
-		PriorityCrtStore,
-		crtStore,
-		IdentityCrtStore,
-		CrtStoreName,
-		executors.CrtStoreCreate(),
-		DescribeTopLevel(OperationCreate, "crt-store", crtStore.Name),
-	)
-}
+func NewCrtStoreCreate(crtStore *models.CrtStore) Operation { return crtStoreOps.Create(crtStore) }
 
 // NewCrtStoreUpdate creates an operation to update a crt-store section.
-func NewCrtStoreUpdate(crtStore *models.CrtStore) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"crt_store",
-		PriorityCrtStore,
-		crtStore,
-		IdentityCrtStore,
-		CrtStoreName,
-		executors.CrtStoreUpdate(),
-		DescribeTopLevel(OperationUpdate, "crt-store", crtStore.Name),
-	)
-}
+func NewCrtStoreUpdate(crtStore *models.CrtStore) Operation { return crtStoreOps.Update(crtStore) }
 
 // NewCrtStoreDelete creates an operation to delete a crt-store section.
-func NewCrtStoreDelete(crtStore *models.CrtStore) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"crt_store",
-		PriorityCrtStore,
-		crtStore,
-		NilCrtStore,
-		CrtStoreName,
-		executors.CrtStoreDelete(),
-		DescribeTopLevel(OperationDelete, "crt-store", crtStore.Name),
-	)
-}
+func NewCrtStoreDelete(crtStore *models.CrtStore) Operation { return crtStoreOps.Delete(crtStore) }
+
+// Userlist factory functions.
 
 // NewUserlistCreate creates an operation to create a userlist section.
-func NewUserlistCreate(userlist *models.Userlist) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"userlist",
-		PriorityUserlist,
-		userlist,
-		IdentityUserlist,
-		UserlistName,
-		executors.UserlistCreate(),
-		DescribeTopLevel(OperationCreate, "userlist", userlist.Name),
-	)
-}
+func NewUserlistCreate(userlist *models.Userlist) Operation { return userlistOps.Create(userlist) }
 
 // NewUserlistDelete creates an operation to delete a userlist section.
-func NewUserlistDelete(userlist *models.Userlist) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"userlist",
-		PriorityUserlist,
-		userlist,
-		NilUserlist,
-		UserlistName,
-		executors.UserlistDelete(),
-		DescribeTopLevel(OperationDelete, "userlist", userlist.Name),
-	)
-}
+func NewUserlistDelete(userlist *models.Userlist) Operation { return userlistOps.Delete(userlist) }
+
+// FCGIApp factory functions.
 
 // NewFCGIAppCreate creates an operation to create a fcgi-app section.
-func NewFCGIAppCreate(fcgiApp *models.FCGIApp) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"fcgi_app",
-		PriorityFCGIApp,
-		fcgiApp,
-		IdentityFCGIApp,
-		FCGIAppName,
-		executors.FCGIAppCreate(),
-		DescribeTopLevel(OperationCreate, "fcgi-app", fcgiApp.Name),
-	)
-}
+func NewFCGIAppCreate(fcgiApp *models.FCGIApp) Operation { return fcgiAppOps.Create(fcgiApp) }
 
 // NewFCGIAppUpdate creates an operation to update a fcgi-app section.
-func NewFCGIAppUpdate(fcgiApp *models.FCGIApp) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"fcgi_app",
-		PriorityFCGIApp,
-		fcgiApp,
-		IdentityFCGIApp,
-		FCGIAppName,
-		executors.FCGIAppUpdate(),
-		DescribeTopLevel(OperationUpdate, "fcgi-app", fcgiApp.Name),
-	)
-}
+func NewFCGIAppUpdate(fcgiApp *models.FCGIApp) Operation { return fcgiAppOps.Update(fcgiApp) }
 
 // NewFCGIAppDelete creates an operation to delete a fcgi-app section.
-func NewFCGIAppDelete(fcgiApp *models.FCGIApp) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"fcgi_app",
-		PriorityFCGIApp,
-		fcgiApp,
-		NilFCGIApp,
-		FCGIAppName,
-		executors.FCGIAppDelete(),
-		DescribeTopLevel(OperationDelete, "fcgi-app", fcgiApp.Name),
-	)
-}
+func NewFCGIAppDelete(fcgiApp *models.FCGIApp) Operation { return fcgiAppOps.Delete(fcgiApp) }
+
+// LogProfile factory functions (HAProxy DataPlane API v3.1+).
 
 // NewLogProfileCreate creates an operation to create a log-profile section.
-// Log profiles are only available in HAProxy DataPlane API v3.1+.
 func NewLogProfileCreate(logProfile *models.LogProfile) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"log_profile",
-		PriorityLogProfile,
-		logProfile,
-		IdentityLogProfile,
-		LogProfileName,
-		executors.LogProfileCreate(),
-		DescribeTopLevel(OperationCreate, "log-profile", logProfile.Name),
-	)
+	return logProfileOps.Create(logProfile)
 }
 
 // NewLogProfileUpdate creates an operation to update a log-profile section.
-// Log profiles are only available in HAProxy DataPlane API v3.1+.
 func NewLogProfileUpdate(logProfile *models.LogProfile) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"log_profile",
-		PriorityLogProfile,
-		logProfile,
-		IdentityLogProfile,
-		LogProfileName,
-		executors.LogProfileUpdate(),
-		DescribeTopLevel(OperationUpdate, "log-profile", logProfile.Name),
-	)
+	return logProfileOps.Update(logProfile)
 }
 
 // NewLogProfileDelete creates an operation to delete a log-profile section.
-// Log profiles are only available in HAProxy DataPlane API v3.1+.
 func NewLogProfileDelete(logProfile *models.LogProfile) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"log_profile",
-		PriorityLogProfile,
-		logProfile,
-		NilLogProfile,
-		LogProfileName,
-		executors.LogProfileDelete(),
-		DescribeTopLevel(OperationDelete, "log-profile", logProfile.Name),
-	)
+	return logProfileOps.Delete(logProfile)
 }
 
 // NewTracesUpdate creates an operation to update the traces section.
@@ -665,53 +317,25 @@ func NewTracesUpdate(traces *models.Traces) Operation {
 		"traces",
 		PriorityTraces,
 		traces,
-		IdentityTraces,
+		Identity[*models.Traces],
 		executors.TracesUpdate(),
 		func() string { return "Update traces section" },
 	)
 }
 
+// AcmeProvider factory functions (HAProxy DataPlane API v3.2+).
+
 // NewAcmeProviderCreate creates an operation to create an acme section.
-// ACME providers are only available in HAProxy DataPlane API v3.2+.
 func NewAcmeProviderCreate(acmeProvider *models.AcmeProvider) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"acme_provider",
-		PriorityAcmeProvider,
-		acmeProvider,
-		IdentityAcmeProvider,
-		AcmeProviderName,
-		executors.AcmeProviderCreate(),
-		DescribeTopLevel(OperationCreate, "acme-provider", acmeProvider.Name),
-	)
+	return acmeProviderOps.Create(acmeProvider)
 }
 
 // NewAcmeProviderUpdate creates an operation to update an acme section.
-// ACME providers are only available in HAProxy DataPlane API v3.2+.
 func NewAcmeProviderUpdate(acmeProvider *models.AcmeProvider) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"acme_provider",
-		PriorityAcmeProvider,
-		acmeProvider,
-		IdentityAcmeProvider,
-		AcmeProviderName,
-		executors.AcmeProviderUpdate(),
-		DescribeTopLevel(OperationUpdate, "acme-provider", acmeProvider.Name),
-	)
+	return acmeProviderOps.Update(acmeProvider)
 }
 
 // NewAcmeProviderDelete creates an operation to delete an acme section.
-// ACME providers are only available in HAProxy DataPlane API v3.2+.
 func NewAcmeProviderDelete(acmeProvider *models.AcmeProvider) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"acme_provider",
-		PriorityAcmeProvider,
-		acmeProvider,
-		NilAcmeProvider,
-		AcmeProviderName,
-		executors.AcmeProviderDelete(),
-		DescribeTopLevel(OperationDelete, "acme-provider", acmeProvider.Name),
-	)
+	return acmeProviderOps.Delete(acmeProvider)
 }

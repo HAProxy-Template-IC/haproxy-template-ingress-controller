@@ -222,7 +222,7 @@ status:
 
 ### Go Type Definitions
 
-Location: `pkg/apis/haproxytemplate/v1alpha1/types.go`
+Location: `pkg/apis/haproxytemplate/v1alpha1/types_config.go`
 
 ```go
 package v1alpha1
