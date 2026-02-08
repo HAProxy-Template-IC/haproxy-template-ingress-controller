@@ -26,6 +26,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// startServer creates and starts an introspection server using Start(), returning the server and a cancel function.
+// It polls until the server is ready to accept connections.
+func startServer(t *testing.T, server *Server) context.CancelFunc {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go server.Start(ctx)
+
+	// Poll until server is ready
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		resp, err := http.Get("http://" + server.Addr() + "/health")
+		if err == nil {
+			resp.Body.Close()
+			return cancel
+		}
+	}
+	t.Fatal("server did not start in time")
+	return nil
+}
+
+// startServerTwoPhase creates and starts an introspection server using Setup()+Serve(), returning a cancel function.
+// It polls until the server is ready to accept connections.
+func startServerTwoPhase(t *testing.T, server *Server) context.CancelFunc {
+	t.Helper()
+	server.Setup()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go server.Serve(ctx)
+
+	// Poll until server is ready
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		resp, err := http.Get("http://" + server.Addr() + "/health")
+		if err == nil {
+			resp.Body.Close()
+			return cancel
+		}
+	}
+	t.Fatal("server did not start in time")
+	return nil
+}
+
 func TestNewServer(t *testing.T) {
 	registry := NewRegistry()
 	server := NewServer(":6060", registry)
@@ -36,27 +81,18 @@ func TestNewServer(t *testing.T) {
 
 func TestServer_RegisterHandler(t *testing.T) {
 	registry := NewRegistry()
-	server := NewServer(":0", registry)
+	server := NewServer("localhost:0", registry)
 
-	// Register custom handler
 	server.RegisterHandler("/custom", func(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, map[string]string{"custom": "response"})
 	})
 
-	// Start server
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
-
-	// Note: Since we can't get the actual port with :0, this is just a registration test
 	assert.Len(t, server.customHandlers, 1)
 }
 
 func TestServer_SetHealthChecker(t *testing.T) {
 	registry := NewRegistry()
-	server := NewServer(":0", registry)
+	server := NewServer("localhost:0", registry)
 
 	checker := func() map[string]ComponentHealth {
 		return map[string]ComponentHealth{
@@ -74,7 +110,7 @@ func TestServer_StartAndShutdown(t *testing.T) {
 		return "test-value", nil
 	}))
 
-	server := NewServer("localhost:16060", registry)
+	server := NewServer("localhost:0", registry)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -83,19 +119,20 @@ func TestServer_StartAndShutdown(t *testing.T) {
 		errChan <- server.Start(ctx)
 	}()
 
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
+	// Poll until server is ready
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		resp, err := http.Get("http://" + server.Addr() + "/debug/vars")
+		if err == nil {
+			resp.Body.Close()
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			break
+		}
+	}
 
-	// Verify server is running
-	resp, err := http.Get("http://localhost:16060/debug/vars")
-	require.NoError(t, err)
-	resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	// Trigger shutdown
 	cancel()
 
-	// Wait for shutdown
 	select {
 	case err := <-errChan:
 		require.NoError(t, err)
@@ -113,15 +150,11 @@ func TestServer_HandleIndex(t *testing.T) {
 		return "running", nil
 	}))
 
-	server := NewServer("localhost:16061", registry)
-
-	ctx, cancel := context.WithCancel(context.Background())
+	server := NewServer("localhost:0", registry)
+	cancel := startServer(t, server)
 	defer cancel()
 
-	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
-
-	resp, err := http.Get("http://localhost:16061/debug/vars")
+	resp, err := http.Get("http://" + server.Addr() + "/debug/vars")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -142,15 +175,11 @@ func TestServer_HandleAllVars(t *testing.T) {
 		return map[string]string{"version": "1.0"}, nil
 	}))
 
-	server := NewServer("localhost:16062", registry)
-
-	ctx, cancel := context.WithCancel(context.Background())
+	server := NewServer("localhost:0", registry)
+	cancel := startServer(t, server)
 	defer cancel()
 
-	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
-
-	resp, err := http.Get("http://localhost:16062/debug/vars/all")
+	resp, err := http.Get("http://" + server.Addr() + "/debug/vars/all")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -172,16 +201,12 @@ func TestServer_HandleVar(t *testing.T) {
 		}, nil
 	}))
 
-	server := NewServer("localhost:16063", registry)
-
-	ctx, cancel := context.WithCancel(context.Background())
+	server := NewServer("localhost:0", registry)
+	cancel := startServer(t, server)
 	defer cancel()
 
-	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
-
 	t.Run("get specific var", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:16063/debug/vars/config")
+		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/config")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -195,7 +220,7 @@ func TestServer_HandleVar(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:16063/debug/vars/nonexistent")
+		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/nonexistent")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -203,7 +228,7 @@ func TestServer_HandleVar(t *testing.T) {
 	})
 
 	t.Run("with field query", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:16063/debug/vars/config?field={.name}")
+		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/config?field={.name}")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -218,15 +243,11 @@ func TestServer_HandleVar(t *testing.T) {
 func TestServer_HandleHealth(t *testing.T) {
 	t.Run("without health checker", func(t *testing.T) {
 		registry := NewRegistry()
-		server := NewServer("localhost:16064", registry)
-
-		ctx, cancel := context.WithCancel(context.Background())
+		server := NewServer("localhost:0", registry)
+		cancel := startServer(t, server)
 		defer cancel()
 
-		go server.Start(ctx)
-		time.Sleep(100 * time.Millisecond)
-
-		resp, err := http.Get("http://localhost:16064/health")
+		resp, err := http.Get("http://" + server.Addr() + "/health")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -241,21 +262,17 @@ func TestServer_HandleHealth(t *testing.T) {
 
 	t.Run("with healthy components", func(t *testing.T) {
 		registry := NewRegistry()
-		server := NewServer("localhost:16065", registry)
+		server := NewServer("localhost:0", registry)
 		server.SetHealthChecker(func() map[string]ComponentHealth {
 			return map[string]ComponentHealth{
 				"component1": {Healthy: true},
 				"component2": {Healthy: true},
 			}
 		})
-
-		ctx, cancel := context.WithCancel(context.Background())
+		cancel := startServer(t, server)
 		defer cancel()
 
-		go server.Start(ctx)
-		time.Sleep(100 * time.Millisecond)
-
-		resp, err := http.Get("http://localhost:16065/health")
+		resp, err := http.Get("http://" + server.Addr() + "/health")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -270,21 +287,17 @@ func TestServer_HandleHealth(t *testing.T) {
 
 	t.Run("with unhealthy component", func(t *testing.T) {
 		registry := NewRegistry()
-		server := NewServer("localhost:16066", registry)
+		server := NewServer("localhost:0", registry)
 		server.SetHealthChecker(func() map[string]ComponentHealth {
 			return map[string]ComponentHealth{
 				"healthy":   {Healthy: true},
 				"unhealthy": {Healthy: false, Error: "connection failed"},
 			}
 		})
-
-		ctx, cancel := context.WithCancel(context.Background())
+		cancel := startServer(t, server)
 		defer cancel()
 
-		go server.Start(ctx)
-		time.Sleep(100 * time.Millisecond)
-
-		resp, err := http.Get("http://localhost:16066/health")
+		resp, err := http.Get("http://" + server.Addr() + "/health")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -299,15 +312,11 @@ func TestServer_HandleHealth(t *testing.T) {
 
 	t.Run("healthz alias", func(t *testing.T) {
 		registry := NewRegistry()
-		server := NewServer("localhost:16067", registry)
-
-		ctx, cancel := context.WithCancel(context.Background())
+		server := NewServer("localhost:0", registry)
+		cancel := startServer(t, server)
 		defer cancel()
 
-		go server.Start(ctx)
-		time.Sleep(100 * time.Millisecond)
-
-		resp, err := http.Get("http://localhost:16067/healthz")
+		resp, err := http.Get("http://" + server.Addr() + "/healthz")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -317,15 +326,11 @@ func TestServer_HandleHealth(t *testing.T) {
 
 func TestServer_HandleNotFound(t *testing.T) {
 	registry := NewRegistry()
-	server := NewServer("localhost:16068", registry)
-
-	ctx, cancel := context.WithCancel(context.Background())
+	server := NewServer("localhost:0", registry)
+	cancel := startServer(t, server)
 	defer cancel()
 
-	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
-
-	resp, err := http.Get("http://localhost:16068/nonexistent")
+	resp, err := http.Get("http://" + server.Addr() + "/nonexistent")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -335,16 +340,13 @@ func TestServer_HandleNotFound(t *testing.T) {
 func TestServer_PortInUse(t *testing.T) {
 	registry := NewRegistry()
 
-	// Start first server
-	server1 := NewServer("localhost:16069", registry)
-	ctx1, cancel1 := context.WithCancel(context.Background())
+	// Start first server on dynamic port
+	server1 := NewServer("localhost:0", registry)
+	cancel1 := startServer(t, server1)
 	defer cancel1()
 
-	go server1.Start(ctx1)
-	time.Sleep(100 * time.Millisecond)
-
-	// Start second server on same port
-	server2 := NewServer("localhost:16069", registry)
+	// Try to start second server on same port
+	server2 := NewServer(server1.Addr(), registry)
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
 
@@ -353,7 +355,6 @@ func TestServer_PortInUse(t *testing.T) {
 		errChan <- server2.Start(ctx2)
 	}()
 
-	// Second server should fail
 	select {
 	case err := <-errChan:
 		require.Error(t, err)
@@ -369,16 +370,12 @@ func TestServer_HandleVarEdgeCases(t *testing.T) {
 		return "value", nil
 	}))
 
-	server := NewServer("localhost:16070", registry)
-
-	ctx, cancel := context.WithCancel(context.Background())
+	server := NewServer("localhost:0", registry)
+	cancel := startServer(t, server)
 	defer cancel()
 
-	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
-
 	t.Run("empty path redirects to index", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:16070/debug/vars/")
+		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -388,12 +385,10 @@ func TestServer_HandleVarEdgeCases(t *testing.T) {
 		err = json.NewDecoder(resp.Body).Decode(&result)
 		require.NoError(t, err)
 
-		// Should return index response
 		assert.Contains(t, result, "paths")
 	})
 }
 
-// TestServer_TwoPhaseInitialization verifies the Setup/Serve pattern works correctly.
 func TestServer_TwoPhaseInitialization(t *testing.T) {
 	t.Run("setup then serve", func(t *testing.T) {
 		registry := NewRegistry()
@@ -401,37 +396,21 @@ func TestServer_TwoPhaseInitialization(t *testing.T) {
 			return "test-value", nil
 		}))
 
-		server := NewServer("localhost:16071", registry)
+		server := NewServer("localhost:0", registry)
 
-		// Register custom handler before Setup
 		server.RegisterHandler("/custom", func(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, map[string]string{"result": "custom-handler"})
 		})
 
-		// Call Setup to finalize routes
-		server.Setup()
-
-		// Start serving
-		ctx, cancel := context.WithCancel(context.Background())
+		cancel := startServerTwoPhase(t, server)
 		defer cancel()
 
-		go func() {
-			err := server.Serve(ctx)
-			// Serve returns nil on graceful shutdown
-			if err != nil && ctx.Err() == nil {
-				t.Errorf("Serve returned unexpected error: %v", err)
-			}
-		}()
-		time.Sleep(100 * time.Millisecond)
-
-		// Verify standard endpoint works
-		resp, err := http.Get("http://localhost:16071/debug/vars/test")
+		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/test")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		// Verify custom handler works
-		resp2, err := http.Get("http://localhost:16071/custom")
+		resp2, err := http.Get("http://" + server.Addr() + "/custom")
 		require.NoError(t, err)
 		defer resp2.Body.Close()
 		assert.Equal(t, http.StatusOK, resp2.StatusCode)
@@ -442,12 +421,11 @@ func TestServer_TwoPhaseInitialization(t *testing.T) {
 
 	t.Run("serve without setup returns error", func(t *testing.T) {
 		registry := NewRegistry()
-		server := NewServer("localhost:16072", registry)
+		server := NewServer("localhost:0", registry)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// Calling Serve without Setup should return error
 		err := server.Serve(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "Setup() must be called before Serve()")
@@ -459,27 +437,21 @@ func TestServer_TwoPhaseInitialization(t *testing.T) {
 			return "implicit-setup", nil
 		}))
 
-		server := NewServer("localhost:16073", registry)
+		server := NewServer("localhost:0", registry)
 
-		// Register handler before Start
 		server.RegisterHandler("/custom2", func(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, map[string]string{"result": "implicit"})
 		})
 
-		ctx, cancel := context.WithCancel(context.Background())
+		cancel := startServer(t, server)
 		defer cancel()
 
-		// Start should call Setup implicitly
-		go server.Start(ctx)
-		time.Sleep(100 * time.Millisecond)
-
-		// Verify both standard and custom endpoints work
-		resp, err := http.Get("http://localhost:16073/debug/vars/test")
+		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/test")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		resp2, err := http.Get("http://localhost:16073/custom2")
+		resp2, err := http.Get("http://" + server.Addr() + "/custom2")
 		require.NoError(t, err)
 		defer resp2.Body.Close()
 		assert.Equal(t, http.StatusOK, resp2.StatusCode)

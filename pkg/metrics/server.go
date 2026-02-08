@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -34,6 +36,7 @@ import (
 // when the context is cancelled.
 type Server struct {
 	addr     string
+	addrMu   sync.RWMutex
 	registry prometheus.Gatherer
 	server   *http.Server
 	logger   *slog.Logger
@@ -91,13 +94,26 @@ func NewServer(addr string, registry prometheus.Gatherer) *Server {
 // The server performs graceful shutdown when the context is cancelled,
 // waiting for active connections to complete (up to a 10-second timeout).
 func (s *Server) Start(ctx context.Context) error {
+	s.addrMu.RLock()
+	listenAddr := s.addr
+	s.addrMu.RUnlock()
+
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return fmt.Errorf("server error: %w", err)
+	}
+
+	s.addrMu.Lock()
+	s.addr = listener.Addr().String()
+	s.addrMu.Unlock()
+
 	serverErr := make(chan error, 1)
 
 	// Start server in background
 	go func() {
 		s.logger.Info("Starting metrics server", "addr", s.addr)
 
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("Metrics server error", "error", err)
 			serverErr <- err
 		}
@@ -146,5 +162,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 // Addr returns the address the server is configured to listen on.
 func (s *Server) Addr() string {
+	s.addrMu.RLock()
+	defer s.addrMu.RUnlock()
 	return s.addr
 }
