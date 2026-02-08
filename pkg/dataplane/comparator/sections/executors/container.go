@@ -47,11 +47,7 @@ func UserCreate(userlistName string) func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().CreateUser(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "user creation")
+		return dispatchAndCheck(resp, err, "user creation")
 	}
 }
 
@@ -86,11 +82,7 @@ func UserUpdate(userlistName string) func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().ReplaceUser(ctx, name, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "user update")
+		return dispatchAndCheck(resp, err, "user update")
 	}
 }
 
@@ -125,11 +117,7 @@ func UserDelete(userlistName string) func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().DeleteUser(ctx, name, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "user deletion")
+		return dispatchAndCheck(resp, err, "user deletion")
 	}
 }
 
@@ -164,11 +152,7 @@ func MailerEntryCreate(mailersName string) func(ctx context.Context, c *client.D
 				return clientset.V30EE().CreateMailerEntry(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "mailer entry creation")
+		return dispatchAndCheck(resp, err, "mailer entry creation")
 	}
 }
 
@@ -203,11 +187,7 @@ func MailerEntryUpdate(mailersName string) func(ctx context.Context, c *client.D
 				return clientset.V30EE().ReplaceMailerEntry(ctx, name, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "mailer entry update")
+		return dispatchAndCheck(resp, err, "mailer entry update")
 	}
 }
 
@@ -242,11 +222,7 @@ func MailerEntryDelete(mailersName string) func(ctx context.Context, c *client.D
 				return clientset.V30EE().DeleteMailerEntry(ctx, name, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "mailer entry deletion")
+		return dispatchAndCheck(resp, err, "mailer entry deletion")
 	}
 }
 
@@ -281,11 +257,7 @@ func PeerEntryCreate(peerSectionName string) func(ctx context.Context, c *client
 				return clientset.V30EE().CreatePeerEntry(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "peer entry creation")
+		return dispatchAndCheck(resp, err, "peer entry creation")
 	}
 }
 
@@ -320,11 +292,7 @@ func PeerEntryUpdate(peerSectionName string) func(ctx context.Context, c *client
 				return clientset.V30EE().ReplacePeerEntry(ctx, name, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "peer entry update")
+		return dispatchAndCheck(resp, err, "peer entry update")
 	}
 }
 
@@ -359,11 +327,7 @@ func PeerEntryDelete(peerSectionName string) func(ctx context.Context, c *client
 				return clientset.V30EE().DeletePeerEntry(ctx, name, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "peer entry deletion")
+		return dispatchAndCheck(resp, err, "peer entry deletion")
 	}
 }
 
@@ -398,11 +362,7 @@ func NameserverCreate(resolverName string) func(ctx context.Context, c *client.D
 				return clientset.V30EE().CreateNameserver(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "nameserver creation")
+		return dispatchAndCheck(resp, err, "nameserver creation")
 	}
 }
 
@@ -437,11 +397,7 @@ func NameserverUpdate(resolverName string) func(ctx context.Context, c *client.D
 				return clientset.V30EE().ReplaceNameserver(ctx, name, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "nameserver update")
+		return dispatchAndCheck(resp, err, "nameserver update")
 	}
 }
 
@@ -476,10 +432,6 @@ func NameserverDelete(resolverName string) func(ctx context.Context, c *client.D
 				return clientset.V30EE().DeleteNameserver(ctx, name, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "nameserver deletion")
+		return dispatchAndCheck(resp, err, "nameserver deletion")
 	}
 }

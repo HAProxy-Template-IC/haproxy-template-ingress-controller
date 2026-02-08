@@ -15,6 +15,7 @@
 package rendercontext
 
 import (
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -32,7 +33,7 @@ import (
 func SeparateHAProxyPodStore(storeMap map[string]stores.Store) (resourceStores map[string]stores.Store, haproxyPodStore stores.Store) {
 	resourceStores = make(map[string]stores.Store)
 	for resourceTypeName, store := range storeMap {
-		if resourceTypeName == "haproxy-pods" {
+		if resourceTypeName == names.HAProxyPodsResourceType {
 			haproxyPodStore = store
 		} else {
 			resourceStores[resourceTypeName] = store

@@ -49,10 +49,6 @@ func GlobalUpdate() func(ctx context.Context, c *client.DataplaneClient, txID st
 				return clientset.V30EE().ReplaceGlobal(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "global section update")
+		return dispatchAndCheck(resp, err, "global section update")
 	}
 }

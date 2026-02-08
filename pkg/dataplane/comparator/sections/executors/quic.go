@@ -39,11 +39,7 @@ func QUICInitialRuleFrontendCreate() func(ctx context.Context, c *client.Datapla
 				return clientset.V31EE().CreateQUICInitialRuleFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "QUIC initial rule creation in frontend")
+		return dispatchAndCheck(resp, err, "QUIC initial rule creation in frontend")
 	}
 }
 
@@ -71,11 +67,7 @@ func QUICInitialRuleFrontendUpdate() func(ctx context.Context, c *client.Datapla
 				return clientset.V31EE().ReplaceQUICInitialRuleFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "QUIC initial rule update in frontend")
+		return dispatchAndCheck(resp, err, "QUIC initial rule update in frontend")
 	}
 }
 
@@ -103,11 +95,7 @@ func QUICInitialRuleFrontendDelete() func(ctx context.Context, c *client.Datapla
 				return clientset.V31EE().DeleteQUICInitialRuleFrontend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "QUIC initial rule deletion from frontend")
+		return dispatchAndCheck(resp, err, "QUIC initial rule deletion from frontend")
 	}
 }
 
@@ -135,11 +123,7 @@ func QUICInitialRuleDefaultsCreate() func(ctx context.Context, c *client.Datapla
 				return clientset.V31EE().CreateQUICInitialRuleDefaults(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "QUIC initial rule creation in defaults")
+		return dispatchAndCheck(resp, err, "QUIC initial rule creation in defaults")
 	}
 }
 
@@ -167,11 +151,7 @@ func QUICInitialRuleDefaultsUpdate() func(ctx context.Context, c *client.Datapla
 				return clientset.V31EE().ReplaceQUICInitialRuleDefaults(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "QUIC initial rule update in defaults")
+		return dispatchAndCheck(resp, err, "QUIC initial rule update in defaults")
 	}
 }
 
@@ -199,11 +179,7 @@ func QUICInitialRuleDefaultsDelete() func(ctx context.Context, c *client.Datapla
 				return clientset.V31EE().DeleteQUICInitialRuleDefaults(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "QUIC initial rule deletion from defaults")
+		return dispatchAndCheck(resp, err, "QUIC initial rule deletion from defaults")
 	}
 }
 

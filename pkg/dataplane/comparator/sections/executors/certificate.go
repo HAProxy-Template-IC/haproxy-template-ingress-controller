@@ -30,11 +30,7 @@ func AcmeProviderCreate() func(ctx context.Context, c *client.DataplaneClient, t
 				return clientset.V32EE().CreateAcmeProvider(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "acme-provider creation")
+		return dispatchAndCheck(resp, err, "acme-provider creation")
 	}
 }
 
@@ -55,11 +51,7 @@ func AcmeProviderUpdate() func(ctx context.Context, c *client.DataplaneClient, t
 				return clientset.V32EE().EditAcmeProvider(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "acme-provider update")
+		return dispatchAndCheck(resp, err, "acme-provider update")
 	}
 }
 
@@ -80,11 +72,7 @@ func AcmeProviderDelete() func(ctx context.Context, c *client.DataplaneClient, t
 				return clientset.V32EE().DeleteAcmeProvider(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "acme-provider deletion")
+		return dispatchAndCheck(resp, err, "acme-provider deletion")
 	}
 }
 

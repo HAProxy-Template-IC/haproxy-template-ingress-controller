@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
@@ -300,7 +301,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 		SSLCertsDir:       filepath.Join(tempDir, s.sslCertsDir),
 		CRTListDir:        filepath.Join(tempDir, s.generalDir),
 		GeneralStorageDir: filepath.Join(tempDir, s.generalDir),
-		ConfigFile:        filepath.Join(tempDir, "haproxy.cfg"),
+		ConfigFile:        filepath.Join(tempDir, names.MainTemplateName),
 	}
 
 	// Check for context cancellation before running semantic validation

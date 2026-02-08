@@ -20,6 +20,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
@@ -173,8 +174,8 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 			"resource_type", resourceType,
 			"count", len(resources))
 
-		if resourceType == "haproxy-pods" {
-			if err := r.populateHAProxyPodsStore(storeMap["haproxy-pods"], resources); err != nil {
+		if resourceType == names.HAProxyPodsResourceType {
+			if err := r.populateHAProxyPodsStore(storeMap[names.HAProxyPodsResourceType], resources); err != nil {
 				return nil, err
 			}
 			continue
@@ -204,7 +205,7 @@ func (r *Runner) createEmptyStores() map[string]stores.Store {
 	}
 
 	r.logger.Log(context.Background(), logging.LevelTrace, "Creating empty store for haproxy-pods (controller metadata)")
-	storeMap["haproxy-pods"] = store.NewMemoryStore(2)
+	storeMap[names.HAProxyPodsResourceType] = store.NewMemoryStore(2)
 
 	return storeMap
 }

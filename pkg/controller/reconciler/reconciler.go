@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -224,7 +225,7 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 
 	// Skip HAProxy pod changes - they are deployment targets, not configuration sources
 	// Pod changes trigger deployment via HAProxyPodsDiscoveredEvent → Deployer component
-	if event.ResourceTypeName == "haproxy-pods" {
+	if event.ResourceTypeName == names.HAProxyPodsResourceType {
 		r.logger.Debug("Skipping HAProxy pod change (deployment target, not config source)",
 			"created", event.ChangeStats.Created,
 			"modified", event.ChangeStats.Modified,

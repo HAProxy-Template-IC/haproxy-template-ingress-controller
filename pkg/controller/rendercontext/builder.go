@@ -34,6 +34,7 @@ import (
 	"runtime"
 	"sort"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
@@ -175,7 +176,7 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 		b.logger.Debug("wrapping HAProxy pods store for rendering context")
 		controller["haproxy_pods"] = &StoreWrapper{
 			Store:        b.haproxyPodStore,
-			ResourceType: "haproxy-pods",
+			ResourceType: names.HAProxyPodsResourceType,
 			Logger:       b.logger,
 		}
 	}
@@ -244,12 +245,12 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 // (e.g., "features-050-ssl" for priority 50). This is required because render_glob
 // sorts templates alphabetically.
 func SortSnippetNames(snippets map[string]config.TemplateSnippet) []string {
-	names := make([]string, 0, len(snippets))
+	sorted := make([]string, 0, len(snippets))
 	for name := range snippets {
-		names = append(names, name)
+		sorted = append(sorted, name)
 	}
-	sort.Strings(names)
-	return names
+	sort.Strings(sorted)
+	return sorted
 }
 
 // MergeExtraContextInto merges the extraContext variables from the config into the provided template context.

@@ -26,6 +26,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/indextracker"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -54,7 +55,7 @@ func setupResourceWatchers(
 		resourceNames = append(resourceNames, name)
 	}
 	// Add haproxy-pods (auto-injected)
-	resourceNames = append(resourceNames, "haproxy-pods")
+	resourceNames = append(resourceNames, names.HAProxyPodsResourceType)
 
 	// Create ResourceWatcherComponent
 	resourceWatcher, err := resourcewatcher.New(cfg, k8sClient, bus, logger)

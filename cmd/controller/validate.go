@@ -27,6 +27,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
@@ -521,7 +522,7 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 		MapsDir:    filepath.Join(tempDir, filepath.Base(cfg.Dataplane.MapsDir)),
 		SSLDir:     filepath.Join(tempDir, filepath.Base(cfg.Dataplane.SSLCertsDir)),
 		GeneralDir: filepath.Join(tempDir, filepath.Base(cfg.Dataplane.GeneralStorageDir)),
-		ConfigFile: filepath.Join(tempDir, "haproxy.cfg"),
+		ConfigFile: filepath.Join(tempDir, names.MainTemplateName),
 	}
 
 	// Use centralized path resolution to get capability-aware paths

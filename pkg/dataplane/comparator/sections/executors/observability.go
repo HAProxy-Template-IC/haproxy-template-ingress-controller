@@ -40,11 +40,7 @@ func LogProfileCreate() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V31EE().CreateLogProfile(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log-profile creation")
+		return dispatchAndCheck(resp, err, "log-profile creation")
 	}
 }
 
@@ -73,11 +69,7 @@ func LogProfileUpdate() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V31EE().EditLogProfile(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log-profile update")
+		return dispatchAndCheck(resp, err, "log-profile update")
 	}
 }
 
@@ -106,11 +98,7 @@ func LogProfileDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V31EE().DeleteLogProfile(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log-profile deletion")
+		return dispatchAndCheck(resp, err, "log-profile deletion")
 	}
 }
 
@@ -140,11 +128,7 @@ func TracesUpdate() func(ctx context.Context, c *client.DataplaneClient, txID st
 				return clientset.V31EE().ReplaceTraces(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "traces update")
+		return dispatchAndCheck(resp, err, "traces update")
 	}
 }
 

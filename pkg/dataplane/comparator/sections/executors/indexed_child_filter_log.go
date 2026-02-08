@@ -60,11 +60,7 @@ func FilterFrontendCreate() func(ctx context.Context, c *client.DataplaneClient,
 				return clientset.V30EE().CreateFilterFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "filter creation in frontend")
+		return dispatchAndCheck(resp, err, "filter creation in frontend")
 	}
 }
 
@@ -99,11 +95,7 @@ func FilterFrontendUpdate() func(ctx context.Context, c *client.DataplaneClient,
 				return clientset.V30EE().ReplaceFilterFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "filter update in frontend")
+		return dispatchAndCheck(resp, err, "filter update in frontend")
 	}
 }
 
@@ -138,11 +130,7 @@ func FilterFrontendDelete() func(ctx context.Context, c *client.DataplaneClient,
 				return clientset.V30EE().DeleteFilterFrontend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "filter deletion from frontend")
+		return dispatchAndCheck(resp, err, "filter deletion from frontend")
 	}
 }
 
@@ -177,11 +165,7 @@ func FilterBackendCreate() func(ctx context.Context, c *client.DataplaneClient, 
 				return clientset.V30EE().CreateFilterBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "filter creation in backend")
+		return dispatchAndCheck(resp, err, "filter creation in backend")
 	}
 }
 
@@ -216,11 +200,7 @@ func FilterBackendUpdate() func(ctx context.Context, c *client.DataplaneClient, 
 				return clientset.V30EE().ReplaceFilterBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "filter update in backend")
+		return dispatchAndCheck(resp, err, "filter update in backend")
 	}
 }
 
@@ -255,11 +235,7 @@ func FilterBackendDelete() func(ctx context.Context, c *client.DataplaneClient, 
 				return clientset.V30EE().DeleteFilterBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "filter deletion from backend")
+		return dispatchAndCheck(resp, err, "filter deletion from backend")
 	}
 }
 
@@ -294,11 +270,7 @@ func LogTargetFrontendCreate() func(ctx context.Context, c *client.DataplaneClie
 				return clientset.V30EE().CreateLogTargetFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log target creation in frontend")
+		return dispatchAndCheck(resp, err, "log target creation in frontend")
 	}
 }
 
@@ -333,11 +305,7 @@ func LogTargetFrontendUpdate() func(ctx context.Context, c *client.DataplaneClie
 				return clientset.V30EE().ReplaceLogTargetFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log target update in frontend")
+		return dispatchAndCheck(resp, err, "log target update in frontend")
 	}
 }
 
@@ -372,11 +340,7 @@ func LogTargetFrontendDelete() func(ctx context.Context, c *client.DataplaneClie
 				return clientset.V30EE().DeleteLogTargetFrontend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log target deletion from frontend")
+		return dispatchAndCheck(resp, err, "log target deletion from frontend")
 	}
 }
 
@@ -411,11 +375,7 @@ func LogTargetBackendCreate() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().CreateLogTargetBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log target creation in backend")
+		return dispatchAndCheck(resp, err, "log target creation in backend")
 	}
 }
 
@@ -450,11 +410,7 @@ func LogTargetBackendUpdate() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().ReplaceLogTargetBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log target update in backend")
+		return dispatchAndCheck(resp, err, "log target update in backend")
 	}
 }
 
@@ -489,10 +445,6 @@ func LogTargetBackendDelete() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().DeleteLogTargetBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log target deletion from backend")
+		return dispatchAndCheck(resp, err, "log target deletion from backend")
 	}
 }

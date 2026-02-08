@@ -38,10 +38,9 @@ func TestNewCredentialsLoaderComponent(t *testing.T) {
 	component := NewCredentialsLoaderComponent(bus, logger)
 
 	require.NotNil(t, component)
-	assert.Equal(t, bus, component.eventBus)
-	assert.NotNil(t, component.eventChan) // Event channel subscribed in constructor
-	assert.NotNil(t, component.logger)    // Logger is enhanced with component name
-	assert.NotNil(t, component.stopCh)
+	assert.NotNil(t, component.BaseLoader)
+	assert.Equal(t, bus, component.EventBus())
+	assert.NotNil(t, component.Logger())
 }
 
 func TestCredentialsLoaderComponent_StartAndStop(t *testing.T) {

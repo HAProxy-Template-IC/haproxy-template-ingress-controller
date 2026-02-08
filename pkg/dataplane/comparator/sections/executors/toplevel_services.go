@@ -50,11 +50,7 @@ func MailersSectionCreate() func(ctx context.Context, c *client.DataplaneClient,
 				return clientset.V30EE().CreateMailersSection(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "mailers section creation")
+		return dispatchAndCheck(resp, err, "mailers section creation")
 	}
 }
 
@@ -89,11 +85,7 @@ func MailersSectionUpdate() func(ctx context.Context, c *client.DataplaneClient,
 				return clientset.V30EE().EditMailersSection(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "mailers section update")
+		return dispatchAndCheck(resp, err, "mailers section update")
 	}
 }
 
@@ -128,11 +120,7 @@ func MailersSectionDelete() func(ctx context.Context, c *client.DataplaneClient,
 				return clientset.V30EE().DeleteMailersSection(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "mailers section deletion")
+		return dispatchAndCheck(resp, err, "mailers section deletion")
 	}
 }
 
@@ -167,11 +155,7 @@ func ProgramCreate() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().CreateProgram(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "program creation")
+		return dispatchAndCheck(resp, err, "program creation")
 	}
 }
 
@@ -206,11 +190,7 @@ func ProgramUpdate() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().ReplaceProgram(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "program update")
+		return dispatchAndCheck(resp, err, "program update")
 	}
 }
 
@@ -245,11 +225,7 @@ func ProgramDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().DeleteProgram(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "program deletion")
+		return dispatchAndCheck(resp, err, "program deletion")
 	}
 }
 
@@ -284,11 +260,7 @@ func ResolverCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().CreateResolver(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "resolver creation")
+		return dispatchAndCheck(resp, err, "resolver creation")
 	}
 }
 
@@ -323,11 +295,7 @@ func ResolverUpdate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().ReplaceResolver(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "resolver update")
+		return dispatchAndCheck(resp, err, "resolver update")
 	}
 }
 
@@ -362,11 +330,7 @@ func ResolverDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().DeleteResolver(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "resolver deletion")
+		return dispatchAndCheck(resp, err, "resolver deletion")
 	}
 }
 
@@ -401,11 +365,7 @@ func RingCreate() func(ctx context.Context, c *client.DataplaneClient, txID stri
 				return clientset.V30EE().CreateRing(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ring creation")
+		return dispatchAndCheck(resp, err, "ring creation")
 	}
 }
 
@@ -440,11 +400,7 @@ func RingUpdate() func(ctx context.Context, c *client.DataplaneClient, txID stri
 				return clientset.V30EE().ReplaceRing(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ring update")
+		return dispatchAndCheck(resp, err, "ring update")
 	}
 }
 
@@ -479,10 +435,6 @@ func RingDelete() func(ctx context.Context, c *client.DataplaneClient, txID stri
 				return clientset.V30EE().DeleteRing(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ring deletion")
+		return dispatchAndCheck(resp, err, "ring deletion")
 	}
 }

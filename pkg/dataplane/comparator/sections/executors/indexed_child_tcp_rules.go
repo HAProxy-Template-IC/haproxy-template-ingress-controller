@@ -60,11 +60,7 @@ func TCPRequestRuleFrontendCreate() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().CreateTCPRequestRuleFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP request rule creation in frontend")
+		return dispatchAndCheck(resp, err, "TCP request rule creation in frontend")
 	}
 }
 
@@ -99,11 +95,7 @@ func TCPRequestRuleFrontendUpdate() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().ReplaceTCPRequestRuleFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP request rule update in frontend")
+		return dispatchAndCheck(resp, err, "TCP request rule update in frontend")
 	}
 }
 
@@ -138,11 +130,7 @@ func TCPRequestRuleFrontendDelete() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().DeleteTCPRequestRuleFrontend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP request rule deletion from frontend")
+		return dispatchAndCheck(resp, err, "TCP request rule deletion from frontend")
 	}
 }
 
@@ -177,11 +165,7 @@ func TCPRequestRuleBackendCreate() func(ctx context.Context, c *client.Dataplane
 				return clientset.V30EE().CreateTCPRequestRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP request rule creation in backend")
+		return dispatchAndCheck(resp, err, "TCP request rule creation in backend")
 	}
 }
 
@@ -216,11 +200,7 @@ func TCPRequestRuleBackendUpdate() func(ctx context.Context, c *client.Dataplane
 				return clientset.V30EE().ReplaceTCPRequestRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP request rule update in backend")
+		return dispatchAndCheck(resp, err, "TCP request rule update in backend")
 	}
 }
 
@@ -255,11 +235,7 @@ func TCPRequestRuleBackendDelete() func(ctx context.Context, c *client.Dataplane
 				return clientset.V30EE().DeleteTCPRequestRuleBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP request rule deletion from backend")
+		return dispatchAndCheck(resp, err, "TCP request rule deletion from backend")
 	}
 }
 
@@ -294,11 +270,7 @@ func TCPResponseRuleBackendCreate() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().CreateTCPResponseRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP response rule creation in backend")
+		return dispatchAndCheck(resp, err, "TCP response rule creation in backend")
 	}
 }
 
@@ -333,11 +305,7 @@ func TCPResponseRuleBackendUpdate() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().ReplaceTCPResponseRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP response rule update in backend")
+		return dispatchAndCheck(resp, err, "TCP response rule update in backend")
 	}
 }
 
@@ -372,11 +340,7 @@ func TCPResponseRuleBackendDelete() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().DeleteTCPResponseRuleBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP response rule deletion from backend")
+		return dispatchAndCheck(resp, err, "TCP response rule deletion from backend")
 	}
 }
 
@@ -411,11 +375,7 @@ func StickRuleBackendCreate() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().CreateStickRule(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "stick rule creation in backend")
+		return dispatchAndCheck(resp, err, "stick rule creation in backend")
 	}
 }
 
@@ -450,11 +410,7 @@ func StickRuleBackendUpdate() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().ReplaceStickRule(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "stick rule update in backend")
+		return dispatchAndCheck(resp, err, "stick rule update in backend")
 	}
 }
 
@@ -489,10 +445,6 @@ func StickRuleBackendDelete() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().DeleteStickRule(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "stick rule deletion from backend")
+		return dispatchAndCheck(resp, err, "stick rule deletion from backend")
 	}
 }

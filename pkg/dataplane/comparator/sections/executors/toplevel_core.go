@@ -50,11 +50,7 @@ func BackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().CreateBackend(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "backend creation")
+		return dispatchAndCheck(resp, err, "backend creation")
 	}
 }
 
@@ -89,11 +85,7 @@ func BackendUpdate() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().ReplaceBackend(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "backend update")
+		return dispatchAndCheck(resp, err, "backend update")
 	}
 }
 
@@ -128,11 +120,7 @@ func BackendDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().DeleteBackend(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "backend deletion")
+		return dispatchAndCheck(resp, err, "backend deletion")
 	}
 }
 
@@ -167,11 +155,7 @@ func FrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().CreateFrontend(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "frontend creation")
+		return dispatchAndCheck(resp, err, "frontend creation")
 	}
 }
 
@@ -206,11 +190,7 @@ func FrontendUpdate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().ReplaceFrontend(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "frontend update")
+		return dispatchAndCheck(resp, err, "frontend update")
 	}
 }
 
@@ -245,11 +225,7 @@ func FrontendDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().DeleteFrontend(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "frontend deletion")
+		return dispatchAndCheck(resp, err, "frontend deletion")
 	}
 }
 
@@ -284,11 +260,7 @@ func DefaultsCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().CreateDefaultsSection(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "defaults creation")
+		return dispatchAndCheck(resp, err, "defaults creation")
 	}
 }
 
@@ -323,11 +295,7 @@ func DefaultsUpdate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().ReplaceDefaultsSection(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "defaults update")
+		return dispatchAndCheck(resp, err, "defaults update")
 	}
 }
 
@@ -362,10 +330,6 @@ func DefaultsDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().DeleteDefaultsSection(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "defaults deletion")
+		return dispatchAndCheck(resp, err, "defaults deletion")
 	}
 }

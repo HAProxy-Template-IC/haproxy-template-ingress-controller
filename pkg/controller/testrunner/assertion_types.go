@@ -22,6 +22,7 @@ import (
 
 	"k8s.io/client-go/util/jsonpath"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
@@ -60,7 +61,7 @@ func (r *Runner) assertHAProxyValid(
 	}
 
 	// Populate target metadata (target is haproxy.cfg for this assertion)
-	r.populateTargetMetadata(&result, haproxyConfig, "haproxy.cfg", failed)
+	r.populateTargetMetadata(&result, haproxyConfig, names.MainTemplateName, failed)
 
 	return result
 }

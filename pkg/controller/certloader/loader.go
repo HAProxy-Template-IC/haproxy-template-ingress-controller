@@ -15,7 +15,6 @@
 package certloader
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -23,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceloader"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -48,10 +48,7 @@ const (
 // Kubernetes. It simply reacts to CertResourceChangedEvent and produces
 // CertParsedEvent.
 type CertLoaderComponent struct {
-	eventBus  *busevents.EventBus
-	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger    *slog.Logger
-	stopCh    chan struct{}
+	*resourceloader.BaseLoader
 }
 
 // NewCertLoaderComponent creates a new CertLoader component.
@@ -63,49 +60,19 @@ type CertLoaderComponent struct {
 // Returns:
 //   - *CertLoaderComponent ready to start
 func NewCertLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CertLoaderComponent {
-	// Subscribe to only CertResourceChangedEvent during construction
-	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeCertResourceChanged)
-
-	return &CertLoaderComponent{
-		eventBus:  eventBus,
-		eventChan: eventChan,
-		logger:    logger.With("component", ComponentName),
-		stopCh:    make(chan struct{}),
-	}
+	c := &CertLoaderComponent{}
+	c.BaseLoader = resourceloader.NewBaseLoader(
+		eventBus, logger, ComponentName, EventBufferSize, c,
+		events.EventTypeCertResourceChanged,
+	)
+	return c
 }
 
-// Start begins processing events from the EventBus.
-//
-// This method blocks until Stop() is called or the context is canceled.
-// The component is already subscribed to the EventBus (subscription happens in constructor).
-// Returns nil on graceful shutdown.
-//
-// Example:
-//
-//	go component.Start(ctx)
-func (c *CertLoaderComponent) Start(ctx context.Context) error {
-	c.logger.Debug("cert loader starting")
-
-	for {
-		select {
-		case <-ctx.Done():
-			c.logger.Info("CertLoader shutting down", "reason", ctx.Err())
-			return nil
-		case <-c.stopCh:
-			c.logger.Info("CertLoader shutting down")
-			return nil
-		case event := <-c.eventChan:
-			if certEvent, ok := event.(*events.CertResourceChangedEvent); ok {
-				c.processCertChange(certEvent)
-			}
-		}
+// ProcessEvent handles a single event from the EventBus.
+func (c *CertLoaderComponent) ProcessEvent(event busevents.Event) {
+	if certEvent, ok := event.(*events.CertResourceChangedEvent); ok {
+		c.processCertChange(certEvent)
 	}
-}
-
-// Stop gracefully stops the component.
-func (c *CertLoaderComponent) Stop() {
-	close(c.stopCh)
 }
 
 // processCertChange handles a CertResourceChangedEvent by extracting certificate data from the Secret.
@@ -113,7 +80,7 @@ func (c *CertLoaderComponent) processCertChange(event *events.CertResourceChange
 	// Extract unstructured resource
 	resource, ok := event.Resource.(*unstructured.Unstructured)
 	if !ok {
-		c.logger.Error("CertResourceChangedEvent contains invalid resource type",
+		c.Logger().Error("CertResourceChangedEvent contains invalid resource type",
 			"expected", "*unstructured.Unstructured",
 			"got", fmt.Sprintf("%T", event.Resource))
 		return
@@ -122,38 +89,38 @@ func (c *CertLoaderComponent) processCertChange(event *events.CertResourceChange
 	// Get resourceVersion for tracking
 	version := resource.GetResourceVersion()
 
-	c.logger.Debug("Processing Secret change for webhook certificates", "version", version)
+	c.Logger().Debug("Processing Secret change for webhook certificates", "version", version)
 
 	// Extract Secret data
 	data, found, err := unstructured.NestedMap(resource.Object, "data")
 	if err != nil {
-		c.logger.Error("Failed to extract Secret data field",
+		c.Logger().Error("Failed to extract Secret data field",
 			"error", err,
 			"version", version)
 		return
 	}
 	if !found {
-		c.logger.Error("Secret has no data field", "version", version)
+		c.Logger().Error("Secret has no data field", "version", version)
 		return
 	}
 
 	// Extract tls.crt and tls.key (standard Kubernetes TLS Secret keys)
 	tlsCertBase64, ok := data["tls.crt"]
 	if !ok {
-		c.logger.Error("Secret data missing 'tls.crt' key", "version", version)
+		c.Logger().Error("Secret data missing 'tls.crt' key", "version", version)
 		return
 	}
 
 	tlsKeyBase64, ok := data["tls.key"]
 	if !ok {
-		c.logger.Error("Secret data missing 'tls.key' key", "version", version)
+		c.Logger().Error("Secret data missing 'tls.key' key", "version", version)
 		return
 	}
 
 	// Decode base64 data
 	tlsCertPEM, err := decodeBase64SecretValue(tlsCertBase64)
 	if err != nil {
-		c.logger.Error("Failed to decode tls.crt from base64",
+		c.Logger().Error("Failed to decode tls.crt from base64",
 			"error", err,
 			"version", version)
 		return
@@ -161,20 +128,20 @@ func (c *CertLoaderComponent) processCertChange(event *events.CertResourceChange
 
 	tlsKeyPEM, err := decodeBase64SecretValue(tlsKeyBase64)
 	if err != nil {
-		c.logger.Error("Failed to decode tls.key from base64",
+		c.Logger().Error("Failed to decode tls.key from base64",
 			"error", err,
 			"version", version)
 		return
 	}
 
-	c.logger.Info("Webhook certificates extracted successfully",
+	c.Logger().Info("Webhook certificates extracted successfully",
 		"version", version,
 		"cert_size", len(tlsCertPEM),
 		"key_size", len(tlsKeyPEM))
 
 	// Publish CertParsedEvent
 	parsedEvent := events.NewCertParsedEvent(tlsCertPEM, tlsKeyPEM, version)
-	c.eventBus.Publish(parsedEvent)
+	c.EventBus().Publish(parsedEvent)
 }
 
 // decodeBase64SecretValue decodes a base64-encoded Secret value.

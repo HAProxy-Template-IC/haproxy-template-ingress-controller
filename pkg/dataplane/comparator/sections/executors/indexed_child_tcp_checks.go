@@ -60,11 +60,7 @@ func HTTPCheckBackendCreate() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().CreateHTTPCheckBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP check creation in backend")
+		return dispatchAndCheck(resp, err, "HTTP check creation in backend")
 	}
 }
 
@@ -99,11 +95,7 @@ func HTTPCheckBackendUpdate() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().ReplaceHTTPCheckBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP check update in backend")
+		return dispatchAndCheck(resp, err, "HTTP check update in backend")
 	}
 }
 
@@ -138,11 +130,7 @@ func HTTPCheckBackendDelete() func(ctx context.Context, c *client.DataplaneClien
 				return clientset.V30EE().DeleteHTTPCheckBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP check deletion from backend")
+		return dispatchAndCheck(resp, err, "HTTP check deletion from backend")
 	}
 }
 
@@ -177,11 +165,7 @@ func TCPCheckBackendCreate() func(ctx context.Context, c *client.DataplaneClient
 				return clientset.V30EE().CreateTCPCheckBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP check creation in backend")
+		return dispatchAndCheck(resp, err, "TCP check creation in backend")
 	}
 }
 
@@ -216,11 +200,7 @@ func TCPCheckBackendUpdate() func(ctx context.Context, c *client.DataplaneClient
 				return clientset.V30EE().ReplaceTCPCheckBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP check update in backend")
+		return dispatchAndCheck(resp, err, "TCP check update in backend")
 	}
 }
 
@@ -255,10 +235,6 @@ func TCPCheckBackendDelete() func(ctx context.Context, c *client.DataplaneClient
 				return clientset.V30EE().DeleteTCPCheckBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "TCP check deletion from backend")
+		return dispatchAndCheck(resp, err, "TCP check deletion from backend")
 	}
 }

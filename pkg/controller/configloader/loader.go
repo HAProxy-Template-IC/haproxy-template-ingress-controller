@@ -1,7 +1,6 @@
 package configloader
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 
@@ -10,6 +9,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceloader"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -35,10 +35,7 @@ const (
 // Kubernetes. It simply reacts to ConfigResourceChangedEvent and produces
 // ConfigParsedEvent.
 type ConfigLoaderComponent struct {
-	eventBus  *busevents.EventBus
-	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger    *slog.Logger
-	stopCh    chan struct{}
+	*resourceloader.BaseLoader
 }
 
 // NewConfigLoaderComponent creates a new ConfigLoader component.
@@ -50,49 +47,19 @@ type ConfigLoaderComponent struct {
 // Returns:
 //   - *ConfigLoaderComponent ready to start
 func NewConfigLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *ConfigLoaderComponent {
-	// Subscribe to only ConfigResourceChangedEvent during construction
-	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeConfigResourceChanged)
-
-	return &ConfigLoaderComponent{
-		eventBus:  eventBus,
-		eventChan: eventChan,
-		logger:    logger.With("component", ComponentName),
-		stopCh:    make(chan struct{}),
-	}
+	c := &ConfigLoaderComponent{}
+	c.BaseLoader = resourceloader.NewBaseLoader(
+		eventBus, logger, ComponentName, EventBufferSize, c,
+		events.EventTypeConfigResourceChanged,
+	)
+	return c
 }
 
-// Start begins processing events from the EventBus.
-//
-// This method blocks until Stop() is called or the context is canceled.
-// The component is already subscribed to the EventBus (subscription happens in constructor).
-// Returns nil on graceful shutdown.
-//
-// Example:
-//
-//	go component.Start(ctx)
-func (c *ConfigLoaderComponent) Start(ctx context.Context) error {
-	c.logger.Debug("config loader starting")
-
-	for {
-		select {
-		case <-ctx.Done():
-			c.logger.Info("ConfigLoader shutting down", "reason", ctx.Err())
-			return nil
-		case <-c.stopCh:
-			c.logger.Info("ConfigLoader shutting down")
-			return nil
-		case event := <-c.eventChan:
-			if configEvent, ok := event.(*events.ConfigResourceChangedEvent); ok {
-				c.processConfigChange(configEvent)
-			}
-		}
+// ProcessEvent handles a single event from the EventBus.
+func (c *ConfigLoaderComponent) ProcessEvent(event busevents.Event) {
+	if configEvent, ok := event.(*events.ConfigResourceChangedEvent); ok {
+		c.processConfigChange(configEvent)
 	}
-}
-
-// Stop gracefully stops the component.
-func (c *ConfigLoaderComponent) Stop() {
-	close(c.stopCh)
 }
 
 // processConfigChange handles a ConfigResourceChangedEvent by parsing the config resource.
@@ -100,7 +67,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	// Extract unstructured resource
 	resource, ok := event.Resource.(*unstructured.Unstructured)
 	if !ok {
-		c.logger.Error("ConfigResourceChangedEvent contains invalid resource type",
+		c.Logger().Error("ConfigResourceChangedEvent contains invalid resource type",
 			"expected", "*unstructured.Unstructured",
 			"got", fmt.Sprintf("%T", event.Resource))
 		return
@@ -113,14 +80,14 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	apiVersion := resource.GetAPIVersion()
 	kind := resource.GetKind()
 
-	c.logger.Debug("Processing config resource change",
+	c.Logger().Debug("Processing config resource change",
 		"apiVersion", apiVersion,
 		"kind", kind,
 		"version", version)
 
 	// Validate resource type
 	if apiVersion != "haproxy-haptic.org/v1alpha1" || kind != "HAProxyTemplateConfig" {
-		c.logger.Error("Unsupported resource type for config",
+		c.Logger().Error("Unsupported resource type for config",
 			"apiVersion", apiVersion,
 			"kind", kind,
 			"version", version)
@@ -128,10 +95,10 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	}
 
 	// Process CRD
-	cfg, templateConfig, err := c.processCRD(resource)
+	cfg, templateConfig, err := processCRD(resource)
 
 	if err != nil {
-		c.logger.Error("Failed to process config resource",
+		c.Logger().Error("Failed to process config resource",
 			"error", err,
 			"apiVersion", apiVersion,
 			"kind", kind,
@@ -139,7 +106,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 		return
 	}
 
-	c.logger.Info("Configuration processed successfully",
+	c.Logger().Info("Configuration processed successfully",
 		"apiVersion", apiVersion,
 		"kind", kind,
 		"version", version)
@@ -148,7 +115,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	// Note: SecretVersion will be empty here - it gets populated later when
 	// the ValidationCoordinator correlates with credentials
 	parsedEvent := events.NewConfigParsedEvent(cfg, templateConfig, version, "")
-	c.eventBus.Publish(parsedEvent)
+	c.EventBus().Publish(parsedEvent)
 }
 
 // processCRD converts a HAProxyTemplateConfig CRD to config.Config and returns both.
@@ -157,6 +124,6 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 //   - *config.Config: Parsed configuration for validation and rendering
 //   - *v1alpha1.HAProxyTemplateConfig: Original CRD for metadata (name, namespace, UID)
 //   - error: Conversion failure
-func (c *ConfigLoaderComponent) processCRD(resource *unstructured.Unstructured) (*config.Config, *v1alpha1.HAProxyTemplateConfig, error) {
+func processCRD(resource *unstructured.Unstructured) (*config.Config, *v1alpha1.HAProxyTemplateConfig, error) {
 	return conversion.ParseCRD(resource)
 }

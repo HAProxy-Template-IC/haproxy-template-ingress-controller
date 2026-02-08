@@ -25,6 +25,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/discovery"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
@@ -87,9 +88,9 @@ func createReconciliationComponents(
 		"supports_general_storage", capabilities.SupportsGeneralStorage)
 
 	// Get haproxy-pods store for pod-maxconn calculations in templates
-	haproxyPodStore := resourceWatcher.GetStore("haproxy-pods")
+	haproxyPodStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
 	if haproxyPodStore == nil {
-		return nil, fmt.Errorf("haproxy-pods store not found (should be auto-injected)")
+		return nil, fmt.Errorf(names.HAProxyPodsResourceType + " store not found (should be auto-injected)")
 	}
 
 	// Create HTTPStore component for dynamic HTTP content fetching
@@ -181,9 +182,9 @@ func createReconciliationComponents(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery component: %w", err)
 	}
-	podStore := resourceWatcher.GetStore("haproxy-pods")
+	podStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
 	if podStore == nil {
-		return nil, fmt.Errorf("haproxy-pods store not found (should be auto-injected)")
+		return nil, fmt.Errorf(names.HAProxyPodsResourceType + " store not found (should be auto-injected)")
 	}
 	discoveryComponent.SetPodStore(podStore)
 

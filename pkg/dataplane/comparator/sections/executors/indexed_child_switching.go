@@ -60,11 +60,7 @@ func BackendSwitchingRuleCreate() func(ctx context.Context, c *client.DataplaneC
 				return clientset.V30EE().CreateBackendSwitchingRule(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "backend switching rule creation")
+		return dispatchAndCheck(resp, err, "backend switching rule creation")
 	}
 }
 
@@ -99,11 +95,7 @@ func BackendSwitchingRuleUpdate() func(ctx context.Context, c *client.DataplaneC
 				return clientset.V30EE().ReplaceBackendSwitchingRule(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "backend switching rule update")
+		return dispatchAndCheck(resp, err, "backend switching rule update")
 	}
 }
 
@@ -138,11 +130,7 @@ func BackendSwitchingRuleDelete() func(ctx context.Context, c *client.DataplaneC
 				return clientset.V30EE().DeleteBackendSwitchingRule(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "backend switching rule deletion")
+		return dispatchAndCheck(resp, err, "backend switching rule deletion")
 	}
 }
 
@@ -177,11 +165,7 @@ func ServerSwitchingRuleBackendCreate() func(ctx context.Context, c *client.Data
 				return clientset.V30EE().CreateServerSwitchingRule(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "server switching rule creation in backend")
+		return dispatchAndCheck(resp, err, "server switching rule creation in backend")
 	}
 }
 
@@ -216,11 +200,7 @@ func ServerSwitchingRuleBackendUpdate() func(ctx context.Context, c *client.Data
 				return clientset.V30EE().ReplaceServerSwitchingRule(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "server switching rule update in backend")
+		return dispatchAndCheck(resp, err, "server switching rule update in backend")
 	}
 }
 
@@ -255,10 +235,6 @@ func ServerSwitchingRuleBackendDelete() func(ctx context.Context, c *client.Data
 				return clientset.V30EE().DeleteServerSwitchingRule(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "server switching rule deletion from backend")
+		return dispatchAndCheck(resp, err, "server switching rule deletion from backend")
 	}
 }

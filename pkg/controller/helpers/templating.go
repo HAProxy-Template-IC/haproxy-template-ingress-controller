@@ -18,6 +18,7 @@ package helpers
 import (
 	"fmt"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -159,8 +160,8 @@ func ExtractTemplatesFromConfig(cfg *config.Config) TemplateExtraction {
 	}
 
 	// Main HAProxy config (entry point)
-	extraction.AllTemplates["haproxy.cfg"] = cfg.HAProxyConfig.Template
-	extraction.EntryPoints = append(extraction.EntryPoints, "haproxy.cfg")
+	extraction.AllTemplates[names.MainTemplateName] = cfg.HAProxyConfig.Template
+	extraction.EntryPoints = append(extraction.EntryPoints, names.MainTemplateName)
 
 	// Template snippets (NOT entry points - discovered via render calls)
 	for name, snippet := range cfg.TemplateSnippets {
@@ -202,7 +203,7 @@ func ExtractPostProcessorConfigs(cfg *config.Config) map[string][]templating.Pos
 
 	// Main HAProxy config
 	if len(cfg.HAProxyConfig.PostProcessing) > 0 {
-		configs["haproxy.cfg"] = convertPostProcessorConfigs(cfg.HAProxyConfig.PostProcessing)
+		configs[names.MainTemplateName] = convertPostProcessorConfigs(cfg.HAProxyConfig.PostProcessing)
 	}
 
 	// Map files

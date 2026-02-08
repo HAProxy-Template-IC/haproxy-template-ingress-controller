@@ -36,6 +36,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -403,10 +404,10 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver) (*single
 
 	// Render main HAProxy config
 	mainStart := time.Now()
-	haproxyConfig, err := c.engine.Render(c.ctx, "haproxy.cfg", renderContext)
+	haproxyConfig, err := c.engine.Render(c.ctx, names.MainTemplateName, renderContext)
 	mainMs := time.Since(mainStart).Milliseconds()
 	if err != nil {
-		c.publishRenderFailure("haproxy.cfg", err)
+		c.publishRenderFailure(names.MainTemplateName, err)
 		return nil, err
 	}
 
