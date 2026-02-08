@@ -18,10 +18,6 @@ func init() {
 	responseEventTypes = append(responseEventTypes, "test.response")
 }
 
-// -----------------------------------------------------------------------------
-// Test Event Types
-// -----------------------------------------------------------------------------
-
 // testEvent is a simple test event.
 type testEvent struct {
 	message string
@@ -51,10 +47,6 @@ func (e testResponse) EventType() string    { return "test.response" }
 func (e testResponse) RequestID() string    { return e.reqID }
 func (e testResponse) Responder() string    { return e.responder }
 func (e testResponse) Timestamp() time.Time { return time.Now() }
-
-// -----------------------------------------------------------------------------
-// Basic Pub/Sub Tests
-// -----------------------------------------------------------------------------
 
 func TestEventBus_PublishSubscribe(t *testing.T) {
 	t.Parallel()
@@ -182,10 +174,6 @@ func TestEventBus_ConcurrentPublish(t *testing.T) {
 		}
 	}
 }
-
-// -----------------------------------------------------------------------------
-// Request-Response (Scatter-Gather) Tests
-// -----------------------------------------------------------------------------
 
 func TestEventBus_RequestAllResponses(t *testing.T) {
 	t.Parallel()
@@ -409,10 +397,6 @@ func TestEventBus_RequestInvalidMinResponses(t *testing.T) {
 	require.Error(t, err, "expected error for MinResponses > ExpectedResponders")
 }
 
-// -----------------------------------------------------------------------------
-// Helper Functions
-// -----------------------------------------------------------------------------
-
 // startResponder simulates a validator component that responds to requests.
 func startResponder(bus *EventBus, name string) {
 	sub := bus.Subscribe("test-sub", 100)
@@ -449,10 +433,6 @@ func startSlowResponder(bus *EventBus, name string, delay time.Duration) {
 		}
 	}
 }
-
-// -----------------------------------------------------------------------------
-// Startup Coordination Tests
-// -----------------------------------------------------------------------------
 
 func TestEventBus_Start_BuffersEventsBeforeStart(t *testing.T) {
 	t.Parallel()
@@ -702,10 +682,6 @@ func TestEventBus_Start_PublishReturnsZeroBeforeStart(t *testing.T) {
 	assert.Equal(t, 1, sent, "expected 1 (sent)")
 }
 
-// -----------------------------------------------------------------------------
-// Benchmark Tests
-// -----------------------------------------------------------------------------
-
 func BenchmarkEventBus_Publish(b *testing.B) {
 	bus := NewEventBus(100)
 	event := testEvent{message: "benchmark"}
@@ -762,10 +738,6 @@ func BenchmarkEventBus_Request(b *testing.B) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Additional Test Event Types for Typed Subscriptions
-// -----------------------------------------------------------------------------
-
 // otherTestEvent is a different test event type.
 type otherTestEvent struct {
 	value int
@@ -773,10 +745,6 @@ type otherTestEvent struct {
 
 func (e otherTestEvent) EventType() string    { return "other.test.event" }
 func (e otherTestEvent) Timestamp() time.Time { return time.Now() }
-
-// -----------------------------------------------------------------------------
-// Typed Subscription Tests
-// -----------------------------------------------------------------------------
 
 func TestEventBus_SubscribeTypes_FiltersCorrectly(t *testing.T) {
 	t.Parallel()
@@ -1105,10 +1073,6 @@ func BenchmarkEventBus_SubscribeTypes_NonMatchingEvents(b *testing.B) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Unsubscribe Tests
-// -----------------------------------------------------------------------------
-
 func TestEventBus_Unsubscribe(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
@@ -1243,10 +1207,6 @@ func TestEventBus_SubscribeMultiple_UnsubscribesOnCancel(t *testing.T) {
 	// There should be 0 universal subscribers after unsubscribe
 	assert.Equal(t, 0, subsCount, "expected 0 universal subscribers after context cancel")
 }
-
-// -----------------------------------------------------------------------------
-// Lossy Subscription Tests
-// -----------------------------------------------------------------------------
 
 func TestEventBus_SubscribeLossy_SilentDrop(t *testing.T) {
 	t.Parallel()

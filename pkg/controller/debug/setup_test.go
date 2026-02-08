@@ -112,7 +112,6 @@ func TestRegisterVariables_UptimeIncreases(t *testing.T) {
 	assert.NotNil(t, data2["started"])
 }
 
-// TestRegisterEventsHandler tests that RegisterEventsHandler registers the handler correctly
 // and the handler responds to HTTP requests properly.
 func TestRegisterEventsHandler(t *testing.T) {
 	bus := busevents.NewEventBus(100)

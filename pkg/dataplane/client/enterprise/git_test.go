@@ -37,10 +37,6 @@ func TestNewGitOperations(t *testing.T) {
 	assert.Equal(t, c, git.client)
 }
 
-// =============================================================================
-// Git Settings Tests
-// =============================================================================
-
 func TestGitOperations_GetSettings_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -164,10 +160,6 @@ func TestGitOperations_ReplaceSettings_CommunityEdition(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, client.ErrEnterpriseRequired))
 }
-
-// =============================================================================
-// Git Actions Tests
-// =============================================================================
 
 func TestGitOperations_GetAllActions_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

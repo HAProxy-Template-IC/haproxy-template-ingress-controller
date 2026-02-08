@@ -22,10 +22,6 @@ func NewDynamicUpdateOperations(c *client.DataplaneClient) *DynamicUpdateOperati
 	return &DynamicUpdateOperations{client: c}
 }
 
-// =============================================================================
-// Dynamic Update Section Operations
-// =============================================================================
-
 // GetSection checks if the dynamic update section exists.
 func (d *DynamicUpdateOperations) GetSection(ctx context.Context, txID string) error {
 	resp, err := d.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -109,10 +105,6 @@ func (d *DynamicUpdateOperations) DeleteSection(ctx context.Context, txID string
 	}
 	return nil
 }
-
-// =============================================================================
-// Dynamic Update Rules Operations
-// =============================================================================
 
 // DynamicUpdateRule represents a dynamic update rule.
 type DynamicUpdateRule = v32ee.DynamicUpdateRule

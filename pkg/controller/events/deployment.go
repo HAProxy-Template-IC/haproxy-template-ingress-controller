@@ -21,10 +21,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
-// -----------------------------------------------------------------------------
-// Deployment Events.
-// -----------------------------------------------------------------------------
-
 // DeploymentStartedEvent is published when deployment to HAProxy instances begins.
 //
 // This event propagates the correlation ID from DeploymentScheduledEvent.

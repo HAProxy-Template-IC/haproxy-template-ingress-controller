@@ -61,7 +61,9 @@ func newHAProxyGeneralFiles(c *HaproxyTemplateICV1alpha1Client, namespace string
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			namespace,
-			func() *haproxytemplatev1alpha1.HAProxyGeneralFile { return &haproxytemplatev1alpha1.HAProxyGeneralFile{} },
+			func() *haproxytemplatev1alpha1.HAProxyGeneralFile {
+				return &haproxytemplatev1alpha1.HAProxyGeneralFile{}
+			},
 			func() *haproxytemplatev1alpha1.HAProxyGeneralFileList {
 				return &haproxytemplatev1alpha1.HAProxyGeneralFileList{}
 			},

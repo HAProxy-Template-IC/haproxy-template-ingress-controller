@@ -25,7 +25,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
-// TestConfigEvents tests config.go event types.
 func TestConfigEvents(t *testing.T) {
 	t.Run("ConfigParsedEvent", func(t *testing.T) {
 		config := map[string]string{"key": "value"}
@@ -134,7 +133,6 @@ func TestConfigEvents(t *testing.T) {
 	})
 }
 
-// TestResourceEvents tests resource.go event types.
 func TestResourceEvents(t *testing.T) {
 	t.Run("ResourceIndexUpdatedEvent", func(t *testing.T) {
 		changeStats := types.ChangeStats{
@@ -188,7 +186,6 @@ func TestResourceEvents(t *testing.T) {
 	})
 }
 
-// TestLeaderEvents tests leader.go event types.
 func TestLeaderEvents(t *testing.T) {
 	t.Run("LeaderElectionStartedEvent", func(t *testing.T) {
 		event := NewLeaderElectionStartedEvent("pod-1", "my-lease", "default")
@@ -227,7 +224,6 @@ func TestLeaderEvents(t *testing.T) {
 	})
 }
 
-// TestReconciliationEvents tests reconciliation.go event types.
 func TestReconciliationEvents(t *testing.T) {
 	t.Run("ReconciliationTriggeredEvent", func(t *testing.T) {
 		event := NewReconciliationTriggeredEvent("config_change", true)
@@ -278,7 +274,6 @@ func TestReconciliationEvents(t *testing.T) {
 	})
 }
 
-// TestCredentialsEvents tests credentials.go event types.
 func TestCredentialsEvents(t *testing.T) {
 	t.Run("SecretResourceChangedEvent", func(t *testing.T) {
 		resource := map[string]string{"name": "my-secret"}
@@ -309,7 +304,6 @@ func TestCredentialsEvents(t *testing.T) {
 	})
 }
 
-// TestCertificateEvents tests certificate.go event types.
 func TestCertificateEvents(t *testing.T) {
 	t.Run("CertResourceChangedEvent", func(t *testing.T) {
 		resource := map[string]string{"name": "my-cert"}
@@ -347,7 +341,6 @@ func TestCertificateEvents(t *testing.T) {
 	})
 }
 
-// TestHTTPEvents tests http.go event types.
 func TestHTTPEvents(t *testing.T) {
 	t.Run("HTTPResourceUpdatedEvent", func(t *testing.T) {
 		event := NewHTTPResourceUpdatedEvent("https://example.com/resource", "abc123", 1024)
@@ -380,7 +373,6 @@ func TestHTTPEvents(t *testing.T) {
 	})
 }
 
-// TestTemplateEvents tests template.go event types.
 func TestTemplateEvents(t *testing.T) {
 	t.Run("TemplateRenderedEvent", func(t *testing.T) {
 		auxFiles := &dataplane.AuxiliaryFiles{}
@@ -431,7 +423,6 @@ func TestTemplateEvents(t *testing.T) {
 	})
 }
 
-// TestValidationEvents tests validation.go event types.
 func TestValidationEvents(t *testing.T) {
 	t.Run("ValidationStartedEvent", func(t *testing.T) {
 		event := NewValidationStartedEvent()
@@ -550,7 +541,6 @@ func TestValidationEvents(t *testing.T) {
 	})
 }
 
-// TestDeploymentEvents tests deployment.go event types.
 func TestDeploymentEvents(t *testing.T) {
 	t.Run("DeploymentStartedEvent", func(t *testing.T) {
 		endpoints := []dataplane.Endpoint{
@@ -710,7 +700,6 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 }
 
-// TestDiscoveryEvents tests discovery.go event types.
 func TestDiscoveryEvents(t *testing.T) {
 	t.Run("HAProxyPodsDiscoveredEvent", func(t *testing.T) {
 		endpoints := []dataplane.Endpoint{
@@ -754,7 +743,6 @@ func TestDiscoveryEvents(t *testing.T) {
 	})
 }
 
-// TestPublishingEvents tests publishing.go event types.
 func TestPublishingEvents(t *testing.T) {
 	t.Run("ConfigPublishedEvent", func(t *testing.T) {
 		event := NewConfigPublishedEvent("my-config", "default", 5, 2)
@@ -828,7 +816,6 @@ func TestPublishingEvents(t *testing.T) {
 	})
 }
 
-// TestWebhookEvents tests webhook.go event types.
 func TestWebhookEvents(t *testing.T) {
 	t.Run("WebhookValidationRequest", func(t *testing.T) {
 		obj := map[string]interface{}{"metadata": map[string]interface{}{"name": "test"}}
@@ -879,7 +866,6 @@ func TestWebhookEvents(t *testing.T) {
 	})
 }
 
-// TestWebhookObservabilityEvents tests webhookobservability.go event types.
 func TestWebhookObservabilityEvents(t *testing.T) {
 	t.Run("WebhookValidationRequestEvent", func(t *testing.T) {
 		event := NewWebhookValidationRequestEvent(
@@ -939,7 +925,6 @@ func TestWebhookObservabilityEvents(t *testing.T) {
 	})
 }
 
-// TestCorrelation tests correlation.go functionality.
 func TestCorrelation(t *testing.T) {
 	t.Run("NewCorrelation_NoOptions", func(t *testing.T) {
 		c := NewCorrelation()

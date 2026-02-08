@@ -82,58 +82,10 @@ func (d *Discovery) LocalVersion() *dataplane.Version {
 //   - Checks that container's ready status in status.containerStatuses[]
 //
 // Returns true only if the dataplane container exists and is ready.
-//
-//nolint:gocyclo,revive // Complex pod status checking required for robust discovery
 func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, logger *slog.Logger) (bool, error) {
-	// Step 1: Find which container has the dataplane port
-	containersSpec, found, err := unstructured.NestedSlice(pod.Object, "spec", "containers")
-	if err != nil || !found {
-		return false, fmt.Errorf("failed to get containers spec: %w", err)
-	}
-
-	var dataplaneContainerName string
-	for _, c := range containersSpec {
-		container, ok := c.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// Get container name
-		name, found, err := unstructured.NestedString(container, "name")
-		if err != nil || !found {
-			continue
-		}
-
-		// Check if this container has the dataplane port
-		ports, found, err := unstructured.NestedSlice(container, "ports")
-		if err != nil || !found {
-			continue
-		}
-
-		for _, p := range ports {
-			port, ok := p.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			containerPort, found, err := unstructured.NestedInt64(port, "containerPort")
-			if err != nil || !found {
-				continue
-			}
-
-			if int(containerPort) == d.dataplanePort {
-				dataplaneContainerName = name
-				break
-			}
-		}
-
-		if dataplaneContainerName != "" {
-			break
-		}
-	}
-
-	if dataplaneContainerName == "" {
-		return false, fmt.Errorf("no container found with dataplane port %d", d.dataplanePort)
+	dataplaneContainerName, err := d.findDataplaneContainerName(pod)
+	if err != nil {
+		return false, err
 	}
 
 	if logger != nil {
@@ -143,10 +95,65 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 			"port", d.dataplanePort)
 	}
 
-	// Step 2: Check that container's ready status
+	return checkContainerReady(pod, dataplaneContainerName, logger)
+}
+
+// findDataplaneContainerName finds which container exposes the dataplane port.
+func (d *Discovery) findDataplaneContainerName(pod *unstructured.Unstructured) (string, error) {
+	containersSpec, found, err := unstructured.NestedSlice(pod.Object, "spec", "containers")
+	if err != nil || !found {
+		return "", fmt.Errorf("failed to get containers spec: %w", err)
+	}
+
+	for _, c := range containersSpec {
+		container, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		name, found, err := unstructured.NestedString(container, "name")
+		if err != nil || !found {
+			continue
+		}
+
+		if containerHasPort(container, d.dataplanePort) {
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("no container found with dataplane port %d", d.dataplanePort)
+}
+
+// containerHasPort checks if a container spec contains the given port.
+func containerHasPort(container map[string]interface{}, targetPort int) bool {
+	ports, found, err := unstructured.NestedSlice(container, "ports")
+	if err != nil || !found {
+		return false
+	}
+
+	for _, p := range ports {
+		port, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		containerPort, found, err := unstructured.NestedInt64(port, "containerPort")
+		if err != nil || !found {
+			continue
+		}
+
+		if int(containerPort) == targetPort {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkContainerReady checks the ready status of a named container in pod status.
+func checkContainerReady(pod *unstructured.Unstructured, containerName string, logger *slog.Logger) (bool, error) {
 	containerStatuses, found, err := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
 	if err != nil || !found {
-		// No container statuses yet
 		if logger != nil {
 			logger.Log(context.Background(), logging.LevelTrace, "No containerStatuses found in pod status",
 				"pod", pod.GetName(),
@@ -166,55 +173,65 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 			continue
 		}
 
-		if name == dataplaneContainerName {
-			ready, found, err := unstructured.NestedBool(status, "ready")
-
-			// Trace logging to investigate connection refused despite ready status
-			if logger != nil {
-				started, _, _ := unstructured.NestedBool(status, "started")
-				restartCount, _, _ := unstructured.NestedInt64(status, "restartCount")
-
-				// Extract state information
-				state, stateFound, _ := unstructured.NestedMap(status, "state")
-				var stateType string
-				if stateFound {
-					if _, ok := state["running"]; ok {
-						stateType = "running"
-					} else if _, ok := state["waiting"]; ok {
-						stateType = "waiting"
-					} else if _, ok := state["terminated"]; ok {
-						stateType = "terminated"
-					}
-				}
-
-				logger.Log(context.Background(), logging.LevelTrace, "Dataplane container status check",
-					"pod", pod.GetName(),
-					"container", name,
-					"ready", ready,
-					"ready_found", found,
-					"ready_error", err,
-					"started", started,
-					"restart_count", restartCount,
-					"state_type", stateType)
-			}
-
-			if err != nil {
-				return false, fmt.Errorf("failed to get ready status: %w", err)
-			}
-			if !found {
-				return false, nil
-			}
-			return ready, nil
+		if name != containerName {
+			continue
 		}
+
+		ready, found, err := unstructured.NestedBool(status, "ready")
+
+		if logger != nil {
+			logContainerStatus(logger, pod.GetName(), name, status, ready, found, err)
+		}
+
+		if err != nil {
+			return false, fmt.Errorf("failed to get ready status: %w", err)
+		}
+		if !found {
+			return false, nil
+		}
+		return ready, nil
 	}
 
-	// Container not found in status (shouldn't happen)
 	if logger != nil {
 		logger.Log(context.Background(), logging.LevelTrace, "Dataplane container not found in containerStatuses",
 			"pod", pod.GetName(),
-			"expected_container", dataplaneContainerName)
+			"expected_container", containerName)
 	}
 	return false, nil
+}
+
+// logContainerStatus logs detailed container status for debugging.
+func logContainerStatus(logger *slog.Logger, podName, containerName string, status map[string]interface{}, ready, readyFound bool, readyErr error) {
+	started, _, _ := unstructured.NestedBool(status, "started")
+	restartCount, _, _ := unstructured.NestedInt64(status, "restartCount")
+
+	state, stateFound, _ := unstructured.NestedMap(status, "state")
+	var stateType string
+	if stateFound {
+		switch {
+		case hasKey(state, "running"):
+			stateType = "running"
+		case hasKey(state, "waiting"):
+			stateType = "waiting"
+		case hasKey(state, "terminated"):
+			stateType = "terminated"
+		}
+	}
+
+	logger.Log(context.Background(), logging.LevelTrace, "Dataplane container status check",
+		"pod", podName,
+		"container", containerName,
+		"ready", ready,
+		"ready_found", readyFound,
+		"ready_error", readyErr,
+		"started", started,
+		"restart_count", restartCount,
+		"state_type", stateType)
+}
+
+func hasKey(m map[string]interface{}, key string) bool {
+	_, ok := m[key]
+	return ok
 }
 
 // resourceToPod converts a store resource to *unstructured.Unstructured.
@@ -267,8 +284,6 @@ func (d *Discovery) DiscoverEndpoints(
 }
 
 // DiscoverEndpointsWithLogger is like DiscoverEndpoints but accepts an optional logger for debugging.
-//
-//nolint:revive // High cognitive complexity required for robust pod filtering and error handling
 func (d *Discovery) DiscoverEndpointsWithLogger(
 	podStore types.Store,
 	credentials coreconfig.Credentials,
@@ -278,7 +293,6 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 		return nil, fmt.Errorf("pod store is nil")
 	}
 
-	// List all pods from store
 	resources, err := podStore.List()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
@@ -287,103 +301,128 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 	endpoints := make([]dataplane.Endpoint, 0, len(resources))
 
 	for _, resource := range resources {
-		// Convert resource to unstructured.Unstructured
-		pod := resourceToPod(resource)
-		if pod == nil {
-			// Skip unsupported resource types
-			continue
+		endpoint, ok, err := d.evaluatePod(resource, credentials, logger)
+		if err != nil {
+			return nil, err
 		}
+		if ok {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
 
-		// Log pod evaluation start
+	return endpoints, nil
+}
+
+// evaluatePod evaluates a single pod resource and returns an endpoint if it is eligible.
+// Returns ok=false if the pod should be skipped.
+func (d *Discovery) evaluatePod(
+	resource interface{},
+	credentials coreconfig.Credentials,
+	logger *slog.Logger,
+) (dataplane.Endpoint, bool, error) {
+	var zero dataplane.Endpoint
+
+	pod := resourceToPod(resource)
+	if pod == nil {
+		return zero, false, nil
+	}
+
+	if logger != nil {
+		logger.Log(context.Background(), logging.LevelTrace, "Evaluating pod for discovery",
+			"pod", pod.GetName(),
+			"namespace", pod.GetNamespace(),
+			"uid", pod.GetUID())
+	}
+
+	// Skip terminating pods — they may still report phase="Running" and ready=true
+	// during graceful shutdown, but their ports are shutting down
+	if pod.GetDeletionTimestamp() != nil {
 		if logger != nil {
-			logger.Log(context.Background(), logging.LevelTrace, "Evaluating pod for discovery",
+			logger.Log(context.Background(), logging.LevelTrace, "Skipping terminating pod",
 				"pod", pod.GetName(),
-				"namespace", pod.GetNamespace(),
-				"uid", pod.GetUID())
+				"deletionTimestamp", pod.GetDeletionTimestamp())
 		}
+		return zero, false, nil
+	}
 
-		// Skip terminating pods (pods with deletionTimestamp set)
-		// Terminating pods may still have phase="Running" and ready=true during graceful shutdown,
-		// but their ports are shutting down and will refuse connections
-		if pod.GetDeletionTimestamp() != nil {
-			if logger != nil {
-				logger.Log(context.Background(), logging.LevelTrace, "Skipping terminating pod",
-					"pod", pod.GetName(),
-					"deletionTimestamp", pod.GetDeletionTimestamp())
-			}
-			continue
-		}
+	podIP, err := extractPodIP(pod, logger)
+	if err != nil {
+		return zero, false, err
+	}
+	if podIP == "" {
+		return zero, false, nil
+	}
 
-		// Extract pod IP from status.podIP
-		podIP, found, err := unstructured.NestedString(pod.Object, "status", "podIP")
-		if err != nil {
-			return nil, fmt.Errorf("failed to extract pod IP from %s: %w",
-				pod.GetName(), err)
-		}
-		if !found || podIP == "" {
-			// Skip pods without IP (not running yet)
-			if logger != nil {
-				logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - no IP assigned",
-					"pod", pod.GetName())
-			}
-			continue
-		}
+	phase, err := extractPodPhase(pod, logger)
+	if err != nil {
+		return zero, false, err
+	}
+	if phase != "Running" {
+		return zero, false, nil
+	}
 
-		// Extract pod phase from status.phase
-		phase, found, err := unstructured.NestedString(pod.Object, "status", "phase")
-		if err != nil {
-			return nil, fmt.Errorf("failed to extract pod phase from %s: %w",
-				pod.GetName(), err)
-		}
-		if !found || phase != "Running" {
-			// Skip pods that aren't in Running phase
-			if logger != nil {
-				logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - not in Running phase",
-					"pod", pod.GetName(),
-					"phase", phase)
-			}
-			continue
-		}
-
-		// Check if dataplane container is ready
-		ready, err := d.isDataplaneContainerReady(pod, logger)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check dataplane container readiness for %s: %w",
-				pod.GetName(), err)
-		}
-		if !ready {
-			// Skip pods where dataplane container isn't ready yet
-			if logger != nil {
-				logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - dataplane container not ready",
-					"pod", pod.GetName(),
-					"podIP", podIP,
-					"phase", phase)
-			}
-			continue
-		}
-
-		// Pod passed readiness check
+	ready, err := d.isDataplaneContainerReady(pod, logger)
+	if err != nil {
+		return zero, false, fmt.Errorf("failed to check dataplane container readiness for %s: %w",
+			pod.GetName(), err)
+	}
+	if !ready {
 		if logger != nil {
-			logger.Log(context.Background(), logging.LevelTrace, "Including pod - dataplane container is ready",
+			logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - dataplane container not ready",
 				"pod", pod.GetName(),
 				"podIP", podIP,
 				"phase", phase)
 		}
-
-		// Construct Dataplane API URL with v3 prefix
-		url := fmt.Sprintf("http://%s:%d/v3", podIP, d.dataplanePort)
-
-		// Create endpoint with credentials
-		endpoint := dataplane.Endpoint{
-			URL:          url,
-			Username:     credentials.DataplaneUsername,
-			Password:     credentials.DataplanePassword,
-			PodName:      pod.GetName(),
-			PodNamespace: pod.GetNamespace(),
-		}
-
-		endpoints = append(endpoints, endpoint)
+		return zero, false, nil
 	}
 
-	return endpoints, nil
+	if logger != nil {
+		logger.Log(context.Background(), logging.LevelTrace, "Including pod - dataplane container is ready",
+			"pod", pod.GetName(),
+			"podIP", podIP,
+			"phase", phase)
+	}
+
+	return dataplane.Endpoint{
+		URL:          fmt.Sprintf("http://%s:%d/v3", podIP, d.dataplanePort),
+		Username:     credentials.DataplaneUsername,
+		Password:     credentials.DataplanePassword,
+		PodName:      pod.GetName(),
+		PodNamespace: pod.GetNamespace(),
+	}, true, nil
+}
+
+// extractPodIP extracts the pod IP from status.podIP.
+// Returns empty string (without error) if the pod has no IP assigned yet.
+func extractPodIP(pod *unstructured.Unstructured, logger *slog.Logger) (string, error) {
+	podIP, found, err := unstructured.NestedString(pod.Object, "status", "podIP")
+	if err != nil {
+		return "", fmt.Errorf("failed to extract pod IP from %s: %w", pod.GetName(), err)
+	}
+	if !found || podIP == "" {
+		if logger != nil {
+			logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - no IP assigned",
+				"pod", pod.GetName())
+		}
+		return "", nil
+	}
+	return podIP, nil
+}
+
+// extractPodPhase extracts the pod phase from status.phase.
+// Returns empty string (without error) if the phase is not found.
+func extractPodPhase(pod *unstructured.Unstructured, logger *slog.Logger) (string, error) {
+	phase, found, err := unstructured.NestedString(pod.Object, "status", "phase")
+	if err != nil {
+		return "", fmt.Errorf("failed to extract pod phase from %s: %w", pod.GetName(), err)
+	}
+	if !found || phase != "Running" {
+		if logger != nil {
+			logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - not in Running phase",
+				"pod", pod.GetName(),
+				"phase", phase)
+		}
+		return phase, nil
+	}
+	return phase, nil
 }

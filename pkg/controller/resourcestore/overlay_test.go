@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNewOverlayStore tests the OverlayStore constructor.
 func TestNewOverlayStore(t *testing.T) {
 	baseStore := &mockStore{}
 	obj := newMockResource("default", "test")
@@ -36,7 +35,6 @@ func TestNewOverlayStore(t *testing.T) {
 	assert.Equal(t, OperationCreate, overlay.operation)
 }
 
-// TestOverlayStore_Get_OverlayHit_Create tests Get returns overlay object for CREATE.
 func TestOverlayStore_Get_OverlayHit_Create(t *testing.T) {
 	baseStore := &mockStore{
 		resources: []interface{}{
@@ -55,7 +53,6 @@ func TestOverlayStore_Get_OverlayHit_Create(t *testing.T) {
 	assert.Equal(t, newResource, results[0])
 }
 
-// TestOverlayStore_Get_OverlayHit_Update tests Get returns overlay object for UPDATE.
 func TestOverlayStore_Get_OverlayHit_Update(t *testing.T) {
 	originalResource := newMockResource("default", "test-resource")
 	baseStore := &mockStore{
@@ -81,7 +78,6 @@ func TestOverlayStore_Get_OverlayHit_Update(t *testing.T) {
 	assert.Equal(t, updatedResource, results[0])
 }
 
-// TestOverlayStore_Get_OverlayHit_Delete tests Get returns empty for DELETE.
 func TestOverlayStore_Get_OverlayHit_Delete(t *testing.T) {
 	existingResource := newMockResource("default", "to-delete")
 	baseStore := &mockStore{
@@ -97,7 +93,6 @@ func TestOverlayStore_Get_OverlayHit_Delete(t *testing.T) {
 	assert.Empty(t, results)
 }
 
-// TestOverlayStore_Get_Fallback tests Get falls back to base store for non-overlay keys.
 func TestOverlayStore_Get_Fallback(t *testing.T) {
 	existingResource := newMockResource("default", "existing")
 	baseStore := &mockStore{
@@ -115,7 +110,6 @@ func TestOverlayStore_Get_Fallback(t *testing.T) {
 	assert.Equal(t, existingResource, results[0])
 }
 
-// TestOverlayStore_List_Delete tests List excludes deleted resource.
 func TestOverlayStore_List_Delete(t *testing.T) {
 	resource1 := newMockResource("default", "keep-me")
 	resource2 := newMockResource("default", "delete-me")
@@ -135,7 +129,6 @@ func TestOverlayStore_List_Delete(t *testing.T) {
 	assert.Equal(t, "keep-me", name)
 }
 
-// TestOverlayStore_List_Update tests List replaces updated resource.
 func TestOverlayStore_List_Update(t *testing.T) {
 	resource1 := newMockResource("default", "unchanged")
 	resource2 := newMockResource("default", "to-update")
@@ -175,7 +168,6 @@ func TestOverlayStore_List_Update(t *testing.T) {
 	assert.True(t, foundUpdated, "updated resource should be in list")
 }
 
-// TestOverlayStore_List_Create tests List includes new resource.
 func TestOverlayStore_List_Create(t *testing.T) {
 	existingResource := newMockResource("default", "existing")
 	baseStore := &mockStore{
@@ -200,7 +192,6 @@ func TestOverlayStore_List_Create(t *testing.T) {
 	assert.Contains(t, names, "new-resource")
 }
 
-// TestOverlayStore_ReadOnlyOperations tests that write operations return errors.
 func TestOverlayStore_ReadOnlyOperations(t *testing.T) {
 	overlay := NewOverlayStore(&mockStore{}, "default", "test", nil, OperationDelete)
 
@@ -229,7 +220,6 @@ func TestOverlayStore_ReadOnlyOperations(t *testing.T) {
 	})
 }
 
-// TestExtractMetadata tests metadata extraction from different resource types.
 func TestExtractMetadata(t *testing.T) {
 	t.Run("map[string]interface{}", func(t *testing.T) {
 		resource := newMockResource("test-ns", "test-name")
@@ -274,7 +264,6 @@ func TestExtractMetadata(t *testing.T) {
 	})
 }
 
-// TestOverlayStore_MultipleNamespaces tests overlay with resources in different namespaces.
 func TestOverlayStore_MultipleNamespaces(t *testing.T) {
 	resource1 := newMockResource("ns1", "resource")
 	resource2 := newMockResource("ns2", "resource")

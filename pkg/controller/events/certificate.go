@@ -16,10 +16,6 @@ package events
 
 import "time"
 
-// -----------------------------------------------------------------------------
-// Webhook Certificate Events.
-// -----------------------------------------------------------------------------
-
 // CertResourceChangedEvent is published when the webhook certificate Secret changes.
 //
 // This event is published by the resource watcher when the Secret resource

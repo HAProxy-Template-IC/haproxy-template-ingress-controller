@@ -71,7 +71,6 @@ func defaultCapabilities() dataplane.Capabilities {
 	return dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
 }
 
-// TestNew_Success tests successful renderer creation with valid configuration.
 func TestNew_Success(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -99,7 +98,6 @@ func TestNew_Success(t *testing.T) {
 	assert.Equal(t, storeMap, renderer.stores)
 }
 
-// TestNew_InvalidTemplate tests renderer creation with invalid template syntax.
 func TestNew_InvalidTemplate(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -123,7 +121,6 @@ func TestNew_InvalidTemplate(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to compile template")
 }
 
-// TestRenderer_SuccessfulRendering tests successful template rendering.
 func TestRenderer_SuccessfulRendering(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -183,7 +180,6 @@ defaults
 	assert.GreaterOrEqual(t, renderedEvent.DurationMs, int64(0))
 }
 
-// TestRenderer_WithAuxiliaryFiles tests rendering with maps, files, and SSL certificates.
 func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -246,7 +242,6 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	assert.NotNil(t, renderedEvent.AuxiliaryFiles)
 }
 
-// TestRenderer_RenderFailure tests handling of template compilation failures.
 // Note: Scriggo catches undefined functions at compile time, not runtime.
 func TestRenderer_RenderFailure(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -276,7 +271,6 @@ func TestRenderer_RenderFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "undefined")
 }
 
-// TestRenderer_EmptyStores tests rendering with empty resource stores.
 func TestRenderer_EmptyStores(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -317,7 +311,6 @@ func TestRenderer_EmptyStores(t *testing.T) {
 	assert.Contains(t, renderedEvent.HAProxyConfig, "# No ingresses configured")
 }
 
-// TestRenderer_MultipleStores tests rendering with multiple resource types.
 func TestRenderer_MultipleStores(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -377,7 +370,6 @@ func TestRenderer_MultipleStores(t *testing.T) {
 	assert.Contains(t, renderedEvent.HAProxyConfig, "# Pods: 3")
 }
 
-// TestRenderer_ContextCancellation tests graceful shutdown on context cancellation.
 func TestRenderer_ContextCancellation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -419,7 +411,6 @@ func TestRenderer_ContextCancellation(t *testing.T) {
 	}
 }
 
-// TestRenderer_MultipleReconciliations tests handling multiple reconciliation triggers.
 func TestRenderer_MultipleReconciliations(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -471,7 +462,6 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	assert.Contains(t, secondEvent.HAProxyConfig, "# Count: 2")
 }
 
-// TestBuildRenderingContext tests the context building logic.
 func TestBuildRenderingContext(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -537,7 +527,6 @@ func TestBuildRenderingContext(t *testing.T) {
 	assert.Len(t, services, 1)
 }
 
-// TestPathResolverWithCapabilities_CRTListFallback tests CRT-list path resolution
 // based on HAProxy version capabilities. When CRT-list storage is not supported
 // (HAProxy < 3.2), CRT-list files should use the general files directory.
 func TestPathResolverWithCapabilities_CRTListFallback(t *testing.T) {
@@ -632,7 +621,6 @@ frontend test
 	}
 }
 
-// TestPathResolverInitialization tests that the PathResolver is correctly initialized
 // with all required directory paths for the pathResolver.GetPath() method.
 func TestPathResolverInitialization(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -692,7 +680,6 @@ frontend test
 		"pathResolver.GetPath() should not return just the filename without directory")
 }
 
-// TestRenderer_Name tests the Name method.
 func TestRenderer_Name(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -713,7 +700,6 @@ func TestRenderer_Name(t *testing.T) {
 	assert.Equal(t, "renderer", renderer.Name())
 }
 
-// TestRenderer_SetHTTPStoreComponent tests setting the HTTP store component.
 func TestRenderer_SetHTTPStoreComponent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -738,7 +724,6 @@ func TestRenderer_SetHTTPStoreComponent(t *testing.T) {
 	assert.Nil(t, renderer.httpStoreComponent)
 }
 
-// TestRenderer_WithPostProcessors tests rendering with post-processors configured.
 func TestRenderer_WithPostProcessors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -785,7 +770,6 @@ func TestRenderer_WithPostProcessors(t *testing.T) {
 	assert.NotContains(t, renderedEvent.HAProxyConfig, "#MARKER#")
 }
 
-// TestRenderer_WithTemplateSnippets tests rendering with template snippets.
 func TestRenderer_WithTemplateSnippets(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -837,7 +821,6 @@ frontend fe1
 	assert.Contains(t, renderedEvent.HAProxyConfig, "timeout client 30s")
 }
 
-// TestFailFunction tests the fail() global function.
 func TestFailFunction(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -891,7 +874,6 @@ func TestFailFunction(t *testing.T) {
 	}
 }
 
-// TestExtractTemplates tests template extraction from config.
 func TestExtractTemplates(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -928,7 +910,6 @@ func TestExtractTemplates(t *testing.T) {
 	assert.Equal(t, "map1-content", templates.AllTemplates["map1.map"])
 }
 
-// TestExtractPostProcessorConfigs tests post-processor config extraction.
 func TestExtractPostProcessorConfigs(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -982,10 +963,6 @@ func TestExtractPostProcessorConfigs(t *testing.T) {
 	require.Contains(t, ppConfigs, "cert1.pem")
 	assert.Equal(t, templating.PostProcessorType("trim"), ppConfigs["cert1.pem"][0].Type)
 }
-
-// ============================================================================
-// Reconciliation Coalescing Tests
-// ============================================================================
 
 // TestRenderer_ReconciliationCoalescing_LatestWins verifies that when multiple
 // ReconciliationTriggeredEvents arrive while rendering is in progress, only
@@ -1065,10 +1042,6 @@ func TestRenderer_TriggerReasonPropagation(t *testing.T) {
 	require.NotNil(t, renderedEvent)
 	assert.Equal(t, "drift_prevention", renderedEvent.TriggerReason)
 }
-
-// ============================================================================
-// HTTP Store Integration Tests
-// ============================================================================
 
 // TestRenderer_WithHTTPStoreComponent verifies that when an HTTP store component
 // is set, templates can call http.Fetch() to retrieve remote content.

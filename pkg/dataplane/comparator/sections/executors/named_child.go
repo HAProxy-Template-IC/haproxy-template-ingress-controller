@@ -17,10 +17,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// Bind Executors (Frontend)
-// =============================================================================
-
 // BindFrontendCreate returns an executor for creating binds in frontends.
 // Note: Bind uses DispatchCreate (not DispatchCreateChild) because the API
 // takes frontendName as a path parameter, not as part of an index-based child.
@@ -140,10 +136,6 @@ func BindFrontendDelete(frontendName string) func(ctx context.Context, c *client
 	}
 }
 
-// =============================================================================
-// Server Template Executors (Backend)
-// =============================================================================
-
 // ServerTemplateCreate returns an executor for creating server templates in backends.
 func ServerTemplateCreate(backendName string) func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, childName string, model *models.ServerTemplate) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, _ string, _ string, model *models.ServerTemplate) error {
@@ -260,10 +252,6 @@ func ServerTemplateDelete(backendName string) func(ctx context.Context, c *clien
 		return client.CheckResponse(resp, "server template deletion")
 	}
 }
-
-// =============================================================================
-// Server Executors (Backend)
-// =============================================================================
 
 // ServerCreate returns an executor for creating servers in backends.
 func ServerCreate(backendName string) func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, childName string, model *models.Server) error {

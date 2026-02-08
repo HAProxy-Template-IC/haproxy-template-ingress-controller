@@ -34,7 +34,6 @@ func testValidationPaths(t *testing.T) *ValidationPaths {
 	}
 }
 
-// TestValidateConfiguration_ValidMinimalConfig tests validation of minimal valid HAProxy config.
 func TestValidateConfiguration_ValidMinimalConfig(t *testing.T) {
 	config := `
 global
@@ -62,7 +61,6 @@ backend servers
 	}
 }
 
-// TestValidateConfiguration_ValidComplexConfig tests validation of complex valid HAProxy config.
 func TestValidateConfiguration_ValidComplexConfig(t *testing.T) {
 	config := `
 global
@@ -106,7 +104,6 @@ backend api-servers
 	}
 }
 
-// TestValidateConfiguration_SyntaxError tests validation failure for syntax errors.
 func TestValidateConfiguration_SyntaxError(t *testing.T) {
 	// Config with completely invalid structure that parser will reject
 	config := `
@@ -148,7 +145,6 @@ backend
 	}
 }
 
-// TestValidateConfiguration_EmptyConfig tests validation failure for empty config.
 func TestValidateConfiguration_EmptyConfig(t *testing.T) {
 	config := ""
 	auxFiles := &AuxiliaryFiles{}
@@ -170,7 +166,6 @@ func TestValidateConfiguration_EmptyConfig(t *testing.T) {
 	}
 }
 
-// TestValidateConfiguration_SemanticError tests validation failure for semantic errors.
 func TestValidateConfiguration_SemanticError(t *testing.T) {
 	// Valid syntax but semantic error: use_backend refers to non-existent backend
 	config := `
@@ -217,7 +212,6 @@ backend servers
 	}
 }
 
-// TestValidateConfiguration_WithSSLCertificate tests validation with SSL certificate.
 func TestValidateConfiguration_WithSSLCertificate(t *testing.T) {
 	t.Skip("Skipping SSL test - HAProxy strictly validates certificate format in -c mode")
 
@@ -300,7 +294,6 @@ Kw==
 	}
 }
 
-// TestValidateConfiguration_WithAbsolutePathMapFiles tests validation with absolute path map files.
 func TestValidateConfiguration_WithAbsolutePathMapFiles(t *testing.T) {
 	paths := testValidationPaths(t)
 
@@ -339,7 +332,6 @@ backend servers
 	}
 }
 
-// TestValidateConfiguration_WithAbsolutePathGeneralFiles tests validation with absolute path general files.
 func TestValidateConfiguration_WithAbsolutePathGeneralFiles(t *testing.T) {
 	paths := testValidationPaths(t)
 
@@ -384,7 +376,6 @@ Content-Type: text/html
 	}
 }
 
-// TestValidateConfiguration_MissingGlobalSection tests validation failure when global section is missing.
 func TestValidateConfiguration_MissingGlobalSection(t *testing.T) {
 	// HAProxy requires global section
 	config := `
@@ -410,7 +401,6 @@ backend servers
 	_ = err
 }
 
-// TestValidationError_Unwrap tests error unwrapping for ValidationError.
 func TestValidationError_Unwrap(t *testing.T) {
 	innerErr := &ValidationError{
 		Phase:   "syntax",
@@ -430,7 +420,6 @@ func TestValidationError_Unwrap(t *testing.T) {
 	}
 }
 
-// TestValidateConfiguration_BackendHTTPRequestRuleInvalidAuthRealm tests validation of
 // backend HTTP request rules with invalid auth_realm patterns (e.g., containing spaces).
 // This test demonstrates the bug where backend rules are not validated against the OpenAPI schema.
 func TestValidateConfiguration_BackendHTTPRequestRuleInvalidAuthRealm(t *testing.T) {
@@ -486,7 +475,6 @@ backend protected
 	}
 }
 
-// TestValidateConfiguration_FrontendTCPRequestRuleValidation tests comprehensive validation
 // of frontend TCP request rules to ensure all rule types are validated.
 func TestValidateConfiguration_FrontendTCPRequestRuleValidation(t *testing.T) {
 	// Valid config with TCP request rule - should pass
@@ -519,7 +507,6 @@ backend mysql-servers
 	}
 }
 
-// TestValidateConfiguration_BackendServerTemplateValidation tests validation
 // of server templates in backends.
 func TestValidateConfiguration_BackendServerTemplateValidation(t *testing.T) {
 	// Valid config with server template - should pass
@@ -552,7 +539,6 @@ backend dynamic-servers
 	}
 }
 
-// TestValidationError_Error tests error message formatting.
 func TestValidationError_Error(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -600,11 +586,6 @@ func TestValidationError_Error(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Validation Cache Tests
-// =============================================================================
-
-// TestValidationCacheHelpers tests the validation cache helper functions.
 func TestValidationCacheHelpers(t *testing.T) {
 	t.Run("hashValidationInput", func(t *testing.T) {
 		hash1 := hashValidationInput("config1")
@@ -672,7 +653,6 @@ func TestValidationCacheHelpers(t *testing.T) {
 	})
 }
 
-// TestValidationCacheMechanism tests the cache check and store functions.
 func TestValidationCacheMechanism(t *testing.T) {
 	// Clear cache state before test
 	validationCache.mu.Lock()

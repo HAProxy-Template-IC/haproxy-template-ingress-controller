@@ -33,10 +33,6 @@ func NewWAFOperations(c *client.DataplaneClient) *WAFOperations {
 	return &WAFOperations{client: c}
 }
 
-// =============================================================================
-// WAF Global Operations
-// =============================================================================
-
 // WafGlobal represents WAF global configuration.
 type WafGlobal = v32ee.WafGlobal
 
@@ -151,10 +147,6 @@ func (w *WAFOperations) DeleteGlobal(ctx context.Context, txID string) error {
 	}
 	return nil
 }
-
-// =============================================================================
-// WAF Profile Operations
-// =============================================================================
 
 // WafProfile represents a WAF profile configuration.
 // Note: WAF Profiles are only available in HAProxy Enterprise v3.2+.
@@ -321,10 +313,6 @@ func (w *WAFOperations) DeleteProfile(ctx context.Context, txID, name string) er
 	return nil
 }
 
-// =============================================================================
-// WAF Body Rule Operations (Backend)
-// =============================================================================
-
 // WafBodyRule represents a WAF body rule configuration.
 type WafBodyRule = v32ee.WafBodyRule
 
@@ -475,10 +463,6 @@ func (w *WAFOperations) DeleteBodyRuleBackend(ctx context.Context, txID, backend
 	return nil
 }
 
-// =============================================================================
-// WAF Body Rule Operations (Frontend)
-// =============================================================================
-
 // GetAllBodyRulesFrontend retrieves all WAF body rules for a frontend.
 func (w *WAFOperations) GetAllBodyRulesFrontend(ctx context.Context, txID, frontendName string) ([]WafBodyRule, error) {
 	resp, err := w.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -626,10 +610,6 @@ func (w *WAFOperations) DeleteBodyRuleFrontend(ctx context.Context, txID, fronte
 	return nil
 }
 
-// =============================================================================
-// WAF Ruleset Operations
-// =============================================================================
-
 // WafRuleset represents a WAF ruleset.
 type WafRuleset = v32ee.WafRuleset
 
@@ -765,10 +745,6 @@ func (w *WAFOperations) DeleteRuleset(ctx context.Context, name string) error {
 	}
 	return nil
 }
-
-// =============================================================================
-// WAF Ruleset File Operations
-// =============================================================================
 
 // GetAllRulesetFiles retrieves all files in a WAF ruleset.
 func (w *WAFOperations) GetAllRulesetFiles(ctx context.Context, rulesetName, subDir string) ([]string, error) {

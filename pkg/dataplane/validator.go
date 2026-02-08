@@ -59,10 +59,6 @@ type validationResultCache struct {
 
 var validationCache = &validationResultCache{}
 
-// =============================================================================
-// Version-aware Model Conversion (using centralized client converters)
-// =============================================================================
-
 // ValidationPaths holds the filesystem paths for HAProxy validation.
 // These paths must match the HAProxy Dataplane API server's resource configuration.
 type ValidationPaths struct {
@@ -1036,10 +1032,6 @@ func extractConfigContext(alertLine string, configLines []string) string {
 
 	return strings.Join(contextLines, "\n")
 }
-
-// =============================================================================
-// Validation Result Caching
-// =============================================================================
 
 // hashValidationInput computes a SHA256 hash of the main config content.
 func hashValidationInput(config string) string {

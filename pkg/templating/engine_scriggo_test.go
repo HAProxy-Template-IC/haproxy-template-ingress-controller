@@ -891,7 +891,6 @@ func TestMacroWithRenderGlobInheritContext(t *testing.T) {
 	assert.Contains(t, output, "helper:test-1")
 }
 
-// TestMacroWithRenderGlobInheritContext_ManyTemplates tests with 13 templates
 // (matching the real backend-directives-* count) and exact variable names.
 func TestMacroWithRenderGlobInheritContext_ManyTemplates(t *testing.T) {
 	// Build 13 backend-directives templates (matching real count)
@@ -1017,7 +1016,6 @@ backend {{ BackendNameIngress(ingress, path) }}
 	assert.Contains(t, output, "backend ing_default_ing1")
 }
 
-// TestMacroWithRenderGlobInheritContext_FullContext tests with the full rendering context
 // that the controller testrunner uses, to see if missing context variables cause the bug.
 func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 	// Build templates with the minimal test case
@@ -1131,7 +1129,6 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 	assert.Contains(t, output, "directive-100-a")
 }
 
-// TestNestedLoopWithSharedGetPassedToFunction tests the specific pattern that was breaking:
 // calling shared.Get() with string concatenation and passing result to a function inside nested loops.
 func TestNestedLoopWithSharedGetPassedToFunction(t *testing.T) {
 	templates := map[string]string{
@@ -1161,7 +1158,6 @@ func TestNestedLoopWithSharedGetPassedToFunction(t *testing.T) {
 	assert.Equal(t, "6", got, "expected 6 iterations (3 outer × 2 inner) but got %s", got)
 }
 
-// TestTripleNestedLoopWithSharedGet tests triple-nested loops with shared.Get()
 // to reproduce the exact pattern from ingress.yaml backends template.
 func TestTripleNestedLoopWithSharedGet(t *testing.T) {
 	templates := map[string]string{
@@ -1202,7 +1198,6 @@ func TestTripleNestedLoopWithSharedGet(t *testing.T) {
 	assert.Equal(t, "3", got, "expected 3 iterations but got %s", got)
 }
 
-// TestNestedLoopWithRenderGlobModifyingMap tests the exact failing pattern:
 // nested loops with render_glob that modifies a map passed via inherit_context.
 func TestNestedLoopWithRenderGlobModifyingMap(t *testing.T) {
 	templates := map[string]string{
@@ -1242,7 +1237,6 @@ Count: {{ count }}`,
 	assert.Contains(t, got, "Path: p3", "should process p3")
 }
 
-// TestNestedLoopWithServicePortLookup tests the exact failing pattern:
 // nested loops over ingresses/rules/paths with Service lookup AND iteration over ports.
 func TestNestedLoopWithServicePortLookup(t *testing.T) {
 	// Create a service object with multiple ports
@@ -1335,7 +1329,6 @@ Count: {{ count }}`,
 	assert.Contains(t, got, "Port 443 name: https", "port 443 should resolve to 'https'")
 }
 
-// TestNestedLoopWithResourceStoreAccess tests nested loops with ResourceStore.GetSingle()
 // which is the actual pattern that was breaking in ingress.yaml templates.
 func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
 	// Create a service object that will be returned by GetSingle
@@ -1398,7 +1391,6 @@ func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
 	assert.Equal(t, "3", got, "expected 3 iterations but got %s", got)
 }
 
-// TestNestedLoopWithFilters tests that nested loops work correctly when using
 // HAPTIC's custom filter functions. This is a regression test for a bug where
 // the outer loop would terminate prematurely after the first iteration when
 // certain filter functions were used inside nested loops.

@@ -16,10 +16,6 @@ package events
 
 import "github.com/google/uuid"
 
-// -----------------------------------------------------------------------------
-// Event Correlation Support.
-// -----------------------------------------------------------------------------
-
 // CorrelatedEvent is an interface for events that support correlation tracking.
 //
 // Events that implement this interface can be linked together to trace

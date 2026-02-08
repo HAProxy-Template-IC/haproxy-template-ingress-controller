@@ -34,7 +34,6 @@ func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	return New(eventBus, logger, 0, 0) // 0 = unlimited parallelism, 0 = disabled raw push threshold
 }
 
-// TestHandleDeploymentScheduled tests deployment execution when scheduled.
 func TestHandleDeploymentScheduled(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	bus.Start()
@@ -69,7 +68,6 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 	// This test just verifies the component handles the event without crashing
 }
 
-// TestDeployToEndpoints_EventPublishing tests that all expected events are published.
 func TestDeployToEndpoints_EventPublishing(t *testing.T) {
 	// Note: This test can't actually deploy to real HAProxy instances
 	// It tests the event publishing flow assuming deployment would succeed/fail
@@ -83,7 +81,6 @@ func TestDeployToEndpoints_EventPublishing(t *testing.T) {
 	assert.NotNil(t, deployer)
 }
 
-// TestComponent_Start tests the component startup and shutdown.
 func TestComponent_Start(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	deployer := createTestDeployer(bus)
@@ -97,7 +94,6 @@ func TestComponent_Start(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestComponent_EndToEndFlow tests the complete event flow.
 func TestComponent_EndToEndFlow(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	deployer := createTestDeployer(bus)
@@ -156,7 +152,6 @@ loop:
 	time.Sleep(50 * time.Millisecond)
 }
 
-// TestComponent_ConvertSyncResultToMetadata tests sync result conversion.
 func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	deployer := createTestDeployer(bus)
@@ -215,7 +210,6 @@ func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
 	})
 }
 
-// TestComponent_HandleEvent tests event handling.
 func TestComponent_HandleEvent(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	deployer := createTestDeployer(bus)
@@ -245,7 +239,6 @@ func TestComponent_HandleEvent(t *testing.T) {
 	})
 }
 
-// TestComponent_DeploymentInProgressFlag tests the atomic deployment in progress flag.
 func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	bus.Start()
@@ -273,7 +266,6 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 	assert.False(t, deployer.deploymentInProgress.Load())
 }
 
-// TestDeployer_Name tests the Name method.
 func TestDeployer_Name(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	deployer := createTestDeployer(bus)
@@ -281,7 +273,6 @@ func TestDeployer_Name(t *testing.T) {
 	assert.Equal(t, ComponentName, deployer.Name())
 }
 
-// TestComponent_DeploymentInProgressFlag_DuplicateRejected tests that duplicate deployments are rejected.
 func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	bus.Start()
@@ -312,7 +303,6 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 	assert.True(t, deployer.deploymentInProgress.Load())
 }
 
-// TestComponent_isNoOpDeployment tests the helper function that determines
 // whether a deployment made meaningful changes that warrant publishing ConfigAppliedToPodEvent.
 func TestComponent_isNoOpDeployment(t *testing.T) {
 	bus := busevents.NewEventBus(100)

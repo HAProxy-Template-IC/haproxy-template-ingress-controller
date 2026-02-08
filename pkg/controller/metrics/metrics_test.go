@@ -243,10 +243,6 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Webhook Metrics Tests
-// =============================================================================
-
 func TestMetrics_RecordWebhookRequest(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
@@ -330,10 +326,6 @@ func TestMetrics_RecordWebhookCertRotation(t *testing.T) {
 	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.WebhookCertRotations))
 }
 
-// =============================================================================
-// Leader Election Metrics Tests
-// =============================================================================
-
 func TestMetrics_SetIsLeader(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
@@ -379,10 +371,6 @@ func TestMetrics_AddTimeAsLeader(t *testing.T) {
 	assert.Equal(t, 150.75, testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds))
 }
 
-// =============================================================================
-// Event Drop Metrics Tests
-// =============================================================================
-
 func TestMetrics_RecordEventDrop(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
@@ -422,10 +410,6 @@ func TestMetrics_RecordEventDrop(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(reconcilerConfig))
 }
 
-// =============================================================================
-// Validation Tests Metrics
-// =============================================================================
-
 func TestMetrics_RecordValidationTests(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
@@ -444,10 +428,6 @@ func TestMetrics_RecordValidationTests(t *testing.T) {
 	assert.Equal(t, 13.0, testutil.ToFloat64(metrics.ValidationTestsPassTotal))
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTestsFailTotal))
 }
-
-// =============================================================================
-// Parser Cache Metrics Tests
-// =============================================================================
 
 func TestMetrics_UpdateParserCacheStats(t *testing.T) {
 	registry := prometheus.NewRegistry()

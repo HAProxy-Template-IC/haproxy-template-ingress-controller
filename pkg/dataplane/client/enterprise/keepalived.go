@@ -23,10 +23,8 @@ func NewKeepalivedOperations(c *client.DataplaneClient) *KeepalivedOperations {
 	return &KeepalivedOperations{client: c}
 }
 
-// =============================================================================
 // Keepalived Transaction Operations
 // Keepalived has its own transaction system separate from HAProxy configuration.
-// =============================================================================
 
 // KeepalivedTransaction represents a Keepalived configuration transaction.
 type KeepalivedTransaction = v32ee.KeepalivedTransaction
@@ -149,10 +147,6 @@ func (k *KeepalivedOperations) GetTransaction(ctx context.Context, txID string) 
 	}
 	return &result, nil
 }
-
-// =============================================================================
-// VRRP Instance Operations
-// =============================================================================
 
 // VRRPInstance represents a VRRP instance configuration.
 type VRRPInstance = v32ee.VrrpInstance
@@ -333,10 +327,6 @@ func (k *KeepalivedOperations) DeleteVRRPInstance(ctx context.Context, txID, nam
 	return nil
 }
 
-// =============================================================================
-// VRRP Sync Group Operations
-// =============================================================================
-
 // VRRPSyncGroup represents a VRRP sync group configuration.
 type VRRPSyncGroup = v32ee.VrrpSyncGroup
 
@@ -471,10 +461,6 @@ func (k *KeepalivedOperations) DeleteVRRPSyncGroup(ctx context.Context, txID, na
 	}
 	return nil
 }
-
-// =============================================================================
-// VRRP Script (Track Script) Operations
-// =============================================================================
 
 // VRRPScript represents a VRRP tracking script configuration.
 type VRRPScript = v32ee.VrrpTrackScript

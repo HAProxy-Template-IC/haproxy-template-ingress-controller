@@ -79,10 +79,6 @@ func validWatcherConfig() types.WatcherConfig {
 	}
 }
 
-// =============================================================================
-// New() Tests - Configuration Validation
-// =============================================================================
-
 func TestNew_ValidConfig(t *testing.T) {
 	k8sClient := newTestClient(t)
 	cfg := validWatcherConfig()
@@ -234,10 +230,6 @@ func TestNew_SetsDefaults(t *testing.T) {
 	require.NotNil(t, watcher)
 }
 
-// =============================================================================
-// Accessor Tests
-// =============================================================================
-
 func TestWatcher_Store(t *testing.T) {
 	k8sClient := newTestClient(t)
 	cfg := validWatcherConfig()
@@ -258,10 +250,6 @@ func TestWatcher_IsSynced_InitiallyFalse(t *testing.T) {
 
 	assert.False(t, watcher.IsSynced())
 }
-
-// =============================================================================
-// Start/Stop Tests
-// =============================================================================
 
 func TestWatcher_Start_SyncsAndCallsOnSyncComplete(t *testing.T) {
 	k8sClient := newTestClient(t)
@@ -381,10 +369,6 @@ func TestWatcher_ForceSync(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
-// =============================================================================
-// WaitForSync Tests
-// =============================================================================
-
 func TestWatcher_WaitForSync_Success(t *testing.T) {
 	k8sClient := newTestClient(t)
 	cfg := validWatcherConfig()
@@ -423,10 +407,6 @@ func TestWatcher_WaitForSync_ContextCancelled(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "sync")
 }
-
-// =============================================================================
-// Event Handler Tests
-// =============================================================================
 
 func TestWatcher_HandleAdd(t *testing.T) {
 	configMap := &unstructured.Unstructured{
@@ -703,10 +683,6 @@ func TestWatcher_HandleUpdate_ProcessesZeroGeneration(t *testing.T) {
 	assert.Greater(t, updateCount.Load(), initialCount, "update with generation=0 should be processed")
 }
 
-// =============================================================================
-// Callback Configuration Tests
-// =============================================================================
-
 func TestWatcher_CallOnChangeDuringSync_False(t *testing.T) {
 	k8sClient := newTestClient(t)
 
@@ -763,10 +739,6 @@ func TestWatcher_CallOnChangeDuringSync_True(t *testing.T) {
 	// Callbacks may fire during sync
 }
 
-// =============================================================================
-// Thread Safety Tests
-// =============================================================================
-
 func TestWatcher_ConcurrentAccess(t *testing.T) {
 	k8sClient := newTestClient(t)
 	cfg := validWatcherConfig()
@@ -800,10 +772,6 @@ func TestWatcher_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-// =============================================================================
-// applyListOptions Tests
-// =============================================================================
-
 func TestWatcher_ApplyListOptions_WithSelector(t *testing.T) {
 	k8sClient := newTestClient(t)
 	cfg := validWatcherConfig()
@@ -834,10 +802,6 @@ func TestWatcher_ApplyListOptions_NoSelector(t *testing.T) {
 
 	assert.Empty(t, options.LabelSelector)
 }
-
-// =============================================================================
-// Namespace Configuration Tests
-// =============================================================================
 
 func TestWatcher_AllNamespaces(t *testing.T) {
 	k8sClient := newTestClient(t)

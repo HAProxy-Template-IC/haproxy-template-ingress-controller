@@ -29,7 +29,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
-// TestNewDeploymentScheduler tests scheduler creation.
 func TestNewDeploymentScheduler(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	minInterval := 100 * time.Millisecond
@@ -44,7 +43,6 @@ func TestNewDeploymentScheduler(t *testing.T) {
 	assert.Nil(t, scheduler.eventChan)
 }
 
-// TestDeploymentScheduler_Start tests scheduler startup and shutdown.
 func TestDeploymentScheduler_Start(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
@@ -58,7 +56,6 @@ func TestDeploymentScheduler_Start(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestDeploymentScheduler_HandleTemplateRendered tests template rendered event handling.
 func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
@@ -82,7 +79,6 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 	assert.NotNil(t, scheduler.lastAuxiliaryFiles)
 }
 
-// TestDeploymentScheduler_HandleValidationCompleted tests validation completed event handling.
 func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -155,7 +151,6 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_HandlePodsDiscovered tests pod discovery event handling.
 func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -233,7 +228,6 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_HandleValidationFailed tests validation failure handling.
 // When validation fails for any reason, the scheduler should deploy the last known good config.
 func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	bus := testutil.NewTestBus()
@@ -320,7 +314,6 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_HandleDeploymentCompleted tests deployment completion handling.
 func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -344,7 +337,6 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	assert.False(t, scheduler.state.lastDeploymentEndTime.IsZero())
 }
 
-// TestDeploymentScheduler_HandleConfigPublished tests config published handling.
 func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -365,7 +357,6 @@ func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {
 	assert.Equal(t, "test-namespace", scheduler.runtimeConfigNamespace)
 }
 
-// TestDeploymentScheduler_HandleLostLeadership tests leadership loss handling.
 func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -390,7 +381,6 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 	assert.Nil(t, scheduler.state.pending)
 }
 
-// TestDeploymentScheduler_ScheduleOrQueue tests queueing behavior.
 func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
@@ -432,7 +422,6 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_HandleEvent tests event type routing.
 func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -573,7 +562,6 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_Name tests the Name method.
 func TestDeploymentScheduler_Name(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
@@ -581,7 +569,6 @@ func TestDeploymentScheduler_Name(t *testing.T) {
 	assert.Equal(t, SchedulerComponentName, scheduler.Name())
 }
 
-// TestDeploymentScheduler_HandleConfigValidated tests config validated event handling.
 func TestDeploymentScheduler_HandleConfigValidated(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
@@ -625,7 +612,6 @@ func TestDeploymentScheduler_HandleConfigValidated(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_HandleDeploymentCompleted_WithPending tests deployment completion
 // with a pending deployment.
 func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T) {
 	bus := testutil.NewTestBus()
@@ -672,7 +658,6 @@ waitLoop:
 	}
 }
 
-// TestDeploymentScheduler_ScheduleWithRateLimit tests rate limiting.
 func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -719,7 +704,6 @@ waitLoop:
 	}
 }
 
-// TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation tests context cancellation during rate limiting.
 func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
@@ -768,7 +752,6 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 	assert.Equal(t, phaseIdle, scheduler.state.phase)
 }
 
-// TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig tests runtime config name computation.
 func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -813,7 +796,6 @@ waitLoop:
 	}
 }
 
-// TestDeploymentScheduler_ScheduleWithPendingWhileScheduling tests handling pending deployment during scheduling.
 func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -877,7 +859,6 @@ collectLoop:
 	assert.GreaterOrEqual(t, eventsReceived, 1)
 }
 
-// TestDeploymentScheduler_StatePhases tests the state machine phase transitions.
 func TestDeploymentScheduler_StatePhases(t *testing.T) {
 	t.Run("phase string representation", func(t *testing.T) {
 		assert.Equal(t, "idle", phaseIdle.String())

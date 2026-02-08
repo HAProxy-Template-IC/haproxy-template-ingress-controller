@@ -2,7 +2,6 @@ package executors
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,88 +10,27 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// Test helper constants.
-const (
-	testEnterpriseAPIVersion = "v3.2.6-ee1"
-	testCommunityAPIVersion  = "v3.2.6 87ad0bcf"
-	testUsername             = "admin"
-	testPassword             = "password"
-)
-
-// =============================================================================
-// Test Helper Functions
-// =============================================================================
-
-// mockServerConfig configures a mock Dataplane API server for tests.
 type mockServerConfig struct {
 	apiVersion string
 	handlers   map[string]http.HandlerFunc
 }
 
-// newMockServer creates a test server that mimics the Dataplane API.
 func newMockServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 	t.Helper()
-
-	apiVersion := cfg.apiVersion
-	if apiVersion == "" {
-		apiVersion = testEnterpriseAPIVersion
-	}
-
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Handle /v3/info - always required for client initialization
-		if r.URL.Path == "/v3/info" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"api":{"version":"%s"}}`, apiVersion)
-			return
-		}
-
-		// Check for custom handler - try with and without /v3 prefix
-		path := r.URL.Path
-		if handler, ok := cfg.handlers[path]; ok {
-			handler(w, r)
-			return
-		}
-
-		// Try adding /v3 prefix if not present
-		if len(path) < 3 || path[:3] != "/v3" {
-			if handler, ok := cfg.handlers["/v3"+path]; ok {
-				handler(w, r)
-				return
-			}
-		}
-
-		// Default: 404
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	return testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: cfg.apiVersion,
+		Handlers:   cfg.handlers,
+	})
 }
 
-// newTestClient creates a client connected to a test server.
 func newTestClient(t *testing.T, server *httptest.Server) *client.DataplaneClient {
 	t.Helper()
-
-	c, err := client.New(context.Background(), &client.Config{
-		BaseURL:  server.URL,
-		Username: testUsername,
-		Password: testPassword,
-	})
-	require.NoError(t, err, "failed to create test client")
-	return c
+	return testutil.NewTestClient(t, server)
 }
-
-// statusResponse creates a handler that returns a specific status code.
-func statusResponse(status int) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(status)
-	}
-}
-
-// =============================================================================
-// Tests for convertModel helper
-// =============================================================================
 
 func TestConvertModel_SameType(t *testing.T) {
 	scoreVersion := 2
@@ -113,7 +51,6 @@ func TestConvertModel_NilSource(t *testing.T) {
 	var dst v32ee.BotmgmtProfile
 	err := convertModel(nil, &dst)
 
-	// JSON marshal of nil returns "null", which unmarshal handles
 	require.NoError(t, err)
 }
 
@@ -133,14 +70,10 @@ func TestConvertModel_WafGlobal(t *testing.T) {
 	assert.Equal(t, 5000, *dst.BodyLimit)
 }
 
-// =============================================================================
-// Tests for Bot Management Profile Executors
-// =============================================================================
-
 func TestBotMgmtProfileCreate_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles": statusResponse(http.StatusCreated),
+			"/v3/services/haproxy/configuration/botmgmt_profiles": testutil.StatusResponse(http.StatusCreated),
 		},
 	})
 	defer server.Close()
@@ -157,7 +90,7 @@ func TestBotMgmtProfileCreate_Success(t *testing.T) {
 func TestBotMgmtProfileUpdate_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles/test": statusResponse(http.StatusOK),
+			"/v3/services/haproxy/configuration/botmgmt_profiles/test": testutil.StatusResponse(http.StatusOK),
 		},
 	})
 	defer server.Close()
@@ -174,7 +107,7 @@ func TestBotMgmtProfileUpdate_Success(t *testing.T) {
 func TestBotMgmtProfileDelete_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles/test": statusResponse(http.StatusNoContent),
+			"/v3/services/haproxy/configuration/botmgmt_profiles/test": testutil.StatusResponse(http.StatusNoContent),
 		},
 	})
 	defer server.Close()
@@ -187,14 +120,10 @@ func TestBotMgmtProfileDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// =============================================================================
-// Tests for Captcha Executors
-// =============================================================================
-
 func TestCaptchaCreate_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas": statusResponse(http.StatusCreated),
+			"/v3/services/haproxy/configuration/captchas": testutil.StatusResponse(http.StatusCreated),
 		},
 	})
 	defer server.Close()
@@ -211,7 +140,7 @@ func TestCaptchaCreate_Success(t *testing.T) {
 func TestCaptchaUpdate_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas/recaptcha": statusResponse(http.StatusOK),
+			"/v3/services/haproxy/configuration/captchas/recaptcha": testutil.StatusResponse(http.StatusOK),
 		},
 	})
 	defer server.Close()
@@ -228,7 +157,7 @@ func TestCaptchaUpdate_Success(t *testing.T) {
 func TestCaptchaDelete_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas/recaptcha": statusResponse(http.StatusNoContent),
+			"/v3/services/haproxy/configuration/captchas/recaptcha": testutil.StatusResponse(http.StatusNoContent),
 		},
 	})
 	defer server.Close()
@@ -241,14 +170,10 @@ func TestCaptchaDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// =============================================================================
-// Tests for WAF Profile Executors (v3.2+ only)
-// =============================================================================
-
 func TestWAFProfileCreate_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles": statusResponse(http.StatusCreated),
+			"/v3/services/haproxy/configuration/waf_profiles": testutil.StatusResponse(http.StatusCreated),
 		},
 	})
 	defer server.Close()
@@ -265,7 +190,7 @@ func TestWAFProfileCreate_Success(t *testing.T) {
 func TestWAFProfileUpdate_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles/waf-default": statusResponse(http.StatusOK),
+			"/v3/services/haproxy/configuration/waf_profiles/waf-default": testutil.StatusResponse(http.StatusOK),
 		},
 	})
 	defer server.Close()
@@ -282,7 +207,7 @@ func TestWAFProfileUpdate_Success(t *testing.T) {
 func TestWAFProfileDelete_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles/waf-default": statusResponse(http.StatusNoContent),
+			"/v3/services/haproxy/configuration/waf_profiles/waf-default": testutil.StatusResponse(http.StatusNoContent),
 		},
 	})
 	defer server.Close()
@@ -295,14 +220,10 @@ func TestWAFProfileDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// =============================================================================
-// Tests for WAF Global Executors (v3.2+ only, singleton)
-// =============================================================================
-
 func TestWAFGlobalCreate_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": statusResponse(http.StatusCreated),
+			"/v3/services/haproxy/configuration/waf_global": testutil.StatusResponse(http.StatusCreated),
 		},
 	})
 	defer server.Close()
@@ -320,7 +241,7 @@ func TestWAFGlobalCreate_Success(t *testing.T) {
 func TestWAFGlobalUpdate_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": statusResponse(http.StatusOK),
+			"/v3/services/haproxy/configuration/waf_global": testutil.StatusResponse(http.StatusOK),
 		},
 	})
 	defer server.Close()
@@ -338,7 +259,7 @@ func TestWAFGlobalUpdate_Success(t *testing.T) {
 func TestWAFGlobalDelete_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": statusResponse(http.StatusNoContent),
+			"/v3/services/haproxy/configuration/waf_global": testutil.StatusResponse(http.StatusNoContent),
 		},
 	})
 	defer server.Close()
@@ -351,14 +272,10 @@ func TestWAFGlobalDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// =============================================================================
-// Tests for Server Error Handling
-// =============================================================================
-
 func TestBotMgmtProfileCreate_ServerError(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles": statusResponse(http.StatusInternalServerError),
+			"/v3/services/haproxy/configuration/botmgmt_profiles": testutil.StatusResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
@@ -376,7 +293,7 @@ func TestBotMgmtProfileCreate_ServerError(t *testing.T) {
 func TestCaptchaCreate_ServerError(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas": statusResponse(http.StatusBadRequest),
+			"/v3/services/haproxy/configuration/captchas": testutil.StatusResponse(http.StatusBadRequest),
 		},
 	})
 	defer server.Close()
@@ -394,7 +311,7 @@ func TestCaptchaCreate_ServerError(t *testing.T) {
 func TestWAFProfileCreate_ServerError(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles": statusResponse(http.StatusConflict),
+			"/v3/services/haproxy/configuration/waf_profiles": testutil.StatusResponse(http.StatusConflict),
 		},
 	})
 	defer server.Close()
@@ -412,7 +329,7 @@ func TestWAFProfileCreate_ServerError(t *testing.T) {
 func TestWAFGlobalUpdate_ServerError(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": statusResponse(http.StatusUnprocessableEntity),
+			"/v3/services/haproxy/configuration/waf_global": testutil.StatusResponse(http.StatusUnprocessableEntity),
 		},
 	})
 	defer server.Close()

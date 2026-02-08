@@ -308,10 +308,6 @@ func (r *ResourceWatcherComponent) AllSynced() bool {
 	return true
 }
 
-// -----------------------------------------------------------------------------
-// Helper Functions
-// -----------------------------------------------------------------------------
-
 // determineStoreType returns the appropriate store type based on the configuration.
 // Supported values:
 //   - "on-demand": Uses CachedStore for memory-efficient storage with API-backed retrieval

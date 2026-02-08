@@ -356,7 +356,6 @@ func TestDiscovery_DiscoverEndpoints_StoreListError(t *testing.T) {
 	assert.Nil(t, endpoints)
 }
 
-// TestDiscovery_DiscoverEndpoints_MapResources tests discovery with map[string]interface{} resources.
 // This is the actual format stored in production after float-to-int conversion.
 func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
 	// Create pod as map[string]interface{} (production format after conversion)
@@ -414,10 +413,6 @@ func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
 	assert.Equal(t, "haproxy-0", endpoints[0].PodName)
 	assert.Equal(t, "default", endpoints[0].PodNamespace)
 }
-
-// -----------------------------------------------------------------------------
-// Helper Functions
-// -----------------------------------------------------------------------------
 
 // createPod creates a test pod with the specified name and IP in the default namespace.
 // The pod is created with phase "Running" by default.
@@ -518,10 +513,6 @@ func createTerminatingPod(name, podIP string) *unstructured.Unstructured {
 	return pod
 }
 
-// -----------------------------------------------------------------------------
-// Mock Store
-// -----------------------------------------------------------------------------
-
 type mockStore struct {
 	listErr error
 }
@@ -564,10 +555,6 @@ func (m *mockStore) Refresh(resource interface{}, oldKeys, newKeys []string) (ch
 func (m *mockStore) Count() int {
 	return 0
 }
-
-// -----------------------------------------------------------------------------
-// LocalVersion Tests
-// -----------------------------------------------------------------------------
 
 func TestDiscovery_LocalVersion(t *testing.T) {
 	tests := []struct {

@@ -555,10 +555,6 @@ func getSharedContext(env native.Env) *SharedContext {
 	return shared
 }
 
-// =============================================================================
-// Deduplication and filtering functions
-// =============================================================================
-
 // scriggoFirstSeen checks if a composite key is being seen for the first time.
 // Returns true on first occurrence, false on subsequent calls with the same key.
 // Uses SharedContext.ComputeIfAbsent with the wasComputed return value for thread-safe
@@ -854,10 +850,6 @@ func scriggoJoinKey(sep string, parts ...interface{}) string {
 	return strings.Join(strs, sep)
 }
 
-// =============================================================================
-// String manipulation functions
-// =============================================================================
-
 // scriggoStringsContains checks if a value contains a substring.
 // Both parameters are converted to string using lenient type conversion.
 //
@@ -1054,10 +1046,6 @@ func shouldIndentLine(lineIndex int, line string, indentFirst, indentBlank bool)
 	return true
 }
 
-// =============================================================================
-// Type conversion functions
-// =============================================================================
-
 // scriggoToString converts any value to its string representation.
 //
 // Usage in Scriggo templates:
@@ -1135,10 +1123,6 @@ func scriggoToFloat(v interface{}) (float64, error) {
 		return 0, fmt.Errorf("cannot convert %T to float", v)
 	}
 }
-
-// =============================================================================
-// Utility functions
-// =============================================================================
 
 // scriggoCeil returns the ceiling of a float.
 //
@@ -1411,10 +1395,6 @@ func scriggoNamespace(init map[string]interface{}) map[string]interface{} {
 	return init
 }
 
-// =============================================================================
-// Slice manipulation functions
-// =============================================================================
-
 // scriggoToSlice converts any value to []interface{} for safe ranging.
 // Returns an empty slice if input is nil, otherwise converts to []interface{}.
 // This is necessary in Scriggo because Kubernetes resource fields may be nil
@@ -1515,10 +1495,6 @@ func scriggoShardSlice(items interface{}, shardIndex, totalShards int) []interfa
 
 	return itemsSlice[start:end]
 }
-
-// =============================================================================
-// Path utility functions
-// =============================================================================
 
 // scriggoBasename extracts the filename from a path (like Unix basename command).
 // Returns the last element of path. Trailing slashes are removed before extracting.

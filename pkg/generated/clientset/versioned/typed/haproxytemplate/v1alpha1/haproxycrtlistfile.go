@@ -61,7 +61,9 @@ func newHAProxyCRTListFiles(c *HaproxyTemplateICV1alpha1Client, namespace string
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			namespace,
-			func() *haproxytemplatev1alpha1.HAProxyCRTListFile { return &haproxytemplatev1alpha1.HAProxyCRTListFile{} },
+			func() *haproxytemplatev1alpha1.HAProxyCRTListFile {
+				return &haproxytemplatev1alpha1.HAProxyCRTListFile{}
+			},
 			func() *haproxytemplatev1alpha1.HAProxyCRTListFileList {
 				return &haproxytemplatev1alpha1.HAProxyCRTListFileList{}
 			},

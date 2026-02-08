@@ -23,10 +23,6 @@ func NewMiscOperations(c *client.DataplaneClient) *MiscOperations {
 	return &MiscOperations{client: c}
 }
 
-// =============================================================================
-// Facts Operations
-// =============================================================================
-
 // Facts represents system facts information.
 type Facts = v32ee.Facts
 
@@ -71,10 +67,6 @@ func (m *MiscOperations) GetFacts(ctx context.Context, refresh bool) (*Facts, er
 	return &result, nil
 }
 
-// =============================================================================
-// Ping Operations
-// =============================================================================
-
 // ErrPingRequiresV32 is returned when Ping is called on v3.0 or v3.1.
 var ErrPingRequiresV32 = errors.New("ping endpoint requires HAProxy Enterprise v3.2+")
 
@@ -101,10 +93,6 @@ func (m *MiscOperations) Ping(ctx context.Context) error {
 	}
 	return nil
 }
-
-// =============================================================================
-// Structured Configuration Operations
-// =============================================================================
 
 // StructuredConfig represents the HAProxy configuration in structured format.
 type StructuredConfig = v32ee.Structured

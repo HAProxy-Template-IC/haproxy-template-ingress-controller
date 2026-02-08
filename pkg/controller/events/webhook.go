@@ -27,10 +27,6 @@ const (
 	EventTypeWebhookValidationResponseSG = "webhook.validation.response.sg" // Scatter-gather response
 )
 
-// -----------------------------------------------------------------------------
-// Webhook Validation Events (Scatter-Gather Pattern)
-// -----------------------------------------------------------------------------
-
 // WebhookValidationRequest is published by the webhook component via scatter-gather
 // to request validation from all registered validators.
 //

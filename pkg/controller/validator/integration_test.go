@@ -12,7 +12,6 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// TestValidationScatterGather tests the full scatter-gather validation flow
 // with all three validators (basic, template, jsonpath) running concurrently.
 func TestValidationScatterGather(t *testing.T) {
 	ctx, bus := setupValidationTest(t)
@@ -46,7 +45,6 @@ func TestValidationScatterGather(t *testing.T) {
 	}
 }
 
-// TestValidationScatterGather_ValidConfig tests scatter-gather with a valid config.
 func TestValidationScatterGather_ValidConfig(t *testing.T) {
 	ctx, bus := setupValidationTest(t)
 	cfg := createValidTestConfig()

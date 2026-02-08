@@ -22,10 +22,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// -----------------------------------------------------------------------------
-// Proposal Validation Events
-// -----------------------------------------------------------------------------
-
 // ProposalValidationRequestedEvent is published when a component wants to validate
 // a hypothetical configuration change without deploying it.
 //

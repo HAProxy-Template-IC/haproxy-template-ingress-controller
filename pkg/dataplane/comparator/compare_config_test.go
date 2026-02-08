@@ -13,10 +13,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
-// =============================================================================
-// compareMapEntries tests
-// =============================================================================
-
 func TestCompareMapEntries(t *testing.T) {
 	type entry struct {
 		Name  string
@@ -167,10 +163,6 @@ func ptrStr(s string) *string    { return &s }
 func ptrInt64(i int64) *int64    { return &i }
 func ptrString(s string) *string { return &s }
 
-// =============================================================================
-// HTTP Errors comparison tests
-// =============================================================================
-
 func TestCompareHTTPErrors(t *testing.T) {
 	comp := New()
 
@@ -272,10 +264,6 @@ func TestHTTPErrorsEqual(t *testing.T) {
 		assert.False(t, httpErrorsEqual(h1, h2))
 	})
 }
-
-// =============================================================================
-// Mailers comparison tests
-// =============================================================================
 
 func TestCompareMailers(t *testing.T) {
 	comp := New()
@@ -409,10 +397,6 @@ func TestMailerEntriesEqual(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// Peers comparison tests
-// =============================================================================
-
 func TestComparePeers(t *testing.T) {
 	comp := New()
 
@@ -527,10 +511,6 @@ func TestPeerEntriesEqual(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// Caches comparison tests
-// =============================================================================
-
 func TestCompareCaches(t *testing.T) {
 	comp := New()
 
@@ -629,10 +609,6 @@ func TestCacheEqual(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// Rings comparison tests
-// =============================================================================
-
 func TestCompareRings(t *testing.T) {
 	comp := New()
 
@@ -698,10 +674,6 @@ func TestRingEqual(t *testing.T) {
 		assert.False(t, ringEqual(r1, r2))
 	})
 }
-
-// =============================================================================
-// Programs comparison tests
-// =============================================================================
 
 func TestComparePrograms(t *testing.T) {
 	comp := New()
@@ -769,10 +741,6 @@ func TestProgramEqual(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// FCGIApps comparison tests
-// =============================================================================
-
 func TestCompareFCGIApps(t *testing.T) {
 	comp := New()
 
@@ -838,10 +806,6 @@ func TestFCGIAppEqual(t *testing.T) {
 		assert.False(t, fcgiAppEqual(f1, f2))
 	})
 }
-
-// =============================================================================
-// Global and Defaults comparison tests
-// =============================================================================
 
 func TestCompareGlobal(t *testing.T) {
 	comp := New()
@@ -1000,10 +964,6 @@ func TestCompareDefaults(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// Frontends comparison tests
-// =============================================================================
-
 func TestCompareFrontends(t *testing.T) {
 	comp := New()
 
@@ -1102,10 +1062,6 @@ func TestCompareBinds(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// ACL comparison tests
-// =============================================================================
-
 func TestCompareACLs(t *testing.T) {
 	comp := New()
 
@@ -1200,10 +1156,6 @@ func TestCompareACLs(t *testing.T) {
 		assert.Empty(t, ops)
 	})
 }
-
-// =============================================================================
-// HTTP Rules comparison tests
-// =============================================================================
 
 func TestCompareHTTPRequestRules(t *testing.T) {
 	comp := New()
@@ -1319,10 +1271,6 @@ func TestCompareHTTPResponseRules(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// Backend Switching Rules comparison tests
-// =============================================================================
-
 func TestCompareBackendSwitchingRules(t *testing.T) {
 	comp := New()
 
@@ -1377,10 +1325,6 @@ func TestCompareBackendSwitchingRules(t *testing.T) {
 		require.NotEmpty(t, ops)
 	})
 }
-
-// =============================================================================
-// Server comparison tests
-// =============================================================================
 
 func TestCompareServers(t *testing.T) {
 	comp := New()

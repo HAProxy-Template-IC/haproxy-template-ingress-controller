@@ -23,10 +23,6 @@ func NewBotManagementOperations(c *client.DataplaneClient) *BotManagementOperati
 	return &BotManagementOperations{client: c}
 }
 
-// =============================================================================
-// Bot Management Profile Operations
-// =============================================================================
-
 // BotmgmtProfile represents a bot management profile configuration.
 type BotmgmtProfile = v32ee.BotmgmtProfile
 
@@ -167,10 +163,6 @@ func (b *BotManagementOperations) DeleteProfile(ctx context.Context, txID, name 
 	}
 	return nil
 }
-
-// =============================================================================
-// CAPTCHA Operations
-// =============================================================================
 
 // Captcha represents a CAPTCHA configuration.
 type Captcha = v32ee.Captcha

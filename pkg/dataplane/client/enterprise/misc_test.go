@@ -37,10 +37,6 @@ func TestNewMiscOperations(t *testing.T) {
 	assert.Equal(t, c, misc.client)
 }
 
-// =============================================================================
-// Facts Operations Tests
-// =============================================================================
-
 func TestMiscOperations_GetFacts_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -134,10 +130,6 @@ func TestMiscOperations_GetFacts_CommunityEdition(t *testing.T) {
 	assert.True(t, errors.Is(err, client.ErrEnterpriseRequired))
 }
 
-// =============================================================================
-// Ping Operations Tests
-// =============================================================================
-
 func TestMiscOperations_Ping_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		apiVersion: "v3.2.6-ee1", // v3.2 required for ping
@@ -205,10 +197,6 @@ func TestMiscOperations_Ping_CommunityEdition(t *testing.T) {
 	// First check is for v3.2 version requirement
 	require.Error(t, err)
 }
-
-// =============================================================================
-// Structured Configuration Tests
-// =============================================================================
 
 func TestMiscOperations_GetStructuredConfig_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

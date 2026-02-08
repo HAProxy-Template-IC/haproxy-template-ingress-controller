@@ -10,10 +10,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// Enterprise Edition Constants
-// =============================================================================
-
 // EE filter type constants.
 const (
 	FilterTypeWAF     = "waf"
@@ -59,9 +55,7 @@ const (
 //	config, _ := eeParser.ParseFromString(configStr)
 //	// config.WAFProfiles and config.EEFrontends are populated
 type StructuredConfig struct {
-	// ==========================================================================
 	// Standard HAProxy sections (CE and EE)
-	// ==========================================================================
 
 	Global      *models.Global
 	Defaults    []*models.Defaults
@@ -86,10 +80,8 @@ type StructuredConfig struct {
 	// Certificate automation (v3.2+ features)
 	AcmeProviders []*models.AcmeProvider // acme sections for Let's Encrypt/ACME automation
 
-	// ==========================================================================
 	// Enterprise Edition standalone sections (EE only)
 	// These are nil when parsed by CE parser.
-	// ==========================================================================
 
 	UDPLBs          []*v32ee.UdpLbBase      // udp-lb sections
 	WAFGlobal       *v32ee.WafGlobal        // waf-global section (singleton)
@@ -97,11 +89,9 @@ type StructuredConfig struct {
 	BotMgmtProfiles []*v32ee.BotmgmtProfile // botmgmt-profile sections
 	Captchas        []*v32ee.Captcha        // captcha sections
 
-	// ==========================================================================
 	// Enterprise Edition directives in CE sections (EE only)
 	// These capture EE-specific directives within standard sections.
 	// These are nil when parsed by CE parser.
-	// ==========================================================================
 
 	// EEFrontends maps frontend name to EE-specific directive data.
 	// Contains filter waf/botmgmt, http-request waf-evaluate/botmgmt-evaluate, etc.
@@ -114,9 +104,7 @@ type StructuredConfig struct {
 	// Contains maxmind-load, maxmind-cache-size, etc.
 	EEGlobal *EEGlobalData
 
-	// ==========================================================================
 	// Pointer-based indexes for zero-copy iteration
-	// ==========================================================================
 	//
 	// These indexes store pointers to nested elements, enabling zero-copy iteration
 	// during comparison and validation. The upstream client-native library uses
@@ -151,10 +139,6 @@ type StructuredConfig struct {
 	// GroupIndex maps userlist name -> group name -> group pointer
 	GroupIndex map[string]map[string]*models.Group
 }
-
-// =============================================================================
-// Enterprise Edition directive data types
-// =============================================================================
 
 // EEFrontendData holds EE-specific directives parsed from a frontend section.
 type EEFrontendData struct {
@@ -226,10 +210,6 @@ type EEGlobalDirective struct {
 	// Comment is the inline comment
 	Comment string
 }
-
-// =============================================================================
-// Index building helpers
-// =============================================================================
 
 // BuildUserIndex builds a pointer index from a slice of users.
 // Returns nil if the input slice is nil.

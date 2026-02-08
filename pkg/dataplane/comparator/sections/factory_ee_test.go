@@ -189,10 +189,6 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Tests for EE Helper Functions
-// =============================================================================
-
 func TestEENameExtractors(t *testing.T) {
 	t.Run("BotMgmtProfileName", func(t *testing.T) {
 		profile := &v32ee.BotmgmtProfile{Name: "bot-profile-1"}
@@ -291,10 +287,6 @@ func TestDescribeSingleton(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Tests for WAF Global Singleton Operations
-// =============================================================================
-
 func TestWAFGlobalSingleton_Methods(t *testing.T) {
 	cache := 1000
 	wafGlobal := &v32ee.WafGlobal{AnalyzerCache: &cache}
@@ -306,10 +298,6 @@ func TestWAFGlobalSingleton_Methods(t *testing.T) {
 	assert.Equal(t, effectivePriority(PriorityEEWAFGlobal), op.Priority())
 	assert.Contains(t, op.Describe(), "waf-global")
 }
-
-// =============================================================================
-// Tests for Priority Constants
-// =============================================================================
 
 func TestEEPriorityConstants(t *testing.T) {
 	// WAF global should be created before WAF profiles

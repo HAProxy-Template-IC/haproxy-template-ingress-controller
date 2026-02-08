@@ -11,10 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// =============================================================================
-// Tests for eeModelEqual[T]()
-// =============================================================================
-
 func TestEEModelEqual_BothNil(t *testing.T) {
 	var a, b *v32ee.BotmgmtProfile
 	assert.True(t, eeModelEqual(a, b), "two nil pointers should be equal")
@@ -56,10 +52,6 @@ func TestEEModelEqual_WafGlobal(t *testing.T) {
 	b.AnalyzerCache = &cache1
 	assert.True(t, eeModelEqual(a, b), "same analyzer_cache should be equal")
 }
-
-// =============================================================================
-// Tests for compareNamedSections[T]() with EE types
-// =============================================================================
 
 func TestCompareNamedSections_AddedProfiles(t *testing.T) {
 	current := []*v32ee.BotmgmtProfile{}
@@ -188,10 +180,6 @@ func TestCompareNamedSections_MixedOperations(t *testing.T) {
 	assert.Equal(t, 1, updates, "should have 1 update operation")
 }
 
-// =============================================================================
-// Tests for compareBotMgmtProfiles()
-// =============================================================================
-
 func TestCompareBotMgmtProfiles_Create(t *testing.T) {
 	current := &parser.StructuredConfig{}
 	desired := &parser.StructuredConfig{
@@ -241,10 +229,6 @@ func TestCompareBotMgmtProfiles_NoChanges(t *testing.T) {
 
 	assert.Empty(t, ops)
 }
-
-// =============================================================================
-// Tests for compareCaptchas()
-// =============================================================================
 
 func TestCompareCaptchas_Create(t *testing.T) {
 	current := &parser.StructuredConfig{}
@@ -297,10 +281,6 @@ func TestCompareCaptchas_Update(t *testing.T) {
 	assert.Equal(t, sections.OperationUpdate, ops[0].Type())
 }
 
-// =============================================================================
-// Tests for compareWAFProfiles()
-// =============================================================================
-
 func TestCompareWAFProfiles_Create(t *testing.T) {
 	current := &parser.StructuredConfig{}
 	desired := &parser.StructuredConfig{
@@ -351,10 +331,6 @@ func TestCompareWAFProfiles_Update(t *testing.T) {
 	require.Len(t, ops, 1)
 	assert.Equal(t, sections.OperationUpdate, ops[0].Type())
 }
-
-// =============================================================================
-// Tests for compareWAFGlobal() - singleton section
-// =============================================================================
 
 func TestCompareWAFGlobal_CreateFromNil(t *testing.T) {
 	cache := 1000
@@ -430,10 +406,6 @@ func TestCompareWAFGlobal_BothNil(t *testing.T) {
 	assert.Empty(t, ops)
 }
 
-// =============================================================================
-// Tests for compareEnterpriseSections() integration
-// =============================================================================
-
 func TestCompareEnterpriseSections_AllTypes(t *testing.T) {
 	scoreVersion := 1
 	cache := 1000
@@ -462,10 +434,6 @@ func TestCompareEnterpriseSections_AllTypes(t *testing.T) {
 	assert.Equal(t, 1, sectionTypes["waf-profile"])
 	assert.Equal(t, 1, sectionTypes["waf-global"])
 }
-
-// =============================================================================
-// Helper functions
-// =============================================================================
 
 func countOperationsByType(ops []Operation, opType sections.OperationType) int {
 	count := 0

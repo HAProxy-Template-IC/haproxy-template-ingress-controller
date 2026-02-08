@@ -60,10 +60,6 @@
 //   - webhook.go:             Scatter-gather request/response events for webhook validation
 package events
 
-// -----------------------------------------------------------------------------
-// Event Type Constants.
-// -----------------------------------------------------------------------------
-
 const (
 	// Configuration event types.
 	EventTypeConfigParsed             = "config.parsed"
@@ -149,10 +145,6 @@ const (
 	EventTypeProposalValidationRequested = "proposal.validation.requested"
 	EventTypeProposalValidationCompleted = "proposal.validation.completed"
 )
-
-// -----------------------------------------------------------------------------
-// Trigger Reason Constants.
-// -----------------------------------------------------------------------------
 
 // TriggerReason constants for reconciliation events.
 // These are propagated through the event chain via TriggerReason fields.

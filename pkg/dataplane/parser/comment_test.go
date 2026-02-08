@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCommentParsing tests how the parser handles standalone comments
 // between http-request rules to understand the comment indexing bug.
 func TestCommentParsing(t *testing.T) {
 	// This is the SYNCED format (wrong - all comments first)

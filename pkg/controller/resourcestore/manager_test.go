@@ -72,7 +72,6 @@ func newMockResource(namespace, name string) map[string]interface{} {
 	}
 }
 
-// TestNewManager tests the Manager constructor.
 func TestNewManager(t *testing.T) {
 	manager := NewManager()
 
@@ -81,7 +80,6 @@ func TestNewManager(t *testing.T) {
 	assert.Equal(t, 0, manager.ResourceCount())
 }
 
-// TestManager_RegisterAndGetStore tests store registration and retrieval.
 func TestManager_RegisterAndGetStore(t *testing.T) {
 	manager := NewManager()
 	store := &mockStore{}
@@ -99,7 +97,6 @@ func TestManager_RegisterAndGetStore(t *testing.T) {
 	assert.False(t, exists)
 }
 
-// TestManager_RegisterStore_Replace tests that registering replaces existing store.
 func TestManager_RegisterStore_Replace(t *testing.T) {
 	manager := NewManager()
 	store1 := &mockStore{resources: []interface{}{"first"}}
@@ -119,7 +116,6 @@ func TestManager_RegisterStore_Replace(t *testing.T) {
 	assert.Equal(t, 1, manager.ResourceCount())
 }
 
-// TestManager_GetAllStores tests retrieving all registered stores.
 func TestManager_GetAllStores(t *testing.T) {
 	manager := NewManager()
 	ingressStore := &mockStore{}
@@ -138,7 +134,6 @@ func TestManager_GetAllStores(t *testing.T) {
 	assert.Equal(t, endpointStore, stores["endpointslices"])
 }
 
-// TestManager_GetAllStores_ReturnsShallowCopy tests that GetAllStores returns a copy.
 func TestManager_GetAllStores_ReturnsShallowCopy(t *testing.T) {
 	manager := NewManager()
 	manager.RegisterStore("ingresses", &mockStore{})
@@ -154,7 +149,6 @@ func TestManager_GetAllStores_ReturnsShallowCopy(t *testing.T) {
 	assert.Equal(t, 1, manager.ResourceCount())
 }
 
-// TestManager_ResourceCount tests counting registered stores.
 func TestManager_ResourceCount(t *testing.T) {
 	manager := NewManager()
 
@@ -167,7 +161,6 @@ func TestManager_ResourceCount(t *testing.T) {
 	assert.Equal(t, 2, manager.ResourceCount())
 }
 
-// TestManager_CreateOverlay tests creating an overlay store.
 func TestManager_CreateOverlay(t *testing.T) {
 	manager := NewManager()
 	baseStore := &mockStore{
@@ -189,7 +182,6 @@ func TestManager_CreateOverlay(t *testing.T) {
 	assert.True(t, ok)
 }
 
-// TestManager_CreateOverlay_NonexistentStore tests error for non-existent store.
 func TestManager_CreateOverlay_NonexistentStore(t *testing.T) {
 	manager := NewManager()
 
@@ -199,7 +191,6 @@ func TestManager_CreateOverlay_NonexistentStore(t *testing.T) {
 	assert.Contains(t, err.Error(), "no store registered for resource type")
 }
 
-// TestManager_CreateOverlayMap tests creating an overlay map.
 func TestManager_CreateOverlayMap(t *testing.T) {
 	manager := NewManager()
 	ingressStore := &mockStore{resources: []interface{}{newMockResource("default", "ing1")}}
@@ -223,7 +214,6 @@ func TestManager_CreateOverlayMap(t *testing.T) {
 	assert.Equal(t, serviceStore, stores["services"])
 }
 
-// TestManager_CreateOverlayMap_NonexistentStore tests error for non-existent store in overlay map.
 func TestManager_CreateOverlayMap_NonexistentStore(t *testing.T) {
 	manager := NewManager()
 	manager.RegisterStore("services", &mockStore{})

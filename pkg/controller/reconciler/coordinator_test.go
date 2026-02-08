@@ -30,10 +30,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// =============================================================================
-// Coordinator Tests
-// =============================================================================
-
 func TestNewCoordinator(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -222,10 +218,6 @@ func TestCoordinator_Name(t *testing.T) {
 	coordinator := &Coordinator{}
 	assert.Equal(t, CoordinatorComponentName, coordinator.Name())
 }
-
-// =============================================================================
-// Mock Types
-// =============================================================================
 
 // mockPipeline implements PipelineExecutor interface for testing.
 type mockPipeline struct {

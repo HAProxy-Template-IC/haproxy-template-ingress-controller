@@ -544,10 +544,6 @@ func checkDiscoveryOccurred(t *testing.T, eventChan <-chan busevents.Event, ctx 
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Helper Functions
-// -----------------------------------------------------------------------------
-
 // createTestPodStore creates a test pod store with the specified pod IPs.
 // Creates fully configured pods with Running phase, Ready condition, and dataplane container.
 //
@@ -785,10 +781,6 @@ func TestComponent_PerformInitialDiscovery_NoPodsInStore(t *testing.T) {
 	// Should NOT receive HAProxyPodsDiscoveredEvent (no pods in store)
 	testutil.AssertNoEvent[*events.HAProxyPodsDiscoveredEvent](t, eventChan, testutil.NoEventTimeout)
 }
-
-// -----------------------------------------------------------------------------
-// Additional Helper Functions
-// -----------------------------------------------------------------------------
 
 // addPodToStore adds a pod with the given name, namespace, and IP to the store.
 // The pod is created in Running phase with Ready condition true.

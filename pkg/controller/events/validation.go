@@ -20,10 +20,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
-// -----------------------------------------------------------------------------
-// Validation Events.
-// -----------------------------------------------------------------------------
-
 // ValidationStartedEvent is published when local configuration validation begins.
 //
 // Validation is performed locally using the HAProxy binary to check configuration syntax.

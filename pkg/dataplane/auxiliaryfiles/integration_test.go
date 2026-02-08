@@ -194,7 +194,6 @@ func createTestClient(t *testing.T, serverURL string) *client.DataplaneClient {
 	return c
 }
 
-// TestCompareGeneralFiles_Integration tests CompareGeneralFiles with a mock HTTP server.
 func TestCompareGeneralFiles_Integration(t *testing.T) {
 	generalFiles := newMockStorage()
 	server := createTestServer(generalFiles, nil)
@@ -252,7 +251,6 @@ func TestCompareGeneralFiles_Integration(t *testing.T) {
 	})
 }
 
-// TestSyncGeneralFiles_Integration tests SyncGeneralFiles with a mock HTTP server.
 // Note: Create and update tests are omitted because they require complex multipart form
 // upload handling in the mock server. The core sync logic is tested via unit tests.
 func TestSyncGeneralFiles_Integration(t *testing.T) {
@@ -283,7 +281,6 @@ func TestSyncGeneralFiles_Integration(t *testing.T) {
 	})
 }
 
-// TestCompareMapFiles_Integration tests CompareMapFiles with a mock HTTP server.
 func TestCompareMapFiles_Integration(t *testing.T) {
 	mapFiles := newMockStorage()
 	server := createTestServer(nil, mapFiles)
@@ -322,7 +319,6 @@ func TestCompareMapFiles_Integration(t *testing.T) {
 	})
 }
 
-// TestSyncMapFiles_Integration tests SyncMapFiles with a mock HTTP server.
 // Note: Create and update tests are omitted because they require complex multipart form
 // upload handling in the mock server. The core sync logic is tested via unit tests.
 func TestSyncMapFiles_Integration(t *testing.T) {
@@ -357,7 +353,6 @@ func TestSyncMapFiles_Integration(t *testing.T) {
 // name sanitization logic that matches the real API behavior. The core SSL comparison
 // logic is tested via the unit tests for Compare and Sync generic functions.
 
-// TestCompareCRTLists_Integration tests CompareCRTLists with a mock HTTP server.
 // Note: CRT-list files are always stored as general files to avoid reload on create
 // (native CRT-list API triggers reload without skip_reload support).
 func TestCompareCRTLists_Integration(t *testing.T) {
@@ -399,7 +394,6 @@ func TestCompareCRTLists_Integration(t *testing.T) {
 	})
 }
 
-// TestSyncCRTLists_Integration tests SyncCRTLists with a mock HTTP server.
 // Note: CRT-list files are always stored as general files to avoid reload on create
 // (native CRT-list API triggers reload without skip_reload support).
 func TestSyncCRTLists_Integration(t *testing.T) {

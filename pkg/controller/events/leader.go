@@ -16,10 +16,6 @@ package events
 
 import "time"
 
-// -----------------------------------------------------------------------------
-// Leader Election Events.
-// -----------------------------------------------------------------------------
-
 // LeaderElectionStartedEvent is published when leader election is initiated.
 type LeaderElectionStartedEvent struct {
 	Identity       string

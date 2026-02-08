@@ -16,10 +16,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// User Executors (Userlist container)
-// =============================================================================
-
 // UserCreate returns an executor for creating users in userlists.
 func UserCreate(userlistName string) func(ctx context.Context, c *client.DataplaneClient, txID string, containerName string, childName string, model *models.User) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, _ string, _ string, model *models.User) error {
@@ -136,10 +132,6 @@ func UserDelete(userlistName string) func(ctx context.Context, c *client.Datapla
 		return client.CheckResponse(resp, "user deletion")
 	}
 }
-
-// =============================================================================
-// Mailer Entry Executors (Mailers container)
-// =============================================================================
 
 // MailerEntryCreate returns an executor for creating mailer entries in mailers sections.
 func MailerEntryCreate(mailersName string) func(ctx context.Context, c *client.DataplaneClient, txID string, containerName string, childName string, model *models.MailerEntry) error {
@@ -258,10 +250,6 @@ func MailerEntryDelete(mailersName string) func(ctx context.Context, c *client.D
 	}
 }
 
-// =============================================================================
-// Peer Entry Executors (Peer container)
-// =============================================================================
-
 // PeerEntryCreate returns an executor for creating peer entries in peers sections.
 func PeerEntryCreate(peerSectionName string) func(ctx context.Context, c *client.DataplaneClient, txID string, containerName string, childName string, model *models.PeerEntry) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, _ string, _ string, model *models.PeerEntry) error {
@@ -378,10 +366,6 @@ func PeerEntryDelete(peerSectionName string) func(ctx context.Context, c *client
 		return client.CheckResponse(resp, "peer entry deletion")
 	}
 }
-
-// =============================================================================
-// Nameserver Executors (Resolver container)
-// =============================================================================
 
 // NameserverCreate returns an executor for creating nameservers in resolver sections.
 func NameserverCreate(resolverName string) func(ctx context.Context, c *client.DataplaneClient, txID string, containerName string, childName string, model *models.Nameserver) error {

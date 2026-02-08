@@ -327,7 +327,6 @@ func TestScriggoB64Decode_InvalidInput(t *testing.T) {
 	}
 }
 
-// TestScriggoStrip_TypeConversion tests lenient type conversion for strip filter.
 func TestScriggoStrip_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -353,7 +352,6 @@ func TestScriggoStrip_TypeConversion(t *testing.T) {
 	}
 }
 
-// TestScriggoStringsContains_TypeConversion tests both parameters accept interface{}.
 func TestScriggoStringsContains_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -379,7 +377,6 @@ func TestScriggoStringsContains_TypeConversion(t *testing.T) {
 	}
 }
 
-// TestScriggoStringsReplace_TypeConversion tests all three parameters.
 func TestScriggoStringsReplace_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -404,7 +401,6 @@ func TestScriggoStringsReplace_TypeConversion(t *testing.T) {
 	}
 }
 
-// TestScriggoB64Decode_TypeConversion tests type conversion for b64decode.
 func TestScriggoB64Decode_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -692,7 +688,6 @@ func TestScriggo_FailFunction(t *testing.T) {
 	})
 }
 
-// TestScriggo_FailFunction_DirectSignature tests fail with a direct Scriggo-compatible signature.
 func TestScriggo_FailFunction_DirectSignature(t *testing.T) {
 	templates := map[string]string{
 		"test": `{{ fail("Direct error") }}`,
@@ -724,7 +719,6 @@ func TestScriggo_FailFunction_DirectSignature(t *testing.T) {
 	t.Logf("Direct signature test - Error: %v", err)
 }
 
-// TestScriggoMerge tests the merge function for combining maps.
 func TestScriggoMerge(t *testing.T) {
 	t.Run("merge empty maps", func(t *testing.T) {
 		result := scriggoMerge(
@@ -773,7 +767,6 @@ func TestScriggoMerge(t *testing.T) {
 	})
 }
 
-// TestScriggoMerge_Integration tests merge function in actual templates.
 func TestScriggoMerge_Integration(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -809,7 +802,6 @@ b={{ config["b"] }}`,
 	}
 }
 
-// TestScriggoKeys tests the keys function for sorted map key extraction.
 func TestScriggoKeys(t *testing.T) {
 	t.Run("empty map", func(t *testing.T) {
 		result := scriggoKeys(map[string]interface{}{})
@@ -843,7 +835,6 @@ func TestScriggoKeys(t *testing.T) {
 	})
 }
 
-// TestScriggoKeys_Integration tests keys function in actual templates.
 func TestScriggoKeys_Integration(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -876,10 +867,6 @@ count={{ len(keys(config)) }}`,
 		})
 	}
 }
-
-// =============================================================================
-// first_seen tests
-// =============================================================================
 
 func TestScriggoFirstSeen_Basic(t *testing.T) {
 	// Define data inside template since Scriggo requires compile-time type knowledge
@@ -943,10 +930,6 @@ func TestScriggoFirstSeen_EmptyKey(t *testing.T) {
 	assert.Contains(t, output, "empty1")
 	assert.Contains(t, output, "empty2")
 }
-
-// =============================================================================
-// selectattr tests
-// =============================================================================
 
 func TestScriggoSelectAttr_ExistenceCheck(t *testing.T) {
 	templates := map[string]string{
@@ -1049,10 +1032,6 @@ func TestScriggoSelectAttr_EmptySlice(t *testing.T) {
 	assert.Empty(t, result)
 }
 
-// =============================================================================
-// join_key tests
-// =============================================================================
-
 func TestScriggoJoinKey_Basic(t *testing.T) {
 	templates := map[string]string{
 		"test": `{{ join_key("_", "default", "my-service", 80) }}`,
@@ -1100,10 +1079,6 @@ func TestScriggoJoinKey_NilValues(t *testing.T) {
 	assert.Equal(t, "a__b", result)
 }
 
-// =============================================================================
-// isEmpty helper tests
-// =============================================================================
-
 func TestIsEmpty(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1131,10 +1106,6 @@ func TestIsEmpty(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// isValueInList helper tests
-// =============================================================================
-
 func TestIsValueInList(t *testing.T) {
 	t.Run("string slice", func(t *testing.T) {
 		list := []string{"Exact", "Prefix"}
@@ -1158,10 +1129,6 @@ func TestIsValueInList(t *testing.T) {
 		assert.False(t, isValueInList("a", []string{}))
 	})
 }
-
-// =============================================================================
-// scriggoIndent tests
-// =============================================================================
 
 func TestScriggoIndent_DefaultBehavior(t *testing.T) {
 	input := "first\nsecond\nthird"

@@ -15,10 +15,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// LogProfile Executors (v3.1+ only)
-// =============================================================================
-
 // LogProfileCreate returns an executor for creating log-profile sections.
 // Log profiles are only available in HAProxy DataPlane API v3.1+.
 func LogProfileCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.LogProfile, name string) error {
@@ -118,10 +114,6 @@ func LogProfileDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 	}
 }
 
-// =============================================================================
-// Traces Executor (v3.1+ only, singleton)
-// =============================================================================
-
 // TracesUpdate returns an executor for updating the traces section.
 // The traces section is a singleton - it can be created or replaced.
 // Traces configuration is only available in HAProxy DataPlane API v3.1+.
@@ -156,12 +148,10 @@ func TracesUpdate() func(ctx context.Context, c *client.DataplaneClient, txID st
 	}
 }
 
-// =============================================================================
 // v3.1+ Dispatch Helpers
 // These are specialized dispatchers for features only available in v3.1+.
 // They will return an error if called on v3.0 clients (which should never
 // happen since capability checks prevent operation generation for unsupported versions).
-// =============================================================================
 
 // DispatchCreate31Plus is a generic helper for create operations on v3.1+ only features.
 func DispatchCreate31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE any](

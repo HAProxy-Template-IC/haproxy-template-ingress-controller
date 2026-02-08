@@ -22,10 +22,6 @@ func NewGitOperations(c *client.DataplaneClient) *GitOperations {
 	return &GitOperations{client: c}
 }
 
-// =============================================================================
-// Git Settings Operations
-// =============================================================================
-
 // GitSettings represents Git integration settings.
 type GitSettings = v32ee.GitSettings
 
@@ -101,10 +97,6 @@ func (g *GitOperations) ReplaceSettings(ctx context.Context, settings *GitSettin
 	}
 	return nil
 }
-
-// =============================================================================
-// Git Actions Operations
-// =============================================================================
 
 // GitAction represents a Git action.
 type GitAction = v32ee.GitAction

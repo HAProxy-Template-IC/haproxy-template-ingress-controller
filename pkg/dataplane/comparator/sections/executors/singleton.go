@@ -16,10 +16,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// Global Section Executor
-// =============================================================================
-
 // GlobalUpdate returns an executor for updating the global section.
 // The global section is a singleton - it always exists and can only be updated.
 func GlobalUpdate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Global) error {

@@ -9,10 +9,6 @@ import (
 	"github.com/haproxytech/client-native/v6/models"
 )
 
-// =============================================================================
-// Description Helpers
-// =============================================================================
-
 // DescribeTopLevel returns a description function for top-level operations.
 func DescribeTopLevel(op OperationType, section, name string) func() string {
 	verb := opVerb(op)
@@ -84,10 +80,6 @@ func opPreposition(op OperationType) string {
 	}
 	return prepositionIn
 }
-
-// =============================================================================
-// Name Extractors
-// =============================================================================
 
 // BackendName extracts the name from a Backend model.
 func BackendName(b *models.Backend) string { return b.Name }
@@ -163,10 +155,6 @@ func LogProfileName(l *models.LogProfile) string { return l.Name }
 
 // AcmeProviderName extracts the name from an AcmeProvider model.
 func AcmeProviderName(a *models.AcmeProvider) string { return a.Name }
-
-// =============================================================================
-// Nil Transform Functions (for delete operations)
-// =============================================================================
 
 // NilBackend returns nil, used for delete operations where model isn't needed.
 func NilBackend(_ *models.Backend) *models.Backend { return nil }
@@ -281,11 +269,9 @@ func NilLogProfile(_ *models.LogProfile) *models.LogProfile { return nil }
 // NilAcmeProvider returns nil, used for delete operations where model isn't needed.
 func NilAcmeProvider(_ *models.AcmeProvider) *models.AcmeProvider { return nil }
 
-// =============================================================================
 // Identity Transform Functions (for direct model passthrough)
 // These replace the old transform.ToAPI* functions since executors now accept
 // client-native models directly.
-// =============================================================================
 
 // IdentityBackend returns the model as-is.
 func IdentityBackend(b *models.Backend) *models.Backend { return b }

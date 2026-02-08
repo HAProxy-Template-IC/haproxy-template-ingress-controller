@@ -19,10 +19,6 @@ import (
 	"time"
 )
 
-// -----------------------------------------------------------------------------
-// Configuration Events.
-// -----------------------------------------------------------------------------
-
 // ConfigParsedEvent is published when the configuration ConfigMap/Secret has been.
 // successfully parsed into a Config structure.
 //
