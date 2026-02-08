@@ -195,7 +195,7 @@ func DefaultControllerEnvironmentOptions() ControllerEnvironmentOptions {
 	return ControllerEnvironmentOptions{
 		Replicas:             1,
 		CRDName:              ControllerCRDName,
-		EnableLeaderElection: false,
+		EnableLeaderElection: true,
 	}
 }
 
