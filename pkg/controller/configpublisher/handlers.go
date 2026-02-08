@@ -17,10 +17,10 @@ package configpublisher
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
@@ -307,7 +307,7 @@ func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent)
 	}
 
 	// Call pure publisher (non-blocking - log errors but don't fail)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPITimeout)
 	defer cancel()
 
 	if err := c.publisher.CleanupPodReferences(ctx, &cleanupReq); err != nil {
@@ -355,7 +355,7 @@ func (c *Component) handlePodsDiscovered(event *events.HAProxyPodsDiscoveredEven
 	}
 
 	// Create timeout context (same pattern as handlePodTerminated)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPILongTimeout)
 	defer cancel()
 
 	// Reconcile status against running pods (namespace-scoped)

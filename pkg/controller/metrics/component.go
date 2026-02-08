@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	pkgevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -89,7 +90,7 @@ func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 // It also periodically updates the observability drop metric from EventBus stats.
 func (c *Component) Start(ctx context.Context) error {
 	// Ticker to poll EventBus stats for observability drops (every 5 seconds)
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(timeouts.TickerPollInterval)
 	defer ticker.Stop()
 
 	for {

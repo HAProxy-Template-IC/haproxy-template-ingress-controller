@@ -29,154 +29,70 @@ const (
 	PriorityEEWAFProfile = 15
 )
 
+// Top-level CRUD builders for Enterprise Edition sections.
+var (
+	botMgmtProfileOps = NewTopLevelCRUD(
+		"botmgmt-profile", "botmgmt-profile", PriorityEEBotMgmtProfile, BotMgmtProfileName,
+		executors.BotMgmtProfileCreate(), executors.BotMgmtProfileUpdate(), executors.BotMgmtProfileDelete(),
+	)
+	captchaOps = NewTopLevelCRUD(
+		"captcha", "captcha", PriorityEECaptcha, CaptchaEEName,
+		executors.CaptchaCreate(), executors.CaptchaUpdate(), executors.CaptchaDelete(),
+	)
+	wafProfileOps = NewTopLevelCRUD(
+		"waf-profile", "waf-profile", PriorityEEWAFProfile, WAFProfileName,
+		executors.WAFProfileCreate(), executors.WAFProfileUpdate(), executors.WAFProfileDelete(),
+	)
+)
+
 // NewBotMgmtProfileCreate creates an operation to create a bot management profile.
 // Bot management profiles are only available in HAProxy Enterprise Edition.
 func NewBotMgmtProfileCreate(profile *v32ee.BotmgmtProfile) Operation {
-	name := profile.Name
-	return NewTopLevelOp(
-		OperationCreate,
-		"botmgmt-profile",
-		PriorityEEBotMgmtProfile,
-		profile,
-		IdentityBotMgmtProfile,
-		BotMgmtProfileName,
-		executors.BotMgmtProfileCreate(),
-		DescribeTopLevel(OperationCreate, "botmgmt-profile", name),
-	)
+	return botMgmtProfileOps.Create(profile)
 }
 
 // NewBotMgmtProfileUpdate creates an operation to update a bot management profile.
 func NewBotMgmtProfileUpdate(profile *v32ee.BotmgmtProfile) Operation {
-	name := profile.Name
-	return NewTopLevelOp(
-		OperationUpdate,
-		"botmgmt-profile",
-		PriorityEEBotMgmtProfile,
-		profile,
-		IdentityBotMgmtProfile,
-		BotMgmtProfileName,
-		executors.BotMgmtProfileUpdate(),
-		DescribeTopLevel(OperationUpdate, "botmgmt-profile", name),
-	)
+	return botMgmtProfileOps.Update(profile)
 }
 
 // NewBotMgmtProfileDelete creates an operation to delete a bot management profile.
 func NewBotMgmtProfileDelete(profile *v32ee.BotmgmtProfile) Operation {
-	name := profile.Name
-	return NewTopLevelOp(
-		OperationDelete,
-		"botmgmt-profile",
-		PriorityEEBotMgmtProfile,
-		profile,
-		NilBotMgmtProfile,
-		BotMgmtProfileName,
-		executors.BotMgmtProfileDelete(),
-		DescribeTopLevel(OperationDelete, "botmgmt-profile", name),
-	)
+	return botMgmtProfileOps.Delete(profile)
 }
 
 // NewCaptchaCreate creates an operation to create a captcha section.
 // Captcha is only available in HAProxy Enterprise Edition.
-func NewCaptchaCreate(captcha *v32ee.Captcha) Operation {
-	name := captcha.Name
-	return NewTopLevelOp(
-		OperationCreate,
-		"captcha",
-		PriorityEECaptcha,
-		captcha,
-		IdentityCaptchaEE,
-		CaptchaEEName,
-		executors.CaptchaCreate(),
-		DescribeTopLevel(OperationCreate, "captcha", name),
-	)
-}
+func NewCaptchaCreate(captcha *v32ee.Captcha) Operation { return captchaOps.Create(captcha) }
 
 // NewCaptchaUpdate creates an operation to update a captcha section.
-func NewCaptchaUpdate(captcha *v32ee.Captcha) Operation {
-	name := captcha.Name
-	return NewTopLevelOp(
-		OperationUpdate,
-		"captcha",
-		PriorityEECaptcha,
-		captcha,
-		IdentityCaptchaEE,
-		CaptchaEEName,
-		executors.CaptchaUpdate(),
-		DescribeTopLevel(OperationUpdate, "captcha", name),
-	)
-}
+func NewCaptchaUpdate(captcha *v32ee.Captcha) Operation { return captchaOps.Update(captcha) }
 
 // NewCaptchaDelete creates an operation to delete a captcha section.
-func NewCaptchaDelete(captcha *v32ee.Captcha) Operation {
-	name := captcha.Name
-	return NewTopLevelOp(
-		OperationDelete,
-		"captcha",
-		PriorityEECaptcha,
-		captcha,
-		NilCaptchaEE,
-		CaptchaEEName,
-		executors.CaptchaDelete(),
-		DescribeTopLevel(OperationDelete, "captcha", name),
-	)
-}
+func NewCaptchaDelete(captcha *v32ee.Captcha) Operation { return captchaOps.Delete(captcha) }
 
 // NewWAFProfileCreate creates an operation to create a WAF profile.
 // WAF profiles are only available in HAProxy Enterprise Edition v3.2+.
 func NewWAFProfileCreate(profile *v32ee.WafProfile) Operation {
-	name := profile.Name
-	return NewTopLevelOp(
-		OperationCreate,
-		"waf-profile",
-		PriorityEEWAFProfile,
-		profile,
-		IdentityWAFProfile,
-		WAFProfileName,
-		executors.WAFProfileCreate(),
-		DescribeTopLevel(OperationCreate, "waf-profile", name),
-	)
+	return wafProfileOps.Create(profile)
 }
 
 // NewWAFProfileUpdate creates an operation to update a WAF profile.
 func NewWAFProfileUpdate(profile *v32ee.WafProfile) Operation {
-	name := profile.Name
-	return NewTopLevelOp(
-		OperationUpdate,
-		"waf-profile",
-		PriorityEEWAFProfile,
-		profile,
-		IdentityWAFProfile,
-		WAFProfileName,
-		executors.WAFProfileUpdate(),
-		DescribeTopLevel(OperationUpdate, "waf-profile", name),
-	)
+	return wafProfileOps.Update(profile)
 }
 
 // NewWAFProfileDelete creates an operation to delete a WAF profile.
 func NewWAFProfileDelete(profile *v32ee.WafProfile) Operation {
-	name := profile.Name
-	return NewTopLevelOp(
-		OperationDelete,
-		"waf-profile",
-		PriorityEEWAFProfile,
-		profile,
-		NilWAFProfile,
-		WAFProfileName,
-		executors.WAFProfileDelete(),
-		DescribeTopLevel(OperationDelete, "waf-profile", name),
-	)
+	return wafProfileOps.Delete(profile)
 }
 
 // NewWAFGlobalCreate creates an operation to create the WAF global configuration.
 // WAF global is a singleton section (only one per configuration).
 func NewWAFGlobalCreate(wafGlobal *v32ee.WafGlobal) Operation {
 	return NewSingletonOp(
-		OperationCreate,
-		"waf-global",
-		PriorityEEWAFGlobal,
-		wafGlobal,
-		IdentityWAFGlobal,
-		executors.WAFGlobalCreate(),
+		OperationCreate, "waf-global", PriorityEEWAFGlobal, wafGlobal,
+		Identity[*v32ee.WafGlobal], executors.WAFGlobalCreate(),
 		DescribeSingleton(OperationCreate, "waf-global"),
 	)
 }
@@ -184,12 +100,8 @@ func NewWAFGlobalCreate(wafGlobal *v32ee.WafGlobal) Operation {
 // NewWAFGlobalUpdate creates an operation to update the WAF global configuration.
 func NewWAFGlobalUpdate(wafGlobal *v32ee.WafGlobal) Operation {
 	return NewSingletonOp(
-		OperationUpdate,
-		"waf-global",
-		PriorityEEWAFGlobal,
-		wafGlobal,
-		IdentityWAFGlobal,
-		executors.WAFGlobalUpdate(),
+		OperationUpdate, "waf-global", PriorityEEWAFGlobal, wafGlobal,
+		Identity[*v32ee.WafGlobal], executors.WAFGlobalUpdate(),
 		DescribeSingleton(OperationUpdate, "waf-global"),
 	)
 }
@@ -197,12 +109,8 @@ func NewWAFGlobalUpdate(wafGlobal *v32ee.WafGlobal) Operation {
 // NewWAFGlobalDelete creates an operation to delete the WAF global configuration.
 func NewWAFGlobalDelete(wafGlobal *v32ee.WafGlobal) Operation {
 	return NewSingletonOp(
-		OperationDelete,
-		"waf-global",
-		PriorityEEWAFGlobal,
-		wafGlobal,
-		IdentityWAFGlobal,
-		executors.WAFGlobalDelete(),
+		OperationDelete, "waf-global", PriorityEEWAFGlobal, wafGlobal,
+		Identity[*v32ee.WafGlobal], executors.WAFGlobalDelete(),
 		DescribeSingleton(OperationDelete, "waf-global"),
 	)
 }
@@ -222,32 +130,6 @@ func CaptchaEEName(c *v32ee.Captcha) string {
 func WAFProfileName(p *v32ee.WafProfile) string {
 	return p.Name
 }
-
-// IdentityBotMgmtProfile returns the model as-is.
-func IdentityBotMgmtProfile(p *v32ee.BotmgmtProfile) *v32ee.BotmgmtProfile { return p }
-
-// IdentityCaptchaEE returns the model as-is.
-// Named IdentityCaptchaEE to avoid conflict with IdentityCapture in helpers.go.
-func IdentityCaptchaEE(c *v32ee.Captcha) *v32ee.Captcha { return c }
-
-// IdentityWAFProfile returns the model as-is.
-func IdentityWAFProfile(p *v32ee.WafProfile) *v32ee.WafProfile { return p }
-
-// IdentityWAFGlobal returns the model as-is.
-func IdentityWAFGlobal(w *v32ee.WafGlobal) *v32ee.WafGlobal { return w }
-
-// NilBotMgmtProfile returns nil, used for delete operations where model isn't needed.
-func NilBotMgmtProfile(_ *v32ee.BotmgmtProfile) *v32ee.BotmgmtProfile { return nil }
-
-// NilCaptchaEE returns nil, used for delete operations where model isn't needed.
-// Named NilCaptchaEE to avoid conflict with NilCapture in helpers.go.
-func NilCaptchaEE(_ *v32ee.Captcha) *v32ee.Captcha { return nil }
-
-// NilWAFProfile returns nil, used for delete operations where model isn't needed.
-func NilWAFProfile(_ *v32ee.WafProfile) *v32ee.WafProfile { return nil }
-
-// NilWAFGlobal returns nil, used for delete operations where model isn't needed.
-func NilWAFGlobal(_ *v32ee.WafGlobal) *v32ee.WafGlobal { return nil }
 
 // DescribeSingleton returns a description function for singleton operations.
 func DescribeSingleton(op OperationType, section string) func() string {

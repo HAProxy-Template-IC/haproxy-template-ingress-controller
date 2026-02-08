@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -237,7 +238,7 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 		"deployment_timeout_ms", s.deploymentTimeout.Milliseconds())
 
 	// Ticker to check for deployment timeouts
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(timeouts.TickerPollInterval)
 	defer ticker.Stop()
 
 	for {

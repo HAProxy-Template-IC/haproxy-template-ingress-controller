@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
@@ -178,8 +179,8 @@ func (c *Component) Start(ctx context.Context) error {
 		Path:         c.config.Path,
 		CertPEM:      c.config.CertPEM,
 		KeyPEM:       c.config.KeyPEM,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  timeouts.HTTPServerTimeout,
+		WriteTimeout: timeouts.HTTPServerTimeout,
 	})
 
 	// Register validators

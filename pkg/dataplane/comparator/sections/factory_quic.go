@@ -30,7 +30,7 @@ func NewQUICInitialRuleFrontendCreate(frontendName string, rule *models.QUICInit
 		frontendName,
 		index,
 		rule,
-		IdentityQUICInitialRule,
+		Identity[*models.QUICInitialRule],
 		executors.QUICInitialRuleFrontendCreate(),
 		DescribeIndexChild(OperationCreate, "quic-initial-rule", index, "frontend", frontendName),
 	)
@@ -46,7 +46,7 @@ func NewQUICInitialRuleFrontendUpdate(frontendName string, rule *models.QUICInit
 		frontendName,
 		index,
 		rule,
-		IdentityQUICInitialRule,
+		Identity[*models.QUICInitialRule],
 		executors.QUICInitialRuleFrontendUpdate(),
 		DescribeIndexChild(OperationUpdate, "quic-initial-rule", index, "frontend", frontendName),
 	)
@@ -62,7 +62,7 @@ func NewQUICInitialRuleFrontendDelete(frontendName string, rule *models.QUICInit
 		frontendName,
 		index,
 		rule,
-		NilQUICInitialRule,
+		Nil[*models.QUICInitialRule],
 		executors.QUICInitialRuleFrontendDelete(),
 		DescribeIndexChild(OperationDelete, "quic-initial-rule", index, "frontend", frontendName),
 	)
@@ -78,7 +78,7 @@ func NewQUICInitialRuleDefaultsCreate(defaultsName string, rule *models.QUICInit
 		defaultsName,
 		index,
 		rule,
-		IdentityQUICInitialRule,
+		Identity[*models.QUICInitialRule],
 		executors.QUICInitialRuleDefaultsCreate(),
 		DescribeIndexChild(OperationCreate, "quic-initial-rule", index, "defaults", defaultsName),
 	)
@@ -94,7 +94,7 @@ func NewQUICInitialRuleDefaultsUpdate(defaultsName string, rule *models.QUICInit
 		defaultsName,
 		index,
 		rule,
-		IdentityQUICInitialRule,
+		Identity[*models.QUICInitialRule],
 		executors.QUICInitialRuleDefaultsUpdate(),
 		DescribeIndexChild(OperationUpdate, "quic-initial-rule", index, "defaults", defaultsName),
 	)
@@ -110,7 +110,7 @@ func NewQUICInitialRuleDefaultsDelete(defaultsName string, rule *models.QUICInit
 		defaultsName,
 		index,
 		rule,
-		NilQUICInitialRule,
+		Nil[*models.QUICInitialRule],
 		executors.QUICInitialRuleDefaultsDelete(),
 		DescribeIndexChild(OperationDelete, "quic-initial-rule", index, "defaults", defaultsName),
 	)

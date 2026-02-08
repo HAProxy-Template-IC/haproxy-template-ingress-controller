@@ -80,7 +80,9 @@ This separation ensures the template engine remains generic while users can buil
 
 ```
 pkg/templating/
-├── engine_scriggo.go      # Scriggo template engine implementation
+├── engine_scriggo.go         # Scriggo engine core (constructors, Render, profiling)
+├── engine_scriggo_tracing.go # Tracing and filter debug configuration
+├── engine_scriggo_fs.go      # Virtual filesystem for template compilation
 ├── engine_interface.go    # Engine interface definition
 ├── config.go              # NewEngineFromConfig helper
 ├── filter_names.go        # Filter name constants

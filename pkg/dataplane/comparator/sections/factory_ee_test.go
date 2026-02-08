@@ -207,48 +207,16 @@ func TestEENameExtractors(t *testing.T) {
 }
 
 func TestEEIdentityTransforms(t *testing.T) {
-	t.Run("IdentityBotMgmtProfile", func(t *testing.T) {
+	t.Run("Identity returns same pointer", func(t *testing.T) {
 		profile := &v32ee.BotmgmtProfile{Name: "test"}
-		assert.Same(t, profile, IdentityBotMgmtProfile(profile))
-	})
-
-	t.Run("IdentityCaptchaEE", func(t *testing.T) {
-		captcha := &v32ee.Captcha{Name: "test"}
-		assert.Same(t, captcha, IdentityCaptchaEE(captcha))
-	})
-
-	t.Run("IdentityWAFProfile", func(t *testing.T) {
-		profile := &v32ee.WafProfile{Name: "test"}
-		assert.Same(t, profile, IdentityWAFProfile(profile))
-	})
-
-	t.Run("IdentityWAFGlobal", func(t *testing.T) {
-		cache := 1000
-		wafGlobal := &v32ee.WafGlobal{AnalyzerCache: &cache}
-		assert.Same(t, wafGlobal, IdentityWAFGlobal(wafGlobal))
+		assert.Same(t, profile, Identity[*v32ee.BotmgmtProfile](profile))
 	})
 }
 
 func TestEENilTransforms(t *testing.T) {
-	t.Run("NilBotMgmtProfile", func(t *testing.T) {
+	t.Run("Nil returns nil", func(t *testing.T) {
 		profile := &v32ee.BotmgmtProfile{Name: "test"}
-		assert.Nil(t, NilBotMgmtProfile(profile))
-	})
-
-	t.Run("NilCaptchaEE", func(t *testing.T) {
-		captcha := &v32ee.Captcha{Name: "test"}
-		assert.Nil(t, NilCaptchaEE(captcha))
-	})
-
-	t.Run("NilWAFProfile", func(t *testing.T) {
-		profile := &v32ee.WafProfile{Name: "test"}
-		assert.Nil(t, NilWAFProfile(profile))
-	})
-
-	t.Run("NilWAFGlobal", func(t *testing.T) {
-		cache := 1000
-		wafGlobal := &v32ee.WafGlobal{AnalyzerCache: &cache}
-		assert.Nil(t, NilWAFGlobal(wafGlobal))
+		assert.Nil(t, Nil[*v32ee.BotmgmtProfile](profile))
 	})
 }
 

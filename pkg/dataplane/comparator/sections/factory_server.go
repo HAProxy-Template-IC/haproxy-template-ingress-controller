@@ -32,7 +32,7 @@ func NewServerCreate(backendName string, server *models.Server) Operation {
 		backendName,
 		server.Name,
 		server,
-		IdentityServer,
+		Identity[*models.Server],
 		executors.ServerCreate(backendName),
 		DescribeNamedChild(OperationCreate, "server", server.Name, "backend", backendName),
 	)
@@ -102,7 +102,7 @@ func NewServerDelete(backendName string, server *models.Server) Operation {
 		backendName,
 		server.Name,
 		server,
-		NilServer,
+		Nil[*models.Server],
 		executors.ServerDelete(backendName),
 		DescribeNamedChild(OperationDelete, "server", server.Name, "backend", backendName),
 	)
@@ -117,7 +117,7 @@ func NewServerTemplateCreate(backendName string, serverTemplate *models.ServerTe
 		backendName,
 		serverTemplate.Prefix,
 		serverTemplate,
-		IdentityServerTemplate,
+		Identity[*models.ServerTemplate],
 		executors.ServerTemplateCreate(backendName),
 		DescribeNamedChild(OperationCreate, "server template", serverTemplate.Prefix, "backend", backendName),
 	)
@@ -132,7 +132,7 @@ func NewServerTemplateUpdate(backendName string, serverTemplate *models.ServerTe
 		backendName,
 		serverTemplate.Prefix,
 		serverTemplate,
-		IdentityServerTemplate,
+		Identity[*models.ServerTemplate],
 		executors.ServerTemplateUpdate(backendName),
 		DescribeNamedChild(OperationUpdate, "server template", serverTemplate.Prefix, "backend", backendName),
 	)
@@ -147,7 +147,7 @@ func NewServerTemplateDelete(backendName string, serverTemplate *models.ServerTe
 		backendName,
 		serverTemplate.Prefix,
 		serverTemplate,
-		NilServerTemplate,
+		Nil[*models.ServerTemplate],
 		executors.ServerTemplateDelete(backendName),
 		DescribeNamedChild(OperationDelete, "server template", serverTemplate.Prefix, "backend", backendName),
 	)

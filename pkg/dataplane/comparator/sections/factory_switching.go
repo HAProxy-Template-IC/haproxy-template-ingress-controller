@@ -51,7 +51,7 @@ func NewBackendSwitchingRuleFrontendCreate(frontendName string, rule *models.Bac
 		frontendName,
 		index,
 		rule,
-		IdentityBackendSwitchingRule,
+		Identity[*models.BackendSwitchingRule],
 		executors.BackendSwitchingRuleCreate(),
 		func() string { return describeBackendSwitchingRule(OperationCreate, rule, frontendName, index) },
 	)
@@ -66,7 +66,7 @@ func NewBackendSwitchingRuleFrontendUpdate(frontendName string, rule *models.Bac
 		frontendName,
 		index,
 		rule,
-		IdentityBackendSwitchingRule,
+		Identity[*models.BackendSwitchingRule],
 		executors.BackendSwitchingRuleUpdate(),
 		func() string { return describeBackendSwitchingRule(OperationUpdate, rule, frontendName, index) },
 	)
@@ -81,7 +81,7 @@ func NewBackendSwitchingRuleFrontendDelete(frontendName string, rule *models.Bac
 		frontendName,
 		index,
 		rule,
-		NilBackendSwitchingRule,
+		Nil[*models.BackendSwitchingRule],
 		executors.BackendSwitchingRuleDelete(),
 		func() string { return describeBackendSwitchingRule(OperationDelete, rule, frontendName, index) },
 	)
@@ -116,7 +116,7 @@ func NewServerSwitchingRuleBackendCreate(backendName string, rule *models.Server
 		backendName,
 		index,
 		rule,
-		IdentityServerSwitchingRule,
+		Identity[*models.ServerSwitchingRule],
 		executors.ServerSwitchingRuleBackendCreate(),
 		func() string { return describeServerSwitchingRule(OperationCreate, rule, backendName, index) },
 	)
@@ -131,7 +131,7 @@ func NewServerSwitchingRuleBackendUpdate(backendName string, rule *models.Server
 		backendName,
 		index,
 		rule,
-		IdentityServerSwitchingRule,
+		Identity[*models.ServerSwitchingRule],
 		executors.ServerSwitchingRuleBackendUpdate(),
 		func() string { return describeServerSwitchingRule(OperationUpdate, rule, backendName, index) },
 	)
@@ -146,7 +146,7 @@ func NewServerSwitchingRuleBackendDelete(backendName string, rule *models.Server
 		backendName,
 		index,
 		rule,
-		NilServerSwitchingRule,
+		Nil[*models.ServerSwitchingRule],
 		executors.ServerSwitchingRuleBackendDelete(),
 		func() string { return describeServerSwitchingRule(OperationDelete, rule, backendName, index) },
 	)
