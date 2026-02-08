@@ -19,10 +19,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// Bot Management Profile Executors (v3.0+ EE)
-// =============================================================================
-
 // BotMgmtProfileCreate returns an executor for creating bot management profiles.
 // Bot management profiles are only available in HAProxy Enterprise Edition.
 func BotMgmtProfileCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *v32ee.BotmgmtProfile, name string) error {
@@ -105,10 +101,6 @@ func BotMgmtProfileDelete() func(ctx context.Context, c *client.DataplaneClient,
 		return client.CheckResponse(resp, "botmgmt profile deletion")
 	}
 }
-
-// =============================================================================
-// Captcha Executors (v3.0+ EE)
-// =============================================================================
 
 // CaptchaCreate returns an executor for creating captcha sections.
 // Captcha is only available in HAProxy Enterprise Edition.
@@ -193,10 +185,6 @@ func CaptchaDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 	}
 }
 
-// =============================================================================
-// WAF Profile Executors (v3.2+ EE only)
-// =============================================================================
-
 // WAFProfileCreate returns an executor for creating WAF profiles.
 // WAF profiles are only available in HAProxy Enterprise Edition v3.2+.
 func WAFProfileCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *v32ee.WafProfile, name string) error {
@@ -247,10 +235,6 @@ func WAFProfileDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 	}
 }
 
-// =============================================================================
-// WAF Global Executors (v3.2+ EE only, singleton - only update/create)
-// =============================================================================
-
 // WAFGlobalCreate returns an executor for creating the WAF global configuration.
 // WAF global is a singleton section. If it doesn't exist, it can be created.
 func WAFGlobalCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *v32ee.WafGlobal) error {
@@ -300,10 +284,6 @@ func WAFGlobalDelete() func(ctx context.Context, c *client.DataplaneClient, txID
 		return client.CheckResponse(resp, "WAF global deletion")
 	}
 }
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
 
 // convertModel converts a model from one version to another via JSON marshaling.
 // This is necessary because EE types differ across API versions.

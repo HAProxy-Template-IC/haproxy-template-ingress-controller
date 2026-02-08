@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSanitizeStorageName tests the filename sanitization for Dataplane API storage.
 func TestSanitizeStorageName(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -374,7 +373,6 @@ func TestB64Decode(t *testing.T) {
 	}
 }
 
-// TestStrip tests the shared Strip function that removes leading/trailing whitespace.
 func TestStrip(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -421,7 +419,6 @@ func TestStrip(t *testing.T) {
 	}
 }
 
-// TestDebug tests the shared Debug function that formats values as JSON comments.
 func TestDebug(t *testing.T) {
 	tests := []struct {
 		name         string

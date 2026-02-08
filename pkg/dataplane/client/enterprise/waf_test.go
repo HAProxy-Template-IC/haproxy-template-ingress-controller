@@ -38,10 +38,6 @@ func TestNewWAFOperations(t *testing.T) {
 	assert.Equal(t, c, waf.client)
 }
 
-// =============================================================================
-// WAF Global Tests (v3.2+ only)
-// =============================================================================
-
 func TestWAFOperations_GetGlobal_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -204,10 +200,6 @@ func TestWAFOperations_DeleteGlobal_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// =============================================================================
-// WAF Profile Tests (v3.2+ only)
-// =============================================================================
-
 func TestWAFOperations_GetAllProfiles_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -339,10 +331,6 @@ func TestWAFOperations_DeleteProfile_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// =============================================================================
-// WAF Body Rules Backend Tests
-// =============================================================================
-
 func TestWAFOperations_GetAllBodyRulesBackend_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -435,10 +423,6 @@ func TestWAFOperations_DeleteBodyRuleBackend_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// =============================================================================
-// WAF Body Rules Frontend Tests
-// =============================================================================
-
 func TestWAFOperations_GetAllBodyRulesFrontend_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -498,10 +482,6 @@ func TestWAFOperations_DeleteBodyRuleFrontend_Success(t *testing.T) {
 
 	require.NoError(t, err)
 }
-
-// =============================================================================
-// WAF Ruleset Tests
-// =============================================================================
 
 func TestWAFOperations_GetAllRulesets_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
@@ -628,10 +608,6 @@ func TestWAFOperations_DeleteRuleset_Success(t *testing.T) {
 
 	require.NoError(t, err)
 }
-
-// =============================================================================
-// WAF Ruleset File Tests
-// =============================================================================
 
 func TestWAFOperations_GetAllRulesetFiles_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

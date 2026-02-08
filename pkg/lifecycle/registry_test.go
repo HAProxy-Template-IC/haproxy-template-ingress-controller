@@ -25,10 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// -----------------------------------------------------------------------------
-// Test Components
-// -----------------------------------------------------------------------------
-
 // mockComponent is a simple test component.
 type mockComponent struct {
 	name        string
@@ -128,10 +124,6 @@ func (c *healthyComponent) HealthCheck() error {
 	}
 	return nil
 }
-
-// -----------------------------------------------------------------------------
-// Tests
-// -----------------------------------------------------------------------------
 
 func TestRegistry_Register(t *testing.T) {
 	registry := NewRegistry()
@@ -526,10 +518,6 @@ func TestRegistry_Options(t *testing.T) {
 	})
 }
 
-// -----------------------------------------------------------------------------
-// StatusRunning Tests
-// -----------------------------------------------------------------------------
-
 func TestRegistry_StatusRunning(t *testing.T) {
 	t.Run("component reaches running status", func(t *testing.T) {
 		registry := NewRegistry()
@@ -573,10 +561,6 @@ func TestRegistry_StatusRunning(t *testing.T) {
 		assert.Equal(t, StatusFailed, status["failing-comp"].Status)
 	})
 }
-
-// -----------------------------------------------------------------------------
-// DependsOn Tests
-// -----------------------------------------------------------------------------
 
 // startOrderRecorder is a thread-safe recorder for component start order.
 type startOrderRecorder struct {

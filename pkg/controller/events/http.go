@@ -16,10 +16,6 @@ package events
 
 import "time"
 
-// -----------------------------------------------------------------------------
-// HTTP Resource Events.
-// -----------------------------------------------------------------------------
-
 // HTTPResourceUpdatedEvent is published when HTTP resource content has changed.
 // This triggers a reconciliation cycle with the new content as "pending".
 // The content must pass validation before being promoted to "accepted".

@@ -20,10 +20,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
-// -----------------------------------------------------------------------------
-// Template Events.
-// -----------------------------------------------------------------------------
-
 // TemplateRenderedEvent is published when template rendering completes successfully.
 //
 // This event carries a single rendered HAProxy configuration using relative paths

@@ -37,10 +37,6 @@ func TestNewKeepalivedOperations(t *testing.T) {
 	assert.Equal(t, c, keepalived.client)
 }
 
-// =============================================================================
-// Keepalived Transaction Tests
-// =============================================================================
-
 func TestKeepalivedOperations_StartTransaction_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -207,10 +203,6 @@ func TestKeepalivedOperations_GetTransaction_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
-
-// =============================================================================
-// VRRP Instance Tests
-// =============================================================================
 
 func TestKeepalivedOperations_GetAllVRRPInstances_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
@@ -395,10 +387,6 @@ func TestKeepalivedOperations_DeleteVRRPInstance_CommunityEdition(t *testing.T) 
 	assert.True(t, errors.Is(err, client.ErrEnterpriseRequired))
 }
 
-// =============================================================================
-// VRRP Sync Group Tests
-// =============================================================================
-
 func TestKeepalivedOperations_GetAllVRRPSyncGroups_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -544,10 +532,6 @@ func TestKeepalivedOperations_DeleteVRRPSyncGroup_Success(t *testing.T) {
 
 	require.NoError(t, err)
 }
-
-// =============================================================================
-// VRRP Script Tests
-// =============================================================================
 
 func TestKeepalivedOperations_GetAllVRRPScripts_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

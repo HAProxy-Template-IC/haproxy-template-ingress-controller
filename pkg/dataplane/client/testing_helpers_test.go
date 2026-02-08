@@ -12,25 +12,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test helper constants for mock server configuration.
 const (
 	testAPIVersion = "v3.2.6 87ad0bcf"
 	testUsername   = "admin"
 	testPassword   = "password"
 )
 
-// mockServerConfig configures a mock Dataplane API server for tests.
 type mockServerConfig struct {
-	// apiVersion is returned by the /v3/info endpoint.
-	// Defaults to testAPIVersion if empty.
 	apiVersion string
-
-	// handlers maps URL paths to handler functions.
-	handlers map[string]http.HandlerFunc
+	handlers   map[string]http.HandlerFunc
 }
 
-// newMockServer creates a test server that mimics the Dataplane API.
-// It always provides a /v3/info endpoint returning the configured API version.
 func newMockServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 	t.Helper()
 
@@ -40,7 +32,6 @@ func newMockServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 	}
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Handle /v3/info specially - always required for client initialization
 		if r.URL.Path == "/v3/info" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -48,18 +39,15 @@ func newMockServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 			return
 		}
 
-		// Check for custom handler
 		if handler, ok := cfg.handlers[r.URL.Path]; ok {
 			handler(w, r)
 			return
 		}
 
-		// Default: 404
 		w.WriteHeader(http.StatusNotFound)
 	}))
 }
 
-// newTestClient creates a client connected to a test server.
 func newTestClient(t *testing.T, server *httptest.Server) *DataplaneClient {
 	t.Helper()
 
@@ -72,7 +60,6 @@ func newTestClient(t *testing.T, server *httptest.Server) *DataplaneClient {
 	return c
 }
 
-// jsonResponse creates a handler that returns JSON with http.StatusOK.
 func jsonResponse(body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -81,7 +68,6 @@ func jsonResponse(body string) http.HandlerFunc {
 	}
 }
 
-// textResponse creates a handler that returns plain text with the given status code.
 func textResponse(status int, body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -90,7 +76,6 @@ func textResponse(status int, body string) http.HandlerFunc {
 	}
 }
 
-// errorResponse creates a handler that returns an error status.
 func errorResponse(status int) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(status)
@@ -99,21 +84,15 @@ func errorResponse(status int) http.HandlerFunc {
 
 // storageTestConfig defines configuration for storage API tests.
 type storageTestConfig struct {
-	// endpoint is the API endpoint path (e.g., "/services/haproxy/storage/general")
-	endpoint string
-	// itemNames are the expected storage_name values in list responses
+	endpoint  string
 	itemNames []string
-	// itemName is the specific file name for get/create/update/delete tests
-	itemName string
-	// content is the file content for create/update tests
-	content string
+	itemName  string
+	content   string
 }
 
-// runGetAllStorageSuccessTest tests that GetAll returns expected items.
 func runGetAllStorageSuccessTest(t *testing.T, cfg storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
 	t.Helper()
 
-	// Build JSON response
 	items := make([]string, 0, len(cfg.itemNames))
 	for _, name := range cfg.itemNames {
 		items = append(items, fmt.Sprintf(`{"storage_name": %q}`, name))
@@ -137,7 +116,6 @@ func runGetAllStorageSuccessTest(t *testing.T, cfg storageTestConfig, getAllFunc
 	}
 }
 
-// runGetAllStorageEmptyTest tests that GetAll returns empty slice for empty response.
 func runGetAllStorageEmptyTest(t *testing.T, cfg storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
 	t.Helper()
 
@@ -155,7 +133,6 @@ func runGetAllStorageEmptyTest(t *testing.T, cfg storageTestConfig, getAllFunc f
 	assert.Empty(t, files)
 }
 
-// runGetAllStorageServerErrorTest tests that GetAll returns error on server error.
 func runGetAllStorageServerErrorTest(t *testing.T, cfg storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
 	t.Helper()
 
@@ -173,7 +150,6 @@ func runGetAllStorageServerErrorTest(t *testing.T, cfg storageTestConfig, getAll
 	assert.Contains(t, err.Error(), "failed with status 500")
 }
 
-// runGetAllStorageInvalidJSONTest tests that GetAll returns error on invalid JSON.
 func runGetAllStorageInvalidJSONTest(t *testing.T, cfg storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
 	t.Helper()
 
@@ -191,7 +167,6 @@ func runGetAllStorageInvalidJSONTest(t *testing.T, cfg storageTestConfig, getAll
 	assert.Contains(t, err.Error(), "failed to decode")
 }
 
-// runCreateStorageSuccessTest tests successful file creation.
 func runCreateStorageSuccessTest(t *testing.T, cfg storageTestConfig, createFunc func(context.Context, *DataplaneClient, string, string) error) {
 	t.Helper()
 
@@ -215,7 +190,6 @@ func runCreateStorageSuccessTest(t *testing.T, cfg storageTestConfig, createFunc
 	require.NoError(t, err)
 }
 
-// runCreateStorageConflictTest tests that Create returns error when file exists.
 func runCreateStorageConflictTest(t *testing.T, cfg storageTestConfig, createFunc func(context.Context, *DataplaneClient, string, string) error) {
 	t.Helper()
 
@@ -239,7 +213,6 @@ func runCreateStorageConflictTest(t *testing.T, cfg storageTestConfig, createFun
 	assert.Contains(t, err.Error(), "already exists")
 }
 
-// runDeleteStorageSuccessTest tests successful file deletion.
 func runDeleteStorageSuccessTest(t *testing.T, cfg storageTestConfig, deleteFunc func(context.Context, *DataplaneClient, string) error) {
 	t.Helper()
 
@@ -262,7 +235,6 @@ func runDeleteStorageSuccessTest(t *testing.T, cfg storageTestConfig, deleteFunc
 	require.NoError(t, err)
 }
 
-// runDeleteStorageNotFoundTest tests that Delete returns error when file not found.
 func runDeleteStorageNotFoundTest(t *testing.T, cfg storageTestConfig, deleteFunc func(context.Context, *DataplaneClient, string) error) {
 	t.Helper()
 
@@ -286,7 +258,6 @@ func runDeleteStorageNotFoundTest(t *testing.T, cfg storageTestConfig, deleteFun
 	assert.Contains(t, err.Error(), "not found")
 }
 
-// runUpdateStorageSuccessTest tests successful file update.
 func runUpdateStorageSuccessTest(t *testing.T, cfg storageTestConfig, updateFunc func(context.Context, *DataplaneClient, string, string) error) {
 	t.Helper()
 
@@ -309,7 +280,6 @@ func runUpdateStorageSuccessTest(t *testing.T, cfg storageTestConfig, updateFunc
 	require.NoError(t, err)
 }
 
-// runUpdateStorageNotFoundTest tests that Update returns error when file not found.
 func runUpdateStorageNotFoundTest(t *testing.T, cfg storageTestConfig, updateFunc func(context.Context, *DataplaneClient, string, string) error) {
 	t.Helper()
 

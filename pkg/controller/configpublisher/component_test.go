@@ -41,8 +41,6 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestComponent_ConfigPublishedEvent tests that ConfigPublishedEvent is properly published after validation.
-//
 // This test verifies the full event flow:
 // 1. Component receives ConfigValidatedEvent and caches template config.
 // 2. Component receives TemplateRenderedEvent and caches rendered config.
@@ -144,7 +142,6 @@ eventLoop:
 	assert.Contains(t, runtimeConfig.Spec.Content, "global")
 }
 
-// TestComponent_ConfigAppliedToPodEvent tests the component's response to ConfigAppliedToPodEvent.
 func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -205,7 +202,6 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	assert.NotNil(t, pod.DeployedAt)
 }
 
-// TestComponent_HAProxyPodTerminatedEvent tests the component's response to HAProxyPodTerminatedEvent.
 func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -285,7 +281,6 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	assert.Len(t, runtimeConfig.Status.DeployedToPods, 0, "pod should be removed from deployment status")
 }
 
-// TestComponent_MultiplePods tests managing multiple pods in deployment status.
 func TestComponent_MultiplePods(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -376,7 +371,6 @@ func TestComponent_MultiplePods(t *testing.T) {
 	assert.NotContains(t, podNames, "haproxy-pod-2")
 }
 
-// TestComponent_Name tests that Name returns the correct component name.
 func TestComponent_Name(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
@@ -391,7 +385,6 @@ func TestComponent_Name(t *testing.T) {
 	assert.Equal(t, "config-publisher", component.Name())
 }
 
-// TestComponent_LostLeadership tests that cached state is cleared when leadership is lost.
 func TestComponent_LostLeadership(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -483,7 +476,6 @@ drainLoop:
 	assert.False(t, receivedConfigPublished, "ConfigPublishedEvent should not be published after leadership loss")
 }
 
-// TestComponent_ValidationFailed tests the handling of validation failure events.
 func TestComponent_ValidationFailed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -561,7 +553,6 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	assert.Contains(t, runtimeConfig.Status.ValidationError, "maxconn must be numeric")
 }
 
-// TestComponent_ValidationFailed_NoCachedState tests that validation failure is ignored without cached state.
 func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -602,7 +593,6 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	require.Error(t, err, "Should get error because no config should be created")
 }
 
-// TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata tests sync metadata processing.
 func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -683,7 +673,6 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	assert.Equal(t, 2, pod.LastOperationSummary.BackendsAdded)
 }
 
-// TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges tests drift checks that detected changes.
 // Note: No-op drift checks are filtered at the Deployer level and never publish ConfigAppliedToPodEvent.
 func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -751,7 +740,6 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 	assert.Equal(t, 1, pod.LastOperationSummary.TotalAPIOperations)
 }
 
-// TestComponent_ConfigAppliedToPodEvent_DriftCheck_NoChanges tests that drift checks with no changes
 // do not update performance metrics like SyncDuration. This prevents status updates when no actual
 // deployment occurred.
 func TestComponent_ConfigAppliedToPodEvent_DriftCheck_NoChanges(t *testing.T) {
@@ -845,7 +833,6 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_NoChanges(t *testing.T) {
 		"SyncDuration should not be updated during drift checks with no changes")
 }
 
-// TestComponent_ConfigAppliedToPodEvent_WithError tests error handling in sync metadata.
 func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

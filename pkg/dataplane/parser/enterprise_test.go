@@ -10,7 +10,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/enterprise/parsers"
 )
 
-// =============================================================================
 // TDD Tests for HAProxy Enterprise Edition (EE) Config Parsing
 //
 // These tests define the expected behavior for EE section parsing.
@@ -20,7 +19,6 @@ import (
 // 1. New sections: udp-lb, waf-global, waf-profile, botmgmt-profile, captcha
 // 2. New directives in existing sections: maxmind-load in global, filter waf/botmgmt
 // 3. New actions in existing directives: http-request waf-evaluate, botmgmt-evaluate
-// =============================================================================
 
 // EETestCase defines a reusable test case structure for table-driven tests.
 type EETestCase struct {
@@ -42,10 +40,6 @@ func runParseTest(tc EETestCase) func(t *testing.T) {
 		tc.ValidateFunc(t, conf)
 	}
 }
-
-// =============================================================================
-// Config Fixtures - EE Sections
-// =============================================================================
 
 const udpLBConfig = `
 global
@@ -102,10 +96,6 @@ captcha recaptcha-v2
     html-file /etc/haproxy/captcha/recaptcha.html
 `
 
-// =============================================================================
-// Config Fixtures - EE Directives in Existing Sections
-// =============================================================================
-
 const maxmindConfig = `
 global
     daemon
@@ -141,10 +131,6 @@ backend servers
     server s1 127.0.0.1:8080
 `
 
-// =============================================================================
-// Config Fixtures - EE http-request Actions
-// =============================================================================
-
 const wafEvaluateConfig = `
 global
     daemon
@@ -175,10 +161,6 @@ frontend http-in
 backend servers
     server s1 127.0.0.1:8080
 `
-
-// =============================================================================
-// Config Fixture - Combined EE Integration Test
-// =============================================================================
 
 const combinedEEConfig = `
 global
@@ -215,10 +197,6 @@ udp-lb dns-servers
     balance roundrobin
     server dns1 192.168.1.10:53 check
 `
-
-// =============================================================================
-// Validation Functions - Reusable across tests
-// =============================================================================
 
 func validateUDPLB(t *testing.T, conf *enterprise.StructuredConfig) {
 	t.Helper()
@@ -439,10 +417,6 @@ func validateCombinedEE(t *testing.T, conf *enterprise.StructuredConfig) {
 	assert.True(t, foundBotEval, "botmgmt-evaluate action should exist")
 }
 
-// =============================================================================
-// Test Tables
-// =============================================================================
-
 // eeSectionTests contains test cases for EE section parsing.
 var eeSectionTests = []EETestCase{
 	{Name: "udp-lb", Config: udpLBConfig, ValidateFunc: validateUDPLB},
@@ -471,10 +445,6 @@ var eeCombinedTest = EETestCase{
 	Config:       combinedEEConfig,
 	ValidateFunc: validateCombinedEE,
 }
-
-// =============================================================================
-// Main Test Entry Point
-// =============================================================================
 
 // TestParseFromString_EnterpriseEdition runs all EE parsing tests.
 // This is the single entry point for all EE parser tests following DRY principles.

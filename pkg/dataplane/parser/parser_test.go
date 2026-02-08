@@ -37,7 +37,6 @@ func TestParseFromString_EmptyConfig(t *testing.T) {
 	}
 }
 
-// TestParseFromString_MinimalValidConfig tests parsing minimal valid HAProxy config.
 func TestParseFromString_MinimalValidConfig(t *testing.T) {
 	config := `
 global
@@ -83,7 +82,6 @@ defaults
 	}
 }
 
-// TestParseFromString_CompleteConfig tests parsing config with all section types.
 func TestParseFromString_CompleteConfig(t *testing.T) {
 	config := `
 global
@@ -173,7 +171,6 @@ http-errors custom-errors
 	}
 }
 
-// TestParseFromString_FrontendWithNestedStructures tests frontend parsing with ACLs, binds, rules.
 func TestParseFromString_FrontendWithNestedStructures(t *testing.T) {
 	config := `
 global
@@ -248,7 +245,6 @@ backend web
 	_ = fe.CaptureList
 }
 
-// TestParseFromString_BackendWithServers tests backend parsing with servers.
 func TestParseFromString_BackendWithServers(t *testing.T) {
 	config := `
 global
@@ -334,7 +330,6 @@ backend web-servers
 	}
 }
 
-// TestParseFromString_PeersSection tests peers section parsing.
 func TestParseFromString_PeersSection(t *testing.T) {
 	config := `
 global
@@ -385,7 +380,6 @@ peers mycluster
 	}
 }
 
-// TestParseFromString_ResolversSection tests resolvers section parsing.
 func TestParseFromString_ResolversSection(t *testing.T) {
 	config := `
 global
@@ -435,7 +429,6 @@ resolvers mydns
 	}
 }
 
-// TestParseFromString_MailersSection tests mailers section parsing.
 func TestParseFromString_MailersSection(t *testing.T) {
 	config := `
 global
@@ -483,7 +476,6 @@ mailers mymailers
 	}
 }
 
-// TestParseFromString_CacheSection tests cache section parsing.
 func TestParseFromString_CacheSection(t *testing.T) {
 	// Note: Cache section has type mismatches in client-native models
 	// (ParseSection tries to assign *int64 to int64 fields)
@@ -517,7 +509,6 @@ cache mycache
 	}
 }
 
-// TestParseFromString_RingSection tests ring section parsing.
 func TestParseFromString_RingSection(t *testing.T) {
 	config := `
 global
@@ -557,7 +548,6 @@ ring myring
 	_ = ring.Format
 }
 
-// TestParseFromString_HTTPErrorsSection tests http-errors section parsing.
 func TestParseFromString_HTTPErrorsSection(t *testing.T) {
 	config := `
 global
@@ -596,7 +586,6 @@ http-errors myerrors
 	}
 }
 
-// TestParseFromString_MultipleDefaultsSections tests parsing multiple defaults sections.
 func TestParseFromString_MultipleDefaultsSections(t *testing.T) {
 	config := `
 global
@@ -652,7 +641,6 @@ frontend tcp-fe
 	}
 }
 
-// TestParseFromString_MalformedConfig tests parsing completely malformed config.
 func TestParseFromString_MalformedConfig(t *testing.T) {
 	config := `
 this is not valid haproxy config at all
@@ -671,7 +659,6 @@ just random text
 	_ = err
 }
 
-// TestParseFromString_LogTargets tests log target parsing in global and defaults.
 func TestParseFromString_LogTargets(t *testing.T) {
 	config := `
 global
@@ -705,7 +692,6 @@ defaults
 	}
 }
 
-// TestParseFromString_UserlistSection tests userlist section parsing with users and groups.
 func TestParseFromString_UserlistSection(t *testing.T) {
 	config := `
 global
@@ -772,7 +758,6 @@ userlist myusers
 	}
 }
 
-// TestParseFromString_ProgramSection tests program section parsing.
 func TestParseFromString_ProgramSection(t *testing.T) {
 	config := `
 global
@@ -811,7 +796,6 @@ program myprogram
 	}
 }
 
-// TestParseFromString_LogForwardSection tests log-forward section parsing.
 func TestParseFromString_LogForwardSection(t *testing.T) {
 	config := `
 global
@@ -844,7 +828,6 @@ log-forward mylogforward
 	}
 }
 
-// TestParseFromString_FCGIAppSection tests fcgi-app section parsing.
 func TestParseFromString_FCGIAppSection(t *testing.T) {
 	config := `
 global
@@ -878,7 +861,6 @@ fcgi-app php
 	}
 }
 
-// TestParseFromString_CrtStoreSection tests crt-store section parsing.
 func TestParseFromString_CrtStoreSection(t *testing.T) {
 	config := `
 global
@@ -910,7 +892,6 @@ crt-store mystore
 	}
 }
 
-// TestParseFromString_EmptyUserlist tests empty userlist parsing.
 func TestParseFromString_EmptyUserlist(t *testing.T) {
 	config := `
 global
@@ -951,7 +932,6 @@ userlist emptylist
 	}
 }
 
-// TestParseFromString_AllExtendedSections tests parsing config with all extended sections.
 func TestParseFromString_AllExtendedSections(t *testing.T) {
 	config := `
 global
@@ -1004,7 +984,6 @@ crt-store ssl
 	}
 }
 
-// TestParseFromString_MultipleExtendedSections tests multiple sections of same type.
 func TestParseFromString_MultipleExtendedSections(t *testing.T) {
 	config := `
 global
@@ -1060,7 +1039,6 @@ crt-store store2
 	}
 }
 
-// TestParseFromString_MultipleCachesAndRings tests multiple cache and ring sections.
 func TestParseFromString_MultipleCachesAndRings(t *testing.T) {
 	config := `
 global
@@ -1096,7 +1074,6 @@ ring ring2
 	}
 }
 
-// TestParseFromString_MultipleHTTPErrors tests multiple http-errors sections.
 func TestParseFromString_MultipleHTTPErrors(t *testing.T) {
 	config := `
 global
@@ -1125,7 +1102,6 @@ http-errors errors2
 	}
 }
 
-// TestParseFromString_MultipleLogForwards tests multiple log-forward sections.
 func TestParseFromString_MultipleLogForwards(t *testing.T) {
 	config := `
 global

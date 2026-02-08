@@ -20,10 +20,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
-// -----------------------------------------------------------------------------
-// HAProxy Pod Events.
-// -----------------------------------------------------------------------------
-
 // HAProxyPodsDiscoveredEvent is published when HAProxy pods are discovered or updated.
 // This event is always coalescible since it represents endpoint state where only the
 // latest set of endpoints matters.

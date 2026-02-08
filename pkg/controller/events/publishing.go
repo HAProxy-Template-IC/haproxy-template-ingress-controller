@@ -16,10 +16,6 @@ package events
 
 import "time"
 
-// -----------------------------------------------------------------------------
-// Config Publishing Events.
-// -----------------------------------------------------------------------------
-
 // ConfigPublishedEvent is published after runtime configuration resources are created/updated.
 //
 // This is a non-critical event - publishing failures do not affect controller operation.

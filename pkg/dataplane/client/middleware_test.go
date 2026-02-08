@@ -43,7 +43,6 @@ func (c *captureLogger) output() string {
 	return c.buffer.String()
 }
 
-// TestLoggingRoundTripper_Success tests that successful 2xx responses are not logged.
 func TestLoggingRoundTripper_Success(t *testing.T) {
 	logger := newCaptureLogger()
 
@@ -68,7 +67,6 @@ func TestLoggingRoundTripper_Success(t *testing.T) {
 	assert.Empty(t, logger.output(), "Expected no logging for 2xx status code")
 }
 
-// TestLoggingRoundTripper_404NotFound tests that 404 responses are logged with full URL.
 func TestLoggingRoundTripper_404NotFound(t *testing.T) {
 	logger := newCaptureLogger()
 
@@ -98,7 +96,6 @@ func TestLoggingRoundTripper_404NotFound(t *testing.T) {
 	assert.Contains(t, output, `response_body="{\"code\":404,\"message\":\"Not found\"}"`)
 }
 
-// TestLoggingRoundTripper_422UnprocessableEntity tests that existing 422 behavior still works.
 func TestLoggingRoundTripper_422UnprocessableEntity(t *testing.T) {
 	logger := newCaptureLogger()
 
@@ -133,7 +130,6 @@ func TestLoggingRoundTripper_422UnprocessableEntity(t *testing.T) {
 	assert.Contains(t, output, `response_body="{\"code\":422,\"message\":\"Invalid transaction\"}"`)
 }
 
-// TestLoggingRoundTripper_500InternalServerError tests that 5xx errors are logged.
 func TestLoggingRoundTripper_500InternalServerError(t *testing.T) {
 	logger := newCaptureLogger()
 
@@ -160,7 +156,6 @@ func TestLoggingRoundTripper_500InternalServerError(t *testing.T) {
 	assert.Contains(t, output, "status_code=500")
 }
 
-// TestLoggingRoundTripper_AllStatusCodes tests various status codes.
 func TestLoggingRoundTripper_AllStatusCodes(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -218,7 +213,6 @@ func TestLoggingRoundTripper_AllStatusCodes(t *testing.T) {
 	}
 }
 
-// TestLoggingRoundTripper_NilLogger tests that nil logger falls back to default.
 func TestLoggingRoundTripper_NilLogger(t *testing.T) {
 	mockTransport := &mockRoundTripper{
 		response: &http.Response{
@@ -240,7 +234,6 @@ func TestLoggingRoundTripper_NilLogger(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
-// TestLoggingRoundTripper_NilBaseTransport tests that nil base transport uses default.
 func TestLoggingRoundTripper_NilBaseTransport(t *testing.T) {
 	logger := newCaptureLogger()
 
@@ -252,7 +245,6 @@ func TestLoggingRoundTripper_NilBaseTransport(t *testing.T) {
 	assert.Equal(t, http.DefaultTransport, rt.base)
 }
 
-// TestLoggingRoundTripper_RequestBodyCapture tests that request body is captured and restored.
 func TestLoggingRoundTripper_RequestBodyCapture(t *testing.T) {
 	logger := newCaptureLogger()
 
@@ -284,7 +276,6 @@ func TestLoggingRoundTripper_RequestBodyCapture(t *testing.T) {
 	assert.NotNil(t, req.Body)
 }
 
-// TestLoggingRoundTripper_ResponseBodyCapture tests that response body is captured and restored.
 func TestLoggingRoundTripper_ResponseBodyCapture(t *testing.T) {
 	logger := newCaptureLogger()
 
@@ -317,7 +308,6 @@ func TestLoggingRoundTripper_ResponseBodyCapture(t *testing.T) {
 	assert.Equal(t, responseBody, string(body))
 }
 
-// TestLoggingRoundTripper_EmptyRequestBody tests handling of empty request body.
 func TestLoggingRoundTripper_EmptyRequestBody(t *testing.T) {
 	logger := newCaptureLogger()
 
@@ -343,7 +333,6 @@ func TestLoggingRoundTripper_EmptyRequestBody(t *testing.T) {
 	assert.Contains(t, output, "request_body=\"\"")
 }
 
-// TestLoggingRoundTripper_TransportError tests handling of transport errors.
 func TestLoggingRoundTripper_TransportError(t *testing.T) {
 	logger := newCaptureLogger()
 

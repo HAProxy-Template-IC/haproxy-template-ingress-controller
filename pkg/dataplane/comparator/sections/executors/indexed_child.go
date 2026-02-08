@@ -16,10 +16,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// ACL Executors (Frontend)
-// =============================================================================
-
 // ACLFrontendCreate returns an executor for creating ACLs in frontends.
 func ACLFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.ACL) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.ACL) error {
@@ -136,10 +132,6 @@ func ACLFrontendDelete() func(ctx context.Context, c *client.DataplaneClient, tx
 		return client.CheckResponse(resp, "ACL deletion from frontend")
 	}
 }
-
-// =============================================================================
-// ACL Executors (Backend)
-// =============================================================================
 
 // ACLBackendCreate returns an executor for creating ACLs in backends.
 func ACLBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.ACL) error {
@@ -258,10 +250,6 @@ func ACLBackendDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 	}
 }
 
-// =============================================================================
-// HTTP Request Rule Executors (Frontend)
-// =============================================================================
-
 // HTTPRequestRuleFrontendCreate returns an executor for creating HTTP request rules in frontends.
 func HTTPRequestRuleFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPRequestRule) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPRequestRule) error {
@@ -378,10 +366,6 @@ func HTTPRequestRuleFrontendDelete() func(ctx context.Context, c *client.Datapla
 		return client.CheckResponse(resp, "HTTP request rule deletion from frontend")
 	}
 }
-
-// =============================================================================
-// HTTP Request Rule Executors (Backend)
-// =============================================================================
 
 // HTTPRequestRuleBackendCreate returns an executor for creating HTTP request rules in backends.
 func HTTPRequestRuleBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPRequestRule) error {
@@ -500,10 +484,6 @@ func HTTPRequestRuleBackendDelete() func(ctx context.Context, c *client.Dataplan
 	}
 }
 
-// =============================================================================
-// HTTP Response Rule Executors (Frontend)
-// =============================================================================
-
 // HTTPResponseRuleFrontendCreate returns an executor for creating HTTP response rules in frontends.
 func HTTPResponseRuleFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPResponseRule) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPResponseRule) error {
@@ -620,10 +600,6 @@ func HTTPResponseRuleFrontendDelete() func(ctx context.Context, c *client.Datapl
 		return client.CheckResponse(resp, "HTTP response rule deletion from frontend")
 	}
 }
-
-// =============================================================================
-// HTTP Response Rule Executors (Backend)
-// =============================================================================
 
 // HTTPResponseRuleBackendCreate returns an executor for creating HTTP response rules in backends.
 func HTTPResponseRuleBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPResponseRule) error {
@@ -742,10 +718,6 @@ func HTTPResponseRuleBackendDelete() func(ctx context.Context, c *client.Datapla
 	}
 }
 
-// =============================================================================
-// Backend Switching Rule Executors
-// =============================================================================
-
 // BackendSwitchingRuleCreate returns an executor for creating backend switching rules.
 func BackendSwitchingRuleCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.BackendSwitchingRule) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.BackendSwitchingRule) error {
@@ -862,10 +834,6 @@ func BackendSwitchingRuleDelete() func(ctx context.Context, c *client.DataplaneC
 		return client.CheckResponse(resp, "backend switching rule deletion")
 	}
 }
-
-// =============================================================================
-// Filter Executors (Frontend)
-// =============================================================================
 
 // FilterFrontendCreate returns an executor for creating filters in frontends.
 func FilterFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.Filter) error {
@@ -984,10 +952,6 @@ func FilterFrontendDelete() func(ctx context.Context, c *client.DataplaneClient,
 	}
 }
 
-// =============================================================================
-// Filter Executors (Backend)
-// =============================================================================
-
 // FilterBackendCreate returns an executor for creating filters in backends.
 func FilterBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.Filter) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.Filter) error {
@@ -1104,10 +1068,6 @@ func FilterBackendDelete() func(ctx context.Context, c *client.DataplaneClient, 
 		return client.CheckResponse(resp, "filter deletion from backend")
 	}
 }
-
-// =============================================================================
-// Log Target Executors (Frontend)
-// =============================================================================
 
 // LogTargetFrontendCreate returns an executor for creating log targets in frontends.
 func LogTargetFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.LogTarget) error {
@@ -1226,10 +1186,6 @@ func LogTargetFrontendDelete() func(ctx context.Context, c *client.DataplaneClie
 	}
 }
 
-// =============================================================================
-// Log Target Executors (Backend)
-// =============================================================================
-
 // LogTargetBackendCreate returns an executor for creating log targets in backends.
 func LogTargetBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.LogTarget) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.LogTarget) error {
@@ -1346,10 +1302,6 @@ func LogTargetBackendDelete() func(ctx context.Context, c *client.DataplaneClien
 		return client.CheckResponse(resp, "log target deletion from backend")
 	}
 }
-
-// =============================================================================
-// TCP Request Rule Executors (Frontend)
-// =============================================================================
 
 // TCPRequestRuleFrontendCreate returns an executor for creating TCP request rules in frontends.
 func TCPRequestRuleFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.TCPRequestRule) error {
@@ -1468,10 +1420,6 @@ func TCPRequestRuleFrontendDelete() func(ctx context.Context, c *client.Dataplan
 	}
 }
 
-// =============================================================================
-// TCP Request Rule Executors (Backend)
-// =============================================================================
-
 // TCPRequestRuleBackendCreate returns an executor for creating TCP request rules in backends.
 func TCPRequestRuleBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.TCPRequestRule) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.TCPRequestRule) error {
@@ -1588,10 +1536,6 @@ func TCPRequestRuleBackendDelete() func(ctx context.Context, c *client.Dataplane
 		return client.CheckResponse(resp, "TCP request rule deletion from backend")
 	}
 }
-
-// =============================================================================
-// TCP Response Rule Executors (Backend only)
-// =============================================================================
 
 // TCPResponseRuleBackendCreate returns an executor for creating TCP response rules in backends.
 func TCPResponseRuleBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.TCPResponseRule) error {
@@ -1710,10 +1654,6 @@ func TCPResponseRuleBackendDelete() func(ctx context.Context, c *client.Dataplan
 	}
 }
 
-// =============================================================================
-// Stick Rule Executors (Backend only)
-// =============================================================================
-
 // StickRuleBackendCreate returns an executor for creating stick rules in backends.
 func StickRuleBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.StickRule) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.StickRule) error {
@@ -1830,10 +1770,6 @@ func StickRuleBackendDelete() func(ctx context.Context, c *client.DataplaneClien
 		return client.CheckResponse(resp, "stick rule deletion from backend")
 	}
 }
-
-// =============================================================================
-// HTTP After Response Rule Executors (Backend only)
-// =============================================================================
 
 // HTTPAfterResponseRuleBackendCreate returns an executor for creating HTTP after response rules in backends.
 func HTTPAfterResponseRuleBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPAfterResponseRule) error {
@@ -1952,10 +1888,6 @@ func HTTPAfterResponseRuleBackendDelete() func(ctx context.Context, c *client.Da
 	}
 }
 
-// =============================================================================
-// Server Switching Rule Executors (Backend only)
-// =============================================================================
-
 // ServerSwitchingRuleBackendCreate returns an executor for creating server switching rules in backends.
 func ServerSwitchingRuleBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.ServerSwitchingRule) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.ServerSwitchingRule) error {
@@ -2072,10 +2004,6 @@ func ServerSwitchingRuleBackendDelete() func(ctx context.Context, c *client.Data
 		return client.CheckResponse(resp, "server switching rule deletion from backend")
 	}
 }
-
-// =============================================================================
-// HTTP Check Executors (Backend only)
-// =============================================================================
 
 // HTTPCheckBackendCreate returns an executor for creating HTTP checks in backends.
 func HTTPCheckBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPCheck) error {
@@ -2194,10 +2122,6 @@ func HTTPCheckBackendDelete() func(ctx context.Context, c *client.DataplaneClien
 	}
 }
 
-// =============================================================================
-// TCP Check Executors (Backend only)
-// =============================================================================
-
 // TCPCheckBackendCreate returns an executor for creating TCP checks in backends.
 func TCPCheckBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.TCPCheck) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.TCPCheck) error {
@@ -2314,10 +2238,6 @@ func TCPCheckBackendDelete() func(ctx context.Context, c *client.DataplaneClient
 		return client.CheckResponse(resp, "TCP check deletion from backend")
 	}
 }
-
-// =============================================================================
-// Declare Capture Executors (Frontend only)
-// =============================================================================
 
 // DeclareCaptureFrontendCreate returns an executor for creating declare captures in frontends.
 func DeclareCaptureFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.Capture) error {

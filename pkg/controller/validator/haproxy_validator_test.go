@@ -63,7 +63,6 @@ func (m *mockStore) Clear() error {
 	return nil
 }
 
-// TestRendererToValidator_SuccessFlow tests the successful flow from Renderer to Validator.
 func TestRendererToValidator_SuccessFlow(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -153,7 +152,6 @@ Done:
 	assert.GreaterOrEqual(t, validationCompleted.DurationMs, int64(0))
 }
 
-// TestRendererToValidator_ValidationFailure tests validation failure handling.
 func TestRendererToValidator_ValidationFailure(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -234,7 +232,6 @@ Done:
 	assert.GreaterOrEqual(t, validationFailed.DurationMs, int64(0))
 }
 
-// TestRendererToValidator_WithMapFiles tests validation with map files.
 func TestRendererToValidator_WithMapFiles(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -334,7 +331,6 @@ func waitForValidation(eventChan <-chan busevents.Event, timeout time.Duration) 
 	}
 }
 
-// TestRendererToValidator_MultipleReconciliations tests renderer content deduplication.
 func TestRendererToValidator_MultipleReconciliations(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -392,7 +388,6 @@ backend servers
 	assert.False(t, waitForValidation(eventChan, 200*time.Millisecond), "Identical content should be deduplicated")
 }
 
-// TestValidator_ContextCancellation tests graceful shutdown on context cancellation.
 func TestValidator_ContextCancellation(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -422,7 +417,6 @@ func TestValidator_ContextCancellation(t *testing.T) {
 	}
 }
 
-// TestHAProxyValidator_Name tests the Name method.
 func TestHAProxyValidator_Name(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -433,7 +427,6 @@ func TestHAProxyValidator_Name(t *testing.T) {
 	assert.Equal(t, "haproxy-validator", validator.Name())
 }
 
-// TestHAProxyValidator_HandleBecameLeader_NoState tests BecameLeaderEvent when no state is available.
 func TestHAProxyValidator_HandleBecameLeader_NoState(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -474,7 +467,6 @@ func TestHAProxyValidator_HandleBecameLeader_NoState(t *testing.T) {
 	}
 }
 
-// TestHAProxyValidator_HandleBecameLeader_WithState tests BecameLeaderEvent when validation state is available.
 func TestHAProxyValidator_HandleBecameLeader_WithState(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -555,7 +547,6 @@ backend servers
 	require.NotNil(t, replayedEvent)
 }
 
-// TestHAProxyValidator_HandleBecameLeader_AfterFailure tests BecameLeaderEvent after a failed validation.
 func TestHAProxyValidator_HandleBecameLeader_AfterFailure(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

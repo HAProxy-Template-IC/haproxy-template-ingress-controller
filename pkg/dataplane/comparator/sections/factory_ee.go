@@ -29,10 +29,6 @@ const (
 	PriorityEEWAFProfile = 15
 )
 
-// =============================================================================
-// Bot Management Profile Factory Functions
-// =============================================================================
-
 // NewBotMgmtProfileCreate creates an operation to create a bot management profile.
 // Bot management profiles are only available in HAProxy Enterprise Edition.
 func NewBotMgmtProfileCreate(profile *v32ee.BotmgmtProfile) Operation {
@@ -78,10 +74,6 @@ func NewBotMgmtProfileDelete(profile *v32ee.BotmgmtProfile) Operation {
 		DescribeTopLevel(OperationDelete, "botmgmt-profile", name),
 	)
 }
-
-// =============================================================================
-// Captcha Factory Functions
-// =============================================================================
 
 // NewCaptchaCreate creates an operation to create a captcha section.
 // Captcha is only available in HAProxy Enterprise Edition.
@@ -129,10 +121,6 @@ func NewCaptchaDelete(captcha *v32ee.Captcha) Operation {
 	)
 }
 
-// =============================================================================
-// WAF Profile Factory Functions (v3.2+ EE only)
-// =============================================================================
-
 // NewWAFProfileCreate creates an operation to create a WAF profile.
 // WAF profiles are only available in HAProxy Enterprise Edition v3.2+.
 func NewWAFProfileCreate(profile *v32ee.WafProfile) Operation {
@@ -179,10 +167,6 @@ func NewWAFProfileDelete(profile *v32ee.WafProfile) Operation {
 	)
 }
 
-// =============================================================================
-// WAF Global Factory Functions (v3.2+ EE only, singleton)
-// =============================================================================
-
 // NewWAFGlobalCreate creates an operation to create the WAF global configuration.
 // WAF global is a singleton section (only one per configuration).
 func NewWAFGlobalCreate(wafGlobal *v32ee.WafGlobal) Operation {
@@ -223,10 +207,6 @@ func NewWAFGlobalDelete(wafGlobal *v32ee.WafGlobal) Operation {
 	)
 }
 
-// =============================================================================
-// EE Helper Functions - Name Extractors
-// =============================================================================
-
 // BotMgmtProfileName extracts the name from a BotmgmtProfile model.
 func BotMgmtProfileName(p *v32ee.BotmgmtProfile) string {
 	return p.Name
@@ -243,10 +223,6 @@ func WAFProfileName(p *v32ee.WafProfile) string {
 	return p.Name
 }
 
-// =============================================================================
-// EE Helper Functions - Identity Transforms
-// =============================================================================
-
 // IdentityBotMgmtProfile returns the model as-is.
 func IdentityBotMgmtProfile(p *v32ee.BotmgmtProfile) *v32ee.BotmgmtProfile { return p }
 
@@ -260,10 +236,6 @@ func IdentityWAFProfile(p *v32ee.WafProfile) *v32ee.WafProfile { return p }
 // IdentityWAFGlobal returns the model as-is.
 func IdentityWAFGlobal(w *v32ee.WafGlobal) *v32ee.WafGlobal { return w }
 
-// =============================================================================
-// EE Helper Functions - Nil Transforms (for delete operations)
-// =============================================================================
-
 // NilBotMgmtProfile returns nil, used for delete operations where model isn't needed.
 func NilBotMgmtProfile(_ *v32ee.BotmgmtProfile) *v32ee.BotmgmtProfile { return nil }
 
@@ -276,10 +248,6 @@ func NilWAFProfile(_ *v32ee.WafProfile) *v32ee.WafProfile { return nil }
 
 // NilWAFGlobal returns nil, used for delete operations where model isn't needed.
 func NilWAFGlobal(_ *v32ee.WafGlobal) *v32ee.WafGlobal { return nil }
-
-// =============================================================================
-// EE Helper Functions - Describe Functions
-// =============================================================================
 
 // DescribeSingleton returns a description function for singleton operations.
 func DescribeSingleton(op OperationType, section string) func() string {

@@ -37,10 +37,6 @@ func TestNewBotManagementOperations(t *testing.T) {
 	assert.Equal(t, c, bot.client)
 }
 
-// =============================================================================
-// Bot Management Profile Tests
-// =============================================================================
-
 func TestBotManagementOperations_GetAllProfiles_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -268,10 +264,6 @@ func TestBotManagementOperations_DeleteProfile_CommunityEdition(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, client.ErrEnterpriseRequired))
 }
-
-// =============================================================================
-// CAPTCHA Tests
-// =============================================================================
 
 func TestBotManagementOperations_GetAllCaptchas_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

@@ -371,10 +371,6 @@ func DefaultsDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 	}
 }
 
-// =============================================================================
-// Cache Executors
-// =============================================================================
-
 // CacheCreate returns an executor for creating cache sections.
 func CacheCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Cache, name string) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Cache, _ string) error {
@@ -491,10 +487,6 @@ func CacheDelete() func(ctx context.Context, c *client.DataplaneClient, txID str
 		return client.CheckResponse(resp, "cache deletion")
 	}
 }
-
-// =============================================================================
-// HTTPErrorsSection Executors
-// =============================================================================
 
 // HTTPErrorsSectionCreate returns an executor for creating http-errors sections.
 func HTTPErrorsSectionCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.HTTPErrorsSection, name string) error {
@@ -613,10 +605,6 @@ func HTTPErrorsSectionDelete() func(ctx context.Context, c *client.DataplaneClie
 	}
 }
 
-// =============================================================================
-// LogForward Executors
-// =============================================================================
-
 // LogForwardCreate returns an executor for creating log-forward sections.
 func LogForwardCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.LogForward, name string) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.LogForward, _ string) error {
@@ -733,10 +721,6 @@ func LogForwardDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 		return client.CheckResponse(resp, "log-forward deletion")
 	}
 }
-
-// =============================================================================
-// MailersSection Executors (no Update - API doesn't support it)
-// =============================================================================
 
 // MailersSectionCreate returns an executor for creating mailers sections.
 func MailersSectionCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.MailersSection, name string) error {
@@ -855,10 +839,6 @@ func MailersSectionDelete() func(ctx context.Context, c *client.DataplaneClient,
 	}
 }
 
-// =============================================================================
-// PeerSection Executors (no Update - API doesn't support it)
-// =============================================================================
-
 // PeerSectionCreate returns an executor for creating peer sections.
 func PeerSectionCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.PeerSection, name string) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.PeerSection, _ string) error {
@@ -944,10 +924,6 @@ func PeerSectionDelete() func(ctx context.Context, c *client.DataplaneClient, tx
 		return client.CheckResponse(resp, "peer section deletion")
 	}
 }
-
-// =============================================================================
-// Program Executors
-// =============================================================================
 
 // ProgramCreate returns an executor for creating program sections.
 func ProgramCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Program, name string) error {
@@ -1066,10 +1042,6 @@ func ProgramDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 	}
 }
 
-// =============================================================================
-// Resolver Executors
-// =============================================================================
-
 // ResolverCreate returns an executor for creating resolver sections.
 func ResolverCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Resolver, name string) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Resolver, _ string) error {
@@ -1186,10 +1158,6 @@ func ResolverDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 		return client.CheckResponse(resp, "resolver deletion")
 	}
 }
-
-// =============================================================================
-// Ring Executors
-// =============================================================================
 
 // RingCreate returns an executor for creating ring sections.
 func RingCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Ring, name string) error {
@@ -1308,10 +1276,6 @@ func RingDelete() func(ctx context.Context, c *client.DataplaneClient, txID stri
 	}
 }
 
-// =============================================================================
-// CrtStore Executors
-// =============================================================================
-
 // CrtStoreCreate returns an executor for creating crt-store sections.
 func CrtStoreCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.CrtStore, name string) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.CrtStore, _ string) error {
@@ -1429,10 +1393,6 @@ func CrtStoreDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 	}
 }
 
-// =============================================================================
-// Userlist Executors (no Update - API doesn't support it)
-// =============================================================================
-
 // UserlistCreate returns an executor for creating userlist sections.
 func UserlistCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Userlist, name string) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Userlist, _ string) error {
@@ -1510,10 +1470,6 @@ func UserlistDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 		return client.CheckResponse(resp, "userlist deletion")
 	}
 }
-
-// =============================================================================
-// FCGI App Executors (Top-level section, full CRUD)
-// =============================================================================
 
 // FCGIAppCreate returns an executor for creating fcgi-app sections.
 func FCGIAppCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.FCGIApp, name string) error {

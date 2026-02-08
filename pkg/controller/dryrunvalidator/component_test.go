@@ -39,10 +39,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-// =============================================================================
-// mapGVKToResourceType Tests
-// =============================================================================
-
 func TestMapGVKToResourceType(t *testing.T) {
 	// Create a minimal component for testing
 	c := &Component{
@@ -131,10 +127,6 @@ func TestMapGVKToResourceType(t *testing.T) {
 		})
 	}
 }
-
-// =============================================================================
-// buildTestFailureError Tests
-// =============================================================================
 
 func TestBuildTestFailureError(t *testing.T) {
 	tests := []struct {
@@ -278,18 +270,10 @@ func TestBuildTestFailureError(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Constants Tests
-// =============================================================================
-
 func TestConstants(t *testing.T) {
 	assert.Equal(t, "dryrun", ValidatorID)
 	assert.Equal(t, 50, EventBufferSize)
 }
-
-// =============================================================================
-// createOverlay Tests
-// =============================================================================
 
 func TestCreateOverlay(t *testing.T) {
 	c := &Component{
@@ -349,10 +333,6 @@ func TestCreateOverlay(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// simplifyError Tests
-// =============================================================================
-
 func TestSimplifyError(t *testing.T) {
 	c := &Component{}
 
@@ -395,10 +375,6 @@ func TestSimplifyError(t *testing.T) {
 		})
 	}
 }
-
-// =============================================================================
-// New() Tests
-// =============================================================================
 
 func TestNew(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -444,10 +420,6 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, component.logger)
 	assert.NotNil(t, component.eventChan, "eventChan should be set by constructor")
 }
-
-// =============================================================================
-// Start() Tests
-// =============================================================================
 
 func TestStart_ContextCancellation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -506,10 +478,6 @@ func TestStart_ContextCancellation(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// handleEvent() Tests
-// =============================================================================
-
 func TestHandleEvent_IgnoresNonValidationEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -539,10 +507,6 @@ func TestHandleEvent_IgnoresNonValidationEvents(t *testing.T) {
 	// This tests the type switch in handleEvent
 	component.handleEvent(&events.ConfigParsedEvent{})
 }
-
-// =============================================================================
-// publishResponse() Tests
-// =============================================================================
 
 func TestPublishResponse_Allowed(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -622,10 +586,6 @@ func TestPublishResponse_Denied(t *testing.T) {
 	assert.Equal(t, "validation failed: invalid config", event.Reason)
 }
 
-// =============================================================================
-// handleValidationRequest() Tests
-// =============================================================================
-
 func TestHandleValidationRequest_InvalidGVK(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -682,10 +642,6 @@ func TestHandleValidationRequest_InvalidGVK(t *testing.T) {
 	assert.Contains(t, event.Reason, "unsupported resource type")
 	assert.Contains(t, event.Reason, "invalid GVK")
 }
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
 
 // createMockProposalValidator creates a minimal ProposalValidator for testing.
 func createMockProposalValidator(bus *busevents.EventBus, logger *slog.Logger) *proposalvalidator.Component {

@@ -15,10 +15,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// Directive Parsing Helpers
-// =============================================================================
-
 // getUnprocessedLines retrieves all unprocessed directive lines from a parser collection.
 func getUnprocessedLines(parsers *clientparser.Parsers) []string {
 	if parsers == nil || parsers.Parsers == nil {
@@ -146,10 +142,6 @@ func parseBool(s string) *bool {
 	return nil
 }
 
-// =============================================================================
-// WAF Global Extraction
-// =============================================================================
-
 // extractWAFGlobalFields populates WAF global fields from unprocessed directives.
 // Returns nil if no meaningful data was extracted.
 func extractWAFGlobalFields(wafParsers *clientparser.Parsers) *v32ee.WafGlobal {
@@ -195,10 +187,6 @@ func extractWAFGlobalFields(wafParsers *clientparser.Parsers) *v32ee.WafGlobal {
 	return wafGlobal
 }
 
-// =============================================================================
-// WAF Profile Extraction
-// =============================================================================
-
 // extractWAFProfileFields populates WAF profile fields from unprocessed directives.
 // Always returns a profile with the name set since named sections always exist.
 func extractWAFProfileFields(name string, wafParsers *clientparser.Parsers) *v32ee.WafProfile {
@@ -235,10 +223,6 @@ func extractWAFProfileFields(name string, wafParsers *clientparser.Parsers) *v32
 	// Named sections always return a profile (name is meaningful data)
 	return profile
 }
-
-// =============================================================================
-// Bot Management Profile Extraction
-// =============================================================================
 
 // extractBotMgmtProfileFields populates bot management profile fields.
 func extractBotMgmtProfileFields(name string, botParsers *clientparser.Parsers) *v32ee.BotmgmtProfile {
@@ -304,10 +288,6 @@ func parseTrackDefaults(values []string) *v32ee.BotmgmtTrackDefaults {
 	return defaults
 }
 
-// =============================================================================
-// Captcha Extraction
-// =============================================================================
-
 // extractCaptchaFields populates captcha fields from unprocessed directives.
 func extractCaptchaFields(name string, captchaParsers *clientparser.Parsers) *v32ee.Captcha {
 	if captchaParsers == nil {
@@ -359,10 +339,6 @@ func extractCaptchaFields(name string, captchaParsers *clientparser.Parsers) *v3
 
 	return captcha
 }
-
-// =============================================================================
-// UDP LB Extraction
-// =============================================================================
 
 // extractUDPLBFields populates UDP LB fields from parser data.
 func extractUDPLBFields(name string, udpParsers *clientparser.Parsers) *v32ee.UdpLbBase {

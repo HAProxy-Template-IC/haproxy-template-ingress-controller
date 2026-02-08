@@ -55,10 +55,6 @@ func ptrStr(s *string) string {
 // unknownIdentifier is the fallback identifier used when a model field is empty.
 const unknownIdentifier = "<unknown>"
 
-// =============================================================================
-// Backend Factory Functions
-// =============================================================================
-
 // NewBackendCreate creates an operation to create a backend.
 func NewBackendCreate(backend *models.Backend) Operation {
 	return NewTopLevelOp(
@@ -100,10 +96,6 @@ func NewBackendDelete(backend *models.Backend) Operation {
 		DescribeTopLevel(OperationDelete, "backend", backend.Name),
 	)
 }
-
-// =============================================================================
-// Frontend Factory Functions
-// =============================================================================
 
 // NewFrontendCreate creates an operation to create a frontend.
 func NewFrontendCreate(frontend *models.Frontend) Operation {
@@ -147,10 +139,6 @@ func NewFrontendDelete(frontend *models.Frontend) Operation {
 	)
 }
 
-// =============================================================================
-// Defaults Factory Functions
-// =============================================================================
-
 // NewDefaultsCreate creates an operation to create a defaults section.
 func NewDefaultsCreate(defaults *models.Defaults) Operation {
 	return NewTopLevelOp(
@@ -193,10 +181,6 @@ func NewDefaultsDelete(defaults *models.Defaults) Operation {
 	)
 }
 
-// =============================================================================
-// Global Factory Functions (Singleton)
-// =============================================================================
-
 // NewGlobalUpdate creates an operation to update the global section.
 func NewGlobalUpdate(global *models.Global) Operation {
 	return NewSingletonOp(
@@ -209,10 +193,6 @@ func NewGlobalUpdate(global *models.Global) Operation {
 		func() string { return "Update global section" },
 	)
 }
-
-// =============================================================================
-// ACL Factory Functions (Index-based child)
-// =============================================================================
 
 // NewACLFrontendCreate creates an operation to create an ACL in a frontend.
 func NewACLFrontendCreate(frontendName string, acl *models.ACL, index int) Operation {
@@ -303,10 +283,6 @@ func NewACLBackendDelete(backendName string, acl *models.ACL, index int) Operati
 		DescribeACL(OperationDelete, acl.ACLName, "backend", backendName),
 	)
 }
-
-// =============================================================================
-// HTTP Request Rule Factory Functions (Index-based child)
-// =============================================================================
 
 // describeHTTPRequestRule creates a descriptive string for HTTP request rule operations.
 // Uses the rule's Type field for identification, falls back to index if not available.
@@ -418,10 +394,6 @@ func NewHTTPRequestRuleBackendDelete(backendName string, rule *models.HTTPReques
 	)
 }
 
-// =============================================================================
-// HTTP Response Rule Factory Functions (Index-based child)
-// =============================================================================
-
 // describeHTTPResponseRule creates a descriptive string for HTTP response rule operations.
 // Uses the rule's Type field for identification.
 func describeHTTPResponseRule(opType OperationType, rule *models.HTTPResponseRule, parentType, parentName string) string {
@@ -532,10 +504,6 @@ func NewHTTPResponseRuleBackendDelete(backendName string, rule *models.HTTPRespo
 	)
 }
 
-// =============================================================================
-// Backend Switching Rule Factory Functions (Index-based child)
-// =============================================================================
-
 // describeBackendSwitchingRule creates a descriptive string for backend switching rule operations.
 // Uses the rule's Name field which contains the condition expression, falls back to index if not available.
 func describeBackendSwitchingRule(opType OperationType, rule *models.BackendSwitchingRule, frontendName string, index int) string {
@@ -600,10 +568,6 @@ func NewBackendSwitchingRuleFrontendDelete(frontendName string, rule *models.Bac
 		func() string { return describeBackendSwitchingRule(OperationDelete, rule, frontendName, index) },
 	)
 }
-
-// =============================================================================
-// Filter Factory Functions (Index-based child)
-// =============================================================================
 
 // NewFilterFrontendCreate creates an operation to create a filter in a frontend.
 func NewFilterFrontendCreate(frontendName string, filter *models.Filter, index int) Operation {
@@ -695,10 +659,6 @@ func NewFilterBackendDelete(backendName string, filter *models.Filter, index int
 	)
 }
 
-// =============================================================================
-// Log Target Factory Functions (Index-based child)
-// =============================================================================
-
 // NewLogTargetFrontendCreate creates an operation to create a log target in a frontend.
 func NewLogTargetFrontendCreate(frontendName string, logTarget *models.LogTarget, index int) Operation {
 	return NewIndexChildOp(
@@ -788,10 +748,6 @@ func NewLogTargetBackendDelete(backendName string, logTarget *models.LogTarget, 
 		func() string { return describeLogTarget(OperationDelete, logTarget, "backend", backendName, index) },
 	)
 }
-
-// =============================================================================
-// Bind Factory Functions (Name-based child)
-// =============================================================================
 
 // describeBindWithSSL creates a description for bind operations that includes SSL info.
 // This matches the legacy behavior where bind descriptions included SSL certificate paths.
@@ -1078,10 +1034,6 @@ func NewBindFrontendDelete(frontendName, bindName string, bind *models.Bind) Ope
 	)
 }
 
-// =============================================================================
-// User Factory Functions (Container child)
-// =============================================================================
-
 // NewUserCreate creates an operation to create a user in a userlist.
 func NewUserCreate(userlistName string, user *models.User) Operation {
 	return NewContainerChildOp(
@@ -1126,10 +1078,6 @@ func NewUserDelete(userlistName string, user *models.User) Operation {
 		DescribeContainerChild(OperationDelete, "user", user.Username, "userlist", userlistName),
 	)
 }
-
-// =============================================================================
-// Mailer Entry Factory Functions (Container child)
-// =============================================================================
 
 // NewMailerEntryCreate creates an operation to create a mailer entry.
 func NewMailerEntryCreate(mailersName string, entry *models.MailerEntry) Operation {
@@ -1176,10 +1124,6 @@ func NewMailerEntryDelete(mailersName string, entry *models.MailerEntry) Operati
 	)
 }
 
-// =============================================================================
-// Peer Entry Factory Functions (Container child)
-// =============================================================================
-
 // NewPeerEntryCreate creates an operation to create a peer entry.
 func NewPeerEntryCreate(peerSectionName string, entry *models.PeerEntry) Operation {
 	return NewContainerChildOp(
@@ -1225,10 +1169,6 @@ func NewPeerEntryDelete(peerSectionName string, entry *models.PeerEntry) Operati
 	)
 }
 
-// =============================================================================
-// Nameserver Factory Functions (Container child)
-// =============================================================================
-
 // NewNameserverCreate creates an operation to create a nameserver in a resolver.
 func NewNameserverCreate(resolverName string, nameserver *models.Nameserver) Operation {
 	return NewContainerChildOp(
@@ -1273,10 +1213,6 @@ func NewNameserverDelete(resolverName string, nameserver *models.Nameserver) Ope
 		DescribeContainerChild(OperationDelete, "nameserver", nameserver.Name, "resolvers section", resolverName),
 	)
 }
-
-// =============================================================================
-// Server Factory Functions (Name-based child)
-// =============================================================================
 
 // NewServerCreate creates an operation to create a server in a backend.
 func NewServerCreate(backendName string, server *models.Server) Operation {
@@ -1363,10 +1299,6 @@ func NewServerDelete(backendName string, server *models.Server) Operation {
 	)
 }
 
-// =============================================================================
-// Server Template Factory Functions (Name-based child)
-// =============================================================================
-
 // NewServerTemplateCreate creates an operation to create a server template in a backend.
 func NewServerTemplateCreate(backendName string, serverTemplate *models.ServerTemplate) Operation {
 	return NewNameChildOp(
@@ -1412,10 +1344,6 @@ func NewServerTemplateDelete(backendName string, serverTemplate *models.ServerTe
 	)
 }
 
-// =============================================================================
-// Cache Factory Functions
-// =============================================================================
-
 // NewCacheCreate creates an operation to create a cache section.
 func NewCacheCreate(cache *models.Cache) Operation {
 	return NewTopLevelOp(
@@ -1457,10 +1385,6 @@ func NewCacheDelete(cache *models.Cache) Operation {
 		DescribeTopLevel(OperationDelete, "cache", CacheName(cache)),
 	)
 }
-
-// =============================================================================
-// HTTPErrorsSection Factory Functions
-// =============================================================================
 
 // NewHTTPErrorsSectionCreate creates an operation to create an http-errors section.
 func NewHTTPErrorsSectionCreate(section *models.HTTPErrorsSection) Operation {
@@ -1504,10 +1428,6 @@ func NewHTTPErrorsSectionDelete(section *models.HTTPErrorsSection) Operation {
 	)
 }
 
-// =============================================================================
-// LogForward Factory Functions
-// =============================================================================
-
 // NewLogForwardCreate creates an operation to create a log-forward section.
 func NewLogForwardCreate(logForward *models.LogForward) Operation {
 	return NewTopLevelOp(
@@ -1549,10 +1469,6 @@ func NewLogForwardDelete(logForward *models.LogForward) Operation {
 		DescribeTopLevel(OperationDelete, "log-forward", logForward.Name),
 	)
 }
-
-// =============================================================================
-// MailersSection Factory Functions
-// =============================================================================
 
 // NewMailersSectionCreate creates an operation to create a mailers section.
 func NewMailersSectionCreate(section *models.MailersSection) Operation {
@@ -1596,10 +1512,8 @@ func NewMailersSectionDelete(section *models.MailersSection) Operation {
 	)
 }
 
-// =============================================================================
 // PeerSection Factory Functions
 // Note: Update operations return an error as the API doesn't support direct updates.
-// =============================================================================
 
 // NewPeerSectionCreate creates an operation to create a peer section.
 func NewPeerSectionCreate(section *models.PeerSection) Operation {
@@ -1645,10 +1559,6 @@ func NewPeerSectionDelete(section *models.PeerSection) Operation {
 	)
 }
 
-// =============================================================================
-// Program Factory Functions
-// =============================================================================
-
 // NewProgramCreate creates an operation to create a program section.
 func NewProgramCreate(program *models.Program) Operation {
 	return NewTopLevelOp(
@@ -1690,10 +1600,6 @@ func NewProgramDelete(program *models.Program) Operation {
 		DescribeTopLevel(OperationDelete, "program", program.Name),
 	)
 }
-
-// =============================================================================
-// Resolver Factory Functions
-// =============================================================================
 
 // NewResolverCreate creates an operation to create a resolver section.
 func NewResolverCreate(resolver *models.Resolver) Operation {
@@ -1737,10 +1643,6 @@ func NewResolverDelete(resolver *models.Resolver) Operation {
 	)
 }
 
-// =============================================================================
-// Ring Factory Functions
-// =============================================================================
-
 // NewRingCreate creates an operation to create a ring section.
 func NewRingCreate(ring *models.Ring) Operation {
 	return NewTopLevelOp(
@@ -1782,10 +1684,6 @@ func NewRingDelete(ring *models.Ring) Operation {
 		DescribeTopLevel(OperationDelete, "ring", ring.Name),
 	)
 }
-
-// =============================================================================
-// CrtStore Factory Functions
-// =============================================================================
 
 // NewCrtStoreCreate creates an operation to create a crt-store section.
 func NewCrtStoreCreate(crtStore *models.CrtStore) Operation {
@@ -1829,10 +1727,6 @@ func NewCrtStoreDelete(crtStore *models.CrtStore) Operation {
 	)
 }
 
-// =============================================================================
-// Userlist Factory Functions (Create/Delete only - no Update API)
-// =============================================================================
-
 // NewUserlistCreate creates an operation to create a userlist section.
 func NewUserlistCreate(userlist *models.Userlist) Operation {
 	return NewTopLevelOp(
@@ -1860,10 +1754,6 @@ func NewUserlistDelete(userlist *models.Userlist) Operation {
 		DescribeTopLevel(OperationDelete, "userlist", userlist.Name),
 	)
 }
-
-// =============================================================================
-// FCGIApp Factory Functions
-// =============================================================================
 
 // NewFCGIAppCreate creates an operation to create a fcgi-app section.
 func NewFCGIAppCreate(fcgiApp *models.FCGIApp) Operation {
@@ -1906,10 +1796,6 @@ func NewFCGIAppDelete(fcgiApp *models.FCGIApp) Operation {
 		DescribeTopLevel(OperationDelete, "fcgi-app", fcgiApp.Name),
 	)
 }
-
-// =============================================================================
-// TCP Request Rule Factory Functions (Index-based child)
-// =============================================================================
 
 // NewTCPRequestRuleFrontendCreate creates an operation to create a TCP request rule in a frontend.
 func NewTCPRequestRuleFrontendCreate(frontendName string, rule *models.TCPRequestRule, index int) Operation {
@@ -2001,10 +1887,6 @@ func NewTCPRequestRuleBackendDelete(backendName string, rule *models.TCPRequestR
 	)
 }
 
-// =============================================================================
-// TCP Response Rule Factory Functions (Index-based child, Backend only)
-// =============================================================================
-
 // NewTCPResponseRuleBackendCreate creates an operation to create a TCP response rule in a backend.
 func NewTCPResponseRuleBackendCreate(backendName string, rule *models.TCPResponseRule, index int) Operation {
 	return NewIndexChildOp(
@@ -2049,10 +1931,6 @@ func NewTCPResponseRuleBackendDelete(backendName string, rule *models.TCPRespons
 		func() string { return describeTCPResponseRule(OperationDelete, rule, backendName, index) },
 	)
 }
-
-// =============================================================================
-// Stick Rule Factory Functions (Index-based child, Backend only)
-// =============================================================================
 
 // NewStickRuleBackendCreate creates an operation to create a stick rule in a backend.
 func NewStickRuleBackendCreate(backendName string, rule *models.StickRule, index int) Operation {
@@ -2099,10 +1977,6 @@ func NewStickRuleBackendDelete(backendName string, rule *models.StickRule, index
 	)
 }
 
-// =============================================================================
-// HTTP After Response Rule Factory Functions (Index-based child, Backend only)
-// =============================================================================
-
 // NewHTTPAfterResponseRuleBackendCreate creates an operation to create an HTTP after-response rule in a backend.
 func NewHTTPAfterResponseRuleBackendCreate(backendName string, rule *models.HTTPAfterResponseRule, index int) Operation {
 	return NewIndexChildOp(
@@ -2147,10 +2021,6 @@ func NewHTTPAfterResponseRuleBackendDelete(backendName string, rule *models.HTTP
 		func() string { return describeHTTPAfterResponseRule(OperationDelete, rule, backendName, index) },
 	)
 }
-
-// =============================================================================
-// Server Switching Rule Factory Functions (Index-based child, Backend only)
-// =============================================================================
 
 // NewServerSwitchingRuleBackendCreate creates an operation to create a server switching rule in a backend.
 func NewServerSwitchingRuleBackendCreate(backendName string, rule *models.ServerSwitchingRule, index int) Operation {
@@ -2197,10 +2067,6 @@ func NewServerSwitchingRuleBackendDelete(backendName string, rule *models.Server
 	)
 }
 
-// =============================================================================
-// HTTP Check Factory Functions (Index-based child, Backend only)
-// =============================================================================
-
 // NewHTTPCheckBackendCreate creates an operation to create an HTTP check in a backend.
 func NewHTTPCheckBackendCreate(backendName string, check *models.HTTPCheck, index int) Operation {
 	return NewIndexChildOp(
@@ -2245,10 +2111,6 @@ func NewHTTPCheckBackendDelete(backendName string, check *models.HTTPCheck, inde
 		func() string { return describeHTTPCheck(OperationDelete, check, backendName, index) },
 	)
 }
-
-// =============================================================================
-// TCP Check Factory Functions (Index-based child, Backend only)
-// =============================================================================
 
 // NewTCPCheckBackendCreate creates an operation to create a TCP check in a backend.
 func NewTCPCheckBackendCreate(backendName string, check *models.TCPCheck, index int) Operation {
@@ -2295,10 +2157,6 @@ func NewTCPCheckBackendDelete(backendName string, check *models.TCPCheck, index 
 	)
 }
 
-// =============================================================================
-// Capture (DeclareCapture) Factory Functions (Index-based child, Frontend only)
-// =============================================================================
-
 // NewCaptureFrontendCreate creates an operation to create a capture declaration in a frontend.
 func NewCaptureFrontendCreate(frontendName string, capture *models.Capture, index int) Operation {
 	return NewIndexChildOp(
@@ -2343,10 +2201,6 @@ func NewCaptureFrontendDelete(frontendName string, capture *models.Capture, inde
 		func() string { return describeCapture(OperationDelete, capture, frontendName, index) },
 	)
 }
-
-// =============================================================================
-// LogProfile Factory Functions (v3.1+ only)
-// =============================================================================
 
 // NewLogProfileCreate creates an operation to create a log-profile section.
 // Log profiles are only available in HAProxy DataPlane API v3.1+.
@@ -2393,10 +2247,6 @@ func NewLogProfileDelete(logProfile *models.LogProfile) Operation {
 	)
 }
 
-// =============================================================================
-// Traces Factory Functions (v3.1+ only, Singleton)
-// =============================================================================
-
 // NewTracesUpdate creates an operation to update the traces section.
 // The traces section is a singleton - it can be created or replaced.
 // Traces configuration is only available in HAProxy DataPlane API v3.1+.
@@ -2411,10 +2261,6 @@ func NewTracesUpdate(traces *models.Traces) Operation {
 		func() string { return "Update traces section" },
 	)
 }
-
-// =============================================================================
-// AcmeProvider Factory Functions (v3.2+ only)
-// =============================================================================
 
 // NewAcmeProviderCreate creates an operation to create an acme section.
 // ACME providers are only available in HAProxy DataPlane API v3.2+.
@@ -2460,10 +2306,6 @@ func NewAcmeProviderDelete(acmeProvider *models.AcmeProvider) Operation {
 		DescribeTopLevel(OperationDelete, "acme-provider", acmeProvider.Name),
 	)
 }
-
-// =============================================================================
-// QUICInitialRule Factory Functions (v3.1+ only)
-// =============================================================================
 
 // NewQUICInitialRuleFrontendCreate creates an operation to create a QUIC initial rule in a frontend.
 // QUIC initial rules are only available in HAProxy DataPlane API v3.1+.

@@ -26,7 +26,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 )
 
-// TestNewDriftPreventionMonitor tests monitor creation.
 func TestNewDriftPreventionMonitor(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	interval := 5 * time.Minute
@@ -39,7 +38,6 @@ func TestNewDriftPreventionMonitor(t *testing.T) {
 	assert.Nil(t, monitor.eventChan)
 }
 
-// TestDriftPreventionMonitor_Start tests monitor startup and shutdown.
 func TestDriftPreventionMonitor_Start(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
@@ -53,7 +51,6 @@ func TestDriftPreventionMonitor_Start(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestDriftPreventionMonitor_ResetDriftTimer tests timer reset.
 func TestDriftPreventionMonitor_ResetDriftTimer(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
@@ -70,7 +67,6 @@ func TestDriftPreventionMonitor_ResetDriftTimer(t *testing.T) {
 	assert.False(t, monitor.lastDeploymentTime.IsZero())
 }
 
-// TestDriftPreventionMonitor_StopDriftTimer tests timer stop.
 func TestDriftPreventionMonitor_StopDriftTimer(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
@@ -87,7 +83,6 @@ func TestDriftPreventionMonitor_StopDriftTimer(t *testing.T) {
 	assert.False(t, monitor.timerActive)
 }
 
-// TestDriftPreventionMonitor_GetDriftTimerChan tests getting timer channel.
 func TestDriftPreventionMonitor_GetDriftTimerChan(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
@@ -119,7 +114,6 @@ func TestDriftPreventionMonitor_GetDriftTimerChan(t *testing.T) {
 	})
 }
 
-// TestDriftPreventionMonitor_HandleDeploymentCompleted tests deployment completion handling.
 func TestDriftPreventionMonitor_HandleDeploymentCompleted(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
@@ -141,7 +135,6 @@ func TestDriftPreventionMonitor_HandleDeploymentCompleted(t *testing.T) {
 	assert.True(t, monitor.lastDeploymentTime.After(oldTime))
 }
 
-// TestDriftPreventionMonitor_HandleDriftTimerExpired tests timer expiration.
 func TestDriftPreventionMonitor_HandleDriftTimerExpired(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -171,7 +164,6 @@ waitLoop:
 	}
 }
 
-// TestDriftPreventionMonitor_HandleEvent tests event type routing.
 func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 100*time.Millisecond)
@@ -202,7 +194,6 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 	})
 }
 
-// TestDriftPreventionMonitor_TimerTriggersEvent tests the full timer flow.
 func TestDriftPreventionMonitor_TimerTriggersEvent(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -232,7 +223,6 @@ waitLoop:
 	}
 }
 
-// TestDriftMonitor_Name tests the Name method.
 func TestDriftMonitor_Name(t *testing.T) {
 	bus := testutil.NewTestBus()
 	monitor := NewDriftPreventionMonitor(bus, testutil.NewTestLogger(), 1*time.Minute)

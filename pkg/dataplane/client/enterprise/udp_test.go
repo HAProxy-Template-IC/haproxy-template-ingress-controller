@@ -37,10 +37,6 @@ func TestNewUDPLBOperations(t *testing.T) {
 	assert.Equal(t, c, udp.client)
 }
 
-// =============================================================================
-// UDP Load Balancer Tests
-// =============================================================================
-
 func TestUDPLBOperations_GetAllUDPLbs_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -272,10 +268,6 @@ func TestUDPLBOperations_DeleteUDPLb_CommunityEdition(t *testing.T) {
 	assert.True(t, errors.Is(err, client.ErrEnterpriseRequired))
 }
 
-// =============================================================================
-// UDP LB ACL Tests (v3.2+ only)
-// =============================================================================
-
 func TestUDPLBOperations_GetAllACLsUDPLb_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -395,10 +387,6 @@ func TestUDPLBOperations_DeleteACLUDPLb_RequiresV32(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUDPLBACLsRequiresV32))
 }
-
-// =============================================================================
-// UDP LB Dgram Bind Tests
-// =============================================================================
 
 func TestUDPLBOperations_GetAllDgramBindsUDPLb_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
@@ -531,10 +519,6 @@ func TestUDPLBOperations_DeleteDgramBindUDPLb_ServerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "status 404")
 }
 
-// =============================================================================
-// UDP LB Log Target Tests
-// =============================================================================
-
 func TestUDPLBOperations_GetAllLogTargetsUDPLb_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -665,10 +649,6 @@ func TestUDPLBOperations_DeleteLogTargetUDPLb_ServerError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status 404")
 }
-
-// =============================================================================
-// UDP LB Server Switching Rule Tests (v3.2+ only)
-// =============================================================================
 
 func TestUDPLBOperations_GetAllServerSwitchingRulesUDPLb_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

@@ -20,10 +20,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
-// -----------------------------------------------------------------------------
-// Resource Events.
-// -----------------------------------------------------------------------------
-
 // ResourceIndexUpdatedEvent is published when a watched Kubernetes resource.
 // has been added, updated, or deleted in the local index.
 type ResourceIndexUpdatedEvent struct {

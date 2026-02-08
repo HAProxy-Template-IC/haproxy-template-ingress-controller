@@ -39,10 +39,6 @@ func validConfig() *Config {
 	}
 }
 
-// =============================================================================
-// New() Tests - Configuration Validation
-// =============================================================================
-
 func TestNew_Success(t *testing.T) {
 	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
@@ -150,10 +146,6 @@ func TestNew_WithCustomLogger(t *testing.T) {
 	require.NotNil(t, elector)
 }
 
-// =============================================================================
-// State Accessor Tests
-// =============================================================================
-
 func TestElector_IsLeader_InitialState(t *testing.T) {
 	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
@@ -173,10 +165,6 @@ func TestElector_GetLeader_InitialState(t *testing.T) {
 
 	assert.Empty(t, elector.GetLeader())
 }
-
-// =============================================================================
-// Start() Tests with Fake Clientset
-// =============================================================================
 
 func TestElector_Start_BecomesLeader(t *testing.T) {
 	if testing.Short() {
@@ -356,10 +344,6 @@ func TestElector_Start_OnStoppedLeadingCalled(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Callback Tests
-// =============================================================================
-
 func TestElector_Callbacks_NilCallbacksHandledGracefully(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping leader election test in short mode")
@@ -404,10 +388,6 @@ func TestElector_Callbacks_NilCallbacksHandledGracefully(t *testing.T) {
 	assert.True(t, elector.IsLeader())
 }
 
-// =============================================================================
-// Thread Safety Tests
-// =============================================================================
-
 func TestElector_ConcurrentAccess(t *testing.T) {
 	clientset := fake.NewClientset()
 	callbacks := Callbacks{}
@@ -432,10 +412,6 @@ func TestElector_ConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
-
-// =============================================================================
-// Config Edge Cases
-// =============================================================================
 
 func TestNew_AllConfigFieldsUsed(t *testing.T) {
 	clientset := fake.NewClientset()

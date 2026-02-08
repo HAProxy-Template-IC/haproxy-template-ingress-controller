@@ -33,10 +33,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-// =============================================================================
-// collectResourceTypes Tests
-// =============================================================================
-
 func TestCollectResourceTypes(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -101,10 +97,6 @@ func TestCollectResourceTypes(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// buildResourceIdentity Tests
-// =============================================================================
-
 func TestBuildResourceIdentity(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -157,10 +149,6 @@ func TestBuildResourceIdentity(t *testing.T) {
 		})
 	}
 }
-
-// =============================================================================
-// mergeResourceType Tests
-// =============================================================================
 
 func TestMergeResourceType(t *testing.T) {
 	tests := []struct {
@@ -285,10 +273,6 @@ func TestMergeResourceType(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// mergeFixtures Tests
-// =============================================================================
-
 func TestMergeFixtures(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -370,10 +354,6 @@ func TestMergeFixtures(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// buildFixtureIdentityMap Tests
-// =============================================================================
-
 func TestBuildFixtureIdentityMap(t *testing.T) {
 	fixtures := map[string][]interface{}{
 		"services": {
@@ -431,10 +411,6 @@ func TestBuildFixtureIdentityMap_InvalidResources(t *testing.T) {
 	_, exists := result["services|v1|Service|default|valid-svc"]
 	assert.True(t, exists, "should contain valid-svc identity")
 }
-
-// =============================================================================
-// mergeHTTPFixtures Tests
-// =============================================================================
 
 func TestMergeHTTPFixtures(t *testing.T) {
 	tests := []struct {
@@ -512,10 +488,6 @@ func TestMergeHTTPFixtures(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// fixtureToString Tests
-// =============================================================================
-
 func TestFixtureToString(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -572,10 +544,6 @@ func (s stringerType) String() string {
 	return s.value
 }
 
-// =============================================================================
-// FixtureHTTPStoreWrapper Tests
-// =============================================================================
-
 func TestFixtureHTTPStoreWrapper_Fetch(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -625,10 +593,6 @@ func TestFixtureHTTPStoreWrapper_Fetch(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// createHTTPStoreFromFixtures Tests
-// =============================================================================
-
 func TestCreateHTTPStoreFromFixtures(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -650,10 +614,6 @@ func TestCreateHTTPStoreFromFixtures(t *testing.T) {
 	_, ok := store.Get("http://example.com/missing.txt")
 	assert.False(t, ok, "missing URL should not exist")
 }
-
-// =============================================================================
-// createStoresFromFixtures Tests
-// =============================================================================
 
 func TestCreateStoresFromFixtures_HAProxyPods(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -831,10 +791,6 @@ func TestCreateStoresFromFixtures_TypeMetaInference(t *testing.T) {
 	// The main test is that the fixture was successfully added to the store
 }
 
-// =============================================================================
-// sortSnippetNames Tests
-// =============================================================================
-
 func TestSortSnippetNames(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -884,10 +840,6 @@ func TestSortSnippetNames(t *testing.T) {
 		})
 	}
 }
-
-// =============================================================================
-// storeAuxiliaryFiles Tests
-// =============================================================================
 
 func TestStoreAuxiliaryFiles(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -984,10 +936,6 @@ func TestStoreAuxiliaryFiles(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// hasRenderingErrorAssertions Tests
-// =============================================================================
-
 func TestHasRenderingErrorAssertions(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1031,15 +979,6 @@ func TestHasRenderingErrorAssertions(t *testing.T) {
 		})
 	}
 }
-
-// =============================================================================
-// renderAuxiliaryFiles Tests
-// =============================================================================
-
-// =============================================================================
-// runAssertion Tests
-// =============================================================================
-
 func TestRunAssertion(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -1139,10 +1078,6 @@ func TestRunAssertion(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// assertContains Tests
-// =============================================================================
-
 func TestAssertContains(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -1214,10 +1149,6 @@ func TestAssertContains(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// findMapFile Tests
-// =============================================================================
-
 func TestFindMapFile(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -1263,10 +1194,6 @@ func TestFindMapFile(t *testing.T) {
 		assert.Equal(t, "", result)
 	})
 }
-
-// =============================================================================
-// renderAuxiliaryFiles Tests
-// =============================================================================
 
 func TestRenderAuxiliaryFiles(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -1441,10 +1368,6 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// assertDeterministic Tests
-// =============================================================================
-
 func TestAssertDeterministic(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -1545,10 +1468,6 @@ func TestAssertDeterministic(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// generateUnifiedDiff Tests
-// =============================================================================
-
 func TestGenerateUnifiedDiff(t *testing.T) {
 	t.Run("shows diff between different strings", func(t *testing.T) {
 		from := "line1\nline2\nline3\n"
@@ -1571,10 +1490,6 @@ func TestGenerateUnifiedDiff(t *testing.T) {
 		assert.Contains(t, diff, "no visible diff")
 	})
 }
-
-// =============================================================================
-// compareAuxiliaryFiles Tests
-// =============================================================================
 
 func TestCompareAuxiliaryFiles(t *testing.T) {
 	t.Run("both nil returns empty", func(t *testing.T) {

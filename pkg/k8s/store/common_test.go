@@ -7,7 +7,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// TestStoreError_Error tests the Error() method.
 func TestStoreError_Error(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -56,7 +55,6 @@ func TestStoreError_Error(t *testing.T) {
 	}
 }
 
-// TestStoreError_Unwrap tests the Unwrap() method.
 func TestStoreError_Unwrap(t *testing.T) {
 	baseErr := errors.New("base error")
 	storeErr := &StoreError{
@@ -76,7 +74,6 @@ func TestStoreError_Unwrap(t *testing.T) {
 	}
 }
 
-// TestMakeKeyString tests the makeKeyString function.
 func TestMakeKeyString(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -115,7 +112,6 @@ func TestMakeKeyString(t *testing.T) {
 	}
 }
 
-// TestExtractNamespaceName tests namespace/name extraction from resources.
 func TestExtractNamespaceName(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -190,9 +186,6 @@ func containsHelper(s, substr string) bool {
 	return false
 }
 
-// ============================================================================
-// Shared Store Interface Tests
-// ============================================================================
 // These helpers test common Store interface behaviors across different
 // implementations (MemoryStore, CachedStore) to ensure consistent behavior.
 

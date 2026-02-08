@@ -7,7 +7,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
-// TestCompare_UserlistWithHTTPAuthRule tests that when a backend references a userlist
 // via http_auth, both the userlist creation and the http_request_rule creation are detected.
 //
 // This reproduces the bug where fine-grained sync fails because the userlist is not
@@ -141,7 +140,6 @@ func logOperations(t *testing.T, operations []Operation) {
 	}
 }
 
-// TestCompare_ExistingUserlistNoChange tests that when both current and desired configs
 // have the same userlist, no operations are generated for it.
 func TestCompare_ExistingUserlistNoChange(t *testing.T) {
 	config := `
@@ -194,7 +192,6 @@ backend test_backend
 	}
 }
 
-// TestCompare_UserlistPriority tests that userlist operations have correct priority.
 func TestCompare_UserlistPriority(t *testing.T) {
 	currentConfig := `
 global
@@ -259,7 +256,6 @@ backend test_backend
 	t.Error("No userlist operation found in diff")
 }
 
-// TestCompare_BackendHTTPRequestRuleOrderPreservation tests that http-request rules
 // maintain their order when comparing configs.
 func TestCompare_BackendHTTPRequestRuleOrderPreservation(t *testing.T) {
 	currentConfig := `
@@ -342,7 +338,6 @@ backend test_backend
 	}
 }
 
-// TestCompare_UserlistModification tests userlist update detection.
 // This test verifies that user changes within a userlist generate fine-grained
 // user operations (CreateUser, ReplaceUser) rather than recreating the entire userlist.
 func TestCompare_UserlistModification(t *testing.T) {
@@ -442,7 +437,6 @@ type userlistUserOperationsTestCase struct {
 	expectUserlistOps bool     // whether userlist-level operations are expected
 }
 
-// TestCompare_UserlistUserOperations tests fine-grained user operations within userlists.
 // This test verifies that when users are added, modified, or removed from a userlist,
 // the comparator generates appropriate CreateUser, ReplaceUser, and DeleteUser operations
 // rather than recreating the entire userlist.

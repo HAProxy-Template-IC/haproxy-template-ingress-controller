@@ -30,10 +30,6 @@ func NewUDPLBOperations(c *client.DataplaneClient) *UDPLBOperations {
 	return &UDPLBOperations{client: c}
 }
 
-// =============================================================================
-// UDP Load Balancer Operations
-// =============================================================================
-
 // UDPLb represents a UDP load balancer configuration.
 type UDPLb = v32ee.UDPLb
 
@@ -219,10 +215,6 @@ func (u *UDPLBOperations) DeleteUDPLb(ctx context.Context, txID, name string) er
 	return nil
 }
 
-// =============================================================================
-// UDP Load Balancer ACL Operations
-// =============================================================================
-
 // ACL represents an ACL configuration.
 type ACL = v32ee.Acl
 
@@ -317,10 +309,6 @@ func (u *UDPLBOperations) DeleteACLUDPLb(ctx context.Context, txID, lbName strin
 	}
 	return nil
 }
-
-// =============================================================================
-// UDP Load Balancer Dgram Bind Operations
-// =============================================================================
 
 // DgramBind represents a datagram bind configuration.
 type DgramBind = v32ee.DgramBind
@@ -428,10 +416,6 @@ func (u *UDPLBOperations) DeleteDgramBindUDPLb(ctx context.Context, txID, lbName
 	return nil
 }
 
-// =============================================================================
-// UDP Load Balancer Log Target Operations
-// =============================================================================
-
 // LogTarget represents a log target configuration.
 type LogTarget = v32ee.LogTarget
 
@@ -537,10 +521,6 @@ func (u *UDPLBOperations) DeleteLogTargetUDPLb(ctx context.Context, txID, lbName
 	}
 	return nil
 }
-
-// =============================================================================
-// UDP Load Balancer Server Switching Rule Operations
-// =============================================================================
 
 // ServerSwitchingRule represents a server switching rule configuration.
 type ServerSwitchingRule = v32ee.ServerSwitchingRule

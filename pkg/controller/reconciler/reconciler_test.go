@@ -27,7 +27,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
-// TestReconciler_LeadingEdgeTrigger tests that the first change triggers immediately (leading-edge).
 func TestReconciler_LeadingEdgeTrigger(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -72,7 +71,6 @@ func TestReconciler_LeadingEdgeTrigger(t *testing.T) {
 		"First change should trigger immediately, not wait for debounce timer")
 }
 
-// TestReconciler_RefractoryBatching tests that changes during refractory period are batched
 // and trigger when refractory ends (timer does NOT reset, unlike old trailing-edge behavior).
 func TestReconciler_RefractoryBatching(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -132,7 +130,6 @@ func TestReconciler_RefractoryBatching(t *testing.T) {
 		"Second trigger should wait for remaining refractory period")
 }
 
-// TestReconciler_MaxLatencyGuarantee tests that every change is synced within debounceInterval.
 // This is the key property of leading-edge debouncing - changes are never delayed longer than the interval.
 func TestReconciler_MaxLatencyGuarantee(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -189,7 +186,6 @@ func TestReconciler_MaxLatencyGuarantee(t *testing.T) {
 		"All changes should be synced within debounceInterval from first trigger")
 }
 
-// TestReconciler_ImmediateTriggerAfterRefractoryEnds tests that changes after refractory ends
 // trigger immediately again (not queued).
 func TestReconciler_ImmediateTriggerAfterRefractoryEnds(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -239,7 +235,6 @@ func TestReconciler_ImmediateTriggerAfterRefractoryEnds(t *testing.T) {
 		"Change after refractory should trigger immediately")
 }
 
-// TestReconciler_IndexSynchronizedTriggersImmediate tests that IndexSynchronizedEvent triggers immediately.
 func TestReconciler_IndexSynchronizedTriggersImmediate(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -274,7 +269,6 @@ func TestReconciler_IndexSynchronizedTriggersImmediate(t *testing.T) {
 	assert.Equal(t, "index_synchronized", receivedEvent.Reason)
 }
 
-// TestReconciler_SkipInitialSyncEvents tests that initial sync events don't trigger reconciliation.
 func TestReconciler_SkipInitialSyncEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -310,7 +304,6 @@ func TestReconciler_SkipInitialSyncEvents(t *testing.T) {
 	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, 300*time.Millisecond)
 }
 
-// TestReconciler_IndexSynchronizedCancelsDebounce tests that IndexSynchronizedEvent
 // triggers immediately and cancels any pending debounce.
 // With leading-edge behavior, the first resource change also triggers immediately,
 // so we expect two events: resource_change (immediate) and index_synchronized.
@@ -363,7 +356,6 @@ func TestReconciler_IndexSynchronizedCancelsDebounce(t *testing.T) {
 	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
-// TestReconciler_ContextCancellation tests graceful shutdown on context cancellation.
 // Verifies that pending refractory timers are properly cleaned up on shutdown.
 func TestReconciler_ContextCancellation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -419,7 +411,6 @@ func TestReconciler_ContextCancellation(t *testing.T) {
 	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
-// TestReconciler_CustomDebounceInterval tests using a custom debounce interval as refractory period.
 func TestReconciler_CustomDebounceInterval(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -475,7 +466,6 @@ func TestReconciler_CustomDebounceInterval(t *testing.T) {
 		"Should not wait significantly longer than custom refractory period")
 }
 
-// TestReconciler_DefaultConfig tests using default configuration.
 func TestReconciler_DefaultConfig(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -486,7 +476,6 @@ func TestReconciler_DefaultConfig(t *testing.T) {
 		"Should use default debounce interval when config is nil")
 }
 
-// TestReconciler_ZeroDebounceUsesDefault tests that zero debounce interval falls back to default.
 func TestReconciler_ZeroDebounceUsesDefault(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -500,8 +489,6 @@ func TestReconciler_ZeroDebounceUsesDefault(t *testing.T) {
 		"Should use default debounce interval when config value is zero")
 }
 
-// TestReconciler_SkipHAProxyPodChanges tests that HAProxy pod changes are filtered out.
-//
 // HAProxy pods are deployment targets, not configuration sources. Changes to HAProxy pods
 // should trigger deployment-only reconciliation via HAProxyPodsDiscoveredEvent → Deployer component,
 // not full reconciliation (render + validate + deploy).
@@ -537,8 +524,6 @@ func TestReconciler_SkipHAProxyPodChanges(t *testing.T) {
 	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, 300*time.Millisecond)
 }
 
-// TestReconciler_NonHAProxyPodChangesStillTrigger tests that non-HAProxy pod resource changes still trigger reconciliation.
-//
 // This ensures the haproxy-pods filter doesn't break reconciliation for actual configuration sources.
 func TestReconciler_NonHAProxyPodChangesStillTrigger(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -575,7 +560,6 @@ func TestReconciler_NonHAProxyPodChangesStillTrigger(t *testing.T) {
 	assert.Equal(t, "resource_change", receivedEvent.Reason)
 }
 
-// TestReconciler_Name tests the Name method.
 func TestReconciler_Name(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -584,7 +568,6 @@ func TestReconciler_Name(t *testing.T) {
 	assert.Equal(t, ComponentName, reconciler.Name())
 }
 
-// TestReconciler_HandleHTTPResourceChange tests HTTP resource change handling.
 func TestReconciler_HandleHTTPResourceChange(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -615,7 +598,6 @@ func TestReconciler_HandleHTTPResourceChange(t *testing.T) {
 	assert.Equal(t, "http_resource_change", receivedEvent.Reason)
 }
 
-// TestReconciler_HandleHTTPResourceAccepted tests HTTP resource accepted handling.
 func TestReconciler_HandleHTTPResourceAccepted(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -646,7 +628,6 @@ func TestReconciler_HandleHTTPResourceAccepted(t *testing.T) {
 	assert.Equal(t, "http_resource_accepted", receivedEvent.Reason)
 }
 
-// TestReconciler_HandleBecameLeader tests BecameLeaderEvent handling.
 // When leadership is acquired, the reconciler should trigger an immediate reconciliation
 // to ensure leader-only components (renderer, drift monitor) receive fresh state.
 func TestReconciler_HandleBecameLeader(t *testing.T) {
@@ -679,7 +660,6 @@ func TestReconciler_HandleBecameLeader(t *testing.T) {
 	assert.Equal(t, "became_leader", receivedEvent.Reason)
 }
 
-// TestReconciler_BecameLeaderCancelsDebounce tests that BecameLeaderEvent cancels pending debounce.
 func TestReconciler_BecameLeaderCancelsDebounce(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -727,7 +707,6 @@ func TestReconciler_BecameLeaderCancelsDebounce(t *testing.T) {
 	testutil.AssertNoEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
-// TestReconciler_HandleEvent_UnknownEvent tests unknown event handling.
 func TestReconciler_HandleEvent_UnknownEvent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -738,7 +717,6 @@ func TestReconciler_HandleEvent_UnknownEvent(t *testing.T) {
 	reconciler.handleEvent(unknownEvent)
 }
 
-// TestReconciler_CleanupStopsTimer tests cleanup stops the debounce timer.
 func TestReconciler_CleanupStopsTimer(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 

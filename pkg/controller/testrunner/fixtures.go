@@ -165,18 +165,37 @@ func buildResourceIdentity(resourceType string, resource *unstructured.Unstructu
 // Returns:
 //   - Map of resource type names to resource stores
 //   - error if fixture processing fails
-//
-//nolint:revive // Complexity acceptable for fixture processing with indexing and type inference
 func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (map[string]stores.Store, error) {
+	storeMap := r.createEmptyStores()
+
+	for resourceType, resources := range fixtures {
+		r.logger.Log(context.Background(), logging.LevelTrace, "Populating fixture store",
+			"resource_type", resourceType,
+			"count", len(resources))
+
+		if resourceType == "haproxy-pods" {
+			if err := r.populateHAProxyPodsStore(storeMap["haproxy-pods"], resources); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if err := r.populateWatchedResourceStore(storeMap, resourceType, resources); err != nil {
+			return nil, err
+		}
+	}
+
+	return storeMap, nil
+}
+
+// createEmptyStores creates empty stores for all watched resources and haproxy-pods.
+func (r *Runner) createEmptyStores() map[string]stores.Store {
 	storeMap := make(map[string]stores.Store)
 
-	// PHASE 1: Create empty stores for ALL watched resources
-	// This ensures templates can safely reference any watched resource type
 	for resourceType, watchedResource := range r.config.WatchedResources {
 		r.logger.Log(context.Background(), logging.LevelTrace, "Creating empty store for watched resource",
 			"resource_type", resourceType)
 
-		// Use number of index fields for numKeys parameter
 		numKeys := len(watchedResource.IndexBy)
 		if numKeys < 1 {
 			numKeys = 1
@@ -184,116 +203,96 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (ma
 		storeMap[resourceType] = store.NewMemoryStore(numKeys)
 	}
 
-	// Create store for haproxy-pods (special controller metadata, not a watched resource)
 	r.logger.Log(context.Background(), logging.LevelTrace, "Creating empty store for haproxy-pods (controller metadata)")
-	storeMap["haproxy-pods"] = store.NewMemoryStore(2) // namespace + name keys
+	storeMap["haproxy-pods"] = store.NewMemoryStore(2)
 
-	// PHASE 2: Populate stores with fixture data
-	for resourceType, resources := range fixtures {
-		r.logger.Log(context.Background(), logging.LevelTrace, "Populating fixture store",
-			"resource_type", resourceType,
-			"count", len(resources))
+	return storeMap
+}
 
-		// Handle haproxy-pods specially (controller metadata, not a watched resource)
-		if resourceType == "haproxy-pods" {
-			storeInstance := storeMap["haproxy-pods"]
-
-			for i, resourceObj := range resources {
-				resourceMap, ok := resourceObj.(map[string]interface{})
-				if !ok {
-					return nil, fmt.Errorf("haproxy-pods fixture at index %d is not a map", i)
-				}
-
-				// Deep-copy the resource to avoid mutating shared fixture data.
-				// Fixtures may be shared across concurrent test workers via global fixtures.
-				resource := (&unstructured.Unstructured{Object: resourceMap}).DeepCopy()
-
-				// Ensure TypeMeta for haproxy-pods (Pod resources)
-				if resource.GetAPIVersion() == "" {
-					resource.SetAPIVersion("v1")
-				}
-				if resource.GetKind() == "" {
-					resource.SetKind("Pod")
-				}
-
-				r.logger.Log(context.Background(), logging.LevelTrace, "Adding haproxy-pods fixture to store",
-					"index", i,
-					"name", resource.GetName(),
-					"namespace", resource.GetNamespace())
-
-				// Use namespace + name as keys (matches discovery component indexing)
-				keys := []string{resource.GetNamespace(), resource.GetName()}
-
-				// Convert resource for template use (floats to ints)
-				converted := indexer.ConvertResource(resource)
-				if err := storeInstance.Add(converted, keys); err != nil {
-					return nil, fmt.Errorf("failed to add haproxy-pods fixture: %w", err)
-				}
-			}
-			continue // Skip normal watched resource processing
+// populateHAProxyPodsStore populates the haproxy-pods store with fixture data.
+func (r *Runner) populateHAProxyPodsStore(storeInstance stores.Store, resources []interface{}) error {
+	for i, resourceObj := range resources {
+		resourceMap, ok := resourceObj.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("haproxy-pods fixture at index %d is not a map", i)
 		}
 
-		// Verify resource type is in watched resources
-		watchedResource, exists := r.config.WatchedResources[resourceType]
-		if !exists {
-			return nil, fmt.Errorf("resource type %q in fixtures not found in watched resources", resourceType)
+		// Deep-copy to avoid mutating shared fixture data
+		resource := (&unstructured.Unstructured{Object: resourceMap}).DeepCopy()
+
+		if resource.GetAPIVersion() == "" {
+			resource.SetAPIVersion("v1")
+		}
+		if resource.GetKind() == "" {
+			resource.SetKind("Pod")
 		}
 
-		// Create indexer for this resource type
-		idx, err := indexer.New(indexer.Config{
-			IndexBy:      watchedResource.IndexBy,
-			IgnoreFields: r.config.WatchedResourcesIgnoreFields,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create indexer for %s: %w", resourceType, err)
-		}
+		r.logger.Log(context.Background(), logging.LevelTrace, "Adding haproxy-pods fixture to store",
+			"index", i,
+			"name", resource.GetName(),
+			"namespace", resource.GetNamespace())
 
-		// Get the existing empty store created in Phase 1
-		storeInstance := storeMap[resourceType]
+		keys := []string{resource.GetNamespace(), resource.GetName()}
 
-		// Add all fixture resources to the store
-		for i, resourceObj := range resources {
-			// Convert interface{} to unstructured.Unstructured
-			// The interface{} is expected to be a map[string]interface{}
-			resourceMap, ok := resourceObj.(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf("fixture resource at index %d in %s is not a map", i, resourceType)
-			}
-
-			// Deep-copy the resource to avoid mutating shared fixture data.
-			// Fixtures may be shared across concurrent test workers via global fixtures.
-			resource := (&unstructured.Unstructured{Object: resourceMap}).DeepCopy()
-
-			// Ensure resource has TypeMeta (some fixtures might omit it)
-			if resource.GetAPIVersion() == "" {
-				resource.SetAPIVersion(watchedResource.APIVersion)
-			}
-			if resource.GetKind() == "" {
-				// Extract kind from resource name (e.g., "ingresses" → "Ingress")
-				// This is a heuristic; proper kind resolution would use RESTMapper
-				kind := resourcestore.SingularizeResourceType(watchedResource.Resources)
-				resource.SetKind(kind)
-			}
-
-			r.logger.Log(context.Background(), logging.LevelTrace, "Adding fixture resource to store",
-				"resource_type", resourceType,
-				"index", i,
-				"name", resource.GetName(),
-				"namespace", resource.GetNamespace())
-
-			// Extract index keys using indexer
-			keys, err := idx.ExtractKeys(resource)
-			if err != nil {
-				return nil, fmt.Errorf("failed to extract index keys from fixture resource: %w", err)
-			}
-
-			// Convert resource for template use (floats to ints)
-			converted := indexer.ConvertResource(resource)
-			if err := storeInstance.Add(converted, keys); err != nil {
-				return nil, fmt.Errorf("failed to add fixture resource to %s store: %w", resourceType, err)
-			}
+		converted := indexer.ConvertResource(resource)
+		if err := storeInstance.Add(converted, keys); err != nil {
+			return fmt.Errorf("failed to add haproxy-pods fixture: %w", err)
 		}
 	}
 
-	return storeMap, nil
+	return nil
+}
+
+// populateWatchedResourceStore populates a watched resource store with fixture data.
+func (r *Runner) populateWatchedResourceStore(storeMap map[string]stores.Store, resourceType string, resources []interface{}) error {
+	watchedResource, exists := r.config.WatchedResources[resourceType]
+	if !exists {
+		return fmt.Errorf("resource type %q in fixtures not found in watched resources", resourceType)
+	}
+
+	idx, err := indexer.New(indexer.Config{
+		IndexBy:      watchedResource.IndexBy,
+		IgnoreFields: r.config.WatchedResourcesIgnoreFields,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create indexer for %s: %w", resourceType, err)
+	}
+
+	storeInstance := storeMap[resourceType]
+
+	for i, resourceObj := range resources {
+		resourceMap, ok := resourceObj.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("fixture resource at index %d in %s is not a map", i, resourceType)
+		}
+
+		// Deep-copy to avoid mutating shared fixture data
+		resource := (&unstructured.Unstructured{Object: resourceMap}).DeepCopy()
+
+		if resource.GetAPIVersion() == "" {
+			resource.SetAPIVersion(watchedResource.APIVersion)
+		}
+		if resource.GetKind() == "" {
+			kind := resourcestore.SingularizeResourceType(watchedResource.Resources)
+			resource.SetKind(kind)
+		}
+
+		r.logger.Log(context.Background(), logging.LevelTrace, "Adding fixture resource to store",
+			"resource_type", resourceType,
+			"index", i,
+			"name", resource.GetName(),
+			"namespace", resource.GetNamespace())
+
+		keys, err := idx.ExtractKeys(resource)
+		if err != nil {
+			return fmt.Errorf("failed to extract index keys from fixture resource: %w", err)
+		}
+
+		converted := indexer.ConvertResource(resource)
+		if err := storeInstance.Add(converted, keys); err != nil {
+			return fmt.Errorf("failed to add fixture resource to %s store: %w", resourceType, err)
+		}
+	}
+
+	return nil
 }

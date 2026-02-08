@@ -571,7 +571,6 @@ func TestComponent_HandleEvent_ValidationFailedType(t *testing.T) {
 	// Should not panic - just verify the routing works
 }
 
-// TestComponent_ValidationCompleted_WithActualPendingContent tests promotion of
 // pending content when ValidationCompletedEvent is received.
 func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	// Create HTTP test server that returns different content on second request
@@ -642,7 +641,6 @@ func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	}
 }
 
-// TestComponent_ValidationFailed_WithActualPendingContent tests rejection of
 // pending content when ValidationFailedEvent is received.
 func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	// Create HTTP test server that returns different content on second request

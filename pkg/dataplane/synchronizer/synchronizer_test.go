@@ -67,7 +67,6 @@ func newFailingOperation(opType sections.OperationType, section string, priority
 	}
 }
 
-// TestSync_NoChanges tests that when configs are identical, NoChangesResult is returned.
 func TestSync_NoChanges(t *testing.T) {
 	// Create identical configs
 	configStr := `
@@ -104,7 +103,6 @@ backend test_backend
 	assert.Equal(t, 0, result.Retries)
 }
 
-// TestSync_DryRun tests that dry-run mode returns operations without executing them.
 func TestSync_DryRun(t *testing.T) {
 	// Create configs with a difference
 	currentConfig := `
@@ -153,7 +151,6 @@ backend new_backend
 	assert.Len(t, result.AppliedOperations, 0, "Dry-run should not have applied operations")
 }
 
-// TestDryRun_ReturnsOperationsWithoutExecuting tests the dryRun method directly.
 func TestDryRun_ReturnsOperationsWithoutExecuting(t *testing.T) {
 	// Create a mock diff with operations
 	ops := []comparator.Operation{
@@ -185,7 +182,6 @@ func TestDryRun_ReturnsOperationsWithoutExecuting(t *testing.T) {
 	}
 }
 
-// TestExecuteOperations_AllSucceed tests executeOperations when all operations succeed.
 func TestExecuteOperations_AllSucceed(t *testing.T) {
 	ops := []comparator.Operation{
 		newMockOperation(sections.OperationCreate, "backend", 20),
@@ -209,7 +205,6 @@ func TestExecuteOperations_AllSucceed(t *testing.T) {
 	}
 }
 
-// TestExecuteOperations_FirstFailure_StopsExecution tests that execution stops on first error
 // when ContinueOnError is false. With parallel execution by priority, operations at the same
 // priority run in parallel, so we use different priorities to ensure sequential execution
 // for this test: first a successful operation (priority 10), then a failing one (priority 20).
@@ -242,7 +237,6 @@ func TestExecuteOperations_FirstFailure_StopsExecution(t *testing.T) {
 	assert.False(t, thirdOp.executed, "Third operation should not be executed after failure")
 }
 
-// TestExecuteOperations_ContinueOnError tests that execution continues after failure
 // when ContinueOnError is true. All operations run regardless of failures.
 func TestExecuteOperations_ContinueOnError(t *testing.T) {
 	testErr := errors.New("operation failed")
@@ -271,7 +265,6 @@ func TestExecuteOperations_ContinueOnError(t *testing.T) {
 	assert.True(t, thirdOp.executed, "Third operation should be executed when ContinueOnError is true")
 }
 
-// TestExecuteOperations_EmptyList tests executeOperations with empty operation list.
 func TestExecuteOperations_EmptyList(t *testing.T) {
 	synchronizer := New(nil)
 	opts := DefaultSyncOptions()
@@ -283,7 +276,6 @@ func TestExecuteOperations_EmptyList(t *testing.T) {
 	assert.Empty(t, failed)
 }
 
-// TestNewSuccessResult tests the NewSuccessResult constructor.
 func TestNewSuccessResult(t *testing.T) {
 	diff := &comparator.ConfigDiff{
 		Summary: comparator.DiffSummary{
@@ -308,7 +300,6 @@ func TestNewSuccessResult(t *testing.T) {
 	assert.Contains(t, result.Message, "successfully")
 }
 
-// TestNewSuccessResult_DryRun tests the NewSuccessResult constructor for dry-run.
 func TestNewSuccessResult_DryRun(t *testing.T) {
 	diff := &comparator.ConfigDiff{
 		Summary: comparator.DiffSummary{
@@ -325,7 +316,6 @@ func TestNewSuccessResult_DryRun(t *testing.T) {
 	assert.Contains(t, result.Message, "no changes applied")
 }
 
-// TestNewFailureResult tests the NewFailureResult constructor.
 func TestNewFailureResult(t *testing.T) {
 	diff := &comparator.ConfigDiff{
 		Summary: comparator.DiffSummary{
@@ -355,7 +345,6 @@ func TestNewFailureResult(t *testing.T) {
 	assert.Equal(t, "sync failed", result.Message)
 }
 
-// TestNewNoChangesResult tests the NewNoChangesResult constructor.
 func TestNewNoChangesResult(t *testing.T) {
 	duration := 10 * time.Millisecond
 
@@ -371,7 +360,6 @@ func TestNewNoChangesResult(t *testing.T) {
 	assert.Contains(t, result.Message, "No configuration changes")
 }
 
-// TestSyncResult_HasChanges tests the HasChanges method.
 func TestSyncResult_HasChanges(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -428,7 +416,6 @@ func TestSyncResult_HasChanges(t *testing.T) {
 	}
 }
 
-// TestSyncResult_HasFailures tests the HasFailures method.
 func TestSyncResult_HasFailures(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -463,7 +450,6 @@ func TestSyncResult_HasFailures(t *testing.T) {
 	}
 }
 
-// TestSyncResult_String tests the String method produces readable output.
 func TestSyncResult_String(t *testing.T) {
 	diff := &comparator.ConfigDiff{
 		Summary: comparator.DiffSummary{
@@ -490,7 +476,6 @@ func TestSyncResult_String(t *testing.T) {
 	assert.Contains(t, str, "Sync completed")
 }
 
-// TestSyncPolicy tests policy methods.
 func TestSyncPolicy(t *testing.T) {
 	t.Run("IsDryRun", func(t *testing.T) {
 		assert.True(t, PolicyDryRun.IsDryRun())
@@ -517,7 +502,6 @@ func TestSyncPolicy(t *testing.T) {
 	})
 }
 
-// TestDefaultSyncOptions tests the DefaultSyncOptions function.
 func TestDefaultSyncOptions(t *testing.T) {
 	opts := DefaultSyncOptions()
 
@@ -526,7 +510,6 @@ func TestDefaultSyncOptions(t *testing.T) {
 	assert.True(t, opts.ValidateBeforeApply)
 }
 
-// TestDryRunOptions tests the DryRunOptions function.
 func TestDryRunOptions(t *testing.T) {
 	opts := DryRunOptions()
 
@@ -535,7 +518,6 @@ func TestDryRunOptions(t *testing.T) {
 	assert.False(t, opts.ValidateBeforeApply)
 }
 
-// TestWithLogger tests that WithLogger sets a custom logger.
 func TestWithLogger(t *testing.T) {
 	synchronizer := New(nil)
 	require.NotNil(t, synchronizer)
@@ -550,7 +532,6 @@ func TestWithLogger(t *testing.T) {
 	assert.Equal(t, customLogger, synchronizer.logger, "Logger should be set to custom logger")
 }
 
-// TestSyncPolicy_MaxRetries_UnknownPolicy tests the default case for MaxRetries.
 func TestSyncPolicy_MaxRetries_UnknownPolicy(t *testing.T) {
 	// Create an unknown policy
 	unknownPolicy := SyncPolicy("unknown-policy")
@@ -559,7 +540,6 @@ func TestSyncPolicy_MaxRetries_UnknownPolicy(t *testing.T) {
 	assert.Equal(t, 3, unknownPolicy.MaxRetries())
 }
 
-// TestSync_NilCurrentConfig tests that Sync returns error for nil current config.
 func TestSync_NilCurrentConfig(t *testing.T) {
 	p, err := parser.New()
 	require.NoError(t, err)
@@ -577,7 +557,6 @@ global
 	assert.Contains(t, err.Error(), "current configuration is nil")
 }
 
-// TestSync_NilDesiredConfig tests that Sync returns error for nil desired config.
 func TestSync_NilDesiredConfig(t *testing.T) {
 	p, err := parser.New()
 	require.NoError(t, err)
@@ -595,7 +574,6 @@ global
 	assert.Contains(t, err.Error(), "desired configuration is nil")
 }
 
-// TestSyncFromStrings_ParsesAndSyncsConfigs tests that SyncFromStrings properly parses both configs.
 func TestSyncFromStrings_ParsesAndSyncsConfigs(t *testing.T) {
 	synchronizer := New(nil)
 
@@ -636,7 +614,6 @@ backend new_backend
 	assert.True(t, result.Diff.Summary.TotalCreates > 0 || result.Diff.Summary.TotalDeletes > 0)
 }
 
-// TestSyncFromStrings_NoChanges tests SyncFromStrings with identical configs.
 func TestSyncFromStrings_NoChanges(t *testing.T) {
 	synchronizer := New(nil)
 
@@ -662,7 +639,6 @@ backend test_backend
 	assert.Contains(t, result.Message, "No configuration changes")
 }
 
-// TestSyncFromStrings_DryRunWithChanges tests SyncFromStrings with changes in dry-run mode.
 func TestSyncFromStrings_DryRunWithChanges(t *testing.T) {
 	synchronizer := New(nil)
 
@@ -698,7 +674,6 @@ backend new_backend
 	assert.Equal(t, PolicyDryRun, result.Policy)
 }
 
-// TestSyncResult_String_Failure tests the String method for failed results.
 func TestSyncResult_String_Failure(t *testing.T) {
 	diff := &comparator.ConfigDiff{
 		Summary: comparator.DiffSummary{
@@ -725,7 +700,6 @@ func TestSyncResult_String_Failure(t *testing.T) {
 	assert.Contains(t, str, "Sync failed due to error")
 }
 
-// TestSyncResult_String_WithAppliedOperations tests the String method shows applied operations.
 func TestSyncResult_String_WithAppliedOperations(t *testing.T) {
 	diff := &comparator.ConfigDiff{
 		Summary: comparator.DiffSummary{
@@ -753,7 +727,6 @@ func TestSyncResult_String_WithAppliedOperations(t *testing.T) {
 	assert.Contains(t, str, "Applied: 2 operations")
 }
 
-// TestSyncResult_String_WithFailedOperations tests the String method shows failed operations.
 func TestSyncResult_String_WithFailedOperations(t *testing.T) {
 	diff := &comparator.ConfigDiff{
 		Summary: comparator.DiffSummary{
@@ -790,7 +763,6 @@ func TestSyncResult_String_WithFailedOperations(t *testing.T) {
 	assert.Contains(t, str, "timeout")
 }
 
-// TestSyncResult_String_NoDiff tests the String method when Diff is nil.
 func TestSyncResult_String_NoDiff(t *testing.T) {
 	result := &SyncResult{
 		Success:  true,
@@ -808,7 +780,6 @@ func TestSyncResult_String_NoDiff(t *testing.T) {
 	// Should not panic on nil Diff
 }
 
-// TestSyncResult_String_NoMessage tests the String method when Message is empty.
 func TestSyncResult_String_NoMessage(t *testing.T) {
 	diff := &comparator.ConfigDiff{
 		Summary: comparator.DiffSummary{
@@ -831,7 +802,6 @@ func TestSyncResult_String_NoMessage(t *testing.T) {
 	assert.NotContains(t, str, "Message:") // Should not have Message section
 }
 
-// TestSyncOperations_Success tests SyncOperations with successful operations.
 func TestSyncOperations_Success(t *testing.T) {
 	ops := []comparator.Operation{
 		newMockOperation(sections.OperationCreate, "backend", 20),
@@ -857,7 +827,6 @@ func TestSyncOperations_Success(t *testing.T) {
 	}
 }
 
-// TestSyncOperations_FailOnError tests SyncOperations stops on first error.
 // With parallel execution by priority, operations at the same priority level
 // run in parallel, and operations at higher priorities don't start if an
 // earlier priority group fails.
@@ -896,7 +865,6 @@ func TestSyncOperations_FailOnError(t *testing.T) {
 	assert.False(t, laterOp.executed, "Higher priority operations should not execute after earlier priority fails")
 }
 
-// TestSyncOperations_EmptyList tests SyncOperations with empty operation list.
 func TestSyncOperations_EmptyList(t *testing.T) {
 	tx := &client.Transaction{
 		ID:      "test-tx-empty",
@@ -910,7 +878,6 @@ func TestSyncOperations_EmptyList(t *testing.T) {
 	assert.False(t, result.ReloadTriggered)
 }
 
-// TestSyncOperations_ParallelByPriority tests that operations are grouped by priority
 // and executed in priority order, with operations at the same priority running in parallel.
 func TestSyncOperations_ParallelByPriority(t *testing.T) {
 	// Track execution order
@@ -1006,7 +973,6 @@ func TestSyncOperations_ParallelByPriority(t *testing.T) {
 	}
 }
 
-// TestGroupByPriority tests the groupByPriority helper function.
 func TestGroupByPriority(t *testing.T) {
 	ops := []comparator.Operation{
 		newMockOperation(sections.OperationCreate, "backend", 20),
@@ -1023,7 +989,6 @@ func TestGroupByPriority(t *testing.T) {
 	assert.Len(t, groups[30], 1, "Priority 30 should have 1 operation")
 }
 
-// TestSortedPriorityKeys tests the sortedPriorityKeys helper function.
 func TestSortedPriorityKeys(t *testing.T) {
 	groups := map[int][]comparator.Operation{
 		30: {newMockOperation(sections.OperationCreate, "server", 30)},
@@ -1092,7 +1057,6 @@ func createMockDataplaneServer(t *testing.T, version int64) *httptest.Server {
 	}))
 }
 
-// TestSync_Apply_ExercisesApplyPath tests that the apply path is exercised.
 // Note: This test exercises the apply code path. The mock server may not
 // perfectly handle all DataPlane API operations, but coverage is the goal.
 func TestSync_Apply_ExercisesApplyPath(t *testing.T) {
@@ -1158,7 +1122,6 @@ backend new_backend
 	assert.Equal(t, PolicyApply, result.Policy)
 }
 
-// TestSync_Apply_VersionConflict tests the apply path with version conflict.
 // Note: This test exercises the version conflict handling code path.
 func TestSync_Apply_VersionConflict(t *testing.T) {
 	var conflictCount atomic.Int32
@@ -1267,7 +1230,6 @@ backend new_backend
 	assert.NotEmpty(t, result.Message)
 }
 
-// TestSync_Apply_ContinueOnError tests the apply path with ContinueOnError enabled.
 func TestSync_Apply_ContinueOnError(t *testing.T) {
 	server := createMockDataplaneServer(t, 1)
 	defer server.Close()
@@ -1323,7 +1285,6 @@ backend backend2
 	assert.True(t, result.HasChanges())
 }
 
-// TestSyncOperations_IndexBasedOperationsExecuteInOrder tests that index-based operations
 // execute sequentially in index order. This is critical for operations like HTTP checks
 // where index 0 must complete BEFORE index 1 starts.
 //
@@ -1402,7 +1363,6 @@ func TestSyncOperations_IndexBasedOperationsExecuteInOrder(t *testing.T) {
 	}
 }
 
-// TestSyncOperations_IndexBasedDeletesExecuteInReverseOrder tests that index-based delete
 // operations execute in reverse index order (higher indices first). This is important
 // because deleting index 0 when index 1 still exists could cause array reindexing issues.
 func TestSyncOperations_IndexBasedDeletesExecuteInReverseOrder(t *testing.T) {
@@ -1451,7 +1411,6 @@ func TestSyncOperations_IndexBasedDeletesExecuteInReverseOrder(t *testing.T) {
 		"Delete operations should execute in reverse index order (highest first)")
 }
 
-// TestSyncOperations_MaxParallel_LimitsConcurrency tests that MaxParallel limits
 // the number of concurrent operations. Creates many operations at the same priority
 // and verifies that no more than MaxParallel run concurrently.
 func TestSyncOperations_MaxParallel_LimitsConcurrency(t *testing.T) {
@@ -1516,7 +1475,6 @@ func TestSyncOperations_MaxParallel_LimitsConcurrency(t *testing.T) {
 		"Should have some parallelism (observed max: %d)", observedMax)
 }
 
-// TestSyncOperations_MaxParallel_Unlimited tests that MaxParallel=0 allows unlimited concurrency.
 func TestSyncOperations_MaxParallel_Unlimited(t *testing.T) {
 	const (
 		totalOps   = 20
@@ -1566,7 +1524,6 @@ func TestSyncOperations_MaxParallel_Unlimited(t *testing.T) {
 		observedMax, totalOps/2)
 }
 
-// TestExecuteOperations_MaxParallel_ContinueOnError tests that MaxParallel works
 // with the ContinueOnError mode in executeOperations.
 func TestExecuteOperations_MaxParallel_ContinueOnError(t *testing.T) {
 	const (
@@ -1630,7 +1587,6 @@ func TestExecuteOperations_MaxParallel_ContinueOnError(t *testing.T) {
 		"Max concurrent operations (%d) should not exceed MaxParallel (%d)", observedMax, maxParallel)
 }
 
-// TestSync_Apply_OperationFailure tests the apply path when operations fail.
 func TestSync_Apply_OperationFailure(t *testing.T) {
 	// Create a server that fails on backend creation
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

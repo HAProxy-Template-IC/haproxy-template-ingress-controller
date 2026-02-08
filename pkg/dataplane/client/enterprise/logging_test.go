@@ -37,10 +37,6 @@ func TestNewLoggingOperations(t *testing.T) {
 	assert.Equal(t, c, logging.client)
 }
 
-// =============================================================================
-// Get Log Config Tests
-// =============================================================================
-
 func TestLoggingOperations_GetLogConfig_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -106,10 +102,6 @@ func TestLoggingOperations_GetLogConfig_CommunityEdition(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, client.ErrEnterpriseRequired))
 }
-
-// =============================================================================
-// Replace Log Config Tests
-// =============================================================================
 
 func TestLoggingOperations_ReplaceLogConfig_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

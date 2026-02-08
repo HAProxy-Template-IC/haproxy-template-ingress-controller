@@ -15,10 +15,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// QUIC Initial Rule Executors (Frontend) - v3.1+ only
-// =============================================================================
-
 // QUICInitialRuleFrontendCreate returns an executor for creating QUIC initial rules in frontends.
 // QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 func QUICInitialRuleFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.QUICInitialRule) error {
@@ -114,10 +110,6 @@ func QUICInitialRuleFrontendDelete() func(ctx context.Context, c *client.Datapla
 		return client.CheckResponse(resp, "QUIC initial rule deletion from frontend")
 	}
 }
-
-// =============================================================================
-// QUIC Initial Rule Executors (Defaults) - v3.1+ only
-// =============================================================================
 
 // QUICInitialRuleDefaultsCreate returns an executor for creating QUIC initial rules in defaults.
 // QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
@@ -215,10 +207,8 @@ func QUICInitialRuleDefaultsDelete() func(ctx context.Context, c *client.Datapla
 	}
 }
 
-// =============================================================================
 // v3.1+ Child Dispatch Helpers
 // These are specialized dispatchers for indexed child resources only available in v3.1+.
-// =============================================================================
 
 // DispatchCreateChild31Plus is a generic helper for create operations on v3.1+ only indexed child features.
 func DispatchCreateChild31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE any](

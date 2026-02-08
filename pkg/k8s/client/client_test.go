@@ -193,10 +193,6 @@ func TestDiscoverNamespace_UsesDefaultPath(t *testing.T) {
 	assert.Equal(t, DefaultNamespaceFile, nsErr.Path)
 }
 
-// =============================================================================
-// Error Type Tests
-// =============================================================================
-
 func TestClientError_Error(t *testing.T) {
 	err := &ClientError{
 		Operation: "create client",
@@ -239,10 +235,6 @@ func TestNamespaceDiscoveryError_Unwrap(t *testing.T) {
 	assert.True(t, errors.Is(err, underlying))
 }
 
-// =============================================================================
-// New() Error Handling Tests
-// =============================================================================
-
 func TestNew_InvalidKubeconfig(t *testing.T) {
 	// Create invalid kubeconfig file
 	tmpDir := t.TempDir()
@@ -280,10 +272,6 @@ func TestNew_InClusterNotAvailable(t *testing.T) {
 	assert.Equal(t, "get in-cluster config", clientErr.Operation)
 }
 
-// =============================================================================
-// Config Namespace Handling Tests
-// =============================================================================
-
 func TestNewFromClientset_WithNamespace(t *testing.T) {
 	fakeClientset := fake.NewClientset()
 	scheme := runtime.NewScheme()
@@ -303,10 +291,6 @@ func TestNewFromClientset_EmptyNamespace(t *testing.T) {
 
 	assert.Equal(t, "", client.Namespace())
 }
-
-// =============================================================================
-// GetResource Edge Cases
-// =============================================================================
 
 func TestClient_GetResource_WithContext(t *testing.T) {
 	configMap := &unstructured.Unstructured{

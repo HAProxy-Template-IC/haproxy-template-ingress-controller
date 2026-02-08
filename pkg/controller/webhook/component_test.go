@@ -157,10 +157,6 @@ func (m *mockMetricsRecorder) RecordWebhookValidation(gvk, result string) {
 	m.validationsRecorded++
 }
 
-// =============================================================================
-// Start() Tests - Error Cases
-// =============================================================================
-
 func TestComponent_Start_MissingCertificate(t *testing.T) {
 	config := &Config{
 		// CertPEM is empty
@@ -191,10 +187,6 @@ func TestComponent_Start_MissingKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "tls private key is empty")
 }
 
-// =============================================================================
-// RegisterValidator() Tests
-// =============================================================================
-
 func TestComponent_RegisterValidator_BeforeServerCreated(t *testing.T) {
 	config := &Config{
 		CertPEM: []byte("test-cert"),
@@ -211,10 +203,6 @@ func TestComponent_RegisterValidator_BeforeServerCreated(t *testing.T) {
 	// Verify server is still nil
 	assert.Nil(t, component.server)
 }
-
-// =============================================================================
-// resolveKind() Tests
-// =============================================================================
 
 func TestComponent_resolveKind_Success(t *testing.T) {
 	config := &Config{
@@ -261,19 +249,11 @@ func TestComponent_resolveKind_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to resolve kind")
 }
 
-// =============================================================================
-// Constants Tests
-// =============================================================================
-
 func TestConstants(t *testing.T) {
 	assert.Equal(t, 9443, DefaultWebhookPort)
 	assert.Equal(t, "/validate", DefaultWebhookPath)
 	assert.Equal(t, 50, EventBufferSize)
 }
-
-// =============================================================================
-// Mock RESTMapper
-// =============================================================================
 
 // mockRESTMapper is a minimal mock for testing resolveKind.
 type mockRESTMapper struct {
@@ -312,10 +292,6 @@ func (m *mockRESTMapper) RESTMappings(schema.GroupKind, ...string) ([]*meta.REST
 func (m *mockRESTMapper) ResourceSingularizer(string) (string, error) {
 	return "", fmt.Errorf("not implemented")
 }
-
-// =============================================================================
-// registerValidators() Tests
-// =============================================================================
 
 func TestComponent_registerValidators(t *testing.T) {
 	t.Run("registers validators for all rules", func(t *testing.T) {
@@ -418,10 +394,6 @@ func TestComponent_registerValidators(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// Mock DryRunValidator
-// =============================================================================
-
 // mockDryRunValidator is a mock implementation of DryRunValidator.
 type mockDryRunValidator struct {
 	allowed bool
@@ -431,10 +403,6 @@ type mockDryRunValidator struct {
 func (m *mockDryRunValidator) ValidateDirect(_ context.Context, _, _, _ string, _ interface{}, _ string) (allowed bool, reason string) {
 	return m.allowed, m.reason
 }
-
-// =============================================================================
-// createResourceValidator() Tests
-// =============================================================================
 
 func TestComponent_createResourceValidator_ReturnsFunction(t *testing.T) {
 	config := &Config{
@@ -632,10 +600,6 @@ func TestComponent_createResourceValidator_MetricsOnDenial(t *testing.T) {
 	assert.Greater(t, metrics.requestsRecorded, 0)
 	assert.Greater(t, metrics.validationsRecorded, 0)
 }
-
-// =============================================================================
-// validateBasicStructure() Tests
-// =============================================================================
 
 func TestComponent_validateBasicStructure(t *testing.T) {
 	component := &Component{}

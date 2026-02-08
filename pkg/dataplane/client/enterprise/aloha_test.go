@@ -37,10 +37,6 @@ func TestNewALOHAOperations(t *testing.T) {
 	assert.Equal(t, c, aloha.client)
 }
 
-// =============================================================================
-// ALOHA Endpoints Tests
-// =============================================================================
-
 func TestALOHAOperations_GetEndpoints_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -106,10 +102,6 @@ func TestALOHAOperations_GetEndpoints_CommunityEdition(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, client.ErrEnterpriseRequired))
 }
-
-// =============================================================================
-// ALOHA Actions Tests
-// =============================================================================
 
 func TestALOHAOperations_GetAllActions_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

@@ -58,7 +58,6 @@ func (h *successHandler) HandleRequest(req *events.ConfigValidationRequest) {
 	}
 }
 
-// TestBaseValidator_Stop tests the Stop() method.
 func TestBaseValidator_Stop(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -95,7 +94,6 @@ func TestBaseValidator_Stop(t *testing.T) {
 	validator.Stop()
 }
 
-// TestBaseValidator_StopIdempotent tests that Stop() can be called multiple times.
 func TestBaseValidator_StopIdempotent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -117,7 +115,6 @@ func TestBaseValidator_StopIdempotent(t *testing.T) {
 	wg.Wait()
 }
 
-// TestBaseValidator_PanicRecovery tests panic recovery in handleEvent.
 func TestBaseValidator_PanicRecovery(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -150,7 +147,6 @@ func TestBaseValidator_PanicRecovery(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "validator panicked: test panic")
 }
 
-// TestBaseValidator_ContextCancellation tests context cancellation handling.
 func TestBaseValidator_ContextCancellation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -186,7 +182,6 @@ func TestBaseValidator_ContextCancellation(t *testing.T) {
 	}
 }
 
-// TestBasicValidator_InvalidConfigType tests handling of invalid config type.
 func TestBasicValidator_InvalidConfigType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -216,7 +211,6 @@ func TestBasicValidator_InvalidConfigType(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "invalid config type")
 }
 
-// TestTemplateValidator_InvalidConfigType tests handling of invalid config type.
 func TestTemplateValidator_InvalidConfigType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -246,7 +240,6 @@ func TestTemplateValidator_InvalidConfigType(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "invalid config type")
 }
 
-// TestJSONPathValidator_InvalidConfigType tests handling of invalid config type.
 func TestJSONPathValidator_InvalidConfigType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -276,7 +269,6 @@ func TestJSONPathValidator_InvalidConfigType(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "invalid config type")
 }
 
-// TestTemplateValidator_SnippetErrors tests template snippet validation errors.
 func TestTemplateValidator_SnippetErrors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -321,7 +313,6 @@ func TestTemplateValidator_SnippetErrors(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "syntax error")
 }
 
-// TestTemplateValidator_MapErrors tests map file template validation errors.
 func TestTemplateValidator_MapErrors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -364,7 +355,6 @@ func TestTemplateValidator_MapErrors(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "syntax error")
 }
 
-// TestTemplateValidator_FileErrors tests file template validation errors.
 func TestTemplateValidator_FileErrors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -407,7 +397,6 @@ func TestTemplateValidator_FileErrors(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "syntax error")
 }
 
-// TestTemplateValidator_CurrentConfigDeclaration tests that templates using
 // currentConfig compile successfully. This ensures the TemplateValidator
 // provides the currentConfig type declaration like other code paths do.
 func TestTemplateValidator_CurrentConfigDeclaration(t *testing.T) {
@@ -450,7 +439,6 @@ valid config`,
 	assert.Empty(t, response.Errors)
 }
 
-// TestJSONPathValidator_IndexByErrors tests IndexBy JSONPath validation errors.
 func TestJSONPathValidator_IndexByErrors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
@@ -492,7 +480,6 @@ func TestJSONPathValidator_IndexByErrors(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "watched_resources.ingresses.index_by")
 }
 
-// TestBaseValidator_IgnoresOtherEvents tests that the validator ignores non-ConfigValidationRequest events.
 func TestBaseValidator_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 

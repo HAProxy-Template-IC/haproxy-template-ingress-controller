@@ -1,43 +1,14 @@
 package comparator
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 )
 
-// mockTestOperation implements Operation for testing OrderOperations.
-type mockTestOperation struct {
-	opType   sections.OperationType
-	section  string
-	priority int
-	desc     string
-}
-
-func (m *mockTestOperation) Type() sections.OperationType { return m.opType }
-func (m *mockTestOperation) Section() string              { return m.section }
-func (m *mockTestOperation) Priority() int                { return m.priority }
-func (m *mockTestOperation) Describe() string             { return m.desc }
-func (m *mockTestOperation) Execute(_ context.Context, _ *client.DataplaneClient, _ string) error {
-	return nil
-}
-
-// newTestOp creates a mock operation for testing.
-func newTestOp(opType sections.OperationType, section string, priority int) *mockTestOperation {
-	return &mockTestOperation{
-		opType:   opType,
-		section:  section,
-		priority: priority,
-		desc:     section + " op",
-	}
-}
-
-// TestNewDiffSummary tests the NewDiffSummary constructor.
 func TestNewDiffSummary(t *testing.T) {
 	summary := NewDiffSummary()
 
@@ -50,7 +21,6 @@ func TestNewDiffSummary(t *testing.T) {
 	assert.Equal(t, 0, summary.TotalDeletes)
 }
 
-// TestDiffSummary_HasChanges tests the HasChanges method.
 func TestDiffSummary_HasChanges(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -91,7 +61,6 @@ func TestDiffSummary_HasChanges(t *testing.T) {
 	}
 }
 
-// TestDiffSummary_TotalOperations tests the TotalOperations method.
 func TestDiffSummary_TotalOperations(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -122,7 +91,6 @@ func TestDiffSummary_TotalOperations(t *testing.T) {
 	}
 }
 
-// TestDiffSummary_StructuralOperations tests the StructuralOperations method.
 // This method should exclude server UPDATE operations (runtime-eligible) from the count.
 func TestDiffSummary_StructuralOperations(t *testing.T) {
 	tests := []struct {
@@ -203,7 +171,6 @@ func TestDiffSummary_StructuralOperations(t *testing.T) {
 	}
 }
 
-// TestDiffSummary_String tests the String method.
 func TestDiffSummary_String(t *testing.T) {
 	t.Run("no changes", func(t *testing.T) {
 		summary := DiffSummary{}
@@ -278,7 +245,6 @@ func TestDiffSummary_String(t *testing.T) {
 	})
 }
 
-// TestOrderOperations_EmptyList tests OrderOperations with empty input.
 func TestOrderOperations_EmptyList(t *testing.T) {
 	result := OrderOperations(nil)
 	assert.Empty(t, result)
@@ -287,10 +253,9 @@ func TestOrderOperations_EmptyList(t *testing.T) {
 	assert.Empty(t, result)
 }
 
-// TestOrderOperations_SingleOperation tests OrderOperations with single operation.
 func TestOrderOperations_SingleOperation(t *testing.T) {
 	ops := []Operation{
-		newTestOp(sections.OperationCreate, "backend", 20),
+		newMockOp(sections.OperationCreate, "backend", 20),
 	}
 
 	result := OrderOperations(ops)
@@ -299,13 +264,12 @@ func TestOrderOperations_SingleOperation(t *testing.T) {
 	assert.Equal(t, "backend", result[0].Section())
 }
 
-// TestOrderOperations_DeletesBeforeCreates tests that deletes come before creates.
 func TestOrderOperations_DeletesBeforeCreates(t *testing.T) {
 	ops := []Operation{
-		newTestOp(sections.OperationCreate, "backend", 20),
-		newTestOp(sections.OperationDelete, "frontend", 10),
-		newTestOp(sections.OperationCreate, "server", 30),
-		newTestOp(sections.OperationDelete, "acl", 50),
+		newMockOp(sections.OperationCreate, "backend", 20),
+		newMockOp(sections.OperationDelete, "frontend", 10),
+		newMockOp(sections.OperationCreate, "server", 30),
+		newMockOp(sections.OperationDelete, "acl", 50),
 	}
 
 	result := OrderOperations(ops)
@@ -321,12 +285,11 @@ func TestOrderOperations_DeletesBeforeCreates(t *testing.T) {
 	assert.Equal(t, sections.OperationCreate, result[3].Type())
 }
 
-// TestOrderOperations_UpdatesAfterCreates tests that updates come after creates.
 func TestOrderOperations_UpdatesAfterCreates(t *testing.T) {
 	ops := []Operation{
-		newTestOp(sections.OperationUpdate, "backend", 20),
-		newTestOp(sections.OperationCreate, "frontend", 10),
-		newTestOp(sections.OperationUpdate, "server", 30),
+		newMockOp(sections.OperationUpdate, "backend", 20),
+		newMockOp(sections.OperationCreate, "frontend", 10),
+		newMockOp(sections.OperationUpdate, "server", 30),
 	}
 
 	result := OrderOperations(ops)
@@ -341,14 +304,13 @@ func TestOrderOperations_UpdatesAfterCreates(t *testing.T) {
 	assert.Equal(t, sections.OperationUpdate, result[2].Type())
 }
 
-// TestOrderOperations_DeletesPriorityDescending tests that deletes are sorted by descending priority.
 func TestOrderOperations_DeletesPriorityDescending(t *testing.T) {
 	// Higher priority deletes first (children before parents)
 	ops := []Operation{
-		newTestOp(sections.OperationDelete, "backend", 20),
-		newTestOp(sections.OperationDelete, "server", 30),
-		newTestOp(sections.OperationDelete, "acl", 50),
-		newTestOp(sections.OperationDelete, "frontend", 10),
+		newMockOp(sections.OperationDelete, "backend", 20),
+		newMockOp(sections.OperationDelete, "server", 30),
+		newMockOp(sections.OperationDelete, "acl", 50),
+		newMockOp(sections.OperationDelete, "frontend", 10),
 	}
 
 	result := OrderOperations(ops)
@@ -362,14 +324,13 @@ func TestOrderOperations_DeletesPriorityDescending(t *testing.T) {
 	assert.Equal(t, 10, result[3].Priority()) // frontend
 }
 
-// TestOrderOperations_CreatesPriorityAscending tests that creates are sorted by ascending priority.
 func TestOrderOperations_CreatesPriorityAscending(t *testing.T) {
 	// Lower priority creates first (parents before children)
 	ops := []Operation{
-		newTestOp(sections.OperationCreate, "server", 30),
-		newTestOp(sections.OperationCreate, "acl", 50),
-		newTestOp(sections.OperationCreate, "backend", 20),
-		newTestOp(sections.OperationCreate, "frontend", 10),
+		newMockOp(sections.OperationCreate, "server", 30),
+		newMockOp(sections.OperationCreate, "acl", 50),
+		newMockOp(sections.OperationCreate, "backend", 20),
+		newMockOp(sections.OperationCreate, "frontend", 10),
 	}
 
 	result := OrderOperations(ops)
@@ -383,15 +344,14 @@ func TestOrderOperations_CreatesPriorityAscending(t *testing.T) {
 	assert.Equal(t, 50, result[3].Priority()) // acl
 }
 
-// TestOrderOperations_FullExample tests a realistic mix of operations.
 func TestOrderOperations_FullExample(t *testing.T) {
 	ops := []Operation{
-		newTestOp(sections.OperationCreate, "frontend", 10),
-		newTestOp(sections.OperationDelete, "old-server", 30),
-		newTestOp(sections.OperationUpdate, "backend", 20),
-		newTestOp(sections.OperationCreate, "server", 30),
-		newTestOp(sections.OperationDelete, "old-backend", 20),
-		newTestOp(sections.OperationUpdate, "frontend", 10),
+		newMockOp(sections.OperationCreate, "frontend", 10),
+		newMockOp(sections.OperationDelete, "old-server", 30),
+		newMockOp(sections.OperationUpdate, "backend", 20),
+		newMockOp(sections.OperationCreate, "server", 30),
+		newMockOp(sections.OperationDelete, "old-backend", 20),
+		newMockOp(sections.OperationUpdate, "frontend", 10),
 	}
 
 	result := OrderOperations(ops)

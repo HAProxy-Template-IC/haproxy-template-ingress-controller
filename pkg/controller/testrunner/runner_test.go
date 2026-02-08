@@ -724,7 +724,6 @@ global
 	assert.Contains(t, testResult.RenderError, "no fixture defined for URL")
 }
 
-// TestRunner_RunTests_WithCurrentConfig tests that the currentConfig fixture
 // is parsed and made available to templates for slot-aware server assignment.
 func TestRunner_RunTests_WithCurrentConfig(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -842,7 +841,6 @@ backend my-backend-2
 	assert.Contains(t, testResult.RenderedConfig, "Previous backend: my-backend-2")
 }
 
-// TestRunner_RunTests_WithoutCurrentConfig tests that templates handle
 // the case when currentConfig is nil (first deployment).
 func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

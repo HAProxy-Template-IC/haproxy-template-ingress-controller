@@ -7,16 +7,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// =============================================================================
 // TDD Tests for Enterprise Parser
 //
 // These tests verify that the enterprise parser:
 // 1. Parses CE sections (global, defaults, frontend, backend) correctly
 // 2. Parses EE standalone sections (udp-lb, waf-global, waf-profile, etc.)
 // 3. Captures EE directives in CE sections (filter waf, http-request waf-evaluate)
-// =============================================================================
-
-// --- Test Configs ---
 
 const simpleConfig = `
 global
@@ -108,8 +104,6 @@ global
 defaults
     mode http
 `
-
-// --- Tests ---
 
 func TestParser_ParseFromString_Empty(t *testing.T) {
 	p, err := NewParser()

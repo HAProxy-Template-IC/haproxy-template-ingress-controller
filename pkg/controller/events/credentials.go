@@ -16,10 +16,6 @@ package events
 
 import "time"
 
-// -----------------------------------------------------------------------------
-// Credentials Events.
-// -----------------------------------------------------------------------------
-
 // SecretResourceChangedEvent is published when the Secret resource is added, updated, or deleted.
 //
 // This is a low-level event published directly by the SingleWatcher callback in the controller package.

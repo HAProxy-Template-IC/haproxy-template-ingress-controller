@@ -37,10 +37,6 @@ func TestNewDynamicUpdateOperations(t *testing.T) {
 	assert.Equal(t, c, du.client)
 }
 
-// =============================================================================
-// Dynamic Update Section Tests
-// =============================================================================
-
 func TestDynamicUpdateOperations_GetSection_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -215,10 +211,6 @@ func TestDynamicUpdateOperations_DeleteSection_CommunityEdition(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, client.ErrEnterpriseRequired))
 }
-
-// =============================================================================
-// Dynamic Update Rules Tests
-// =============================================================================
 
 func TestDynamicUpdateOperations_GetAllRules_Success(t *testing.T) {
 	server := newMockEnterpriseServer(t, mockServerConfig{

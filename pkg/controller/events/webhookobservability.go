@@ -16,10 +16,6 @@ package events
 
 import "time"
 
-// -----------------------------------------------------------------------------
-// Webhook Validation Events (Observability).
-// -----------------------------------------------------------------------------
-
 // WebhookValidationRequestEvent is published when an admission request is received.
 type WebhookValidationRequestEvent struct {
 	RequestUID string

@@ -13,10 +13,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
-// =============================================================================
-// AcmeProvider Executors (v3.2+ only)
-// =============================================================================
-
 // AcmeProviderCreate returns an executor for creating acme sections.
 // ACME providers are only available in HAProxy DataPlane API v3.2+.
 func AcmeProviderCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.AcmeProvider, name string) error {
@@ -92,12 +88,10 @@ func AcmeProviderDelete() func(ctx context.Context, c *client.DataplaneClient, t
 	}
 }
 
-// =============================================================================
 // v3.2+ Dispatch Helpers
 // These are specialized dispatchers for features only available in v3.2+.
 // They will return an error if called on v3.0 or v3.1 clients (which should never
 // happen since capability checks prevent operation generation for unsupported versions).
-// =============================================================================
 
 // DispatchCreate32Plus is a generic helper for create operations on v3.2+ only features.
 func DispatchCreate32Plus[TUnified any, TV32 any, TV32EE any](

@@ -16,10 +16,6 @@ package events
 
 import "time"
 
-// -----------------------------------------------------------------------------
-// Reconciliation Events.
-// -----------------------------------------------------------------------------
-
 // ReconciliationTriggeredEvent is published when a reconciliation cycle should start.
 //
 // This event is typically published by the Reconciler after the debounce timer.

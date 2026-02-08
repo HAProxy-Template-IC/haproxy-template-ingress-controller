@@ -38,7 +38,6 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestPublishConfig_CreateNew tests publishing a new runtime config with auxiliary files.
 func TestPublishConfig_CreateNew(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -121,7 +120,6 @@ func TestPublishConfig_CreateNew(t *testing.T) {
 		secrets.Items[0].Data["path"])
 }
 
-// TestPublishConfig_Update tests updating an existing runtime config.
 func TestPublishConfig_Update(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -171,7 +169,6 @@ func TestPublishConfig_Update(t *testing.T) {
 	assert.Equal(t, "def456", runtimeConfig.Spec.Checksum)
 }
 
-// TestUpdateDeploymentStatus_AddPod tests adding a pod to deployment status.
 func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -219,7 +216,6 @@ func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
 	assert.Equal(t, "abc123", runtimeConfig.Status.DeployedToPods[0].Checksum)
 }
 
-// TestUpdateDeploymentStatus_UpdateExistingPod tests updating existing pod status.
 func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -278,7 +274,6 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	assert.Equal(t, "def456", runtimeConfig.Status.DeployedToPods[0].Checksum)
 }
 
-// TestUpdateDeploymentStatus_MultiplePods tests adding multiple pods.
 func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -334,7 +329,6 @@ func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 	assert.Contains(t, podNames, "haproxy-2")
 }
 
-// TestCleanupPodReferences_RemovePod tests removing a pod from deployment status.
 func TestCleanupPodReferences_RemovePod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -390,7 +384,6 @@ func TestCleanupPodReferences_RemovePod(t *testing.T) {
 	assert.Equal(t, "haproxy-1", runtimeConfig.Status.DeployedToPods[0].PodName)
 }
 
-// TestCleanupPodReferences_NonexistentPod tests cleaning up a pod that doesn't exist.
 func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -433,7 +426,6 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 	assert.Len(t, runtimeConfig.Status.DeployedToPods, 0)
 }
 
-// TestUpdateDeploymentStatus_RuntimeConfigNotFound tests updating when runtime config doesn't exist.
 func TestUpdateDeploymentStatus_RuntimeConfigNotFound(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -456,7 +448,6 @@ func TestUpdateDeploymentStatus_RuntimeConfigNotFound(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestPublishConfig_GeneralFiles tests publishing a runtime config with general files.
 func TestPublishConfig_GeneralFiles(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -503,7 +494,6 @@ func TestPublishConfig_GeneralFiles(t *testing.T) {
 		generalFiles.Items[0].Spec.Content)
 }
 
-// TestPublishConfig_CRTListFiles tests publishing a runtime config with crt-list files.
 func TestPublishConfig_CRTListFiles(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -549,7 +539,6 @@ func TestPublishConfig_CRTListFiles(t *testing.T) {
 	assert.Contains(t, crtListFiles.Items[0].Spec.Entries, "wildcard.pem")
 }
 
-// TestPublishConfig_WithCompression tests that large content is compressed.
 func TestPublishConfig_WithCompression(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -596,7 +585,6 @@ func TestPublishConfig_WithCompression(t *testing.T) {
 		"Compressed content should be smaller than original")
 }
 
-// TestPublishConfig_CompressionDisabled tests that compression is disabled when threshold is <= 0.
 func TestPublishConfig_CompressionDisabled(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -638,7 +626,6 @@ func TestPublishConfig_CompressionDisabled(t *testing.T) {
 	assert.Equal(t, largeContent, runtimeConfig.Spec.Content, "Content should be unchanged")
 }
 
-// TestPublishConfig_SSLSecretCompressionAnnotation tests that SSL secrets use annotations for compression flag.
 func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -690,7 +677,6 @@ func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
 	assert.False(t, hasCompressedData, "compressed should NOT be in Secret data")
 }
 
-// TestReconcileDeployedToPods_RemovesStalePods tests that stale pods are removed from status.
 func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -742,7 +728,6 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 	assert.Equal(t, "haproxy-1", runtimeConfig.Status.DeployedToPods[0].PodName)
 }
 
-// TestReconcileDeployedToPods_NoRunningPods tests that all pods are removed when no pods running.
 func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -793,7 +778,6 @@ func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 	assert.Empty(t, runtimeConfig.Status.DeployedToPods)
 }
 
-// TestReconcileDeployedToPods_NoStalePods tests that nothing changes when all pods are running.
 func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -844,7 +828,6 @@ func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 2)
 }
 
-// TestReconcileDeployedToPods_EmptyStatus tests reconciling when no pods in status.
 func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -881,7 +864,6 @@ func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 	assert.Empty(t, runtimeConfig.Status.DeployedToPods)
 }
 
-// TestAddOrUpdatePodStatus_PreservesDeployedAt tests that existing deployedAt is preserved when new one is zero.
 func TestAddOrUpdatePodStatus_PreservesDeployedAt(t *testing.T) {
 	existingTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 
@@ -909,7 +891,6 @@ func TestAddOrUpdatePodStatus_PreservesDeployedAt(t *testing.T) {
 	assert.Equal(t, existingTime, result[0].DeployedAt, "existing deployedAt should be preserved")
 }
 
-// TestAddOrUpdatePodStatus_UpdatesExistingPod tests that existing pod is updated, not appended.
 func TestAddOrUpdatePodStatus_UpdatesExistingPod(t *testing.T) {
 	existingTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 	newTime := metav1.NewTime(time.Now())
@@ -936,7 +917,6 @@ func TestAddOrUpdatePodStatus_UpdatesExistingPod(t *testing.T) {
 	assert.Equal(t, newTime, result[0].DeployedAt)
 }
 
-// TestAddOrUpdatePodStatus_AppendsDifferentPod tests that a different pod is appended.
 func TestAddOrUpdatePodStatus_AppendsDifferentPod(t *testing.T) {
 	existingTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 	newTime := metav1.NewTime(time.Now())
@@ -963,7 +943,6 @@ func TestAddOrUpdatePodStatus_AppendsDifferentPod(t *testing.T) {
 	assert.Equal(t, "haproxy-1", result[1].PodName)
 }
 
-// TestCopyPodStatuses_ReturnsDeepCopy tests that copyPodStatuses creates a deep copy.
 func TestCopyPodStatuses_ReturnsDeepCopy(t *testing.T) {
 	original := []haproxyv1alpha1.PodDeploymentStatus{
 		{
@@ -982,13 +961,11 @@ func TestCopyPodStatuses_ReturnsDeepCopy(t *testing.T) {
 	assert.Equal(t, "checksum-0", copied[0].Checksum, "copy should not be affected by original modification")
 }
 
-// TestCopyPodStatuses_NilInput tests that copyPodStatuses handles nil input.
 func TestCopyPodStatuses_NilInput(t *testing.T) {
 	copied := copyPodStatuses(nil)
 	assert.Nil(t, copied, "nil input should return nil")
 }
 
-// TestPodStatusesEqual_IdenticalStatuses tests that identical statuses are equal.
 func TestPodStatusesEqual_IdenticalStatuses(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 	reloadAt := metav1.NewTime(time.Now().Add(-5 * time.Minute))
@@ -1016,7 +993,6 @@ func TestPodStatusesEqual_IdenticalStatuses(t *testing.T) {
 	assert.True(t, podStatusesEqual(a, b), "identical statuses should be equal")
 }
 
-// TestPodStatusesEqual_DifferentChecksum tests that different checksums are not equal.
 func TestPodStatusesEqual_DifferentChecksum(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
@@ -1039,7 +1015,6 @@ func TestPodStatusesEqual_DifferentChecksum(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different checksums should not be equal")
 }
 
-// TestPodStatusesEqual_DifferentDeployedAt tests that different deployment times are not equal.
 func TestPodStatusesEqual_DifferentDeployedAt(t *testing.T) {
 	a := []haproxyv1alpha1.PodDeploymentStatus{
 		{
@@ -1060,7 +1035,6 @@ func TestPodStatusesEqual_DifferentDeployedAt(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different deployment times should not be equal")
 }
 
-// TestPodStatusesEqual_DifferentLength tests that slices with different lengths are not equal.
 func TestPodStatusesEqual_DifferentLength(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
@@ -1076,7 +1050,6 @@ func TestPodStatusesEqual_DifferentLength(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different lengths should not be equal")
 }
 
-// TestPodStatusesEqual_EmptySlices tests that empty slices are equal.
 func TestPodStatusesEqual_EmptySlices(t *testing.T) {
 	a := []haproxyv1alpha1.PodDeploymentStatus{}
 	b := []haproxyv1alpha1.PodDeploymentStatus{}
@@ -1084,7 +1057,6 @@ func TestPodStatusesEqual_EmptySlices(t *testing.T) {
 	assert.True(t, podStatusesEqual(a, b), "empty slices should be equal")
 }
 
-// TestPodStatusesEqual_LastReloadAtNilVsSet tests LastReloadAt comparison.
 func TestPodStatusesEqual_LastReloadAtNilVsSet(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 	reloadAt := metav1.NewTime(time.Now())
@@ -1110,7 +1082,6 @@ func TestPodStatusesEqual_LastReloadAtNilVsSet(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "nil vs set LastReloadAt should not be equal")
 }
 
-// TestPodStatusesEqual_DifferentSyncDuration tests SyncDuration comparison.
 func TestPodStatusesEqual_DifferentSyncDuration(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 	duration1 := metav1.Duration{Duration: 5 * time.Second}
@@ -1137,7 +1108,6 @@ func TestPodStatusesEqual_DifferentSyncDuration(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different SyncDuration should not be equal")
 }
 
-// TestPodStatusesEqual_SyncDurationNilVsSet tests SyncDuration nil comparison.
 func TestPodStatusesEqual_SyncDurationNilVsSet(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 	duration := metav1.Duration{Duration: 5 * time.Second}
@@ -1163,7 +1133,6 @@ func TestPodStatusesEqual_SyncDurationNilVsSet(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "nil vs set SyncDuration should not be equal")
 }
 
-// TestPodStatusesEqual_DifferentVersionConflictRetries tests VersionConflictRetries comparison.
 func TestPodStatusesEqual_DifferentVersionConflictRetries(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
@@ -1188,7 +1157,6 @@ func TestPodStatusesEqual_DifferentVersionConflictRetries(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different VersionConflictRetries should not be equal")
 }
 
-// TestPodStatusesEqual_DifferentFallbackUsed tests FallbackUsed comparison.
 func TestPodStatusesEqual_DifferentFallbackUsed(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
@@ -1213,7 +1181,6 @@ func TestPodStatusesEqual_DifferentFallbackUsed(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different FallbackUsed should not be equal")
 }
 
-// TestPodStatusesEqual_DifferentConsecutiveErrors tests ConsecutiveErrors comparison.
 func TestPodStatusesEqual_DifferentConsecutiveErrors(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
@@ -1238,7 +1205,6 @@ func TestPodStatusesEqual_DifferentConsecutiveErrors(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different ConsecutiveErrors should not be equal")
 }
 
-// TestPodStatusesEqual_DifferentLastErrorAt tests LastErrorAt comparison.
 func TestPodStatusesEqual_DifferentLastErrorAt(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 	errorAt1 := metav1.NewTime(time.Now().Add(-1 * time.Hour))
@@ -1265,7 +1231,6 @@ func TestPodStatusesEqual_DifferentLastErrorAt(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different LastErrorAt should not be equal")
 }
 
-// TestPodStatusesEqual_LastErrorAtNilVsSet tests LastErrorAt nil comparison.
 func TestPodStatusesEqual_LastErrorAtNilVsSet(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 	errorAt := metav1.NewTime(time.Now())
@@ -1291,7 +1256,6 @@ func TestPodStatusesEqual_LastErrorAtNilVsSet(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "nil vs set LastErrorAt should not be equal")
 }
 
-// TestPodStatusesEqual_DifferentLastOperationSummary tests LastOperationSummary comparison.
 func TestPodStatusesEqual_DifferentLastOperationSummary(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
@@ -1322,7 +1286,6 @@ func TestPodStatusesEqual_DifferentLastOperationSummary(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "different LastOperationSummary should not be equal")
 }
 
-// TestPodStatusesEqual_LastOperationSummaryNilVsSet tests LastOperationSummary nil comparison.
 func TestPodStatusesEqual_LastOperationSummaryNilVsSet(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
@@ -1349,7 +1312,6 @@ func TestPodStatusesEqual_LastOperationSummaryNilVsSet(t *testing.T) {
 	assert.False(t, podStatusesEqual(a, b), "nil vs set LastOperationSummary should not be equal")
 }
 
-// TestPodStatusesEqual_IdenticalWithAllFields tests that statuses with all fields set are equal.
 func TestPodStatusesEqual_IdenticalWithAllFields(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 	reloadAt := metav1.NewTime(time.Now().Add(-5 * time.Minute))
