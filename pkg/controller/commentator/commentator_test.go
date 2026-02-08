@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
@@ -336,7 +337,11 @@ func TestEventCommentator_GenerateInsight_DeploymentEvents(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	t.Run("DeploymentStartedEvent", func(t *testing.T) {
-		endpoints := []interface{}{"pod1", "pod2", "pod3"}
+		endpoints := []dataplane.Endpoint{
+			{URL: "http://pod1:5555"},
+			{URL: "http://pod2:5555"},
+			{URL: "http://pod3:5555"},
+		}
 		event := events.NewDeploymentStartedEvent(endpoints)
 
 		insight, attrs := ec.generateInsight(event)
@@ -803,7 +808,11 @@ func TestEventCommentator_GenerateInsight_HAProxyPodEvents(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	t.Run("HAProxyPodsDiscoveredEvent", func(t *testing.T) {
-		endpoints := []interface{}{"pod1", "pod2", "pod3"}
+		endpoints := []dataplane.Endpoint{
+			{URL: "http://pod1:5555"},
+			{URL: "http://pod2:5555"},
+			{URL: "http://pod3:5555"},
+		}
 		event := events.NewHAProxyPodsDiscoveredEvent(endpoints, 3)
 
 		insight, attrs := ec.generateInsight(event)

@@ -17,6 +17,7 @@ package events
 import (
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
@@ -28,7 +29,7 @@ import (
 //
 // This event propagates the correlation ID from DeploymentScheduledEvent.
 type DeploymentStartedEvent struct {
-	Endpoints []interface{}
+	Endpoints []dataplane.Endpoint
 	timestamp time.Time
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -42,11 +43,11 @@ type DeploymentStartedEvent struct {
 //
 //	event := events.NewDeploymentStartedEvent(endpoints,
 //	    events.PropagateCorrelation(scheduledEvent))
-func NewDeploymentStartedEvent(endpoints []interface{}, opts ...CorrelationOption) *DeploymentStartedEvent {
+func NewDeploymentStartedEvent(endpoints []dataplane.Endpoint, opts ...CorrelationOption) *DeploymentStartedEvent {
 	// Defensive copy of slice
-	var endpointsCopy []interface{}
+	var endpointsCopy []dataplane.Endpoint
 	if len(endpoints) > 0 {
-		endpointsCopy = make([]interface{}, len(endpoints))
+		endpointsCopy = make([]dataplane.Endpoint, len(endpoints))
 		copy(endpointsCopy, endpoints)
 	}
 
@@ -217,19 +218,15 @@ type DeploymentScheduledEvent struct {
 	Config string
 
 	// AuxiliaryFiles contains all rendered auxiliary files.
-	// Type: interface{} to avoid circular dependencies with pkg/dataplane.
-	// Consumers should type-assert to *dataplane.AuxiliaryFiles.
-	AuxiliaryFiles interface{}
+	AuxiliaryFiles *dataplane.AuxiliaryFiles
 
 	// ParsedConfig is the pre-parsed desired configuration from validation.
 	// May be nil if validation cache was used.
 	// When non-nil, passed to sync operations to skip redundant parsing.
-	// Type: interface{} to avoid circular dependencies with pkg/dataplane.
-	// Consumers should type-assert to *parser.StructuredConfig.
-	ParsedConfig interface{}
+	ParsedConfig *parser.StructuredConfig
 
 	// Endpoints is the list of HAProxy endpoints to deploy to.
-	Endpoints []interface{}
+	Endpoints []dataplane.Endpoint
 
 	// RuntimeConfigName is the name of the HAProxyCfg resource.
 	// Used for publishing ConfigAppliedToPodEvent after successful deployment.
@@ -276,11 +273,11 @@ type DeploymentScheduledEvent struct {
 //
 //	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, contentChecksum, coalescible,
 //	    events.PropagateCorrelation(validationEvent))
-func NewDeploymentScheduledEvent(config string, auxFiles interface{}, parsedConfig *parser.StructuredConfig, endpoints []interface{}, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
+func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFiles, parsedConfig *parser.StructuredConfig, endpoints []dataplane.Endpoint, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
 	// Defensive copy of endpoints slice
-	var endpointsCopy []interface{}
+	var endpointsCopy []dataplane.Endpoint
 	if len(endpoints) > 0 {
-		endpointsCopy = make([]interface{}, len(endpoints))
+		endpointsCopy = make([]dataplane.Endpoint, len(endpoints))
 		copy(endpointsCopy, endpoints)
 	}
 

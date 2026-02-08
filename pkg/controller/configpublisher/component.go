@@ -309,23 +309,11 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 		"correlation_id", correlationID,
 	)
 
-	// Extract auxiliary files using typed accessor for compile-time type safety
-	var auxFiles *dataplane.AuxiliaryFiles
-	if event.AuxiliaryFiles != nil {
-		if files, ok := event.GetAuxiliaryFiles(); ok {
-			auxFiles = files
-		} else {
-			c.logger.Warn("template rendered event contains unexpected auxiliary files type - expected *dataplane.AuxiliaryFiles",
-				"actual_type", fmt.Sprintf("%T", event.AuxiliaryFiles),
-				"config_bytes", event.ConfigBytes)
-		}
-	}
-
 	// Cache the rendered config indexed by correlation ID
 	c.mu.Lock()
 	c.renderedConfigs[correlationID] = &renderedConfigEntry{
 		config:          event.HAProxyConfig,
-		auxFiles:        auxFiles,
+		auxFiles:        event.AuxiliaryFiles,
 		contentChecksum: event.ContentChecksum,
 		renderedAt:      event.Timestamp(),
 	}
@@ -595,9 +583,7 @@ func (c *Component) handlePodsDiscovered(event *events.HAProxyPodsDiscoveredEven
 	// Extract pod names from discovered endpoints
 	podNames := make([]string, 0, len(event.Endpoints))
 	for _, ep := range event.Endpoints {
-		if endpoint, ok := ep.(dataplane.Endpoint); ok {
-			podNames = append(podNames, endpoint.PodName)
-		}
+		podNames = append(podNames, ep.PodName)
 	}
 
 	// Create timeout context (same pattern as handlePodTerminated)

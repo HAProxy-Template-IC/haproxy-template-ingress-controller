@@ -261,56 +261,15 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		c.cancelMu.Unlock()
 	}()
 
-	// Extract parsed config from event
-	var parsedConfig *parser.StructuredConfig
-	if event.ParsedConfig != nil {
-		if pc, ok := event.ParsedConfig.(*parser.StructuredConfig); ok {
-			parsedConfig = pc
-		}
-	}
-
 	c.logger.Debug("Deployment scheduled, starting execution",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
 		"config_bytes", len(event.Config),
-		"has_parsed_config", parsedConfig != nil,
+		"has_parsed_config", event.ParsedConfig != nil,
 		"correlation_id", correlationID)
 
 	// Execute deployment with cancellable context
-	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, parsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, correlationID)
-}
-
-// convertEndpoints converts []interface{} to []dataplane.Endpoint.
-func (c *Component) convertEndpoints(endpointsRaw []interface{}) []dataplane.Endpoint {
-	endpoints := make([]dataplane.Endpoint, 0, len(endpointsRaw))
-	for i, ep := range endpointsRaw {
-		endpoint, ok := ep.(dataplane.Endpoint)
-		if !ok {
-			c.logger.Error("invalid endpoint type",
-				"index", i,
-				"expected", "dataplane.Endpoint",
-				"actual", fmt.Sprintf("%T", ep))
-			continue
-		}
-		endpoints = append(endpoints, endpoint)
-	}
-	return endpoints
-}
-
-// convertAuxFiles converts interface{} to *dataplane.AuxiliaryFiles.
-func (c *Component) convertAuxFiles(auxFilesRaw interface{}) *dataplane.AuxiliaryFiles {
-	if auxFilesRaw == nil {
-		return nil
-	}
-
-	auxFiles, ok := auxFilesRaw.(*dataplane.AuxiliaryFiles)
-	if !ok {
-		c.logger.Warn("invalid auxiliary files type, proceeding without aux files",
-			"expected", "*dataplane.AuxiliaryFiles",
-			"actual", fmt.Sprintf("%T", auxFilesRaw))
-		return nil
-	}
-	return auxFiles
+	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.ParsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, correlationID)
 }
 
 // deployToEndpoints deploys configuration to all HAProxy endpoints in parallel.
@@ -324,9 +283,9 @@ func (c *Component) convertAuxFiles(auxFilesRaw interface{}) *dataplane.Auxiliar
 func (c *Component) deployToEndpoints(
 	ctx context.Context,
 	config string,
-	auxFilesRaw interface{},
+	auxFiles *dataplane.AuxiliaryFiles,
 	parsedConfig *parser.StructuredConfig,
-	endpointsRaw []interface{},
+	endpoints []dataplane.Endpoint,
 	runtimeConfigName string,
 	runtimeConfigNamespace string,
 	reason string,
@@ -338,8 +297,6 @@ func (c *Component) deployToEndpoints(
 
 	startTime := time.Now()
 
-	// Convert endpoints and auxiliary files
-	endpoints := c.convertEndpoints(endpointsRaw)
 	if len(endpoints) == 0 {
 		c.logger.Error("no valid endpoints to deploy to")
 		// Publish completion event so downstream components know deployment didn't happen
@@ -349,8 +306,6 @@ func (c *Component) deployToEndpoints(
 		))
 		return
 	}
-
-	auxFiles := c.convertAuxFiles(auxFilesRaw)
 
 	// Calculate config checksum for ConfigAppliedToPodEvent
 	hash := sha256.Sum256([]byte(config))
@@ -365,7 +320,7 @@ func (c *Component) deployToEndpoints(
 
 	// Publish DeploymentStartedEvent with correlation
 	c.eventBus.Publish(events.NewDeploymentStartedEvent(
-		endpointsRaw,
+		endpoints,
 		events.WithCorrelation(correlationID, correlationID),
 	))
 

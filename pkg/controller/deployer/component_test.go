@@ -51,7 +51,7 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 		"test config",
 		nil,
 		nil, // parsedConfig
-		[]interface{}{},
+		[]dataplane.Endpoint{},
 		"test-runtime-config",
 		"test-namespace",
 		"test",
@@ -67,46 +67,6 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 
 	// Since there are no valid endpoints, no deployment events should be published
 	// This test just verifies the component handles the event without crashing
-}
-
-// TestDeployToEndpoints_InvalidEndpointType tests handling invalid endpoint types.
-func TestDeployToEndpoints_InvalidEndpointType(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	eventChan := bus.Subscribe("test-sub", 100)
-	bus.Start()
-
-	deployer := createTestDeployer(bus)
-
-	ctx := context.Background()
-	config := "test config"
-	auxFiles := &dataplane.AuxiliaryFiles{}
-
-	// Invalid endpoint type (string instead of dataplane.Endpoint)
-	invalidEndpoints := []interface{}{"not-an-endpoint"}
-
-	deployer.deployToEndpoints(ctx, config, auxFiles, nil, invalidEndpoints, "test-runtime-config", "default", "test", "", "test-correlation-id")
-
-	// Should not crash, just log error and publish completion event with zero endpoints
-	timeout := time.After(100 * time.Millisecond)
-	receivedEvents := []busevents.Event{}
-
-loop:
-	for {
-		select {
-		case event := <-eventChan:
-			receivedEvents = append(receivedEvents, event)
-		case <-timeout:
-			break loop
-		}
-	}
-
-	// Should publish a DeploymentCompletedEvent with 0 endpoints to notify downstream components
-	assert.Len(t, receivedEvents, 1)
-	completedEvent, ok := receivedEvents[0].(*events.DeploymentCompletedEvent)
-	assert.True(t, ok, "expected DeploymentCompletedEvent")
-	assert.Equal(t, 0, completedEvent.Total)
-	assert.Equal(t, 0, completedEvent.Succeeded)
-	assert.Equal(t, 0, completedEvent.Failed)
 }
 
 // TestDeployToEndpoints_EventPublishing tests that all expected events are published.
@@ -162,8 +122,8 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 	bus.Publish(events.NewDeploymentScheduledEvent(
 		"global\n  daemon\n",
 		&dataplane.AuxiliaryFiles{},
-		nil,             // parsedConfig
-		[]interface{}{}, // no endpoints
+		nil,                    // parsedConfig
+		[]dataplane.Endpoint{}, // no endpoints
 		"test-runtime-config",
 		"test-namespace",
 		"test",
@@ -194,84 +154,6 @@ loop:
 	// Cleanup
 	cancel()
 	time.Sleep(50 * time.Millisecond)
-}
-
-// TestComponent_ConvertEndpoints tests endpoint conversion.
-func TestComponent_ConvertEndpoints(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	deployer := createTestDeployer(bus)
-
-	t.Run("valid endpoints", func(t *testing.T) {
-		endpoints := []interface{}{
-			dataplane.Endpoint{
-				URL:          "http://localhost:5555",
-				PodName:      "haproxy-0",
-				PodNamespace: "default",
-			},
-			dataplane.Endpoint{
-				URL:          "http://localhost:5556",
-				PodName:      "haproxy-1",
-				PodNamespace: "default",
-			},
-		}
-
-		result := deployer.convertEndpoints(endpoints)
-
-		assert.Len(t, result, 2)
-		assert.Equal(t, "http://localhost:5555", result[0].URL)
-		assert.Equal(t, "http://localhost:5556", result[1].URL)
-	})
-
-	t.Run("empty endpoints", func(t *testing.T) {
-		endpoints := []interface{}{}
-
-		result := deployer.convertEndpoints(endpoints)
-
-		assert.Len(t, result, 0)
-	})
-
-	t.Run("mixed valid and invalid endpoints", func(t *testing.T) {
-		endpoints := []interface{}{
-			dataplane.Endpoint{
-				URL:     "http://localhost:5555",
-				PodName: "haproxy-0",
-			},
-			"invalid-endpoint",
-			dataplane.Endpoint{
-				URL:     "http://localhost:5556",
-				PodName: "haproxy-1",
-			},
-		}
-
-		result := deployer.convertEndpoints(endpoints)
-
-		// Should only include valid endpoints
-		assert.Len(t, result, 2)
-	})
-}
-
-// TestComponent_ConvertAuxFiles tests auxiliary files conversion.
-func TestComponent_ConvertAuxFiles(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	deployer := createTestDeployer(bus)
-
-	t.Run("nil input", func(t *testing.T) {
-		result := deployer.convertAuxFiles(nil)
-		assert.Nil(t, result)
-	})
-
-	t.Run("valid AuxiliaryFiles pointer", func(t *testing.T) {
-		auxFiles := &dataplane.AuxiliaryFiles{}
-
-		result := deployer.convertAuxFiles(auxFiles)
-
-		assert.NotNil(t, result)
-	})
-
-	t.Run("invalid type", func(t *testing.T) {
-		result := deployer.convertAuxFiles("invalid-type")
-		assert.Nil(t, result)
-	})
 }
 
 // TestComponent_ConvertSyncResultToMetadata tests sync result conversion.
@@ -351,7 +233,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 			"test config",
 			nil,
 			nil, // parsedConfig
-			[]interface{}{},
+			[]dataplane.Endpoint{},
 			"test-runtime-config",
 			"test-namespace",
 			"test",
@@ -376,7 +258,7 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 		"test config",
 		nil,
 		nil, // parsedConfig
-		[]interface{}{},
+		[]dataplane.Endpoint{},
 		"test-runtime-config",
 		"test-namespace",
 		"test",
@@ -415,7 +297,7 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 		"test config",
 		nil,
 		nil, // parsedConfig
-		[]interface{}{},
+		[]dataplane.Endpoint{},
 		"test-runtime-config",
 		"test-namespace",
 		"duplicate",
@@ -428,27 +310,6 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 
 	// Flag should still be true (not modified)
 	assert.True(t, deployer.deploymentInProgress.Load())
-}
-
-// TestComponent_ConvertEndpoints_InvalidType tests conversion of invalid endpoint types.
-func TestComponent_ConvertEndpoints_InvalidType(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	deployer := createTestDeployer(bus)
-
-	// Mix of valid and invalid endpoint types
-	endpointsRaw := []interface{}{
-		dataplane.Endpoint{URL: "http://localhost:5555"},
-		"invalid-string-type",
-		dataplane.Endpoint{URL: "http://localhost:5556"},
-		123, // invalid int type
-	}
-
-	endpoints := deployer.convertEndpoints(endpointsRaw)
-
-	// Should only include valid endpoints
-	assert.Len(t, endpoints, 2)
-	assert.Equal(t, "http://localhost:5555", endpoints[0].URL)
-	assert.Equal(t, "http://localhost:5556", endpoints[1].URL)
 }
 
 // TestComponent_isNoOpDeployment tests the helper function that determines
