@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
@@ -29,7 +30,7 @@ func (r *Runner) resolveTarget(target, haproxyConfig string, auxiliaryFiles *dat
 		return renderError
 	}
 
-	if target == "haproxy.cfg" || target == "" {
+	if target == names.MainTemplateName || target == "" {
 		return haproxyConfig
 	}
 

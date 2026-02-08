@@ -1,13 +1,13 @@
 package credentialsloader
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceloader"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -34,10 +34,7 @@ const (
 // Kubernetes. It simply reacts to SecretResourceChangedEvent and produces
 // CredentialsUpdatedEvent or CredentialsInvalidEvent.
 type CredentialsLoaderComponent struct {
-	eventBus  *busevents.EventBus
-	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger    *slog.Logger
-	stopCh    chan struct{}
+	*resourceloader.BaseLoader
 }
 
 // NewCredentialsLoaderComponent creates a new CredentialsLoader component.
@@ -49,49 +46,19 @@ type CredentialsLoaderComponent struct {
 // Returns:
 //   - *CredentialsLoaderComponent ready to start
 func NewCredentialsLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CredentialsLoaderComponent {
-	// Subscribe to only SecretResourceChangedEvent during construction
-	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeSecretResourceChanged)
-
-	return &CredentialsLoaderComponent{
-		eventBus:  eventBus,
-		eventChan: eventChan,
-		logger:    logger.With("component", ComponentName),
-		stopCh:    make(chan struct{}),
-	}
+	c := &CredentialsLoaderComponent{}
+	c.BaseLoader = resourceloader.NewBaseLoader(
+		eventBus, logger, ComponentName, EventBufferSize, c,
+		events.EventTypeSecretResourceChanged,
+	)
+	return c
 }
 
-// Start begins processing events from the EventBus.
-//
-// This method blocks until Stop() is called or the context is canceled.
-// The component is already subscribed to the EventBus (subscription happens in constructor).
-// Returns nil on graceful shutdown.
-//
-// Example:
-//
-//	go component.Start(ctx)
-func (c *CredentialsLoaderComponent) Start(ctx context.Context) error {
-	c.logger.Debug("credentials loader starting")
-
-	for {
-		select {
-		case <-ctx.Done():
-			c.logger.Info("CredentialsLoader shutting down", "reason", ctx.Err())
-			return nil
-		case <-c.stopCh:
-			c.logger.Info("CredentialsLoader shutting down")
-			return nil
-		case event := <-c.eventChan:
-			if secretEvent, ok := event.(*events.SecretResourceChangedEvent); ok {
-				c.processSecretChange(secretEvent)
-			}
-		}
+// ProcessEvent handles a single event from the EventBus.
+func (c *CredentialsLoaderComponent) ProcessEvent(event busevents.Event) {
+	if secretEvent, ok := event.(*events.SecretResourceChangedEvent); ok {
+		c.processSecretChange(secretEvent)
 	}
-}
-
-// Stop gracefully stops the component.
-func (c *CredentialsLoaderComponent) Stop() {
-	close(c.stopCh)
 }
 
 // processSecretChange handles a SecretResourceChangedEvent by parsing the Secret.
@@ -99,7 +66,7 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 	// Extract unstructured resource
 	resource, ok := event.Resource.(*unstructured.Unstructured)
 	if !ok {
-		c.logger.Error("SecretResourceChangedEvent contains invalid resource type",
+		c.Logger().Error("SecretResourceChangedEvent contains invalid resource type",
 			"expected", "*unstructured.Unstructured",
 			"got", fmt.Sprintf("%T", event.Resource))
 		return
@@ -108,7 +75,7 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 	// Get resourceVersion for tracking
 	version := resource.GetResourceVersion()
 
-	c.logger.Debug("Processing Secret change", "version", version)
+	c.Logger().Debug("Processing Secret change", "version", version)
 
 	// Extract Secret data
 	// Note: Secret data is stored as base64-encoded strings in the Kubernetes API.
@@ -116,40 +83,40 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 	// and must be decoded.
 	dataRaw, found, err := unstructured.NestedMap(resource.Object, "data")
 	if err != nil {
-		c.logger.Error("Failed to extract Secret data field",
+		c.Logger().Error("Failed to extract Secret data field",
 			"error", err,
 			"version", version)
-		c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("failed to extract Secret data: %v", err)))
+		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("failed to extract Secret data: %v", err)))
 		return
 	}
 	if !found {
-		c.logger.Error("Secret has no data field", "version", version)
-		c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, "Secret has no data field"))
+		c.Logger().Error("Secret has no data field", "version", version)
+		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, "Secret has no data field"))
 		return
 	}
 
 	// Parse Secret data (handles base64 decoding)
 	data, err := config.ParseSecretData(dataRaw)
 	if err != nil {
-		c.logger.Error("Failed to parse Secret data",
+		c.Logger().Error("Failed to parse Secret data",
 			"error", err,
 			"version", version)
-		c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
+		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
 		return
 	}
 
 	// Load the credentials
 	creds, err := config.LoadCredentials(data)
 	if err != nil {
-		c.logger.Error("Failed to load credentials from Secret",
+		c.Logger().Error("Failed to load credentials from Secret",
 			"error", err,
 			"version", version)
-		c.eventBus.Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
+		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
 		return
 	}
 
-	c.logger.Info("Credentials loaded successfully", "version", version)
+	c.Logger().Info("Credentials loaded successfully", "version", version)
 
 	// Publish CredentialsUpdatedEvent
-	c.eventBus.Publish(events.NewCredentialsUpdatedEvent(creds, version))
+	c.EventBus().Publish(events.NewCredentialsUpdatedEvent(creds, version))
 }

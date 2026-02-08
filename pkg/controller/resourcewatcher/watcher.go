@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
@@ -103,7 +104,7 @@ func New(
 	}
 
 	// Add haproxy-pods watcher (or override if user configured it)
-	resourcesWithHAProxyPods["haproxy-pods"] = coreconfig.WatchedResource{
+	resourcesWithHAProxyPods[names.HAProxyPodsResourceType] = coreconfig.WatchedResource{
 		APIVersion:    "v1",
 		Resources:     "pods",
 		LabelSelector: cfg.PodSelector.MatchLabels,
@@ -323,7 +324,7 @@ func determineStoreType(storeConfig string) types.StoreType {
 // HAProxy pods ("haproxy-pods") are scoped to the controller namespace for security.
 // All other resources are watched cluster-wide.
 func determineNamespace(resourceTypeName string, k8sClient *client.Client) string {
-	if resourceTypeName == "haproxy-pods" {
+	if resourceTypeName == names.HAProxyPodsResourceType {
 		return k8sClient.Namespace()
 	}
 	return "" // Cluster-wide for other resources

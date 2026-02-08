@@ -51,11 +51,7 @@ func CacheCreate() func(ctx context.Context, c *client.DataplaneClient, txID str
 				return clientset.V30EE().CreateCache(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "cache creation")
+		return dispatchAndCheck(resp, err, "cache creation")
 	}
 }
 
@@ -90,11 +86,7 @@ func CacheUpdate() func(ctx context.Context, c *client.DataplaneClient, txID str
 				return clientset.V30EE().ReplaceCache(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "cache update")
+		return dispatchAndCheck(resp, err, "cache update")
 	}
 }
 
@@ -129,11 +121,7 @@ func CacheDelete() func(ctx context.Context, c *client.DataplaneClient, txID str
 				return clientset.V30EE().DeleteCache(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "cache deletion")
+		return dispatchAndCheck(resp, err, "cache deletion")
 	}
 }
 
@@ -168,11 +156,7 @@ func HTTPErrorsSectionCreate() func(ctx context.Context, c *client.DataplaneClie
 				return clientset.V30EE().CreateHTTPErrorsSection(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "http-errors section creation")
+		return dispatchAndCheck(resp, err, "http-errors section creation")
 	}
 }
 
@@ -207,11 +191,7 @@ func HTTPErrorsSectionUpdate() func(ctx context.Context, c *client.DataplaneClie
 				return clientset.V30EE().ReplaceHTTPErrorsSection(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "http-errors section update")
+		return dispatchAndCheck(resp, err, "http-errors section update")
 	}
 }
 
@@ -246,11 +226,7 @@ func HTTPErrorsSectionDelete() func(ctx context.Context, c *client.DataplaneClie
 				return clientset.V30EE().DeleteHTTPErrorsSection(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "http-errors section deletion")
+		return dispatchAndCheck(resp, err, "http-errors section deletion")
 	}
 }
 
@@ -285,11 +261,7 @@ func LogForwardCreate() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V30EE().CreateLogForward(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log-forward creation")
+		return dispatchAndCheck(resp, err, "log-forward creation")
 	}
 }
 
@@ -324,11 +296,7 @@ func LogForwardUpdate() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V30EE().ReplaceLogForward(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log-forward update")
+		return dispatchAndCheck(resp, err, "log-forward update")
 	}
 }
 
@@ -363,11 +331,7 @@ func LogForwardDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V30EE().DeleteLogForward(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "log-forward deletion")
+		return dispatchAndCheck(resp, err, "log-forward deletion")
 	}
 }
 
@@ -402,11 +366,7 @@ func PeerSectionCreate() func(ctx context.Context, c *client.DataplaneClient, tx
 				return clientset.V30EE().CreatePeer(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "peer section creation")
+		return dispatchAndCheck(resp, err, "peer section creation")
 	}
 }
 
@@ -449,10 +409,6 @@ func PeerSectionDelete() func(ctx context.Context, c *client.DataplaneClient, tx
 				return clientset.V30EE().DeletePeer(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "peer section deletion")
+		return dispatchAndCheck(resp, err, "peer section deletion")
 	}
 }

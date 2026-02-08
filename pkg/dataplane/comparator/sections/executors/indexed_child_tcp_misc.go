@@ -60,11 +60,7 @@ func HTTPAfterResponseRuleBackendCreate() func(ctx context.Context, c *client.Da
 				return clientset.V30EE().CreateHTTPAfterResponseRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP after response rule creation in backend")
+		return dispatchAndCheck(resp, err, "HTTP after response rule creation in backend")
 	}
 }
 
@@ -99,11 +95,7 @@ func HTTPAfterResponseRuleBackendUpdate() func(ctx context.Context, c *client.Da
 				return clientset.V30EE().ReplaceHTTPAfterResponseRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP after response rule update in backend")
+		return dispatchAndCheck(resp, err, "HTTP after response rule update in backend")
 	}
 }
 
@@ -138,11 +130,7 @@ func HTTPAfterResponseRuleBackendDelete() func(ctx context.Context, c *client.Da
 				return clientset.V30EE().DeleteHTTPAfterResponseRuleBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP after response rule deletion from backend")
+		return dispatchAndCheck(resp, err, "HTTP after response rule deletion from backend")
 	}
 }
 
@@ -177,11 +165,7 @@ func DeclareCaptureFrontendCreate() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().CreateDeclareCapture(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "declare capture creation in frontend")
+		return dispatchAndCheck(resp, err, "declare capture creation in frontend")
 	}
 }
 
@@ -216,11 +200,7 @@ func DeclareCaptureFrontendUpdate() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().ReplaceDeclareCapture(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "declare capture update in frontend")
+		return dispatchAndCheck(resp, err, "declare capture update in frontend")
 	}
 }
 
@@ -255,10 +235,6 @@ func DeclareCaptureFrontendDelete() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().DeleteDeclareCapture(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "declare capture deletion from frontend")
+		return dispatchAndCheck(resp, err, "declare capture deletion from frontend")
 	}
 }

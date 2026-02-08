@@ -60,11 +60,7 @@ func ACLFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, tx
 				return clientset.V30EE().CreateAclFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ACL creation in frontend")
+		return dispatchAndCheck(resp, err, "ACL creation in frontend")
 	}
 }
 
@@ -99,11 +95,7 @@ func ACLFrontendUpdate() func(ctx context.Context, c *client.DataplaneClient, tx
 				return clientset.V30EE().ReplaceAclFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ACL update in frontend")
+		return dispatchAndCheck(resp, err, "ACL update in frontend")
 	}
 }
 
@@ -138,11 +130,7 @@ func ACLFrontendDelete() func(ctx context.Context, c *client.DataplaneClient, tx
 				return clientset.V30EE().DeleteAclFrontend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ACL deletion from frontend")
+		return dispatchAndCheck(resp, err, "ACL deletion from frontend")
 	}
 }
 
@@ -177,11 +165,7 @@ func ACLBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V30EE().CreateAclBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ACL creation in backend")
+		return dispatchAndCheck(resp, err, "ACL creation in backend")
 	}
 }
 
@@ -216,11 +200,7 @@ func ACLBackendUpdate() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V30EE().ReplaceAclBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ACL update in backend")
+		return dispatchAndCheck(resp, err, "ACL update in backend")
 	}
 }
 
@@ -255,10 +235,6 @@ func ACLBackendDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 				return clientset.V30EE().DeleteAclBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "ACL deletion from backend")
+		return dispatchAndCheck(resp, err, "ACL deletion from backend")
 	}
 }

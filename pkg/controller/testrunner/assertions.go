@@ -19,6 +19,7 @@ import (
 
 	"github.com/pmezard/go-difflib/difflib"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
@@ -81,9 +82,9 @@ func (r *Runner) assertDeterministic(
 	// Compare main HAProxy config
 	if firstConfig != secondConfig {
 		result.Passed = false
-		diff := generateUnifiedDiff("haproxy.cfg (render 1)", "haproxy.cfg (render 2)", firstConfig, secondConfig)
-		result.Error = fmt.Sprintf("haproxy.cfg differs between renders:\n%s", diff)
-		r.populateTargetMetadata(&result, firstConfig, "haproxy.cfg", true)
+		diff := generateUnifiedDiff(names.MainTemplateName+" (render 1)", names.MainTemplateName+" (render 2)", firstConfig, secondConfig)
+		result.Error = fmt.Sprintf("%s differs between renders:\n%s", names.MainTemplateName, diff)
+		r.populateTargetMetadata(&result, firstConfig, names.MainTemplateName, true)
 		return result
 	}
 

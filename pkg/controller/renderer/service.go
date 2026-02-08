@@ -27,6 +27,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -185,9 +186,9 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	renderContext, fileRegistry := s.buildRenderingContext(ctx, provider)
 
 	// Render main HAProxy config
-	haproxyConfig, err := s.engine.Render(ctx, "haproxy.cfg", renderContext)
+	haproxyConfig, err := s.engine.Render(ctx, names.MainTemplateName, renderContext)
 	if err != nil {
-		return nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
+		return nil, fmt.Errorf("failed to render %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files
@@ -242,7 +243,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	if s.haproxyPodStore != nil {
 		controller["haproxy_pods"] = &rendercontext.StoreWrapper{
 			Store:        s.haproxyPodStore,
-			ResourceType: "haproxy-pods",
+			ResourceType: names.HAProxyPodsResourceType,
 			Logger:       s.logger,
 		}
 	}

@@ -27,6 +27,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -282,9 +283,9 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	var allIncludeStats []templating.IncludeStats
 
 	// Render haproxy.cfg
-	fileResult, stats, err := renderSingleTemplate(engine, "haproxy.cfg", "haproxy.cfg", renderCtx)
+	fileResult, stats, err := renderSingleTemplate(engine, names.MainTemplateName, names.MainTemplateName, renderCtx)
 	if err != nil {
-		return result, fmt.Errorf("failed to render haproxy.cfg: %w", err)
+		return result, fmt.Errorf("failed to render %s: %w", names.MainTemplateName, err)
 	}
 	result.FileResults = append(result.FileResults, fileResult)
 	allIncludeStats = append(allIncludeStats, stats...)
@@ -331,32 +332,32 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 
 // sortedMapKeys returns sorted keys from a map config.
 func sortedMapKeys(maps map[string]config.MapFile) []string {
-	names := make([]string, 0, len(maps))
+	keys := make([]string, 0, len(maps))
 	for name := range maps {
-		names = append(names, name)
+		keys = append(keys, name)
 	}
-	sort.Strings(names)
-	return names
+	sort.Strings(keys)
+	return keys
 }
 
 // sortedFileKeys returns sorted keys from a file config.
 func sortedFileKeys(files map[string]config.GeneralFile) []string {
-	names := make([]string, 0, len(files))
+	keys := make([]string, 0, len(files))
 	for name := range files {
-		names = append(names, name)
+		keys = append(keys, name)
 	}
-	sort.Strings(names)
-	return names
+	sort.Strings(keys)
+	return keys
 }
 
 // sortedCertKeys returns sorted keys from a certificate config.
 func sortedCertKeys(certs map[string]config.SSLCertificate) []string {
-	names := make([]string, 0, len(certs))
+	keys := make([]string, 0, len(certs))
 	for name := range certs {
-		names = append(names, name)
+		keys = append(keys, name)
 	}
-	sort.Strings(names)
-	return names
+	sort.Strings(keys)
+	return keys
 }
 
 // createStoresForBenchmark creates resource stores from test fixtures.

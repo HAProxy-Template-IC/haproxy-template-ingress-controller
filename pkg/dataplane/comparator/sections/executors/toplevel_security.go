@@ -50,11 +50,7 @@ func CrtStoreCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().CreateCrtStore(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "crt-store creation")
+		return dispatchAndCheck(resp, err, "crt-store creation")
 	}
 }
 
@@ -89,11 +85,7 @@ func CrtStoreUpdate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().EditCrtStore(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "crt-store update")
+		return dispatchAndCheck(resp, err, "crt-store update")
 	}
 }
 
@@ -128,11 +120,7 @@ func CrtStoreDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().DeleteCrtStore(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "crt-store deletion")
+		return dispatchAndCheck(resp, err, "crt-store deletion")
 	}
 }
 
@@ -167,11 +155,7 @@ func UserlistCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().CreateUserlist(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "userlist creation")
+		return dispatchAndCheck(resp, err, "userlist creation")
 	}
 }
 
@@ -206,11 +190,7 @@ func UserlistDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 				return clientset.V30EE().DeleteUserlist(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "userlist deletion")
+		return dispatchAndCheck(resp, err, "userlist deletion")
 	}
 }
 
@@ -245,11 +225,7 @@ func FCGIAppCreate() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().CreateFCGIApp(ctx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "fcgi-app creation")
+		return dispatchAndCheck(resp, err, "fcgi-app creation")
 	}
 }
 
@@ -284,11 +260,7 @@ func FCGIAppUpdate() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().ReplaceFCGIApp(ctx, n, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "fcgi-app update")
+		return dispatchAndCheck(resp, err, "fcgi-app update")
 	}
 }
 
@@ -323,10 +295,6 @@ func FCGIAppDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 				return clientset.V30EE().DeleteFCGIApp(ctx, n, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "fcgi-app deletion")
+		return dispatchAndCheck(resp, err, "fcgi-app deletion")
 	}
 }

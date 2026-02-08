@@ -45,8 +45,7 @@ func BotMgmtProfileCreate() func(ctx context.Context, c *client.DataplaneClient,
 		if err != nil {
 			return fmt.Errorf("failed to create botmgmt profile: %w", err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "botmgmt profile creation")
+		return dispatchAndCheck(resp, nil, "botmgmt profile creation")
 	}
 }
 
@@ -75,8 +74,7 @@ func BotMgmtProfileUpdate() func(ctx context.Context, c *client.DataplaneClient,
 		if err != nil {
 			return fmt.Errorf("failed to update botmgmt profile '%s': %w", name, err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "botmgmt profile update")
+		return dispatchAndCheck(resp, nil, "botmgmt profile update")
 	}
 }
 
@@ -97,8 +95,7 @@ func BotMgmtProfileDelete() func(ctx context.Context, c *client.DataplaneClient,
 		if err != nil {
 			return fmt.Errorf("failed to delete botmgmt profile '%s': %w", name, err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "botmgmt profile deletion")
+		return dispatchAndCheck(resp, nil, "botmgmt profile deletion")
 	}
 }
 
@@ -128,8 +125,7 @@ func CaptchaCreate() func(ctx context.Context, c *client.DataplaneClient, txID s
 		if err != nil {
 			return fmt.Errorf("failed to create captcha: %w", err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "captcha creation")
+		return dispatchAndCheck(resp, nil, "captcha creation")
 	}
 }
 
@@ -158,8 +154,7 @@ func CaptchaUpdate() func(ctx context.Context, c *client.DataplaneClient, txID s
 		if err != nil {
 			return fmt.Errorf("failed to update captcha '%s': %w", name, err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "captcha update")
+		return dispatchAndCheck(resp, nil, "captcha update")
 	}
 }
 
@@ -180,8 +175,7 @@ func CaptchaDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 		if err != nil {
 			return fmt.Errorf("failed to delete captcha '%s': %w", name, err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "captcha deletion")
+		return dispatchAndCheck(resp, nil, "captcha deletion")
 	}
 }
 
@@ -198,8 +192,7 @@ func WAFProfileCreate() func(ctx context.Context, c *client.DataplaneClient, txI
 		if err != nil {
 			return fmt.Errorf("failed to create WAF profile: %w", err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "WAF profile creation")
+		return dispatchAndCheck(resp, nil, "WAF profile creation")
 	}
 }
 
@@ -214,8 +207,7 @@ func WAFProfileUpdate() func(ctx context.Context, c *client.DataplaneClient, txI
 		if err != nil {
 			return fmt.Errorf("failed to update WAF profile '%s': %w", name, err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "WAF profile update")
+		return dispatchAndCheck(resp, nil, "WAF profile update")
 	}
 }
 
@@ -230,8 +222,7 @@ func WAFProfileDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 		if err != nil {
 			return fmt.Errorf("failed to delete WAF profile '%s': %w", name, err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "WAF profile deletion")
+		return dispatchAndCheck(resp, nil, "WAF profile deletion")
 	}
 }
 
@@ -247,8 +238,7 @@ func WAFGlobalCreate() func(ctx context.Context, c *client.DataplaneClient, txID
 		if err != nil {
 			return fmt.Errorf("failed to create WAF global: %w", err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "WAF global creation")
+		return dispatchAndCheck(resp, nil, "WAF global creation")
 	}
 }
 
@@ -264,8 +254,7 @@ func WAFGlobalUpdate() func(ctx context.Context, c *client.DataplaneClient, txID
 		if err != nil {
 			return fmt.Errorf("failed to update WAF global: %w", err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "WAF global update")
+		return dispatchAndCheck(resp, nil, "WAF global update")
 	}
 }
 
@@ -280,8 +269,7 @@ func WAFGlobalDelete() func(ctx context.Context, c *client.DataplaneClient, txID
 		if err != nil {
 			return fmt.Errorf("failed to delete WAF global: %w", err)
 		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "WAF global deletion")
+		return dispatchAndCheck(resp, nil, "WAF global deletion")
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
@@ -156,7 +157,7 @@ func (c *Component) handleCredentialsUpdated(event *events.CredentialsUpdatedEve
 // This handler is for subsequent changes only, not for initial startup.
 func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdatedEvent) {
 	// Only handle haproxy-pods resource type
-	if event.ResourceTypeName != "haproxy-pods" {
+	if event.ResourceTypeName != names.HAProxyPodsResourceType {
 		return
 	}
 
@@ -207,7 +208,7 @@ func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdate
 // when they complete, ensuring discovery happens as soon as all requirements are met.
 func (c *Component) handleResourceSyncComplete(event *events.ResourceSyncCompleteEvent) {
 	// Only handle haproxy-pods resource type
-	if event.ResourceTypeName != "haproxy-pods" {
+	if event.ResourceTypeName != names.HAProxyPodsResourceType {
 		return
 	}
 

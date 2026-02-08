@@ -33,6 +33,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -267,7 +268,7 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 		SSLCertsDir:       filepath.Join(tempDir, "ssl"),
 		CRTListDir:        filepath.Join(tempDir, "files"),
 		GeneralStorageDir: filepath.Join(tempDir, "files"),
-		ConfigFile:        filepath.Join(tempDir, "haproxy.cfg"),
+		ConfigFile:        filepath.Join(tempDir, names.MainTemplateName),
 	}
 
 	// Validate configuration using the single HAProxy config

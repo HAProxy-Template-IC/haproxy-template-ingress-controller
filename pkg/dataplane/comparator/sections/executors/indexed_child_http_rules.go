@@ -60,11 +60,7 @@ func HTTPRequestRuleFrontendCreate() func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().CreateHTTPRequestRuleFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP request rule creation in frontend")
+		return dispatchAndCheck(resp, err, "HTTP request rule creation in frontend")
 	}
 }
 
@@ -99,11 +95,7 @@ func HTTPRequestRuleFrontendUpdate() func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().ReplaceHTTPRequestRuleFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP request rule update in frontend")
+		return dispatchAndCheck(resp, err, "HTTP request rule update in frontend")
 	}
 }
 
@@ -138,11 +130,7 @@ func HTTPRequestRuleFrontendDelete() func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().DeleteHTTPRequestRuleFrontend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP request rule deletion from frontend")
+		return dispatchAndCheck(resp, err, "HTTP request rule deletion from frontend")
 	}
 }
 
@@ -177,11 +165,7 @@ func HTTPRequestRuleBackendCreate() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().CreateHTTPRequestRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP request rule creation in backend")
+		return dispatchAndCheck(resp, err, "HTTP request rule creation in backend")
 	}
 }
 
@@ -216,11 +200,7 @@ func HTTPRequestRuleBackendUpdate() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().ReplaceHTTPRequestRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP request rule update in backend")
+		return dispatchAndCheck(resp, err, "HTTP request rule update in backend")
 	}
 }
 
@@ -255,11 +235,7 @@ func HTTPRequestRuleBackendDelete() func(ctx context.Context, c *client.Dataplan
 				return clientset.V30EE().DeleteHTTPRequestRuleBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP request rule deletion from backend")
+		return dispatchAndCheck(resp, err, "HTTP request rule deletion from backend")
 	}
 }
 
@@ -294,11 +270,7 @@ func HTTPResponseRuleFrontendCreate() func(ctx context.Context, c *client.Datapl
 				return clientset.V30EE().CreateHTTPResponseRuleFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP response rule creation in frontend")
+		return dispatchAndCheck(resp, err, "HTTP response rule creation in frontend")
 	}
 }
 
@@ -333,11 +305,7 @@ func HTTPResponseRuleFrontendUpdate() func(ctx context.Context, c *client.Datapl
 				return clientset.V30EE().ReplaceHTTPResponseRuleFrontend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP response rule update in frontend")
+		return dispatchAndCheck(resp, err, "HTTP response rule update in frontend")
 	}
 }
 
@@ -372,11 +340,7 @@ func HTTPResponseRuleFrontendDelete() func(ctx context.Context, c *client.Datapl
 				return clientset.V30EE().DeleteHTTPResponseRuleFrontend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP response rule deletion from frontend")
+		return dispatchAndCheck(resp, err, "HTTP response rule deletion from frontend")
 	}
 }
 
@@ -411,11 +375,7 @@ func HTTPResponseRuleBackendCreate() func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().CreateHTTPResponseRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP response rule creation in backend")
+		return dispatchAndCheck(resp, err, "HTTP response rule creation in backend")
 	}
 }
 
@@ -450,11 +410,7 @@ func HTTPResponseRuleBackendUpdate() func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().ReplaceHTTPResponseRuleBackend(ctx, p, idx, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP response rule update in backend")
+		return dispatchAndCheck(resp, err, "HTTP response rule update in backend")
 	}
 }
 
@@ -489,10 +445,6 @@ func HTTPResponseRuleBackendDelete() func(ctx context.Context, c *client.Datapla
 				return clientset.V30EE().DeleteHTTPResponseRuleBackend(ctx, p, idx, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "HTTP response rule deletion from backend")
+		return dispatchAndCheck(resp, err, "HTTP response rule deletion from backend")
 	}
 }

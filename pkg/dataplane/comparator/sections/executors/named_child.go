@@ -50,11 +50,7 @@ func BindFrontendCreate(frontendName string) func(ctx context.Context, c *client
 				return clientset.V30EE().CreateBindFrontend(ctx, frontendName, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "bind creation in frontend")
+		return dispatchAndCheck(resp, err, "bind creation in frontend")
 	}
 }
 
@@ -89,11 +85,7 @@ func BindFrontendUpdate(frontendName string) func(ctx context.Context, c *client
 				return clientset.V30EE().ReplaceBindFrontend(ctx, frontendName, name, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "bind update in frontend")
+		return dispatchAndCheck(resp, err, "bind update in frontend")
 	}
 }
 
@@ -128,11 +120,7 @@ func BindFrontendDelete(frontendName string) func(ctx context.Context, c *client
 				return clientset.V30EE().DeleteBindFrontend(ctx, frontendName, name, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "bind deletion from frontend")
+		return dispatchAndCheck(resp, err, "bind deletion from frontend")
 	}
 }
 
@@ -167,11 +155,7 @@ func ServerTemplateCreate(backendName string) func(ctx context.Context, c *clien
 				return clientset.V30EE().CreateServerTemplate(ctx, backendName, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "server template creation")
+		return dispatchAndCheck(resp, err, "server template creation")
 	}
 }
 
@@ -206,11 +190,7 @@ func ServerTemplateUpdate(backendName string) func(ctx context.Context, c *clien
 				return clientset.V30EE().ReplaceServerTemplate(ctx, backendName, name, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "server template update")
+		return dispatchAndCheck(resp, err, "server template update")
 	}
 }
 
@@ -245,11 +225,7 @@ func ServerTemplateDelete(backendName string) func(ctx context.Context, c *clien
 				return clientset.V30EE().DeleteServerTemplate(ctx, backendName, name, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "server template deletion")
+		return dispatchAndCheck(resp, err, "server template deletion")
 	}
 }
 
@@ -284,11 +260,7 @@ func ServerCreate(backendName string) func(ctx context.Context, c *client.Datapl
 				return clientset.V30EE().CreateServerBackend(ctx, backendName, params, m)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "server creation in backend")
+		return dispatchAndCheck(resp, err, "server creation in backend")
 	}
 }
 
@@ -362,11 +334,7 @@ func serverUpdateWithTransaction(ctx context.Context, c *client.DataplaneClient,
 			return clientset.V30EE().ReplaceServerBackend(ctx, backendName, name, params, m)
 		},
 	)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	return client.CheckResponse(resp, "server update in backend")
+	return dispatchAndCheck(resp, err, "server update in backend")
 }
 
 // serverUpdateWithVersion updates a server using version-based update.
@@ -462,10 +430,6 @@ func ServerDelete(backendName string) func(ctx context.Context, c *client.Datapl
 				return clientset.V30EE().DeleteServerBackend(ctx, backendName, name, params)
 			},
 		)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		return client.CheckResponse(resp, "server deletion from backend")
+		return dispatchAndCheck(resp, err, "server deletion from backend")
 	}
 }

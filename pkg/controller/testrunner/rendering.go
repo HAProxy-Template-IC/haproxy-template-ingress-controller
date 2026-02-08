@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
@@ -57,7 +58,7 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 		MapsDir:    filepath.Join(testDir, filepath.Base(r.config.Dataplane.MapsDir)),
 		SSLDir:     filepath.Join(testDir, filepath.Base(r.config.Dataplane.SSLCertsDir)),
 		GeneralDir: filepath.Join(testDir, filepath.Base(r.config.Dataplane.GeneralStorageDir)),
-		ConfigFile: filepath.Join(testDir, "haproxy.cfg"),
+		ConfigFile: filepath.Join(testDir, names.MainTemplateName),
 	}
 
 	// Use centralized path resolution to get capability-aware paths
@@ -112,12 +113,12 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 	var err error
 
 	if r.profileIncludes {
-		haproxyConfig, includeStats, err = engine.RenderWithProfiling(context.Background(), "haproxy.cfg", renderCtx)
+		haproxyConfig, includeStats, err = engine.RenderWithProfiling(context.Background(), names.MainTemplateName, renderCtx)
 	} else {
-		haproxyConfig, err = engine.Render(context.Background(), "haproxy.cfg", renderCtx)
+		haproxyConfig, err = engine.Render(context.Background(), names.MainTemplateName, renderCtx)
 	}
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to render haproxy.cfg: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to render %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
