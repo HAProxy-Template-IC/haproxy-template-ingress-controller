@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/deployer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -271,10 +272,15 @@ func setupLeaderElection(
 		return state
 	}
 
-	// Leader election disabled - start leader-only components immediately
+	// Leader election disabled - start leader-only components immediately.
+	// Use the same Pause/Start pattern as leaderelection/component.go to ensure
+	// leader-only components subscribe before any buffered events are replayed.
 	logger.Info("Leader election disabled, starting all components")
+	eventBus.Pause()
+	eventBus.Publish(events.NewBecameLeaderEvent("standalone"))
 	state := &leaderCallbackState{
 		components: startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel, g),
 	}
+	eventBus.Start()
 	return state
 }
