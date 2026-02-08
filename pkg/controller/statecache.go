@@ -233,13 +233,9 @@ func (sc *StateCache) handleTemplateRendered(e *events.TemplateRenderedEvent) {
 	sc.renderError = ""
 	sc.renderTime = e.Timestamp()
 
-	if auxFiles, ok := e.GetAuxiliaryFiles(); ok {
-		sc.lastAuxFiles = auxFiles
+	if e.AuxiliaryFiles != nil {
+		sc.lastAuxFiles = e.AuxiliaryFiles
 		sc.lastAuxFilesTime = time.Now()
-	} else if e.AuxiliaryFiles != nil {
-		sc.logger.Error("type assertion failed for TemplateRenderedEvent auxiliary files",
-			"expected", "*dataplane.AuxiliaryFiles",
-			"got", fmt.Sprintf("%T", e.AuxiliaryFiles))
 	}
 }
 

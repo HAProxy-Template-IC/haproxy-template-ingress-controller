@@ -526,14 +526,14 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	c.lastEndpoints = currentEndpoints
 	c.mu.Unlock()
 
-	// Convert endpoints to []interface{} for event
-	endpointsInterface := make([]interface{}, len(admittedEndpoints))
+	// Dereference endpoint pointers for event (events use value types for immutability)
+	endpointValues := make([]dataplane.Endpoint, len(admittedEndpoints))
 	for i, ep := range admittedEndpoints {
-		endpointsInterface[i] = *ep
+		endpointValues[i] = *ep
 	}
 
 	// Create event and cache for state replay (used by handleBecameLeader)
-	event := events.NewHAProxyPodsDiscoveredEvent(endpointsInterface, len(admittedEndpoints))
+	event := events.NewHAProxyPodsDiscoveredEvent(endpointValues, len(admittedEndpoints))
 	c.discoveredReplayer.Cache(event)
 
 	// Publish HAProxyPodsDiscoveredEvent

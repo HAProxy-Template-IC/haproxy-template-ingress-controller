@@ -389,9 +389,9 @@ func TestStateCache_HandleDeploymentStarted(t *testing.T) {
 	go cache.Start(ctx)
 	bus.Start()
 
-	endpoints := []interface{}{
-		&testEndpoint{url: "http://haproxy1:5555"},
-		&testEndpoint{url: "http://haproxy2:5555"},
+	endpoints := []dataplane.Endpoint{
+		{URL: "http://haproxy1:5555"},
+		{URL: "http://haproxy2:5555"},
 	}
 
 	// Publish deployment started event
@@ -509,7 +509,7 @@ func TestStateCache_HandleInstanceDeploymentFailed(t *testing.T) {
 	go cache.Start(ctx)
 	bus.Start()
 
-	endpoints := []interface{}{&testEndpoint{url: "http://haproxy1:5555"}}
+	endpoints := []dataplane.Endpoint{{URL: "http://haproxy1:5555"}}
 	endpoint := &testEndpoint{url: "http://haproxy1:5555"}
 
 	// Start deployment first (sets deploymentStatus to "pending")

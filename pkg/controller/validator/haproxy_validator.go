@@ -239,18 +239,7 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 		events.PropagateCorrelation(event),
 	))
 
-	// Extract auxiliary files from event
-	auxiliaryFiles, ok := event.GetAuxiliaryFiles()
-	if !ok {
-		v.publishValidationFailure(
-			[]string{"failed to extract auxiliary files from event"},
-			time.Since(startTime).Milliseconds(),
-			correlationID,
-			triggerReason,
-			"", // Don't cache infrastructure errors
-		)
-		return
-	}
+	auxiliaryFiles := event.AuxiliaryFiles
 
 	// Create isolated temp directory for validation
 	// The config uses relative paths (maps/, ssl/, files/) that we create as subdirectories

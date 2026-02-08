@@ -14,7 +14,11 @@
 
 package events
 
-import "time"
+import (
+	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+)
 
 // -----------------------------------------------------------------------------
 // HAProxy Pod Events.
@@ -25,18 +29,18 @@ import "time"
 // latest set of endpoints matters.
 type HAProxyPodsDiscoveredEvent struct {
 	// Endpoints is the list of discovered HAProxy Dataplane API endpoints.
-	Endpoints []interface{}
+	Endpoints []dataplane.Endpoint
 	Count     int
 	timestamp time.Time
 }
 
 // NewHAProxyPodsDiscoveredEvent creates a new HAProxyPodsDiscoveredEvent.
 // Performs defensive copy of the endpoints slice.
-func NewHAProxyPodsDiscoveredEvent(endpoints []interface{}, count int) *HAProxyPodsDiscoveredEvent {
+func NewHAProxyPodsDiscoveredEvent(endpoints []dataplane.Endpoint, count int) *HAProxyPodsDiscoveredEvent {
 	// Defensive copy of slice
-	var endpointsCopy []interface{}
+	var endpointsCopy []dataplane.Endpoint
 	if len(endpoints) > 0 {
-		endpointsCopy = make([]interface{}, len(endpoints))
+		endpointsCopy = make([]dataplane.Endpoint, len(endpoints))
 		copy(endpointsCopy, endpoints)
 	}
 

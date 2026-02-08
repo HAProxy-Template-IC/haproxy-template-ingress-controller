@@ -74,9 +74,7 @@ type ValidationCompletedEvent struct {
 	// ParsedConfig is the pre-parsed desired configuration from syntax validation.
 	// May be nil if validation cache was used.
 	// When non-nil, can be passed to downstream sync operations to avoid re-parsing.
-	// Type: interface{} to avoid circular dependencies with pkg/dataplane.
-	// Consumers should type-assert to *parser.StructuredConfig.
-	ParsedConfig interface{}
+	ParsedConfig *parser.StructuredConfig
 
 	// coalescible indicates if this event can be safely skipped when a newer
 	// event of the same type is available. Propagated from TemplateRenderedEvent.

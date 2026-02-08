@@ -16,6 +16,8 @@ package events
 
 import (
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
 // -----------------------------------------------------------------------------
@@ -38,9 +40,7 @@ type TemplateRenderedEvent struct {
 	HAProxyConfig string
 
 	// AuxiliaryFiles contains all rendered auxiliary files (maps, certificates, general files).
-	// Type: interface{} to avoid circular dependencies with pkg/dataplane.
-	// Consumers should type-assert to *dataplane.AuxiliaryFiles.
-	AuxiliaryFiles interface{}
+	AuxiliaryFiles *dataplane.AuxiliaryFiles
 
 	// ContentChecksum is the pre-computed content checksum covering config + aux files.
 	// Computed once in the pipeline and propagated to downstream consumers to avoid
@@ -79,7 +79,7 @@ type TemplateRenderedEvent struct {
 //	    events.PropagateCorrelation(triggeredEvent))
 func NewTemplateRenderedEvent(
 	haproxyConfig string,
-	auxiliaryFiles interface{},
+	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	auxFileCount int,
 	durationMs int64,
 	triggerReason string,

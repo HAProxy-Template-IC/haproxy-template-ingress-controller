@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
@@ -382,7 +383,7 @@ func TestHTTPEvents(t *testing.T) {
 // TestTemplateEvents tests template.go event types.
 func TestTemplateEvents(t *testing.T) {
 	t.Run("TemplateRenderedEvent", func(t *testing.T) {
-		auxFiles := map[string]string{"file1": "content1"}
+		auxFiles := &dataplane.AuxiliaryFiles{}
 		event := NewTemplateRenderedEvent(
 			"haproxy config",
 			auxFiles,
@@ -552,24 +553,27 @@ func TestValidationEvents(t *testing.T) {
 // TestDeploymentEvents tests deployment.go event types.
 func TestDeploymentEvents(t *testing.T) {
 	t.Run("DeploymentStartedEvent", func(t *testing.T) {
-		endpoints := []interface{}{"endpoint1", "endpoint2"}
+		endpoints := []dataplane.Endpoint{
+			{URL: "http://endpoint1:5555"},
+			{URL: "http://endpoint2:5555"},
+		}
 		event := NewDeploymentStartedEvent(endpoints)
 		require.NotNil(t, event)
 		assert.Len(t, event.Endpoints, 2)
-		assert.Equal(t, "endpoint1", event.Endpoints[0])
+		assert.Equal(t, "http://endpoint1:5555", event.Endpoints[0].URL)
 		assert.Equal(t, EventTypeDeploymentStarted, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
 
 	t.Run("DeploymentStartedEvent_DefensiveCopy", func(t *testing.T) {
-		endpoints := []interface{}{"endpoint1"}
+		endpoints := []dataplane.Endpoint{{URL: "http://endpoint1:5555"}}
 		event := NewDeploymentStartedEvent(endpoints)
 
 		// Modify original
-		endpoints[0] = "modified"
+		endpoints[0] = dataplane.Endpoint{URL: "http://modified:5555"}
 
 		// Event should have original value
-		assert.Equal(t, "endpoint1", event.Endpoints[0])
+		assert.Equal(t, "http://endpoint1:5555", event.Endpoints[0].URL)
 	})
 
 	t.Run("DeploymentStartedEvent_EmptyEndpoints", func(t *testing.T) {
@@ -651,8 +655,11 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentScheduledEvent", func(t *testing.T) {
-		endpoints := []interface{}{"ep1", "ep2"}
-		auxFiles := map[string]string{"file": "content"}
+		endpoints := []dataplane.Endpoint{
+			{URL: "http://ep1:5555"},
+			{URL: "http://ep2:5555"},
+		}
+		auxFiles := &dataplane.AuxiliaryFiles{}
 		event := NewDeploymentScheduledEvent(
 			"haproxy config",
 			auxFiles,
@@ -676,14 +683,14 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentScheduledEvent_DefensiveCopy", func(t *testing.T) {
-		endpoints := []interface{}{"ep1"}
+		endpoints := []dataplane.Endpoint{{URL: "http://ep1:5555"}}
 		event := NewDeploymentScheduledEvent("cfg", nil, nil, endpoints, "n", "ns", "r", "", true)
 
 		// Modify original
-		endpoints[0] = "modified"
+		endpoints[0] = dataplane.Endpoint{URL: "http://modified:5555"}
 
 		// Event should have original value
-		assert.Equal(t, "ep1", event.Endpoints[0])
+		assert.Equal(t, "http://ep1:5555", event.Endpoints[0].URL)
 	})
 
 	t.Run("DeploymentScheduledEvent_WithCorrelation", func(t *testing.T) {
@@ -706,7 +713,11 @@ func TestDeploymentEvents(t *testing.T) {
 // TestDiscoveryEvents tests discovery.go event types.
 func TestDiscoveryEvents(t *testing.T) {
 	t.Run("HAProxyPodsDiscoveredEvent", func(t *testing.T) {
-		endpoints := []interface{}{"ep1", "ep2", "ep3"}
+		endpoints := []dataplane.Endpoint{
+			{URL: "http://ep1:5555"},
+			{URL: "http://ep2:5555"},
+			{URL: "http://ep3:5555"},
+		}
 		event := NewHAProxyPodsDiscoveredEvent(endpoints, 3)
 		require.NotNil(t, event)
 		assert.Len(t, event.Endpoints, 3)
@@ -716,14 +727,14 @@ func TestDiscoveryEvents(t *testing.T) {
 	})
 
 	t.Run("HAProxyPodsDiscoveredEvent_DefensiveCopy", func(t *testing.T) {
-		endpoints := []interface{}{"ep1"}
+		endpoints := []dataplane.Endpoint{{URL: "http://ep1:5555"}}
 		event := NewHAProxyPodsDiscoveredEvent(endpoints, 1)
 
 		// Modify original
-		endpoints[0] = "modified"
+		endpoints[0] = dataplane.Endpoint{URL: "http://modified:5555"}
 
 		// Event should have original value
-		assert.Equal(t, "ep1", event.Endpoints[0])
+		assert.Equal(t, "http://ep1:5555", event.Endpoints[0].URL)
 	})
 
 	t.Run("HAProxyPodsDiscoveredEvent_EmptyEndpoints", func(t *testing.T) {

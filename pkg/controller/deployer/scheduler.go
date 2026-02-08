@@ -88,9 +88,9 @@ type schedulerState struct {
 // deployment was in progress. Only the latest scheduled deployment is kept (latest wins).
 type scheduledDeployment struct {
 	config        string
-	auxFiles      interface{}
-	parsedConfig  interface{} // Pre-parsed desired config (*parser.StructuredConfig)
-	endpoints     []interface{}
+	auxFiles      *dataplane.AuxiliaryFiles
+	parsedConfig  *parser.StructuredConfig
+	endpoints     []dataplane.Endpoint
 	reason        string
 	correlationID string // Correlation ID for event tracing
 	coalescible   bool   // Whether this deployment can be coalesced (skipped if newer available)
@@ -117,20 +117,20 @@ type DeploymentScheduler struct {
 
 	// State protected by mutex
 	mu                      sync.RWMutex
-	lastRenderedConfig      string        // Last rendered HAProxy config (before validation)
-	lastAuxiliaryFiles      interface{}   // Last rendered auxiliary files
-	lastContentChecksum     string        // Pre-computed content checksum from pipeline
-	lastValidatedConfig     string        // Last validated HAProxy config
-	lastValidatedAux        interface{}   // Last validated auxiliary files
-	lastParsedConfig        interface{}   // Pre-parsed desired config (*parser.StructuredConfig)
-	lastCorrelationID       string        // Correlation ID from last validation event
-	lastCoalescible         bool          // Coalescibility flag from last validation event
-	currentEndpoints        []interface{} // Current HAProxy pod endpoints
-	hasValidConfig          bool          // Whether we have a validated config to deploy
-	runtimeConfigName       string        // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
-	runtimeConfigNamespace  string        // Namespace of HAProxyCfg resource (set by ConfigPublishedEvent)
-	templateConfigName      string        // Name from ConfigValidatedEvent.TemplateConfig (for early runtimeConfigName computation)
-	templateConfigNamespace string        // Namespace from ConfigValidatedEvent.TemplateConfig
+	lastRenderedConfig      string                    // Last rendered HAProxy config (before validation)
+	lastAuxiliaryFiles      *dataplane.AuxiliaryFiles // Last rendered auxiliary files
+	lastContentChecksum     string                    // Pre-computed content checksum from pipeline
+	lastValidatedConfig     string                    // Last validated HAProxy config
+	lastValidatedAux        *dataplane.AuxiliaryFiles // Last validated auxiliary files
+	lastParsedConfig        *parser.StructuredConfig  // Pre-parsed desired config
+	lastCorrelationID       string                    // Correlation ID from last validation event
+	lastCoalescible         bool                      // Coalescibility flag from last validation event
+	currentEndpoints        []dataplane.Endpoint      // Current HAProxy pod endpoints
+	hasValidConfig          bool                      // Whether we have a validated config to deploy
+	runtimeConfigName       string                    // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
+	runtimeConfigNamespace  string                    // Namespace of HAProxyCfg resource (set by ConfigPublishedEvent)
+	templateConfigName      string                    // Name from ConfigValidatedEvent.TemplateConfig (for early runtimeConfigName computation)
+	templateConfigNamespace string                    // Namespace from ConfigValidatedEvent.TemplateConfig
 
 	// Deployment scheduling and rate limiting
 	schedulerMutex    sync.Mutex
@@ -152,15 +152,13 @@ type DeploymentScheduler struct {
 
 // computePodSetHash computes a hash of the current pod endpoints.
 // Used to detect if pod set changed (new/removed HAProxy pods).
-func computePodSetHash(endpoints []interface{}) string {
+func computePodSetHash(endpoints []dataplane.Endpoint) string {
 	h := sha256.New()
 
 	// Extract and sort URLs for deterministic hashing
 	urls := make([]string, 0, len(endpoints))
 	for _, ep := range endpoints {
-		if endpoint, ok := ep.(dataplane.Endpoint); ok {
-			urls = append(urls, endpoint.URL)
-		}
+		urls = append(urls, ep.URL)
 	}
 	sort.Strings(urls)
 
@@ -559,9 +557,9 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 func (s *DeploymentScheduler) scheduleOrQueue(
 	ctx context.Context,
 	config string,
-	auxFiles interface{},
-	parsedConfig interface{},
-	endpoints []interface{},
+	auxFiles *dataplane.AuxiliaryFiles,
+	parsedConfig *parser.StructuredConfig,
+	endpoints []dataplane.Endpoint,
 	reason string,
 	correlationID string,
 	coalescible bool,
@@ -606,9 +604,9 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	ctx context.Context,
 	config string,
-	auxFiles interface{},
-	parsedConfig interface{},
-	endpoints []interface{},
+	auxFiles *dataplane.AuxiliaryFiles,
+	parsedConfig *parser.StructuredConfig,
+	endpoints []dataplane.Endpoint,
 	reason string,
 	correlationID string,
 	coalescible bool,
@@ -673,24 +671,16 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 			"template_config_name", templateConfigName)
 	}
 
-	// Type assert parsedConfig to *parser.StructuredConfig for the event constructor
-	var typedParsedConfig *parser.StructuredConfig
-	if parsedConfig != nil {
-		if pc, ok := parsedConfig.(*parser.StructuredConfig); ok {
-			typedParsedConfig = pc
-		}
-	}
-
 	// Publish DeploymentScheduledEvent with correlation
 	s.logger.Debug("Scheduling deployment",
 		"reason", reason,
 		"endpoint_count", len(endpoints),
 		"config_bytes", len(config),
-		"has_parsed_config", typedParsedConfig != nil,
+		"has_parsed_config", parsedConfig != nil,
 		"correlation_id", correlationID)
 
 	s.eventBus.Publish(events.NewDeploymentScheduledEvent(
-		config, auxFiles, typedParsedConfig, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum, coalescible,
+		config, auxFiles, parsedConfig, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum, coalescible,
 		events.WithCorrelation(correlationID, correlationID),
 	))
 

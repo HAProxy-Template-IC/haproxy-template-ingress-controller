@@ -129,8 +129,8 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 		scheduler.mu.Lock()
 		scheduler.lastRenderedConfig = "global\n  daemon\n"
 		scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
-		scheduler.currentEndpoints = []interface{}{
-			dataplane.Endpoint{URL: "http://localhost:5555"},
+		scheduler.currentEndpoints = []dataplane.Endpoint{
+			{URL: "http://localhost:5555"},
 		}
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
@@ -167,9 +167,9 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	scheduler.ctx = ctx
 
 	t.Run("updates endpoints", func(t *testing.T) {
-		endpoints := []interface{}{
-			dataplane.Endpoint{URL: "http://localhost:5555"},
-			dataplane.Endpoint{URL: "http://localhost:5556"},
+		endpoints := []dataplane.Endpoint{
+			{URL: "http://localhost:5555"},
+			{URL: "http://localhost:5556"},
 		}
 
 		event := events.NewHAProxyPodsDiscoveredEvent(endpoints, len(endpoints))
@@ -187,8 +187,8 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
-		event := events.NewHAProxyPodsDiscoveredEvent([]interface{}{
-			dataplane.Endpoint{URL: "http://localhost:5555"},
+		event := events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{
+			{URL: "http://localhost:5555"},
 		}, 1)
 
 		scheduler.handlePodsDiscovered(ctx, event)
@@ -211,8 +211,8 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 		scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
 		scheduler.mu.Unlock()
 
-		event := events.NewHAProxyPodsDiscoveredEvent([]interface{}{
-			dataplane.Endpoint{URL: "http://localhost:5555"},
+		event := events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{
+			{URL: "http://localhost:5555"},
 		}, 1)
 
 		scheduler.handlePodsDiscovered(ctx, event)
@@ -250,8 +250,8 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 		scheduler.hasValidConfig = true
 		scheduler.lastValidatedConfig = "global\n  daemon\n"
 		scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
-		scheduler.currentEndpoints = []interface{}{
-			dataplane.Endpoint{URL: "http://localhost:5555"},
+		scheduler.currentEndpoints = []dataplane.Endpoint{
+			{URL: "http://localhost:5555"},
 		}
 		scheduler.mu.Unlock()
 
@@ -301,7 +301,7 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 		scheduler.hasValidConfig = true
 		scheduler.lastValidatedConfig = "global\n  daemon\n"
 		scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
-		scheduler.currentEndpoints = []interface{}{} // No endpoints
+		scheduler.currentEndpoints = []dataplane.Endpoint{} // No endpoints
 		scheduler.mu.Unlock()
 
 		event := events.NewValidationFailedEvent([]string{"error"}, 100, "config_change")
@@ -405,7 +405,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []interface{}{}, "test", "test-correlation-id", true)
+		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -420,8 +420,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []interface{}{}, "first", "correlation-1", true)
-		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []interface{}{}, "second", "correlation-2", true)
+		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", true)
+		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -475,8 +475,8 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 	})
 
 	t.Run("routes HAProxyPodsDiscoveredEvent", func(t *testing.T) {
-		event := events.NewHAProxyPodsDiscoveredEvent([]interface{}{
-			dataplane.Endpoint{URL: "http://localhost:5555"},
+		event := events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{
+			{URL: "http://localhost:5555"},
 		}, 1)
 
 		scheduler.handleEvent(ctx, event)
@@ -641,7 +641,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	scheduler.state.pending = &scheduledDeployment{
 		config:        "pending-config",
 		auxFiles:      nil,
-		endpoints:     []interface{}{dataplane.Endpoint{URL: "http://localhost:5555"}},
+		endpoints:     []dataplane.Endpoint{{URL: "http://localhost:5555"}},
 		reason:        "pending-deployment",
 		correlationID: "correlation-123",
 	}
@@ -695,7 +695,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 		"config",
 		nil,
 		nil,
-		[]interface{}{dataplane.Endpoint{URL: "http://localhost:5555"}},
+		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
 		"test-rate-limit",
 		"correlation-456",
 		true, // coalescible
@@ -742,7 +742,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 			"config",
 			nil,
 			nil,
-			[]interface{}{},
+			[]dataplane.Endpoint{},
 			"test-cancel",
 			"correlation-789",
 			true, // coalescible
@@ -789,7 +789,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 		"config",
 		nil,
 		nil,
-		[]interface{}{},
+		[]dataplane.Endpoint{},
 		"test-compute-runtime",
 		"correlation-compute",
 		true, // coalescible
@@ -833,7 +833,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 		"config1",
 		nil,
 		nil,
-		[]interface{}{},
+		[]dataplane.Endpoint{},
 		"first",
 		"correlation-1",
 		true, // coalescible
@@ -845,7 +845,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 	scheduler.state.pending = &scheduledDeployment{
 		config:        "config2",
 		auxFiles:      nil,
-		endpoints:     []interface{}{},
+		endpoints:     []dataplane.Endpoint{},
 		reason:        "second",
 		correlationID: "correlation-2",
 	}
