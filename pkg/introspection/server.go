@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	//nolint:gosec // G108: pprof intentionally exposed for debugging
@@ -67,6 +69,7 @@ type ComponentHealth struct {
 // routes are finalized, while enabling the server to start serving immediately.
 type Server struct {
 	addr           string
+	addrMu         sync.RWMutex
 	registry       *Registry
 	server         *http.Server
 	logger         *slog.Logger
@@ -247,7 +250,6 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 
 	s.server = &http.Server{
-		Addr:              s.addr,
 		Handler:           s.mux,
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -255,36 +257,40 @@ func (s *Server) Serve(ctx context.Context) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// Channel to signal server has stopped
+	s.addrMu.RLock()
+	listenAddr := s.addr
+	s.addrMu.RUnlock()
+
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return fmt.Errorf("server error: %w", err)
+	}
+
+	s.addrMu.Lock()
+	s.addr = listener.Addr().String()
+	s.addrMu.Unlock()
+
 	serverErr := make(chan error, 1)
 
-	// Start server in background
 	go func() {
 		s.logger.Info("Starting debug server", "addr", s.addr)
-
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("Debug server error", "error", err)
 			serverErr <- err
 		}
 	}()
 
-	// Wait for context cancellation or server error
 	select {
 	case <-ctx.Done():
 		s.logger.Info("Debug server shutting down", "reason", ctx.Err())
-
-		// Graceful shutdown with timeout
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-
 		if err := s.server.Shutdown(shutdownCtx); err != nil {
 			s.logger.Error("Debug server shutdown error", "error", err)
 			return fmt.Errorf("server shutdown failed: %w", err)
 		}
-
 		s.logger.Info("Debug server stopped")
 		return nil
-
 	case err := <-serverErr:
 		return fmt.Errorf("server error: %w", err)
 	}
@@ -292,5 +298,7 @@ func (s *Server) Serve(ctx context.Context) error {
 
 // Addr returns the address the server is configured to listen on.
 func (s *Server) Addr() string {
+	s.addrMu.RLock()
+	defer s.addrMu.RUnlock()
 	return s.addr
 }
