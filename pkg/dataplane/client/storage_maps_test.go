@@ -72,7 +72,7 @@ func TestGetMapFileContent_Success(t *testing.T) {
 
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/services/haproxy/storage/maps/hosts.map": textResponse(http.StatusOK, expectedContent),
+			"/services/haproxy/storage/maps/hosts.map": textResponse(expectedContent),
 		},
 	})
 	defer server.Close()

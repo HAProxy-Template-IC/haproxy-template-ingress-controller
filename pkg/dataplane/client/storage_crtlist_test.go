@@ -155,7 +155,7 @@ func TestGetCRTListFileContent_Success(t *testing.T) {
 
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/services/haproxy/storage/ssl_crt_lists/example_com.crtlist": textResponse(http.StatusOK, expectedContent),
+			"/services/haproxy/storage/ssl_crt_lists/example_com.crtlist": textResponse(expectedContent),
 		},
 	})
 	defer server.Close()

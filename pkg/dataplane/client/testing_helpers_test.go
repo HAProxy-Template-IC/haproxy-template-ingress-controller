@@ -68,10 +68,10 @@ func jsonResponse(body string) http.HandlerFunc {
 	}
 }
 
-func textResponse(status int, body string) http.HandlerFunc {
+func textResponse(body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(status)
+		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, body)
 	}
 }

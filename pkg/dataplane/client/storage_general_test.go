@@ -95,7 +95,7 @@ func TestGetGeneralFileContent_Success(t *testing.T) {
 
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
-			"/services/haproxy/storage/general/500.http": textResponse(http.StatusOK, expectedContent),
+			"/services/haproxy/storage/general/500.http": textResponse(expectedContent),
 		},
 	})
 	defer server.Close()
