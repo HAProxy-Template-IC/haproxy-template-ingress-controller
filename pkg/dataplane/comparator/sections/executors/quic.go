@@ -13,6 +13,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // QUICInitialRuleFrontendCreate returns an executor for creating QUIC initial rules in frontends.
@@ -22,6 +23,10 @@ func QUICInitialRuleFrontendCreate() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := DispatchCreateChild31Plus(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.QUICInitialRule) (*http.Response, error) {
+				params := &v33.CreateQUICInitialRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateQUICInitialRuleFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.QUICInitialRule) (*http.Response, error) {
 				params := &v32.CreateQUICInitialRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().CreateQUICInitialRuleFrontend(ctx, p, idx, params, m)
@@ -50,6 +55,10 @@ func QUICInitialRuleFrontendUpdate() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := DispatchReplaceChild31Plus(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.QUICInitialRule) (*http.Response, error) {
+				params := &v33.ReplaceQUICInitialRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceQUICInitialRuleFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.QUICInitialRule) (*http.Response, error) {
 				params := &v32.ReplaceQUICInitialRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceQUICInitialRuleFrontend(ctx, p, idx, params, m)
@@ -79,6 +88,10 @@ func QUICInitialRuleFrontendDelete() func(ctx context.Context, c *client.Datapla
 
 		resp, err := DispatchDeleteChild31Plus(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteQUICInitialRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteQUICInitialRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteQUICInitialRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().DeleteQUICInitialRuleFrontend(ctx, p, idx, params)
 			},
@@ -106,6 +119,10 @@ func QUICInitialRuleDefaultsCreate() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := DispatchCreateChild31Plus(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.QUICInitialRule) (*http.Response, error) {
+				params := &v33.CreateQUICInitialRuleDefaultsParams{TransactionId: &txID}
+				return clientset.V33().CreateQUICInitialRuleDefaults(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.QUICInitialRule) (*http.Response, error) {
 				params := &v32.CreateQUICInitialRuleDefaultsParams{TransactionId: &txID}
 				return clientset.V32().CreateQUICInitialRuleDefaults(ctx, p, idx, params, m)
@@ -134,6 +151,10 @@ func QUICInitialRuleDefaultsUpdate() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := DispatchReplaceChild31Plus(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.QUICInitialRule) (*http.Response, error) {
+				params := &v33.ReplaceQUICInitialRuleDefaultsParams{TransactionId: &txID}
+				return clientset.V33().ReplaceQUICInitialRuleDefaults(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.QUICInitialRule) (*http.Response, error) {
 				params := &v32.ReplaceQUICInitialRuleDefaultsParams{TransactionId: &txID}
 				return clientset.V32().ReplaceQUICInitialRuleDefaults(ctx, p, idx, params, m)
@@ -163,6 +184,10 @@ func QUICInitialRuleDefaultsDelete() func(ctx context.Context, c *client.Datapla
 
 		resp, err := DispatchDeleteChild31Plus(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteQUICInitialRuleDefaultsParams{TransactionId: &txID}
+				return clientset.V33().DeleteQUICInitialRuleDefaults(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteQUICInitialRuleDefaultsParams{TransactionId: &txID}
 				return clientset.V32().DeleteQUICInitialRuleDefaults(ctx, p, idx, params)
 			},
@@ -187,18 +212,20 @@ func QUICInitialRuleDefaultsDelete() func(ctx context.Context, c *client.Datapla
 // These are specialized dispatchers for indexed child resources only available in v3.1+.
 
 // DispatchCreateChild31Plus is a generic helper for create operations on v3.1+ only indexed child features.
-func DispatchCreateChild31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE any](
+func DispatchCreateChild31Plus[TUnified any, TV33 any, TV32 any, TV31 any, TV32EE any, TV31EE any](
 	ctx context.Context,
 	c *client.DataplaneClient,
 	parent string,
 	index int,
 	unifiedModel TUnified,
+	v33Call func(string, int, TV33) (*http.Response, error),
 	v32Call func(string, int, TV32) (*http.Response, error),
 	v31Call func(string, int, TV31) (*http.Response, error),
 	v32eeCall func(string, int, TV32EE) (*http.Response, error),
 	v31eeCall func(string, int, TV31EE) (*http.Response, error),
 ) (*http.Response, error) {
 	return client.DispatchCreateChild(ctx, c, parent, index, unifiedModel,
+		v33Call,
 		v32Call,
 		v31Call,
 		func(_ string, _ int, _ struct{}) (*http.Response, error) {
@@ -213,18 +240,20 @@ func DispatchCreateChild31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV3
 }
 
 // DispatchReplaceChild31Plus is a generic helper for replace operations on v3.1+ only indexed child features.
-func DispatchReplaceChild31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE any](
+func DispatchReplaceChild31Plus[TUnified any, TV33 any, TV32 any, TV31 any, TV32EE any, TV31EE any](
 	ctx context.Context,
 	c *client.DataplaneClient,
 	parent string,
 	index int,
 	unifiedModel TUnified,
+	v33Call func(string, int, TV33) (*http.Response, error),
 	v32Call func(string, int, TV32) (*http.Response, error),
 	v31Call func(string, int, TV31) (*http.Response, error),
 	v32eeCall func(string, int, TV32EE) (*http.Response, error),
 	v31eeCall func(string, int, TV31EE) (*http.Response, error),
 ) (*http.Response, error) {
 	return client.DispatchReplaceChild(ctx, c, parent, index, unifiedModel,
+		v33Call,
 		v32Call,
 		v31Call,
 		func(_ string, _ int, _ struct{}) (*http.Response, error) {
@@ -244,12 +273,14 @@ func DispatchDeleteChild31Plus(
 	c *client.DataplaneClient,
 	parent string,
 	index int,
+	v33Call func(string, int) (*http.Response, error),
 	v32Call func(string, int) (*http.Response, error),
 	v31Call func(string, int) (*http.Response, error),
 	v32eeCall func(string, int) (*http.Response, error),
 	v31eeCall func(string, int) (*http.Response, error),
 ) (*http.Response, error) {
 	return client.DispatchDeleteChild(ctx, c, parent, index,
+		v33Call,
 		v32Call,
 		v31Call,
 		func(_ string, _ int) (*http.Response, error) {

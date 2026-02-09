@@ -9,6 +9,7 @@ import (
 
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // CRTListEntry represents an entry within a CRT-list file.
@@ -34,6 +35,9 @@ func (c *DataplaneClient) GetCRTListEntries(ctx context.Context, crtListName str
 	sanitizedName := sanitizeCRTListName(crtListName)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.GetOneStorageSSLCrtListFile(ctx, sanitizedName)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.GetOneStorageSSLCrtListFile(ctx, sanitizedName)
 		},
@@ -108,6 +112,10 @@ func (c *DataplaneClient) AddCRTListEntry(ctx context.Context, crtListName strin
 	body := bytes.NewReader(jsonData)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			params := &v33.CreateStorageSSLCrtListEntryParams{}
+			return c.CreateStorageSSLCrtListEntryWithBody(ctx, sanitizedName, params, "application/json", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			params := &v32.CreateStorageSSLCrtListEntryParams{}
 			return c.CreateStorageSSLCrtListEntryWithBody(ctx, sanitizedName, params, "application/json", body)
@@ -142,6 +150,13 @@ func (c *DataplaneClient) DeleteCRTListEntry(ctx context.Context, crtListName, c
 	sanitizedName := sanitizeCRTListName(crtListName)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			params := &v33.DeleteStorageSSLCrtListEntryParams{
+				Certificate: certificate,
+				LineNumber:  lineNumber,
+			}
+			return c.DeleteStorageSSLCrtListEntry(ctx, sanitizedName, params)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			params := &v32.DeleteStorageSSLCrtListEntryParams{
 				Certificate: certificate,

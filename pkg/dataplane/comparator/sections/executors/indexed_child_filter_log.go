@@ -27,6 +27,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // FilterFrontendCreate returns an executor for creating filters in frontends.
@@ -35,6 +36,10 @@ func FilterFrontendCreate() func(ctx context.Context, c *client.DataplaneClient,
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Filter) (*http.Response, error) {
+				params := &v33.CreateFilterFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateFilterFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Filter) (*http.Response, error) {
 				params := &v32.CreateFilterFrontendParams{TransactionId: &txID}
 				return clientset.V32().CreateFilterFrontend(ctx, p, idx, params, m)
@@ -70,6 +75,10 @@ func FilterFrontendUpdate() func(ctx context.Context, c *client.DataplaneClient,
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Filter) (*http.Response, error) {
+				params := &v33.ReplaceFilterFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceFilterFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Filter) (*http.Response, error) {
 				params := &v32.ReplaceFilterFrontendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceFilterFrontend(ctx, p, idx, params, m)
@@ -106,6 +115,10 @@ func FilterFrontendDelete() func(ctx context.Context, c *client.DataplaneClient,
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteFilterFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteFilterFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteFilterFrontendParams{TransactionId: &txID}
 				return clientset.V32().DeleteFilterFrontend(ctx, p, idx, params)
 			},
@@ -140,6 +153,10 @@ func FilterBackendCreate() func(ctx context.Context, c *client.DataplaneClient, 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Filter) (*http.Response, error) {
+				params := &v33.CreateFilterBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateFilterBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Filter) (*http.Response, error) {
 				params := &v32.CreateFilterBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateFilterBackend(ctx, p, idx, params, m)
@@ -175,6 +192,10 @@ func FilterBackendUpdate() func(ctx context.Context, c *client.DataplaneClient, 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Filter) (*http.Response, error) {
+				params := &v33.ReplaceFilterBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceFilterBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Filter) (*http.Response, error) {
 				params := &v32.ReplaceFilterBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceFilterBackend(ctx, p, idx, params, m)
@@ -211,6 +232,10 @@ func FilterBackendDelete() func(ctx context.Context, c *client.DataplaneClient, 
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteFilterBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteFilterBackend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteFilterBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteFilterBackend(ctx, p, idx, params)
 			},
@@ -245,6 +270,10 @@ func LogTargetFrontendCreate() func(ctx context.Context, c *client.DataplaneClie
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.LogTarget) (*http.Response, error) {
+				params := &v33.CreateLogTargetFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateLogTargetFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.LogTarget) (*http.Response, error) {
 				params := &v32.CreateLogTargetFrontendParams{TransactionId: &txID}
 				return clientset.V32().CreateLogTargetFrontend(ctx, p, idx, params, m)
@@ -280,6 +309,10 @@ func LogTargetFrontendUpdate() func(ctx context.Context, c *client.DataplaneClie
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.LogTarget) (*http.Response, error) {
+				params := &v33.ReplaceLogTargetFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceLogTargetFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.LogTarget) (*http.Response, error) {
 				params := &v32.ReplaceLogTargetFrontendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceLogTargetFrontend(ctx, p, idx, params, m)
@@ -316,6 +349,10 @@ func LogTargetFrontendDelete() func(ctx context.Context, c *client.DataplaneClie
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteLogTargetFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteLogTargetFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteLogTargetFrontendParams{TransactionId: &txID}
 				return clientset.V32().DeleteLogTargetFrontend(ctx, p, idx, params)
 			},
@@ -350,6 +387,10 @@ func LogTargetBackendCreate() func(ctx context.Context, c *client.DataplaneClien
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.LogTarget) (*http.Response, error) {
+				params := &v33.CreateLogTargetBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateLogTargetBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.LogTarget) (*http.Response, error) {
 				params := &v32.CreateLogTargetBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateLogTargetBackend(ctx, p, idx, params, m)
@@ -385,6 +426,10 @@ func LogTargetBackendUpdate() func(ctx context.Context, c *client.DataplaneClien
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.LogTarget) (*http.Response, error) {
+				params := &v33.ReplaceLogTargetBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceLogTargetBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.LogTarget) (*http.Response, error) {
 				params := &v32.ReplaceLogTargetBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceLogTargetBackend(ctx, p, idx, params, m)
@@ -420,6 +465,10 @@ func LogTargetBackendDelete() func(ctx context.Context, c *client.DataplaneClien
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
+			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteLogTargetBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteLogTargetBackend(ctx, p, idx, params)
+			},
 			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteLogTargetBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteLogTargetBackend(ctx, p, idx, params)

@@ -27,6 +27,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // ACLFrontendCreate returns an executor for creating ACLs in frontends.
@@ -35,6 +36,10 @@ func ACLFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, tx
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Acl) (*http.Response, error) {
+				params := &v33.CreateAclFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateAclFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Acl) (*http.Response, error) {
 				params := &v32.CreateAclFrontendParams{TransactionId: &txID}
 				return clientset.V32().CreateAclFrontend(ctx, p, idx, params, m)
@@ -70,6 +75,10 @@ func ACLFrontendUpdate() func(ctx context.Context, c *client.DataplaneClient, tx
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Acl) (*http.Response, error) {
+				params := &v33.ReplaceAclFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceAclFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Acl) (*http.Response, error) {
 				params := &v32.ReplaceAclFrontendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceAclFrontend(ctx, p, idx, params, m)
@@ -106,6 +115,10 @@ func ACLFrontendDelete() func(ctx context.Context, c *client.DataplaneClient, tx
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteAclFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteAclFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteAclFrontendParams{TransactionId: &txID}
 				return clientset.V32().DeleteAclFrontend(ctx, p, idx, params)
 			},
@@ -140,6 +153,10 @@ func ACLBackendCreate() func(ctx context.Context, c *client.DataplaneClient, txI
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Acl) (*http.Response, error) {
+				params := &v33.CreateAclBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateAclBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Acl) (*http.Response, error) {
 				params := &v32.CreateAclBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateAclBackend(ctx, p, idx, params, m)
@@ -175,6 +192,10 @@ func ACLBackendUpdate() func(ctx context.Context, c *client.DataplaneClient, txI
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Acl) (*http.Response, error) {
+				params := &v33.ReplaceAclBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceAclBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Acl) (*http.Response, error) {
 				params := &v32.ReplaceAclBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceAclBackend(ctx, p, idx, params, m)
@@ -210,6 +231,10 @@ func ACLBackendDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
+			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteAclBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteAclBackend(ctx, p, idx, params)
+			},
 			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteAclBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteAclBackend(ctx, p, idx, params)

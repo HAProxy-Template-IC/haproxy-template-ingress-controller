@@ -13,6 +13,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // GetAllMapFiles retrieves all map file names from the storage.
@@ -21,6 +22,7 @@ import (
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) GetAllMapFiles(ctx context.Context) ([]string, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetAllStorageMapFiles(ctx) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetAllStorageMapFiles(ctx) },
 		V31:   func(c *v31.Client) (*http.Response, error) { return c.GetAllStorageMapFiles(ctx) },
 		V30:   func(c *v30.Client) (*http.Response, error) { return c.GetAllStorageMapFiles(ctx) },
@@ -64,6 +66,7 @@ func (c *DataplaneClient) GetAllMapFiles(ctx context.Context) ([]string, error) 
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) GetMapFileContent(ctx context.Context, name string) (string, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetOneStorageMap(ctx, name) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetOneStorageMap(ctx, name) },
 		V31:   func(c *v31.Client) (*http.Response, error) { return c.GetOneStorageMap(ctx, name) },
 		V30:   func(c *v30.Client) (*http.Response, error) { return c.GetOneStorageMap(ctx, name) },
@@ -90,6 +93,9 @@ func (c *DataplaneClient) CreateMapFile(ctx context.Context, name, content strin
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CreateStorageMapFileWithBody(ctx, contentType, body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CreateStorageMapFileWithBody(ctx, contentType, body)
 		},
@@ -128,6 +134,9 @@ func (c *DataplaneClient) UpdateMapFile(ctx context.Context, name, content strin
 	body := bytes.NewReader([]byte(content))
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
 		},
@@ -160,6 +169,7 @@ func (c *DataplaneClient) UpdateMapFile(ctx context.Context, name, content strin
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) DeleteMapFile(ctx context.Context, name string) error {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.DeleteStorageMap(ctx, name) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.DeleteStorageMap(ctx, name) },
 		V31:   func(c *v31.Client) (*http.Response, error) { return c.DeleteStorageMap(ctx, name) },
 		V30:   func(c *v30.Client) (*http.Response, error) { return c.DeleteStorageMap(ctx, name) },

@@ -13,6 +13,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // LogProfileCreate returns an executor for creating log-profile sections.
@@ -23,6 +24,10 @@ func LogProfileCreate() func(ctx context.Context, c *client.DataplaneClient, txI
 
 		// Log profiles are v3.1+ only - use DispatchCreate31Plus
 		resp, err := DispatchCreate31Plus(ctx, c, model,
+			func(m v33.LogProfile) (*http.Response, error) {
+				params := &v33.CreateLogProfileParams{TransactionId: &txID}
+				return clientset.V33().CreateLogProfile(ctx, params, m)
+			},
 			func(m v32.LogProfile) (*http.Response, error) {
 				params := &v32.CreateLogProfileParams{TransactionId: &txID}
 				return clientset.V32().CreateLogProfile(ctx, params, m)
@@ -52,6 +57,10 @@ func LogProfileUpdate() func(ctx context.Context, c *client.DataplaneClient, txI
 
 		// Log profiles are v3.1+ only - use DispatchUpdate31Plus
 		resp, err := DispatchUpdate31Plus(ctx, c, name, model,
+			func(n string, m v33.LogProfile) (*http.Response, error) {
+				params := &v33.EditLogProfileParams{TransactionId: &txID}
+				return clientset.V33().EditLogProfile(ctx, n, params, m)
+			},
 			func(n string, m v32.LogProfile) (*http.Response, error) {
 				params := &v32.EditLogProfileParams{TransactionId: &txID}
 				return clientset.V32().EditLogProfile(ctx, n, params, m)
@@ -82,6 +91,10 @@ func LogProfileDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 		// Log profiles are v3.1+ only - use DispatchDelete31Plus
 		resp, err := DispatchDelete31Plus(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteLogProfileParams{TransactionId: &txID}
+				return clientset.V33().DeleteLogProfile(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteLogProfileParams{TransactionId: &txID}
 				return clientset.V32().DeleteLogProfile(ctx, n, params)
 			},
@@ -111,6 +124,10 @@ func TracesUpdate() func(ctx context.Context, c *client.DataplaneClient, txID st
 
 		// Traces are v3.1+ only - use DispatchUpdate31Plus with empty name since it's a singleton
 		resp, err := DispatchUpdate31Plus(ctx, c, "", model,
+			func(_ string, m v33.Traces) (*http.Response, error) {
+				params := &v33.ReplaceTracesParams{TransactionId: &txID}
+				return clientset.V33().ReplaceTraces(ctx, params, m)
+			},
 			func(_ string, m v32.Traces) (*http.Response, error) {
 				params := &v32.ReplaceTracesParams{TransactionId: &txID}
 				return clientset.V32().ReplaceTraces(ctx, params, m)
@@ -138,10 +155,11 @@ func TracesUpdate() func(ctx context.Context, c *client.DataplaneClient, txID st
 // happen since capability checks prevent operation generation for unsupported versions).
 
 // DispatchCreate31Plus is a generic helper for create operations on v3.1+ only features.
-func DispatchCreate31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE any](
+func DispatchCreate31Plus[TUnified any, TV33 any, TV32 any, TV31 any, TV32EE any, TV31EE any](
 	ctx context.Context,
 	c *client.DataplaneClient,
 	unifiedModel TUnified,
+	v33Call func(TV33) (*http.Response, error),
 	v32Call func(TV32) (*http.Response, error),
 	v31Call func(TV31) (*http.Response, error),
 	v32eeCall func(TV32EE) (*http.Response, error),
@@ -149,6 +167,7 @@ func DispatchCreate31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE a
 ) (*http.Response, error) {
 	// Wrap v3.1+ callbacks to v3.0+ interface with error handlers for unsupported versions
 	return client.DispatchCreate(ctx, c, unifiedModel,
+		v33Call,
 		v32Call,
 		v31Call,
 		func(_ struct{}) (*http.Response, error) {
@@ -163,11 +182,12 @@ func DispatchCreate31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE a
 }
 
 // DispatchUpdate31Plus is a generic helper for update operations on v3.1+ only features.
-func DispatchUpdate31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE any](
+func DispatchUpdate31Plus[TUnified any, TV33 any, TV32 any, TV31 any, TV32EE any, TV31EE any](
 	ctx context.Context,
 	c *client.DataplaneClient,
 	name string,
 	unifiedModel TUnified,
+	v33Call func(string, TV33) (*http.Response, error),
 	v32Call func(string, TV32) (*http.Response, error),
 	v31Call func(string, TV31) (*http.Response, error),
 	v32eeCall func(string, TV32EE) (*http.Response, error),
@@ -175,6 +195,7 @@ func DispatchUpdate31Plus[TUnified any, TV32 any, TV31 any, TV32EE any, TV31EE a
 ) (*http.Response, error) {
 	// Wrap v3.1+ callbacks to v3.0+ interface with error handlers for unsupported versions
 	return client.DispatchUpdate(ctx, c, name, unifiedModel,
+		v33Call,
 		v32Call,
 		v31Call,
 		func(_ string, _ struct{}) (*http.Response, error) {
@@ -193,6 +214,7 @@ func DispatchDelete31Plus(
 	ctx context.Context,
 	c *client.DataplaneClient,
 	name string,
+	v33Call func(string) (*http.Response, error),
 	v32Call func(string) (*http.Response, error),
 	v31Call func(string) (*http.Response, error),
 	v32eeCall func(string) (*http.Response, error),
@@ -200,6 +222,7 @@ func DispatchDelete31Plus(
 ) (*http.Response, error) {
 	// Wrap v3.1+ callbacks to v3.0+ interface with error handlers for unsupported versions
 	return client.DispatchDelete(ctx, c, name,
+		v33Call,
 		v32Call,
 		v31Call,
 		func(_ string) (*http.Response, error) {

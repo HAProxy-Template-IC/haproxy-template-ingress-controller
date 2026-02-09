@@ -12,6 +12,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // ErrEnterpriseRequired is returned when an enterprise-only operation is attempted
@@ -22,7 +23,7 @@ var ErrEnterpriseRequired = errors.New("this operation requires HAProxy Enterpri
 // Each field is a function that takes a version-specific client and returns a result of type T.
 // This allows type-safe dispatch to the appropriate client version based on runtime detection.
 //
-// For HAProxy Community editions, use V30, V31, V32.
+// For HAProxy Community editions, use V30, V31, V32, V33.
 // For HAProxy Enterprise editions, use V30EE, V31EE, V32EE.
 //
 // Example usage:
@@ -37,7 +38,10 @@ var ErrEnterpriseRequired = errors.New("this operation requires HAProxy Enterpri
 //	})
 type CallFunc[T any] struct {
 	// Community edition clients
-	// V32 is the function to call for DataPlane API v3.2+
+	// V33 is the function to call for DataPlane API v3.3+
+	V33 func(*v33.Client) (T, error)
+
+	// V32 is the function to call for DataPlane API v3.2
 	V32 func(*v32.Client) (T, error)
 
 	// V31 is the function to call for DataPlane API v3.1
@@ -127,6 +131,12 @@ func (c *DataplaneClient) DispatchWithCapability(
 	// Dispatch to appropriate version (community or enterprise)
 	switch client := c.clientset.PreferredClient().(type) {
 	// Community edition clients
+	case *v33.Client:
+		if call.V33 == nil {
+			return nil, fmt.Errorf("operation not supported by DataPlane API v3.3 (v3.3 function is nil)")
+		}
+		return call.V33(client)
+
 	case *v32.Client:
 		if call.V32 == nil {
 			return nil, fmt.Errorf("operation not supported by DataPlane API v3.2 (v3.2 function is nil)")
@@ -196,6 +206,13 @@ func DispatchGeneric[T any](
 ) (T, error) {
 	switch client := clientset.PreferredClient().(type) {
 	// Community edition clients
+	case *v33.Client:
+		if call.V33 == nil {
+			var zero T
+			return zero, fmt.Errorf("operation not supported by DataPlane API v3.3 (v3.3 function is nil)")
+		}
+		return call.V33(client)
+
 	case *v32.Client:
 		if call.V32 == nil {
 			var zero T
@@ -310,6 +327,13 @@ func (c *DataplaneClient) DispatchEnterpriseOnly(
 
 	// Route to appropriate enterprise version
 	switch c.clientset.MinorVersion() {
+	case 3:
+		// No v33ee client yet (HAProxy Enterprise 3.3 not released).
+		// Fall through to v32ee which has the same API endpoints.
+		if call.V32EE == nil {
+			return nil, fmt.Errorf("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
+		}
+		return call.V32EE(c.clientset.V32EE())
 	case 2:
 		if call.V32EE == nil {
 			return nil, fmt.Errorf("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
@@ -359,6 +383,13 @@ func DispatchEnterpriseOnlyGeneric[T any](
 
 	// Route to appropriate enterprise version
 	switch clientset.MinorVersion() {
+	case 3:
+		// No v33ee client yet (HAProxy Enterprise 3.3 not released).
+		// Fall through to v32ee which has the same API endpoints.
+		if call.V32EE == nil {
+			return zero, fmt.Errorf("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
+		}
+		return call.V32EE(clientset.V32EE())
 	case 2:
 		if call.V32EE == nil {
 			return zero, fmt.Errorf("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")

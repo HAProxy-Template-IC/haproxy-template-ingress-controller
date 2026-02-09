@@ -27,6 +27,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // HTTPRequestRuleFrontendCreate returns an executor for creating HTTP request rules in frontends.
@@ -35,6 +36,10 @@ func HTTPRequestRuleFrontendCreate() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpRequestRule) (*http.Response, error) {
+				params := &v33.CreateHTTPRequestRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateHTTPRequestRuleFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpRequestRule) (*http.Response, error) {
 				params := &v32.CreateHTTPRequestRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().CreateHTTPRequestRuleFrontend(ctx, p, idx, params, m)
@@ -70,6 +75,10 @@ func HTTPRequestRuleFrontendUpdate() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpRequestRule) (*http.Response, error) {
+				params := &v33.ReplaceHTTPRequestRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceHTTPRequestRuleFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpRequestRule) (*http.Response, error) {
 				params := &v32.ReplaceHTTPRequestRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceHTTPRequestRuleFrontend(ctx, p, idx, params, m)
@@ -106,6 +115,10 @@ func HTTPRequestRuleFrontendDelete() func(ctx context.Context, c *client.Datapla
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteHTTPRequestRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteHTTPRequestRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteHTTPRequestRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().DeleteHTTPRequestRuleFrontend(ctx, p, idx, params)
 			},
@@ -140,6 +153,10 @@ func HTTPRequestRuleBackendCreate() func(ctx context.Context, c *client.Dataplan
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpRequestRule) (*http.Response, error) {
+				params := &v33.CreateHTTPRequestRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateHTTPRequestRuleBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpRequestRule) (*http.Response, error) {
 				params := &v32.CreateHTTPRequestRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateHTTPRequestRuleBackend(ctx, p, idx, params, m)
@@ -175,6 +192,10 @@ func HTTPRequestRuleBackendUpdate() func(ctx context.Context, c *client.Dataplan
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpRequestRule) (*http.Response, error) {
+				params := &v33.ReplaceHTTPRequestRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceHTTPRequestRuleBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpRequestRule) (*http.Response, error) {
 				params := &v32.ReplaceHTTPRequestRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceHTTPRequestRuleBackend(ctx, p, idx, params, m)
@@ -211,6 +232,10 @@ func HTTPRequestRuleBackendDelete() func(ctx context.Context, c *client.Dataplan
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteHTTPRequestRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteHTTPRequestRuleBackend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteHTTPRequestRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteHTTPRequestRuleBackend(ctx, p, idx, params)
 			},
@@ -245,6 +270,10 @@ func HTTPResponseRuleFrontendCreate() func(ctx context.Context, c *client.Datapl
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpResponseRule) (*http.Response, error) {
+				params := &v33.CreateHTTPResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateHTTPResponseRuleFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpResponseRule) (*http.Response, error) {
 				params := &v32.CreateHTTPResponseRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().CreateHTTPResponseRuleFrontend(ctx, p, idx, params, m)
@@ -280,6 +309,10 @@ func HTTPResponseRuleFrontendUpdate() func(ctx context.Context, c *client.Datapl
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpResponseRule) (*http.Response, error) {
+				params := &v33.ReplaceHTTPResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceHTTPResponseRuleFrontend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpResponseRule) (*http.Response, error) {
 				params := &v32.ReplaceHTTPResponseRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceHTTPResponseRuleFrontend(ctx, p, idx, params, m)
@@ -316,6 +349,10 @@ func HTTPResponseRuleFrontendDelete() func(ctx context.Context, c *client.Datapl
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteHTTPResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteHTTPResponseRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteHTTPResponseRuleFrontendParams{TransactionId: &txID}
 				return clientset.V32().DeleteHTTPResponseRuleFrontend(ctx, p, idx, params)
 			},
@@ -350,6 +387,10 @@ func HTTPResponseRuleBackendCreate() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpResponseRule) (*http.Response, error) {
+				params := &v33.CreateHTTPResponseRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateHTTPResponseRuleBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpResponseRule) (*http.Response, error) {
 				params := &v32.CreateHTTPResponseRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateHTTPResponseRuleBackend(ctx, p, idx, params, m)
@@ -385,6 +426,10 @@ func HTTPResponseRuleBackendUpdate() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpResponseRule) (*http.Response, error) {
+				params := &v33.ReplaceHTTPResponseRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceHTTPResponseRuleBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpResponseRule) (*http.Response, error) {
 				params := &v32.ReplaceHTTPResponseRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceHTTPResponseRuleBackend(ctx, p, idx, params, m)
@@ -420,6 +465,10 @@ func HTTPResponseRuleBackendDelete() func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
+			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteHTTPResponseRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteHTTPResponseRuleBackend(ctx, p, idx, params)
+			},
 			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteHTTPResponseRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteHTTPResponseRuleBackend(ctx, p, idx, params)

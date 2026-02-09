@@ -72,6 +72,7 @@ var versionDirs = map[string]string{
 	"v30": "pkg/generated/dataplaneapi/v30",
 	"v31": "pkg/generated/dataplaneapi/v31",
 	"v32": "pkg/generated/dataplaneapi/v32",
+	"v33": "pkg/generated/dataplaneapi/v33",
 }
 
 func main() {
@@ -104,6 +105,10 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Warning: schema %s not found in %s: %v\n", schemaName, version, err)
 				continue
 			}
+			// Filter out properties that don't exist on client-native model structs.
+			// Newer specs may define fields not yet in the client-native library.
+			resolved = filterSchemaProperties(schemaName, resolved)
+
 			schemas[schemaName] = resolved
 
 			// Collect all patterns

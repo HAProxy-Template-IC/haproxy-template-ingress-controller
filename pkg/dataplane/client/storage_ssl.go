@@ -16,6 +16,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // SanitizeSSLCertName sanitizes a certificate name for HAProxy Data Plane API storage.
@@ -33,6 +34,7 @@ func SanitizeSSLCertName(name string) string {
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) GetAllSSLCertificates(ctx context.Context) ([]string, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetAllStorageSSLCertificates(ctx) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetAllStorageSSLCertificates(ctx) },
 		V31:   func(c *v31.Client) (*http.Response, error) { return c.GetAllStorageSSLCertificates(ctx) },
 		V30:   func(c *v30.Client) (*http.Response, error) { return c.GetAllStorageSSLCertificates(ctx) },
@@ -97,6 +99,7 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 	sanitizedName := SanitizeSSLCertName(name)
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) { return c.GetOneStorageSSLCertificate(ctx, sanitizedName) },
 		V32: func(c *v32.Client) (*http.Response, error) { return c.GetOneStorageSSLCertificate(ctx, sanitizedName) },
 		V31: func(c *v31.Client) (*http.Response, error) { return c.GetOneStorageSSLCertificate(ctx, sanitizedName) },
 		V30: func(c *v30.Client) (*http.Response, error) { return c.GetOneStorageSSLCertificate(ctx, sanitizedName) },
@@ -197,6 +200,9 @@ func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, conten
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
 		},
@@ -238,6 +244,9 @@ func (c *DataplaneClient) UpdateSSLCertificate(ctx context.Context, name, conten
 	body := bytes.NewBufferString(content)
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
 		},
@@ -275,6 +284,9 @@ func (c *DataplaneClient) DeleteSSLCertificate(ctx context.Context, name string)
 	sanitizedName := SanitizeSSLCertName(name)
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
 		},

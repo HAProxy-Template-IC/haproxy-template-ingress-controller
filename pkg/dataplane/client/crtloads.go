@@ -9,6 +9,7 @@ import (
 
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // CrtLoad represents a certificate load configuration within a crt-store.
@@ -92,6 +93,10 @@ func (r *crtLoadAPIResponse) toCrtLoad() CrtLoad {
 // CRT loads are only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetAllCrtLoads(ctx context.Context, crtStoreName string) ([]CrtLoad, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			params := &v33.GetCrtLoadsParams{CrtStore: crtStoreName}
+			return c.GetCrtLoads(ctx, params)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			params := &v32.GetCrtLoadsParams{CrtStore: crtStoreName}
 			return c.GetCrtLoads(ctx, params)
@@ -133,6 +138,10 @@ func (c *DataplaneClient) GetAllCrtLoads(ctx context.Context, crtStoreName strin
 // CRT loads are only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetCrtLoad(ctx context.Context, crtStoreName, certificate string) (*CrtLoad, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			params := &v33.GetCrtLoadParams{CrtStore: crtStoreName}
+			return c.GetCrtLoad(ctx, certificate, params)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			params := &v32.GetCrtLoadParams{CrtStore: crtStoreName}
 			return c.GetCrtLoad(ctx, certificate, params)
@@ -184,6 +193,13 @@ func (c *DataplaneClient) CreateCrtLoad(ctx context.Context, crtStoreName string
 	body := bytes.NewReader(jsonData)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			params := &v33.CreateCrtLoadParams{
+				CrtStore:      crtStoreName,
+				TransactionId: &transactionID,
+			}
+			return c.CreateCrtLoadWithBody(ctx, params, "application/json", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			params := &v32.CreateCrtLoadParams{
 				CrtStore:      crtStoreName,
@@ -228,6 +244,13 @@ func (c *DataplaneClient) ReplaceCrtLoad(ctx context.Context, crtStoreName, cert
 	body := bytes.NewReader(jsonData)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			params := &v33.ReplaceCrtLoadParams{
+				CrtStore:      crtStoreName,
+				TransactionId: &transactionID,
+			}
+			return c.ReplaceCrtLoadWithBody(ctx, certificate, params, "application/json", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			params := &v32.ReplaceCrtLoadParams{
 				CrtStore:      crtStoreName,
@@ -265,6 +288,13 @@ func (c *DataplaneClient) ReplaceCrtLoad(ctx context.Context, crtStoreName, cert
 // CRT loads are only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) DeleteCrtLoad(ctx context.Context, crtStoreName, certificate, transactionID string) error {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			params := &v33.DeleteCrtLoadParams{
+				CrtStore:      crtStoreName,
+				TransactionId: &transactionID,
+			}
+			return c.DeleteCrtLoad(ctx, certificate, params)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			params := &v32.DeleteCrtLoadParams{
 				CrtStore:      crtStoreName,

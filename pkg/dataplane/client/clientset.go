@@ -1,7 +1,7 @@
 // Package client provides a multi-version wrapper for HAProxy Dataplane API clients.
 //
 // This package implements the Kubernetes-style clientset pattern to support multiple
-// HAProxy DataPlane API versions (3.0, 3.1, 3.2) with:
+// HAProxy DataPlane API versions (3.0, 3.1, 3.2, 3.3) with:
 // - Runtime version detection using /v3/info endpoint
 // - Capability-based routing for graceful degradation
 // - Version-specific client accessors
@@ -22,6 +22,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // Clientset provides access to clients for all supported HAProxy DataPlane API versions.
@@ -32,6 +33,7 @@ type Clientset struct {
 	v30Client *v30.Client
 	v31Client *v31.Client
 	v32Client *v32.Client
+	v33Client *v33.Client
 
 	// Enterprise version-specific clients
 	v30eeClient *v30ee.Client
@@ -51,7 +53,7 @@ type Clientset struct {
 }
 
 // Capabilities defines which features are available for a given DataPlane API version.
-// Version thresholds verified against OpenAPI specs for v3.0, v3.1, v3.2.
+// Version thresholds verified against OpenAPI specs for v3.0, v3.1, v3.2, v3.3.
 type Capabilities struct {
 	// Storage capabilities
 	SupportsCrtList        bool // /v3/storage/ssl_crt_lists (v3.2+)
@@ -246,6 +248,11 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		return nil, fmt.Errorf("failed to create v3.2 client: %w", err)
 	}
 
+	v33Client, err := v33.NewClient(endpoint.URL, v33.WithRequestEditorFn(authEditor))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create v3.3 client: %w", err)
+	}
+
 	// Create enterprise clients for all supported versions
 	v30eeClient, err := v30ee.NewClient(endpoint.URL, v30ee.WithRequestEditorFn(authEditor))
 	if err != nil {
@@ -266,6 +273,7 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		v30Client:       v30Client,
 		v31Client:       v31Client,
 		v32Client:       v32Client,
+		v33Client:       v33Client,
 		v30eeClient:     v30eeClient,
 		v31eeClient:     v31eeClient,
 		v32eeClient:     v32eeClient,
@@ -295,6 +303,11 @@ func (c *Clientset) V31() *v31.Client {
 // This client is compatible with HAProxy 2.8 and later.
 func (c *Clientset) V32() *v32.Client {
 	return c.v32Client
+}
+
+// V33 returns the DataPlane API v3.3 client.
+func (c *Clientset) V33() *v33.Client {
+	return c.v33Client
 }
 
 // V30EE returns the HAProxy Enterprise DataPlane API v3.0 client.
@@ -353,6 +366,10 @@ func (c *Clientset) IsEnterprise() bool {
 func (c *Clientset) PreferredClient() interface{} {
 	if c.isEnterprise {
 		switch c.minorVersion {
+		case 3:
+			// No v33ee client yet (HAProxy Enterprise 3.3 not released).
+			// Fall through to v32ee which has the same API endpoints.
+			return c.v32eeClient
 		case 2:
 			return c.v32eeClient
 		case 1:
@@ -363,6 +380,8 @@ func (c *Clientset) PreferredClient() interface{} {
 	}
 
 	switch c.minorVersion {
+	case 3:
+		return c.v33Client
 	case 2:
 		return c.v32Client
 	case 1:
@@ -447,7 +466,7 @@ func ParseVersion(version string) (major, minor int, err error) {
 }
 
 // buildCapabilities constructs a capability map based on version and edition.
-// Thresholds verified against OpenAPI specs for v3.0, v3.1, v3.2 (both Community and Enterprise).
+// Thresholds verified against OpenAPI specs for v3.0, v3.1, v3.2, v3.3 (both Community and Enterprise).
 func buildCapabilities(_, minor int, isEnterprise bool) Capabilities {
 	// Baseline: all v3.0+ features (verified against OpenAPI specs)
 	caps := Capabilities{

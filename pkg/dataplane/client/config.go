@@ -15,6 +15,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // GetVersion retrieves the current configuration version from the Dataplane API.
@@ -33,6 +34,9 @@ import (
 //	fmt.Printf("Current version: %d\n", version)
 func (c *DataplaneClient) GetVersion(ctx context.Context) (int64, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.GetConfigurationVersion(ctx, &v33.GetConfigurationVersionParams{})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.GetConfigurationVersion(ctx, &v32.GetConfigurationVersionParams{})
 		},
@@ -95,6 +99,9 @@ func (c *DataplaneClient) GetVersion(ctx context.Context) (int64, error) {
 //	fmt.Printf("Current config:\n%s\n", config)
 func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.GetHAProxyConfiguration(ctx, &v33.GetHAProxyConfigurationParams{})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.GetHAProxyConfiguration(ctx, &v32.GetHAProxyConfigurationParams{})
 		},
@@ -161,6 +168,7 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 //	}
 func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config string, version int64) (string, error) {
 	// Convert int64 to API's Version type (int alias)
+	v33Version := v33.Version(version)
 	v32Version := v32.Version(version)
 	v31Version := v31.Version(version)
 	v30Version := v30.Version(version)
@@ -169,6 +177,9 @@ func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config strin
 	v30eeVersion := v30ee.Version(version)
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.PostHAProxyConfigurationWithTextBody(ctx, &v33.PostHAProxyConfigurationParams{Version: &v33Version}, config)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v32.PostHAProxyConfigurationParams{Version: &v32Version}, config)
 		},
@@ -270,6 +281,9 @@ type ReloadInfo struct {
 //	}
 func (c *DataplaneClient) GetReloadStatus(ctx context.Context, reloadID string) (*ReloadInfo, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.GetReload(ctx, reloadID)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.GetReload(ctx, reloadID)
 		},

@@ -202,7 +202,6 @@ templateSnippets:
       # Backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
                   {%- var backendKey = BackendNameIngress(ingress, path) %}
       backend {{ backendKey }}
-        balance roundrobin
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context }}
         default-server check{{ BuildServerOptions(serverOpts) }}

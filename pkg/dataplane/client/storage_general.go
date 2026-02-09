@@ -12,6 +12,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // GetAllGeneralFiles retrieves all general file paths from the storage.
@@ -20,6 +21,7 @@ import (
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) GetAllGeneralFiles(ctx context.Context) ([]string, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetAllStorageGeneralFiles(ctx) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetAllStorageGeneralFiles(ctx) },
 		V31:   func(c *v31.Client) (*http.Response, error) { return c.GetAllStorageGeneralFiles(ctx) },
 		V30:   func(c *v30.Client) (*http.Response, error) { return c.GetAllStorageGeneralFiles(ctx) },
@@ -69,6 +71,7 @@ func (c *DataplaneClient) GetAllGeneralFiles(ctx context.Context) ([]string, err
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) GetGeneralFileContent(ctx context.Context, path string) (string, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetOneStorageGeneralFile(ctx, path) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetOneStorageGeneralFile(ctx, path) },
 		V31:   func(c *v31.Client) (*http.Response, error) { return c.GetOneStorageGeneralFile(ctx, path) },
 		V30:   func(c *v30.Client) (*http.Response, error) { return c.GetOneStorageGeneralFile(ctx, path) },
@@ -95,6 +98,9 @@ func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content s
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CreateStorageGeneralFileWithBody(ctx, contentType, body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CreateStorageGeneralFileWithBody(ctx, contentType, body)
 		},
@@ -133,6 +139,9 @@ func (c *DataplaneClient) UpdateGeneralFile(ctx context.Context, path, content s
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.ReplaceStorageGeneralFileWithBody(ctx, path, nil, contentType, body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.ReplaceStorageGeneralFileWithBody(ctx, path, nil, contentType, body)
 		},
@@ -165,6 +174,7 @@ func (c *DataplaneClient) UpdateGeneralFile(ctx context.Context, path, content s
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) DeleteGeneralFile(ctx context.Context, path string) error {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.DeleteStorageGeneralFile(ctx, path) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.DeleteStorageGeneralFile(ctx, path) },
 		V31:   func(c *v31.Client) (*http.Response, error) { return c.DeleteStorageGeneralFile(ctx, path) },
 		V30:   func(c *v30.Client) (*http.Response, error) { return c.DeleteStorageGeneralFile(ctx, path) },

@@ -11,6 +11,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // Traces represents HAProxy trace events configuration.
@@ -34,6 +35,9 @@ type TraceEntry struct {
 // Traces configuration is only available in HAProxy DataPlane API v3.1+.
 func (c *DataplaneClient) GetTraces(ctx context.Context) (*Traces, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.GetTraces(ctx, &v33.GetTracesParams{})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.GetTraces(ctx, &v32.GetTracesParams{})
 		},
@@ -91,6 +95,9 @@ func (c *DataplaneClient) CreateTraces(ctx context.Context, traces *Traces, tran
 	body := bytes.NewReader(jsonData)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CreateTracesWithBody(ctx, &v33.CreateTracesParams{TransactionId: &transactionID}, "application/json", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CreateTracesWithBody(ctx, &v32.CreateTracesParams{TransactionId: &transactionID}, "application/json", body)
 		},
@@ -134,6 +141,9 @@ func (c *DataplaneClient) ReplaceTraces(ctx context.Context, traces *Traces, tra
 	body := bytes.NewReader(jsonData)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.ReplaceTracesWithBody(ctx, &v33.ReplaceTracesParams{TransactionId: &transactionID}, "application/json", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.ReplaceTracesWithBody(ctx, &v32.ReplaceTracesParams{TransactionId: &transactionID}, "application/json", body)
 		},
@@ -169,6 +179,9 @@ func (c *DataplaneClient) ReplaceTraces(ctx context.Context, traces *Traces, tra
 // Traces configuration is only available in HAProxy DataPlane API v3.1+.
 func (c *DataplaneClient) DeleteTraces(ctx context.Context, transactionID string) error {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.DeleteTraces(ctx, &v33.DeleteTracesParams{TransactionId: &transactionID})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.DeleteTraces(ctx, &v32.DeleteTracesParams{TransactionId: &transactionID})
 		},

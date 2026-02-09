@@ -30,6 +30,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // TestDispatchCreate verifies that the DispatchCreate function signatures
@@ -38,12 +39,14 @@ import (
 func TestDispatchCreate(t *testing.T) {
 	// Verify type compatibility by declaring callback signatures.
 	// These verify the dispatcher helpers accept correct function signatures.
+	type v33CreateFunc func(v33.Backend, *v33.CreateBackendParams) (*http.Response, error)
 	type v32CreateFunc func(v32.Backend, *v32.CreateBackendParams) (*http.Response, error)
 	type v31CreateFunc func(v31.Backend, *v31.CreateBackendParams) (*http.Response, error)
 	type v30CreateFunc func(v30.Backend, *v30.CreateBackendParams) (*http.Response, error)
 
 	// Type assertions at compile time verify the function signatures are valid.
 	var (
+		_ v33CreateFunc
 		_ v32CreateFunc
 		_ v31CreateFunc
 		_ v30CreateFunc
@@ -55,11 +58,13 @@ func TestDispatchCreate(t *testing.T) {
 // TestDispatchUpdate verifies that the DispatchUpdate function signatures
 // compile correctly with version-specific types.
 func TestDispatchUpdate(t *testing.T) {
+	type v33UpdateFunc func(string, v33.Backend, *v33.ReplaceBackendParams) (*http.Response, error)
 	type v32UpdateFunc func(string, v32.Backend, *v32.ReplaceBackendParams) (*http.Response, error)
 	type v31UpdateFunc func(string, v31.Backend, *v31.ReplaceBackendParams) (*http.Response, error)
 	type v30UpdateFunc func(string, v30.Backend, *v30.ReplaceBackendParams) (*http.Response, error)
 
 	var (
+		_ v33UpdateFunc
 		_ v32UpdateFunc
 		_ v31UpdateFunc
 		_ v30UpdateFunc
@@ -71,11 +76,13 @@ func TestDispatchUpdate(t *testing.T) {
 // TestDispatchDelete verifies that the DispatchDelete function signatures
 // compile correctly with version-specific types.
 func TestDispatchDelete(t *testing.T) {
+	type v33DeleteFunc func(string, *v33.DeleteBackendParams) (*http.Response, error)
 	type v32DeleteFunc func(string, *v32.DeleteBackendParams) (*http.Response, error)
 	type v31DeleteFunc func(string, *v31.DeleteBackendParams) (*http.Response, error)
 	type v30DeleteFunc func(string, *v30.DeleteBackendParams) (*http.Response, error)
 
 	var (
+		_ v33DeleteFunc
 		_ v32DeleteFunc
 		_ v31DeleteFunc
 		_ v30DeleteFunc
@@ -87,11 +94,13 @@ func TestDispatchDelete(t *testing.T) {
 // TestDispatchCreateChild verifies that the DispatchCreateChild function signatures
 // compile correctly with version-specific types.
 func TestDispatchCreateChild(t *testing.T) {
+	type v33CreateChildFunc func(string, int, v33.Acl, *v33.CreateAclFrontendParams) (*http.Response, error)
 	type v32CreateChildFunc func(string, int, v32.Acl, *v32.CreateAclFrontendParams) (*http.Response, error)
 	type v31CreateChildFunc func(string, int, v31.Acl, *v31.CreateAclFrontendParams) (*http.Response, error)
 	type v30CreateChildFunc func(string, int, v30.Acl, *v30.CreateAclFrontendParams) (*http.Response, error)
 
 	var (
+		_ v33CreateChildFunc
 		_ v32CreateChildFunc
 		_ v31CreateChildFunc
 		_ v30CreateChildFunc
@@ -103,11 +112,13 @@ func TestDispatchCreateChild(t *testing.T) {
 // TestDispatchReplaceChild verifies that the DispatchReplaceChild function signatures
 // compile correctly with version-specific types.
 func TestDispatchReplaceChild(t *testing.T) {
+	type v33ReplaceChildFunc func(string, int, v33.Acl, *v33.ReplaceAclFrontendParams) (*http.Response, error)
 	type v32ReplaceChildFunc func(string, int, v32.Acl, *v32.ReplaceAclFrontendParams) (*http.Response, error)
 	type v31ReplaceChildFunc func(string, int, v31.Acl, *v31.ReplaceAclFrontendParams) (*http.Response, error)
 	type v30ReplaceChildFunc func(string, int, v30.Acl, *v30.ReplaceAclFrontendParams) (*http.Response, error)
 
 	var (
+		_ v33ReplaceChildFunc
 		_ v32ReplaceChildFunc
 		_ v31ReplaceChildFunc
 		_ v30ReplaceChildFunc
@@ -119,11 +130,13 @@ func TestDispatchReplaceChild(t *testing.T) {
 // TestDispatchDeleteChild verifies that the DispatchDeleteChild function signatures
 // compile correctly with version-specific types.
 func TestDispatchDeleteChild(t *testing.T) {
+	type v33DeleteChildFunc func(string, int, *v33.DeleteAclFrontendParams) (*http.Response, error)
 	type v32DeleteChildFunc func(string, int, *v32.DeleteAclFrontendParams) (*http.Response, error)
 	type v31DeleteChildFunc func(string, int, *v31.DeleteAclFrontendParams) (*http.Response, error)
 	type v30DeleteChildFunc func(string, int, *v30.DeleteAclFrontendParams) (*http.Response, error)
 
 	var (
+		_ v33DeleteChildFunc
 		_ v32DeleteChildFunc
 		_ v31DeleteChildFunc
 		_ v30DeleteChildFunc
@@ -179,10 +192,14 @@ func TestDispatchCreate_Runtime(t *testing.T) {
 		v32Called := atomic.Int32{}
 		model := dispatchTestModel{Name: "test", Value: 42}
 
-		resp, err := DispatchCreate[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
+		resp, err := DispatchCreate[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
 			context.Background(),
 			client,
 			model,
+			func(m dispatchTestModel) (*http.Response, error) {
+				t.Error("v33 should not be called")
+				return nil, errors.New("v33 should not be called")
+			},
 			func(m dispatchTestModel) (*http.Response, error) {
 				v32Called.Add(1)
 				assert.Equal(t, "test", m.Name)
@@ -223,10 +240,11 @@ func TestDispatchCreate_Runtime(t *testing.T) {
 	t.Run("callback error propagated", func(t *testing.T) {
 		expectedErr := errors.New("create failed")
 
-		resp, err := DispatchCreate[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
+		resp, err := DispatchCreate[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
 			context.Background(),
 			client,
 			dispatchTestModel{Name: "test"},
+			func(m dispatchTestModel) (*http.Response, error) { return nil, errors.New("unused") },
 			func(m dispatchTestModel) (*http.Response, error) {
 				return nil, expectedErr
 			},
@@ -255,11 +273,15 @@ func TestDispatchUpdate_Runtime(t *testing.T) {
 		v32Called := atomic.Int32{}
 		model := dispatchTestModel{Name: "updated", Value: 100}
 
-		resp, err := DispatchUpdate[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
+		resp, err := DispatchUpdate[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
 			context.Background(),
 			client,
 			"resource-name",
 			model,
+			func(name string, m dispatchTestModel) (*http.Response, error) {
+				t.Error("v33 should not be called")
+				return nil, errors.New("v33 should not be called")
+			},
 			func(name string, m dispatchTestModel) (*http.Response, error) {
 				v32Called.Add(1)
 				assert.Equal(t, "resource-name", name)
@@ -313,6 +335,10 @@ func TestDispatchDelete_Runtime(t *testing.T) {
 			client,
 			"delete-me",
 			func(name string) (*http.Response, error) {
+				t.Error("v33 should not be called")
+				return nil, errors.New("v33 should not be called")
+			},
+			func(name string) (*http.Response, error) {
 				v32Called.Add(1)
 				assert.Equal(t, "delete-me", name)
 				return &http.Response{StatusCode: http.StatusNoContent}, nil
@@ -359,12 +385,16 @@ func TestDispatchCreateChild_Runtime(t *testing.T) {
 		v32Called := atomic.Int32{}
 		model := dispatchTestModel{Name: "child", Value: 5}
 
-		resp, err := DispatchCreateChild[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
+		resp, err := DispatchCreateChild[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
 			context.Background(),
 			client,
 			"parent-frontend",
 			10,
 			model,
+			func(parent string, idx int, m dispatchTestModel) (*http.Response, error) {
+				t.Error("v33 should not be called")
+				return nil, errors.New("v33 should not be called")
+			},
 			func(parent string, idx int, m dispatchTestModel) (*http.Response, error) {
 				v32Called.Add(1)
 				assert.Equal(t, "parent-frontend", parent)
@@ -415,12 +445,16 @@ func TestDispatchReplaceChild_Runtime(t *testing.T) {
 		v32Called := atomic.Int32{}
 		model := dispatchTestModel{Name: "updated-child", Value: 99}
 
-		resp, err := DispatchReplaceChild[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
+		resp, err := DispatchReplaceChild[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
 			context.Background(),
 			client,
 			"parent-backend",
 			5,
 			model,
+			func(parent string, idx int, m dispatchTestModel) (*http.Response, error) {
+				t.Error("v33 should not be called")
+				return nil, errors.New("v33 should not be called")
+			},
 			func(parent string, idx int, m dispatchTestModel) (*http.Response, error) {
 				v32Called.Add(1)
 				assert.Equal(t, "parent-backend", parent)
@@ -476,6 +510,10 @@ func TestDispatchDeleteChild_Runtime(t *testing.T) {
 			"parent-frontend",
 			7,
 			func(parent string, idx int) (*http.Response, error) {
+				t.Error("v33 should not be called")
+				return nil, errors.New("v33 should not be called")
+			},
+			func(parent string, idx int) (*http.Response, error) {
 				v32Called.Add(1)
 				assert.Equal(t, "parent-frontend", parent)
 				assert.Equal(t, 7, idx)
@@ -520,6 +558,11 @@ func TestDispatchHelpers_VersionRouting(t *testing.T) {
 		expectedVersion string
 	}{
 		{
+			name:            "v3.3 community",
+			apiVersion:      "v3.3.0 aabb1122",
+			expectedVersion: "v33",
+		},
+		{
 			name:            "v3.2 community",
 			apiVersion:      "v3.2.6 87ad0bcf",
 			expectedVersion: "v32",
@@ -548,10 +591,14 @@ func TestDispatchHelpers_VersionRouting(t *testing.T) {
 			calledVersion := ""
 			model := dispatchTestModel{Name: "test"}
 
-			resp, err := DispatchCreate[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
+			resp, err := DispatchCreate[dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel, dispatchTestModel](
 				context.Background(),
 				client,
 				model,
+				func(m dispatchTestModel) (*http.Response, error) {
+					calledVersion = "v33"
+					return &http.Response{StatusCode: http.StatusOK}, nil
+				},
 				func(m dispatchTestModel) (*http.Response, error) {
 					calledVersion = "v32"
 					return &http.Response{StatusCode: http.StatusOK}, nil
@@ -587,8 +634,9 @@ func TestDispatchHelpers_VersionRouting(t *testing.T) {
 	}
 }
 
-// Ensure enterprise imports are used - they're needed for type assertions in signature tests.
+// Ensure imports are used - they're needed for type assertions in signature tests.
 var (
+	_ = v33.Client{}
 	_ = v30ee.Client{}
 	_ = v31ee.Client{}
 	_ = v32ee.Client{}

@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
+#
+# Configuration for oapi-codegen code generation
+# Generates complete HAProxy Dataplane API v3.3 client (models + client)
+#
+# Note: Using compatibility mode to avoid name collisions between
+# enum value "client" (becomes const Client) and HTTP client struct (type Client).
+#
+package: v33
+output: pkg/generated/dataplaneapi/v33/api.gen.go
+generate:
+  models: true
+  client: true
+  embedded-spec: true
+compatibility:
+  always-prefix-enum-values: true

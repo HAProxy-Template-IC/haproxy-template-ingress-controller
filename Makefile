@@ -367,6 +367,13 @@ generate-dataplaneapi-v32: ## Generate HAProxy DataPlane API v3.2 client
 		pkg/generated/dataplaneapi/v32/spec.json
 	@echo "✓ DataPlane API v3.2 client generated"
 
+generate-dataplaneapi-v33: ## Generate HAProxy DataPlane API v3.3 client
+	@echo "Generating DataPlane API v3.3 client (models + client)..."
+	@mkdir -p pkg/generated/dataplaneapi/v33
+	$(OAPI_CODEGEN) -config hack/oapi-codegen-v33.yaml \
+		pkg/generated/dataplaneapi/v33/spec.json
+	@echo "✓ DataPlane API v3.3 client generated"
+
 generate-dataplaneapi-v30ee: ## Generate HAProxy Enterprise DataPlane API v3.0 client
 	@echo "Generating Enterprise DataPlane API v3.0 client (models + client)..."
 	@mkdir -p pkg/generated/dataplaneapi/v30ee
@@ -388,7 +395,7 @@ generate-dataplaneapi-v32ee: ## Generate HAProxy Enterprise DataPlane API v3.2 c
 		pkg/generated/dataplaneapi/v32ee/spec.json
 	@echo "✓ Enterprise DataPlane API v3.2 client generated"
 
-generate-dataplaneapi-all: generate-dataplaneapi-v30 generate-dataplaneapi-v31 generate-dataplaneapi-v32 generate-dataplaneapi-v30ee generate-dataplaneapi-v31ee generate-dataplaneapi-v32ee ## Generate all HAProxy DataPlane API versions
+generate-dataplaneapi-all: generate-dataplaneapi-v30 generate-dataplaneapi-v31 generate-dataplaneapi-v32 generate-dataplaneapi-v33 generate-dataplaneapi-v30ee generate-dataplaneapi-v31ee generate-dataplaneapi-v32ee ## Generate all HAProxy DataPlane API versions
 	@echo "✓ All DataPlane API clients generated (Community + Enterprise)"
 
 generate-validators: ## Generate zero-allocation OpenAPI validators
