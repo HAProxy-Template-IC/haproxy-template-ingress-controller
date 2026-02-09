@@ -32,8 +32,8 @@ func TestForVersion(t *testing.T) {
 		{"v3.0 maps to v30", 3, 0, "v30"},
 		{"v3.1 maps to v31", 3, 1, "v31"},
 		{"v3.2 maps to v32", 3, 2, "v32"},
-		{"v3.3 maps to v32", 3, 3, "v32"},
-		{"v4.0 maps to v32", 4, 0, "v32"},
+		{"v3.3 maps to v33", 3, 3, "v33"},
+		{"v4.0 maps to v33", 4, 0, "v33"},
 	}
 
 	for _, tt := range tests {
@@ -49,6 +49,7 @@ func TestValidatorSet_Version(t *testing.T) {
 	assert.Equal(t, "v30", ForVersion(3, 0).Version())
 	assert.Equal(t, "v31", ForVersion(3, 1).Version())
 	assert.Equal(t, "v32", ForVersion(3, 2).Version())
+	assert.Equal(t, "v33", ForVersion(3, 3).Version())
 }
 
 func TestValidatorSet_NilFunctions(t *testing.T) {

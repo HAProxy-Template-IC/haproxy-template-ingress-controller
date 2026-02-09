@@ -9,6 +9,7 @@ import (
 
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // GetAllSSLCrlFiles retrieves all SSL CRL file names from the runtime storage.
@@ -17,6 +18,7 @@ import (
 // SSL CRL file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetAllSSLCrlFiles(ctx context.Context) ([]string, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetAllCrl(ctx) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetAllCrl(ctx) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetAllCrl(ctx) },
 	}, func(caps Capabilities) error {
@@ -61,6 +63,7 @@ func (c *DataplaneClient) GetAllSSLCrlFiles(ctx context.Context) ([]string, erro
 // SSL CRL file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetSSLCrlFileContent(ctx context.Context, name string) (string, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetCrl(ctx, name, nil) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetCrl(ctx, name, nil) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetCrl(ctx, name, nil) },
 	}, func(caps Capabilities) error {
@@ -92,6 +95,9 @@ func (c *DataplaneClient) CreateSSLCrlFile(ctx context.Context, name, content st
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CreateCrlWithBody(ctx, contentType, body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CreateCrlWithBody(ctx, contentType, body)
 		},
@@ -120,6 +126,9 @@ func (c *DataplaneClient) UpdateSSLCrlFile(ctx context.Context, name, content st
 	body := bytes.NewReader([]byte(content))
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.ReplaceCrlWithBody(ctx, name, "text/plain", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.ReplaceCrlWithBody(ctx, name, "text/plain", body)
 		},
@@ -145,6 +154,7 @@ func (c *DataplaneClient) UpdateSSLCrlFile(ctx context.Context, name, content st
 // SSL CRL file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) DeleteSSLCrlFile(ctx context.Context, name string) error {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.DeleteCrl(ctx, name) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.DeleteCrl(ctx, name) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.DeleteCrl(ctx, name) },
 	}, func(caps Capabilities) error {

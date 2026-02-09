@@ -17,6 +17,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // BackendCreate returns an executor for creating backends.
@@ -25,6 +26,10 @@ func BackendCreate() func(ctx context.Context, c *client.DataplaneClient, txID s
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Backend) (*http.Response, error) {
+				params := &v33.CreateBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateBackend(ctx, params, m)
+			},
 			func(m v32.Backend) (*http.Response, error) {
 				params := &v32.CreateBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateBackend(ctx, params, m)
@@ -60,6 +65,10 @@ func BackendUpdate() func(ctx context.Context, c *client.DataplaneClient, txID s
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.Backend) (*http.Response, error) {
+				params := &v33.ReplaceBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceBackend(ctx, n, params, m)
+			},
 			func(n string, m v32.Backend) (*http.Response, error) {
 				params := &v32.ReplaceBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceBackend(ctx, n, params, m)
@@ -96,6 +105,10 @@ func BackendDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteBackend(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteBackend(ctx, n, params)
 			},
@@ -130,6 +143,10 @@ func FrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Frontend) (*http.Response, error) {
+				params := &v33.CreateFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateFrontend(ctx, params, m)
+			},
 			func(m v32.Frontend) (*http.Response, error) {
 				params := &v32.CreateFrontendParams{TransactionId: &txID}
 				return clientset.V32().CreateFrontend(ctx, params, m)
@@ -165,6 +182,10 @@ func FrontendUpdate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.Frontend) (*http.Response, error) {
+				params := &v33.ReplaceFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceFrontend(ctx, n, params, m)
+			},
 			func(n string, m v32.Frontend) (*http.Response, error) {
 				params := &v32.ReplaceFrontendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceFrontend(ctx, n, params, m)
@@ -201,6 +222,10 @@ func FrontendDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteFrontend(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteFrontendParams{TransactionId: &txID}
 				return clientset.V32().DeleteFrontend(ctx, n, params)
 			},
@@ -235,6 +260,10 @@ func DefaultsCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Defaults) (*http.Response, error) {
+				params := &v33.CreateDefaultsSectionParams{TransactionId: &txID}
+				return clientset.V33().CreateDefaultsSection(ctx, params, m)
+			},
 			func(m v32.Defaults) (*http.Response, error) {
 				params := &v32.CreateDefaultsSectionParams{TransactionId: &txID}
 				return clientset.V32().CreateDefaultsSection(ctx, params, m)
@@ -270,6 +299,10 @@ func DefaultsUpdate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.Defaults) (*http.Response, error) {
+				params := &v33.ReplaceDefaultsSectionParams{TransactionId: &txID}
+				return clientset.V33().ReplaceDefaultsSection(ctx, n, params, m)
+			},
 			func(n string, m v32.Defaults) (*http.Response, error) {
 				params := &v32.ReplaceDefaultsSectionParams{TransactionId: &txID}
 				return clientset.V32().ReplaceDefaultsSection(ctx, n, params, m)
@@ -305,6 +338,10 @@ func DefaultsDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDelete(ctx, c, name,
+			func(n string) (*http.Response, error) {
+				params := &v33.DeleteDefaultsSectionParams{TransactionId: &txID}
+				return clientset.V33().DeleteDefaultsSection(ctx, n, params)
+			},
 			func(n string) (*http.Response, error) {
 				params := &v32.DeleteDefaultsSectionParams{TransactionId: &txID}
 				return clientset.V32().DeleteDefaultsSection(ctx, n, params)

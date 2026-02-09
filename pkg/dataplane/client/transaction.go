@@ -15,6 +15,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // Transaction represents an HAProxy Dataplane API transaction.
@@ -72,6 +73,9 @@ type TransactionResponse struct {
 //	err = tx.Commit(context.Background())
 func (c *DataplaneClient) CreateTransaction(ctx context.Context, version int64) (*Transaction, error) {
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.StartTransaction(ctx, &v33.StartTransactionParams{Version: int(version)})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.StartTransaction(ctx, &v32.StartTransactionParams{Version: int(version)})
 		},
@@ -187,6 +191,9 @@ func (tx *Transaction) Commit(ctx context.Context) (*CommitResult, error) {
 	forceReload := false
 
 	resp, err := tx.client.Dispatch(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CommitTransaction(ctx, tx.ID, &v33.CommitTransactionParams{ForceReload: &forceReload})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CommitTransaction(ctx, tx.ID, &v32.CommitTransactionParams{ForceReload: &forceReload})
 		},
@@ -283,6 +290,7 @@ func (tx *Transaction) Abort(ctx context.Context) error {
 
 	// Perform actual abort
 	resp, err := tx.client.Dispatch(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.DeleteTransaction(ctx, tx.ID) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.DeleteTransaction(ctx, tx.ID) },
 		V31:   func(c *v31.Client) (*http.Response, error) { return c.DeleteTransaction(ctx, tx.ID) },
 		V30:   func(c *v30.Client) (*http.Response, error) { return c.DeleteTransaction(ctx, tx.ID) },

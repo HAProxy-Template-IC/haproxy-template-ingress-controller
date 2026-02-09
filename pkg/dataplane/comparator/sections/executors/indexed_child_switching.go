@@ -27,6 +27,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // BackendSwitchingRuleCreate returns an executor for creating backend switching rules.
@@ -35,6 +36,10 @@ func BackendSwitchingRuleCreate() func(ctx context.Context, c *client.DataplaneC
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.BackendSwitchingRule) (*http.Response, error) {
+				params := &v33.CreateBackendSwitchingRuleParams{TransactionId: &txID}
+				return clientset.V33().CreateBackendSwitchingRule(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.BackendSwitchingRule) (*http.Response, error) {
 				params := &v32.CreateBackendSwitchingRuleParams{TransactionId: &txID}
 				return clientset.V32().CreateBackendSwitchingRule(ctx, p, idx, params, m)
@@ -70,6 +75,10 @@ func BackendSwitchingRuleUpdate() func(ctx context.Context, c *client.DataplaneC
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.BackendSwitchingRule) (*http.Response, error) {
+				params := &v33.ReplaceBackendSwitchingRuleParams{TransactionId: &txID}
+				return clientset.V33().ReplaceBackendSwitchingRule(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.BackendSwitchingRule) (*http.Response, error) {
 				params := &v32.ReplaceBackendSwitchingRuleParams{TransactionId: &txID}
 				return clientset.V32().ReplaceBackendSwitchingRule(ctx, p, idx, params, m)
@@ -106,6 +115,10 @@ func BackendSwitchingRuleDelete() func(ctx context.Context, c *client.DataplaneC
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteBackendSwitchingRuleParams{TransactionId: &txID}
+				return clientset.V33().DeleteBackendSwitchingRule(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteBackendSwitchingRuleParams{TransactionId: &txID}
 				return clientset.V32().DeleteBackendSwitchingRule(ctx, p, idx, params)
 			},
@@ -140,6 +153,10 @@ func ServerSwitchingRuleBackendCreate() func(ctx context.Context, c *client.Data
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.ServerSwitchingRule) (*http.Response, error) {
+				params := &v33.CreateServerSwitchingRuleParams{TransactionId: &txID}
+				return clientset.V33().CreateServerSwitchingRule(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.ServerSwitchingRule) (*http.Response, error) {
 				params := &v32.CreateServerSwitchingRuleParams{TransactionId: &txID}
 				return clientset.V32().CreateServerSwitchingRule(ctx, p, idx, params, m)
@@ -175,6 +192,10 @@ func ServerSwitchingRuleBackendUpdate() func(ctx context.Context, c *client.Data
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.ServerSwitchingRule) (*http.Response, error) {
+				params := &v33.ReplaceServerSwitchingRuleParams{TransactionId: &txID}
+				return clientset.V33().ReplaceServerSwitchingRule(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.ServerSwitchingRule) (*http.Response, error) {
 				params := &v32.ReplaceServerSwitchingRuleParams{TransactionId: &txID}
 				return clientset.V32().ReplaceServerSwitchingRule(ctx, p, idx, params, m)
@@ -210,6 +231,10 @@ func ServerSwitchingRuleBackendDelete() func(ctx context.Context, c *client.Data
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
+			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteServerSwitchingRuleParams{TransactionId: &txID}
+				return clientset.V33().DeleteServerSwitchingRule(ctx, p, idx, params)
+			},
 			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteServerSwitchingRuleParams{TransactionId: &txID}
 				return clientset.V32().DeleteServerSwitchingRule(ctx, p, idx, params)

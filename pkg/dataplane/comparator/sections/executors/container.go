@@ -14,6 +14,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // UserCreate returns an executor for creating users in userlists.
@@ -22,6 +23,10 @@ func UserCreate(userlistName string) func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.User) (*http.Response, error) {
+				params := &v33.CreateUserParams{TransactionId: &txID, Userlist: userlistName}
+				return clientset.V33().CreateUser(ctx, params, m)
+			},
 			func(m v32.User) (*http.Response, error) {
 				params := &v32.CreateUserParams{TransactionId: &txID, Userlist: userlistName}
 				return clientset.V32().CreateUser(ctx, params, m)
@@ -57,6 +62,10 @@ func UserUpdate(userlistName string) func(ctx context.Context, c *client.Datapla
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, childName, model,
+			func(name string, m v33.User) (*http.Response, error) {
+				params := &v33.ReplaceUserParams{TransactionId: &txID, Userlist: userlistName}
+				return clientset.V33().ReplaceUser(ctx, name, params, m)
+			},
 			func(name string, m v32.User) (*http.Response, error) {
 				params := &v32.ReplaceUserParams{TransactionId: &txID, Userlist: userlistName}
 				return clientset.V32().ReplaceUser(ctx, name, params, m)
@@ -93,6 +102,10 @@ func UserDelete(userlistName string) func(ctx context.Context, c *client.Datapla
 
 		resp, err := client.DispatchDelete(ctx, c, childName,
 			func(name string) (*http.Response, error) {
+				params := &v33.DeleteUserParams{TransactionId: &txID, Userlist: userlistName}
+				return clientset.V33().DeleteUser(ctx, name, params)
+			},
+			func(name string) (*http.Response, error) {
 				params := &v32.DeleteUserParams{TransactionId: &txID, Userlist: userlistName}
 				return clientset.V32().DeleteUser(ctx, name, params)
 			},
@@ -127,6 +140,10 @@ func MailerEntryCreate(mailersName string) func(ctx context.Context, c *client.D
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.MailerEntry) (*http.Response, error) {
+				params := &v33.CreateMailerEntryParams{TransactionId: &txID, MailersSection: mailersName}
+				return clientset.V33().CreateMailerEntry(ctx, params, m)
+			},
 			func(m v32.MailerEntry) (*http.Response, error) {
 				params := &v32.CreateMailerEntryParams{TransactionId: &txID, MailersSection: mailersName}
 				return clientset.V32().CreateMailerEntry(ctx, params, m)
@@ -162,6 +179,10 @@ func MailerEntryUpdate(mailersName string) func(ctx context.Context, c *client.D
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, childName, model,
+			func(name string, m v33.MailerEntry) (*http.Response, error) {
+				params := &v33.ReplaceMailerEntryParams{TransactionId: &txID, MailersSection: mailersName}
+				return clientset.V33().ReplaceMailerEntry(ctx, name, params, m)
+			},
 			func(name string, m v32.MailerEntry) (*http.Response, error) {
 				params := &v32.ReplaceMailerEntryParams{TransactionId: &txID, MailersSection: mailersName}
 				return clientset.V32().ReplaceMailerEntry(ctx, name, params, m)
@@ -198,6 +219,10 @@ func MailerEntryDelete(mailersName string) func(ctx context.Context, c *client.D
 
 		resp, err := client.DispatchDelete(ctx, c, childName,
 			func(name string) (*http.Response, error) {
+				params := &v33.DeleteMailerEntryParams{TransactionId: &txID, MailersSection: mailersName}
+				return clientset.V33().DeleteMailerEntry(ctx, name, params)
+			},
+			func(name string) (*http.Response, error) {
 				params := &v32.DeleteMailerEntryParams{TransactionId: &txID, MailersSection: mailersName}
 				return clientset.V32().DeleteMailerEntry(ctx, name, params)
 			},
@@ -232,6 +257,10 @@ func PeerEntryCreate(peerSectionName string) func(ctx context.Context, c *client
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.PeerEntry) (*http.Response, error) {
+				params := &v33.CreatePeerEntryParams{TransactionId: &txID, PeerSection: peerSectionName}
+				return clientset.V33().CreatePeerEntry(ctx, params, m)
+			},
 			func(m v32.PeerEntry) (*http.Response, error) {
 				params := &v32.CreatePeerEntryParams{TransactionId: &txID, PeerSection: peerSectionName}
 				return clientset.V32().CreatePeerEntry(ctx, params, m)
@@ -267,6 +296,10 @@ func PeerEntryUpdate(peerSectionName string) func(ctx context.Context, c *client
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, childName, model,
+			func(name string, m v33.PeerEntry) (*http.Response, error) {
+				params := &v33.ReplacePeerEntryParams{TransactionId: &txID, PeerSection: peerSectionName}
+				return clientset.V33().ReplacePeerEntry(ctx, name, params, m)
+			},
 			func(name string, m v32.PeerEntry) (*http.Response, error) {
 				params := &v32.ReplacePeerEntryParams{TransactionId: &txID, PeerSection: peerSectionName}
 				return clientset.V32().ReplacePeerEntry(ctx, name, params, m)
@@ -303,6 +336,10 @@ func PeerEntryDelete(peerSectionName string) func(ctx context.Context, c *client
 
 		resp, err := client.DispatchDelete(ctx, c, childName,
 			func(name string) (*http.Response, error) {
+				params := &v33.DeletePeerEntryParams{TransactionId: &txID, PeerSection: peerSectionName}
+				return clientset.V33().DeletePeerEntry(ctx, name, params)
+			},
+			func(name string) (*http.Response, error) {
 				params := &v32.DeletePeerEntryParams{TransactionId: &txID, PeerSection: peerSectionName}
 				return clientset.V32().DeletePeerEntry(ctx, name, params)
 			},
@@ -337,6 +374,10 @@ func NameserverCreate(resolverName string) func(ctx context.Context, c *client.D
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Nameserver) (*http.Response, error) {
+				params := &v33.CreateNameserverParams{TransactionId: &txID, Resolver: resolverName}
+				return clientset.V33().CreateNameserver(ctx, params, m)
+			},
 			func(m v32.Nameserver) (*http.Response, error) {
 				params := &v32.CreateNameserverParams{TransactionId: &txID, Resolver: resolverName}
 				return clientset.V32().CreateNameserver(ctx, params, m)
@@ -372,6 +413,10 @@ func NameserverUpdate(resolverName string) func(ctx context.Context, c *client.D
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, childName, model,
+			func(name string, m v33.Nameserver) (*http.Response, error) {
+				params := &v33.ReplaceNameserverParams{TransactionId: &txID, Resolver: resolverName}
+				return clientset.V33().ReplaceNameserver(ctx, name, params, m)
+			},
 			func(name string, m v32.Nameserver) (*http.Response, error) {
 				params := &v32.ReplaceNameserverParams{TransactionId: &txID, Resolver: resolverName}
 				return clientset.V32().ReplaceNameserver(ctx, name, params, m)
@@ -407,6 +452,10 @@ func NameserverDelete(resolverName string) func(ctx context.Context, c *client.D
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDelete(ctx, c, childName,
+			func(name string) (*http.Response, error) {
+				params := &v33.DeleteNameserverParams{TransactionId: &txID, Resolver: resolverName}
+				return clientset.V33().DeleteNameserver(ctx, name, params)
+			},
 			func(name string) (*http.Response, error) {
 				params := &v32.DeleteNameserverParams{TransactionId: &txID, Resolver: resolverName}
 				return clientset.V32().DeleteNameserver(ctx, name, params)

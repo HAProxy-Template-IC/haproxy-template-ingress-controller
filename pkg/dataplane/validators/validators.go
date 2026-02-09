@@ -358,16 +358,18 @@ func (v *ValidatorSet) HashCapture(m *models.Capture) uint64 {
 }
 
 // ForVersion returns the ValidatorSet for a specific HAProxy version.
-// Returns v32 for 3.2+, v31 for 3.1, v30 for 3.0 and below.
+// Returns v33 for 3.3+, v32 for 3.2, v31 for 3.1, v30 for 3.0 and below.
 func ForVersion(major, minor int) *ValidatorSet {
 	if major < 3 {
 		return validatorSetV30
 	}
 	if major > 3 {
-		return validatorSetV32
+		return validatorSetV33
 	}
 
 	switch {
+	case minor >= 3:
+		return validatorSetV33
 	case minor >= 2:
 		return validatorSetV32
 	case minor >= 1:
@@ -383,6 +385,7 @@ var (
 	validatorSetV30 *ValidatorSet
 	validatorSetV31 *ValidatorSet
 	validatorSetV32 *ValidatorSet
+	validatorSetV33 *ValidatorSet
 )
 
 func init() {
@@ -504,5 +507,45 @@ func init() {
 		hashHTTPCheck:               HashHttpCheckV32,
 		hashTCPCheck:                HashTcpCheckV32,
 		hashCapture:                 HashCaptureV32,
+	}
+
+	validatorSetV33 = &ValidatorSet{
+		version:                     "v33",
+		validateServer:              ValidateServerV33,
+		validateServerTemplate:      ValidateServerTemplateV33,
+		validateBind:                ValidateBindV33,
+		validateHTTPRequestRule:     ValidateHttpRequestRuleV33,
+		validateHTTPResponseRule:    ValidateHttpResponseRuleV33,
+		validateTCPRequestRule:      ValidateTcpRequestRuleV33,
+		validateTCPResponseRule:     ValidateTcpResponseRuleV33,
+		validateHTTPAfterResponse:   ValidateHttpAfterResponseRuleV33,
+		validateHTTPErrorRule:       ValidateHttpErrorRuleV33,
+		validateServerSwitchingRule: ValidateServerSwitchingRuleV33,
+		validateBackendSwitching:    ValidateBackendSwitchingRuleV33,
+		validateStickRule:           ValidateStickRuleV33,
+		validateACL:                 ValidateAclV33,
+		validateFilter:              ValidateFilterV33,
+		validateLogTarget:           ValidateLogTargetV33,
+		validateHTTPCheck:           ValidateHttpCheckV33,
+		validateTCPCheck:            ValidateTcpCheckV33,
+		validateCapture:             ValidateCaptureV33,
+		hashServer:                  HashServerV33,
+		hashServerTemplate:          HashServerTemplateV33,
+		hashBind:                    HashBindV33,
+		hashHTTPRequestRule:         HashHttpRequestRuleV33,
+		hashHTTPResponseRule:        HashHttpResponseRuleV33,
+		hashTCPRequestRule:          HashTcpRequestRuleV33,
+		hashTCPResponseRule:         HashTcpResponseRuleV33,
+		hashHTTPAfterResponse:       HashHttpAfterResponseRuleV33,
+		hashHTTPErrorRule:           HashHttpErrorRuleV33,
+		hashServerSwitchingRule:     HashServerSwitchingRuleV33,
+		hashBackendSwitching:        HashBackendSwitchingRuleV33,
+		hashStickRule:               HashStickRuleV33,
+		hashACL:                     HashAclV33,
+		hashFilter:                  HashFilterV33,
+		hashLogTarget:               HashLogTargetV33,
+		hashHTTPCheck:               HashHttpCheckV33,
+		hashTCPCheck:                HashTcpCheckV33,
+		hashCapture:                 HashCaptureV33,
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // sanitizeCRTListName sanitizes a crt-list file name for HAProxy Data Plane API storage.
@@ -30,6 +31,7 @@ func unsanitizeCRTListName(name string) string {
 // CRT-list storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetAllCRTListFiles(ctx context.Context) ([]string, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetAllStorageSSLCrtListFiles(ctx) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetAllStorageSSLCrtListFiles(ctx) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetAllStorageSSLCrtListFiles(ctx) },
 	}, func(caps Capabilities) error {
@@ -81,6 +83,7 @@ func (c *DataplaneClient) GetCRTListFileContent(ctx context.Context, name string
 	sanitizedName := sanitizeCRTListName(name)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) { return c.GetOneStorageSSLCrtListFile(ctx, sanitizedName) },
 		V32: func(c *v32.Client) (*http.Response, error) { return c.GetOneStorageSSLCrtListFile(ctx, sanitizedName) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
 			return c.GetOneStorageSSLCrtListFile(ctx, sanitizedName)
@@ -120,6 +123,9 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CreateStorageSSLCrtListFileWithBody(ctx, &v33.CreateStorageSSLCrtListFileParams{}, contentType, body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CreateStorageSSLCrtListFileWithBody(ctx, &v32.CreateStorageSSLCrtListFileParams{}, contentType, body)
 		},
@@ -156,6 +162,9 @@ func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content s
 	body := bytes.NewReader([]byte(content))
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.ReplaceStorageSSLCrtListFileWithBody(ctx, sanitizedName, &v33.ReplaceStorageSSLCrtListFileParams{}, "text/plain", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.ReplaceStorageSSLCrtListFileWithBody(ctx, sanitizedName, &v32.ReplaceStorageSSLCrtListFileParams{}, "text/plain", body)
 		},
@@ -186,6 +195,9 @@ func (c *DataplaneClient) DeleteCRTListFile(ctx context.Context, name string) er
 	sanitizedName := sanitizeCRTListName(name)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.DeleteStorageSSLCrtListFile(ctx, sanitizedName, &v33.DeleteStorageSSLCrtListFileParams{})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.DeleteStorageSSLCrtListFile(ctx, sanitizedName, &v32.DeleteStorageSSLCrtListFileParams{})
 		},

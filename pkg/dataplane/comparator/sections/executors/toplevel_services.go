@@ -17,6 +17,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // MailersSectionCreate returns an executor for creating mailers sections.
@@ -25,6 +26,10 @@ func MailersSectionCreate() func(ctx context.Context, c *client.DataplaneClient,
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.MailersSection) (*http.Response, error) {
+				params := &v33.CreateMailersSectionParams{TransactionId: &txID}
+				return clientset.V33().CreateMailersSection(ctx, params, m)
+			},
 			func(m v32.MailersSection) (*http.Response, error) {
 				params := &v32.CreateMailersSectionParams{TransactionId: &txID}
 				return clientset.V32().CreateMailersSection(ctx, params, m)
@@ -60,6 +65,10 @@ func MailersSectionUpdate() func(ctx context.Context, c *client.DataplaneClient,
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.MailersSection) (*http.Response, error) {
+				params := &v33.EditMailersSectionParams{TransactionId: &txID}
+				return clientset.V33().EditMailersSection(ctx, n, params, m)
+			},
 			func(n string, m v32.MailersSection) (*http.Response, error) {
 				params := &v32.EditMailersSectionParams{TransactionId: &txID}
 				return clientset.V32().EditMailersSection(ctx, n, params, m)
@@ -96,6 +105,10 @@ func MailersSectionDelete() func(ctx context.Context, c *client.DataplaneClient,
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteMailersSectionParams{TransactionId: &txID}
+				return clientset.V33().DeleteMailersSection(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteMailersSectionParams{TransactionId: &txID}
 				return clientset.V32().DeleteMailersSection(ctx, n, params)
 			},
@@ -130,6 +143,10 @@ func ProgramCreate() func(ctx context.Context, c *client.DataplaneClient, txID s
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Program) (*http.Response, error) {
+				params := &v33.CreateProgramParams{TransactionId: &txID}
+				return clientset.V33().CreateProgram(ctx, params, m)
+			},
 			func(m v32.Program) (*http.Response, error) {
 				params := &v32.CreateProgramParams{TransactionId: &txID}
 				return clientset.V32().CreateProgram(ctx, params, m)
@@ -165,6 +182,10 @@ func ProgramUpdate() func(ctx context.Context, c *client.DataplaneClient, txID s
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.Program) (*http.Response, error) {
+				params := &v33.ReplaceProgramParams{TransactionId: &txID}
+				return clientset.V33().ReplaceProgram(ctx, n, params, m)
+			},
 			func(n string, m v32.Program) (*http.Response, error) {
 				params := &v32.ReplaceProgramParams{TransactionId: &txID}
 				return clientset.V32().ReplaceProgram(ctx, n, params, m)
@@ -201,6 +222,10 @@ func ProgramDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteProgramParams{TransactionId: &txID}
+				return clientset.V33().DeleteProgram(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteProgramParams{TransactionId: &txID}
 				return clientset.V32().DeleteProgram(ctx, n, params)
 			},
@@ -235,6 +260,10 @@ func ResolverCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Resolver) (*http.Response, error) {
+				params := &v33.CreateResolverParams{TransactionId: &txID}
+				return clientset.V33().CreateResolver(ctx, params, m)
+			},
 			func(m v32.Resolver) (*http.Response, error) {
 				params := &v32.CreateResolverParams{TransactionId: &txID}
 				return clientset.V32().CreateResolver(ctx, params, m)
@@ -270,6 +299,10 @@ func ResolverUpdate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.Resolver) (*http.Response, error) {
+				params := &v33.ReplaceResolverParams{TransactionId: &txID}
+				return clientset.V33().ReplaceResolver(ctx, n, params, m)
+			},
 			func(n string, m v32.Resolver) (*http.Response, error) {
 				params := &v32.ReplaceResolverParams{TransactionId: &txID}
 				return clientset.V32().ReplaceResolver(ctx, n, params, m)
@@ -306,6 +339,10 @@ func ResolverDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteResolverParams{TransactionId: &txID}
+				return clientset.V33().DeleteResolver(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteResolverParams{TransactionId: &txID}
 				return clientset.V32().DeleteResolver(ctx, n, params)
 			},
@@ -340,6 +377,10 @@ func RingCreate() func(ctx context.Context, c *client.DataplaneClient, txID stri
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Ring) (*http.Response, error) {
+				params := &v33.CreateRingParams{TransactionId: &txID}
+				return clientset.V33().CreateRing(ctx, params, m)
+			},
 			func(m v32.Ring) (*http.Response, error) {
 				params := &v32.CreateRingParams{TransactionId: &txID}
 				return clientset.V32().CreateRing(ctx, params, m)
@@ -375,6 +416,10 @@ func RingUpdate() func(ctx context.Context, c *client.DataplaneClient, txID stri
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.Ring) (*http.Response, error) {
+				params := &v33.ReplaceRingParams{TransactionId: &txID}
+				return clientset.V33().ReplaceRing(ctx, n, params, m)
+			},
 			func(n string, m v32.Ring) (*http.Response, error) {
 				params := &v32.ReplaceRingParams{TransactionId: &txID}
 				return clientset.V32().ReplaceRing(ctx, n, params, m)
@@ -410,6 +455,10 @@ func RingDelete() func(ctx context.Context, c *client.DataplaneClient, txID stri
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDelete(ctx, c, name,
+			func(n string) (*http.Response, error) {
+				params := &v33.DeleteRingParams{TransactionId: &txID}
+				return clientset.V33().DeleteRing(ctx, n, params)
+			},
 			func(n string) (*http.Response, error) {
 				params := &v32.DeleteRingParams{TransactionId: &txID}
 				return clientset.V32().DeleteRing(ctx, n, params)

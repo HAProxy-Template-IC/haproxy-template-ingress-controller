@@ -465,6 +465,7 @@ haproxyConfig:
         option dontlognull
         option log-health-checks
         option forwardfor
+        balance roundrobin
         timeout connect 5000
         timeout client 50000
         timeout server 50000

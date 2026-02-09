@@ -166,7 +166,7 @@ OPTIONS:
 
 ENVIRONMENT VARIABLES:
     HAPROXY_VERSION         HAProxy version for production pods (default: 3.2)
-                            Supported: 3.0, 3.1, 3.2, 3.3-dev
+                            Supported: 3.0, 3.1, 3.2 (LTS, default), 3.3
     HAPROXY_ENTERPRISE      Use HAProxy Enterprise instead of Community (default: false)
                             Enterprise versions: 3.0r1, 3.1r1, 3.2r1
                             Registry: hapee-registry.haproxy.com/haproxy-enterprise

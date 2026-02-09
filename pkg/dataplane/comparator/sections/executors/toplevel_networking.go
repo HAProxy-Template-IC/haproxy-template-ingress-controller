@@ -18,6 +18,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // CacheCreate returns an executor for creating cache sections.
@@ -26,6 +27,10 @@ func CacheCreate() func(ctx context.Context, c *client.DataplaneClient, txID str
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Cache) (*http.Response, error) {
+				params := &v33.CreateCacheParams{TransactionId: &txID}
+				return clientset.V33().CreateCache(ctx, params, m)
+			},
 			func(m v32.Cache) (*http.Response, error) {
 				params := &v32.CreateCacheParams{TransactionId: &txID}
 				return clientset.V32().CreateCache(ctx, params, m)
@@ -61,6 +66,10 @@ func CacheUpdate() func(ctx context.Context, c *client.DataplaneClient, txID str
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.Cache) (*http.Response, error) {
+				params := &v33.ReplaceCacheParams{TransactionId: &txID}
+				return clientset.V33().ReplaceCache(ctx, n, params, m)
+			},
 			func(n string, m v32.Cache) (*http.Response, error) {
 				params := &v32.ReplaceCacheParams{TransactionId: &txID}
 				return clientset.V32().ReplaceCache(ctx, n, params, m)
@@ -97,6 +106,10 @@ func CacheDelete() func(ctx context.Context, c *client.DataplaneClient, txID str
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteCacheParams{TransactionId: &txID}
+				return clientset.V33().DeleteCache(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteCacheParams{TransactionId: &txID}
 				return clientset.V32().DeleteCache(ctx, n, params)
 			},
@@ -131,6 +144,10 @@ func HTTPErrorsSectionCreate() func(ctx context.Context, c *client.DataplaneClie
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.HttpErrorsSection) (*http.Response, error) {
+				params := &v33.CreateHTTPErrorsSectionParams{TransactionId: &txID}
+				return clientset.V33().CreateHTTPErrorsSection(ctx, params, m)
+			},
 			func(m v32.HttpErrorsSection) (*http.Response, error) {
 				params := &v32.CreateHTTPErrorsSectionParams{TransactionId: &txID}
 				return clientset.V32().CreateHTTPErrorsSection(ctx, params, m)
@@ -166,6 +183,10 @@ func HTTPErrorsSectionUpdate() func(ctx context.Context, c *client.DataplaneClie
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.HttpErrorsSection) (*http.Response, error) {
+				params := &v33.ReplaceHTTPErrorsSectionParams{TransactionId: &txID}
+				return clientset.V33().ReplaceHTTPErrorsSection(ctx, n, params, m)
+			},
 			func(n string, m v32.HttpErrorsSection) (*http.Response, error) {
 				params := &v32.ReplaceHTTPErrorsSectionParams{TransactionId: &txID}
 				return clientset.V32().ReplaceHTTPErrorsSection(ctx, n, params, m)
@@ -202,6 +223,10 @@ func HTTPErrorsSectionDelete() func(ctx context.Context, c *client.DataplaneClie
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteHTTPErrorsSectionParams{TransactionId: &txID}
+				return clientset.V33().DeleteHTTPErrorsSection(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteHTTPErrorsSectionParams{TransactionId: &txID}
 				return clientset.V32().DeleteHTTPErrorsSection(ctx, n, params)
 			},
@@ -236,6 +261,10 @@ func LogForwardCreate() func(ctx context.Context, c *client.DataplaneClient, txI
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.LogForward) (*http.Response, error) {
+				params := &v33.CreateLogForwardParams{TransactionId: &txID}
+				return clientset.V33().CreateLogForward(ctx, params, m)
+			},
 			func(m v32.LogForward) (*http.Response, error) {
 				params := &v32.CreateLogForwardParams{TransactionId: &txID}
 				return clientset.V32().CreateLogForward(ctx, params, m)
@@ -271,6 +300,10 @@ func LogForwardUpdate() func(ctx context.Context, c *client.DataplaneClient, txI
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.LogForward) (*http.Response, error) {
+				params := &v33.ReplaceLogForwardParams{TransactionId: &txID}
+				return clientset.V33().ReplaceLogForward(ctx, n, params, m)
+			},
 			func(n string, m v32.LogForward) (*http.Response, error) {
 				params := &v32.ReplaceLogForwardParams{TransactionId: &txID}
 				return clientset.V32().ReplaceLogForward(ctx, n, params, m)
@@ -307,6 +340,10 @@ func LogForwardDelete() func(ctx context.Context, c *client.DataplaneClient, txI
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteLogForwardParams{TransactionId: &txID}
+				return clientset.V33().DeleteLogForward(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteLogForwardParams{TransactionId: &txID}
 				return clientset.V32().DeleteLogForward(ctx, n, params)
 			},
@@ -341,6 +378,10 @@ func PeerSectionCreate() func(ctx context.Context, c *client.DataplaneClient, tx
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.PeerSection) (*http.Response, error) {
+				params := &v33.CreatePeerParams{TransactionId: &txID}
+				return clientset.V33().CreatePeer(ctx, params, m)
+			},
 			func(m v32.PeerSection) (*http.Response, error) {
 				params := &v32.CreatePeerParams{TransactionId: &txID}
 				return clientset.V32().CreatePeer(ctx, params, m)
@@ -384,6 +425,10 @@ func PeerSectionDelete() func(ctx context.Context, c *client.DataplaneClient, tx
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDelete(ctx, c, name,
+			func(n string) (*http.Response, error) {
+				params := &v33.DeletePeerParams{TransactionId: &txID}
+				return clientset.V33().DeletePeer(ctx, n, params)
+			},
 			func(n string) (*http.Response, error) {
 				params := &v32.DeletePeerParams{TransactionId: &txID}
 				return clientset.V32().DeletePeer(ctx, n, params)

@@ -149,7 +149,7 @@ extract_spec() {
         haproxy_bin_path="/opt/hapee-${major_minor}/sbin/hapee-lb"
     else
         docker_image="haproxytech/haproxy-alpine:${haproxy_version}"
-        dataplaneapi_bin="/usr/bin/dataplaneapi"
+        dataplaneapi_bin="/usr/local/bin/dataplaneapi"
         haproxy_config_path="/etc/haproxy/haproxy.cfg"
         haproxy_bin_path="/usr/local/sbin/haproxy"
     fi
@@ -223,11 +223,11 @@ EOF
         mkdir -p "$temp_dir/hapee-${hapee_version}"
         cp "$temp_dir/dataplaneapi.yaml" "$temp_dir/hapee-extras/dataplaneapi.yml"
         cp "$temp_dir/haproxy.cfg" "$temp_dir/hapee-${hapee_version}/hapee-lb.cfg"
-        docker_volumes="-v $temp_dir/hapee-extras:/etc/hapee-extras -v $temp_dir/hapee-${hapee_version}:/etc/hapee-${hapee_version}"
+        docker_volumes="-v $temp_dir/hapee-extras:/etc/hapee-extras:z -v $temp_dir/hapee-${hapee_version}:/etc/hapee-${hapee_version}:z"
         docker_cmd="${dataplaneapi_bin} -f /etc/hapee-extras/dataplaneapi.yml"
     else
         # Community: mount to /etc/haproxy/ with config file
-        docker_volumes="-v $temp_dir:/etc/haproxy"
+        docker_volumes="-v $temp_dir:/etc/haproxy:z"
         docker_cmd="${dataplaneapi_bin} -f /etc/haproxy/dataplaneapi.yaml"
     fi
 

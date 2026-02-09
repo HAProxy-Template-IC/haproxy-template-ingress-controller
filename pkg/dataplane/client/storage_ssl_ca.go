@@ -8,6 +8,7 @@ import (
 
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // GetAllSSLCaFiles retrieves all SSL CA file names from the runtime storage.
@@ -16,6 +17,7 @@ import (
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetAllSSLCaFiles(ctx context.Context) ([]string, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetAllCaFiles(ctx) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetAllCaFiles(ctx) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetAllCaFiles(ctx) },
 	}, func(caps Capabilities) error {
@@ -60,6 +62,7 @@ func (c *DataplaneClient) GetAllSSLCaFiles(ctx context.Context) ([]string, error
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetSSLCaFileContent(ctx context.Context, name string) (string, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetCaFile(ctx, name) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetCaFile(ctx, name) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetCaFile(ctx, name) },
 	}, func(caps Capabilities) error {
@@ -91,6 +94,9 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CreateCaFileWithBody(ctx, contentType, body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CreateCaFileWithBody(ctx, contentType, body)
 		},
@@ -126,6 +132,9 @@ func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content str
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.SetCaFileWithBody(ctx, name, contentType, body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.SetCaFileWithBody(ctx, name, contentType, body)
 		},
@@ -151,6 +160,7 @@ func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content str
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) DeleteSSLCaFile(ctx context.Context, name string) error {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33:   func(c *v33.Client) (*http.Response, error) { return c.DeleteCaFile(ctx, name) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.DeleteCaFile(ctx, name) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.DeleteCaFile(ctx, name) },
 	}, func(caps Capabilities) error {

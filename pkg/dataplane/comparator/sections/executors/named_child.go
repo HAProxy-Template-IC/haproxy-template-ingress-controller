@@ -15,6 +15,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // BindFrontendCreate returns an executor for creating binds in frontends.
@@ -25,6 +26,10 @@ func BindFrontendCreate(frontendName string) func(ctx context.Context, c *client
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Bind) (*http.Response, error) {
+				params := &v33.CreateBindFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateBindFrontend(ctx, frontendName, params, m)
+			},
 			func(m v32.Bind) (*http.Response, error) {
 				params := &v32.CreateBindFrontendParams{TransactionId: &txID}
 				return clientset.V32().CreateBindFrontend(ctx, frontendName, params, m)
@@ -60,6 +65,10 @@ func BindFrontendUpdate(frontendName string) func(ctx context.Context, c *client
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, childName, model,
+			func(name string, m v33.Bind) (*http.Response, error) {
+				params := &v33.ReplaceBindFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceBindFrontend(ctx, frontendName, name, params, m)
+			},
 			func(name string, m v32.Bind) (*http.Response, error) {
 				params := &v32.ReplaceBindFrontendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceBindFrontend(ctx, frontendName, name, params, m)
@@ -96,6 +105,10 @@ func BindFrontendDelete(frontendName string) func(ctx context.Context, c *client
 
 		resp, err := client.DispatchDelete(ctx, c, childName,
 			func(name string) (*http.Response, error) {
+				params := &v33.DeleteBindFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteBindFrontend(ctx, frontendName, name, params)
+			},
+			func(name string) (*http.Response, error) {
 				params := &v32.DeleteBindFrontendParams{TransactionId: &txID}
 				return clientset.V32().DeleteBindFrontend(ctx, frontendName, name, params)
 			},
@@ -130,6 +143,10 @@ func ServerTemplateCreate(backendName string) func(ctx context.Context, c *clien
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.ServerTemplate) (*http.Response, error) {
+				params := &v33.CreateServerTemplateParams{TransactionId: &txID}
+				return clientset.V33().CreateServerTemplate(ctx, backendName, params, m)
+			},
 			func(m v32.ServerTemplate) (*http.Response, error) {
 				params := &v32.CreateServerTemplateParams{TransactionId: &txID}
 				return clientset.V32().CreateServerTemplate(ctx, backendName, params, m)
@@ -165,6 +182,10 @@ func ServerTemplateUpdate(backendName string) func(ctx context.Context, c *clien
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, childName, model,
+			func(name string, m v33.ServerTemplate) (*http.Response, error) {
+				params := &v33.ReplaceServerTemplateParams{TransactionId: &txID}
+				return clientset.V33().ReplaceServerTemplate(ctx, backendName, name, params, m)
+			},
 			func(name string, m v32.ServerTemplate) (*http.Response, error) {
 				params := &v32.ReplaceServerTemplateParams{TransactionId: &txID}
 				return clientset.V32().ReplaceServerTemplate(ctx, backendName, name, params, m)
@@ -201,6 +222,10 @@ func ServerTemplateDelete(backendName string) func(ctx context.Context, c *clien
 
 		resp, err := client.DispatchDelete(ctx, c, childName,
 			func(name string) (*http.Response, error) {
+				params := &v33.DeleteServerTemplateParams{TransactionId: &txID}
+				return clientset.V33().DeleteServerTemplate(ctx, backendName, name, params)
+			},
+			func(name string) (*http.Response, error) {
 				params := &v32.DeleteServerTemplateParams{TransactionId: &txID}
 				return clientset.V32().DeleteServerTemplate(ctx, backendName, name, params)
 			},
@@ -235,6 +260,10 @@ func ServerCreate(backendName string) func(ctx context.Context, c *client.Datapl
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Server) (*http.Response, error) {
+				params := &v33.CreateServerBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateServerBackend(ctx, backendName, params, m)
+			},
 			func(m v32.Server) (*http.Response, error) {
 				params := &v32.CreateServerBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateServerBackend(ctx, backendName, params, m)
@@ -309,6 +338,10 @@ func serverUpdateWithTransaction(ctx context.Context, c *client.DataplaneClient,
 	clientset := c.Clientset()
 
 	resp, err := client.DispatchUpdate(ctx, c, childName, model,
+		func(name string, m v33.Server) (*http.Response, error) {
+			params := &v33.ReplaceServerBackendParams{TransactionId: &txID}
+			return clientset.V33().ReplaceServerBackend(ctx, backendName, name, params, m)
+		},
 		func(name string, m v32.Server) (*http.Response, error) {
 			params := &v32.ReplaceServerBackendParams{TransactionId: &txID}
 			return clientset.V32().ReplaceServerBackend(ctx, backendName, name, params, m)
@@ -347,6 +380,11 @@ func serverUpdateWithVersion(ctx context.Context, c *client.DataplaneClient, bac
 	clientset := c.Clientset()
 
 	resp, err := client.DispatchUpdate(ctx, c, childName, model,
+		func(name string, m v33.Server) (*http.Response, error) {
+			version := v33.Version(version64)
+			params := &v33.ReplaceServerBackendParams{Version: &version}
+			return clientset.V33().ReplaceServerBackend(ctx, backendName, name, params, m)
+		},
 		func(name string, m v32.Server) (*http.Response, error) {
 			version := v32.Version(version64)
 			params := &v32.ReplaceServerBackendParams{Version: &version}
@@ -405,6 +443,10 @@ func ServerDelete(backendName string) func(ctx context.Context, c *client.Datapl
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDelete(ctx, c, childName,
+			func(name string) (*http.Response, error) {
+				params := &v33.DeleteServerBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteServerBackend(ctx, backendName, name, params)
+			},
 			func(name string) (*http.Response, error) {
 				params := &v32.DeleteServerBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteServerBackend(ctx, backendName, name, params)

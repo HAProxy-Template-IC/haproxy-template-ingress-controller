@@ -17,6 +17,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // CrtStoreCreate returns an executor for creating crt-store sections.
@@ -25,6 +26,10 @@ func CrtStoreCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.CrtStore) (*http.Response, error) {
+				params := &v33.CreateCrtStoreParams{TransactionId: &txID}
+				return clientset.V33().CreateCrtStore(ctx, params, m)
+			},
 			func(m v32.CrtStore) (*http.Response, error) {
 				params := &v32.CreateCrtStoreParams{TransactionId: &txID}
 				return clientset.V32().CreateCrtStore(ctx, params, m)
@@ -60,6 +65,10 @@ func CrtStoreUpdate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.CrtStore) (*http.Response, error) {
+				params := &v33.EditCrtStoreParams{TransactionId: &txID}
+				return clientset.V33().EditCrtStore(ctx, n, params, m)
+			},
 			func(n string, m v32.CrtStore) (*http.Response, error) {
 				params := &v32.EditCrtStoreParams{TransactionId: &txID}
 				return clientset.V32().EditCrtStore(ctx, n, params, m)
@@ -96,6 +105,10 @@ func CrtStoreDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteCrtStoreParams{TransactionId: &txID}
+				return clientset.V33().DeleteCrtStore(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteCrtStoreParams{TransactionId: &txID}
 				return clientset.V32().DeleteCrtStore(ctx, n, params)
 			},
@@ -130,6 +143,10 @@ func UserlistCreate() func(ctx context.Context, c *client.DataplaneClient, txID 
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.Userlist) (*http.Response, error) {
+				params := &v33.CreateUserlistParams{TransactionId: &txID}
+				return clientset.V33().CreateUserlist(ctx, params, m)
+			},
 			func(m v32.Userlist) (*http.Response, error) {
 				params := &v32.CreateUserlistParams{TransactionId: &txID}
 				return clientset.V32().CreateUserlist(ctx, params, m)
@@ -166,6 +183,10 @@ func UserlistDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 
 		resp, err := client.DispatchDelete(ctx, c, name,
 			func(n string) (*http.Response, error) {
+				params := &v33.DeleteUserlistParams{TransactionId: &txID}
+				return clientset.V33().DeleteUserlist(ctx, n, params)
+			},
+			func(n string) (*http.Response, error) {
 				params := &v32.DeleteUserlistParams{TransactionId: &txID}
 				return clientset.V32().DeleteUserlist(ctx, n, params)
 			},
@@ -200,6 +221,10 @@ func FCGIAppCreate() func(ctx context.Context, c *client.DataplaneClient, txID s
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreate(ctx, c, model,
+			func(m v33.FCGIApp) (*http.Response, error) {
+				params := &v33.CreateFCGIAppParams{TransactionId: &txID}
+				return clientset.V33().CreateFCGIApp(ctx, params, m)
+			},
 			func(m v32.FCGIApp) (*http.Response, error) {
 				params := &v32.CreateFCGIAppParams{TransactionId: &txID}
 				return clientset.V32().CreateFCGIApp(ctx, params, m)
@@ -235,6 +260,10 @@ func FCGIAppUpdate() func(ctx context.Context, c *client.DataplaneClient, txID s
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchUpdate(ctx, c, name, model,
+			func(n string, m v33.FCGIApp) (*http.Response, error) {
+				params := &v33.ReplaceFCGIAppParams{TransactionId: &txID}
+				return clientset.V33().ReplaceFCGIApp(ctx, n, params, m)
+			},
 			func(n string, m v32.FCGIApp) (*http.Response, error) {
 				params := &v32.ReplaceFCGIAppParams{TransactionId: &txID}
 				return clientset.V32().ReplaceFCGIApp(ctx, n, params, m)
@@ -270,6 +299,10 @@ func FCGIAppDelete() func(ctx context.Context, c *client.DataplaneClient, txID s
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDelete(ctx, c, name,
+			func(n string) (*http.Response, error) {
+				params := &v33.DeleteFCGIAppParams{TransactionId: &txID}
+				return clientset.V33().DeleteFCGIApp(ctx, n, params)
+			},
 			func(n string) (*http.Response, error) {
 				params := &v32.DeleteFCGIAppParams{TransactionId: &txID}
 				return clientset.V32().DeleteFCGIApp(ctx, n, params)

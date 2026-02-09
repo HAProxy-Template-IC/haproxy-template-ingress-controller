@@ -27,6 +27,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // HTTPAfterResponseRuleBackendCreate returns an executor for creating HTTP after response rules in backends.
@@ -35,6 +36,10 @@ func HTTPAfterResponseRuleBackendCreate() func(ctx context.Context, c *client.Da
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v33.CreateHTTPAfterResponseRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateHTTPAfterResponseRuleBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpAfterResponseRule) (*http.Response, error) {
 				params := &v32.CreateHTTPAfterResponseRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateHTTPAfterResponseRuleBackend(ctx, p, idx, params, m)
@@ -70,6 +75,10 @@ func HTTPAfterResponseRuleBackendUpdate() func(ctx context.Context, c *client.Da
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v33.ReplaceHTTPAfterResponseRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceHTTPAfterResponseRuleBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpAfterResponseRule) (*http.Response, error) {
 				params := &v32.ReplaceHTTPAfterResponseRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceHTTPAfterResponseRuleBackend(ctx, p, idx, params, m)
@@ -106,6 +115,10 @@ func HTTPAfterResponseRuleBackendDelete() func(ctx context.Context, c *client.Da
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteHTTPAfterResponseRuleBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteHTTPAfterResponseRuleBackend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteHTTPAfterResponseRuleBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteHTTPAfterResponseRuleBackend(ctx, p, idx, params)
 			},
@@ -140,6 +153,10 @@ func DeclareCaptureFrontendCreate() func(ctx context.Context, c *client.Dataplan
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Capture) (*http.Response, error) {
+				params := &v33.CreateDeclareCaptureParams{TransactionId: &txID}
+				return clientset.V33().CreateDeclareCapture(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Capture) (*http.Response, error) {
 				params := &v32.CreateDeclareCaptureParams{TransactionId: &txID}
 				return clientset.V32().CreateDeclareCapture(ctx, p, idx, params, m)
@@ -175,6 +192,10 @@ func DeclareCaptureFrontendUpdate() func(ctx context.Context, c *client.Dataplan
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.Capture) (*http.Response, error) {
+				params := &v33.ReplaceDeclareCaptureParams{TransactionId: &txID}
+				return clientset.V33().ReplaceDeclareCapture(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.Capture) (*http.Response, error) {
 				params := &v32.ReplaceDeclareCaptureParams{TransactionId: &txID}
 				return clientset.V32().ReplaceDeclareCapture(ctx, p, idx, params, m)
@@ -210,6 +231,10 @@ func DeclareCaptureFrontendDelete() func(ctx context.Context, c *client.Dataplan
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
+			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteDeclareCaptureParams{TransactionId: &txID}
+				return clientset.V33().DeleteDeclareCapture(ctx, p, idx, params)
+			},
 			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteDeclareCaptureParams{TransactionId: &txID}
 				return clientset.V32().DeleteDeclareCapture(ctx, p, idx, params)

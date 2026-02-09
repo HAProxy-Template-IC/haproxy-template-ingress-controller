@@ -11,6 +11,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Added
 
+- **HAProxy 3.3 support**: DataPlane API v3.3 client generation, dispatch routing, and version-specific validators
 - **Dataplane API concurrency limiting**: New `maxParallel` config option to limit concurrent API operations during sync, preventing timeouts when syncing large configurations (default: auto-calculated from dataplane GOMAXPROCS × 10)
 - Test-specific `extraContext` overrides for validation tests
 - **CRD content compression**: HAProxyCfg content automatically compressed with zstd when exceeding `configPublishing.compressionThreshold` (default 1 MiB), reducing etcd storage
@@ -19,6 +20,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Changed
 
+- **Balance directive consolidation**: Moved `balance roundrobin` from per-backend to `defaults` section, preventing silent behavior change on HAProxy 3.3 (which changed the default from `roundrobin` to `random`)
 - **Parallel Dataplane API operations**: Execute operations in parallel within each priority group, reducing sync time from sequential (~10-20s) to parallel (~sub-second) for large deployments
 - **Reduced CRD API load**: Skip status updates for no-op drift checks, reducing Kubernetes API calls by 95%+ during drift prevention
 - **Removed `lastCheckedAt` field**: Removed from `PodDeploymentStatus` in all CRDs (HAProxyCfg, HAProxyMapFile, HAProxyGeneralFile, HAProxyCRTListFile) to eliminate unnecessary status updates

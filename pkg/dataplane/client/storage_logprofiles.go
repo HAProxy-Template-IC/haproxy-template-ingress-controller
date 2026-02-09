@@ -11,6 +11,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // LogProfile represents a HAProxy log profile configuration.
@@ -23,6 +24,9 @@ type LogProfile struct {
 // Log profiles are only available in HAProxy DataPlane API v3.1+.
 func (c *DataplaneClient) GetAllLogProfiles(ctx context.Context) ([]string, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.GetLogProfiles(ctx, &v33.GetLogProfilesParams{})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.GetLogProfiles(ctx, &v32.GetLogProfilesParams{})
 		},
@@ -76,6 +80,9 @@ func (c *DataplaneClient) GetAllLogProfiles(ctx context.Context) ([]string, erro
 // Log profiles are only available in HAProxy DataPlane API v3.1+.
 func (c *DataplaneClient) GetLogProfile(ctx context.Context, name string) (*LogProfile, error) {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.GetLogProfile(ctx, name, &v33.GetLogProfileParams{})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.GetLogProfile(ctx, name, &v32.GetLogProfileParams{})
 		},
@@ -131,6 +138,9 @@ func (c *DataplaneClient) CreateLogProfile(ctx context.Context, profile *LogProf
 	body := bytes.NewReader(jsonData)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.CreateLogProfileWithBody(ctx, &v33.CreateLogProfileParams{TransactionId: &transactionID}, "application/json", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.CreateLogProfileWithBody(ctx, &v32.CreateLogProfileParams{TransactionId: &transactionID}, "application/json", body)
 		},
@@ -173,6 +183,9 @@ func (c *DataplaneClient) UpdateLogProfile(ctx context.Context, name string, pro
 	body := bytes.NewReader(jsonData)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.EditLogProfileWithBody(ctx, name, &v33.EditLogProfileParams{TransactionId: &transactionID}, "application/json", body)
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.EditLogProfileWithBody(ctx, name, &v32.EditLogProfileParams{TransactionId: &transactionID}, "application/json", body)
 		},
@@ -208,6 +221,9 @@ func (c *DataplaneClient) UpdateLogProfile(ctx context.Context, name string, pro
 // Log profiles are only available in HAProxy DataPlane API v3.1+.
 func (c *DataplaneClient) DeleteLogProfile(ctx context.Context, name, transactionID string) error {
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.DeleteLogProfile(ctx, name, &v33.DeleteLogProfileParams{TransactionId: &transactionID})
+		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.DeleteLogProfile(ctx, name, &v32.DeleteLogProfileParams{TransactionId: &transactionID})
 		},

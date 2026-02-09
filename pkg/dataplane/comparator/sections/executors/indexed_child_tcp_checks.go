@@ -27,6 +27,7 @@ import (
 	v31ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v31ee"
 	v32 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 // HTTPCheckBackendCreate returns an executor for creating HTTP checks in backends.
@@ -35,6 +36,10 @@ func HTTPCheckBackendCreate() func(ctx context.Context, c *client.DataplaneClien
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpCheck) (*http.Response, error) {
+				params := &v33.CreateHTTPCheckBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateHTTPCheckBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpCheck) (*http.Response, error) {
 				params := &v32.CreateHTTPCheckBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateHTTPCheckBackend(ctx, p, idx, params, m)
@@ -70,6 +75,10 @@ func HTTPCheckBackendUpdate() func(ctx context.Context, c *client.DataplaneClien
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpCheck) (*http.Response, error) {
+				params := &v33.ReplaceHTTPCheckBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceHTTPCheckBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.HttpCheck) (*http.Response, error) {
 				params := &v32.ReplaceHTTPCheckBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceHTTPCheckBackend(ctx, p, idx, params, m)
@@ -106,6 +115,10 @@ func HTTPCheckBackendDelete() func(ctx context.Context, c *client.DataplaneClien
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
 			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteHTTPCheckBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteHTTPCheckBackend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteHTTPCheckBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteHTTPCheckBackend(ctx, p, idx, params)
 			},
@@ -140,6 +153,10 @@ func TCPCheckBackendCreate() func(ctx context.Context, c *client.DataplaneClient
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.TcpCheck) (*http.Response, error) {
+				params := &v33.CreateTCPCheckBackendParams{TransactionId: &txID}
+				return clientset.V33().CreateTCPCheckBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.TcpCheck) (*http.Response, error) {
 				params := &v32.CreateTCPCheckBackendParams{TransactionId: &txID}
 				return clientset.V32().CreateTCPCheckBackend(ctx, p, idx, params, m)
@@ -175,6 +192,10 @@ func TCPCheckBackendUpdate() func(ctx context.Context, c *client.DataplaneClient
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.TcpCheck) (*http.Response, error) {
+				params := &v33.ReplaceTCPCheckBackendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceTCPCheckBackend(ctx, p, idx, params, m)
+			},
 			func(p string, idx int, m v32.TcpCheck) (*http.Response, error) {
 				params := &v32.ReplaceTCPCheckBackendParams{TransactionId: &txID}
 				return clientset.V32().ReplaceTCPCheckBackend(ctx, p, idx, params, m)
@@ -210,6 +231,10 @@ func TCPCheckBackendDelete() func(ctx context.Context, c *client.DataplaneClient
 		clientset := c.Clientset()
 
 		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
+			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteTCPCheckBackendParams{TransactionId: &txID}
+				return clientset.V33().DeleteTCPCheckBackend(ctx, p, idx, params)
+			},
 			func(p string, idx int) (*http.Response, error) {
 				params := &v32.DeleteTCPCheckBackendParams{TransactionId: &txID}
 				return clientset.V32().DeleteTCPCheckBackend(ctx, p, idx, params)
