@@ -417,6 +417,7 @@ To migrate an existing single-replica deployment to HA:
 
 ## See Also
 
+- [Helm Chart HA Configuration](https://haproxy-haptic.org/helm-chart/operations/high-availability/) - HA configuration via Helm values
 - [Leader Election Design](../development/design/leader-election.md) - Architecture and implementation details
 - [Monitoring Guide](./monitoring.md) - Prometheus metrics and alerting
 - [Debugging Guide](./debugging.md) - Runtime introspection and troubleshooting
