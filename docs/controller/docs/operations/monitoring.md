@@ -474,6 +474,7 @@ datadog:
 
 ## See Also
 
+- [Helm Chart Monitoring Configuration](https://haproxy-haptic.org/helm-chart/operations/monitoring/) - ServiceMonitor setup via Helm values
 - [Debugging Guide](./debugging.md) - Runtime introspection and troubleshooting
 - [High Availability](./high-availability.md) - Leader election configuration
 - [Troubleshooting Guide](../troubleshooting.md) - General troubleshooting

@@ -20,10 +20,12 @@ The debug HTTP server is configured via Helm values:
 ```yaml
 # values.yaml
 controller:
-  debugPort: 6060  # Set to 0 to disable
+  debugPort: 8080  # Set to 0 to disable
 ```
 
-By default, the debug port is **6060**. The server binds to all interfaces (`0.0.0.0`) for kubectl port-forward compatibility.
+By default, the debug port is **8080**. The server binds to all interfaces (`0.0.0.0`) for kubectl port-forward compatibility.
+
+For Helm chart configuration, see the [chart debugging page](https://haproxy-haptic.org/helm-chart/operations/debugging/).
 
 ## Accessing Debug Endpoints
 
@@ -33,10 +35,10 @@ Use kubectl port-forward to access the debug server:
 
 ```bash
 # Forward debug port from controller pod
-kubectl port-forward -n <namespace> deployment/haptic-controller 6060:6060
+kubectl port-forward -n <namespace> deployment/haptic-controller 8080:8080
 
 # Access endpoints
-curl http://localhost:6060/debug/vars
+curl http://localhost:8080/debug/vars
 ```
 
 ### From Inside the Cluster
@@ -46,7 +48,7 @@ Access directly via pod IP or service:
 ```bash
 # Get pod IP
 POD_IP=$(kubectl get pod -n <namespace> <pod-name> -o jsonpath='{.status.podIP}')
-curl http://${POD_IP}:6060/debug/vars
+curl http://${POD_IP}:8080/debug/vars
 ```
 
 ## Debug Variables
@@ -54,7 +56,7 @@ curl http://${POD_IP}:6060/debug/vars
 ### List All Variables
 
 ```bash
-curl http://localhost:6060/debug/vars
+curl http://localhost:8080/debug/vars
 ```
 
 Returns a list of all available debug variable paths:
@@ -80,13 +82,13 @@ Get the current controller configuration:
 
 ```bash
 # Full configuration
-curl http://localhost:6060/debug/vars/config
+curl http://localhost:8080/debug/vars/config
 
 # Just the version
-curl 'http://localhost:6060/debug/vars/config?field={.version}'
+curl 'http://localhost:8080/debug/vars/config?field={.version}'
 
 # Template names
-curl 'http://localhost:6060/debug/vars/config?field={.config.templates}'
+curl 'http://localhost:8080/debug/vars/config?field={.config.templates}'
 ```
 
 **Response:**
@@ -110,14 +112,14 @@ Get the most recently rendered HAProxy configuration:
 
 ```bash
 # Full rendered config
-curl http://localhost:6060/debug/vars/rendered
+curl http://localhost:8080/debug/vars/rendered
 
 # Just the config text (useful for saving to file)
-curl 'http://localhost:6060/debug/vars/rendered?field={.config}' | jq -r '.'
+curl 'http://localhost:8080/debug/vars/rendered?field={.config}' | jq -r '.'
 
 # Config size and timestamp
-curl 'http://localhost:6060/debug/vars/rendered?field={.size}'
-curl 'http://localhost:6060/debug/vars/rendered?field={.timestamp}'
+curl 'http://localhost:8080/debug/vars/rendered?field={.size}'
+curl 'http://localhost:8080/debug/vars/rendered?field={.timestamp}'
 ```
 
 **Response:**
@@ -136,10 +138,10 @@ Get counts of watched Kubernetes resources:
 
 ```bash
 # All resource counts
-curl http://localhost:6060/debug/vars/resources
+curl http://localhost:8080/debug/vars/resources
 
 # Specific resource type
-curl 'http://localhost:6060/debug/vars/resources?field={.ingresses}'
+curl 'http://localhost:8080/debug/vars/resources?field={.ingresses}'
 ```
 
 **Response:**
@@ -157,7 +159,7 @@ curl 'http://localhost:6060/debug/vars/resources?field={.ingresses}'
 Get SSL certificates, map files, and general files used in the last deployment:
 
 ```bash
-curl http://localhost:6060/debug/vars/auxfiles
+curl http://localhost:8080/debug/vars/auxfiles
 ```
 
 **Response:**
@@ -189,7 +191,7 @@ Get recent controller events:
 
 ```bash
 # Last 100 events (default)
-curl http://localhost:6060/debug/vars/events
+curl http://localhost:8080/debug/vars/events
 ```
 
 **Response:**
@@ -214,7 +216,7 @@ curl http://localhost:6060/debug/vars/events
 Get all controller state in a single response:
 
 ```bash
-curl http://localhost:6060/debug/vars/state
+curl http://localhost:8080/debug/vars/state
 ```
 
 !!! warning
@@ -223,7 +225,7 @@ curl http://localhost:6060/debug/vars/state
 ### Controller Uptime
 
 ```bash
-curl http://localhost:6060/debug/vars/uptime
+curl http://localhost:8080/debug/vars/uptime
 ```
 
 ## JSONPath Field Selection
@@ -232,13 +234,13 @@ All debug endpoints support JSONPath field selection using kubectl-style syntax:
 
 ```bash
 # Basic field access
-curl 'http://localhost:6060/debug/vars/config?field={.version}'
+curl 'http://localhost:8080/debug/vars/config?field={.version}'
 
 # Nested field access
-curl 'http://localhost:6060/debug/vars/config?field={.config.templates.main}'
+curl 'http://localhost:8080/debug/vars/config?field={.config.templates.main}'
 
 # Array indexing
-curl 'http://localhost:6060/debug/vars/events?field={[0]}'
+curl 'http://localhost:8080/debug/vars/events?field={[0]}'
 ```
 
 See [Kubernetes JSONPath documentation](https://kubernetes.io/docs/reference/kubectl/jsonpath/) for full syntax.
@@ -249,22 +251,22 @@ The debug server includes Go pprof endpoints for performance analysis:
 
 ```bash
 # CPU profile (30 second sample)
-curl http://localhost:6060/debug/pprof/profile?seconds=30 > cpu.pprof
+curl http://localhost:8080/debug/pprof/profile?seconds=30 > cpu.pprof
 
 # Heap profile
-curl http://localhost:6060/debug/pprof/heap > heap.pprof
+curl http://localhost:8080/debug/pprof/heap > heap.pprof
 
 # Goroutine dump
-curl http://localhost:6060/debug/pprof/goroutine?debug=1
+curl http://localhost:8080/debug/pprof/goroutine?debug=1
 
 # Block profile
-curl http://localhost:6060/debug/pprof/block > block.pprof
+curl http://localhost:8080/debug/pprof/block > block.pprof
 
 # Mutex profile
-curl http://localhost:6060/debug/pprof/mutex > mutex.pprof
+curl http://localhost:8080/debug/pprof/mutex > mutex.pprof
 
 # All profiles summary
-curl http://localhost:6060/debug/pprof/
+curl http://localhost:8080/debug/pprof/
 ```
 
 Analyze profiles with `go tool pprof`:
@@ -280,7 +282,7 @@ go tool pprof -http=:8080 cpu.pprof
 1. Check if config is loaded:
 
    ```bash
-   curl http://localhost:6060/debug/vars/config
+   curl http://localhost:8080/debug/vars/config
    ```
 
 2. If error "config not loaded yet", check controller logs for parsing errors:
@@ -300,19 +302,19 @@ go tool pprof -http=:8080 cpu.pprof
 1. Check rendered config timestamp:
 
    ```bash
-   curl 'http://localhost:6060/debug/vars/rendered?field={.timestamp}'
+   curl 'http://localhost:8080/debug/vars/rendered?field={.timestamp}'
    ```
 
 2. Check recent events for reconciliation activity:
 
    ```bash
-   curl http://localhost:6060/debug/vars/events | jq '.[] | select(.type | contains("reconciliation"))'
+   curl http://localhost:8080/debug/vars/events | jq '.[] | select(.type | contains("reconciliation"))'
    ```
 
 3. Verify resource counts match expected:
 
    ```bash
-   curl http://localhost:6060/debug/vars/resources
+   curl http://localhost:8080/debug/vars/resources
    ```
 
 ### Template Rendering Errors
@@ -320,13 +322,13 @@ go tool pprof -http=:8080 cpu.pprof
 1. Check if config is valid:
 
    ```bash
-   curl 'http://localhost:6060/debug/vars/config?field={.version}'
+   curl 'http://localhost:8080/debug/vars/config?field={.version}'
    ```
 
 2. Look for template-related events:
 
    ```bash
-   curl http://localhost:6060/debug/vars/events | jq '.[] | select(.type | contains("template"))'
+   curl http://localhost:8080/debug/vars/events | jq '.[] | select(.type | contains("template"))'
    ```
 
 3. Try rendering with debug output (see [Templating Guide](../templating.md))
@@ -336,20 +338,20 @@ go tool pprof -http=:8080 cpu.pprof
 1. Get current heap usage:
 
    ```bash
-   curl http://localhost:6060/debug/pprof/heap?debug=1 | head -20
+   curl http://localhost:8080/debug/pprof/heap?debug=1 | head -20
    ```
 
 2. Generate heap profile for analysis:
 
    ```bash
-   curl http://localhost:6060/debug/pprof/heap > heap.pprof
+   curl http://localhost:8080/debug/pprof/heap > heap.pprof
    go tool pprof -top heap.pprof
    ```
 
 3. Check resource counts (large counts may indicate memory pressure):
 
    ```bash
-   curl http://localhost:6060/debug/vars/resources
+   curl http://localhost:8080/debug/vars/resources
    ```
 
 ### High CPU Usage
@@ -357,7 +359,7 @@ go tool pprof -http=:8080 cpu.pprof
 1. Generate CPU profile:
 
    ```bash
-   curl http://localhost:6060/debug/pprof/profile?seconds=30 > cpu.pprof
+   curl http://localhost:8080/debug/pprof/profile?seconds=30 > cpu.pprof
    ```
 
 2. Analyze hot spots:
@@ -369,7 +371,7 @@ go tool pprof -http=:8080 cpu.pprof
 3. Check reconciliation frequency in events:
 
    ```bash
-   curl http://localhost:6060/debug/vars/events | jq '[.[] | select(.type == "reconciliation.triggered")] | length'
+   curl http://localhost:8080/debug/vars/events | jq '[.[] | select(.type == "reconciliation.triggered")] | length'
    ```
 
 ### Deployment Failures
@@ -377,19 +379,19 @@ go tool pprof -http=:8080 cpu.pprof
 1. Check recent events for deployment status:
 
    ```bash
-   curl http://localhost:6060/debug/vars/events | jq '.[] | select(.type | contains("deployment"))'
+   curl http://localhost:8080/debug/vars/events | jq '.[] | select(.type | contains("deployment"))'
    ```
 
 2. Verify HAProxy pods are discovered:
 
    ```bash
-   curl 'http://localhost:6060/debug/vars/resources?field={."haproxy-pods"}'
+   curl 'http://localhost:8080/debug/vars/resources?field={."haproxy-pods"}'
    ```
 
 3. Check rendered config for syntax errors:
 
    ```bash
-   curl 'http://localhost:6060/debug/vars/rendered?field={.config}' > haproxy.cfg
+   curl 'http://localhost:8080/debug/vars/rendered?field={.config}' > haproxy.cfg
    haproxy -c -f haproxy.cfg
    ```
 
@@ -416,7 +418,7 @@ go tool pprof -http=:8080 cpu.pprof
 #!/bin/bash
 # Watch reconciliation events
 while true; do
-    count=$(curl -s http://localhost:6060/debug/vars/events | \
+    count=$(curl -s http://localhost:8080/debug/vars/events | \
             jq '[.[] | select(.type == "reconciliation.completed")] | length')
     echo "$(date): $count reconciliations completed"
     sleep 10
@@ -428,8 +430,8 @@ done
 ```bash
 #!/bin/bash
 # Export current HAProxy config with timestamp
-TIMESTAMP=$(curl -s 'http://localhost:6060/debug/vars/rendered?field={.timestamp}' | jq -r '.')
-curl -s 'http://localhost:6060/debug/vars/rendered?field={.config}' | jq -r '.' > "haproxy-${TIMESTAMP}.cfg"
+TIMESTAMP=$(curl -s 'http://localhost:8080/debug/vars/rendered?field={.timestamp}' | jq -r '.')
+curl -s 'http://localhost:8080/debug/vars/rendered?field={.config}' | jq -r '.' > "haproxy-${TIMESTAMP}.cfg"
 echo "Exported to haproxy-${TIMESTAMP}.cfg"
 ```
 
@@ -440,9 +442,9 @@ echo "Exported to haproxy-${TIMESTAMP}.cfg"
 # Check controller health via debug endpoints
 set -e
 
-CONFIG_VERSION=$(curl -s 'http://localhost:6060/debug/vars/config?field={.version}' 2>/dev/null || echo "error")
-UPTIME=$(curl -s http://localhost:6060/debug/vars/uptime 2>/dev/null || echo "error")
-RESOURCES=$(curl -s http://localhost:6060/debug/vars/resources 2>/dev/null || echo "{}")
+CONFIG_VERSION=$(curl -s 'http://localhost:8080/debug/vars/config?field={.version}' 2>/dev/null || echo "error")
+UPTIME=$(curl -s http://localhost:8080/debug/vars/uptime 2>/dev/null || echo "error")
+RESOURCES=$(curl -s http://localhost:8080/debug/vars/resources 2>/dev/null || echo "{}")
 
 echo "Config Version: $CONFIG_VERSION"
 echo "Uptime: $UPTIME"

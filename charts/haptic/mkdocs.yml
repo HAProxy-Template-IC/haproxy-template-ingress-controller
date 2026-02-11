@@ -52,6 +52,13 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Getting Started:
+    - Configuration: configuration.md
+    - IngressClass: ingress-class.md
+    - GatewayClass: gateway-class.md
+    - SSL Certificates: ssl-certificates.md
+    - Annotations: annotations.md
+  - HAProxy Deployment: haproxy-deployment.md
   - Template Libraries:
     - Overview: template-libraries.md
     - Libraries:
@@ -62,6 +69,13 @@ nav:
       - HAProxy Annotations: libraries/haproxytech.md
       - HAProxy Ingress: libraries/haproxy-ingress.md
       - Path Regex Last: libraries/path-regex-last.md
+  - Operations:
+    - High Availability: operations/high-availability.md
+    - Monitoring: operations/monitoring.md
+    - Networking: operations/networking.md
+    - Debugging: operations/debugging.md
+    - Troubleshooting: operations/troubleshooting.md
+  - Reference: reference.md
   - Changelog: changelog.md
 
 extra:
