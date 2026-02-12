@@ -335,8 +335,6 @@ test:
         ./...
     # Show coverage summary
     - go tool cover -func=coverage.out | tail -1
-  # Unit test coverage for badge (combined coverage is reported by coverage-combined job on MRs)
-  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
   artifacts:
     paths:
       - coverage.out
@@ -539,10 +537,9 @@ coverage-combined:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.2
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
     - if: $CI_COMMIT_TAG
       when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - !reference [.rules-code, rules]
   tags:
     - saas-linux-medium-amd64
@@ -555,10 +552,13 @@ coverage-combined:
       artifacts: true
     - job: "test-integration: [3.0]"
       artifacts: true
+      optional: true
     - job: "test-integration: [3.1]"
       artifacts: true
+      optional: true
     - job: "test-integration: [3.2]"
       artifacts: true
+      optional: true
   script:
     - mkdir -p coverage
     - cp coverage.out coverage/unit.out
@@ -566,22 +566,16 @@ coverage-combined:
       echo "Unit test coverage:"
       go tool cover -func=coverage/unit.out | tail -5
     - |
-      echo "Integration test coverage (HAProxy 3.0):"
-      go tool cover -func=coverage/integration-3.0.out | tail -5
+      for f in coverage/integration-*.out; do
+        [ -f "$f" ] && echo "Integration coverage ($f):" && go tool cover -func="$f" | tail -5
+      done
     - |
-      echo "Integration test coverage (HAProxy 3.1):"
-      go tool cover -func=coverage/integration-3.1.out | tail -5
-    - |
-      echo "Integration test coverage (HAProxy 3.2):"
-      go tool cover -func=coverage/integration-3.2.out | tail -5
-    - |
-      echo "Merging coverage profiles..."
-      go run github.com/wadey/gocovmerge@latest \
-        coverage/unit.out \
-        coverage/integration-3.0.out \
-        coverage/integration-3.1.out \
-        coverage/integration-3.2.out \
-        > coverage/combined.out
+      PROFILES="coverage/unit.out"
+      for f in coverage/integration-*.out; do
+        [ -f "$f" ] && PROFILES="$PROFILES $f"
+      done
+      echo "Merging coverage profiles: $PROFILES"
+      go run github.com/wadey/gocovmerge@latest $PROFILES > coverage/combined.out
     - |
       echo "Combined coverage:"
       go tool cover -func=coverage/combined.out | tail -1
