@@ -374,19 +374,39 @@ assert_cors_headers() {
     debug "Testing CORS headers: $description"
     debug "  Host: $host, Origin: $origin"
 
-    local response_headers
-    response_headers=$(curl -s --max-time 5 -I -H "Host: $host" -H "Origin: $origin" "${BASE_URL}/" 2>&1)
+    # Retry logic for HAProxy reload race conditions
+    local max_retries=8
+    local retry_delay=2
+    local attempt=1
+    local response_headers=""
 
-    debug "  Headers: ${response_headers:0:500}"
+    while [[ $attempt -le $max_retries ]]; do
+        response_headers=$(curl -s --max-time 5 -I -H "Host: $host" -H "Origin: $origin" "${BASE_URL}/" 2>&1)
 
-    # Check for Access-Control-Allow-Origin header
-    if echo "$response_headers" | grep -iq "Access-Control-Allow-Origin:"; then
-        ok "$description - CORS headers present"
-    else
-        err "$description - CORS headers missing"
-        echo "  Response headers: $response_headers"
-        return 1
-    fi
+        debug "  Headers: ${response_headers:0:500}"
+
+        # Check for Access-Control-Allow-Origin header
+        if echo "$response_headers" | grep -iq "Access-Control-Allow-Origin:"; then
+            ok "$description - CORS headers present"
+            return 0
+        fi
+
+        # Retry on 404 (HAProxy reload race) or empty response
+        if [[ "$response_headers" == *"404"* ]] || [[ -z "$response_headers" ]]; then
+            debug "  Attempt $attempt/$max_retries: Got 404 or empty response (HAProxy reload race), retrying..."
+        else
+            debug "  Attempt $attempt/$max_retries: CORS headers missing, retrying..."
+        fi
+
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep "$retry_delay"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "$description - CORS headers missing"
+    echo "  Response headers: $response_headers"
+    return 1
 }
 
 assert_header_present() {
@@ -398,16 +418,36 @@ assert_header_present() {
     debug "Testing header presence: $description"
     debug "  Host: $host, Header: $header_name"
 
-    local response_headers
-    response_headers=$(curl -s --max-time 5 -I -H "Host: $host" "${BASE_URL}${path}" 2>&1)
+    # Retry logic for HAProxy reload race conditions
+    local max_retries=8
+    local retry_delay=2
+    local attempt=1
+    local response_headers=""
 
-    if echo "$response_headers" | grep -iq "^${header_name}:"; then
-        ok "$description - Header '$header_name' present"
-    else
-        err "$description - Header '$header_name' not found"
-        debug "  Response headers: $response_headers"
-        return 1
-    fi
+    while [[ $attempt -le $max_retries ]]; do
+        response_headers=$(curl -s --max-time 5 -I -H "Host: $host" "${BASE_URL}${path}" 2>&1)
+
+        if echo "$response_headers" | grep -iq "^${header_name}:"; then
+            ok "$description - Header '$header_name' present"
+            return 0
+        fi
+
+        # Retry on 404 (HAProxy reload race) or empty response
+        if [[ "$response_headers" == *"404"* ]] || [[ -z "$response_headers" ]]; then
+            debug "  Attempt $attempt/$max_retries: Got 404 or empty response, retrying..."
+        else
+            debug "  Attempt $attempt/$max_retries: Header '$header_name' not found, retrying..."
+        fi
+
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep "$retry_delay"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "$description - Header '$header_name' not found"
+    debug "  Response headers: $response_headers"
+    return 1
 }
 
 assert_header_value() {
@@ -420,20 +460,40 @@ assert_header_value() {
     debug "Testing header value: $description"
     debug "  Host: $host, Header: $header_name, Expected: $expected_value"
 
-    local response_headers
-    response_headers=$(curl -s --max-time 5 -I -H "Host: $host" "${BASE_URL}${path}" 2>&1)
+    # Retry logic for HAProxy reload race conditions
+    local max_retries=8
+    local retry_delay=2
+    local attempt=1
+    local response_headers=""
+    local actual_value=""
 
-    local actual_value
-    actual_value=$(echo "$response_headers" | grep -i "^${header_name}:" | sed 's/^[^:]*: *//' | tr -d '\r')
+    while [[ $attempt -le $max_retries ]]; do
+        response_headers=$(curl -s --max-time 5 -I -H "Host: $host" "${BASE_URL}${path}" 2>&1)
 
-    debug "  Actual value: $actual_value"
+        actual_value=$(echo "$response_headers" | grep -i "^${header_name}:" | sed 's/^[^:]*: *//' | tr -d '\r')
 
-    if [[ "$actual_value" == *"$expected_value"* ]]; then
-        ok "$description - Header value matches"
-    else
-        err "$description - Header value mismatch. Expected: '$expected_value', Got: '$actual_value'"
-        return 1
-    fi
+        debug "  Actual value: $actual_value"
+
+        if [[ "$actual_value" == *"$expected_value"* ]]; then
+            ok "$description - Header value matches"
+            return 0
+        fi
+
+        # Retry on 404 (HAProxy reload race) or missing header
+        if [[ "$response_headers" == *"404"* ]] || [[ -z "$actual_value" ]]; then
+            debug "  Attempt $attempt/$max_retries: Got 404 or header missing, retrying..."
+        else
+            debug "  Attempt $attempt/$max_retries: Header value mismatch ('$actual_value'), retrying..."
+        fi
+
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep "$retry_delay"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "$description - Header value mismatch. Expected: '$expected_value', Got: '$actual_value'"
+    return 1
 }
 
 assert_redirect() {
@@ -446,27 +506,49 @@ assert_redirect() {
     debug "Testing redirect: $description"
     debug "  Host: $host, Expected code: $expected_code"
 
-    local response_code location_header
-    response_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -H "Host: $host" "${BASE_URL}${path}" 2>&1)
-    location_header=$(curl -s -I --max-time 5 -H "Host: $host" "${BASE_URL}${path}" 2>&1 | grep -i "^Location:" | sed 's/^Location: *//' | tr -d '\r')
+    # Retry logic for HAProxy reload race conditions
+    local max_retries=8
+    local retry_delay=2
+    local attempt=1
+    local response_code=""
+    local location_header=""
 
-    debug "  Response code: $response_code, Location: $location_header"
+    while [[ $attempt -le $max_retries ]]; do
+        response_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -H "Host: $host" "${BASE_URL}${path}" 2>&1)
+        location_header=$(curl -s -I --max-time 5 -H "Host: $host" "${BASE_URL}${path}" 2>&1 | grep -i "^Location:" | sed 's/^Location: *//' | tr -d '\r')
 
-    if [[ "$response_code" == "$expected_code" ]]; then
-        if [[ -n "$expected_location" ]]; then
-            if [[ "$location_header" == *"$expected_location"* ]]; then
-                ok "$description - Redirect OK ($response_code to $location_header)"
+        debug "  Response code: $response_code, Location: $location_header"
+
+        if [[ "$response_code" == "$expected_code" ]]; then
+            if [[ -n "$expected_location" ]]; then
+                if [[ "$location_header" == *"$expected_location"* ]]; then
+                    ok "$description - Redirect OK ($response_code to $location_header)"
+                    return 0
+                else
+                    debug "  Attempt $attempt/$max_retries: Location mismatch ('$location_header'), retrying..."
+                fi
             else
-                err "$description - Redirect location mismatch. Expected: '$expected_location', Got: '$location_header'"
-                return 1
+                ok "$description - Redirect OK ($response_code)"
+                return 0
             fi
+        elif [[ "$response_code" == "404" || "$response_code" == "000" ]]; then
+            debug "  Attempt $attempt/$max_retries: Got $response_code (HAProxy reload race), retrying..."
         else
-            ok "$description - Redirect OK ($response_code)"
+            debug "  Attempt $attempt/$max_retries: Got $response_code (expected $expected_code), retrying..."
         fi
-    else
+
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep "$retry_delay"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    if [[ "$response_code" != "$expected_code" ]]; then
         err "$description - Expected $expected_code, got $response_code"
-        return 1
+    else
+        err "$description - Redirect location mismatch. Expected: '$expected_location', Got: '$location_header'"
     fi
+    return 1
 }
 
 assert_rate_limited() {
@@ -580,16 +662,36 @@ assert_cookie_present() {
     debug "Testing cookie presence: $description"
     debug "  Host: $host, Cookie: $cookie_name"
 
-    local response_headers
-    response_headers=$(curl -s --max-time 5 -I -H "Host: $host" "${BASE_URL}${path}" 2>&1)
+    # Retry logic for HAProxy reload race conditions
+    local max_retries=8
+    local retry_delay=2
+    local attempt=1
+    local response_headers=""
 
-    if echo "$response_headers" | grep -iq "Set-Cookie:.*${cookie_name}"; then
-        ok "$description - Cookie '$cookie_name' set"
-    else
-        err "$description - Cookie '$cookie_name' not found"
-        debug "  Response headers: $response_headers"
-        return 1
-    fi
+    while [[ $attempt -le $max_retries ]]; do
+        response_headers=$(curl -s --max-time 5 -I -H "Host: $host" "${BASE_URL}${path}" 2>&1)
+
+        if echo "$response_headers" | grep -iq "Set-Cookie:.*${cookie_name}"; then
+            ok "$description - Cookie '$cookie_name' set"
+            return 0
+        fi
+
+        # Retry on 404 (HAProxy reload race) or empty response
+        if [[ "$response_headers" == *"404"* ]] || [[ -z "$response_headers" ]]; then
+            debug "  Attempt $attempt/$max_retries: Got 404 or empty response, retrying..."
+        else
+            debug "  Attempt $attempt/$max_retries: Cookie '$cookie_name' not found, retrying..."
+        fi
+
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep "$retry_delay"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "$description - Cookie '$cookie_name' not found"
+    debug "  Response headers: $response_headers"
+    return 1
 }
 
 assert_path_rewrite() {
