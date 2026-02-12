@@ -1,13 +1,28 @@
 # CI image with Go, HAProxy, Docker CLI, and Kubernetes tools
 # All version ARGs should be passed from .gitlab-ci.yml to keep versions in sync
+#
+# Uses haproxytech/haproxy-debian as the base image so HAProxy is natively
+# available for all versions without depending on haproxy.debian.net.
+# Go toolchain is copied from the official golang image.
 
+# Global ARGs must be declared before the first FROM to be available to all stages
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.25
-# Use bookworm variant because haproxy.debian.net has no trixie backports yet
-FROM golang:${GO_VERSION}-bookworm
-
 # renovate: datasource=github-tags depName=haproxy/haproxy versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)$
 ARG HAPROXY_VERSION=3.2
+
+# Stage 1: Go toolchain source
+FROM golang:${GO_VERSION}-bookworm AS go-toolchain
+
+# Stage 2: CI image based on official HAProxy image
+FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}
+
+# Copy Go toolchain from official image
+COPY --from=go-toolchain /usr/local/go /usr/local/go
+ENV GOPATH=/go \
+    PATH="/usr/local/go/bin:/go/bin:${PATH}"
+RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
+
 # renovate: datasource=docker depName=docker
 ARG DOCKER_VERSION=29
 # renovate: datasource=github-releases depName=kubernetes-sigs/kind
@@ -29,24 +44,20 @@ ARG COSIGN_VERSION=3.0.3
 # renovate: datasource=github-releases depName=anchore/syft
 ARG SYFT_VERSION=1.39.0
 
-# Install HAProxy from haproxy.debian.net and Docker CLI from Docker's apt repository
+# Install git (for go modules), Docker CLI, and other build dependencies
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
-    && curl -fsSL https://haproxy.debian.net/haproxy-archive-keyring.gpg \
-       -o /usr/share/keyrings/haproxy-archive-keyring.gpg \
-    && . /etc/os-release \
-    && echo "deb [signed-by=/usr/share/keyrings/haproxy-archive-keyring.gpg] \
-       https://haproxy.debian.net ${VERSION_CODENAME}-backports-${HAPROXY_VERSION} main" \
-       > /etc/apt/sources.list.d/haproxy.list \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates gnupg git make \
+       jq python3-pip nodejs npm \
     && curl -fsSL https://download.docker.com/linux/debian/gpg \
        | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && . /etc/os-release \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
        https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-       haproxy=${HAPROXY_VERSION}.\* docker-ce-cli=5:${DOCKER_VERSION}.\* docker-buildx-plugin \
-       jq python3-pip nodejs npm \
+       docker-ce-cli=5:${DOCKER_VERSION}.\* docker-buildx-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 # Install yamllint, yamale (for ct), and markdownlint-cli2 for config file linting
