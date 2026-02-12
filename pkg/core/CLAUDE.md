@@ -96,12 +96,13 @@ type Config struct {
 
 // Watched resource definition
 type WatchedResource struct {
-    APIVersion    string
-    Kind          string
-    Namespace     string
-    LabelSelector string
-    IndexBy       []string
-    StoreType     string
+    APIVersion              string            `yaml:"api_version"`
+    Resources               string            `yaml:"resources"`
+    EnableValidationWebhook bool              `yaml:"enable_validation_webhook"`
+    IndexBy                 []string          `yaml:"index_by"`
+    LabelSelector           map[string]string `yaml:"label_selector,omitempty"`
+    FieldSelector           string            `yaml:"field_selector,omitempty"`
+    Store                   string            `yaml:"store"`
 }
 
 // HAProxy configuration
@@ -159,7 +160,7 @@ func TestParseConfig_Valid(t *testing.T) {
 watched_resources:
   ingresses:
     api_version: networking.k8s.io/v1
-    kind: Ingress
+    resources: ingresses
     index_by:
       - metadata.namespace
       - metadata.name
@@ -178,7 +179,7 @@ haproxy_config:
 
     require.NoError(t, err)
     assert.Len(t, config.WatchedResources, 1)
-    assert.Equal(t, "Ingress", config.WatchedResources["ingresses"].Kind)
+    assert.Equal(t, "ingresses", config.WatchedResources["ingresses"].Resources)
 }
 
 func TestParseConfig_InvalidPortRange(t *testing.T) {
@@ -204,10 +205,8 @@ dataplane_api:
 ```go
 func TestLoadCredentials_Valid(t *testing.T) {
     secretData := map[string][]byte{
-        "dataplane_username":   []byte("admin"),
-        "dataplane_password":   []byte("secret123"),
-        "validation_username":  []byte("validator"),
-        "validation_password":  []byte("valpass"),
+        "dataplane_username": []byte("admin"),
+        "dataplane_password": []byte("secret123"),
     }
 
     creds, err := config.LoadCredentials(secretData)
@@ -295,8 +294,8 @@ func ValidateConfig(cfg Config) error {
     }
 
     for name, res := range cfg.WatchedResources {
-        if res.Kind == "" {
-            return fmt.Errorf("watched_resources.%s.kind is required", name)
+        if res.Resources == "" {
+            return fmt.Errorf("watched_resources.%s.resources is required", name)
         }
         if res.APIVersion == "" {
             return fmt.Errorf("watched_resources.%s.api_version is required", name)
@@ -442,10 +441,8 @@ func TestConfig_GetReconciliationInterval(t *testing.T) {
 ```go
 // Good - secure credential handling
 type Credentials struct {
-    DataplaneUsername   string
-    DataplanePassword   string
-    ValidationUsername  string
-    ValidationPassword  string
+    DataplaneUsername string
+    DataplanePassword string
 }
 
 // No String() method - prevents accidental logging
@@ -453,10 +450,8 @@ type Credentials struct {
 // Redact in logs
 func (c Credentials) Redacted() map[string]string {
     return map[string]string{
-        "dataplane_username":  c.DataplaneUsername,
-        "dataplane_password":  "***REDACTED***",
-        "validation_username": c.ValidationUsername,
-        "validation_password": "***REDACTED***",
+        "dataplane_username": c.DataplaneUsername,
+        "dataplane_password": "***REDACTED***",
     }
 }
 

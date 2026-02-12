@@ -857,7 +857,7 @@ If the controller is OOMKilled or uses excessive memory:
 1. **Switch large resources to cached store**: `store: on-demand`
 2. **Add field filtering** to remove `managedFields` and `last-applied-configuration`
 3. **Limit watch scope** with namespace or label selectors
-4. **Monitor via debug port**: `curl http://localhost:6060/debug/vars`
+4. **Monitor via debug port**: `curl http://localhost:8080/debug/vars`
 
 ### Slow Rendering
 

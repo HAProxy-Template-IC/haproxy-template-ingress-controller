@@ -208,7 +208,7 @@ func convertToString(v interface{}) string {
 //
 //	{%- set matching = template_snippets | glob_match("backend-annotation-*") %}
 //	{%- for snippet_name in matching %}
-//	  {% include snippet_name %}
+//	  {{ render(snippet_name) }}
 //	{%- endfor %}
 //
 // Parameters:

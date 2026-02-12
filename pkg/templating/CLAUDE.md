@@ -84,7 +84,6 @@ pkg/templating/
 ├── engine_scriggo_tracing.go # Tracing and filter debug configuration
 ├── engine_scriggo_fs.go      # Virtual filesystem for template compilation
 ├── engine_interface.go    # Engine interface definition
-├── config.go              # NewEngineFromConfig helper
 ├── filter_names.go        # Filter name constants
 ├── filters_scriggo.go     # Scriggo-specific filter implementations
 ├── types.go               # Type definitions (EngineType)
@@ -110,7 +109,7 @@ if err != nil {
 
 // Rendering is fast (microseconds)
 for i := 0; i < 1000; i++ {
-    output, err := engine.Render("template", context)
+    output, err := engine.Render(ctx, "template", context)
 }
 ```
 
@@ -129,7 +128,7 @@ Four distinct error types for clear error handling:
 // CompilationError - template has syntax errors
 type CompilationError struct {
     TemplateName    string
-    TemplateSnippet string  // First 50 chars for context
+    TemplateSnippet string  // First 200 chars for context
     Cause           error
 }
 
@@ -164,7 +163,7 @@ Scriggo requires special handling for runtime variables (passed via `template.Ru
 ```go
 // In filters_scriggo.go buildScriggoGlobals()
 decl["pathResolver"] = (*PathResolver)(nil)           // Not &PathResolver{}
-decl["resources"] = (*map[string]interface{})(nil)    // Not &map[string]{}
+decl["resources"] = (*map[string]ResourceStore)(nil)  // Not &map[string]{}
 decl["templateSnippets"] = (*[]string)(nil)           // Not &[]string{}
 ```
 
@@ -179,12 +178,16 @@ decl["templateSnippets"] = (*[]string)(nil)           // Not &[]string{}
 | Variable | Type | Purpose |
 |----------|------|---------|
 | `pathResolver` | `*PathResolver` | File path resolution |
-| `resources` | `*map[string]interface{}` | Kubernetes resources |
-| `controller` | `*map[string]interface{}` | Controller state |
+| `resources` | `*map[string]ResourceStore` | Kubernetes resources |
+| `controller` | `*map[string]ResourceStore` | Controller state |
 | `templateSnippets` | `*[]string` | Available snippet names |
 | `fileRegistry` | `*FileRegistrar` | Dynamic file registration |
-| `shared` | `*map[string]interface{}` | Cross-template cache |
+| `shared` | `*SharedContext` | Cross-template shared state |
+| `dataplane` | `*map[string]interface{}` | Dataplane state |
+| `capabilities` | `*map[string]interface{}` | Capability flags |
+| `extraContext` | `*map[string]interface{}` | Custom template variables |
 | `http` | `*HTTPFetcher` | HTTP store for fetching remote content |
+| `runtimeEnvironment` | `*RuntimeEnvironment` | Runtime environment info |
 
 ### PathResolver and HAProxy Paths
 
@@ -314,7 +317,7 @@ func TestEngine_Render(t *testing.T) {
 
             require.NoError(t, err)
 
-            got, err := engine.Render("test", tt.context)
+            got, err := engine.Render(context.Background(), "test", tt.context)
             require.NoError(t, err)
             assert.Equal(t, tt.want, got)
         })
@@ -346,7 +349,7 @@ func TestEngine_TemplateNotFound(t *testing.T) {
         "exists": "content",
     }, nil, nil, nil)
 
-    _, err := engine.Render("missing", nil)
+    _, err := engine.Render(context.Background(), "missing", nil)
 
     require.Error(t, err)
 
@@ -367,7 +370,7 @@ func TestEngine_TemplateNotFound(t *testing.T) {
 // Bad - compiles templates every time (milliseconds)
 for _, context := range contexts {
     engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
-    output, _ := engine.Render("template", context)
+    output, _ := engine.Render(ctx, "template", context)
 }
 ```
 
@@ -381,7 +384,7 @@ if err != nil {
 }
 
 for _, context := range contexts {
-    output, _ := engine.Render("template", context)
+    output, _ := engine.Render(ctx, "template", context)
 }
 ```
 
@@ -394,7 +397,7 @@ for _, context := range contexts {
 engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
 // Later in production...
-output, err := engine.Render("template", context)
+output, err := engine.Render(ctx, "template", context)
 // err: template doesn't exist (because compilation failed)
 ```
 
@@ -432,7 +435,7 @@ if err != nil {
     if errors.As(err, &compErr) {
         log.Error("compilation failed",
             "template", compErr.TemplateName,
-            "snippet", compErr.TemplateSnippet,  // First 50 chars
+            "snippet", compErr.TemplateSnippet,  // First 200 chars
             "error", compErr.Cause)
     }
 }
@@ -449,7 +452,7 @@ var mu sync.Mutex
 func render(engine templating.Engine, ctx map[string]interface{}) string {
     mu.Lock()
     defer mu.Unlock()
-    output, _ := engine.Render("template", ctx)
+    output, _ := engine.Render(ctx, "template", ctx)
     return output
 }
 ```
@@ -459,7 +462,7 @@ func render(engine templating.Engine, ctx map[string]interface{}) string {
 ```go
 // Good - no lock needed
 func render(engine templating.Engine, ctx map[string]interface{}) string {
-    output, _ := engine.Render("template", ctx)
+    output, _ := engine.Render(ctx, "template", ctx)
     return output
 }
 
@@ -488,7 +491,7 @@ engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, n
 engine.EnableTracing()
 
 // Render templates (tracing happens automatically)
-output, _ := engine.Render("haproxy.cfg", context)
+output, _ := engine.Render(ctx, "haproxy.cfg", context)
 
 // Get trace output
 trace := engine.GetTraceOutput()
@@ -526,7 +529,7 @@ engine.EnableTracing()
 
 // Render all templates
 for name := range templates {
-    engine.Render(name, context)
+    engine.Render(ctx, name, context)
 }
 
 // Parse trace to find slow templates
@@ -543,7 +546,7 @@ for _, line := range strings.Split(trace, "\n") {
 ```go
 // Ensure expected templates are executed
 engine.EnableTracing()
-engine.Render("haproxy.cfg", context)
+engine.Render(ctx, "haproxy.cfg", context)
 trace := engine.GetTraceOutput()
 
 if !strings.Contains(trace, "Rendering: backends.cfg") {
@@ -571,10 +574,11 @@ fmt.Println(trace)
 **Tracing configuration:**
 
 ```go
-type tracingConfig struct {
-    enabled bool           // Tracing on/off (protected by mu)
-    mu      sync.Mutex     // Protects enabled flag and traces slice
-    traces  []string       // Accumulated trace outputs from all renders
+type scriggoTracingConfig struct {
+    enabled      bool           // Tracing on/off (protected by mu)
+    debugFilters bool           // Reserved for future filter debug logging
+    mu           sync.RWMutex   // Protects enabled flag and traces slice
+    traces       []string       // Accumulated trace outputs from all renders
 }
 ```
 
@@ -655,7 +659,7 @@ Template tracing captures filter operations when enabled, showing the data flow 
 
 ```go
 engine.EnableTracing()
-output, _ := engine.Render("test", context)
+output, _ := engine.Render(ctx, "test", context)
 trace := engine.GetTraceOutput()
 
 // Example trace output:
@@ -709,7 +713,7 @@ func TestEngine_Tracing(t *testing.T) {
     engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
     engine.EnableTracing()
 
-    _, err := engine.Render("main", nil)
+    _, err := engine.Render(context.Background(), "main", nil)
     require.NoError(t, err)
 
     trace := engine.GetTraceOutput()
@@ -747,7 +751,7 @@ func TestTracing_ConcurrentRenders(t *testing.T) {
 
             for j := 0; j < 5; j++ {
                 tmpl := fmt.Sprintf("template%d", (j%2)+1)
-                output, err := engine.Render(tmpl, map[string]interface{}{
+                output, err := engine.Render(context.Background(), tmpl, map[string]interface{}{
                     "value": fmt.Sprintf("goroutine-%d", id),
                 })
                 assert.NoError(t, err)
@@ -784,7 +788,7 @@ engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, n
 engine.EnableFilterDebug()
 
 // Render templates (debug logs appear in slog output)
-output, _ := engine.Render("test", context)
+output, _ := engine.Render(ctx, "test", context)
 
 // Disable filter debug logging
 engine.DisableFilterDebug()
@@ -975,7 +979,7 @@ func TestDebugFilter(t *testing.T) {
     }
 
     engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
-    output, _ := engine.Render("test", map[string]interface{}{
+    output, _ := engine.Render(context.Background(), "test", map[string]interface{}{
         "item": map[string]interface{}{"key": "value"},
     })
 
@@ -986,15 +990,15 @@ func TestDebugFilter(t *testing.T) {
 
 ## Caching Expensive Computations
 
-Use the `has_cached`, `get_cached`, `set_cached` functions to cache expensive computations:
+Use `shared.ComputeIfAbsent()` for compute-once patterns:
 
 ```go
-{% if !has_cached("analysis") %}
-    {% var result = analyzeRoutes(resources) %}
-    {% set_cached("analysis", result) %}
-{% end %}
-{% var analysis = get_cached("analysis") %}
+{%- var analysis, _ = shared.ComputeIfAbsent("analysis", func() interface{} {
+    return analyzeRoutes(resources)
+}) -%}
 ```
+
+`ComputeIfAbsent` is thread-safe and guarantees exactly-once computation. Use `shared.Get(key)` for read-only access to previously computed values.
 
 **Impact:** Reduces expensive computation calls from N to 1 per render.
 
@@ -1033,7 +1037,7 @@ func BenchmarkEngine_Render(b *testing.B) {
         b.Run(name, func(b *testing.B) {
             b.ResetTimer()
             for i := 0; i < b.N; i++ {
-                engine.Render(name, ctx)
+                engine.Render(ctx, name, ctx)
             }
         })
     }
@@ -1054,14 +1058,14 @@ for i := 0; i < 1000; i++ {
     ctx := map[string]interface{}{
         "name": users[i].Name,
     }
-    engine.Render("template", ctx)
+    engine.Render(ctx, "template", ctx)
 }
 
 // Good - reuse context map
 ctx := make(map[string]interface{})
 for i := 0; i < 1000; i++ {
     ctx["name"] = users[i].Name
-    engine.Render("template", ctx)
+    engine.Render(ctx, "template", ctx)
 }
 ```
 
@@ -1127,7 +1131,7 @@ log.Info("rendering template",
     "template", templateName,
     "context_keys", getKeys(context))
 
-output, err := engine.Render(templateName, context)
+output, err := engine.Render(ctx, templateName, context)
 
 log.Info("render result",
     "output_length", len(output),
@@ -1164,7 +1168,7 @@ log.Info("template engine memory",
 ```go
 // Profile template rendering
 start := time.Now()
-output, err := engine.Render(templateName, context)
+output, err := engine.Render(ctx, templateName, context)
 duration := time.Since(start)
 
 if duration > 100*time.Millisecond {
@@ -1274,16 +1278,20 @@ const (
     FilterTrim      = "trim"
     FilterB64Decode = "b64decode"
     FilterDebug     = "debug"
+    FilterIndent    = "indent"
 )
 
-// Functions
+// Functions (subset - see filter_names.go for full list)
 const (
-    FuncFail      = "fail"
-    FuncMerge     = "merge"
-    FuncKeys      = "keys"
-    FuncHasCached = "has_cached"
-    FuncGetCached = "get_cached"
-    FuncSetCached = "set_cached"
+    FuncFail          = "fail"
+    FuncMerge         = "merge"
+    FuncKeys          = "keys"
+    FuncCoalesce      = "coalesce"
+    FuncFallback      = "fallback"
+    FuncDig           = "dig"
+    FuncToSlice       = "toSlice"
+    FuncSanitizeRegex = "sanitize_regex"
+    // ... 30+ more functions
 )
 ```
 
@@ -1311,40 +1319,22 @@ Scriggo provides functions designed to support idiomatic Go patterns:
 {# Output: a: 1, b: 2, c: 3 (sorted) #}
 ```
 
-#### Cache Functions
+#### Caching with SharedContext
 
-These functions enable the compute_once pattern for expensive operations:
-
-**`has_cached(key)`** - Check if a value is cached:
+Use `shared.ComputeIfAbsent()` for compute-once patterns in templates:
 
 ```go
-{% if !has_cached("gateway_analysis") %}
-    {# expensive computation only runs once #}
-    {% var result = analyzeRoutes(resources) %}
-    {% set_cached("gateway_analysis", result) %}
-{% end %}
+{%- var analysis, _ = shared.ComputeIfAbsent("analysis", func() interface{} {
+    return analyzeRoutes(resources)
+}) -%}
 ```
 
-**`get_cached(key)`** - Retrieve a cached value:
-
-```go
-{% var analysis = get_cached("gateway_analysis") %}
-{% if analysis != nil %}
-    {# use cached result #}
-{% end %}
-```
-
-**`set_cached(key, value)`** - Store a value in the cache:
-
-```go
-{% set_cached("computed_routes", routes) %}
-```
+`ComputeIfAbsent` is thread-safe and guarantees exactly-once computation. Use `shared.Get(key)` for read-only access to previously computed values.
 
 **Cache Characteristics:**
 
 - Cache is per-render (isolated between `Render()` calls)
 - Supports any value type (maps, slices, structs)
-- Zero overhead when not used
 - Thread-safe for concurrent template sections
 
 ### Type Assertions

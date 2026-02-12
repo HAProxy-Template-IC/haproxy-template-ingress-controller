@@ -40,7 +40,7 @@ import "haptic/pkg/events"
 bus := events.NewEventBus(100)
 
 // Subscribe (returns read-only channel)
-eventChan := bus.Subscribe(200) // 200 event buffer
+eventChan := bus.Subscribe("component", 200) // 200 event buffer
 
 // Start after all subscribers are ready (releases buffered events)
 bus.Start()
@@ -162,7 +162,7 @@ if len(result.Errors) > 0 {
 
 ```go
 func (v *Validator) Run(ctx context.Context, bus *events.EventBus) {
-    eventChan := bus.Subscribe(100)
+    eventChan := bus.Subscribe("responder", 100)
 
     for {
         select {
@@ -218,7 +218,7 @@ All operations are safe for concurrent access:
 Minimal surface area:
 
 - `Publish(event)` - send event to all subscribers
-- `Subscribe(bufferSize)` - create new event channel
+- `Subscribe(name, bufferSize)` - create new event channel
 - `Start()` - release buffered events
 - `Request(ctx, req, opts)` - scatter-gather pattern
 

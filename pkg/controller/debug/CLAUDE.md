@@ -200,7 +200,7 @@ func NewEventBuffer(size int, bus *events.EventBus) *EventBuffer {
 }
 
 func (eb *EventBuffer) Start(ctx context.Context) error {
-    eventChan := eb.bus.Subscribe(1000)
+    eventChan := eb.bus.Subscribe("debug-events", 1000)
 
     for {
         select {
@@ -260,22 +260,22 @@ func (c *Controller) runIteration(ctx context.Context, debugPort int) error {
 
 ```bash
 # Get current config
-curl http://localhost:6060/debug/vars/config
+curl http://localhost:8080/debug/vars/config
 
 # Get just the version field
-curl 'http://localhost:6060/debug/vars/config?field={.version}'
+curl 'http://localhost:8080/debug/vars/config?field={.version}'
 
 # Get rendered HAProxy config
-curl http://localhost:6060/debug/vars/rendered
+curl http://localhost:8080/debug/vars/rendered
 
 # Get resource counts
-curl http://localhost:6060/debug/vars/resources
+curl http://localhost:8080/debug/vars/resources
 
 # Get recent events
-curl http://localhost:6060/debug/vars/events
+curl http://localhost:8080/debug/vars/events
 
 # Get full state dump (large!)
-curl http://localhost:6060/debug/vars/state
+curl http://localhost:8080/debug/vars/state
 ```
 
 ### Accessing from Tests
@@ -601,7 +601,7 @@ func RegisterVariables(registry *introspection.Registry, provider StateProvider,
 }
 
 // Step 5: Use it
-// curl http://localhost:6060/debug/vars/components/reconciler
+// curl http://localhost:8080/debug/vars/components/reconciler
 ```
 
 ## Performance Characteristics
