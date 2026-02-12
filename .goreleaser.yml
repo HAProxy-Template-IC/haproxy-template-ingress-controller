@@ -120,6 +120,24 @@ dockers_v2:
       - "--target=runtime"
       - "--build-context=binary=."
 
+  # HAProxy 3.3
+  - id: haproxy33
+    ids: [controller]
+    dockerfile: Dockerfile
+    images:
+      - "registry.gitlab.com/haproxy-haptic/haptic"
+    tags:
+      - "{{ .Version }}-haproxy3.3"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+    build_args:
+      HAPROXY_VERSION: "3.3"
+    flags:
+      - "--target=runtime"
+      - "--build-context=binary=."
+
 # Cosign keyless signing for Docker images
 docker_signs:
   - cmd: cosign
