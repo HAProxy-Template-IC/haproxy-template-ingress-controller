@@ -144,7 +144,7 @@ bus.Publish(events.NewConfigParsedEvent(config, "v1"))
 
 ```go
 // Component subscribes and handles events
-eventChan := bus.Subscribe(100)
+eventChan := bus.Subscribe("consumer", 100)
 for event := range eventChan {
     if validated, ok := event.(*events.ConfigValidatedEvent); ok {
         handleValidatedConfig(validated.Config)

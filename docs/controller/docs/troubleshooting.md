@@ -57,7 +57,7 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 **Solution**:
 
 1. Check template syntax in HAProxyTemplateConfig
-2. Use debug server: `curl http://localhost:6060/debug/vars/rendered`
+2. Use debug server: `curl http://localhost:8080/debug/vars/rendered`
 3. See [Templating Guide](./templating.md)
 
 ### Configuration Validation Failures

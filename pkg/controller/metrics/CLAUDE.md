@@ -134,7 +134,7 @@ func NewComponent(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 
 // Explicit subscription (synchronous, before bus.Start())
 func (c *Component) Start() {
-    c.eventChan = c.eventBus.Subscribe(200)  // Large buffer for high volume
+    c.eventChan = c.eventBus.Subscribe("metrics", 200)  // Large buffer for high volume
 }
 
 // Event processing loop
@@ -597,7 +597,7 @@ Component subscribes with buffer size 200:
 
 ```go
 func (c *Component) Start() {
-    c.eventChan = c.eventBus.Subscribe(200)
+    c.eventChan = c.eventBus.Subscribe("metrics", 200)
 }
 ```
 

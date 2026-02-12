@@ -18,6 +18,7 @@ This package provides template rendering using Scriggo, a Go-native template eng
 package main
 
 import (
+    "context"
     "log"
     "haptic/pkg/templating"
 )
@@ -34,7 +35,7 @@ func main() {
         log.Fatalf("failed to create engine: %v", err)
     }
 
-    output, err := engine.Render("greeting", map[string]interface{}{
+    output, err := engine.Render(context.Background(), "greeting", map[string]interface{}{
         "name": "World",
     })
     if err != nil {
@@ -58,10 +59,10 @@ Creates a new engine and compiles all templates. Returns `CompilationError` if a
 ### Rendering
 
 ```go
-func (e Engine) Render(templateName string, context map[string]interface{}) (string, error)
+func (e Engine) Render(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, error)
 ```
 
-Executes a template with the provided context.
+Executes a template with the provided context. The `ctx` parameter controls cancellation and timeouts.
 
 ### Helper Methods
 
@@ -78,11 +79,12 @@ func (e Engine) GetRawTemplate(name string) (string, error)  // Get source
 |------|---------------|------------|
 | `CompilationError` | Template syntax error | `TemplateName`, `TemplateSnippet`, `Cause` |
 | `RenderError` | Runtime rendering failure | `TemplateName`, `Cause` |
+| `RenderTimeoutError` | Context deadline exceeded | `TemplateName`, `Cause` |
 | `TemplateNotFoundError` | Template doesn't exist | `TemplateName`, `AvailableTemplates` |
 | `UnsupportedEngineError` | Invalid engine type | `EngineType` |
 
 ```go
-output, err := engine.Render("mytemplate", context)
+output, err := engine.Render(ctx, "mytemplate", context)
 if err != nil {
     var renderErr *templating.RenderError
     if errors.As(err, &renderErr) {
@@ -106,7 +108,7 @@ filters := map[string]templating.FilterFunc{
     },
 }
 
-engine, err := templating.NewWithFilters(templating.EngineTypeScriggo, templates, filters)
+engine, err := templating.New(templating.EngineTypeScriggo, templates, filters, nil, nil)
 ```
 
 ### Built-in Custom Filters
@@ -114,13 +116,11 @@ engine, err := templating.NewWithFilters(templating.EngineTypeScriggo, templates
 | Filter | Description | Example |
 |--------|-------------|---------|
 | `b64decode` | Decode base64 | `{{ secret.data.password \| b64decode }}` |
-| `glob_match` | Filter by glob pattern | `{{ snippets \| glob_match("backend-*") }}` |
-| `sort_by` | Sort by JSONPath | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
-| `extract` | Extract via JSONPath | `{{ routes \| extract("$.rules[*].host") }}` |
+| `glob_match` | Filter by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
 | `group_by` | Group by JSONPath | `{{ items \| group_by("$.namespace") }}` |
-| `transform` | Regex substitution | `{{ paths \| transform("^/api", "") }}` |
+| `indent` | Indent each line by N spaces | `{{ render("snippet") \| indent(4) }}` |
+| `sort_by` | Sort by JSONPath | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
 | `debug` | Dump as JSON comment | `{{ routes \| debug("routes") }}` |
-| `eval` | Show JSONPath evaluation | `{{ route \| eval("$.priority") }}` |
 
 **sort_by modifiers:**
 
@@ -135,30 +135,13 @@ engine, err := templating.NewWithFilters(templating.EngineTypeScriggo, templates
 | `fail(msg)` | Stop rendering with error | `{% fail("Missing required field") %}` |
 | `merge(dict, updates)` | Merge two maps | `{% config = merge(config, updates) %}` |
 | `keys(dict)` | Get sorted map keys | `{% for _, k := range keys(config) %}` |
-| `has_cached(key)` | Check if value is cached | `{% if !has_cached("analysis") %}` |
-| `get_cached(key)` | Retrieve cached value | `{% var data = get_cached("analysis") %}` |
-| `set_cached(key, val)` | Store value in cache | `{% set_cached("analysis", result) %}` |
-
-**Cache Functions:**
-
-The cache functions enable expensive computations to run only once per render:
-
-```go
-{% if !has_cached("gateway_analysis") %}
-    {% var result = analyzeRoutes(resources) %}
-    {% set_cached("gateway_analysis", result) %}
-{% end %}
-{% var analysis = get_cached("gateway_analysis") %}
-```
-
-Cache is per-render (isolated between `Render()` calls) and supports any value type.
 
 **pathResolver.GetPath()** - Context method for file path resolution:
 
 ```jinja2
-{{ pathResolver.GetPath("host.map", "map") }}     {# /etc/haproxy/maps/host.map #}
-{{ pathResolver.GetPath("cert.pem", "cert") }}    {# /etc/haproxy/ssl/cert.pem #}
-{{ pathResolver.GetPath("error.http", "file") }}  {# /etc/haproxy/general/error.http #}
+{{ pathResolver.GetPath("host.map", "map") }}     {# maps/host.map #}
+{{ pathResolver.GetPath("cert.pem", "cert") }}    {# ssl/cert.pem #}
+{{ pathResolver.GetPath("error.http", "file") }}  {# files/error.http #}
 ```
 
 ## Template Syntax (Scriggo)
@@ -173,12 +156,13 @@ Scriggo uses Go template syntax. See [Scriggo Documentation](https://scriggo.com
 {{ items[0] }}
 ```
 
-**Functions (Scriggo uses function calls, not pipe syntax):**
+**Functions (both function call and pipe syntax are supported):**
 
 ```go
 {{ strip(value) }}
 {{ coalesce(value, "default") }}
-{{ join(items, ", ") }}
+{{ value | fallback("default") }}
+{{ items | join(", ") }}
 ```
 
 **Control Structures:**
@@ -199,23 +183,21 @@ Scriggo uses Go template syntax. See [Scriggo Documentation](https://scriggo.com
 
 ## Caching Expensive Computations
 
-Use `has_cached`, `get_cached`, `set_cached` for compute-once patterns:
+Use `shared.ComputeIfAbsent()` for compute-once patterns:
 
 ```go
-{% if !has_cached("analysis") %}
-    {% var result = analyzeRoutes(resources) %}
-    {% set_cached("analysis", result) %}
-{% end %}
-{% var analysis = get_cached("analysis") %}
+{%- var analysis, _ = shared.ComputeIfAbsent("analysis", func() interface{} {
+    return analyzeRoutes(resources)
+}) -%}
 ```
 
-**Performance:** Reduces redundant computations by 75%+ in multi-include scenarios.
+`ComputeIfAbsent` is thread-safe and guarantees exactly-once computation. Use `shared.Get(key)` for read-only access to previously computed values.
 
 ## Template Tracing
 
 ```go
 engine.EnableTracing()
-output, _ := engine.Render("template", context)
+output, _ := engine.Render(context.Background(), "template", ctx)
 trace := engine.GetTraceOutput()
 // Rendering: haproxy.cfg
 // Completed: haproxy.cfg (0.007ms)
@@ -227,7 +209,7 @@ engine.DisableTracing()
 ```go
 engine.EnableFilterDebug()
 // Logs sort_by comparisons with values and types
-output, _ := engine.Render("template", context)
+output, _ := engine.Render(context.Background(), "template", ctx)
 engine.DisableFilterDebug()
 ```
 
@@ -239,13 +221,13 @@ engine.DisableFilterDebug()
 // Good - compile once, reuse
 engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 for _, ctx := range contexts {
-    output, _ := engine.Render("template", ctx)
+    output, _ := engine.Render(context.Background(), "template", ctx)
 }
 
 // Bad - recompiles every time
 for _, ctx := range contexts {
     engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
-    output, _ := engine.Render("template", ctx)
+    output, _ := engine.Render(context.Background(), "template", ctx)
 }
 ```
 
@@ -271,7 +253,7 @@ timeout connect {{ coalesce(timeout_connect, "5s") }}
 
 ```go
 templates := map[string]string{
-    "haproxy.cfg": `{% render "global" %}{% render "backends" %}`,
+    "haproxy.cfg": `{{ render "global" }}{{ render "backends" }}`,
     "global":      "global\n    daemon",
     "backends":    "...",
 }

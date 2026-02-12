@@ -44,10 +44,8 @@ type HAProxyTemplateConfigSpec struct {
 	// CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
 	//
 	// The Secret must contain the following keys:
-	//   - dataplane_username: Username for production HAProxy Dataplane API
-	//   - dataplane_password: Password for production HAProxy Dataplane API
-	//   - validation_username: Username for validation HAProxy instance
-	//   - validation_password: Password for validation HAProxy instance
+	//   - dataplane_username: Username for HAProxy Dataplane API
+	//   - dataplane_password: Password for HAProxy Dataplane API
 	//
 	// If the namespace is omitted, it defaults to the same namespace as this config resource.
 	// +kubebuilder:validation:Required
@@ -90,7 +88,7 @@ type HAProxyTemplateConfigSpec struct {
 
 	// TemplateSnippets maps snippet names to reusable template fragments.
 	//
-	// Snippets can be included in other templates using {% include "name" %}.
+	// Snippets can be included in other templates using {{ render "name" }}.
 	// +optional
 	TemplateSnippets map[string]TemplateSnippet `json:"templateSnippets,omitempty"`
 
@@ -436,7 +434,7 @@ type WatchedResource struct {
 type TemplateSnippet struct {
 	// Template is the template content.
 	//
-	// Can be included in other templates using {% include "snippet_name" %}.
+	// Can be included in other templates using {{ render "snippet_name" }}.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Template string `json:"template"`
@@ -662,7 +660,7 @@ type ValidationAssertion struct {
 	//
 	// Format depends on assertion type:
 	//   - haproxy_valid: not used
-	//   - contains/not_contains/equals: "haproxy_config", "maps.<name>", "files.<name>", "sslCertificates.<name>"
+	//   - contains/not_contains/equals: "haproxy.cfg", "map:<name>", "file:<name>", "cert:<name>"
 	//   - jsonpath: the resource to query
 	// +optional
 	Target string `json:"target,omitempty"`

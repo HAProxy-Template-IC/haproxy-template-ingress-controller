@@ -100,8 +100,8 @@ Packages like `templating`, `k8s`, `dataplane` provide pure business logic:
 package templating
 
 // No event dependencies - pure library
-type Engine interface {
-    Render(name string, ctx map[string]interface{}) (string, error)
+type Renderer interface {
+    Render(ctx context.Context, name string, templateContext map[string]interface{}) (string, error)
 }
 ```
 
@@ -129,7 +129,7 @@ func New(bus *events.EventBus, engine templating.Engine) *Component {
     return &Component{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe(100),  // Subscribe in constructor, before Start()
+        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor, before Start()
     }
 }
 
@@ -140,7 +140,7 @@ func (c *Component) Run(ctx context.Context) error {
             // Convert event to pure function call
             switch e := event.(type) {
             case ReconciliationTriggeredEvent:
-                output, err := c.engine.Render("haproxy.cfg", e.Context)
+                output, err := c.engine.Render(ctx, "haproxy.cfg", e.Context)
                 // Publish result event
                 if err != nil {
                     c.eventBus.Publish(RenderFailedEvent{Error: err})
@@ -202,7 +202,7 @@ import "haptic/pkg/templating"
 
 func (e *Executor) render() (string, error) {
     // Direct call to pure component
-    return e.templateEngine.Render("haproxy.cfg", e.context)
+    return e.templateEngine.Render(ctx, "haproxy.cfg", e.context)
 }
 ```
 
@@ -235,7 +235,7 @@ func TestEngine_Render(t *testing.T) {
         "test": "Hello {{ name }}",
     }, nil, nil, nil)
 
-    output, err := engine.Render("test", map[string]interface{}{
+    output, err := engine.Render(context.Background(), "test", map[string]interface{}{
         "name": "World",
     })
 

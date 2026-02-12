@@ -86,7 +86,7 @@ bus.Publish(&events.ConfigResourceChangedEvent{
 // - Publishes ConfigParsedEvent
 
 // 3. ValidationCoordinator receives ConfigParsedEvent
-eventChan := bus.Subscribe(50)
+eventChan := bus.Subscribe("config-validator", 50)
 for event := range eventChan {
     if parsed, ok := event.(*events.ConfigParsedEvent); ok {
         // Trigger validation

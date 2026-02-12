@@ -157,9 +157,9 @@ glab api projects/haproxy-haptic%2Fhaptic/jobs/<JOB_ID>
 Business logic should be pure (no event dependencies):
 
 ```go
-// pkg/templating/engine.go - Pure component
-type Engine interface {
-    Render(templateName string, context map[string]interface{}) (string, error)
+// pkg/templating/engine_interface.go - Pure component
+type Renderer interface {
+    Render(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, error)
 }
 ```
 
@@ -179,7 +179,7 @@ func NewRendererComponent(bus *events.EventBus, engine templating.Engine) *Rende
     return &RendererComponent{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe(100),  // Subscribe in constructor, before Start()
+        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor, before Start()
     }
 }
 
@@ -189,7 +189,7 @@ func (r *RendererComponent) Run(ctx context.Context) error {
         case event := <-r.eventChan:
             if req, ok := event.(ReconciliationTriggeredEvent); ok {
                 // Call pure component
-                output, err := r.engine.Render("haproxy.cfg", req.Context)
+                output, err := r.engine.Render(ctx, "haproxy.cfg", req.Context)
 
                 // Publish result event
                 if err != nil {
@@ -358,7 +358,7 @@ func TestEngine_Render(t *testing.T) {
                 map[string]string{"test": tt.template}, nil, nil, nil)
             require.NoError(t, err)
 
-            got, err := engine.Render("test", tt.context)
+            got, err := engine.Render(context.Background(), "test", tt.context)
             if tt.wantErr {
                 require.Error(t, err)
                 return
@@ -396,7 +396,7 @@ func TestRendererComponent(t *testing.T) {
     renderer := NewRendererComponent(bus, engine)
 
     // Subscribe to output events
-    eventChan := bus.Subscribe(10)
+    eventChan := bus.Subscribe("test", 10)
     bus.Start()
 
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -568,7 +568,7 @@ func main() {
 
     // Wait for shutdown signal or error
     <-ctx.Done()
-    log.Info("Shutdown signal received, stopping components...")
+    slog.Info("Shutdown signal received, stopping components...")
 
     // Wait for components to finish (with timeout)
     done := make(chan error)
@@ -579,10 +579,10 @@ func main() {
     select {
     case err := <-done:
         if err != nil {
-            log.Error("Component error during shutdown", "error", err)
+            slog.Error("Component error during shutdown", "error", err)
         }
     case <-time.After(30 * time.Second):
-        log.Error("Shutdown timeout exceeded")
+        slog.Error("Shutdown timeout exceeded")
     }
 }
 ```

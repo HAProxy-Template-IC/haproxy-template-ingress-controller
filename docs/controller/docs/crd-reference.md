@@ -89,25 +89,20 @@ Controller-level settings for ports and leader election.
 
 ```yaml
 controller:
-  healthzPort: 8080  # Health check endpoints
-  metricsPort: 9090  # Prometheus metrics
-
   leaderElection:
     enabled: true
     leaseName: haptic-leader
-    leaseDuration: 15s
-    renewDeadline: 10s
-    retryPeriod: 2s
+    leaseDuration: 60s
+    renewDeadline: 15s
+    retryPeriod: 5s
 ```
 
 **Defaults:**
 
-- `healthzPort`: 8080
-- `metricsPort`: 9090
 - `leaderElection.enabled`: true
-- `leaderElection.leaseDuration`: 15s
-- `leaderElection.renewDeadline`: 10s
-- `leaderElection.retryPeriod`: 2s
+- `leaderElection.leaseDuration`: 60s
+- `leaderElection.renewDeadline`: 15s
+- `leaderElection.retryPeriod`: 5s
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 
@@ -123,7 +118,7 @@ controller:
 
 | Field                  | Type  | Default   | Description                                                                      |
 |------------------------|-------|-----------|----------------------------------------------------------------------------------|
-| `compressionThreshold` | int64 | 1048576   | Compress content when size exceeds this threshold (bytes). Set to -1 to disable |
+| `compressionThreshold` | int64 | 1048576   | Compress content when size exceeds this threshold (bytes). Set to 0 to disable |
 
 **How compression works:**
 
@@ -197,9 +192,8 @@ watchedResources:
     indexBy:
       - metadata.namespace
       - metadata.name
-    labelSelector:  # Optional
-      app: myapp
-    namespace: production  # Optional, restricts to single namespace
+    labelSelector: "app=myapp"  # Optional
+    namespaceSelector: "environment=production"  # Optional, filters by namespace labels
     store: full  # or "on-demand" for cached store
 ```
 
@@ -215,7 +209,7 @@ templateSnippets:
     ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
 ```
 
-Include in templates: `{% render "backend-name" %}`
+Include in templates: `{{ render "backend-name" }}`
 
 ### maps
 
@@ -360,7 +354,7 @@ validationTests:
         description: Generated config must be valid
 
       - type: contains
-        target: haproxy_config
+        target: haproxy.cfg
         pattern: "example.com"
         description: Config must include host
 ```

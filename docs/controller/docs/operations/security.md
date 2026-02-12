@@ -126,7 +126,7 @@ The debug endpoints do NOT expose actual credentials:
 
 ```bash
 # /debug/vars/credentials returns only metadata
-curl http://localhost:6060/debug/vars/credentials
+curl http://localhost:8080/debug/vars/credentials
 ```
 
 Response:
@@ -252,7 +252,7 @@ spec:
             matchLabels:
               name: monitoring
       ports:
-        - port: 6060  # debug
+        - port: 8080  # debug
 ```
 
 ## TLS Configuration

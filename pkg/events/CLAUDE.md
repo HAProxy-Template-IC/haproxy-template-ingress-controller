@@ -86,7 +86,7 @@ Filter events at the bus level for improved performance and type safety.
 
 ```go
 // Method 1: SubscribeTypes - efficient, filters at bus level
-eventChan := bus.SubscribeTypes(100, "reconciliation.triggered", "reconciliation.completed")
+eventChan := bus.SubscribeTypes("reconciler", 100, "reconciliation.triggered", "reconciliation.completed")
 for event := range eventChan {
     // Only receives the specified event types
     switch e := event.(type) {
@@ -163,7 +163,7 @@ func TestEventBus_Publish(t *testing.T) {
     type TestEvent struct{ Value string }
     func (e TestEvent) EventType() string { return "test" }
 
-    sub := bus.Subscribe(10)
+    sub := bus.Subscribe("test", 10)
     bus.Start()
 
     bus.Publish(TestEvent{Value: "hello"})
@@ -217,10 +217,10 @@ for event := range eventChan {
 
 ```go
 // Control events (low frequency)
-controlChan := bus.Subscribe(10)  // Small buffer OK
+controlChan := bus.Subscribe("control", 10)  // Small buffer OK
 
 // High-volume events (resource changes)
-resourceChan := bus.Subscribe(200)  // Larger buffer
+resourceChan := bus.Subscribe("resources", 200)  // Larger buffer
 
 // Pre-start buffer
 bus := NewEventBus(100)  // Based on expected init events
@@ -269,7 +269,7 @@ bus.Publish(SystemReadyEvent{})
 ```go
 // Bad - deadlock risk
 func (c *Component) Run(ctx context.Context, bus *EventBus) {
-    events := bus.Subscribe(10)
+    events := bus.Subscribe("component", 10)
     for event := range events {
         if req, ok := event.(MyRequest); ok {
             // This can deadlock if request depends on this component responding
@@ -285,7 +285,7 @@ func (c *Component) Run(ctx context.Context, bus *EventBus) {
 ```go
 // Good - handle in goroutine
 func (c *Component) Run(ctx context.Context, bus *EventBus) {
-    events := bus.Subscribe(10)
+    events := bus.Subscribe("component", 10)
     for event := range events {
         if req, ok := event.(MyRequest); ok {
             req := req  // Capture
@@ -309,6 +309,7 @@ If you need new event metadata beyond EventType():
 // events/types.go
 type Event interface {
     EventType() string
+    Timestamp() time.Time
 }
 
 // New interface for events with priority
@@ -352,7 +353,7 @@ Follow scatter-gather as example:
 ```go
 func BenchmarkEventBus_Publish(b *testing.B) {
     bus := NewEventBus(100)
-    sub := bus.Subscribe(1000)
+    sub := bus.Subscribe("bench", 1000)
     bus.Start()
 
     event := TestEvent{Value: "test"}
@@ -432,7 +433,7 @@ log.Info("response sent", "req_id", resp.RequestID(), "responder", resp.Responde
 4. Profile with pprof
 
 ```bash
-go tool pprof http://localhost:6060/debug/pprof/heap
+go tool pprof http://localhost:8080/debug/pprof/heap
 ```
 
 ## Best Practices
@@ -440,9 +441,10 @@ go tool pprof http://localhost:6060/debug/pprof/heap
 ### 1. Keep Event Interfaces Minimal
 
 ```go
-// Good - minimal interface
+// Good - current interface
 type Event interface {
     EventType() string
+    Timestamp() time.Time
 }
 
 // Avoid - too much infrastructure

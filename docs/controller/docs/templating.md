@@ -37,7 +37,7 @@ haproxyConfig:
 ```
 
 !!! important
-    All auxiliary file references must use **absolute paths** from `/etc/haproxy/`. Use `pathResolver.GetPath()` to generate correct paths.
+    All auxiliary file references should use `pathResolver.GetPath()` to generate correct paths.
 
 ### Map Files
 
@@ -92,7 +92,7 @@ sslCertificates:
 
 ### Template Snippets
 
-Reusable template fragments included via `{% render "snippet-name" %}`:
+Reusable template fragments included via `{{ render "snippet-name" }}`:
 
 ```yaml
 templateSnippets:
@@ -109,6 +109,25 @@ templateSnippets:
       {%- end %}
       {%- end %}
       {%- end %}
+```
+
+Include a snippet in a template:
+
+```go
+{{ render "backend-name" }}
+```
+
+Include all snippets matching a glob pattern (rendered in alphabetical order):
+
+```go
+{{ render_glob "backend-*" }}
+```
+
+Pass local variables to rendered snippets with `inherit_context`:
+
+```go
+{%- var service_name = "my-service" %}
+{{ render "backend-servers" inherit_context }}
 ```
 
 ## Template Syntax
@@ -146,20 +165,20 @@ Templates use Scriggo's template syntax. For complete syntax reference, see the 
 
 ### Path Resolution
 
-The `pathResolver.GetPath()` method resolves filenames to absolute paths:
+The `pathResolver.GetPath()` method resolves filenames to paths:
 
 ```go
 {# Map files #}
 use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
-{# Output: /etc/haproxy/maps/host.map #}
+{# Output: maps/host.map #}
 
 {# General files #}
 errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
-{# Output: /etc/haproxy/general/504.http #}
+{# Output: files/504.http #}
 
 {# SSL certificates #}
 bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
-{# Output: /etc/haproxy/ssl/example.com.pem #}
+{# Output: ssl/example.com.pem #}
 ```
 
 **Arguments**: filename (required), type (`"map"`, `"file"`, `"cert"`, or `"crt-list"`)
@@ -169,14 +188,12 @@ bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 | Filter | Description | Example |
 |--------|-------------|---------|
 | `b64decode` | Decode base64 strings | `{{ secret.data.password \| b64decode }}` |
-| `glob_match` | Filter strings by glob pattern | `{{ snippets \| glob_match("backend-*") }}` |
-| `regex_escape` | Escape regex special characters | `{{ path \| regex_escape }}` |
-| `sort_by` | Sort by JSONPath expressions | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
-| `extract` | Extract values via JSONPath | `{{ routes \| extract("$.spec.rules[*].host") }}` |
+| `glob_match` | Filter strings by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
 | `group_by` | Group items by JSONPath | `{{ ingresses \| group_by("$.metadata.namespace") }}` |
-| `transform` | Regex substitution on arrays | `{{ paths \| transform("^/api/v\\d+", "") }}` |
+| `indent` | Indent each line by N spaces | `{{ render("snippet") \| indent(4) }}` |
+| `sanitize_regex` | Escape regex special characters | `{{ path \| sanitize_regex }}` |
+| `sort_by` | Sort by JSONPath expressions | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
 | `debug` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
-| `eval` | Show JSONPath evaluation | `{{ route \| eval("$.priority") }}` |
 
 **sort_by modifiers**: `:desc` (descending), `:exists` (by field presence), `| length` (by length)
 
@@ -417,9 +434,7 @@ Accumulate values across loop iterations using Go-style variable assignment:
 ```go
 {%- for _, item := range items %}   {# Strip before #}
 {% for _, item := range items -%}   {# Strip after #}
-
-{# Use show for indented output #}
-    {% show render("server-list") %}
+{%- for _, item := range items -%}  {# Strip both #}
 ```
 
 ## Complete Example
@@ -490,7 +505,7 @@ haproxyConfig:
 
     backend ing_{{ ingress.metadata.name }}
         balance roundrobin
-        {% show render("backend-servers") %}
+        {{ render "backend-servers" inherit_context }}
     {% end %}
     {% end %}
     {% end %}

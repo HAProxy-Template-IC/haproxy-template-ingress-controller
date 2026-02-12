@@ -137,7 +137,7 @@ func TestComponent_PublishesEvents(t *testing.T) {
     component, _ := New(config, clientset, bus, callbacks, logger)
 
     // Subscribe to events
-    eventChan := bus.Subscribe(10)
+    eventChan := bus.Subscribe("test", 10)
     bus.Start()
 
     go component.Run(ctx)

@@ -88,7 +88,7 @@ func New(bus *busevents.EventBus, engine templating.Engine) *Component {
     return &Component{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe(100),  // Subscribe in constructor, before Start()
+        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor, before Start()
     }
 }
 
@@ -103,7 +103,7 @@ func (c *Component) Run(ctx context.Context) error {
                 context := c.buildContext(e.Resources)
 
                 // Call pure component
-                output, err := c.engine.Render("haproxy.cfg", context)
+                output, err := c.engine.Render(ctx, "haproxy.cfg", context)
 
                 // Publish result event
                 if err != nil {
@@ -150,7 +150,7 @@ func New(bus *events.EventBus, engine templating.Engine) *Component {
     return &Component{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe(100),  // Subscribe in constructor
+        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor
     }
 }
 ```
@@ -179,7 +179,7 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 
     // Pure component called directly within same reconciliation context
     // This is acceptable because we're not coordinating across components
-    haproxyConfig, err := c.engine.Render("haproxy.cfg", context)
+    haproxyConfig, err := c.engine.Render(ctx, "haproxy.cfg", context)
 }
 ```
 
@@ -260,7 +260,7 @@ Subscribes to all events and produces domain-aware logs:
 ```go
 // pkg/controller/commentator/commentator.go
 func (c *EventCommentator) Run(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe(500)  // Large buffer - high volume
+    eventChan := c.eventBus.Subscribe("commentator", 500)  // Large buffer - high volume
 
     for {
         select {
@@ -308,7 +308,7 @@ Implements scatter-gather pattern for multi-phase validation:
 ```go
 // coordinator.go orchestrates validation
 func (v *ValidationCoordinator) Run(ctx context.Context) error {
-    eventChan := v.eventBus.Subscribe(50)
+    eventChan := v.eventBus.Subscribe("coordinator", 50)
 
     for {
         select {
@@ -344,7 +344,7 @@ func (v *ValidationCoordinator) Run(ctx context.Context) error {
 
 // Each validator responds independently
 func (v *TemplateValidator) Run(ctx context.Context) error {
-    eventChan := v.eventBus.Subscribe(10)
+    eventChan := v.eventBus.Subscribe("template-validator", 10)
 
     for {
         select {
@@ -385,7 +385,7 @@ type Reconciler struct {
 }
 
 func (r *Reconciler) Start(ctx context.Context) error {
-    eventChan := r.eventBus.Subscribe(EventBufferSize)
+    eventChan := r.eventBus.Subscribe("reconciler", EventBufferSize)
 
     for {
         select {
@@ -523,7 +523,7 @@ func TestRendererComponent(t *testing.T) {
     renderer := NewRendererComponent(bus, engine)
 
     // Subscribe to output events
-    eventChan := bus.Subscribe(10)
+    eventChan := bus.Subscribe("test", 10)
     bus.Start()
 
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -570,7 +570,7 @@ func TestValidationCoordinator(t *testing.T) {
     go coordinator.Run(ctx)
 
     // Subscribe to validation result
-    eventChan := bus.Subscribe(10)
+    eventChan := bus.Subscribe("test", 10)
     bus.Start()
 
     // Trigger validation
@@ -751,7 +751,7 @@ type CacheWarmerComponent struct {
 }
 
 func (c *CacheWarmerComponent) Run(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe(50)
+    eventChan := c.eventBus.Subscribe("cache-warmer", 50)
 
     for {
         select {
@@ -793,7 +793,7 @@ type ReconciliationComponent struct {
 }
 
 func (r *ReconciliationComponent) Run(ctx context.Context) error {
-    eventChan := r.eventBus.Subscribe(100)
+    eventChan := r.eventBus.Subscribe("reconciliation", 100)
 
     for {
         select {

@@ -61,7 +61,7 @@ type Config struct {
 
 	// TemplateSnippets maps snippet names to reusable template fragments.
 	//
-	// Snippets can be included in other templates using {% include "name" %}.
+	// Snippets can be included in other templates using {{ render "name" }}.
 	TemplateSnippets map[string]TemplateSnippet `yaml:"template_snippets"`
 
 	// Maps maps map file names to their template definitions.
@@ -336,7 +336,7 @@ type WatchedResource struct {
 
 // TemplateSnippet is a reusable template fragment.
 type TemplateSnippet struct {
-	// Name is the snippet identifier for {% include "name" %}.
+	// Name is the snippet identifier for {{ render "name" }}.
 	// This is derived from the map key in the configuration.
 	Name string
 

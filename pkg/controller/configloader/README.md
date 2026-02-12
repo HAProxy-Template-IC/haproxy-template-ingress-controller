@@ -175,7 +175,7 @@ func main() {
     go loader.Start(ctx)
 
     // Wait for ConfigParsedEvent
-    eventChan := bus.Subscribe(10)
+    eventChan := bus.Subscribe("consumer", 10)
     for event := range eventChan {
         if parsed, ok := event.(*events.ConfigParsedEvent); ok {
             fmt.Printf("Config loaded: version %s\n", parsed.ConfigVersion)

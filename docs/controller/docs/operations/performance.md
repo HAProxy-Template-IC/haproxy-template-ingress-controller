@@ -405,15 +405,15 @@ Access pprof endpoints for profiling:
 
 ```bash
 # CPU profile (30 seconds)
-curl http://localhost:6060/debug/pprof/profile?seconds=30 > cpu.pprof
-go tool pprof -http=:8080 cpu.pprof
+curl http://localhost:8080/debug/pprof/profile?seconds=30 > cpu.pprof
+go tool pprof -http=:9999 cpu.pprof
 
 # Memory profile
-curl http://localhost:6060/debug/pprof/heap > heap.pprof
-go tool pprof -http=:8080 heap.pprof
+curl http://localhost:8080/debug/pprof/heap > heap.pprof
+go tool pprof -http=:9999 heap.pprof
 
 # Goroutine dump
-curl http://localhost:6060/debug/pprof/goroutine?debug=1
+curl http://localhost:8080/debug/pprof/goroutine?debug=1
 ```
 
 ### Profile-Guided Optimization (PGO)

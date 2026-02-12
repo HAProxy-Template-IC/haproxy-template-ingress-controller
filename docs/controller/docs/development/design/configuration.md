@@ -19,17 +19,8 @@ pod_selector:
     app: haproxy
     component: loadbalancer
 
-# Grouped controller configuration (previously CLI options)
-controller:
-  healthz_port: 8080
-  metrics_port: 9090
-
 logging:
   level: DEBUG  # TRACE, DEBUG, INFO, WARN, ERROR
-
-validation:
-  dataplane_host: localhost
-  dataplane_port: 5555
 
 # Fields to omit from indexed resources (reduces memory usage)
 watched_resources_ignore_fields:
@@ -38,7 +29,7 @@ watched_resources_ignore_fields:
 watched_resources:
   ingresses:
     api_version: networking.k8s.io/v1
-    kind: Ingress
+    resources: ingresses
     # Enable validation webhook for Ingress resources to prevent faulty configs
     enable_validation_webhook: true
     # Default indexing by namespace and name for standard iteration
@@ -46,7 +37,7 @@ watched_resources:
 
   endpoints:
     api_version: discovery.k8s.io/v1
-    kind: EndpointSlice
+    resources: endpointslices
     # Leave validation disabled for critical resources like EndpointSlices
     enable_validation_webhook: false
     # Custom indexing by service name for O(1) service-to-endpoints matching
@@ -54,7 +45,7 @@ watched_resources:
 
   secrets:
     api_version: v1
-    kind: Secret
+    resources: secrets
     # Enable validation for TLS secrets to catch certificate issues early
     enable_validation_webhook: true
     # Index by namespace and type for efficient TLS secret lookup
@@ -62,19 +53,17 @@ watched_resources:
 
   services:
     api_version: v1
-    kind: Service
+    resources: services
     enable_validation_webhook: false
     # Index by namespace and app label for cross-resource matching
     index_by: ["metadata.namespace", "metadata.labels['app']"]
 
 template_snippets:
   backend-name:
-    name: backend-name
     template: |
       ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ fallback(path.backend.service.port.name, path.backend.service.port.number) }}
 
   path-map-entry:
-    name: path-map-entry
     template: |
       {{ "" }}
       {% for _, ingress := range resources.ingresses.List() %}
@@ -82,7 +71,7 @@ template_snippets:
       {% if rule.http != nil %}
       {% for _, path := range fallback(rule.http.paths, []any{}) %}
       {% if path.path != nil && contains(path_types, path.pathType) %}
-      {{ rule.host }}{{ path.path }} {% render "backend-name" %}{{ suffix }}
+      {{ rule.host }}{{ path.path }} {{ render "backend-name" }}{{ suffix }}
       {% end %}
       {% end %}
       {% end %}
@@ -90,7 +79,6 @@ template_snippets:
       {% end %}
 
   validate-ingress:
-    name: validate-ingress
     template: |
       {#- Validation snippet for ingress resources #}
       {%- if ingress.spec == nil %}
@@ -105,7 +93,6 @@ template_snippets:
       {%- end %}
 
   backend-servers:
-    name: backend-servers
     template: |
       {#- Pre-allocated server pool with auto-expansion #}
       {%- var initial_slots = 10 %}  {#- Single place to adjust initial slots #}
@@ -145,12 +132,11 @@ template_snippets:
       {%- end %}
 
   ingress-backends:
-    name: ingress-backends
     template: |
       {#- Generate all backend definitions from ingress resources #}
-      {#- Usage: {% render "ingress-backends" %} #}
+      {#- Usage: {{ render "ingress-backends" }} #}
       {%- for _, ingress := range resources.ingresses.List() %}
-      {% render "validate-ingress" %}
+      {{ render "validate-ingress" }}
       {%- if ingress.spec != nil && ingress.spec.rules != nil %}
       {%- for _, rule := range ingress.spec.rules %}
       {%- if rule.http != nil && rule.http.paths != nil %}
@@ -158,11 +144,11 @@ template_snippets:
       {%- if path.backend != nil && path.backend.service != nil %}
       {%- var service_name = path.backend.service.name %}
       {%- var port = fallback(path.backend.service.port.number, 80) %}
-      backend {% render "backend-name" %}
+      backend {{ render "backend-name" }}
         balance roundrobin
         option httpchk GET {{ fallback(path.path, "/") }}
         default-server check
-        {% render "backend-servers" %}
+        {{ render "backend-servers" }}
       {%- end %}
       {%- end %}
       {%- end %}
@@ -189,7 +175,7 @@ maps:
       #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(/etc/haproxy/maps/path-exact.map)
       {%- var path_types = []string{"Exact"} %}
       {%- var suffix = "" %}
-      {% render "path-map-entry" %}
+      {{ render "path-map-entry" }}
 
   path-prefix-exact.map:
     template: |
@@ -214,7 +200,7 @@ maps:
       #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg(/etc/haproxy/maps/path-prefix.map)
       {%- var path_types = []string{"Prefix", "ImplementationSpecific"} %}
       {%- var suffix = "/" %}
-      {% render "path-map-entry" %}
+      {{ render "path-map-entry" }}
 
 files:
   400.http:
@@ -350,7 +336,7 @@ haproxy_config:
       # Default backend
       default_backend default_backend
 
-    {% render "ingress-backends" %}
+    {{ render "ingress-backends" }}
 
     backend default_backend
         http-request return status 404

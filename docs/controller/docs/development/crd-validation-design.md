@@ -65,8 +65,6 @@ spec:
 
   # Controller settings
   controller:
-    healthzPort: 8080
-    metricsPort: 9090
     leaderElection:
       enabled: true
       leaseName: haptic-leader
@@ -163,9 +161,9 @@ spec:
           bind *:80
           use_backend %[req.hdr(host),lower,map(/etc/haproxy/maps/domain_to_backend.map)]
 
-  # Embedded validation tests
+  # Embedded validation tests (map keyed by test name)
   validationTests:
-    - name: test_basic_ingress
+    test_basic_ingress:
       description: Validate that a basic ingress generates valid HAProxy config
       fixtures:
         ingresses:
@@ -204,12 +202,12 @@ spec:
 
         - type: contains
           description: Config must include frontend for example.com
-          target: haproxy_config
+          target: haproxy.cfg
           pattern: "example.com"
 
         - type: contains
           description: Map file must include domain mapping
-          target: maps.domain_to_backend
+          target: map:domain_to_backend
           pattern: "example.com example.com_backend"
 
 status:
@@ -251,10 +249,8 @@ type HAProxyTemplateConfig struct {
 type HAProxyTemplateConfigSpec struct {
     // CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
     // The Secret must contain the following keys:
-    //   - dataplane_username: Username for production HAProxy Dataplane API
-    //   - dataplane_password: Password for production HAProxy Dataplane API
-    //   - validation_username: Username for validation HAProxy instance
-    //   - validation_password: Password for validation HAProxy instance
+    //   - dataplane_username: Username for HAProxy Dataplane API
+    //   - dataplane_password: Password for HAProxy Dataplane API
     // +kubebuilder:validation:Required
     CredentialsSecretRef SecretReference `json:"credentialsSecretRef"`
 
@@ -308,7 +304,7 @@ type HAProxyTemplateConfigSpec struct {
     // These tests are executed during admission webhook validation and
     // via the "controller validate" CLI command.
     // +optional
-    ValidationTests []ValidationTest `json:"validationTests,omitempty"`
+    ValidationTests map[string]ValidationTest `json:"validationTests,omitempty"`
 }
 
 // SecretReference references a Secret by name and optional namespace.
@@ -325,21 +321,29 @@ type SecretReference struct {
 }
 
 // ValidationTest defines a validation test with fixtures and assertions.
+// The test name is provided by the map key in ValidationTests.
 type ValidationTest struct {
-    // Name is a unique identifier for this test.
-    // +kubebuilder:validation:Required
-    // +kubebuilder:validation:MinLength=1
-    Name string `json:"name"`
-
     // Description explains what this test validates.
     // +optional
     Description string `json:"description,omitempty"`
 
     // Fixtures defines the Kubernetes resources to use for this test.
     // Keys are resource type names (matching WatchedResources keys).
-    // Values are arrays of resources in unstructured format.
+    // Values are arrays of resources as raw JSON.
     // +kubebuilder:validation:Required
-    Fixtures map[string][]unstructured.Unstructured `json:"fixtures"`
+    Fixtures map[string][]runtime.RawExtension `json:"fixtures"`
+
+    // HTTPResources defines mock HTTP content for this test.
+    // +optional
+    HTTPResources []HTTPResourceFixture `json:"httpResources,omitempty"`
+
+    // CurrentConfig contains HAProxy configuration from a previous deployment.
+    // +optional
+    CurrentConfig string `json:"currentConfig,omitempty"`
+
+    // ExtraContext provides custom variables that override the global extraContext.
+    // +optional
+    ExtraContext runtime.RawExtension `json:"extraContext,omitempty"`
 
     // Assertions defines the validation checks to perform.
     // +kubebuilder:validation:Required
@@ -356,8 +360,11 @@ type ValidationAssertion struct {
     //   - not_contains: Checks if target does not contain pattern (regex)
     //   - equals: Checks if target equals expected value
     //   - jsonpath: Evaluates JSONPath expression against target
+    //   - match_count: Counts how many times pattern matches in target (regex)
+    //   - match_order: Validates that patterns appear in specified order
+    //   - deterministic: Verifies that rendering twice produces identical output
     // +kubebuilder:validation:Required
-    // +kubebuilder:validation:Enum=haproxy_valid;contains;not_contains;equals;jsonpath
+    // +kubebuilder:validation:Enum=haproxy_valid;contains;not_contains;equals;jsonpath;match_count;match_order;deterministic
     Type string `json:"type"`
 
     // Description explains what this assertion validates.
@@ -366,14 +373,17 @@ type ValidationAssertion struct {
 
     // Target specifies what to validate.
     // For haproxy_valid: not used
-    // For contains/not_contains/equals: "haproxy_config", "maps.<name>", "files.<name>", "sslCertificates.<name>"
-    // For jsonpath: the resource to query (e.g., "haproxy_config")
+    // For contains/not_contains/equals: "haproxy.cfg", "map:<name>", "file:<name>", "cert:<name>"
     // +optional
     Target string `json:"target,omitempty"`
 
     // Pattern is the regex pattern for contains/not_contains assertions.
     // +optional
     Pattern string `json:"pattern,omitempty"`
+
+    // Patterns is a list of regex patterns for match_order assertions.
+    // +optional
+    Patterns []string `json:"patterns,omitempty"`
 
     // Expected is the expected value for equals assertions.
     // +optional

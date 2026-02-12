@@ -92,34 +92,34 @@ graph TB
 The debug server exposes controller state via HTTP (port configurable via `--debug-port` flag or `DEBUG_PORT` environment variable, disabled by default):
 
 ```bash
-# List all available variables (assuming port 6060 is configured)
-curl http://localhost:6060/debug/vars
+# List all available variables (assuming port 8080 is configured)
+curl http://localhost:8080/debug/vars
 
 # Get current configuration
-curl http://localhost:6060/debug/vars/config
+curl http://localhost:8080/debug/vars/config
 
 # Get just the config version using JSONPath
-curl 'http://localhost:6060/debug/vars/config?field={.version}'
+curl 'http://localhost:8080/debug/vars/config?field={.version}'
 
 # Get rendered HAProxy configuration
-curl http://localhost:6060/debug/vars/rendered
+curl http://localhost:8080/debug/vars/rendered
 
 # Get resource counts
-curl http://localhost:6060/debug/vars/resources
+curl http://localhost:8080/debug/vars/resources
 
 # Get recent events (last 1000)
-curl http://localhost:6060/debug/vars/events
+curl http://localhost:8080/debug/vars/events
 
 # Get recent 100 events
-curl 'http://localhost:6060/debug/vars/events?field={.last_100}'
+curl 'http://localhost:8080/debug/vars/events?field={.last_100}'
 
 # Get complete state dump
-curl http://localhost:6060/debug/vars/state
+curl http://localhost:8080/debug/vars/state
 
 # Go profiling
-curl http://localhost:6060/debug/pprof/
-curl http://localhost:6060/debug/pprof/heap
-curl http://localhost:6060/debug/pprof/goroutine
+curl http://localhost:8080/debug/pprof/
+curl http://localhost:8080/debug/pprof/heap
+curl http://localhost:8080/debug/pprof/goroutine
 ```
 
 ##### Event History
