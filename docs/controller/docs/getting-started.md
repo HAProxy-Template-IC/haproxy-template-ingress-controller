@@ -125,6 +125,8 @@ Save as `echo-ingress.yaml` and apply:
 kubectl apply -f echo-ingress.yaml
 ```
 
+The controller will automatically detect this new Ingress, render the HAProxy configuration, validate it, and deploy it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
+
 ## Step 4: Verify the Configuration
 
 ### Check Controller Logs
@@ -163,6 +165,8 @@ You should see:
 ## Step 5: Test the Routing
 
 ### Port-Forward to HAProxy
+
+HAProxy is running inside the cluster and isn't directly reachable from your machine. Port-forward creates a temporary tunnel from your local port to the HAProxy service:
 
 ```bash
 kubectl port-forward -n haptic svc/haptic-haproxy 8080:80

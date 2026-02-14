@@ -20,6 +20,8 @@ Performance optimization involves three areas:
 | Medium (50-200 Ingresses) | 100m | 500m | 128Mi | 512Mi |
 | Large (200+ Ingresses) | 200m | 1000m | 256Mi | 1Gi |
 
+These recommendations are based on the controller's primary memory consumers (watched resource caches, template rendering buffers, event history) and CPU consumers (template rendering, API server watch streams). Adjust based on your actual resource counts and template complexity.
+
 Configure via Helm values:
 
 ```yaml
@@ -243,6 +245,9 @@ global
 ```
 
 ### Password Hash Performance
+
+!!! warning "Read this if your templates use password hashes"
+    Password hash validation during configuration parsing can dominate reconciliation time. Review the table below before choosing a hash algorithm.
 
 HAProxy validates password hash formats during configuration parsing by running the full hashing algorithm. This can significantly slow down config validation when using expensive hash algorithms.
 

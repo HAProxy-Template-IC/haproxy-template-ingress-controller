@@ -140,7 +140,7 @@ Response:
 }
 ```
 
-Actual passwords are never exposed through debug endpoints.
+Actual passwords are never exposed through debug endpoints. To restrict who can reach these endpoints, configure a [network policy](#restricting-debug-endpoint-access) that limits ingress to trusted namespaces.
 
 ## Container Security
 
@@ -360,13 +360,16 @@ When using secrets in templates, follow these practices:
 For HAProxy authentication, store password hashes (not plaintext):
 
 ```bash
-# Generate bcrypt hash
+# Generate bcrypt hash (-B = bcrypt, -n = stdout, -b = password on command line)
 htpasswd -nbB admin mypassword | cut -d: -f2
 
 # Store in secret (hash only, not username:hash)
 kubectl create secret generic auth-users \
   --from-literal=password_hash='$2y$05$...'
 ```
+
+!!! note
+    Bcrypt is secure but expensive to validate during config parsing. For large user bases, consider SHA-512 (`htpasswd -n -5 admin`) as a faster alternative. See [Password Hash Performance](./performance.md#password-hash-performance) for benchmarks.
 
 ## Audit Logging
 
@@ -405,22 +408,22 @@ rules:
 
 ### Deployment Checklist
 
-- [ ] Use strong, unique passwords for DataPlane API credentials
-- [ ] Enable read-only root filesystem
-- [ ] Run as non-root user
-- [ ] Drop all capabilities
-- [ ] Enable network policies to restrict traffic
-- [ ] Use TLS for all external endpoints
-- [ ] Restrict RBAC to required namespaces
-- [ ] Enable Kubernetes audit logging
+- [ ] **Critical** -- Use strong, unique passwords for DataPlane API credentials
+- [ ] **Critical** -- Enable read-only root filesystem
+- [ ] **Critical** -- Run as non-root user
+- [ ] **Critical** -- Drop all capabilities
+- [ ] **Recommended** -- Enable network policies to restrict traffic
+- [ ] **Recommended** -- Use TLS for all external endpoints
+- [ ] **Recommended** -- Restrict RBAC to required namespaces
+- [ ] **Recommended** -- Enable Kubernetes audit logging
 
 ### Operational Checklist
 
-- [ ] Rotate credentials periodically
-- [ ] Monitor for unauthorized access attempts
-- [ ] Review RBAC permissions after configuration changes
-- [ ] Keep controller image updated for security patches
-- [ ] Use image scanning in CI/CD pipeline
+- [ ] **Critical** -- Rotate credentials periodically
+- [ ] **Critical** -- Keep controller image updated for security patches
+- [ ] **Recommended** -- Monitor for unauthorized access attempts
+- [ ] **Recommended** -- Review RBAC permissions after configuration changes
+- [ ] **Recommended** -- Use image scanning in CI/CD pipeline
 
 ### Production Hardening
 

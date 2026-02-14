@@ -142,7 +142,7 @@ controller:
           {%- end %}
 ```
 
-The snippet name `frontend-filters-request-id` follows a naming convention: snippets starting with `frontend-filters-` are automatically included in the HTTP frontend section where request/response modification happens. See the [Base Library Extension Points](/helm-chart/latest/libraries/base/#extension-points) for all available hooks.
+The snippet name `frontend-filters-request-id` follows a naming convention: the base template uses `render_glob "frontend-filters-*"` to discover and render all snippets matching the prefix, so any snippet starting with `frontend-filters-` is automatically included in the HTTP frontend section where request/response modification happens. This pattern applies to all extension points -- the prefix determines where your snippet is inserted. See the [Base Library Extension Points](/helm-chart/latest/libraries/base/#extension-points) for all available hooks.
 
 Now users can enable request tracing by adding the annotation to the Ingress from the previous example:
 

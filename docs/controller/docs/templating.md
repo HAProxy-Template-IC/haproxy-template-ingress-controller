@@ -8,6 +8,13 @@ Templates are rendered automatically when any watched resource changes, during i
 
 ## What You Can Template
 
+| Template Type | Use When |
+|---------------|----------|
+| `haproxyConfig` | Main HAProxy configuration (frontends, backends, global settings) |
+| `maps` | HAProxy lookup tables for host/path routing decisions |
+| `files` | Auxiliary files like custom error pages |
+| `sslCertificates` | TLS certificate files assembled from Kubernetes Secrets |
+
 ### HAProxy Configuration
 
 The main `haproxyConfig` template generates the complete HAProxy configuration file:

@@ -21,6 +21,9 @@ For controller architecture and behavior documentation, see the [controller docs
 - Helm 3.0+
 - **HAProxy 3.0 or newer** (the chart deploys HAProxy by default; template libraries require 3.0+ for SSL/TLS features)
 
+!!! note
+    The `haproxyVersion` value controls both the controller image tag and the HAProxy image tag, ensuring version compatibility between the two. See the [configuration reference](./reference.md) for details.
+
 ## Installation
 
 ```bash
@@ -39,13 +42,15 @@ helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 
 The chart deploys:
 
-- **Controller Deployment** with configurable replicas, leader election, and resource limits
-- **HAProxy Deployment** (optional) with Dataplane API sidecar
-- **HAProxyTemplateConfig CRD** containing merged template library configuration
-- **IngressClass** and **GatewayClass** resources for routing API integration
-- **RBAC**, **NetworkPolicy**, and **ServiceAccount** resources
-- Optional **ServiceMonitor** for Prometheus integration
-- Optional **admission webhook** for configuration validation
+- **Controller Deployment** -- the operator that watches resources and generates configurations
+- **HAProxy Deployment** (optional) -- the load balancers that serve your traffic, with Dataplane API sidecars
+- **HAProxyTemplateConfig CRD** -- merged template library configuration that drives config rendering
+- **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
+- **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
+- Optional **ServiceMonitor** -- Prometheus integration for metrics scraping
+- Optional **admission webhook** -- configuration validation before deployment
+
+If you are new to HAPTIC, start with the [Getting Started guide](https://haproxy-haptic.org/controller/latest/getting-started/) to deploy your first template-driven configuration.
 
 ## Documentation Sections
 

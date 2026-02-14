@@ -27,6 +27,9 @@ By default, the debug port is **8080**. The server binds to all interfaces (`0.0
 
 For Helm chart configuration, see the [chart debugging page](https://haproxy-haptic.org/helm-chart/operations/debugging/).
 
+!!! warning "Security implications"
+    Debug endpoints have no built-in authentication and expose internal state including rendered configurations. In production, restrict access using [network policies](./security.md#restricting-debug-endpoint-access) or disable the debug port entirely (`controller.debugPort: 0`).
+
 ## Accessing Debug Endpoints
 
 ### From Outside the Cluster
@@ -277,6 +280,14 @@ go tool pprof -http=:8080 cpu.pprof
 
 ## Common Debugging Workflows
 
+**Start here** -- choose the workflow matching your symptom:
+
+- **Controller won't start or config missing** -- [Configuration Not Loading](#configuration-not-loading)
+- **Config renders but HAProxy doesn't update** -- [HAProxy Config Not Updating](#haproxy-config-not-updating)
+- **Template errors in logs** -- [Template Rendering Errors](#template-rendering-errors)
+- **Performance degradation** -- [High CPU Usage](#high-cpu-usage) or [Memory Issues](#memory-issues)
+- **Deployments failing after render** -- [Deployment Failures](#deployment-failures)
+
 ### Configuration Not Loading
 
 1. Check if config is loaded:
@@ -397,18 +408,11 @@ go tool pprof -http=:8080 cpu.pprof
 
 ## Security Considerations
 
+See the [security warning above](#enabling-debug-endpoints) for access control recommendations. In addition:
+
 1. **Credentials**: The `/debug/vars/credentials` endpoint exposes only metadata, NOT actual passwords
 
-2. **Access Control**: Debug endpoints have no built-in authentication - use kubectl port-forward or network policies to restrict access
-
-3. **Large Responses**: Full state dump can expose sensitive configuration - use specific variables instead
-
-4. **Production Usage**: Consider disabling debug port in high-security environments:
-
-   ```yaml
-   controller:
-     debugPort: 0  # Disabled
-   ```
+2. **Large Responses**: Full state dump can expose sensitive configuration - use specific variables instead
 
 ## Scripting Examples
 
