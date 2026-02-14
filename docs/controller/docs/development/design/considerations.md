@@ -7,7 +7,7 @@ It continuously watches a list of user-defined Kubernetes resource types and use
 main configuration file `haproxy.cfg` via templating engine and an optional amount of auxiliary files like custom error pages (`500.http`)
 or map files for lookups (`host.map`).
 After rendering the files they are validated and pushed via HAProxy Dataplane API (<https://www.haproxy.com/documentation/haproxy-data-plane-api/>).
-By pushing only changed config parts via specialized API endpoints we can prevent unnecessary HAProxy reloads.
+By pushing only changed config parts via specialized API endpoints this prevents unnecessary HAProxy reloads.
 Many specialized endpoints use the HAProxy runtime socket (<https://www.haproxy.com/documentation/haproxy-runtime-api/>)
 under the hood and perform changes at runtime.
 The template rendering is triggered by changed Kubernetes resources.

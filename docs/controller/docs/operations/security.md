@@ -11,6 +11,8 @@ The controller follows security best practices including:
 - Secure credential management via Kubernetes Secrets
 - Support for TLS throughout the stack
 
+For a quick overview of required actions, jump to the [Security Checklist](#security-checklist).
+
 ## RBAC Configuration
 
 ### Controller Service Account

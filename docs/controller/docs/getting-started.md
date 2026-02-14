@@ -275,58 +275,13 @@ See [Monitoring Guide](./operations/monitoring.md) for metrics and dashboards.
 
 ## Troubleshooting
 
-### Controller Not Starting
+If you run into issues during setup, check these common areas:
 
-Check the controller logs for errors:
+- **Controller not starting** -- check logs for missing HAProxyTemplateConfig, RBAC errors, or API connectivity issues
+- **HAProxy pods not updating** -- verify the Dataplane API sidecar is running and credentials match
+- **Ingress not routing** -- ensure `ingressClassName: haproxy` is set and the backend Service has endpoints
 
-```bash
-kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
-```
-
-Common issues:
-
-- Missing HAProxyTemplateConfig or Secret
-- Insufficient RBAC permissions
-- Cannot connect to Kubernetes API
-
-### HAProxy Pods Not Updating
-
-Verify the controller can connect to HAProxy Dataplane API:
-
-```bash
-# Port-forward to Dataplane API
-kubectl port-forward -n haptic $HAPROXY_POD 5555:5555
-
-# Test the API (default credentials)
-curl -u admin:adminpwd http://localhost:5555/v2/info
-```
-
-If this fails, check:
-
-- Dataplane API sidecar is running
-- Credentials match between controller and HAProxy
-- Master socket exists at `/etc/haproxy/haproxy-master.sock`
-
-### Ingress Not Routing
-
-Check that:
-
-1. The Ingress has `ingressClassName: haproxy`
-2. The Ingress is in the same namespace as watched resources
-3. The backend Service exists and has endpoints
-
-```bash
-# Check Ingress
-kubectl get ingress echo-ingress -o yaml
-
-# Check Service
-kubectl get service echo
-
-# Check Endpoints
-kubectl get endpointslices -l kubernetes.io/service-name=echo
-```
-
-For more troubleshooting guidance, see [Troubleshooting Guide](./troubleshooting.md).
+For detailed diagnosis steps, see the [Troubleshooting Guide](./troubleshooting.md).
 
 ## Clean Up
 

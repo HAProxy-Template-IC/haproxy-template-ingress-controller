@@ -49,7 +49,7 @@ The chart deploys:
 
 ## Documentation Sections
 
-### Getting Started
+### Configuration
 
 - [Configuration](./configuration.md) - Key values, controller config, ingress class filtering
 - [IngressClass](./ingress-class.md) - IngressClass configuration and multi-controller environments

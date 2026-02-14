@@ -36,7 +36,7 @@ Add a scrape config for the controller:
 
 ```yaml
 scrape_configs:
-  - job_name: 'haptic''
+  - job_name: 'haptic'
     kubernetes_sd_configs:
       - role: pod
     relabel_configs:
