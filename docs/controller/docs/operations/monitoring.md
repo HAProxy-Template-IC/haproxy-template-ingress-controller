@@ -16,7 +16,9 @@ The controller exposes Prometheus metrics via an HTTP endpoint, providing visibi
 
 ## Enabling Metrics
 
-Metrics are enabled by default. Configure the metrics port in Helm values:
+Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (separate from the debug port). No additional configuration is needed beyond pointing Prometheus at this endpoint.
+
+Configure the metrics port in Helm values:
 
 ```yaml
 # values.yaml
@@ -302,6 +304,9 @@ groups:
           description: "Controller cannot find any HAProxy pods to manage"
 ```
 
+!!! note "Tuning alert thresholds"
+    The thresholds above suit typical production environments. For high-churn environments (frequent deployments, many short-lived resources), increase the `for` duration on reconciliation and deployment alerts to avoid noise. For development clusters, consider relaxing error rate thresholds or disabling non-critical alerts entirely.
+
 ## Dashboard Examples
 
 ### Grafana Dashboard Queries
@@ -391,6 +396,8 @@ A basic Grafana dashboard template can be imported from:
 }
 ```
 
+This is a starting point -- add additional panels using the [PromQL queries](#grafana-dashboard-queries) above for more detailed views of deployment latency distribution, resource counts over time, or per-pod leader status.
+
 ## Operational Insights
 
 ### Key Health Indicators
@@ -400,8 +407,8 @@ A basic Grafana dashboard template can be imported from:
 | Reconciliation success rate | >99% | Check logs for template/validation errors |
 | Deployment success rate | >99% | Check HAProxy pod connectivity |
 | P95 deployment latency | <2s | Check HAProxy DataPlane API performance |
-| Leader count | =1 | Check HA configuration and network |
-| Event subscribers | Constant | Restart controller if dropping |
+| Leader count | Exactly 1 | Check HA configuration and network |
+| Event subscribers | Should not decrease during normal operation | Restart controller if dropping |
 
 ### Capacity Planning
 

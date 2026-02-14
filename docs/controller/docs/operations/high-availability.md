@@ -73,12 +73,16 @@ Worst-case failover = lease_duration + renew_deadline
 Default failover    = 60s + 15s = 75s (but typically 15-20s)
 ```
 
+When the leader fails, followers must wait for the lease to expire before they can acquire it. During this window, HAProxy continues serving traffic with its last known configuration -- no traffic is dropped, but new resource changes are not processed until a new leader is elected. The typical failover (15-20s) is faster than worst-case because the leader usually fails mid-lease rather than right after renewal.
+
 **Clock skew tolerance:**
 
 ```
 Skew tolerance = lease_duration - renew_deadline
 Default        = 60s - 15s = 45s (handles up to 4x clock differences)
 ```
+
+If clock skew exceeds this tolerance, brief split-brain may occur where two replicas both believe they are leader. NTP-synchronized nodes typically have sub-second skew, well within the default tolerance.
 
 ## Deployment
 
@@ -162,6 +166,13 @@ rate(haptic_leader_election_transitions_total[1h])
 ```
 
 ## Troubleshooting
+
+Check these areas in order of likelihood:
+
+1. **RBAC permissions** (most common) -- service account missing lease permissions
+2. **Environment variables** -- `POD_NAME` / `POD_NAMESPACE` not injected
+3. **API server connectivity** -- network policies or firewall blocking access
+4. **Clock skew** -- NTP not configured or excessive drift between nodes
 
 ### No Leader Elected
 
