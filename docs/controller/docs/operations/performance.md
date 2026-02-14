@@ -399,70 +399,70 @@ If subscriber count drops, components may be failing.
 
 ## Profiling
 
-### Go Profiling
+??? note "Go profiling with pprof"
 
-Access pprof endpoints for profiling:
-
-```bash
-# CPU profile (30 seconds)
-curl http://localhost:8080/debug/pprof/profile?seconds=30 > cpu.pprof
-go tool pprof -http=:9999 cpu.pprof
-
-# Memory profile
-curl http://localhost:8080/debug/pprof/heap > heap.pprof
-go tool pprof -http=:9999 heap.pprof
-
-# Goroutine dump
-curl http://localhost:8080/debug/pprof/goroutine?debug=1
-```
-
-### Profile-Guided Optimization (PGO)
-
-The controller is built with Go's Profile-Guided Optimization (PGO) for improved performance. PGO typically provides 2-7% CPU improvement by optimizing frequently-called functions.
-
-**How it works:**
-
-A baseline CPU profile (`cmd/controller/default.pgo`) is committed to the repository. Go automatically uses this profile during builds to optimize hot paths.
-
-**Updating the profile:**
-
-To collect a fresh profile from the development environment:
-
-1. Start the dev environment:
+    Access pprof endpoints for profiling:
 
     ```bash
-    ./scripts/start-dev-env.sh
+    # CPU profile (30 seconds)
+    curl http://localhost:8080/debug/pprof/profile?seconds=30 > cpu.pprof
+    go tool pprof -http=:9999 cpu.pprof
+
+    # Memory profile
+    curl http://localhost:8080/debug/pprof/heap > heap.pprof
+    go tool pprof -http=:9999 heap.pprof
+
+    # Goroutine dump
+    curl http://localhost:8080/debug/pprof/goroutine?debug=1
     ```
 
-2. Port-forward to the controller's debug port:
+??? note "Profile-Guided Optimization (PGO)"
+
+    The controller is built with Go's Profile-Guided Optimization (PGO) for improved performance. PGO typically provides 2-7% CPU improvement by optimizing frequently-called functions.
+
+    **How it works:**
+
+    A baseline CPU profile (`cmd/controller/default.pgo`) is committed to the repository. Go automatically uses this profile during builds to optimize hot paths.
+
+    **Updating the profile:**
+
+    To collect a fresh profile from the development environment:
+
+    1. Start the dev environment:
+
+        ```bash
+        ./scripts/start-dev-env.sh
+        ```
+
+    2. Port-forward to the controller's debug port:
+
+        ```bash
+        kubectl -n haptic port-forward deploy/haptic-controller 8080:8080
+        ```
+
+    3. Generate workload (trigger reconciliation by modifying resources)
+
+    4. Collect a 30-second CPU profile:
+
+        ```bash
+        make pgo-profile
+        # Or manually:
+        curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
+        ```
+
+    5. Rebuild with the new profile:
+
+        ```bash
+        make build
+        ```
+
+    **Production profiles:**
+
+    For optimal results, collect profiles from production during representative workloads. Merge multiple profiles for broader coverage:
 
     ```bash
-    kubectl -n haptic port-forward deploy/haptic-controller 8080:8080
+    make pgo-merge PROFILES='profile1.pgo profile2.pgo'
     ```
-
-3. Generate workload (trigger reconciliation by modifying resources)
-
-4. Collect a 30-second CPU profile:
-
-    ```bash
-    make pgo-profile
-    # Or manually:
-    curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
-    ```
-
-5. Rebuild with the new profile:
-
-    ```bash
-    make build
-    ```
-
-**Production profiles:**
-
-For optimal results, collect profiles from production during representative workloads. Merge multiple profiles for broader coverage:
-
-```bash
-make pgo-merge PROFILES='profile1.pgo profile2.pgo'
-```
 
 ### Common Performance Issues
 

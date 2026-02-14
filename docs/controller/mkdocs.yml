@@ -30,10 +30,17 @@ theme:
         name: Switch to light mode
   features:
     - navigation.instant
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.expand
+    - navigation.top
+    - navigation.indexes
     - search.highlight
+    - search.suggest
     - content.code.copy
+    - content.tabs.link
+    - toc.follow
 
 extra_css:
   - stylesheets/extra.css
