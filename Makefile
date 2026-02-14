@@ -30,7 +30,7 @@ VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
 CHART_VERSION := $(shell grep '^version:' charts/haptic/Chart.yaml 2>/dev/null | awk '{print $$2}' || echo "dev")
 
 # Coverage packages (excludes generated code)
-COVERAGE_PACKAGES := ./cmd/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/templating/...,./pkg/webhook/...
+COVERAGE_PACKAGES := ./cmd/...,./pkg/compression/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/stores/...,./pkg/templating/...,./pkg/webhook/...
 
 # Default target
 help: ## Show this help message
