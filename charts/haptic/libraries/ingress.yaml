@@ -9,7 +9,6 @@ watchedResources:
     resources: ingresses
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
-    statusPatch: true
     # fieldSelector: injected by Helm from ingressClass.name
   services:
     apiVersion: v1
