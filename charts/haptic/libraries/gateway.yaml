@@ -20,6 +20,7 @@ watchedResources:
     resources: gateways
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: false
+    statusPatch: true
     # fieldSelector: injected by Helm from gatewayClass.name
 
   httproutes:
@@ -27,6 +28,7 @@ watchedResources:
     resources: httproutes
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
+    statusPatch: true
     # Filter by Gateway reference using label selector
     # Users can label HTTPRoutes to target specific Gateways
     # Example: kubectl label httproute my-route gateway=haproxy
@@ -36,6 +38,7 @@ watchedResources:
     resources: grpcroutes
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
+    statusPatch: true
 
   services:
     apiVersion: v1

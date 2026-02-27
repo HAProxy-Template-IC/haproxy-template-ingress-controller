@@ -80,5 +80,9 @@ spec:
   {{- if $mergedLibraries.watchedResources }}
     {{- $_ := set $config "watchedResources" (merge ($config.watchedResources | default dict) $mergedLibraries.watchedResources) }}
   {{- end }}
+  {{- /* Strip Helm-only fields from watchedResources before CRD rendering */ -}}
+  {{- range $name, $resource := $config.watchedResources }}
+    {{- $_ := unset $resource "statusPatch" }}
+  {{- end }}
   {{- toYaml $config | nindent 2 }}
 {{- end }}
