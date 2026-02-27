@@ -41,6 +41,7 @@ The Ingress library implements these extension points from base.yaml:
 | Path Prefix Exact Map | `map-path-prefix-exact-ingress` | Prefix paths matching exactly |
 | Path Prefix Map | `map-path-prefix-ingress` | Prefix path match entries |
 | Backends | `backends-ingress` | Backend definitions for Ingress services |
+| Status Patches | `status-patches-200-ingress` | Ingress LoadBalancer status updates |
 
 ### Injecting Custom Configuration
 
@@ -184,6 +185,12 @@ metadata:
 spec:
   # ...
 ```
+
+## Status Reporting
+
+The Ingress library automatically propagates LoadBalancer addresses to Ingress `.status.loadBalancer` fields. This enables DNS controllers (like external-dns) and `kubectl get ingress` to display the correct external address.
+
+Addresses are discovered from the controller's LoadBalancer Service. Once an address is available, each Ingress processed by the controller receives its `status.loadBalancer.ingress` entries. If deployment fails, the status is cleared to empty.
 
 ## Watched Resources
 

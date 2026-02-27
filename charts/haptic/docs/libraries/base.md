@@ -45,6 +45,7 @@ The base library defines extension points using the `include_matching("prefix-*"
 | Path Prefix Map | `map-path-prefix-*` | path-prefix.map file | Prefix path match entries |
 | Path Regex Map | `map-path-regex-*` | path-regex.map file | Regex path match entries |
 | Weighted Backend Map | `map-weighted-backend-*` | weighted-multi-backend.map file | Weighted routing entries |
+| Status Patches | `status-patches-*` | After features, before backends | Resource status patch registration (side effects only) |
 
 ### How Extension Points Work
 
@@ -181,6 +182,18 @@ Debug headers include:
 - `X-HAProxy-Host-Match`: Matched host group
 - `X-HAProxy-Path-Match`: Full path match result
 - `X-HAProxy-Path-Match-Qualifier`: BACKEND or MULTIBACKEND
+
+### Address Discovery
+
+The base library watches the controller's own LoadBalancer Service and discovers external addresses for status reporting. Addresses are stored in `gf["addresses"]` and consumed by library status patch snippets (Ingress, Gateway API) to populate resource status fields.
+
+The controller Service is discovered via label selector (`app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller`). If the Service has no LoadBalancer addresses assigned yet, `gf["addresses"]` remains nil and status patches that depend on addresses are skipped.
+
+### Status Patch Extension Point
+
+The `status-patches-*` extension point renders at priority 200 — after feature analysis (`features-*` at 050-150) but before backends and frontends (500+). This ensures status patches are captured even when later config generation fails, allowing the `renderFailed` variant to be applied.
+
+Status patch snippets produce no HAProxy configuration output. They call `statusPatch()` as a side effect to register patches for later application by the controller.
 
 ## Map Files
 

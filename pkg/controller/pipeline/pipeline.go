@@ -26,6 +26,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // PipelinePhase identifies which phase of the pipeline failed.
@@ -72,6 +73,10 @@ type PipelineResult struct {
 
 	// AuxiliaryFiles contains all rendered auxiliary files.
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
+
+	// StatusPatches contains status patches registered by templates during rendering.
+	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
+	StatusPatches []templating.StatusPatch
 
 	// AuxFileCount is the total number of auxiliary files.
 	AuxFileCount int
@@ -198,6 +203,7 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (
 	return &PipelineResult{
 		HAProxyConfig:      renderResult.HAProxyConfig,
 		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
+		StatusPatches:      renderResult.StatusPatches,
 		AuxFileCount:       renderResult.AuxFileCount,
 		ContentChecksum:    contentChecksum,
 		RenderDurationMs:   renderResult.DurationMs,
@@ -246,6 +252,7 @@ func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreP
 	result := &PipelineResult{
 		HAProxyConfig:      renderResult.HAProxyConfig,
 		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
+		StatusPatches:      renderResult.StatusPatches,
 		AuxFileCount:       renderResult.AuxFileCount,
 		ContentChecksum:    contentChecksum,
 		RenderDurationMs:   renderResult.DurationMs,

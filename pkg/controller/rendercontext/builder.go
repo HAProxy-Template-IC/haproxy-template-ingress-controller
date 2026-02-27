@@ -26,7 +26,7 @@
 //	    rendercontext.WithStores(stores),
 //	    rendercontext.WithCapabilities(capabilities),
 //	)
-//	ctx, fileRegistry := builder.Build()
+//	ctx, fileRegistry, statusPatchCollector := builder.Build()
 package rendercontext
 
 import (
@@ -137,7 +137,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 	return b
 }
 
-// Build creates the template rendering context and file registry.
+// Build creates the template rendering context, file registry, and status patch collector.
 //
 // The context structure is:
 //
@@ -146,6 +146,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "controller": {"haproxy_pods": StoreWrapper},
 //	  "templateSnippets": []string,
 //	  "fileRegistry": FileRegistry,
+//	  "statusPatchCollector": StatusPatchCollector,
 //	  "pathResolver": PathResolver,
 //	  "dataplane": Config.Dataplane,
 //	  "capabilities": map[string]bool (if set),
@@ -155,7 +156,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "http": HTTPFetcher (if set),
 //	  "extraContext": map from config,
 //	}
-func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
+func (b *Builder) Build() (map[string]interface{}, *FileRegistry, *templating.StatusPatchCollector) {
 	// Create resources map with typed ResourceStore values
 	resources := make(map[string]templating.ResourceStore)
 	if b.stores != nil {
@@ -187,6 +188,9 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 	// Create file registry for dynamic auxiliary file registration
 	fileRegistry := NewFileRegistry(b.pathResolver)
 
+	// Create status patch collector for template-driven status updates
+	statusPatchCollector := templating.NewStatusPatchCollector()
+
 	b.logger.Debug("rendering context built",
 		"resource_count", len(resources),
 		"controller_fields", len(controller),
@@ -194,13 +198,14 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 
 	// Build final context
 	templateContext := map[string]interface{}{
-		"resources":        resources,
-		"controller":       controller,
-		"templateSnippets": snippetNames,
-		"fileRegistry":     fileRegistry,
-		"pathResolver":     b.pathResolver,
-		"dataplane":        b.config.Dataplane,
-		"shared":           templating.NewSharedContext(),
+		"resources":            resources,
+		"controller":           controller,
+		"templateSnippets":     snippetNames,
+		"fileRegistry":         fileRegistry,
+		"statusPatchCollector": statusPatchCollector,
+		"pathResolver":         b.pathResolver,
+		"dataplane":            b.config.Dataplane,
+		"shared":               templating.NewSharedContext(),
 		"runtimeEnvironment": &templating.RuntimeEnvironment{
 			GOMAXPROCS: runtime.GOMAXPROCS(0),
 		},
@@ -235,7 +240,7 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry) {
 			"variable_count", len(b.config.TemplatingSettings.ExtraContext))
 	}
 
-	return templateContext, fileRegistry
+	return templateContext, fileRegistry, statusPatchCollector
 }
 
 // SortSnippetNames sorts template snippet names alphabetically.

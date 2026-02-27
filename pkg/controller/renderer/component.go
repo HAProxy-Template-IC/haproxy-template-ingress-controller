@@ -57,6 +57,7 @@ const (
 type singleRenderResult struct {
 	haproxyConfig  string
 	auxiliaryFiles *dataplane.AuxiliaryFiles
+	statusPatches  []templating.StatusPatch
 	durationMs     int64
 }
 
@@ -384,6 +385,7 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 	c.eventBus.Publish(events.NewTemplateRenderedEvent(
 		result.haproxyConfig,
 		result.auxiliaryFiles,
+		result.statusPatches,
 		auxFileCount,
 		durationMs,
 		event.Reason,
@@ -399,7 +401,7 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver) (*single
 
 	// Build rendering context
 	contextStart := time.Now()
-	renderContext, fileRegistry := c.buildRenderingContext(c.ctx, pathResolver, false)
+	renderContext, fileRegistry, statusPatchCollector := c.buildRenderingContext(c.ctx, pathResolver, false)
 	contextMs := time.Since(contextStart).Milliseconds()
 
 	// Render main HAProxy config
@@ -435,6 +437,7 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver) (*single
 	return &singleRenderResult{
 		haproxyConfig:  haproxyConfig,
 		auxiliaryFiles: auxiliaryFiles,
+		statusPatches:  statusPatchCollector.Patches(),
 		durationMs:     totalMs,
 	}, nil
 }

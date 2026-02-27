@@ -171,6 +171,7 @@ The base template uses `render_glob` to discover and render snippets from all li
 | `frontend-filters-*` | Request/response filters | gateway, haproxytech |
 | `backend-directives-*` | Backend configuration directives | haproxytech |
 | `global-top-*` | Global sections (userlist, resolvers) | haproxytech |
+| `status-patches-*` | Status patch registration (side effects only) | gateway, ingress |
 
 **Extension Point Variable Passing:**
 

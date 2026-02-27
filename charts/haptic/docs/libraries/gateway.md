@@ -45,6 +45,7 @@ The Gateway API library implements these extension points from base.yaml:
 | Backends | `backends-gateway`, `backends-gateway-ssl-passthrough` | Backend definitions |
 | Advanced Matchers | `frontend-matchers-advanced-gateway-*` | Method/header/query matching |
 | Frontend Filters | `frontend-filters-gateway-*` | Header modification, redirects, rewrites |
+| Status Patches | `status-patches-200-gateway` | Gateway, HTTPRoute, GRPCRoute status updates |
 
 ### Injecting Custom Configuration
 
@@ -71,6 +72,7 @@ controller:
 | Services | v1 | Service discovery |
 | EndpointSlices | discovery.k8s.io/v1 | Backend endpoints |
 | Secrets | v1 | TLS certificates |
+| Controller Services | v1 | Address discovery for status reporting |
 
 ## Architecture
 
@@ -93,7 +95,7 @@ This architecture allows the controller to remain resource-agnostic while the ch
 |-------|--------|-------|
 | `parentRefs[].name` | ✅ Supported | Gateway reference |
 | `parentRefs[].namespace` | ⚠️ Partial | Field exists but cross-namespace not tested |
-| `parentRefs[].sectionName` | ❌ Not Implemented | Listener-specific attachment not supported |
+| `parentRefs[].sectionName` | ⚠️ Partial | Used for listener-level `attachedRoutes` counting in status; routing not listener-specific |
 | `parentRefs[].port` | ❌ Not Implemented | Port override not supported |
 
 ### spec.hostnames
@@ -773,6 +775,42 @@ These headers are useful for:
 | URLRewrite | Full | Path and hostname rewrite |
 | Traffic Splitting | Full | Weighted backends |
 | SSL Passthrough | Full | Via annotation |
+
+---
+
+## Status Reporting
+
+The Gateway API library automatically updates the `.status` of Gateway, HTTPRoute, and GRPCRoute resources to reflect their processing state. Status is applied via Server-Side Apply with field manager `haptic`.
+
+### Gateway Status
+
+Each Gateway receives:
+
+- **Conditions**: `Accepted` (True after template rendering) and `Programmed` (True after successful HAProxy deployment, False if deployment fails)
+- **Addresses**: LoadBalancer addresses from the controller Service, converted to Gateway API format (`IPAddress` or `Hostname`)
+- **Listener status**: Per-listener conditions (`Accepted`, `Programmed`, `ResolvedRefs`, `Conflicted`), `supportedKinds` based on protocol, and `attachedRoutes` count
+
+### HTTPRoute and GRPCRoute Status
+
+Each route receives a `parents[]` entry for each `parentRef` that matches a Gateway managed by this controller:
+
+- **Accepted**: True if the parentRef references a known Gateway
+- **ResolvedRefs**: True if all backend Service references can be resolved; False with reason `BackendNotFound` if a referenced Service does not exist
+
+The `controllerName` in route status is set from `gatewayClass.controllerName` in the Helm values.
+
+### Address Discovery
+
+Addresses are automatically discovered from the controller's LoadBalancer Service. If no address is assigned yet, Gateway addresses and Ingress status are not populated. Once an address becomes available, subsequent reconciliations will update all resource statuses.
+
+### Phase-Aware Status
+
+Status patches use outcome-keyed variants:
+
+| Phase | Gateway | Routes |
+|-------|---------|--------|
+| `deployed` | Programmed=True, addresses populated | Accepted=True, ResolvedRefs checked |
+| `deployFailed` | Programmed=False, empty addresses | Same as deployed (route acceptance is deployment-independent) |
 
 ---
 

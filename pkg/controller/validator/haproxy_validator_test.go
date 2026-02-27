@@ -505,6 +505,7 @@ backend servers
 	bus.Publish(events.NewTemplateRenderedEvent(
 		validConfig,                 // haproxyConfig
 		&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
+		nil,                         // statusPatches
 		0,                           // auxFileCount
 		100,                         // durationMs
 		"initial",                   // triggerReason

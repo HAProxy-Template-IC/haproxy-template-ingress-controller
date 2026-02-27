@@ -20,7 +20,8 @@ func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level 
 		events.EventTypeValidationFailed,
 		events.EventTypeInstanceDeploymentFailed,
 		events.EventTypeWebhookValidationError,
-		events.EventTypeConfigInvalid:
+		events.EventTypeConfigInvalid,
+		events.EventTypeStatusUpdateFailed:
 		return slog.LevelError
 
 	// Warn level - recoverable states and leadership loss

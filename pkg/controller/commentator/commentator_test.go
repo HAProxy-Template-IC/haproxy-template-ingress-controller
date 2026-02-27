@@ -308,7 +308,7 @@ func TestEventCommentator_GenerateInsight_TemplateEvents(t *testing.T) {
 		// haproxyConfig, auxiliaryFiles, auxFileCount, durationMs, triggerReason
 		// ConfigBytes is calculated from len(haproxyConfig)
 		haproxyConfig := "test haproxy config content"
-		event := events.NewTemplateRenderedEvent(haproxyConfig, nil, 3, 50, "", "", true)
+		event := events.NewTemplateRenderedEvent(haproxyConfig, nil, nil, 3, 50, "", "", true)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -456,6 +456,33 @@ func TestEventCommentator_GenerateInsight_LeadershipEvents(t *testing.T) {
 		assert.Contains(t, insight, "New leader observed")
 		assert.Contains(t, insight, "another replica")
 		assertContainsAttr(t, attrs, "is_self", false)
+	})
+
+	t.Run("StatusUpdateCompletedEvent", func(t *testing.T) {
+		event := events.NewStatusUpdateCompletedEvent(events.StatusPatchPhaseDeployed, 5, 2, 120)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Status patches applied")
+		assert.Contains(t, insight, "deployed")
+		assert.Contains(t, insight, "5 applied")
+		assert.Contains(t, insight, "2 skipped")
+		assertContainsAttr(t, attrs, "applied", 5)
+		assertContainsAttr(t, attrs, "skipped", 2)
+		assertContainsAttr(t, attrs, "duration_ms", int64(120))
+	})
+
+	t.Run("StatusUpdateFailedEvent", func(t *testing.T) {
+		event := events.NewStatusUpdateFailedEvent("default", "my-ingress", "networking.k8s.io/v1/ingresses", "forbidden", true)
+
+		insight, attrs := ec.generateInsight(event)
+
+		assert.Contains(t, insight, "Status patch failed")
+		assert.Contains(t, insight, "default/my-ingress")
+		assert.Contains(t, insight, "retriable")
+		assertContainsAttr(t, attrs, "namespace", "default")
+		assertContainsAttr(t, attrs, "name", "my-ingress")
+		assertContainsAttr(t, attrs, "retriable", true)
 	})
 }
 

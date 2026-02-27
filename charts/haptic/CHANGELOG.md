@@ -9,6 +9,14 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Ingress status reporting: LoadBalancer addresses propagated to Ingress `.status.loadBalancer`
+- Gateway API status reporting: Gateway conditions (Accepted, Programmed), listener status, and addresses; HTTPRoute/GRPCRoute parent status with Accepted and ResolvedRefs conditions
+- Address discovery via controller LoadBalancer Service watch (`controller_services` watched resource)
+- `status-patches-*` extension point in base library for custom resource status updates
+- `controllerName` injected into `extraContext` when Gateway library is enabled
+
 ### Removed
 
 - `image.appendHaproxyVersion` value (HAProxy version suffix is now always included in controller image tag)

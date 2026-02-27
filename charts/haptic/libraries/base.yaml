@@ -7,6 +7,13 @@
 #
 # SSL/TLS infrastructure is in ssl.yaml (loaded separately when needed)
 
+watchedResources:
+  controller_services:
+    apiVersion: v1
+    resources: services
+    indexBy: ["metadata.namespace", "metadata.name"]
+    # labelSelector: injected by Helm from chart labels to match the LoadBalancer service
+
 templateSnippets:
   # ============================================================================
   # Core Utility Macros
@@ -326,6 +333,50 @@ templateSnippets:
       {% end %}
       {% end %}
   # ============================================================================
+  # Address Discovery
+  # ============================================================================
+
+  features-075-address-discovery:
+    template: |
+      {#-
+        Address Discovery
+
+        Purpose: Reads the controller LoadBalancer service status to discover
+        external addresses for status patches.
+
+        Extension Point: features-* (priority 075 - after ssl init at 050, before TLS at 100)
+
+        Provides (in gf["addresses"]):
+          - Array of LoadBalancer ingress entries ({ip, hostname})
+          - nil if no LoadBalancer addresses available
+
+        Dependencies: None (initializes globalFeatures if needed)
+
+        Used By:
+          - status-patches-200-ingress
+          - status-patches-200-gateway
+      -#}
+
+      {#- Ensure globalFeatures is initialized (may not exist if SSL library is disabled) -#}
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any {
+        return map[string]any{}
+      }) -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%%
+        var addresses []any
+        for _, svc := range resources.controller_services.List() {
+          var lbIngress = dig(svc, "status", "loadBalancer", "ingress")
+          if lbIngress != nil {
+            addresses = toSlice(lbIngress)
+            break
+          }
+        }
+        if len(addresses) > 0 {
+          gf["addresses"] = addresses
+        }
+      %%}
+
+  # ============================================================================
   # Extension Points
   # ============================================================================
 
@@ -487,6 +538,10 @@ haproxyConfig:
     {# Let resource libraries scan resources and register infrastructure needs #}
     {{- render_glob "features-*" -}}
 
+    {#- Phase 1.5: Status Patch Registration #}
+    {#- Status patch snippets register side effects via statusPatch() without producing config output #}
+    {%- _ = render_glob "status-patches-*" -%}
+
     frontend status
         bind *:8404
         no log
@@ -557,3 +612,26 @@ validationTests:
         description: Base configuration must be valid
       - type: deterministic
         description: Template rendering must be deterministic (identical output on repeated renders)
+
+  test-address-discovery:
+    description: Address discovery reads LoadBalancer status from controller service
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+                - hostname: "lb.example.com"
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with controller service fixture

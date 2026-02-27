@@ -144,6 +144,11 @@ const (
 	// See proposal.go for event definitions.
 	EventTypeProposalValidationRequested = "proposal.validation.requested"
 	EventTypeProposalValidationCompleted = "proposal.validation.completed"
+
+	// Status update event types.
+	// Published by StatusApplier after applying template-driven status patches to Kubernetes resources.
+	EventTypeStatusUpdateCompleted = "status.update.completed"
+	EventTypeStatusUpdateFailed    = "status.update.failed"
 )
 
 // TriggerReason constants for reconciliation events.
