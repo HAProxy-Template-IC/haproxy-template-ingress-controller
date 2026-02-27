@@ -189,6 +189,8 @@ The base library watches controller LoadBalancer Services and discovers external
 
 Controller Services are discovered via label selector (`app.kubernetes.io/name=<name>,app.kubernetes.io/component=loadbalancer`). If no Service has LoadBalancer addresses assigned yet, `gf["addresses"]` remains nil and status patches that depend on addresses are skipped.
 
+Address discovery can be disabled via `controller.statusPatches.enabled: false`. When disabled, `gf["addresses"]` is never set, which prevents all `status-patches-*` snippets from writing to Ingress or Gateway status. This is useful during migration from another ingress controller to avoid premature DNS cutover when tools like external-dns watch status fields.
+
 ### Status Patch Extension Point
 
 The `status-patches-*` extension point renders at priority 200 — after feature analysis (`features-*` at 050-150) but before backends and frontends (500+). This ensures status patches are captured even when later config generation fails, allowing the `renderFailed` variant to be applied.
