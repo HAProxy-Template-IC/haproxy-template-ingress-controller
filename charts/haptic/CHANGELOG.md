@@ -9,6 +9,8 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.12] - 2026-02-27
+
 ### Added
 
 - `haproxy.dataplane.validateConfig` value to control server-side config validation (default: `false` since controller validates locally)
@@ -26,6 +28,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
   - HAProxy: 250m CPU / 1Gi memory (Guaranteed QoS)
   - Dataplane API sidecar: 50m CPU / 256Mi memory (Guaranteed QoS)
 - No CPU limits to avoid throttling; memory requests equal limits for eviction protection
+- Updated appVersion to 0.1.0-alpha.12
 
 ### Fixed
 

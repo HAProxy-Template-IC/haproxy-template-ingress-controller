@@ -9,6 +9,8 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.12] - 2026-02-27
+
 ### Added
 
 - **HAProxy 3.3 support**: DataPlane API v3.3 client generation, dispatch routing, and version-specific validators
@@ -17,6 +19,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - **CRD content compression**: HAProxyCfg content automatically compressed with zstd when exceeding `configPublishing.compressionThreshold` (default 1 MiB), reducing etcd storage
 - **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support
 - **HAProxyCRTListFile CRD**: Publish crt-list files as Kubernetes custom resources with compression support
+- **Event coalescing**: Reduce event queue buildup during high-frequency reconciliation
 
 ### Changed
 
@@ -30,6 +33,17 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - **Transaction cleanup on timeout**: Use fresh context for transaction abort operations, ensuring cleanup when deployment timeout is reached
 - **Graceful shutdown errors**: Track all iteration-scoped goroutines in errgroup and reduce internal shutdown timeout to 25s to prevent pod Error state during rolling updates
 - **Compression threshold default**: Apply 1 MiB default compression threshold when `configPublishing.compressionThreshold` is not set in the CRD, fixing "etcdserver: request is too large" errors
+- **Webhook certificate loading**: Skip webhook cert Secret fetch when webhooks are disabled, allowing `--set webhook.enabled=false` to work without cert-manager
+- **Leader election disabled race condition**: Fix race condition when leader election is disabled
+- **Coordinator event buffer overflow**: Fix event buffer overflow causing dropped events
+- **Excessive CRD API requests**: Reduce unnecessary auxiliary file status updates and skip no-op drift check updates
+
+### Performance
+
+- **Memory optimization**: Zero-allocation validators, pointer-based indexes for zero-copy iteration, in-place float conversion, VM pool cleanup
+- **Caching**: LRU parser cache, validation result caching, pre-parsed config reuse, version-based config fetch skip, list result caching
+- **Reduced GC pressure**: In-place normalization, debounce tuning, Scriggo VM allocation reduction, heavyweight event filtering
+- **PGO profile**: Updated profile-guided optimization from production workload
 
 ## [0.1.0-alpha.11] - 2026-01-02
 
