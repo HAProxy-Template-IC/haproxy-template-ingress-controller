@@ -109,7 +109,6 @@ dockers_v2:
       - "registry.gitlab.com/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.2"
-      - "{{ .Version }}"
     platforms:
       - linux/amd64
       - linux/arm64
