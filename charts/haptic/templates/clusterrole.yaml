@@ -21,6 +21,20 @@ rules:
       - {{ $resource.resources }}
     verbs: ["get", "list", "watch"]
   {{- end }}
+  # Status subresource patch permissions for resources with statusPatch: true
+  {{- range $name, $resource := $allWatchedResources }}
+  {{- if $resource.statusPatch }}
+  - apiGroups:
+      {{- if eq $resource.apiVersion "v1" }}
+      - ""
+      {{- else }}
+      - {{ $resource.apiVersion | regexFind "^[^/]+" }}
+      {{- end }}
+    resources:
+      - {{ $resource.resources }}/status
+    verbs: ["patch"]
+  {{- end }}
+  {{- end }}
   # Additional core resources
   - apiGroups: [""]
     resources: ["namespaces", "pods"]
