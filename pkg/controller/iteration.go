@@ -23,6 +23,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
 
@@ -162,10 +163,7 @@ func runIteration(
 	)
 
 	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
-	if webhook.HasWebhookEnabled(cfg) {
-		logger.Info("Stage 7: Setting up webhook validation")
-		setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
-	}
+	maybeSetupWebhook(cfg, webhookCerts, setup, k8sClient, dryrunValidator, logger)
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
@@ -233,4 +231,26 @@ func handleConfigurationChange(
 	waitForGoroutinesToFinish(setup.ErrGroup, logger, "Reinitialization")
 
 	logger.Info("Reinitialization triggered - starting new iteration")
+}
+
+// maybeSetupWebhook sets up webhook validation if enabled in the configuration.
+// When webhook validation is enabled but no certificate secret is configured,
+// it logs a warning and skips setup instead of panicking.
+func maybeSetupWebhook(
+	cfg *coreconfig.Config,
+	webhookCerts *WebhookCertificates,
+	setup *componentSetup,
+	k8sClient *client.Client,
+	dryrunValidator *dryrunvalidator.Component,
+	logger *slog.Logger,
+) {
+	if !webhook.HasWebhookEnabled(cfg) {
+		return
+	}
+	if webhookCerts == nil {
+		logger.Warn("Webhook validation is enabled in config but no webhook certificate secret is configured - skipping webhook setup")
+		return
+	}
+	logger.Info("Stage 7: Setting up webhook validation")
+	setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
 }
