@@ -588,9 +588,10 @@ build_and_load_local_image() {
         return 1
     fi
 
-    # Use source hash as the unique tag (instead of Docker image SHA)
+    # Use source hash as the base tag (Helm chart appends -haproxy<version>)
     # This makes it easy to verify if running image matches local source
-    local unique_tag="dev-${source_hash}"
+    local base_tag="dev-${source_hash}"
+    local unique_tag="${base_tag}-haproxy${HAPROXY_VERSION}"
     local image_with_sha="${LOCAL_IMAGE%%:*}:${unique_tag}"
 
     debug "Tagging image with source hash: ${unique_tag}"
@@ -641,9 +642,9 @@ build_and_load_local_image() {
         return 1
     fi
 
-    # Export unique tag for use by Helm
-    IMAGE_TAG="${unique_tag}"
-    debug "Exported IMAGE_TAG=${IMAGE_TAG}"
+    # Export base tag for use by Helm (chart appends -haproxy<version>)
+    IMAGE_TAG="${base_tag}"
+    debug "Exported IMAGE_TAG=${IMAGE_TAG} (full image: ${image_with_sha})"
 }
 
 deploy_controller() {
@@ -711,7 +712,7 @@ deploy_controller() {
         "--namespace" "${CTRL_NAMESPACE}"
         "--values" "${ASSETS_DIR}/dev-values.yaml"
         "--set" "image.tag=${IMAGE_TAG}"
-        "--set" "image.appendHaproxyVersion=false"
+        "--set" "haproxyVersion=${HAPROXY_VERSION}"
         "--set" "haproxy.image.repository=${HAPROXY_REPO}"
         "--set" "haproxy.image.tag=${HAPROXY_TAG}"
         # Note: --wait is removed because readiness probes are disabled in dev mode
@@ -1029,7 +1030,7 @@ dev_restart() {
         "--create-namespace"
         "--values" "${ASSETS_DIR}/dev-values.yaml"
         "--set" "image.tag=${IMAGE_TAG}"
-        "--set" "image.appendHaproxyVersion=false"
+        "--set" "haproxyVersion=${HAPROXY_VERSION}"
         "--set" "haproxy.image.repository=${HAPROXY_REPO}"
         "--set" "haproxy.image.tag=${HAPROXY_TAG}"
         "--wait"

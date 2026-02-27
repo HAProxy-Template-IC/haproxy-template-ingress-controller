@@ -248,14 +248,20 @@ install_helm_chart() {
     )
 
     # Add image override if specified
-    # When specifying a full image tag, disable appendHaproxyVersion since
-    # the tag already includes the haproxy version suffix (e.g., ci-123-haproxy3.2)
+    # The chart always appends -haproxy<version> to the tag, so strip
+    # the suffix from incoming tags (e.g., ci-123-haproxy3.2 -> ci-123)
     if [[ -n "$IMAGE" ]]; then
         info "Using custom image: $IMAGE"
         helm_args+=("--set" "image.repository=${IMAGE%:*}")
         if [[ "$IMAGE" == *:* ]]; then
-            helm_args+=("--set" "image.tag=${IMAGE##*:}")
-            helm_args+=("--set" "image.appendHaproxyVersion=false")
+            local full_tag="${IMAGE##*:}"
+            local base_tag="${full_tag%-haproxy*}"
+            helm_args+=("--set" "image.tag=${base_tag}")
+            # Extract haproxy version from tag if present
+            if [[ "$full_tag" == *-haproxy* ]]; then
+                local hp_version="${full_tag##*-haproxy}"
+                helm_args+=("--set" "haproxyVersion=${hp_version}")
+            fi
         fi
     fi
 

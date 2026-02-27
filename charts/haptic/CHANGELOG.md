@@ -9,6 +9,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Removed
+
+- `image.appendHaproxyVersion` value (HAProxy version suffix is now always included in controller image tag)
+
 ## [0.1.0-alpha.12] - 2026-02-27
 
 ### Added

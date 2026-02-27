@@ -982,11 +982,6 @@ release-controller:
           IMAGE_DIGEST=$(docker buildx imagetools inspect "$LATEST_TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')
           cosign sign --yes ${CI_REGISTRY_IMAGE}@${IMAGE_DIGEST}
         done
-        # Default latest tag points to latest HAProxy version (3.2)
-        SOURCE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}"
-        docker buildx imagetools create --tag "${CI_REGISTRY_IMAGE}:latest" "$SOURCE_TAG"
-        IMAGE_DIGEST=$(docker buildx imagetools inspect "${CI_REGISTRY_IMAGE}:latest" --format '{{json .Manifest.Digest}}' | tr -d '"')
-        cosign sign --yes ${CI_REGISTRY_IMAGE}@${IMAGE_DIGEST}
       fi
 
 # =============================================================================
