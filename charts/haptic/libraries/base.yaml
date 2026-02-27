@@ -341,13 +341,15 @@ templateSnippets:
       {#-
         Address Discovery
 
-        Purpose: Reads the controller LoadBalancer service status to discover
-        external addresses for status patches.
+        Purpose: Reads controller LoadBalancer service statuses to discover
+        external addresses for status patches. Aggregates addresses from all
+        matching services (e.g., internal + public LoadBalancers).
 
         Extension Point: features-* (priority 075 - after ssl init at 050, before TLS at 100)
 
         Provides (in gf["addresses"]):
-          - Array of LoadBalancer ingress entries ({ip, hostname})
+          - Array of LoadBalancer ingress entries ({ip, hostname}) from all services
+          - Deduplicated by ip or hostname to avoid redundant status entries
           - nil if no LoadBalancer addresses available
 
         Dependencies: None (initializes globalFeatures if needed)
@@ -364,6 +366,7 @@ templateSnippets:
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%%
         var addresses []any
+        var seen = map[string]bool{}
         for _, svc := range resources.controller_services.List() {
           var lbIngress = dig(svc, "status", "loadBalancer", "ingress")
           if lbIngress != nil {
@@ -380,10 +383,14 @@ templateSnippets:
                 clean["hostname"] = hostname
               }
               if len(clean) > 0 {
-                addresses = append(addresses, clean)
+                // Deduplicate by ip or hostname across services
+                var key = tostring(ip) + "/" + tostring(hostname)
+                if !seen[key] {
+                  seen[key] = true
+                  addresses = append(addresses, clean)
+                }
               }
             }
-            break
           }
         }
         if len(addresses) > 0 {
@@ -650,3 +657,51 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with controller service fixture
+
+  test-address-discovery-multiple-services:
+    description: Address discovery aggregates addresses from multiple LoadBalancer services
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy-public
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy-internal
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "192.168.1.50"
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy-pending
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with multiple controller services
