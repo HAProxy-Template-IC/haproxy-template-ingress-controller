@@ -16,6 +16,9 @@ The entire process takes approximately 15-20 minutes on a local Kubernetes clust
 - kubectl configured to access your cluster
 - Helm 3.0+
 
+!!! note "Webhook Validation"
+    Production deployments should enable webhook validation for CRD schema enforcement, which requires [cert-manager](https://cert-manager.io/docs/installation/) to be installed in the cluster. This guide disables webhooks for simplicity.
+
 ## Step 1: Install with Helm
 
 Install the controller and HAProxy using Helm:
@@ -24,6 +27,7 @@ Install the controller and HAProxy using Helm:
 # Install from OCI registry (deploys both controller and HAProxy pods)
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.1.0-alpha.11 \
+  --set webhook.enabled=false \
   --namespace haptic --create-namespace
 ```
 
@@ -192,7 +196,7 @@ Make multiple requests to see load balancing across echo pods:
 
 ```bash
 for i in {1..10}; do
-  curl -s -H "Host: echo.example.local" http://localhost:8080/ | grep -i hostname
+  curl -s -H "Host: echo.example.local" http://localhost:8080/ | grep -o '"HOSTNAME":"[^"]*"'
 done
 ```
 

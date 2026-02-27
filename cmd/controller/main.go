@@ -18,7 +18,7 @@
 //
 //   - ConfigMap name: --configmap-name flag, CONFIGMAP_NAME env var, or "haproxy-config" default
 //   - Secret name: --secret-name flag, SECRET_NAME env var, or "haproxy-credentials" default
-//   - Webhook cert Secret: --webhook-cert-secret-name flag, WEBHOOK_CERT_SECRET_NAME env var, or "haproxy-webhook-certs" default
+//   - Webhook cert Secret: --webhook-cert-secret-name flag or WEBHOOK_CERT_SECRET_NAME env var (optional, empty disables webhook cert loading)
 //   - Kubeconfig: --kubeconfig flag (for out-of-cluster development)
 //
 // The controller runs until receiving SIGTERM or SIGINT, at which point it performs
@@ -54,10 +54,6 @@ const (
 	// DefaultSecretName is the default name for the credentials Secret.
 	// #nosec G101 -- This is a Kubernetes resource name, not an actual credential
 	DefaultSecretName = "haproxy-credentials"
-
-	// DefaultWebhookCertSecretName is the default name for the webhook certificate Secret.
-	// #nosec G101 -- This is a Kubernetes resource name, not an actual credential
-	DefaultWebhookCertSecretName = "haproxy-webhook-certs"
 
 	// DefaultDebugPort is the default port for the debug HTTP server (0 = disabled).
 	DefaultDebugPort = 0

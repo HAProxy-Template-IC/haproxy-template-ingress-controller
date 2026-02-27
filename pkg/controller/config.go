@@ -53,8 +53,11 @@ func fetchAndValidateInitialConfig(
 	secretGVR schema.GroupVersionResource,
 	logger *slog.Logger,
 ) (*coreconfig.Config, *v1alpha1.HAProxyTemplateConfig, *coreconfig.Credentials, *WebhookCertificates, error) {
-	logger.Info("Fetching initial CRD, credentials, and webhook certificates",
-		"crd_name", crdName)
+	logFields := []any{"crd_name", crdName}
+	if webhookCertSecretName != "" {
+		logFields = append(logFields, "webhook_cert_secret", webhookCertSecretName)
+	}
+	logger.Info("Fetching initial CRD and credentials", logFields...)
 
 	var crdResource *unstructured.Unstructured
 	var secretResource *unstructured.Unstructured
@@ -82,15 +85,17 @@ func fetchAndValidateInitialConfig(
 		return nil
 	})
 
-	// Fetch Secret (webhook certificates)
-	g.Go(func() error {
-		var err error
-		webhookCertSecretResource, err = k8sClient.GetResource(gCtx, secretGVR, webhookCertSecretName)
-		if err != nil {
-			return fmt.Errorf("failed to fetch webhook certificate Secret %q: %w", webhookCertSecretName, err)
-		}
-		return nil
-	})
+	// Fetch Secret (webhook certificates) - only if configured
+	if webhookCertSecretName != "" {
+		g.Go(func() error {
+			var err error
+			webhookCertSecretResource, err = k8sClient.GetResource(gCtx, secretGVR, webhookCertSecretName)
+			if err != nil {
+				return fmt.Errorf("failed to fetch webhook certificate Secret %q: %w", webhookCertSecretName, err)
+			}
+			return nil
+		})
+	}
 
 	// Wait for all fetches to complete
 	if err := g.Wait(); err != nil {
@@ -98,7 +103,7 @@ func fetchAndValidateInitialConfig(
 	}
 
 	// Parse initial configuration
-	logger.Info("Parsing initial configuration, credentials, and webhook certificates")
+	logger.Info("Parsing initial configuration and credentials")
 
 	cfg, crd, err := parseCRD(crdResource)
 	if err != nil {
@@ -110,9 +115,12 @@ func fetchAndValidateInitialConfig(
 		return nil, nil, nil, nil, fmt.Errorf("failed to parse initial Secret: %w", err)
 	}
 
-	webhookCerts, err := parseWebhookCertSecret(webhookCertSecretResource)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse webhook certificate Secret: %w", err)
+	var webhookCerts *WebhookCertificates
+	if webhookCertSecretResource != nil {
+		webhookCerts, err = parseWebhookCertSecret(webhookCertSecretResource)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to parse webhook certificate Secret: %w", err)
+		}
 	}
 
 	// Validate initial configuration
@@ -126,10 +134,14 @@ func fetchAndValidateInitialConfig(
 		return nil, nil, nil, nil, fmt.Errorf("initial credentials validation failed: %w", err)
 	}
 
-	logger.Info("Initial configuration validated successfully",
+	logAttrs := []any{
 		"crd_version", crdResource.GetResourceVersion(),
 		"secret_version", secretResource.GetResourceVersion(),
-		"webhook_cert_version", webhookCertSecretResource.GetResourceVersion())
+	}
+	if webhookCertSecretResource != nil {
+		logAttrs = append(logAttrs, "webhook_cert_version", webhookCertSecretResource.GetResourceVersion())
+	}
+	logger.Info("Initial configuration validated successfully", logAttrs...)
 
 	return cfg, crd, creds, webhookCerts, nil
 }

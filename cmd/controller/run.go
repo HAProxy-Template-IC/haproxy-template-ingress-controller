@@ -103,12 +103,9 @@ func runController(cmd *cobra.Command, args []string) error {
 		runSecretName = DefaultSecretName
 	}
 
-	// Webhook certificate Secret name
+	// Webhook certificate Secret name (optional - empty means webhooks disabled)
 	if runWebhookCertSecretName == "" {
 		runWebhookCertSecretName = os.Getenv("WEBHOOK_CERT_SECRET_NAME")
-	}
-	if runWebhookCertSecretName == "" {
-		runWebhookCertSecretName = DefaultWebhookCertSecretName
 	}
 
 	// Debug port
