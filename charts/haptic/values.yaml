@@ -166,6 +166,11 @@ controller:
     #   -----BEGIN PRIVATE KEY-----
     #   MIIEvQIBADANBgkqhkiG9w... (your private key)
     #   -----END PRIVATE KEY-----
+  # Status patches update Ingress/Gateway resource status with LoadBalancer addresses.
+  # Disable during migration from another ingress controller to prevent premature DNS
+  # cutover when tools like external-dns watch status fields.
+  statusPatches:
+    enabled: true
   # HAProxyTemplateConfig specification
   # This configuration is rendered into a HAProxyTemplateConfig CRD
   # Users can customize this configuration using Helm values or create

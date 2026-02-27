@@ -37,6 +37,16 @@ spec:
     {{- $_ := set $config.templatingSettings.extraContext "default_ssl_cert_name" .Values.controller.defaultSSLCertificate.secretName }}
     {{- $_ := set $config.templatingSettings.extraContext "default_ssl_cert_namespace" (.Values.controller.defaultSSLCertificate.namespace | default .Release.Namespace) }}
   {{- end }}
+  {{- /* Add statusPatchesDisabled flag to extraContext when status patches are turned off */ -}}
+  {{- if not (eq (.Values.controller.statusPatches.enabled | toString) "true") }}
+    {{- if not $config.templatingSettings }}
+      {{- $_ := set $config "templatingSettings" dict }}
+    {{- end }}
+    {{- if not $config.templatingSettings.extraContext }}
+      {{- $_ := set $config.templatingSettings "extraContext" dict }}
+    {{- end }}
+    {{- $_ := set $config.templatingSettings.extraContext "statusPatchesDisabled" true }}
+  {{- end }}
   {{- /* Add Gateway API controllerName to extraContext for status patches */ -}}
   {{- if and .Values.controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}
     {{- if not $config.templatingSettings }}

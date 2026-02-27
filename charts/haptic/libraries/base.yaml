@@ -393,7 +393,8 @@ templateSnippets:
             }
           }
         }
-        if len(addresses) > 0 {
+        var statusPatchesDisabled bool = extraContext | dig("statusPatchesDisabled") | fallback(false)
+        if !statusPatchesDisabled && len(addresses) > 0 {
           gf["addresses"] = addresses
         }
       %%}
