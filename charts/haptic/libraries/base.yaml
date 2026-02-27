@@ -367,7 +367,22 @@ templateSnippets:
         for _, svc := range resources.controller_services.List() {
           var lbIngress = dig(svc, "status", "loadBalancer", "ingress")
           if lbIngress != nil {
-            addresses = toSlice(lbIngress)
+            // Extract only ip/hostname to avoid SSA schema errors from
+            // fields like ipMode that may not exist in target resource schemas
+            for _, entry := range toSlice(lbIngress) {
+              var clean = map[string]any{}
+              var ip = dig(entry, "ip") | fallback("")
+              var hostname = dig(entry, "hostname") | fallback("")
+              if tostring(ip) != "" {
+                clean["ip"] = ip
+              }
+              if tostring(hostname) != "" {
+                clean["hostname"] = hostname
+              }
+              if len(clean) > 0 {
+                addresses = append(addresses, clean)
+              }
+            }
             break
           }
         }
