@@ -409,6 +409,30 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 				"leader_identity", e.NewLeaderIdentity,
 				"is_self", e.IsSelf)
 
+	// Status Update Events
+	case *events.StatusUpdateCompletedEvent:
+		return fmt.Sprintf("Status patches applied (%s phase): %d applied, %d skipped (%dms)",
+				e.Phase, e.AppliedCount, e.SkippedCount, e.DurationMs),
+			append(attrs,
+				"phase", string(e.Phase),
+				"applied", e.AppliedCount,
+				"skipped", e.SkippedCount,
+				"duration_ms", e.DurationMs)
+
+	case *events.StatusUpdateFailedEvent:
+		retriableInfo := ""
+		if e.Retriable {
+			retriableInfo = " (retriable)"
+		}
+		return fmt.Sprintf("Status patch failed for %s/%s [%s]%s: %s",
+				e.Namespace, e.Name, e.GVR, retriableInfo, e.Error),
+			append(attrs,
+				"namespace", e.Namespace,
+				"name", e.Name,
+				"gvr", e.GVR,
+				"error", e.Error,
+				"retriable", e.Retriable)
+
 	default:
 		// Fallback for unknown event types
 		return fmt.Sprintf("Event: %s", eventType), attrs

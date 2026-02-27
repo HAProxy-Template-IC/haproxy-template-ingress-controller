@@ -32,6 +32,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -55,6 +56,7 @@ type reconciliationComponents struct {
 	driftMonitor        *deployer.DriftPreventionMonitor
 	configPublisher     *ctrlconfigpublisher.Component
 	statusUpdater       *configchange.StatusUpdater  // Updates CRD status with validation results
+	statusApplier       *statusapplier.Component     // Applies template-driven status patches via SSA
 	httpStore           *httpstore.Component         // HTTP resource fetcher for dynamic content
 	proposalValidator   *proposalvalidator.Component // Validates HTTP content and webhook proposals
 	capabilities        dataplane.Capabilities       // HAProxy/DataPlane API capabilities
@@ -206,6 +208,15 @@ func createReconciliationComponents(
 	// This allows users to see validation errors via `kubectl describe haproxytemplateconfig`
 	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, bus, logger)
 
+	// Create StatusApplier (applies template-driven status patches to Kubernetes resources via SSA)
+	// All-replica: subscribes in constructor to cache patches from renders; only the leader applies.
+	statusApplierComponent := statusapplier.New(&statusapplier.Config{
+		EventBus:      bus,
+		DynamicClient: k8sClient.DynamicClient(),
+		GVRResolver:   statusapplier.NewRestMapperResolver(),
+		Logger:        logger,
+	})
+
 	// Register components with the lifecycle registry using builder pattern
 	// Coordinator is leader-only because it performs rendering (state changes).
 	// DriftMonitor is leader-only to avoid multi-replica race conditions.
@@ -217,6 +228,7 @@ func createReconciliationComponents(
 			discoveryComponent,
 			httpStoreComponent,
 			proposalValidatorComponent,
+			statusApplierComponent,
 		).
 		LeaderOnly(
 			coordinatorComponent,
@@ -237,6 +249,7 @@ func createReconciliationComponents(
 		driftMonitor:        driftMonitorComponent,
 		configPublisher:     configPublisherComponent,
 		statusUpdater:       statusUpdaterComponent,
+		statusApplier:       statusApplierComponent,
 		httpStore:           httpStoreComponent,
 		proposalValidator:   proposalValidatorComponent,
 		capabilities:        capabilities,

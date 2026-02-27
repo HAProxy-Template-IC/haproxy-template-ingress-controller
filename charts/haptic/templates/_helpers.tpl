@@ -110,6 +110,11 @@ Uses mustMergeOverwrite for deep merging of all nested structures
 {{- /* Load base library if enabled */ -}}
 {{- if $context.Values.controller.templateLibraries.base.enabled }}
   {{- $baseLibrary := $context.Files.Get "libraries/base.yaml" | fromYaml }}
+  {{- /* Inject labelSelector for controller service address discovery */ -}}
+  {{- if and $baseLibrary.watchedResources $baseLibrary.watchedResources.controller_services }}
+    {{- $labelSelector := printf "app.kubernetes.io/name=%s,app.kubernetes.io/component=loadbalancer" (include "haptic.name" $context) }}
+    {{- $_ := set $baseLibrary.watchedResources.controller_services "labelSelector" $labelSelector }}
+  {{- end }}
   {{- $merged = mustMergeOverwrite $merged $baseLibrary }}
 {{- end }}
 

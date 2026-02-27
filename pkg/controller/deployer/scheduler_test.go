@@ -63,6 +63,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 	event := events.NewTemplateRenderedEvent(
 		"global\n  daemon\n",        // haproxyConfig
 		&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
+		nil,                         // statusPatches
 		2,                           // auxFileCount
 		50,                          // durationMs
 		"",                          // triggerReason
@@ -433,6 +434,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		event := events.NewTemplateRenderedEvent(
 			"global\n  daemon\n",        // haproxyConfig
 			&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
+			nil,                         // statusPatches
 			2,                           // auxFileCount
 			50,                          // durationMs
 			"",                          // triggerReason

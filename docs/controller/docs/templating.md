@@ -201,6 +201,7 @@ bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 | `sanitize_regex` | Escape regex special characters | `{{ path \| sanitize_regex }}` |
 | `sort_by` | Sort by JSONPath expressions | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
 | `debug` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
+| `toJSON` | Convert value to JSON string | `{{ myMap \| toJSON() }}` |
 
 **sort_by modifiers**: `:desc` (descending), `:exists` (by field presence), `| length` (by length)
 
@@ -314,6 +315,119 @@ kubectl create secret generic my-auth-secret \
 ```
 
 Configure secrets store with `store: on-demand` to fetch secrets on-demand rather than watching all cluster secrets.
+
+## Status Patches
+
+Templates can register status patches for Kubernetes resources using the `statusPatch()` function. The controller applies these patches to the `/status` subresource via Server-Side Apply (SSA) after each reconciliation phase.
+
+This allows templates to report processing results back to resources (e.g., setting `Accepted` and `Programmed` conditions on Gateways, or propagating LoadBalancer addresses to Ingress status) without the controller needing to understand any specific resource's status schema.
+
+### statusPatch()
+
+Registers a status patch for a Kubernetes resource with outcome-keyed variants:
+
+```go
+{% statusPatch(namespace, name, apiVersion, kind, map[string]any{
+    "deployed": map[string]any{
+        "status": map[string]any{
+            "conditions": []any{
+                condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(resource, "Accepted", "True")),
+            },
+        },
+    },
+    "deployFailed": map[string]any{
+        "status": map[string]any{
+            "conditions": []any{
+                condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(resource, "Accepted", "True")),
+                condition("Programmed", "False", "AddressNotAssigned", "No address available", generation, transitionTime(resource, "Programmed", "False")),
+            },
+        },
+    },
+}) %}
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `namespace` | `string` | Resource namespace |
+| `name` | `string` | Resource name |
+| `apiVersion` | `string` | Resource API version (e.g., `networking.k8s.io/v1`) |
+| `kind` | `string` | Resource kind (e.g., `Ingress`, `Gateway`) |
+| `variants` | `map[string]any` | Status payloads keyed by pipeline phase |
+
+**Variants:**
+
+| Key | Applied When |
+|-----|-------------|
+| `rendered` | After successful template rendering (before deployment) |
+| `deployed` | After successful HAProxy deployment |
+| `renderFailed` | When a later rendering phase fails |
+| `deployFailed` | When HAProxy deployment fails |
+
+Templates render all variants upfront. The controller selects the appropriate variant based on the pipeline outcome.
+
+### condition()
+
+Creates a `metav1.Condition`-compatible map:
+
+```go
+{{ condition("Accepted", "True", "Accepted", "Resource is accepted", observedGeneration, lastTransitionTime) }}
+```
+
+**Parameters:** `type`, `status`, `reason`, `message`, `observedGeneration`, `lastTransitionTime`
+
+### transitionTime()
+
+Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet:
+
+```go
+{{ transitionTime(resource, "Accepted", "True") }}
+```
+
+For resources with nested condition arrays (e.g., Gateway API Route `parents[]`), pass the parent index:
+
+```go
+{{ transitionTime(resource, "Accepted", "True", parentIndex) }}
+```
+
+### toJSON()
+
+Converts any value to its JSON representation:
+
+```go
+{{ myMap | toJSON() }}
+```
+
+### Using Status Patches in Custom Templates
+
+Status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      status-patches-200-custom:
+        template: |
+          {%- for _, resource := range resources.myresources.List() %}
+            {%%
+              var ns = resource | dig("metadata", "namespace") | fallback("") | tostring()
+              var name = resource | dig("metadata", "name") | fallback("") | tostring()
+              var gen = resource | dig("metadata", "generation") | fallback(0)
+            %%}
+            {%- statusPatch(ns, name, "example.com/v1", "MyResource", map[string]any{
+                "deployed": map[string]any{
+                    "status": map[string]any{
+                        "conditions": []any{
+                            condition("Ready", "True", "Deployed", "Successfully deployed", gen, transitionTime(resource, "Ready", "True")),
+                        },
+                    },
+                },
+            }) %}
+          {%- end %}
+```
+
+The built-in Ingress and Gateway API libraries already include status patch snippets. You only need custom status patches for resources not covered by the default libraries.
 
 ## Common Patterns
 

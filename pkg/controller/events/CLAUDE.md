@@ -49,6 +49,7 @@ Events are organized into separate files by category:
 | `certificate.go` | Webhook certificate events |
 | `webhookobservability.go` | Webhook validation observability events |
 | `http.go` | HTTP resource events |
+| `status.go` | Status patch application events |
 | `webhook.go` | Scatter-gather request/response events |
 
 ## Event Categories

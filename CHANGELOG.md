@@ -9,6 +9,12 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Template-driven status patches**: Templates can register status patches for any Kubernetes resource via `statusPatch()` function, with outcome-keyed variants (`rendered`, `deployed`, `renderFailed`, `deployFailed`) applied automatically based on pipeline phase
+- **Status patch helper functions**: `condition()`, `transitionTime()`, and `toJSON()` template functions for building Kubernetes status conditions with stable transition timestamps
+- **StatusApplier component**: Applies status patches via Server-Side Apply to `/status` subresource with checksum-based skip optimization and leadership-aware cache management
+
 ## [0.1.0-alpha.12] - 2026-02-27
 
 ### Added

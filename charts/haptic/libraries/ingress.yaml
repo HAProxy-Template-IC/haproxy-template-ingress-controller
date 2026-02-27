@@ -328,6 +328,93 @@ templateSnippets:
       # ingress/map-path-prefix-ingress
       {{ PathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "/") }}
 
+  # ============================================================================
+  # Status Patch Registration
+  # ============================================================================
+
+  util-generate-ingress-status-patches:
+    template: |
+      {#-
+        Generate Ingress Status Patches
+
+        For each Ingress, registers a status patch with:
+          - deployed: LoadBalancer addresses from address discovery
+          - deployFailed: Empty LoadBalancer addresses
+
+        Parameters:
+          ingresses: Slice of Ingress resources to process
+
+        Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
+      -#}
+      {% macro GenerateIngressStatusPatches(ingresses []any) %}
+        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+        {%- var addresses = gf["addresses"] %}
+        {%- for _, ingress := range ingresses %}
+          {%%
+            var namespace = dig(ingress, "metadata", "namespace") | fallback("")
+            var name = dig(ingress, "metadata", "name") | fallback("")
+
+            statusPatch(tostring(namespace), tostring(name),
+              "networking.k8s.io/v1", "Ingress",
+              map[string]interface{}{
+                "deployed": map[string]interface{}{
+                  "loadBalancer": map[string]interface{}{
+                    "ingress": addresses,
+                  },
+                },
+                "deployFailed": map[string]interface{}{
+                  "loadBalancer": map[string]interface{}{
+                    "ingress": []any{},
+                  },
+                },
+              })
+          %%}
+        {%- end %}
+      {% end %}
+
+  util-sharded-ingress-status-patches:
+    template: |
+      {#-
+        Sharded Ingress Status Patches
+
+        Wraps GenerateIngressStatusPatches with automatic parallel sharding.
+        Uses the same pattern as ShardedIngressBackends.
+      -#}
+      {%- import "util-generate-ingress-status-patches" for GenerateIngressStatusPatches -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {% macro ShardedIngressStatusPatches(ingresses []any) %}
+        {%- var n = toint(CalculateShardCount(len(ingresses), 100)) -%}
+        {%- if n <= 1 || len(ingresses) < 100 -%}
+      {{ GenerateIngressStatusPatches(ingresses) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateIngressStatusPatches(shard_slice(ingresses, i, n)) }}
+          {%- end -%}
+        {%- end -%}
+      {% end %}
+
+  status-patches-200-ingress:
+    template: |
+      {#-
+        Ingress Status Patch Registration
+
+        Extension Point: status-patches-* (priority 200)
+
+        Registers status patches for all Ingress resources with LoadBalancer
+        addresses from address discovery. Skips if no addresses are available.
+
+        Dependencies:
+          - features-075-address-discovery (provides gf["addresses"])
+      -#}
+      {%- import "util-sharded-ingress-status-patches" for ShardedIngressStatusPatches -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- if gf["addresses"] != nil %}
+        {%- var allIngresses = resources.ingresses.List() -%}
+        {%- if len(allIngresses) > 0 -%}
+          {{- ShardedIngressStatusPatches(allIngresses) -}}
+        {%- end -%}
+      {%- end %}
+
 validationTests:
   test-ingress-duplicate-backend-different-ports:
     description: Ingress with multiple paths to same service but different ports (tests deduplication)
@@ -743,3 +830,69 @@ validationTests:
         target: haproxy.cfg
         pattern: "server SRV_3 127\\.0\\.0\\.1:1 disabled"
         description: Unused slots should remain as placeholders
+
+  test-ingress-status-patches:
+    description: Ingress status patches register LoadBalancer addresses from controller service
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: web-svc
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: web-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: web-svc
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: web-ingress
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: web-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with status patch registration
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend ing_default_web-ingress"
+        description: Must generate backend for ingress

@@ -185,4 +185,23 @@ const (
 	// Useful for extracting sanitized filenames from paths returned by fileRegistry.Register().
 	// Syntax: basename(path) returns string.
 	funcBasename = "basename"
+
+	// Status patch functions.
+
+	// FuncStatusPatch registers a status patch for a Kubernetes resource during rendering.
+	// Syntax: statusPatch(namespace, name, apiVersion, kind, variants).
+	FuncStatusPatch = "statusPatch"
+
+	// FuncCondition builds a metav1.Condition-compatible map.
+	// Syntax: condition(type, status, reason, message, observedGeneration, lastTransitionTime).
+	FuncCondition = "condition"
+
+	// FuncTransitionTime determines the correct lastTransitionTime for a condition.
+	// Preserves existing time if status hasn't changed, returns current time otherwise.
+	// Syntax: transitionTime(resource, conditionType, newStatus) or transitionTime(resource, conditionType, newStatus, parentIndex).
+	FuncTransitionTime = "transitionTime"
+
+	// FilterToJSON serializes any value to a JSON string.
+	// Syntax: toJSON(value) or value | toJSON().
+	FilterToJSON = "toJSON"
 )

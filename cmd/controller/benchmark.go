@@ -400,7 +400,7 @@ func buildBenchmarkContext(
 		rendercontext.WithHTTPFetcher(httpStore),
 	)
 
-	renderCtx, _ := builder.Build()
+	renderCtx, _, _ := builder.Build()
 	return renderCtx
 }
 

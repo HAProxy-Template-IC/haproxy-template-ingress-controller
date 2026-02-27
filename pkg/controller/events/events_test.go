@@ -379,6 +379,7 @@ func TestTemplateEvents(t *testing.T) {
 		event := NewTemplateRenderedEvent(
 			"haproxy config",
 			auxFiles,
+			nil, // statusPatches
 			5,
 			100,
 			"resource_change",
@@ -396,7 +397,7 @@ func TestTemplateEvents(t *testing.T) {
 	})
 
 	t.Run("TemplateRenderedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewTemplateRenderedEvent("cfg", nil, 0, 0, "", "", true,
+		event := NewTemplateRenderedEvent("cfg", nil, nil, 0, 0, "", "", true,
 			WithCorrelation("corr-123", "cause-456"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
@@ -1063,7 +1064,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},
 		// Template events
-		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, 0, 0, "", "", true)},
+		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, 0, 0, "", "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		// Validation events
 		{"ValidationStarted", NewValidationStartedEvent()},
@@ -1094,6 +1095,9 @@ func TestTimestampNotZero(t *testing.T) {
 		{"WebhookValidationAllowedEvent", NewWebhookValidationAllowedEvent("uid", "kind", "n", "ns")},
 		{"WebhookValidationDeniedEvent", NewWebhookValidationDeniedEvent("uid", "kind", "n", "ns", "reason")},
 		{"WebhookValidationErrorEvent", NewWebhookValidationErrorEvent("uid", "kind", "error")},
+		// Status update events
+		{"StatusUpdateCompleted", NewStatusUpdateCompletedEvent(StatusPatchPhaseDeployed, 3, 1, 50)},
+		{"StatusUpdateFailed", NewStatusUpdateFailedEvent("ns", "name", "networking.k8s.io/v1/ingresses", "error", true)},
 	}
 
 	for _, tt := range tests {

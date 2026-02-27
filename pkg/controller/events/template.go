@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // TemplateRenderedEvent is published when template rendering completes successfully.
@@ -37,6 +38,11 @@ type TemplateRenderedEvent struct {
 
 	// AuxiliaryFiles contains all rendered auxiliary files (maps, certificates, general files).
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
+
+	// StatusPatches contains status patches registered by templates during rendering.
+	// Each patch targets a Kubernetes resource and contains outcome-keyed variants
+	// for different pipeline lifecycle phases (rendered, deployed, renderFailed, deployFailed).
+	StatusPatches []templating.StatusPatch
 
 	// ContentChecksum is the pre-computed content checksum covering config + aux files.
 	// Computed once in the pipeline and propagated to downstream consumers to avoid
@@ -76,6 +82,7 @@ type TemplateRenderedEvent struct {
 func NewTemplateRenderedEvent(
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	statusPatches []templating.StatusPatch,
 	auxFileCount int,
 	durationMs int64,
 	triggerReason string,
@@ -86,6 +93,7 @@ func NewTemplateRenderedEvent(
 	return &TemplateRenderedEvent{
 		HAProxyConfig:      haproxyConfig,
 		AuxiliaryFiles:     auxiliaryFiles,
+		StatusPatches:      statusPatches,
 		ContentChecksum:    contentChecksum,
 		ConfigBytes:        len(haproxyConfig),
 		AuxiliaryFileCount: auxFileCount,

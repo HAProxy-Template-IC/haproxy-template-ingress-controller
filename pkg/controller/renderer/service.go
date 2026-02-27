@@ -44,6 +44,10 @@ type RenderResult struct {
 	// AuxiliaryFiles contains all rendered auxiliary files (maps, certs, general).
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
 
+	// StatusPatches contains status patches registered by templates during rendering.
+	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
+	StatusPatches []templating.StatusPatch
+
 	// DurationMs is the total render duration in milliseconds.
 	DurationMs int64
 
@@ -183,7 +187,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	}
 
 	// Build rendering context from stores
-	renderContext, fileRegistry := s.buildRenderingContext(ctx, provider)
+	renderContext, fileRegistry, statusPatchCollector := s.buildRenderingContext(ctx, provider)
 
 	// Render main HAProxy config
 	haproxyConfig, err := s.engine.Render(ctx, names.MainTemplateName, renderContext)
@@ -209,13 +213,14 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	return &RenderResult{
 		HAProxyConfig:  haproxyConfig,
 		AuxiliaryFiles: auxiliaryFiles,
+		StatusPatches:  statusPatchCollector.Patches(),
 		DurationMs:     time.Since(startTime).Milliseconds(),
 		AuxFileCount:   auxFileCount,
 	}, nil
 }
 
 // buildRenderingContext constructs the template rendering context from stores.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]interface{}, *rendercontext.FileRegistry) {
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]interface{}, *rendercontext.FileRegistry, *templating.StatusPatchCollector) {
 	renderContext := make(map[string]interface{})
 
 	// Add path resolver for file path resolution in templates
@@ -269,6 +274,10 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	fileRegistry := rendercontext.NewFileRegistry(s.pathResolver)
 	renderContext["fileRegistry"] = fileRegistry
 
+	// Create status patch collector for template-driven status updates
+	statusPatchCollector := templating.NewStatusPatchCollector()
+	renderContext["statusPatchCollector"] = statusPatchCollector
+
 	// Create shared cache for cross-template data sharing
 	renderContext["shared"] = templating.NewSharedContext()
 
@@ -302,7 +311,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		renderContext["http"] = httpFetcher
 	}
 
-	return renderContext, fileRegistry
+	return renderContext, fileRegistry, statusPatchCollector
 }
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.

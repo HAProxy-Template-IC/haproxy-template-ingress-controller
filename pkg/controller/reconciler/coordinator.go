@@ -24,6 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // PipelineExecutor defines the interface for executing the render-validate pipeline.
@@ -61,6 +62,11 @@ type Coordinator struct {
 	pipeline      PipelineExecutor
 	storeProvider stores.StoreProvider
 	logger        *slog.Logger
+
+	// lastStatusPatches caches the most recent successful render's status patches.
+	// Used by StatusApplier (via events) to apply failure variants (renderFailed,
+	// deployFailed) when a subsequent pipeline execution fails.
+	lastStatusPatches []templating.StatusPatch
 
 	// subscriptionReady is closed when the component has subscribed to events.
 	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
@@ -184,11 +190,17 @@ func (c *Coordinator) handlePipelineSuccess(
 ) {
 	coalescible := triggerEvent.Coalescible()
 
+	// Cache status patches for failure variant application.
+	// If a subsequent render fails, StatusApplier can apply renderFailed variants
+	// using the most recent successful patches.
+	c.lastStatusPatches = result.StatusPatches
+
 	// Publish TemplateRenderedEvent for DeploymentScheduler
 	// Config uses relative paths that work everywhere with `default-path config`
 	templateEvent := events.NewTemplateRenderedEvent(
 		result.HAProxyConfig,
 		result.AuxiliaryFiles,
+		result.StatusPatches,
 		result.AuxFileCount,
 		result.RenderDurationMs,
 		triggerEvent.Reason,

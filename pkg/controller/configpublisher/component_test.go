@@ -93,6 +93,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
 		nil,  // auxiliary files
+		nil,  // statusPatches
 		0,    // aux file count
 		100,  // duration ms
 		"",   // trigger reason
@@ -431,6 +432,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
 		nil,
+		nil, // statusPatches
 		0,
 		100,
 		"",
@@ -519,6 +521,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
 		nil,
+		nil, // statusPatches
 		0,
 		100,
 		"",

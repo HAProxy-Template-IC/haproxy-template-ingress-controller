@@ -152,6 +152,12 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 
 	// Path utility functions
 	decl[funcBasename] = scriggoBasename
+
+	// Status patch functions
+	decl[FuncStatusPatch] = scriggoStatusPatch
+	decl[FuncCondition] = scriggoCondition
+	decl[FuncTransitionTime] = scriggoTransitionTime
+	decl[FilterToJSON] = scriggoToJSON
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.

@@ -100,6 +100,7 @@ This includes all snippets with names starting with `backends-`:
 | Path Prefix Map | `map-path-prefix-*` | path-prefix.map | Prefix path entries |
 | Path Regex Map | `map-path-regex-*` | path-regex.map | Regex path entries |
 | Weighted Backend Map | `map-weighted-backend-*` | weighted-multi-backend.map | Weighted routing |
+| Status Patches | `status-patches-*` | After features, before backends | Resource status updates (side effects only, no config output) |
 
 ### Injecting Custom Configuration
 
@@ -155,8 +156,8 @@ Default priority is 100 if not specified.
 |---------|----------------------|
 | Base | Defines all extension points |
 | SSL | `features-*`, `frontends-*`, `backends-*`, `global-top-*` |
-| Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*` |
-| Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*` |
+| Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*`, `status-patches-*` |
+| Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |
 | HAProxy Annotations | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
 | HAProxy Ingress | `map-path-regex-*` |
 | Path Regex Last | Overrides `frontend-routing-logic` (not an extension point pattern) |
