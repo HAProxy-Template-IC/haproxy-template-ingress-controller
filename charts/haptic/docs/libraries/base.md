@@ -185,9 +185,9 @@ Debug headers include:
 
 ### Address Discovery
 
-The base library watches the controller's own LoadBalancer Service and discovers external addresses for status reporting. Addresses are stored in `gf["addresses"]` and consumed by library status patch snippets (Ingress, Gateway API) to populate resource status fields.
+The base library watches controller LoadBalancer Services and discovers external addresses for status reporting. Addresses are aggregated from **all** matching services and deduplicated, then stored in `gf["addresses"]`. This supports multi-service setups where HAProxy is exposed via both internal and public LoadBalancers.
 
-The controller Service is discovered via label selector (`app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller`). If the Service has no LoadBalancer addresses assigned yet, `gf["addresses"]` remains nil and status patches that depend on addresses are skipped.
+Controller Services are discovered via label selector (`app.kubernetes.io/name=<name>,app.kubernetes.io/component=loadbalancer`). If no Service has LoadBalancer addresses assigned yet, `gf["addresses"]` remains nil and status patches that depend on addresses are skipped.
 
 ### Status Patch Extension Point
 
