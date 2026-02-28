@@ -174,6 +174,7 @@ The base template uses `render_glob` to discover and render snippets from all li
 | `map-path-prefix-exact-*` | Prefix-exact map entries | gateway, ingress |
 | `map-path-regex-*` | Regex path map entries | gateway, ingress, haproxy-ingress |
 | `map-weighted-backend-*` | Weighted routing map | gateway |
+| `status-extra-*` | Status frontend directives (Prometheus exporter, custom endpoints) | base |
 | `status-patches-*` | Status patch registration (side effects only) | gateway, ingress |
 
 **Extension Point Variable Passing:**

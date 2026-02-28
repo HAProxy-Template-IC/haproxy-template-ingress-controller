@@ -18,7 +18,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 - Gateway API status reporting: Gateway conditions (Accepted, Programmed), listener status, and addresses; HTTPRoute/GRPCRoute parent status with Accepted and ResolvedRefs conditions
 - Address discovery via controller LoadBalancer Service watch (`controller_services` watched resource)
 - `status-patches-*` extension point in base library for custom resource status updates
+- `status-extra-*` extension point in status frontend for custom directives (e.g., Prometheus exporter)
+- HAProxy built-in Prometheus exporter enabled by default on the status frontend (`/metrics` on port 8404)
 - `controllerName` injected into `extraContext` when Gateway library is enabled
+- `extraDeploy` value for deploying arbitrary Kubernetes resources alongside the chart (supports Helm templating)
 
 ### Removed
 
