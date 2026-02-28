@@ -23,6 +23,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 - `controllerName` injected into `extraContext` when Gateway library is enabled
 - `extraDeploy` value for deploying arbitrary Kubernetes resources alongside the chart (supports Helm templating)
 
+### Fixed
+
+- `HostMatchCondition` now uses compact `-m str` form for small host lists and file-based matching for large host lists (>30 hosts), avoiding HAProxy's 64-word-per-line config parser limit
+
 ### Removed
 
 - `image.appendHaproxyVersion` value (HAProxy version suffix is now always included in controller image tag)
