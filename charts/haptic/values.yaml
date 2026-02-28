@@ -1224,3 +1224,20 @@ networkPolicy:
         - namespaceSelector: {}
     # Additional custom ingress rules
     additionalRules: []
+
+# Extra Kubernetes resources to deploy alongside the chart
+# Supports Helm templating ({{ .Release.Name }}, {{ .Release.Namespace }}, etc.)
+# Example:
+#   extraDeploy:
+#     - apiVersion: monitoring.coreos.com/v1
+#       kind: ServiceMonitor
+#       metadata:
+#         name: "{{ .Release.Name }}-haproxy-stats"
+#       spec:
+#         selector:
+#           matchLabels:
+#             app.kubernetes.io/instance: "{{ .Release.Name }}"
+#         endpoints:
+#           - port: stats
+#             path: /metrics
+extraDeploy: []
