@@ -87,8 +87,11 @@ This includes all snippets with names starting with `backends-`:
 
 | Extension Point | Prefix Pattern | Where Included | Purpose |
 |-----------------|----------------|----------------|---------|
+| Global Settings | `global-settings-*` | Inside `global` section | Global directives (logging, process, paths, SSL tuning) |
+| Defaults Settings | `defaults-settings-*` | Inside `defaults` section | Defaults directives (options, balance, timeouts, errorfiles) |
 | Features | `features-*` | Early in config | Feature initialization, SSL setup |
 | Global Top | `global-top-*` | After `defaults` | Userlists, peers, global elements |
+| Frontend Extra | `frontend-extra-*` | After frontend bind, before routing | Early frontend directives (options, captures, ACLs) |
 | Frontend Matchers | `frontend-matchers-advanced-*` | Frontend routing | Method, header, query matching |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend | Request/response processing |
 | Custom Frontends | `frontends-*` | After HTTP frontend | HTTPS, TCP frontends |
@@ -110,6 +113,26 @@ Add custom snippets in your values.yaml to inject configuration at extension poi
 controller:
   config:
     templateSnippets:
+      # Override default timeouts (replaces defaults-settings-300-timeouts)
+      defaults-settings-300-timeouts:
+        template: |
+          timeout connect 5000
+          timeout client 30000
+          timeout server 30000
+          timeout tunnel 600000
+          timeout http-request 10000
+
+      # Add custom global tuning directives
+      global-settings-500-tuning:
+        template: |
+          tune.bufsize 262144
+          no-memory-trimming
+
+      # Add early frontend directives (matches frontend-extra-*)
+      frontend-extra-custom-captures:
+        template: |
+          capture request header X-Request-ID len 64
+
       # Inject into frontend (matches frontend-filters-*)
       frontend-filters-security:
         template: |
@@ -154,7 +177,7 @@ Default priority is 100 if not specified.
 
 | Library | Extension Points Used |
 |---------|----------------------|
-| Base | Defines all extension points |
+| Base | Defines all extension points; provides `global-settings-*`, `defaults-settings-*` snippets |
 | SSL | `features-*`, `frontends-*`, `backends-*`, `global-top-*` |
 | Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*`, `status-patches-*` |
 | Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |

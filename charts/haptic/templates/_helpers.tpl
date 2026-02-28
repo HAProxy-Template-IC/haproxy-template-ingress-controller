@@ -421,6 +421,15 @@ Returns empty string if no CPU requests configured and no override, or if overri
 {{- end -}}
 
 {{/*
+Checksum of HAProxy bootstrap ConfigMap inputs.
+Changes when any value feeding into the bootstrap config changes,
+triggering a rolling update of HAProxy pods.
+*/}}
+{{- define "haptic.haproxy.bootstrapConfigChecksum" -}}
+{{- printf "%v-%v-%v" (.Values.haproxy.ports | toJson) (include "haptic.haproxy.nbthread" . | default "0") (.Values.haproxy.initialConfig | default "") | sha256sum -}}
+{{- end -}}
+
+{{/*
 Convert a Kubernetes memory string to megabytes.
 Supports: Gi, Mi, G, M, Ki, K formats.
 Input: memory string (e.g., "256Mi", "1Gi")

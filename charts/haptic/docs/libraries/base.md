@@ -32,8 +32,11 @@ The base library defines extension points using the `include_matching("prefix-*"
 
 | Extension Point | Prefix Pattern | Location in Config | Purpose |
 |-----------------|----------------|-------------------|---------|
+| Global Settings | `global-settings-*` | Inside `global` section | Global directives (logging, process, paths, SSL tuning) |
+| Defaults Settings | `defaults-settings-*` | Inside `defaults` section | Defaults directives (options, balance, timeouts, errorfiles) |
 | Features | `features-*` | Early in config generation | Feature initialization and registration |
 | Global Top | `global-top-*` | After `defaults` section | Top-level HAProxy elements (userlists, peers, etc.) |
+| Frontend Extra | `frontend-extra-*` | After frontend bind, before routing | Early frontend directives (options, captures, ACLs) |
 | Frontend Matchers | `frontend-matchers-advanced-*` | Within frontend routing logic | Advanced request matching (method, headers, query params) |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend, after routing | Request/response filters (header modification, redirects) |
 | Custom Frontends | `frontends-*` | After HTTP frontend | Additional frontend definitions |
@@ -61,6 +64,21 @@ You can inject custom HAProxy configuration by adding template snippets with the
 controller:
   config:
     templateSnippets:
+      # Override default timeouts (replaces the base library snippet)
+      defaults-settings-300-timeouts:
+        template: |
+          timeout connect 5000
+          timeout client 30000
+          timeout server 30000
+          timeout tunnel 600000
+          timeout http-request 10000
+
+      # Add custom global tuning directives (extends the global section)
+      global-settings-500-tuning:
+        template: |
+          tune.bufsize 262144
+          no-memory-trimming
+
       # Add custom security rules to the HTTP frontend
       frontend-filters-custom-security:
         template: |
@@ -212,26 +230,36 @@ The base library generates these map files for routing:
 
 ## HAProxy Configuration Structure
 
-The base library generates this configuration structure:
+The base library generates this configuration structure. The `global` and `defaults` sections are composed from individually overridable snippets:
 
 ```haproxy
 global
+    # global-settings-100-logging
     log stdout len 4096 local0 info
+    # global-settings-200-process
     daemon
-    ca-base /etc/ssl/certs
+    nbthread 2          # auto-calculated from CPU requests
+    # global-settings-300-paths
+    default-path origin /etc/haproxy
     crt-base /etc/haproxy/certs
+    # global-settings-400-ssl
     tune.ssl.default-dh-param 2048
 
 defaults
+    # defaults-settings-100-options
     mode http
     log global
     option httplog
     option dontlognull
     option log-health-checks
     option forwardfor
+    # defaults-settings-200-balance
+    balance roundrobin
+    # defaults-settings-300-timeouts
     timeout connect 5000
     timeout client 50000
     timeout server 50000
+    # defaults-settings-400-errorfiles
     errorfile 400 /etc/haproxy/general/400.http
     # ... other error files
 
@@ -243,6 +271,7 @@ frontend status
 
 frontend http_frontend
     bind *:8080
+    # frontend-extra-* snippets (options, captures, ACLs)
     # Routing logic
     # frontend-matchers-advanced-* snippets
     # frontend-filters-* snippets
@@ -256,6 +285,8 @@ frontend http_frontend
 backend default_backend
     http-request return status 404
 ```
+
+Each `global-settings-*` and `defaults-settings-*` snippet can be individually overridden or extended via `controller.config.templateSnippets` in your values.yaml. For example, to customize timeouts, override `defaults-settings-300-timeouts` with your own values. To add new global directives, create a `global-settings-500-tuning` snippet (or any name matching the pattern).
 
 ## See Also
 

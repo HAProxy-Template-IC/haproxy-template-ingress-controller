@@ -158,19 +158,22 @@ The base template uses `render_glob` to discover and render snippets from all li
 
 | Pattern | Purpose | Contributing Libraries |
 |---------|---------|----------------------|
+| `global-settings-*` | Global section directives (logging, process, paths, SSL) | base |
+| `global-top-*` | Top-level sections after global (userlist, resolvers) | haproxytech |
+| `defaults-settings-*` | Defaults section directives (options, balance, timeouts, errorfiles) | base |
 | `features-*` | Feature registration (SSL, TLS certs) | gateway, haproxytech, ingress, ssl |
 | `backends-*` | Backend definitions | gateway, ingress, ssl |
 | `frontends-*` | Additional frontends (HTTPS, TCP) | ssl |
+| `frontend-extra-*` | Early frontend directives after bind (options, captures, ACLs) | (user) |
+| `frontend-matchers-advanced-*` | Advanced route matching (method, headers) | gateway |
+| `frontend-filters-*` | Request/response filters (after routing) | gateway, haproxytech |
+| `backend-directives-*` | Backend configuration directives | haproxytech |
 | `map-host-*` | Host map entries | gateway, ingress |
 | `map-path-exact-*` | Exact path map entries | gateway, ingress |
 | `map-path-prefix-*` | Prefix path map entries | gateway, ingress |
 | `map-path-prefix-exact-*` | Prefix-exact map entries | gateway, ingress |
 | `map-path-regex-*` | Regex path map entries | gateway, ingress, haproxy-ingress |
 | `map-weighted-backend-*` | Weighted routing map | gateway |
-| `frontend-matchers-advanced-*` | Advanced route matching (method, headers) | gateway |
-| `frontend-filters-*` | Request/response filters | gateway, haproxytech |
-| `backend-directives-*` | Backend configuration directives | haproxytech |
-| `global-top-*` | Global sections (userlist, resolvers) | haproxytech |
 | `status-patches-*` | Status patch registration (side effects only) | gateway, ingress |
 
 **Extension Point Variable Passing:**
