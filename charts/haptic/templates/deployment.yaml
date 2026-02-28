@@ -172,10 +172,10 @@ spec:
               readOnly: true
             {{- end }}
             {{- with .Values.extraVolumeMounts }}
-            {{- toYaml . | nindent 12 }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
         {{- with .Values.sidecars }}
-        {{- toYaml . | nindent 8 }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
       volumes:
         - name: tmp
@@ -186,7 +186,7 @@ spec:
             secretName: {{ include "haptic.fullname" . }}-webhook-cert
         {{- end }}
         {{- with .Values.extraVolumes }}
-        {{- toYaml . | nindent 8 }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
