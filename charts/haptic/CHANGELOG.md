@@ -11,6 +11,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Added
 
+- `haproxy.nbthread` value to control HAProxy thread count, auto-calculated from CPU requests by default
 - `controller.statusPatches.enabled` value to disable status patch writes during migration from another ingress controller
 - Ingress status reporting: LoadBalancer addresses propagated to Ingress `.status.loadBalancer`
 - Gateway API status reporting: Gateway conditions (Accepted, Programmed), listener status, and addresses; HTTPRoute/GRPCRoute parent status with Accepted and ResolvedRefs conditions

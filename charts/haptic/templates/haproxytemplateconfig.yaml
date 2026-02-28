@@ -57,6 +57,17 @@ spec:
     {{- end }}
     {{- $_ := set $config.templatingSettings.extraContext "controllerName" .Values.gatewayClass.controllerName }}
   {{- end }}
+  {{- /* Add nbthread to extraContext for controller-rendered HAProxy config */ -}}
+  {{- $nbthread := include "haptic.haproxy.nbthread" . }}
+  {{- if $nbthread }}
+    {{- if not $config.templatingSettings }}
+      {{- $_ := set $config "templatingSettings" dict }}
+    {{- end }}
+    {{- if not $config.templatingSettings.extraContext }}
+      {{- $_ := set $config.templatingSettings "extraContext" dict }}
+    {{- end }}
+    {{- $_ := set $config.templatingSettings.extraContext "nbthread" ($nbthread | int) }}
+  {{- end }}
   {{- /* Merge template libraries into config */ -}}
   {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
   {{- if $mergedLibraries.templateSnippets }}
