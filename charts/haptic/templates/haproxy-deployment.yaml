@@ -32,6 +32,7 @@ spec:
     metadata:
       annotations:
         checksum/secret: {{ printf "%s-%s" (include "haptic.dataplane.username" .) (include "haptic.dataplane.password" .) | sha256sum }}
+        checksum/config: {{ include (print .Template.BasePath "/haproxy-configmap.yaml") . | sha256sum }}
       labels:
         {{- include "haptic.selectorLabels" . | nindent 8 }}
         {{- include "haptic.componentLabels" "loadbalancer" | nindent 8 }}
