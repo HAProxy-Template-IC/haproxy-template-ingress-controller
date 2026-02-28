@@ -303,11 +303,34 @@ controller:
     # You can override or extend library templates by defining them here.
     # User-provided values always take precedence over library defaults.
     #
-    # Example - Override a specific template snippet:
+    # HAProxy global and defaults sections are composed from overridable snippets:
+    #   global-settings-100-logging    log directive
+    #   global-settings-200-process    daemon, nbthread
+    #   global-settings-300-paths      default-path, crt-base
+    #   global-settings-400-ssl        tune.ssl.default-dh-param
+    #   defaults-settings-100-options  mode, log, option directives
+    #   defaults-settings-200-balance  balance algorithm
+    #   defaults-settings-300-timeouts timeout connect/client/server
+    #   defaults-settings-400-errorfiles errorfile directives
+    #
+    # Override a snippet to replace its content, or add new ones to extend:
+    #
+    # Example - Custom timeouts:
     # templateSnippets:
-    #   backend-name:
-    #     template: >-
-    #       custom_{{ ingress.metadata.name }}
+    #   defaults-settings-300-timeouts:
+    #     template: |
+    #       timeout connect 5000
+    #       timeout client 30000
+    #       timeout server 30000
+    #       timeout tunnel 600000
+    #       timeout http-request 10000
+    #
+    # Example - Add global tuning directives:
+    # templateSnippets:
+    #   global-settings-500-tuning:
+    #     template: |
+    #       tune.bufsize 262144
+    #       no-memory-trimming
     #
     # Example - Add a custom map:
     # maps:

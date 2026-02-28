@@ -403,6 +403,70 @@ templateSnippets:
   # Extension Points
   # ============================================================================
 
+  # Global section directives — override or extend via global-settings-* snippets.
+  # Users can override specific groups (e.g., defaults-settings-300-timeouts)
+  # or add new ones (e.g., global-settings-500-tuning).
+  global-settings:
+    template: |
+      {#- Renders global-settings-* snippets (global section directives) -#}
+      {{- render_glob "global-settings-*" -}}
+
+  global-settings-100-logging:
+    template: |
+      log stdout len 4096 local0 info
+
+  global-settings-200-process:
+    template: |
+      daemon
+      {%- var nbthread = extraContext | dig("nbthread") | fallback(0) | toint() -%}
+      {%- if nbthread > 0 %}
+      nbthread {{ nbthread }}
+      {%- end %}
+
+  global-settings-300-paths:
+    template: |
+      default-path origin {{ pathResolver.GetBaseDir() }}
+      crt-base {{ pathResolver.GetPath("", "cert") }}
+
+  global-settings-400-ssl:
+    template: |
+      tune.ssl.default-dh-param 2048
+
+  # Defaults section directives — override or extend via defaults-settings-* snippets.
+  defaults-settings:
+    template: |
+      {#- Renders defaults-settings-* snippets (defaults section directives) -#}
+      {{- render_glob "defaults-settings-*" -}}
+
+  defaults-settings-100-options:
+    template: |
+      mode http
+      log global
+      option httplog
+      option dontlognull
+      option log-health-checks
+      option forwardfor
+
+  defaults-settings-200-balance:
+    template: |
+      balance roundrobin
+
+  defaults-settings-300-timeouts:
+    template: |
+      timeout connect 5000
+      timeout client 50000
+      timeout server 50000
+
+  defaults-settings-400-errorfiles:
+    template: |
+      errorfile 400 {{ pathResolver.GetPath("400.http", "file") }}
+      errorfile 403 {{ pathResolver.GetPath("403.http", "file") }}
+      errorfile 408 {{ pathResolver.GetPath("408.http", "file") }}
+      errorfile 500 {{ pathResolver.GetPath("500.http", "file") }}
+      errorfile 502 {{ pathResolver.GetPath("502.http", "file") }}
+      errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}
+      errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
+
   global-top:
     template: |
       {#- Renders global-top-* snippets (e.g., userlist sections from haproxytech.yaml) -#}
@@ -526,34 +590,10 @@ files:
 haproxyConfig:
   template: |
     global
-        log stdout len 4096 local0 info
-        daemon
-        {%- var nbthread = extraContext | dig("nbthread") | fallback(0) | toint() -%}
-        {%- if nbthread > 0 %}
-        nbthread {{ nbthread }}
-        {%- end %}
-        default-path origin {{ pathResolver.GetBaseDir() }}
-        crt-base {{ pathResolver.GetPath("", "cert") }}
-        tune.ssl.default-dh-param 2048
+        {{ render "global-settings" }}
 
     defaults
-        mode http
-        log global
-        option httplog
-        option dontlognull
-        option log-health-checks
-        option forwardfor
-        balance roundrobin
-        timeout connect 5000
-        timeout client 50000
-        timeout server 50000
-        errorfile 400 {{ pathResolver.GetPath("400.http", "file") }}
-        errorfile 403 {{ pathResolver.GetPath("403.http", "file") }}
-        errorfile 408 {{ pathResolver.GetPath("408.http", "file") }}
-        errorfile 500 {{ pathResolver.GetPath("500.http", "file") }}
-        errorfile 502 {{ pathResolver.GetPath("502.http", "file") }}
-        errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}
-        errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
+        {{ render "defaults-settings" }}
 
     {# Include global top-level snippets (e.g., userlist sections) #}
     {{ render "global-top" }}
@@ -577,6 +617,9 @@ haproxyConfig:
 
     frontend http_frontend
         bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
+        {# Extension point for early frontend directives (options, captures, ACLs) #}
+        {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
+        {{- render_glob "frontend-extra-*" }}
 
         {# Include frontend routing logic (can be overridden by libraries) #}
         {{ render "frontend-routing-logic" }}
