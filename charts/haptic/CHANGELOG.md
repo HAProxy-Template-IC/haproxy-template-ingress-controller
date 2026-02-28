@@ -9,6 +9,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- `sidecars`, `extraVolumes`, `extraVolumeMounts` (and their `haproxy.*` counterparts) now support Helm template expressions (rendered via `tpl`)
+
 ### Added
 
 - `haproxy.nbthread` value to control HAProxy thread count, auto-calculated from CPU requests by default
