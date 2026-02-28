@@ -528,6 +528,10 @@ haproxyConfig:
     global
         log stdout len 4096 local0 info
         daemon
+        {%- var nbthread = extraContext | dig("nbthread") | fallback(0) | toint() -%}
+        {%- if nbthread > 0 %}
+        nbthread {{ nbthread }}
+        {%- end %}
         default-path origin {{ pathResolver.GetBaseDir() }}
         crt-base {{ pathResolver.GetPath("", "cert") }}
         tune.ssl.default-dh-param 2048

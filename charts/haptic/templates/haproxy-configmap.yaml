@@ -11,6 +11,10 @@ data:
   haproxy.cfg: |
     global
         log stdout len 4096 local0 info
+        {{- $nbthread := include "haptic.haproxy.nbthread" . }}
+        {{- if $nbthread }}
+        nbthread {{ $nbthread }}
+        {{- end }}
 
     defaults
         mode http

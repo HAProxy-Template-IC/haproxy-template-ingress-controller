@@ -389,6 +389,38 @@ Returns empty string if no memory requests configured.
 {{- end -}}
 
 {{/*
+Calculate nbthread for HAProxy global section.
+If haproxy.nbthread is explicitly set, use that value (rendered via tpl for templatability).
+Otherwise, auto-calculate from haproxy.resources.requests.cpu using ceiling arithmetic.
+Supports: millicores (e.g., "250m") and whole cores (e.g., "2").
+Returns empty string if no CPU requests configured and no override, or if override is 0.
+*/}}
+{{- define "haptic.haproxy.nbthread" -}}
+{{- if and .Values.haproxy (hasKey .Values.haproxy "nbthread") -}}
+  {{- $override := tpl (toString .Values.haproxy.nbthread) . | int -}}
+  {{- if gt $override 0 -}}
+    {{- $override -}}
+  {{- end -}}
+{{- else -}}
+  {{- $cpu := "" -}}
+  {{- if .Values.haproxy.resources -}}
+  {{- if .Values.haproxy.resources.requests -}}
+  {{- $cpu = .Values.haproxy.resources.requests.cpu | default "" | toString -}}
+  {{- end -}}
+  {{- end -}}
+  {{- if $cpu -}}
+    {{- if hasSuffix "m" $cpu -}}
+      {{- $millis := trimSuffix "m" $cpu | int -}}
+      {{- /* ceil(millis/1000): add 999 then divide */ -}}
+      {{- max 1 (div (add $millis 999) 1000) -}}
+    {{- else -}}
+      {{- max 1 ($cpu | int) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Convert a Kubernetes memory string to megabytes.
 Supports: Gi, Mi, G, M, Ki, K formats.
 Input: memory string (e.g., "256Mi", "1Gi")
