@@ -210,15 +210,21 @@ templateSnippets:
 
   frontend-filters-400-haproxytech-ssl-redirect:
     template: |
-      {#- HAProxy SSL redirect -#}
+      {#- HAProxy SSL redirect.
+          Annotation "true" → redirect. Annotation "false" → no redirect.
+          Annotation absent + extraContext.ssl_redirect_default == "true" → redirect.
+          Annotation absent + no default → no redirect.
+      -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- var sslRedirectDefault = extraContext | dig("ssl_redirect_default") | fallback("") | tostring() -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
         {%- if first_seen("haproxytech_sslRedirect", key) %}
           {%- var sslRedirect = ingress | dig("metadata", "annotations", "haproxy.org/ssl-redirect") | fallback("") | tostring() %}
-          {%- if sslRedirect == "true" %}
+          {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && sslRedirectDefault == "true") %}
+          {%- if shouldRedirect %}
             {%- var hosts = []any{} %}
             {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
               {%- var h = rule | dig("host") %}
@@ -1447,3 +1453,162 @@ validationTests:
         target: haproxy.cfg
         pattern: "user admin password"
         description: User must be in config
+
+  test-haproxytech-ssl-redirect-default-enabled:
+    description: SSL redirect applies when annotation absent and ssl_redirect_default is "true"
+    extraContext:
+      ssl_redirect_default: "true"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: no-annotation
+          spec:
+            rules:
+              - host: test.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: test-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: test-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect scheme https"
+        description: SSL redirect must be generated from default
+
+  test-haproxytech-ssl-redirect-default-opt-out:
+    description: SSL redirect does not apply when annotation is "false" even with default
+    extraContext:
+      ssl_redirect_default: "true"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: opt-out
+            annotations:
+              haproxy.org/ssl-redirect: "false"
+          spec:
+            rules:
+              - host: test.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: test-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: test-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "http-request redirect scheme https"
+        description: SSL redirect must not be generated when opted out
+
+  test-haproxytech-ssl-redirect-no-default:
+    description: SSL redirect does not apply when annotation absent and no default
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: no-annotation
+          spec:
+            rules:
+              - host: test.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: test-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: test-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "http-request redirect scheme https"
+        description: SSL redirect must not be generated without default or annotation
