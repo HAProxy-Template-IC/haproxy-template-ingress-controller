@@ -211,4 +211,11 @@ const (
 	// Compares major.minor (patch ignored). Returns false for unparseable versions.
 	// Syntax: semver_gte(version, minVersion) returns bool.
 	FuncSemverGte = "semver_gte"
+
+	// GUID functions.
+
+	// FuncMakeGUID builds a HAProxy GUID from parts joined by ":".
+	// Auto-truncates with a hash suffix if the result exceeds 127 characters.
+	// Syntax: make_guid(parts...) returns string.
+	FuncMakeGUID = "make_guid"
 )

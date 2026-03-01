@@ -161,6 +161,9 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 
 	// Version comparison functions
 	decl[FuncSemverGte] = scriggoSemverGte
+
+	// GUID functions
+	decl[FuncMakeGUID] = scriggoMakeGUID
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.
