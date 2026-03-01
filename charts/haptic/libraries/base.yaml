@@ -450,7 +450,7 @@ templateSnippets:
       {%- var shmEnabled bool = extraContext | dig("shmStatsEnabled") | fallback(false) -%}
       {%- if shmEnabled && semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") %}
       shm-stats-file {{ extraContext | dig("shmStatsPath") | fallback("/dev/shm/haproxy-stats") }}
-      shm-stats-file-max-objects __SHM_STATS_MAX_OBJECTS__
+      shm-stats-file-max-objects {{ extraContext | dig("shmStatsMaxObjects") | fallback(500000) }}
       {%- end %}
 
   global-settings-300-paths:
@@ -705,29 +705,8 @@ haproxyConfig:
         http-request return status 404
     {# Trailing newline preserved #}
 
-  # Post-processing pipeline:
-  # 1. Template post-processor resolves __SHM_STATS_MAX_OBJECTS__ placeholder by counting
-  #    all HAProxy objects that need shared counters (proxies + servers)
-  #    (short-circuits when placeholder is absent)
-  # 2. Regex replace normalizes indentation to 2 spaces
+  # Post-processing: normalize indentation to 2 spaces
   postProcessing:
-    - type: template
-      params:
-        source: |
-          {%- if strings_contains(input, "__SHM_STATS_MAX_OBJECTS__") -%}
-          {%%
-            var serverCount = len(regexp(`(?m)^\s*server\s`).FindAll(input, -1))
-            var proxyCount = len(regexp(`(?m)^(?:frontend|backend|listen)\s`).FindAll(input, -1))
-            var maxObjects = serverCount + proxyCount
-            maxObjects = maxObjects + maxObjects / 5
-            if maxObjects < 2000 {
-              maxObjects = 2000
-            }
-          %%}
-          {{ replace(input, "__SHM_STATS_MAX_OBJECTS__", tostring(maxObjects)) }}
-          {%- else -%}
-          {{ input }}
-          {%- end -%}
     - type: regex_replace
       params:
         pattern: "^[ ]+"
@@ -847,8 +826,8 @@ validationTests:
         pattern: "guid be:default_backend"
         description: Default backend must have guid
 
-  test-shm-stats-dynamic-max-objects:
-    description: shm-stats-file-max-objects is dynamically calculated from object count
+  test-shm-stats-max-objects:
+    description: shm-stats-file-max-objects uses configurable fixed value
     minHAProxyVersion: "3.3"
     extraContext:
       shmStatsEnabled: true
@@ -863,9 +842,5 @@ validationTests:
         description: shm-stats-file must be present
       - type: contains
         target: haproxy.cfg
-        pattern: "shm-stats-file-max-objects 2000"
-        description: Max objects must be at least 2000 (minimum floor)
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: "__SHM_STATS_MAX_OBJECTS__"
-        description: Placeholder must be resolved
+        pattern: "shm-stats-file-max-objects 500000"
+        description: Max objects must use the configured fixed value
