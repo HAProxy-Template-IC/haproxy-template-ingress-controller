@@ -213,6 +213,37 @@ output, _ := engine.Render(context.Background(), "template", ctx)
 engine.DisableFilterDebug()
 ```
 
+## Post-Processing
+
+Post-processors transform rendered output before it is returned. They run in sequence — each receives the previous processor's output.
+
+**Available types:**
+
+| Type | Description |
+|------|-------------|
+| `regex_replace` | Line-by-line regex find/replace (with fast-path for indentation normalization) |
+| `template` | Scriggo template transformation with access to the rendered output via `input` variable |
+
+**Configuration example:**
+
+```yaml
+postProcessing:
+  - type: template
+    params:
+      source: |
+        {%- if strings_contains(input, "__PLACEHOLDER__") -%}
+        {{ replace(input, "__PLACEHOLDER__", "computed_value") }}
+        {%- else -%}
+        {{ input }}
+        {%- end -%}
+  - type: regex_replace
+    params:
+      pattern: "^[ ]+"
+      replace: "  "
+```
+
+The `template` post-processor compiles its source at engine initialization (fail-fast on syntax errors) and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, `strings_contains`, etc.).
+
 ## Best Practices
 
 **1. Pre-compile at startup:**

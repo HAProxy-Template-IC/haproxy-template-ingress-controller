@@ -143,7 +143,7 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 	}
 
 	// Setup validation paths
-	validationPaths, _, cleanupFunc, err := setupValidationPaths(configSpec)
+	validationPaths, _, _, cleanupFunc, err := setupValidationPaths(configSpec)
 	if err != nil {
 		return err
 	}

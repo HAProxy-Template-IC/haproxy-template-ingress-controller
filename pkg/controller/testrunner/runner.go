@@ -60,6 +60,7 @@ type Runner struct {
 	traceTemplates  bool                   // Enable template execution tracing
 	profileIncludes bool                   // Enable include timing profiling
 	capabilities    dataplane.Capabilities // HAProxy/DataPlane API capabilities
+	haproxyVersion  *dataplane.Version     // Local HAProxy version for test skipping
 }
 
 // testEntry is a tuple of test name and test definition for worker processing.
@@ -92,11 +93,15 @@ type Options struct {
 	// Capabilities defines which features are available for the local HAProxy version.
 	// Used to determine path resolution (e.g., CRT-list paths fallback when not supported).
 	Capabilities dataplane.Capabilities
+
+	// HAProxyVersion is the detected local HAProxy version.
+	// When set, tests with MinHAProxyVersion above this version are skipped.
+	HAProxyVersion *dataplane.Version
 }
 
 // TestResults contains the results of running validation tests.
 type TestResults struct {
-	// TotalTests is the total number of tests executed.
+	// TotalTests is the total number of tests executed (excluding skipped).
 	TotalTests int
 
 	// PassedTests is the number of tests that passed all assertions.
@@ -104,6 +109,9 @@ type TestResults struct {
 
 	// FailedTests is the number of tests with at least one failed assertion.
 	FailedTests int
+
+	// SkippedTests is the number of tests skipped (e.g., due to HAProxy version requirements).
+	SkippedTests int
 
 	// TestResults contains detailed results for each test.
 	TestResults []TestResult
@@ -127,6 +135,12 @@ type TestResult struct {
 
 	// Passed is true if all assertions passed.
 	Passed bool
+
+	// Skipped is true if the test was skipped (e.g., HAProxy version too low).
+	Skipped bool
+
+	// SkipReason explains why the test was skipped.
+	SkipReason string
 
 	// Duration is the time taken to run this test.
 	Duration time.Duration
@@ -216,6 +230,7 @@ func New(
 		traceTemplates:  traceTemplates,
 		profileIncludes: options.ProfileIncludes,
 		capabilities:    options.Capabilities,
+		haproxyVersion:  options.HAProxyVersion,
 	}
 }
 
@@ -251,26 +266,48 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 		}
 	}
 
-	results.TotalTests = len(testsToRun)
+	// Separate tests into runnable and skipped based on HAProxy version requirements
+	runnableTests := make(map[string]config.ValidationTest, len(testsToRun))
+	for name, test := range testsToRun {
+		if reason := r.shouldSkipTest(&test); reason != "" {
+			results.SkippedTests++
+			results.TestResults = append(results.TestResults, TestResult{
+				TestName:    name,
+				Description: test.Description,
+				Skipped:     true,
+				SkipReason:  reason,
+			})
+		} else {
+			runnableTests[name] = test
+		}
+	}
 
-	if len(testsToRun) == 0 {
-		r.logger.Info("No tests to run")
+	results.TotalTests = len(runnableTests)
+
+	if len(runnableTests) == 0 {
+		if results.SkippedTests > 0 {
+			r.logger.Info("All tests skipped", "skipped", results.SkippedTests)
+		} else {
+			r.logger.Info("No tests to run")
+		}
+		results.Duration = time.Since(startTime)
 		return results, nil
 	}
 
 	// Determine number of workers (use 1 worker if only 1 test)
 	numWorkers := r.workers
-	if len(testsToRun) < numWorkers {
-		numWorkers = len(testsToRun)
+	if len(runnableTests) < numWorkers {
+		numWorkers = len(runnableTests)
 	}
 
 	r.logger.Log(context.Background(), logging.LevelTrace, "Starting test execution",
-		"total_tests", len(testsToRun),
+		"total_tests", len(runnableTests),
+		"skipped_tests", results.SkippedTests,
 		"workers", numWorkers)
 
 	// Create channels for work distribution
-	testChan := make(chan testEntry, len(testsToRun))
-	resultChan := make(chan TestResult, len(testsToRun))
+	testChan := make(chan testEntry, len(runnableTests))
+	resultChan := make(chan TestResult, len(runnableTests))
 
 	// Start worker pool
 	var wg sync.WaitGroup
@@ -280,7 +317,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 	}
 
 	// Send tests to workers
-	for name, test := range testsToRun {
+	for name, test := range runnableTests {
 		testChan <- testEntry{name: name, test: test}
 	}
 	close(testChan)
@@ -307,6 +344,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 		"total", results.TotalTests,
 		"passed", results.PassedTests,
 		"failed", results.FailedTests,
+		"skipped", results.SkippedTests,
 		"duration", results.Duration)
 
 	return results, nil
@@ -396,6 +434,32 @@ func (r *Runner) filterTests(tests map[string]config.ValidationTest, name string
 		filtered[name] = test
 	}
 	return filtered
+}
+
+// shouldSkipTest checks whether a test should be skipped based on version requirements.
+// Returns the skip reason if the test should be skipped, or empty string if it should run.
+func (r *Runner) shouldSkipTest(test *config.ValidationTest) string {
+	if test.MinHAProxyVersion == "" {
+		return ""
+	}
+
+	if r.haproxyVersion == nil {
+		return fmt.Sprintf("requires HAProxy >= %s but version is unknown", test.MinHAProxyVersion)
+	}
+
+	minVersion, err := dataplane.ParseVersionString(test.MinHAProxyVersion)
+	if err != nil {
+		r.logger.Warn("Invalid minHAProxyVersion, running test anyway",
+			"minHAProxyVersion", test.MinHAProxyVersion,
+			"error", err)
+		return ""
+	}
+
+	if r.haproxyVersion.Compare(minVersion) < 0 {
+		return fmt.Sprintf("requires HAProxy >= %s (detected %s)", test.MinHAProxyVersion, r.haproxyVersion.Full)
+	}
+
+	return ""
 }
 
 // runSingleTest executes a single validation test using worker-specific engine and validation paths.

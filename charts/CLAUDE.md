@@ -89,6 +89,8 @@ validationTests:
     assertions: ...
 ```
 
+The `haproxyConfig` section also supports a `postProcessing` list that transforms rendered output. Available types: `regex_replace` (line-by-line regex find/replace) and `template` (Scriggo template transformation with `input` variable). See `pkg/templating/README.md` for details.
+
 ### Plugin Pattern
 
 Libraries use a **plugin pattern** where base.yaml defines extension points:

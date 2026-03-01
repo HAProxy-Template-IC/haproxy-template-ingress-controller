@@ -462,11 +462,21 @@ func (e *ScriggoEngine) GetProfilingResults() []ProfilingEntry {
 }
 
 // buildScriggoPostProcessors builds post-processors for the Scriggo engine.
+//
+// The template post-processor type is handled here (not in NewPostProcessor) because
+// it requires access to engine.globals for Scriggo compilation.
 func buildScriggoPostProcessors(engine *ScriggoEngine, configs map[string][]PostProcessorConfig) error {
 	for templateName, procConfigs := range configs {
 		processors := make([]PostProcessor, 0, len(procConfigs))
 		for _, cfg := range procConfigs {
-			processor, err := NewPostProcessor(cfg)
+			var processor PostProcessor
+			var err error
+			if cfg.Type == PostProcessorTypeTemplate {
+				source := cfg.Params["source"]
+				processor, err = NewTemplatePostProcessor(source, engine.globals)
+			} else {
+				processor, err = NewPostProcessor(cfg)
+			}
 			if err != nil {
 				return err
 			}

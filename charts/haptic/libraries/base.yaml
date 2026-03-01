@@ -450,6 +450,7 @@ templateSnippets:
       {%- var shmEnabled bool = extraContext | dig("shmStatsEnabled") | fallback(false) -%}
       {%- if shmEnabled && semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") %}
       shm-stats-file {{ extraContext | dig("shmStatsPath") | fallback("/dev/shm/haproxy-stats") }}
+      shm-stats-file-max-objects __SHM_STATS_MAX_OBJECTS__
       {%- end %}
 
   global-settings-300-paths:
@@ -704,9 +705,26 @@ haproxyConfig:
         http-request return status 404
     {# Trailing newline preserved #}
 
-  # Post-processing: Normalize indentation to 2 spaces
-  # Applies regex replacement to ensure consistent indentation throughout the config
+  # Post-processing pipeline:
+  # 1. Template post-processor resolves __SHM_STATS_MAX_OBJECTS__ placeholder by counting
+  #    guid directives in the rendered output (short-circuits when placeholder is absent)
+  # 2. Regex replace normalizes indentation to 2 spaces
   postProcessing:
+    - type: template
+      params:
+        source: |
+          {%- if strings_contains(input, "__SHM_STATS_MAX_OBJECTS__") -%}
+          {%%
+            var guidCount = len(regexp(`(?m)^\s*guid\s`).FindAll(input, -1))
+            var maxObjects = guidCount + guidCount / 5
+            if maxObjects < 2000 {
+              maxObjects = 2000
+            }
+          %%}
+          {{ replace(input, "__SHM_STATS_MAX_OBJECTS__", tostring(maxObjects)) }}
+          {%- else -%}
+          {{ input }}
+          {%- end -%}
     - type: regex_replace
       params:
         pattern: "^[ ]+"
@@ -825,3 +843,26 @@ validationTests:
         target: haproxy.cfg
         pattern: "guid be:default_backend"
         description: Default backend must have guid
+
+  test-shm-stats-dynamic-max-objects:
+    description: shm-stats-file-max-objects is dynamically calculated from GUID count
+    minHAProxyVersion: "3.3"
+    extraContext:
+      shmStatsEnabled: true
+      haproxyVersion: "3.3.0"
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "shm-stats-file /dev/shm/haproxy-stats"
+        description: shm-stats-file must be present
+      - type: contains
+        target: haproxy.cfg
+        pattern: "shm-stats-file-max-objects 2000"
+        description: Max objects must be at least 2000 (minimum floor)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "__SHM_STATS_MAX_OBJECTS__"
+        description: Placeholder must be resolved

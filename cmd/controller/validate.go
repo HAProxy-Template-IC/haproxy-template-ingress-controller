@@ -114,7 +114,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	defer setup.Cleanup()
 
 	// Run tests
-	results, err := runValidationTests(ctx, setup.ConfigSpec, setup.Engine, setup.ValidationPaths, setup.Capabilities, logger)
+	results, err := runValidationTests(ctx, setup.ConfigSpec, setup.Engine, setup.ValidationPaths, setup.Capabilities, setup.HAProxyVersion, logger)
 	if err != nil {
 		return err
 	}
@@ -138,6 +138,7 @@ type ValidationSetup struct {
 	Engine          templating.Engine
 	ValidationPaths *dataplane.ValidationPaths
 	Capabilities    dataplane.Capabilities
+	HAProxyVersion  *dataplane.Version
 	Cleanup         func()
 }
 
@@ -156,7 +157,7 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 
 	// Setup validation paths in temp directory
 	// Pass configSpec so setupValidationPaths can derive subdirectory names from dataplane configuration
-	validationPaths, capabilities, cleanupFunc, err := setupValidationPaths(configSpec)
+	validationPaths, capabilities, haproxyVersion, cleanupFunc, err := setupValidationPaths(configSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +184,7 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 		Engine:          engine,
 		ValidationPaths: validationPaths,
 		Capabilities:    capabilities,
+		HAProxyVersion:  haproxyVersion,
 		Cleanup:         cleanupFunc,
 	}, nil
 }
@@ -194,6 +196,7 @@ func runValidationTests(
 	engine templating.Engine,
 	validationPaths *dataplane.ValidationPaths,
 	capabilities dataplane.Capabilities,
+	haproxyVersion *dataplane.Version,
 	logger *slog.Logger,
 ) (*testrunner.TestResults, error) {
 	// Convert CRD spec to internal config format
@@ -213,6 +216,7 @@ func runValidationTests(
 			DebugFilters:    validateDebugFilters,
 			ProfileIncludes: validateProfileIncludes,
 			Capabilities:    capabilities,
+			HAProxyVersion:  haproxyVersion,
 		},
 	)
 
@@ -491,6 +495,7 @@ func createTemplateEngine(configSpec *v1alpha1.HAProxyTemplateConfigSpec, logger
 func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	paths *dataplane.ValidationPaths,
 	capabilities dataplane.Capabilities,
+	haproxyVersion *dataplane.Version,
 	cleanup func(),
 	err error,
 ) {
@@ -498,21 +503,21 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	// CRT-list storage is only available in HAProxy 3.2+
 	localVersion, err := dataplane.DetectLocalVersion()
 	if err != nil {
-		return nil, dataplane.Capabilities{}, nil, fmt.Errorf("failed to detect local HAProxy version: %w\nHint: Ensure 'haproxy' is in PATH", err)
+		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("failed to detect local HAProxy version: %w\nHint: Ensure 'haproxy' is in PATH", err)
 	}
 	capabilities = dataplane.CapabilitiesFromVersion(localVersion)
 
 	// Create temporary directory
 	tempDir, err := os.MkdirTemp("", "haproxy-validate-*")
 	if err != nil {
-		return nil, dataplane.Capabilities{}, nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 
 	// Convert CRD spec to internal config format to get dataplane configuration with defaults applied
 	cfg, err := conversion.ConvertSpec(configSpec)
 	if err != nil {
 		_ = os.RemoveAll(tempDir)
-		return nil, dataplane.Capabilities{}, nil, fmt.Errorf("failed to convert config spec: %w", err)
+		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("failed to convert config spec: %w", err)
 	}
 
 	// Derive subdirectory names from configured dataplane paths using filepath.Base()
@@ -538,7 +543,7 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	for _, dir := range dirsToCreate {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			_ = os.RemoveAll(tempDir)
-			return nil, dataplane.Capabilities{}, nil, fmt.Errorf("failed to create directory: %w", err)
+			return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("failed to create directory: %w", err)
 		}
 	}
 
@@ -546,5 +551,5 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 		_ = os.RemoveAll(tempDir)
 	}
 
-	return resolvedPaths.ToValidationPaths(), capabilities, cleanup, nil
+	return resolvedPaths.ToValidationPaths(), capabilities, localVersion, cleanup, nil
 }

@@ -100,7 +100,12 @@ func formatSummary(results *TestResults, verbose bool) string {
 	for i := range results.TestResults {
 		test := &results.TestResults[i]
 		// Test header
-		if test.Passed {
+		if test.Skipped {
+			out.WriteString(fmt.Sprintf("⊘ %s [skipped]\n", test.TestName))
+			out.WriteString(fmt.Sprintf("  %s\n", test.SkipReason))
+			out.WriteString("\n")
+			continue
+		} else if test.Passed {
 			out.WriteString(fmt.Sprintf("✓ %s (%.3fs)\n", test.TestName, test.Duration.Seconds()))
 		} else {
 			out.WriteString(fmt.Sprintf("✗ %s (%.3fs)\n", test.TestName, test.Duration.Seconds()))
@@ -159,11 +164,20 @@ func formatSummary(results *TestResults, verbose bool) string {
 	}
 
 	// Summary line
-	out.WriteString(fmt.Sprintf("Tests: %d passed, %d failed, %d total (%.3fs)\n",
-		results.PassedTests,
-		results.FailedTests,
-		results.TotalTests,
-		results.Duration.Seconds()))
+	if results.SkippedTests > 0 {
+		out.WriteString(fmt.Sprintf("Tests: %d passed, %d failed, %d skipped, %d total (%.3fs)\n",
+			results.PassedTests,
+			results.FailedTests,
+			results.SkippedTests,
+			results.TotalTests+results.SkippedTests,
+			results.Duration.Seconds()))
+	} else {
+		out.WriteString(fmt.Sprintf("Tests: %d passed, %d failed, %d total (%.3fs)\n",
+			results.PassedTests,
+			results.FailedTests,
+			results.TotalTests,
+			results.Duration.Seconds()))
+	}
 
 	return out.String()
 }
@@ -175,25 +189,29 @@ func formatJSON(results *TestResults) (string, error) {
 		TestName    string            `json:"testName"`
 		Description string            `json:"description,omitempty"`
 		Passed      bool              `json:"passed"`
+		Skipped     bool              `json:"skipped,omitempty"`
+		SkipReason  string            `json:"skipReason,omitempty"`
 		Duration    float64           `json:"duration"`
 		Assertions  []AssertionResult `json:"assertions,omitempty"`
 		RenderError string            `json:"renderError,omitempty"`
 	}
 
 	type jsonResults struct {
-		TotalTests  int              `json:"totalTests"`
-		PassedTests int              `json:"passedTests"`
-		FailedTests int              `json:"failedTests"`
-		Duration    float64          `json:"duration"`
-		Tests       []jsonTestResult `json:"tests"`
+		TotalTests   int              `json:"totalTests"`
+		PassedTests  int              `json:"passedTests"`
+		FailedTests  int              `json:"failedTests"`
+		SkippedTests int              `json:"skippedTests,omitempty"`
+		Duration     float64          `json:"duration"`
+		Tests        []jsonTestResult `json:"tests"`
 	}
 
 	jr := jsonResults{
-		TotalTests:  results.TotalTests,
-		PassedTests: results.PassedTests,
-		FailedTests: results.FailedTests,
-		Duration:    results.Duration.Seconds(),
-		Tests:       make([]jsonTestResult, 0, len(results.TestResults)),
+		TotalTests:   results.TotalTests,
+		PassedTests:  results.PassedTests,
+		FailedTests:  results.FailedTests,
+		SkippedTests: results.SkippedTests,
+		Duration:     results.Duration.Seconds(),
+		Tests:        make([]jsonTestResult, 0, len(results.TestResults)),
 	}
 
 	for i := range results.TestResults {
@@ -202,6 +220,8 @@ func formatJSON(results *TestResults) (string, error) {
 			TestName:    test.TestName,
 			Description: test.Description,
 			Passed:      test.Passed,
+			Skipped:     test.Skipped,
+			SkipReason:  test.SkipReason,
 			Duration:    test.Duration.Seconds(),
 			Assertions:  test.Assertions,
 			RenderError: test.RenderError,
@@ -223,25 +243,29 @@ func formatYAML(results *TestResults) (string, error) {
 		TestName    string            `yaml:"testName"`
 		Description string            `yaml:"description,omitempty"`
 		Passed      bool              `yaml:"passed"`
+		Skipped     bool              `yaml:"skipped,omitempty"`
+		SkipReason  string            `yaml:"skipReason,omitempty"`
 		Duration    float64           `yaml:"duration"`
 		Assertions  []AssertionResult `yaml:"assertions,omitempty"`
 		RenderError string            `yaml:"renderError,omitempty"`
 	}
 
 	type yamlResults struct {
-		TotalTests  int              `yaml:"totalTests"`
-		PassedTests int              `yaml:"passedTests"`
-		FailedTests int              `yaml:"failedTests"`
-		Duration    float64          `yaml:"duration"`
-		Tests       []yamlTestResult `yaml:"tests"`
+		TotalTests   int              `yaml:"totalTests"`
+		PassedTests  int              `yaml:"passedTests"`
+		FailedTests  int              `yaml:"failedTests"`
+		SkippedTests int              `yaml:"skippedTests,omitempty"`
+		Duration     float64          `yaml:"duration"`
+		Tests        []yamlTestResult `yaml:"tests"`
 	}
 
 	yr := yamlResults{
-		TotalTests:  results.TotalTests,
-		PassedTests: results.PassedTests,
-		FailedTests: results.FailedTests,
-		Duration:    results.Duration.Seconds(),
-		Tests:       make([]yamlTestResult, 0, len(results.TestResults)),
+		TotalTests:   results.TotalTests,
+		PassedTests:  results.PassedTests,
+		FailedTests:  results.FailedTests,
+		SkippedTests: results.SkippedTests,
+		Duration:     results.Duration.Seconds(),
+		Tests:        make([]yamlTestResult, 0, len(results.TestResults)),
 	}
 
 	for i := range results.TestResults {
@@ -250,6 +274,8 @@ func formatYAML(results *TestResults) (string, error) {
 			TestName:    test.TestName,
 			Description: test.Description,
 			Passed:      test.Passed,
+			Skipped:     test.Skipped,
+			SkipReason:  test.SkipReason,
 			Duration:    test.Duration.Seconds(),
 			Assertions:  test.Assertions,
 			RenderError: test.RenderError,

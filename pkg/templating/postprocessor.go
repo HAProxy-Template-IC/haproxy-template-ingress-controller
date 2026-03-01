@@ -37,6 +37,11 @@ type PostProcessorType string
 const (
 	// PostProcessorTypeRegexReplace applies regex-based find/replace.
 	PostProcessorTypeRegexReplace PostProcessorType = "regex_replace"
+
+	// PostProcessorTypeTemplate applies a Scriggo template transformation.
+	// The template receives the rendered output as the `input` variable (string)
+	// and has access to all standard Scriggo builtins.
+	PostProcessorTypeTemplate PostProcessorType = "template"
 )
 
 // PostProcessorConfig defines configuration for a post-processor.
