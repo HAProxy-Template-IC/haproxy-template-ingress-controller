@@ -341,9 +341,9 @@ templateSnippets:
       {#- ── 8. Generate server lines ────────────────────────────────────── -#}
       {%- for i := 1; i <= slots; i++ %}
       {%- if ep := slotAssignments[i]; ep != nil %}
-      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{% if bkName != "" %} guid srv:{{ bkName }}:SRV_{{ i }}{% end %} enabled  # Pod: {{ ep["name"] }}
+      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{% if bkName != "" %} guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}{% end %} enabled  # Pod: {{ ep["name"] }}
       {% else %}
-      server SRV_{{ i }} 127.0.0.1:1{% if bkName != "" %} guid srv:{{ bkName }}:SRV_{{ i }}{% end %} disabled  # Placeholder
+      server SRV_{{ i }} 127.0.0.1:1{% if bkName != "" %} guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}{% end %} disabled  # Placeholder
       {% end %}
       {% end %}
       {% end %}

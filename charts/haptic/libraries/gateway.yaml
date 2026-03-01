@@ -505,7 +505,7 @@ templateSnippets:
       {%- var beKey = BackendNameGateway(route, backend) -%}
       # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
       backend {{ beKey }}
-          guid be:{{ beKey }}
+          guid {{ make_guid("be", beKey) }}
         default-server check{%- if protoFlag != "" %} proto {{ protoFlag }}{%- end %}
         {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey) | indent(2, true) -}}
       {%- end -%}
@@ -590,7 +590,7 @@ templateSnippets:
       # gateway/backends-gateway-ssl-passthrough
 
       backend {{ biName }}
-          guid be:{{ biName }}
+          guid {{ make_guid("be", biName) }}
           mode tcp
           {{ BackendServers(refName, 10, refPort, nil, nil, biName) | indent(4, false) }}
                     {%- generated = true %}
