@@ -881,7 +881,7 @@ haproxy:
   # Requires HAProxy 3.3+ (version-gated in templates via semver_gte).
   shmStats:
     enabled: false
-    path: "/etc/haproxy/shm-stats"
+    path: "/dev/shm/haproxy-stats"
   # Number of HAProxy threads (nbthread global directive).
   # Default (key absent): auto-calculated from CPU requests (ceil of CPU cores, minimum 1).
   # Set to 0 to disable the nbthread directive entirely (HAProxy uses its built-in default).

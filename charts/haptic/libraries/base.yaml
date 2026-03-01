@@ -449,7 +449,7 @@ templateSnippets:
     template: |
       {%- var shmEnabled bool = extraContext | dig("shmStatsEnabled") | fallback(false) -%}
       {%- if shmEnabled && semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") %}
-      shm-stats-file {{ extraContext | dig("shmStatsPath") | fallback("/etc/haproxy/shm-stats") }}
+      shm-stats-file {{ extraContext | dig("shmStatsPath") | fallback("/dev/shm/haproxy-stats") }}
       {%- end %}
 
   global-settings-300-paths:
