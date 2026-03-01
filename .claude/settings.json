@@ -1,0 +1,45 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-no-verify.sh"
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-interactive-git.sh"
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-direct-lint.sh"
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-direct-go-test.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-nolint-edit.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-nolint-write.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
