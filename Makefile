@@ -2,7 +2,7 @@
         test test-integration test-acceptance test-acceptance-parallel build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
-        tidy verify generate clean fmt vet install-tools dev \
+        tidy verify verify-generate generate clean fmt vet install-tools dev \
         release-controller release-chart goreleaser-snapshot \
         pgo-profile pgo-merge
 
@@ -75,6 +75,8 @@ endif
 	@mkdir -p bin
 	@cd tools/linters/eventimmutability && $(GO) build -o ../../../bin/eventimmutability ./cmd/eventimmutability
 	@./bin/eventimmutability ./...
+	@echo "Verifying generated code..."
+	@$(MAKE) verify-generate
 
 lint-fix: ## Run golangci-lint with auto-fix
 	@echo "Running golangci-lint with auto-fix..."
@@ -322,6 +324,20 @@ tidy: ## Run go mod tidy
 verify: ## Verify dependencies
 	@echo "Verifying dependencies..."
 	$(GO) mod verify
+
+verify-generate: ## Verify generated code (CRDs, DeepCopy) is up-to-date
+	@echo "Verifying generated code is up-to-date..."
+	@$(MAKE) generate-crds generate-deepcopy
+	@if ! git diff --quiet --exit-code -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go'; then \
+		echo ""; \
+		echo "ERROR: Generated files are out of date:"; \
+		git diff --stat -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go'; \
+		echo ""; \
+		echo "Run 'make generate-crds generate-deepcopy' and commit the result."; \
+		git checkout -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go'; \
+		exit 1; \
+	fi
+	@echo "✓ Generated code is up-to-date"
 
 ## Code generation
 
