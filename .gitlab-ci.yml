@@ -481,7 +481,7 @@ publish-chart-snapshot:
     - helm registry login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
     - |
-      SNAPSHOT_VERSION="0.0.0-main.${CI_COMMIT_SHORT_SHA}"
+      SNAPSHOT_VERSION="0.0.0-main.g${CI_COMMIT_SHORT_SHA}"
       helm package charts/haptic --version "$SNAPSHOT_VERSION" --app-version "main-${CI_COMMIT_SHORT_SHA}"
       helm push haptic-${SNAPSHOT_VERSION}.tgz oci://${CI_REGISTRY}/haproxy-haptic/haptic/charts
       echo "Published chart snapshot: haptic:${SNAPSHOT_VERSION}"
