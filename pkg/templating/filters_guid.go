@@ -50,13 +50,14 @@ func scriggoMakeGUID(parts ...interface{}) string {
 }
 
 // truncateGUID shortens a GUID that exceeds haproxyGUIDMaxLen by replacing the
-// tail with a hash. The format is: "<truncated>~<hash8>" where hash8 is the
+// tail with a hash. The format is: "<truncated>.<hash8>" where hash8 is the
 // first 8 hex characters of the SHA-256 of the full GUID.
+// The "." separator is used because HAProxy GUIDs only allow alphanumeric, ".", ":", "-", "_".
 func truncateGUID(guid string) string {
 	hash := sha256.Sum256([]byte(guid))
 	hashHex := hex.EncodeToString(hash[:])[:guidHashLen]
 
-	// Budget: haproxyGUIDMaxLen - len("~") - guidHashLen
+	// Budget: haproxyGUIDMaxLen - len(".") - guidHashLen
 	prefixLen := haproxyGUIDMaxLen - 1 - guidHashLen
-	return guid[:prefixLen] + "~" + hashHex
+	return guid[:prefixLen] + "." + hashHex
 }
