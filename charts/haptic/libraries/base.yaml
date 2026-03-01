@@ -707,7 +707,8 @@ haproxyConfig:
 
   # Post-processing pipeline:
   # 1. Template post-processor resolves __SHM_STATS_MAX_OBJECTS__ placeholder by counting
-  #    guid directives in the rendered output (short-circuits when placeholder is absent)
+  #    all HAProxy objects that need shared counters (proxies + servers)
+  #    (short-circuits when placeholder is absent)
   # 2. Regex replace normalizes indentation to 2 spaces
   postProcessing:
     - type: template
@@ -715,8 +716,10 @@ haproxyConfig:
         source: |
           {%- if strings_contains(input, "__SHM_STATS_MAX_OBJECTS__") -%}
           {%%
-            var guidCount = len(regexp(`(?m)^\s*guid\s`).FindAll(input, -1))
-            var maxObjects = guidCount + guidCount / 5
+            var serverCount = len(regexp(`(?m)^\s+server\s`).FindAll(input, -1))
+            var proxyCount = len(regexp(`(?m)^(?:frontend|backend|listen)\s`).FindAll(input, -1))
+            var maxObjects = serverCount + proxyCount
+            maxObjects = maxObjects + maxObjects / 5
             if maxObjects < 2000 {
               maxObjects = 2000
             }
@@ -845,7 +848,7 @@ validationTests:
         description: Default backend must have guid
 
   test-shm-stats-dynamic-max-objects:
-    description: shm-stats-file-max-objects is dynamically calculated from GUID count
+    description: shm-stats-file-max-objects is dynamically calculated from object count
     minHAProxyVersion: "3.3"
     extraContext:
       shmStatsEnabled: true

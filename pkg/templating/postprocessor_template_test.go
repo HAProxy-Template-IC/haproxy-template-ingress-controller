@@ -46,8 +46,10 @@ func TestTemplatePostProcessor_SimpleReplace(t *testing.T) {
 func TestTemplatePostProcessor_RegexCountAndReplace(t *testing.T) {
 	globals := buildScriggoGlobals(nil, nil, nil)
 	source := `{%%
-  var count = len(regexp("(?m)^\\s*guid\\s").FindAll(input, -1))
-  var result = count + count / 5
+  var serverCount = len(regexp("(?m)^\\s+server\\s").FindAll(input, -1))
+  var proxyCount = len(regexp("(?m)^(?:frontend|backend|listen)\\s").FindAll(input, -1))
+  var result = serverCount + proxyCount
+  result = result + result / 5
   if result < 100 {
     result = 100
   }
@@ -77,8 +79,8 @@ max-objects __COUNT__
 	result, err := processor.Process(input)
 	require.NoError(t, err)
 
-	// 3 guid directives: fe:http, be:svc1, be:svc2
-	// count = 3, result = 3 + 3/5 = 3, but min 100
+	// 1 frontend + 2 backends + 2 servers = 5 objects
+	// 5 + 5/5 = 6, but min 100
 	assert.Contains(t, result, "max-objects 100")
 	assert.NotContains(t, result, "__COUNT__")
 }
