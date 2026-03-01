@@ -216,11 +216,12 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 	for _, testName := range testNames {
 		crdTest := crdTests[testName]
 		testConfig := config.ValidationTest{
-			Description:   crdTest.Description,
-			Fixtures:      convertFixtures(crdTest.Fixtures),
-			HTTPFixtures:  convertHTTPFixtures(crdTest.HTTPResources),
-			CurrentConfig: crdTest.CurrentConfig,
-			Assertions:    convertAssertions(crdTest.Assertions),
+			Description:       crdTest.Description,
+			Fixtures:          convertFixtures(crdTest.Fixtures),
+			HTTPFixtures:      convertHTTPFixtures(crdTest.HTTPResources),
+			CurrentConfig:     crdTest.CurrentConfig,
+			MinHAProxyVersion: crdTest.MinHAProxyVersion,
+			Assertions:        convertAssertions(crdTest.Assertions),
 		}
 		// Parse test-specific extraContext if present
 		if len(crdTest.ExtraContext.Raw) > 0 {

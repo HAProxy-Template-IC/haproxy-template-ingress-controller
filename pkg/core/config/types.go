@@ -120,6 +120,11 @@ type ValidationTest struct {
 	// This allows testing template behavior with different extraContext values.
 	ExtraContext map[string]interface{} `yaml:"extraContext,omitempty" json:"extraContext,omitempty"`
 
+	// MinHAProxyVersion specifies the minimum HAProxy version required to run this test.
+	// Format: "major.minor" (e.g., "3.3"). When set, the test is skipped if the local
+	// HAProxy version is below this threshold.
+	MinHAProxyVersion string `yaml:"minHAProxyVersion,omitempty"`
+
 	// Assertions contains validation checks to run against the rendered config.
 	Assertions []ValidationAssertion `yaml:"assertions"`
 }

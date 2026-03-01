@@ -15,6 +15,8 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Added
 
+- `template` post-processor type for declarative output transformations in `postProcessing`
+- `shm-stats-file-max-objects` is now dynamically calculated from the number of `guid` directives in the rendered config
 - `haproxy.shmStats.enabled` value to persist stats counters across HAProxy reloads via shared memory (requires HAProxy 3.3+)
 - `guid` directives on all frontends, backends, and servers for stable object identification
 - `haproxy.nbthread` value to control HAProxy thread count, auto-calculated from CPU requests by default

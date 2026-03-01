@@ -608,6 +608,16 @@ type ValidationTest struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ExtraContext runtime.RawExtension `json:"extraContext,omitempty"`
 
+	// MinHAProxyVersion specifies the minimum HAProxy version required to run this test.
+	//
+	// When set, the test is skipped if the local HAProxy version is below this threshold.
+	// This is useful for tests that use HAProxy features only available in newer versions
+	// (e.g., shm-stats-file requires HAProxy 3.3+).
+	//
+	// Format: "major.minor" (e.g., "3.3")
+	// +optional
+	MinHAProxyVersion string `json:"minHAProxyVersion,omitempty"`
+
 	// Assertions defines the validation checks to perform.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1

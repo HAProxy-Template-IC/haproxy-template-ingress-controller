@@ -201,6 +201,12 @@ Debug headers include:
 - `X-HAProxy-Path-Match`: Full path match result
 - `X-HAProxy-Path-Match-Qualifier`: BACKEND or MULTIBACKEND
 
+### Shared Memory Stats (HAProxy 3.3+)
+
+When `haproxy.shmStats.enabled` is `true` and HAProxy version is 3.3 or later, the base library adds `shm-stats-file` and `shm-stats-file-max-objects` to the global section. This persists stats counters (frontend/backend/server metrics) across HAProxy reloads via shared memory, eliminating counter resets during configuration changes.
+
+The `shm-stats-file-max-objects` value is dynamically calculated from the number of `guid` directives in the rendered configuration (with 20% headroom and a minimum of 2000). This is handled by a `template` post-processor that counts GUIDs after the full configuration is rendered, so the value automatically adjusts as backends and servers are added or removed.
+
 ### Address Discovery
 
 The base library watches controller LoadBalancer Services and discovers external addresses for status reporting. Addresses are aggregated from **all** matching services and deduplicated, then stored in `gf["addresses"]`. This supports multi-service setups where HAProxy is exposed via both internal and public LoadBalancers.
@@ -244,6 +250,9 @@ global
     crt-base /etc/haproxy/certs
     # global-settings-400-ssl
     tune.ssl.default-dh-param 2048
+    # global-settings-250-shm-stats (when haproxy.shmStats.enabled=true and HAProxy >= 3.3)
+    shm-stats-file /dev/shm/haproxy-stats
+    shm-stats-file-max-objects 2000  # dynamically calculated from guid count
 
 defaults
     # defaults-settings-100-options

@@ -46,6 +46,40 @@ haproxyConfig:
 !!! important
     All auxiliary file references should use `pathResolver.GetPath()` to generate correct paths.
 
+#### Post-Processing
+
+The `haproxyConfig` section supports a `postProcessing` list that transforms the rendered output before deployment. Post-processors run sequentially on the rendered configuration.
+
+Available types:
+
+| Type | Description |
+|------|-------------|
+| `regex_replace` | Line-by-line regex find/replace (`pattern` and `replace` params) |
+| `template` | Scriggo template transformation with access to the rendered output via the `input` variable (`source` param) |
+
+```yaml
+haproxyConfig:
+  template: |
+    global
+        daemon
+    # ...
+  postProcessing:
+    - type: template
+      params:
+        source: |
+          {%- if strings_contains(input, "__PLACEHOLDER__") -%}
+          {{ replace(input, "__PLACEHOLDER__", "computed-value") }}
+          {%- else -%}
+          {{ input }}
+          {%- end -%}
+    - type: regex_replace
+      params:
+        pattern: "^[ ]+"
+        replace: "  "
+```
+
+The `template` post-processor receives the fully rendered output as the `input` variable and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, etc.). Its output becomes the new rendered content. This is used by the base library to dynamically calculate `shm-stats-file-max-objects` from `guid` directive counts.
+
 ### Map Files
 
 Map files generate HAProxy lookup tables stored in `/etc/haproxy/maps/`:

@@ -109,6 +109,21 @@ func parseVersionParts(version string) (major, minor int, err error) {
 	return major, minor, nil
 }
 
+// ParseVersionString parses a version string like "3.3" or "3.3.0" into a Version.
+// This is useful for parsing user-provided version constraints.
+func ParseVersionString(version string) (*Version, error) {
+	major, minor, err := parseVersionParts(version)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Version{
+		Major: major,
+		Minor: minor,
+		Full:  version,
+	}, nil
+}
+
 // DetectLocalVersion runs "haproxy -v" and returns the local HAProxy version.
 // Returns an error if haproxy is not found or version cannot be parsed.
 func DetectLocalVersion() (*Version, error) {
