@@ -144,6 +144,7 @@ templateSnippets:
       # ssl/frontends-ssl-tcp
 
       frontend ssl-tcp
+          guid fe:ssl-tcp
           mode tcp
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}
 
@@ -184,6 +185,7 @@ templateSnippets:
       # ssl/backends-ssl-loopback
 
       backend ssl-loopback
+          guid be:ssl-loopback
           mode tcp
           server loopback unix@/etc/haproxy/ssl-frontend.sock send-proxy-v2
 
@@ -212,6 +214,7 @@ templateSnippets:
       # ssl/frontends-https
 
       frontend https
+          guid fe:https
           mode http
       {% if len(passthroughBackends) > 0 -%}
           bind unix@/etc/haproxy/ssl-frontend.sock mode 660{{ render "util-ssl-bind-options" }} accept-proxy

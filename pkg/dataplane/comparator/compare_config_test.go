@@ -1020,7 +1020,7 @@ func TestCompareBinds(t *testing.T) {
 			"http-frontend",
 			map[string]*models.Bind{},
 			map[string]*models.Bind{
-				"http-bind": {BindParams: models.BindParams{Name: "http-bind"}},
+				"http-bind": {Name: "http-bind"},
 			},
 		)
 		require.NotEmpty(t, ops)
@@ -1031,7 +1031,7 @@ func TestCompareBinds(t *testing.T) {
 		ops := comp.compareBindsWithIndex(
 			"http-frontend",
 			map[string]*models.Bind{
-				"old-bind": {BindParams: models.BindParams{Name: "old-bind"}},
+				"old-bind": {Name: "old-bind"},
 			},
 			map[string]*models.Bind{},
 		)
@@ -1043,10 +1043,10 @@ func TestCompareBinds(t *testing.T) {
 		ops := comp.compareBindsWithIndex(
 			"http-frontend",
 			map[string]*models.Bind{
-				"http-bind": {BindParams: models.BindParams{Name: "http-bind"}, Port: ptrInt64(80)},
+				"http-bind": {Name: "http-bind", Port: ptrInt64(80)},
 			},
 			map[string]*models.Bind{
-				"http-bind": {BindParams: models.BindParams{Name: "http-bind"}, Port: ptrInt64(8080)},
+				"http-bind": {Name: "http-bind", Port: ptrInt64(8080)},
 			},
 		)
 		require.NotEmpty(t, ops)
@@ -1054,7 +1054,7 @@ func TestCompareBinds(t *testing.T) {
 	})
 
 	t.Run("no changes", func(t *testing.T) {
-		bind := &models.Bind{BindParams: models.BindParams{Name: "http-bind"}}
+		bind := &models.Bind{Name: "http-bind"}
 		ops := comp.compareBindsWithIndex("http-frontend",
 			map[string]*models.Bind{"http-bind": bind},
 			map[string]*models.Bind{"http-bind": bind})
