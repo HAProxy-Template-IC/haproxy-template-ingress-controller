@@ -57,6 +57,19 @@ spec:
     {{- end }}
     {{- $_ := set $config.templatingSettings.extraContext "controllerName" .Values.gatewayClass.controllerName }}
   {{- end }}
+  {{- /* Add haproxyVersion to extraContext for version-gated features (e.g., shm-stats-file) */ -}}
+  {{- if not $config.templatingSettings }}
+    {{- $_ := set $config "templatingSettings" dict }}
+  {{- end }}
+  {{- if not $config.templatingSettings.extraContext }}
+    {{- $_ := set $config.templatingSettings "extraContext" dict }}
+  {{- end }}
+  {{- $_ := set $config.templatingSettings.extraContext "haproxyVersion" .Values.haproxyVersion }}
+  {{- /* Add shmStats settings to extraContext when enabled */ -}}
+  {{- if .Values.haproxy.shmStats.enabled }}
+    {{- $_ := set $config.templatingSettings.extraContext "shmStatsEnabled" true }}
+    {{- $_ := set $config.templatingSettings.extraContext "shmStatsPath" .Values.haproxy.shmStats.path }}
+  {{- end }}
   {{- /* Add nbthread to extraContext for controller-rendered HAProxy config */ -}}
   {{- $nbthread := include "haptic.haproxy.nbthread" . }}
   {{- if $nbthread }}

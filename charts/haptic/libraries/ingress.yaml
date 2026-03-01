@@ -203,6 +203,7 @@ templateSnippets:
       # Backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
                   {%- var backendKey = BackendNameIngress(ingress, path) %}
       backend {{ backendKey }}
+          guid be:{{ backendKey }}
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context }}
         default-server check{{ BuildServerOptions(serverOpts) }}
@@ -741,7 +742,7 @@ validationTests:
       # Remaining slots should be placeholders
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_3 127\\.0\\.0\\.1:1 disabled"
+        pattern: "server SRV_3 127\\.0\\.0\\.1:1 .*disabled"
         description: Unused slots should remain as placeholders
 
   test-ingress-slot-preservation-lower-ip:
@@ -829,7 +830,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_3 127\\.0\\.0\\.1:1 disabled"
+        pattern: "server SRV_3 127\\.0\\.0\\.1:1 .*disabled"
         description: Unused slots should remain as placeholders
 
   test-ingress-status-patches:

@@ -204,4 +204,11 @@ const (
 	// FilterToJSON serializes any value to a JSON string.
 	// Syntax: toJSON(value) or value | toJSON().
 	FilterToJSON = "toJSON"
+
+	// Version comparison functions.
+
+	// FuncSemverGte checks if a semver version is >= a minimum version.
+	// Compares major.minor (patch ignored). Returns false for unparseable versions.
+	// Syntax: semver_gte(version, minVersion) returns bool.
+	FuncSemverGte = "semver_gte"
 )

@@ -340,7 +340,7 @@ func TestServerFactoryFunctions(t *testing.T) {
 }
 
 func TestBindFactoryFunctions(t *testing.T) {
-	bind := &models.Bind{BindParams: models.BindParams{Name: "http-bind"}}
+	bind := &models.Bind{Name: "http-bind"}
 
 	tests := []struct {
 		name             string
@@ -1815,10 +1815,10 @@ func TestDescribeHelperFunctions(t *testing.T) {
 				name:   "bind with SSL and certificate",
 				opType: OperationCreate,
 				bind: &models.Bind{
+					Name:    "https-bind",
 					Address: "*",
 					Port:    ptrInt64(443),
 					BindParams: models.BindParams{
-						Name:           "https-bind",
 						Ssl:            true,
 						SslCertificate: "/etc/ssl/cert.pem",
 					},
@@ -1830,11 +1830,9 @@ func TestDescribeHelperFunctions(t *testing.T) {
 				name:   "bind without SSL",
 				opType: OperationUpdate,
 				bind: &models.Bind{
+					Name:    "http-bind",
 					Address: "*",
 					Port:    ptrInt64(80),
-					BindParams: models.BindParams{
-						Name: "http-bind",
-					},
 				},
 				frontendName: "http",
 				wantContains: []string{"Update bind", "*:80"},
@@ -2232,7 +2230,7 @@ func TestNameExtractors(t *testing.T) {
 	})
 
 	t.Run("BindName", func(t *testing.T) {
-		b := &models.Bind{BindParams: models.BindParams{Name: "bind"}}
+		b := &models.Bind{Name: "bind"}
 		assert.Equal(t, "bind", BindName(b))
 	})
 

@@ -341,9 +341,9 @@ templateSnippets:
       {#- ── 8. Generate server lines ────────────────────────────────────── -#}
       {%- for i := 1; i <= slots; i++ %}
       {%- if ep := slotAssignments[i]; ep != nil %}
-      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }} enabled  # Pod: {{ ep["name"] }}
+      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{% if bkName != "" %} guid srv:{{ bkName }}:SRV_{{ i }}{% end %} enabled  # Pod: {{ ep["name"] }}
       {% else %}
-      server SRV_{{ i }} 127.0.0.1:1 disabled  # Placeholder
+      server SRV_{{ i }} 127.0.0.1:1{% if bkName != "" %} guid srv:{{ bkName }}:SRV_{{ i }}{% end %} disabled  # Placeholder
       {% end %}
       {% end %}
       {% end %}
@@ -426,6 +426,13 @@ templateSnippets:
       {#- Renders global-settings-* snippets (global section directives) -#}
       {{- render_glob "global-settings-*" -}}
 
+  global-settings-050-experimental:
+    template: |
+      {%- var shmEnabled bool = extraContext | dig("shmStatsEnabled") | fallback(false) -%}
+      {%- if shmEnabled && semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") %}
+      expose-experimental-directives
+      {%- end %}
+
   global-settings-100-logging:
     template: |
       log stdout len 4096 local0 info
@@ -436,6 +443,13 @@ templateSnippets:
       {%- var nbthread = extraContext | dig("nbthread") | fallback(0) | toint() -%}
       {%- if nbthread > 0 %}
       nbthread {{ nbthread }}
+      {%- end %}
+
+  global-settings-250-shm-stats:
+    template: |
+      {%- var shmEnabled bool = extraContext | dig("shmStatsEnabled") | fallback(false) -%}
+      {%- if shmEnabled && semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") %}
+      shm-stats-file {{ extraContext | dig("shmStatsPath") | fallback("/etc/haproxy/shm-stats") }}
       {%- end %}
 
   global-settings-300-paths:
@@ -633,6 +647,7 @@ haproxyConfig:
     {%- _ = render_glob "status-patches-*" -%}
 
     frontend status
+        guid fe:status
         bind *:8404
         no log
         http-request return status 200 content-type text/plain string "OK" if { path /healthz }
@@ -641,6 +656,7 @@ haproxyConfig:
         {{- render_glob "status-extra-*" }}
 
     frontend http_frontend
+        guid fe:http_frontend
         bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
         {# Extension point for early frontend directives (options, captures, ACLs) #}
         {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
@@ -684,6 +700,7 @@ haproxyConfig:
     {{- render_glob "backends-*" }}
 
     backend default_backend
+        guid be:default_backend
         http-request return status 404
     {# Trailing newline preserved #}
 
@@ -789,3 +806,22 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request use-service prometheus-exporter if { path /metrics }"
         description: Prometheus exporter must be enabled on status frontend
+
+  test-guid-directives:
+    description: GUIDs are present on frontends, backends, and default_backend
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config with GUIDs must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "guid fe:status"
+        description: Status frontend must have guid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "guid fe:http_frontend"
+        description: HTTP frontend must have guid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "guid be:default_backend"
+        description: Default backend must have guid

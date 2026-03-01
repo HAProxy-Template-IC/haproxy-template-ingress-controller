@@ -505,6 +505,7 @@ templateSnippets:
       {%- var beKey = BackendNameGateway(route, backend) -%}
       # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
       backend {{ beKey }}
+          guid be:{{ beKey }}
         default-server check{%- if protoFlag != "" %} proto {{ protoFlag }}{%- end %}
         {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey) | indent(2, true) -}}
       {%- end -%}
@@ -589,6 +590,7 @@ templateSnippets:
       # gateway/backends-gateway-ssl-passthrough
 
       backend {{ biName }}
+          guid be:{{ biName }}
           mode tcp
           {{ BackendServers(refName, 10, refPort, nil, nil, biName) | indent(4, false) }}
                     {%- generated = true %}
@@ -4067,7 +4069,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_3 127\\.0\\.0\\.1:1 disabled"
+        pattern: "server SRV_3 127\\.0\\.0\\.1:1 .*disabled"
         description: Unused slots should remain as placeholders
 
   test-gateway-slot-preservation-lower-ip:
@@ -4156,7 +4158,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_3 127\\.0\\.0\\.1:1 disabled"
+        pattern: "server SRV_3 127\\.0\\.0\\.1:1 .*disabled"
         description: Unused slots should remain as placeholders
 
   test-gateway-status-patches:

@@ -15,6 +15,8 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Added
 
+- `haproxy.shmStats.enabled` value to persist stats counters across HAProxy reloads via shared memory (requires HAProxy 3.3+)
+- `guid` directives on all frontends, backends, and servers for stable object identification
 - `haproxy.nbthread` value to control HAProxy thread count, auto-calculated from CPU requests by default
 - `global-settings-*`, `defaults-settings-*`, and `frontend-extra-*` extension points for customizing HAProxy global/defaults sections and early frontend directives via template snippets
 - `controller.statusPatches.enabled` value to disable status patch writes during migration from another ingress controller

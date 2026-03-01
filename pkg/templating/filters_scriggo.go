@@ -158,6 +158,9 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncCondition] = scriggoCondition
 	decl[FuncTransitionTime] = scriggoTransitionTime
 	decl[FilterToJSON] = scriggoToJSON
+
+	// Version comparison functions
+	decl[FuncSemverGte] = scriggoSemverGte
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.
