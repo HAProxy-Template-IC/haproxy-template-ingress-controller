@@ -82,7 +82,7 @@ func TestScriggoMakeGUID(t *testing.T) {
 			if tt.wantMax > 0 {
 				require.LessOrEqual(t, len(result), tt.wantMax,
 					"GUID length %d exceeds max %d: %s", len(result), tt.wantMax, result)
-				assert.Contains(t, result, "~", "truncated GUID should contain hash separator")
+				assert.Regexp(t, `\.[0-9a-f]{8}$`, result, "truncated GUID should end with .hash8")
 			}
 		})
 	}
@@ -104,4 +104,11 @@ func TestScriggoMakeGUID_Deterministic(t *testing.T) {
 	guid2 := scriggoMakeGUID(parts...)
 
 	assert.Equal(t, guid1, guid2, "same inputs must produce same GUID")
+}
+
+func TestScriggoMakeGUID_ValidCharacters(t *testing.T) {
+	// HAProxy GUIDs only allow: alphanumeric, '.', ':', '-', '_'
+	guid := scriggoMakeGUID("srv", strings.Repeat("a", 150), "SRV_1")
+	assert.Regexp(t, `^[a-zA-Z0-9.:_-]+$`, guid,
+		"truncated GUID must only contain valid HAProxy GUID characters")
 }
