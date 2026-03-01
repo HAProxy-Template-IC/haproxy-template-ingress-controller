@@ -716,7 +716,7 @@ haproxyConfig:
         source: |
           {%- if strings_contains(input, "__SHM_STATS_MAX_OBJECTS__") -%}
           {%%
-            var serverCount = len(regexp(`(?m)^\s+server\s`).FindAll(input, -1))
+            var serverCount = len(regexp(`(?m)^\s*server\s`).FindAll(input, -1))
             var proxyCount = len(regexp(`(?m)^(?:frontend|backend|listen)\s`).FindAll(input, -1))
             var maxObjects = serverCount + proxyCount
             maxObjects = maxObjects + maxObjects / 5
