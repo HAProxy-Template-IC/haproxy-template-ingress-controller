@@ -216,15 +216,14 @@ templateSnippets:
       frontend https
           guid fe:https
           mode http
-      {% if len(passthroughBackends) > 0 -%}
+      {% if len(passthroughBackends) > 0 %}
           bind unix@/etc/haproxy/ssl-frontend.sock mode 660{{ render "util-ssl-bind-options" }} accept-proxy
-      {% else -%}
+      {% else %}
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}{{ render "util-ssl-bind-options" }}
-      {% end %}
+      {% end -%}
 
           {# Reuse frontend routing logic from base.yaml #}
-          {# Note: indent filter removed - content should already be properly indented #}
-          {{ render "frontend-routing-logic" }}
+          {{ render "frontend-routing-logic" | indent(2, true) }}
 
           # Use backend from txn.backend_name (set by qualifier logic)
           use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }

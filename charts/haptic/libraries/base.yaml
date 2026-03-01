@@ -628,10 +628,10 @@ files:
 haproxyConfig:
   template: |
     global
-        {{ render "global-settings" }}
+        {{ render "global-settings" | indent(2, true) }}
 
     defaults
-        {{ render "defaults-settings" }}
+        {{ render "defaults-settings" | indent(2, true) }}
 
     {# Include global top-level snippets (e.g., userlist sections) #}
     {{ render "global-top" }}
@@ -654,17 +654,17 @@ haproxyConfig:
         http-request return status 200 content-type text/plain string "OK" if { path /healthz }
         http-request return status 200 content-type text/plain string "READY" if { path /ready }
         {# Extension point for status frontend directives (e.g., Prometheus exporter) #}
-        {{- render_glob "status-extra-*" }}
+        {{- render_glob "status-extra-*" | indent(2, true) }}
 
     frontend http_frontend
         guid fe:http_frontend
         bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
         {# Extension point for early frontend directives (options, captures, ACLs) #}
         {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
-        {{- render_glob "frontend-extra-*" }}
+        {{- render_glob "frontend-extra-*" | indent(2, true) }}
 
         {# Include frontend routing logic (can be overridden by libraries) #}
-        {{ render "frontend-routing-logic" }}
+        {{ render "frontend-routing-logic" | indent(2, true) }}
         # Debug headers (when enabled via templating settings)
         {%- var debug bool = extraContext | dig("debug") | fallback(false) -%}
         {%- if debug %}
@@ -684,7 +684,7 @@ haproxyConfig:
         {# Extension point for frontend request/response filters #}
         {# Runs AFTER routing decisions, BEFORE backend selection #}
         {# Libraries can inject filter logic here (header modification, redirects, rewrites) #}
-        {{- render_glob "frontend-filters-*" }}
+        {{- render_glob "frontend-filters-*" | indent(2, true) }}
         # Use backend from txn.backend_name (set by qualifier logic in "frontend-routing-logic")
         # Falls through to default_backend if backend_name is empty
         use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
