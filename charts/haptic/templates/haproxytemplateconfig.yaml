@@ -69,6 +69,7 @@ spec:
   {{- if .Values.haproxy.shmStats.enabled }}
     {{- $_ := set $config.templatingSettings.extraContext "shmStatsEnabled" true }}
     {{- $_ := set $config.templatingSettings.extraContext "shmStatsPath" .Values.haproxy.shmStats.path }}
+    {{- $_ := set $config.templatingSettings.extraContext "shmStatsMaxObjects" (.Values.haproxy.shmStats.maxObjects | int) }}
   {{- end }}
   {{- /* Add nbthread to extraContext for controller-rendered HAProxy config */ -}}
   {{- $nbthread := include "haptic.haproxy.nbthread" . }}

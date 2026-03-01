@@ -205,7 +205,7 @@ Debug headers include:
 
 When `haproxy.shmStats.enabled` is `true` and HAProxy version is 3.3 or later, the base library adds `shm-stats-file` and `shm-stats-file-max-objects` to the global section. This persists stats counters (frontend/backend/server metrics) across HAProxy reloads via shared memory, eliminating counter resets during configuration changes.
 
-The `shm-stats-file-max-objects` value is dynamically calculated from the number of `guid` directives in the rendered configuration (with 20% headroom and a minimum of 2000). This is handled by a `template` post-processor that counts GUIDs after the full configuration is rendered, so the value automatically adjusts as backends and servers are added or removed.
+The `shm-stats-file-max-objects` value is a configurable fixed value (default 500000) set via `haproxy.shmStats.maxObjects`. Since the shm-stats file is fixed-size and cannot be resized on reload, a large fixed value prevents reload failures when new ingresses are added. HAProxy allocates object slots lazily, so memory overhead is proportional to actual objects, not the configured maximum.
 
 ### Address Discovery
 
