@@ -91,13 +91,34 @@ templateSnippets:
 
   util-backend-name-ingress:
     template: |
-      {#- Generates backend name: ing_<ns>_<name>_<svc>_<port> -#}
+      {#- Generates backend name: <ns>_<ingress>_svc_<svc>_<port-name> (matches production format) -#}
       {% macro BackendNameIngress(ingress any, path any) string %}{%%
         var namespace = tostring(ingress | dig("metadata", "namespace") | fallback(""))
         var name = tostring(ingress | dig("metadata", "name") | fallback(""))
         var serviceName = tostring(path | dig("backend", "service", "name") | fallback(""))
-        var portIdentifier = (path | dig("backend", "service", "port", "name")) | fallback(path | dig("backend", "service", "port", "number") | fallback(""))
-        show "ing_" + namespace + "_" + name + "_" + serviceName + "_" + tostring(portIdentifier)
+        var portName = tostring(path | dig("backend", "service", "port", "name") | fallback(""))
+        var portNumber = path | dig("backend", "service", "port", "number") | fallback(0)
+
+        // Resolve port number to port name via Service lookup when only number is specified
+        if portName == "" && toint(portNumber) > 0 {
+          var svc = resources.services.GetSingle(namespace, serviceName)
+          if svc != nil {
+            for _, sp := range svc | dig("spec", "ports") | toSlice() {
+              if toint(sp | dig("port") | fallback(0)) == toint(portNumber) {
+                portName = tostring(sp | dig("name") | fallback(""))
+                break
+              }
+            }
+          }
+        }
+
+        // Fall back to port number if port name is not available
+        var portIdentifier = portName
+        if portIdentifier == "" {
+          portIdentifier = tostring(portNumber)
+        }
+
+        show namespace + "_" + name + "_svc_" + serviceName + "_" + portIdentifier
       %%}{% end %}
 
   util-path-map-entry-ingress-shard:
@@ -136,9 +157,11 @@ templateSnippets:
                     {%- for _, checkType := range pathTypes -%}
                       {%- if pathType == checkType -%}
                         {%- var pathStr = pathValue | tostring() -%}
+                        {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
                         {%- var actualSuffix = suffix -%}
                         {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
-      {{ "\n" }}{{ rule | dig("host") | fallback("") }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+                        {%- if suffix == "" && len(pathStr) > 1 && hasSuffix(pathStr, "/") -%}{%- pathStr = pathStr[:len(pathStr)-1] -%}{%- end -%}
+      {{ "\n" }}{{ rule | dig("host") | fallback("") | replace("*", "") }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
                       {%- end -%}
                     {%- end -%}
                   {%- end -%}
@@ -298,20 +321,20 @@ templateSnippets:
       # ingress/map-path-exact-ingress
       {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 
-  map-path-prefix-exact-500-ingress:
+  map-pfxexact-500-ingress:
     template: |
       {#-
         Ingress Prefix-Exact Path Map Entries
 
         Purpose: Generates path-prefix-exact.map entries for exact prefix boundary matching.
 
-        Extension Point: map-path-prefix-exact-* (priority 500)
+        Extension Point: map-pfxexact-* (priority 500)
 
         Matches: Ingress paths with pathType: Prefix or ImplementationSpecific
         Note: No trailing slash - matches exact path for prefix boundary check.
       -#}
       {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
-      # ingress/map-path-prefix-exact-ingress
+      # ingress/map-pfxexact-ingress
       {{ PathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "") }}
 
   map-path-prefix-500-ingress:
@@ -496,48 +519,48 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "backend ing_default_multi-port_api-svc_80"
+        pattern: "backend default_multi-port_svc_api-svc_http"
         description: Must generate backend for port 80
 
       - type: contains
         target: haproxy.cfg
-        pattern: "backend ing_default_multi-port_api-svc_81"
+        pattern: "backend default_multi-port_svc_api-svc_admin"
         description: Must generate backend for port 81
 
       - type: match_count
         target: haproxy.cfg
-        pattern: "backend ing_default_multi-port_api-svc_"
+        pattern: "backend default_multi-port_svc_api-svc_"
         expected: "2"
         description: Must generate exactly 2 backends (deduplication test)
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "example.com/api/ BACKEND:ing_default_multi-port_api-svc_80"
+        pattern: "example.com/api/ BACKEND:default_multi-port_svc_api-svc_http"
         description: Path prefix map must use BACKEND qualifier for /api
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "example.com/admin/ BACKEND:ing_default_multi-port_api-svc_81"
+        pattern: "example.com/admin/ BACKEND:default_multi-port_svc_api-svc_admin"
         description: Path prefix map must use BACKEND qualifier for /admin
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "example.com/app/ BACKEND:ing_default_multi-port_api-svc_80"
+        pattern: "example.com/app/ BACKEND:default_multi-port_svc_api-svc_http"
         description: Path prefix map must use BACKEND qualifier for /app
 
       - type: contains
         target: map:path-prefix-exact.map
-        pattern: "example.com/api BACKEND:ing_default_multi-port_api-svc_80"
+        pattern: "example.com/api BACKEND:default_multi-port_svc_api-svc_http"
         description: Path prefix-exact map must use BACKEND qualifier for /api
 
       - type: contains
         target: map:path-prefix-exact.map
-        pattern: "example.com/admin BACKEND:ing_default_multi-port_api-svc_81"
+        pattern: "example.com/admin BACKEND:default_multi-port_svc_api-svc_admin"
         description: Path prefix-exact map must use BACKEND qualifier for /admin
 
       - type: contains
         target: map:path-prefix-exact.map
-        pattern: "example.com/app BACKEND:ing_default_multi-port_api-svc_80"
+        pattern: "example.com/app BACKEND:default_multi-port_svc_api-svc_http"
         description: Path prefix-exact map must use BACKEND qualifier for /app
 
       # Map Formatting Tests - Ensure proper line separation
@@ -654,7 +677,7 @@ validationTests:
       # SRV_1: existing pod that will remain (10.0.0.1)
       # SRV_2: old pod being replaced (10.0.0.2) - will be replaced by new pod (10.0.0.3)
       # SRV_3-10: placeholders
-      backend ing_default_slot-test_slot-svc_80
+      backend default_slot-test_svc_slot-svc_80
           server SRV_1 10.0.0.1:8080 check
           server SRV_2 10.0.0.2:8080 check
           server SRV_3 127.0.0.1:1 disabled
@@ -723,7 +746,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "backend ing_default_slot-test_slot-svc_80"
+        pattern: "backend default_slot-test_svc_slot-svc_80"
         description: Backend must be generated
 
       # Slot preservation assertions: existing pod 10.0.0.1 keeps its original slot (SRV_1)
@@ -751,7 +774,7 @@ validationTests:
       # Previous config: SRV_1=10.0.0.5, SRV_2=10.0.0.6
       # After rolling: 10.0.0.6 removed, 10.0.0.2 added (lower IP than existing)
       # Expected: SRV_1 keeps 10.0.0.5, SRV_2 gets 10.0.0.2 (takes freed slot)
-      backend ing_default_slot-lower_slot-svc_80
+      backend default_slot-lower_svc_slot-svc_80
           server SRV_1 10.0.0.5:8080 check
           server SRV_2 10.0.0.6:8080 check
           server SRV_3 127.0.0.1:1 disabled
@@ -896,5 +919,5 @@ validationTests:
         description: HAProxy config must be valid with status patch registration
       - type: contains
         target: haproxy.cfg
-        pattern: "backend ing_default_web-ingress"
+        pattern: "backend default_web-ingress_svc_web-svc_80"
         description: Must generate backend for ingress

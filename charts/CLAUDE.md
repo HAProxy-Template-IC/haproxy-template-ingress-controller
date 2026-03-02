@@ -173,7 +173,7 @@ The base template uses `render_glob` to discover and render snippets from all li
 | `map-host-*` | Host map entries | gateway, ingress |
 | `map-path-exact-*` | Exact path map entries | gateway, ingress |
 | `map-path-prefix-*` | Prefix path map entries | gateway, ingress |
-| `map-path-prefix-exact-*` | Prefix-exact map entries | gateway, ingress |
+| `map-pfxexact-*` | Prefix-exact map entries | gateway, haproxy-ingress, ingress |
 | `map-path-regex-*` | Regex path map entries | gateway, ingress, haproxy-ingress |
 | `map-weighted-backend-*` | Weighted routing map | gateway |
 | `status-extra-*` | Status frontend directives (Prometheus exporter, custom endpoints) | base |
@@ -510,7 +510,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "backend ing_default_my-ingress_my-service_80"
+        pattern: "backend default_my-ingress_svc_my-service_http"
         description: Must generate backend for ingress
 ```
 
@@ -694,7 +694,7 @@ To enable HAProxy runtime API updates without reloads, server options must be in
 **Correct pattern in templates:**
 
 ```scriggo
-backend ing_{{ ingress.metadata.name }}
+backend {{ BackendNameIngress(ingress, path) }}
     default-server check{{ BuildServerOptions(serverOpts) }}
     {{ BackendServers(serviceName, 10, port, nil, nil, backendKey) }}
 ```
@@ -704,7 +704,7 @@ The `BackendServers` macro generates server lines with only `address:port` plus 
 **Example output:**
 
 ```haproxy
-backend ing_default_my-ingress
+backend default_my-ingress_svc_my-service_http
     default-server check proto h2
     server SRV_1 10.0.0.1:8080 enabled
     server SRV_2 10.0.0.2:8080 enabled

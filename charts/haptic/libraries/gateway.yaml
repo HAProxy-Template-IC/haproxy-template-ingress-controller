@@ -630,14 +630,20 @@ templateSnippets:
           {%- end %}
           {%- var routeIds_str = join(routeIds, "__") -%}
           {%- var frHostname = firstRoute["hostname"] %}
-          {%- var frPath_val = frPath["value"] %}
+          {%- var frPath_val string = tostring(frPath["value"]) %}
+          {%- if suffix == "" && frPath_val == "/" %}
+            {%- continue %}
+          {%- end %}
           {%- var frResourceType = firstRoute["resource_type"] %}
           {%- var routeTypeShort = frResourceType | replace("httproute", "http") | replace("grpcroute", "grpc") %}
           {%- var pathSuffix = suffix %}
           {%- if suffix == "/" && hasSuffix(frPath_val, "/") %}
             {%- pathSuffix = "" %}
           {%- end %}
-      {{ "\n" }}{{ frHostname }}{{ frPath_val }}{{ pathSuffix }} GW_ROUTE_ID:{{ routeTypeShort }}:{{ routeIds_str }}
+          {%- if suffix == "" && len(frPath_val) > 1 && hasSuffix(frPath_val, "/") %}
+            {%- frPath_val = frPath_val[:len(frPath_val)-1] %}
+          {%- end %}
+      {{ "\n" }}{{ frHostname | replace("*", "") }}{{ frPath_val }}{{ pathSuffix }} GW_ROUTE_ID:{{ routeTypeShort }}:{{ routeIds_str }}
         {%- end %}
         {%- end %}
       {%- end %}
@@ -680,7 +686,8 @@ templateSnippets:
       {%- var routeName = route | dig("metadata", "name") | fallback("") %}
       # {{ route_type }}: {{ routeNs }}/{{ routeName }} ({{ len(hostnames) }} hosts)
       {% for _, hostname := range hostnames %}
-      {{ hostname }} {{ hostname }}
+      {%- var hostWithoutAsterisk = hostname | replace("*", "") %}
+      {{ hostWithoutAsterisk }} {{ hostWithoutAsterisk }}
       {% end %}
       {%- end %}
       {%- end %}
@@ -717,11 +724,11 @@ templateSnippets:
       # gateway/map-path-exact-gateway
       {{ GeneratePathMapEntries("Exact", "") }}
 
-  map-path-prefix-exact-500-gateway:
+  map-pfxexact-500-gateway:
     template: |
       {#- Generate prefix-exact path map entries for HTTPRoute #}
       {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
-      # gateway/map-path-prefix-exact-gateway
+      # gateway/map-pfxexact-gateway
       {{ GeneratePathMapEntries("PathPrefix", "") }}
 
   map-path-prefix-500-gateway:

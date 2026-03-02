@@ -195,7 +195,7 @@ templateSnippets:
           backendName    - HAProxy backend name for slot preservation (nil = disabled)
 
         Example:
-          {{ BackendServers("my-service", 0, 80, serverOpts, nil, "ing_default_my-ingress_my-service_80") }}
+          {{ BackendServers("my-service", 0, 80, serverOpts, nil, "default_my-ingress_svc_my-service_http") }}
 
         Output:
           server SRV_1 10.0.0.1:8080 check  # Pod: my-pod-abc
@@ -439,7 +439,8 @@ templateSnippets:
 
   global-settings-200-process:
     template: |
-      daemon
+      {%- var processModel = extraContext | dig("processModel") | fallback("daemon") | tostring() -%}
+      {{ processModel }}
       {%- var nbthread = extraContext | dig("nbthread") | fallback(0) | toint() -%}
       {%- if nbthread > 0 %}
       nbthread {{ nbthread }}
@@ -501,6 +502,49 @@ templateSnippets:
   # The status frontend (port 8404) serves health checks and can expose HAProxy's
   # built-in Prometheus exporter. Snippets are rendered inside the status frontend
   # block after the default health check rules.
+  frontend-filters-999-debug:
+    template: |
+      {%- var debug bool = extraContext | dig("debug") | fallback(false) -%}
+      {%- if debug %}
+      # HAProxy routing decision introspection
+      http-response set-header X-HAProxy-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
+      http-response set-header X-HAProxy-Host-Match %[var(txn.host_match)] if { var(txn.host_match) -m found }
+      http-response set-header X-HAProxy-Path-Match %[var(txn.path_match)] if { var(txn.path_match) -m found }
+      http-response set-header X-HAProxy-Path-Match-Qualifier %[var(txn.path_match_qualifier)] if { var(txn.path_match_qualifier) -m found }
+      http-response set-header X-HAProxy-Total-Weight %[var(txn.total_weight)] if { var(txn.total_weight) -m found }
+      http-response set-header X-HAProxy-Random-Weight %[var(txn.random_weight)] if { var(txn.random_weight) -m found }
+      http-response set-header X-HAProxy-Route-Key %[var(txn.route_key)] if { var(txn.route_key) -m found }
+      # Gateway-specific headers (set by gateway.yaml advanced matchers)
+      http-response set-header X-Gateway-Matched-Route %[var(txn.matched_route)] if { var(txn.matched_route) -m found }
+      http-response set-header X-Gateway-Match-Reason %[var(txn.match_reason)] if { var(txn.match_reason) -m found }
+      http-response set-header X-Gateway-Filters-Applied %[var(txn.filters_applied)] if { var(txn.filters_applied) -m found }
+      {%- end %}
+
+  util-default-backend:
+    template: |
+      {%- import "util-backend-servers" for BackendServers -%}
+      {%- var defaultBackendSvc = extraContext | dig("defaultBackendService") | fallback(nil) -%}
+      {%- if defaultBackendSvc != nil %}
+      {%- var dbName = defaultBackendSvc | dig("name") | fallback("") | tostring() -%}
+      {%- var dbPort = defaultBackendSvc | dig("port") | fallback(80) -%}
+      backend default_backend
+          guid be:default_backend
+          default-server check
+          {{ BackendServers(dbName, 0, toint(dbPort), nil, nil, "default_backend") | indent(2, true) }}
+      {%- else %}
+      backend default_backend
+          guid be:default_backend
+          http-request return status 404
+      {%- end %}
+
+  global-top-050-peers:
+    template: |
+      {%- var peersConfig = extraContext | dig("peers") | fallback(nil) -%}
+      {%- if peersConfig != nil %}
+      peers {{ peersConfig | dig("name") | fallback("localinstance") | tostring() }}
+          peer ${HOSTNAME} 127.0.0.1:{{ peersConfig | dig("port") | fallback(10000) | tostring() }}
+      {%- end %}
+
   status-extra-100-prometheus-exporter:
     template: |
       http-request use-service prometheus-exporter if { path /metrics }
@@ -530,7 +574,7 @@ maps:
   path-prefix-exact.map:
     template: |
       # Prefix boundary matches without trailing slash
-      {{ render_glob "map-path-prefix-exact-*" -}}
+      {{ render_glob "map-pfxexact-*" -}}
 
   path-prefix.map:
     template: |
@@ -665,22 +709,6 @@ haproxyConfig:
 
         {# Include frontend routing logic (can be overridden by libraries) #}
         {{ render "frontend-routing-logic" | indent(2, true) }}
-        # Debug headers (when enabled via templating settings)
-        {%- var debug bool = extraContext | dig("debug") | fallback(false) -%}
-        {%- if debug %}
-        # HAProxy routing decision introspection
-        http-response set-header X-HAProxy-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
-        http-response set-header X-HAProxy-Host-Match %[var(txn.host_match)] if { var(txn.host_match) -m found }
-        http-response set-header X-HAProxy-Path-Match %[var(txn.path_match)] if { var(txn.path_match) -m found }
-        http-response set-header X-HAProxy-Path-Match-Qualifier %[var(txn.path_match_qualifier)] if { var(txn.path_match_qualifier) -m found }
-        http-response set-header X-HAProxy-Total-Weight %[var(txn.total_weight)] if { var(txn.total_weight) -m found }
-        http-response set-header X-HAProxy-Random-Weight %[var(txn.random_weight)] if { var(txn.random_weight) -m found }
-        http-response set-header X-HAProxy-Route-Key %[var(txn.route_key)] if { var(txn.route_key) -m found }
-        # Gateway-specific headers (set by gateway.yaml advanced matchers)
-        http-response set-header X-Gateway-Matched-Route %[var(txn.matched_route)] if { var(txn.matched_route) -m found }
-        http-response set-header X-Gateway-Match-Reason %[var(txn.match_reason)] if { var(txn.match_reason) -m found }
-        http-response set-header X-Gateway-Filters-Applied %[var(txn.filters_applied)] if { var(txn.filters_applied) -m found }
-        {%- end -%}
         {# Extension point for frontend request/response filters #}
         {# Runs AFTER routing decisions, BEFORE backend selection #}
         {# Libraries can inject filter logic here (header modification, redirects, rewrites) #}
@@ -700,9 +728,7 @@ haproxyConfig:
     {# Resource libraries implement backends-* snippets (e.g., backends-ingress, backends-gateway) #}
     {{- render_glob "backends-*" }}
 
-    backend default_backend
-        guid be:default_backend
-        http-request return status 404
+    {{ render "util-default-backend" | indent(0, true) }}
     {# Trailing newline preserved #}
 
   # Post-processing: normalize indentation to 2 spaces

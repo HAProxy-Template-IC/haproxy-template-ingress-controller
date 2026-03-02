@@ -99,7 +99,7 @@ This includes all snippets with names starting with `backends-`:
 | Backend Directives | `backend-directives-*` | Within backends | Per-backend configuration |
 | Host Map | `map-host-*` | host.map | Host routing entries |
 | Path Exact Map | `map-path-exact-*` | path-exact.map | Exact path entries |
-| Path Prefix Exact Map | `map-path-prefix-exact-*` | path-prefix-exact.map | Prefix exact entries |
+| Path Prefix Exact Map | `map-pfxexact-*` | path-prefix-exact.map | Prefix exact entries |
 | Path Prefix Map | `map-path-prefix-*` | path-prefix.map | Prefix path entries |
 | Path Regex Map | `map-path-regex-*` | path-regex.map | Regex path entries |
 | Weighted Backend Map | `map-weighted-backend-*` | weighted-multi-backend.map | Weighted routing |

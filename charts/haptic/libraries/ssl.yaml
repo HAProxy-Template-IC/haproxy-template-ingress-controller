@@ -222,8 +222,16 @@ templateSnippets:
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}{{ render "util-ssl-bind-options" }}
       {% end -%}
 
+          {# Extension point for early frontend directives (options, captures, ACLs) #}
+          {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
+          {{- render_glob "frontend-extra-*" | indent(2, true) }}
+
           {# Reuse frontend routing logic from base.yaml #}
           {{ render "frontend-routing-logic" | indent(2, true) }}
+
+          {# Extension point for frontend request/response filters #}
+          {# Runs AFTER routing decisions, BEFORE backend selection #}
+          {{- render_glob "frontend-filters-*" | indent(2, true) }}
 
           # Use backend from txn.backend_name (set by qualifier logic)
           use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }

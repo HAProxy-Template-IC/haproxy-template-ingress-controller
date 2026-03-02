@@ -652,7 +652,7 @@ templateSnippets:
         {#- server-ssl -#}
         {%- var serverSsl = ingress | dig("metadata", "annotations", "haproxy.org/server-ssl") | fallback("") | tostring() %}
         {%- if serverSsl == "true" %}
-          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl alpn h2,http/1.1 verify none") %}
         {%- end %}
 
         {#- server-proto -#}

@@ -206,7 +206,7 @@ templateSnippets:
   # Phase 3: Path Type Matching - Begin (Legacy)
   # ============================================================================
 
-  map-path-prefix-exact-600-haproxy-ingress:
+  map-pfxexact-600-haproxy-ingress:
     template: |
       {#-
         HAProxy Ingress Begin Path Map Entries
@@ -214,7 +214,7 @@ templateSnippets:
         Purpose: Generates path-prefix-exact.map entries for Ingress resources with
                  haproxy-ingress.github.io/path-type: "begin" annotation.
 
-        Extension Point: map-path-prefix-exact-* (priority 600 - compatibility layer)
+        Extension Point: map-pfxexact-* (priority 600 - compatibility layer)
 
         The "begin" path type in haproxy-ingress is a legacy type that matches
         if the path begins with the specified prefix (no trailing slash normalization).
@@ -231,7 +231,7 @@ templateSnippets:
       {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
       {%- if pathTypeAnnotation == "begin" -%}
       {%- if isFirst %}
-      # haproxy-ingress/map-path-prefix-exact-haproxy-ingress (begin)
+      # haproxy-ingress/map-pfxexact-haproxy-ingress (begin)
       {%- isFirst = false %}
       {%- end %}
         {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}

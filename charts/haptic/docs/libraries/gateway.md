@@ -38,7 +38,7 @@ The Gateway API library implements these extension points from base.yaml:
 | Features | `features-gateway-ssl-passthrough`, `features-gateway-tls` | SSL passthrough registration, TLS certificates |
 | Host Map | `map-host-gateway` | Host-to-group mapping entries |
 | Path Exact Map | `map-path-exact-gateway` | Exact path match entries |
-| Path Prefix Exact Map | `map-path-prefix-exact-gateway` | Prefix paths matching exactly |
+| Path Prefix Exact Map | `map-pfxexact-gateway` | Prefix paths matching exactly |
 | Path Prefix Map | `map-path-prefix-gateway` | Prefix path match entries |
 | Path Regex Map | `map-path-regex-gateway` | Regex path match entries |
 | Weighted Backend Map | `map-weighted-backend-gateway` | Weighted routing entries |
