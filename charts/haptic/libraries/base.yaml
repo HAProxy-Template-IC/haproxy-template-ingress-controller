@@ -542,7 +542,7 @@ templateSnippets:
       {%- var peersConfig = extraContext | dig("peers") | fallback(nil) -%}
       {%- if peersConfig != nil %}
       peers {{ peersConfig | dig("name") | fallback("localinstance") | tostring() }}
-          peer ${HOSTNAME} 127.0.0.1:{{ peersConfig | dig("port") | fallback(10000) | tostring() }}
+          peer "${HOSTNAME}" 127.0.0.1:{{ peersConfig | dig("port") | fallback(10000) | tostring() }}
       {%- end %}
 
   status-extra-100-prometheus-exporter:
