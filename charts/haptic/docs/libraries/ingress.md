@@ -38,7 +38,7 @@ The Ingress library implements these extension points from base.yaml:
 | Features | `features-ingress-tls` | TLS certificate registration (priority 100) |
 | Host Map | `map-host-ingress` | Host-to-group mapping entries |
 | Path Exact Map | `map-path-exact-ingress` | Exact path match entries |
-| Path Prefix Exact Map | `map-path-prefix-exact-ingress` | Prefix paths matching exactly |
+| Path Prefix Exact Map | `map-pfxexact-ingress` | Prefix paths matching exactly |
 | Path Prefix Map | `map-path-prefix-ingress` | Prefix path match entries |
 | Backends | `backends-ingress` | Backend definitions for Ingress services |
 | Status Patches | `status-patches-200-ingress` | Ingress LoadBalancer status updates |
@@ -161,7 +161,7 @@ ing_<namespace>_<ingress-name>_<service-name>_<port>
 **Example generated configuration:**
 
 ```haproxy
-backend ing_default_my-app_api-service_80
+backend default_my-app_svc_api-service_http
     balance roundrobin
     option httpchk GET /api
     default-server check

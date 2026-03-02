@@ -44,7 +44,7 @@ The base library defines extension points using the `include_matching("prefix-*"
 | Backend Directives | `backend-directives-*` | Within backend blocks | Per-backend directives (auth, rate limiting) |
 | Host Map | `map-host-*` | host.map file | Host-to-group mapping entries |
 | Path Exact Map | `map-path-exact-*` | path-exact.map file | Exact path match entries |
-| Path Prefix Exact Map | `map-path-prefix-exact-*` | path-prefix-exact.map file | Prefix-exact path match entries |
+| Path Prefix Exact Map | `map-pfxexact-*` | path-prefix-exact.map file | Prefix-exact path match entries |
 | Path Prefix Map | `map-path-prefix-*` | path-prefix.map file | Prefix path match entries |
 | Path Regex Map | `map-path-regex-*` | path-regex.map file | Regex path match entries |
 | Weighted Backend Map | `map-weighted-backend-*` | weighted-multi-backend.map file | Weighted routing entries |
