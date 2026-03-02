@@ -8,30 +8,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 )
 
-// safeGetHTTPRequestRule safely retrieves a rule at the given index, returning nil if out of bounds.
-func safeGetHTTPRequestRule(rules models.HTTPRequestRules, i int) *models.HTTPRequestRule {
-	if i >= 0 && i < len(rules) {
-		return rules[i]
-	}
-	return nil
-}
-
-// safeGetHTTPResponseRule safely retrieves a rule at the given index, returning nil if out of bounds.
-func safeGetHTTPResponseRule(rules models.HTTPResponseRules, i int) *models.HTTPResponseRule {
-	if i >= 0 && i < len(rules) {
-		return rules[i]
-	}
-	return nil
-}
-
-// safeGetBackendSwitchingRule safely retrieves a rule at the given index, returning nil if out of bounds.
-func safeGetBackendSwitchingRule(rules models.BackendSwitchingRules, i int) *models.BackendSwitchingRule {
-	if i >= 0 && i < len(rules) {
-		return rules[i]
-	}
-	return nil
-}
-
 // compareACLs compares ACL configurations within a frontend or backend.
 // ACLs are identified by their name (ACLName field).
 func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, desiredACLs models.Acls, _ *DiffSummary) []Operation {
@@ -141,29 +117,25 @@ func (c *Comparator) compareModifiedACLs(parentType, parentName string, desiredA
 }
 
 // compareHTTPRequestRules compares HTTP request rule configurations within a frontend or backend.
-// Rules are compared by position since they don't have unique identifiers.
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations
+// instead of cascading UPDATEs caused by index shifts.
 func (c *Comparator) compareHTTPRequestRules(parentType, parentName string, currentRules, desiredRules models.HTTPRequestRules) []Operation {
+	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.HTTPRequestRule) bool {
+		return a.Equal(*b)
+	})
+	edits := collapseEdits(diffs)
+
 	var operations []Operation
-
-	// Compare rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		currentRule := safeGetHTTPRequestRule(currentRules, i)
-		desiredRule := safeGetHTTPRequestRule(desiredRules, i)
-
-		switch {
-		case currentRule == nil && desiredRule != nil:
-			ops := c.createHTTPRequestRuleOperation(parentType, parentName, desiredRule, i)
+	for _, e := range edits {
+		switch e.Op {
+		case editInsert:
+			ops := c.createHTTPRequestRuleOperation(parentType, parentName, e.New, e.NewIndex)
 			operations = append(operations, ops...)
-		case currentRule != nil && desiredRule == nil:
-			ops := c.deleteHTTPRequestRuleOperation(parentType, parentName, currentRule, i)
+		case editDelete:
+			ops := c.deleteHTTPRequestRuleOperation(parentType, parentName, e.Old, e.OldIndex)
 			operations = append(operations, ops...)
-		case currentRule != nil && desiredRule != nil:
-			ops := c.updateHTTPRequestRuleOperation(parentType, parentName, currentRule, desiredRule, i)
+		case editUpdate:
+			ops := c.updateHTTPRequestRuleOperation(parentType, parentName, e.Old, e.New, e.OldIndex)
 			operations = append(operations, ops...)
 		}
 	}
@@ -196,29 +168,24 @@ func (c *Comparator) updateHTTPRequestRuleOperation(parentType, parentName strin
 }
 
 // compareHTTPResponseRules compares HTTP response rule configurations within a frontend or backend.
-// Rules are compared by position since they don't have unique identifiers.
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareHTTPResponseRules(parentType, parentName string, currentRules, desiredRules models.HTTPResponseRules) []Operation {
+	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.HTTPResponseRule) bool {
+		return a.Equal(*b)
+	})
+	edits := collapseEdits(diffs)
+
 	var operations []Operation
-
-	// Compare rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		currentRule := safeGetHTTPResponseRule(currentRules, i)
-		desiredRule := safeGetHTTPResponseRule(desiredRules, i)
-
-		switch {
-		case currentRule == nil && desiredRule != nil:
-			ops := c.createHTTPResponseRuleOperation(parentType, parentName, desiredRule, i)
+	for _, e := range edits {
+		switch e.Op {
+		case editInsert:
+			ops := c.createHTTPResponseRuleOperation(parentType, parentName, e.New, e.NewIndex)
 			operations = append(operations, ops...)
-		case currentRule != nil && desiredRule == nil:
-			ops := c.deleteHTTPResponseRuleOperation(parentType, parentName, currentRule, i)
+		case editDelete:
+			ops := c.deleteHTTPResponseRuleOperation(parentType, parentName, e.Old, e.OldIndex)
 			operations = append(operations, ops...)
-		case currentRule != nil && desiredRule != nil:
-			ops := c.updateHTTPResponseRuleOperation(parentType, parentName, currentRule, desiredRule, i)
+		case editUpdate:
+			ops := c.updateHTTPResponseRuleOperation(parentType, parentName, e.Old, e.New, e.OldIndex)
 			operations = append(operations, ops...)
 		}
 	}
@@ -251,28 +218,24 @@ func (c *Comparator) updateHTTPResponseRuleOperation(parentType, parentName stri
 }
 
 // compareTCPRequestRules compares TCP request rule configurations within a frontend or backend.
-// Rules are compared by position since they don't have unique identifiers.
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareTCPRequestRules(parentType, parentName string, currentRules, desiredRules models.TCPRequestRules) []Operation {
+	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.TCPRequestRule) bool {
+		return a.Equal(*b)
+	})
+	edits := collapseEdits(diffs)
+
 	var operations []Operation
-
-	// Compare rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
-
-		if !hasCurrentRule && hasDesiredRule {
-			ops := c.createTCPRequestRuleOperation(parentType, parentName, desiredRules[i], i)
+	for _, e := range edits {
+		switch e.Op {
+		case editInsert:
+			ops := c.createTCPRequestRuleOperation(parentType, parentName, e.New, e.NewIndex)
 			operations = append(operations, ops...)
-		} else if hasCurrentRule && !hasDesiredRule {
-			ops := c.deleteTCPRequestRuleOperation(parentType, parentName, currentRules[i], i)
+		case editDelete:
+			ops := c.deleteTCPRequestRuleOperation(parentType, parentName, e.Old, e.OldIndex)
 			operations = append(operations, ops...)
-		} else if hasCurrentRule && hasDesiredRule {
-			ops := c.updateTCPRequestRuleOperation(parentType, parentName, currentRules[i], desiredRules[i], i)
+		case editUpdate:
+			ops := c.updateTCPRequestRuleOperation(parentType, parentName, e.Old, e.New, e.OldIndex)
 			operations = append(operations, ops...)
 		}
 	}
@@ -305,36 +268,22 @@ func (c *Comparator) updateTCPRequestRuleOperation(parentType, parentName string
 }
 
 // compareTCPResponseRules compares TCP response rule configurations within a backend.
-// Rules are compared by position since they don't have unique identifiers.
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareTCPResponseRules(parentName string, currentRules, desiredRules models.TCPResponseRules) []Operation {
+	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.TCPResponseRule) bool {
+		return a.Equal(*b)
+	})
+	edits := collapseEdits(diffs)
+
 	var operations []Operation
-
-	// Compare rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
-
-		if !hasCurrentRule && hasDesiredRule {
-			// Rule added at this position
-			rule := desiredRules[i]
-			operations = append(operations, sections.NewTCPResponseRuleBackendCreate(parentName, rule, i))
-		} else if hasCurrentRule && !hasDesiredRule {
-			// Rule removed at this position
-			rule := currentRules[i]
-			operations = append(operations, sections.NewTCPResponseRuleBackendDelete(parentName, rule, i))
-		} else if hasCurrentRule && hasDesiredRule {
-			// Both exist - check if modified
-			currentRule := currentRules[i]
-			desiredRule := desiredRules[i]
-
-			if !currentRule.Equal(*desiredRule) {
-				operations = append(operations, sections.NewTCPResponseRuleBackendUpdate(parentName, desiredRule, i))
-			}
+	for _, e := range edits {
+		switch e.Op {
+		case editInsert:
+			operations = append(operations, sections.NewTCPResponseRuleBackendCreate(parentName, e.New, e.NewIndex))
+		case editDelete:
+			operations = append(operations, sections.NewTCPResponseRuleBackendDelete(parentName, e.Old, e.OldIndex))
+		case editUpdate:
+			operations = append(operations, sections.NewTCPResponseRuleBackendUpdate(parentName, e.New, e.OldIndex))
 		}
 	}
 
@@ -342,37 +291,22 @@ func (c *Comparator) compareTCPResponseRules(parentName string, currentRules, de
 }
 
 // compareStickRules compares stick rule configurations within a backend.
-// Stick rules are compared by position since they don't have unique identifiers.
-// Backend-only (frontends do not support stick rules).
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareStickRules(backendName string, currentRules, desiredRules models.StickRules) []Operation {
+	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.StickRule) bool {
+		return a.Equal(*b)
+	})
+	edits := collapseEdits(diffs)
+
 	var operations []Operation
-
-	// Compare stick rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
-
-		if !hasCurrentRule && hasDesiredRule {
-			// Stick rule added at this position
-			rule := desiredRules[i]
-			operations = append(operations, sections.NewStickRuleBackendCreate(backendName, rule, i))
-		} else if hasCurrentRule && !hasDesiredRule {
-			// Stick rule removed at this position
-			rule := currentRules[i]
-			operations = append(operations, sections.NewStickRuleBackendDelete(backendName, rule, i))
-		} else if hasCurrentRule && hasDesiredRule {
-			// Both exist - check if modified
-			currentRule := currentRules[i]
-			desiredRule := desiredRules[i]
-
-			if !currentRule.Equal(*desiredRule) {
-				operations = append(operations, sections.NewStickRuleBackendUpdate(backendName, desiredRule, i))
-			}
+	for _, e := range edits {
+		switch e.Op {
+		case editInsert:
+			operations = append(operations, sections.NewStickRuleBackendCreate(backendName, e.New, e.NewIndex))
+		case editDelete:
+			operations = append(operations, sections.NewStickRuleBackendDelete(backendName, e.Old, e.OldIndex))
+		case editUpdate:
+			operations = append(operations, sections.NewStickRuleBackendUpdate(backendName, e.New, e.OldIndex))
 		}
 	}
 
@@ -380,37 +314,22 @@ func (c *Comparator) compareStickRules(backendName string, currentRules, desired
 }
 
 // compareHTTPAfterResponseRules compares HTTP after response rule configurations within a backend.
-// Rules are compared by position since they don't have unique identifiers.
-// Backend-only (frontends do not support HTTP after response rules).
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareHTTPAfterResponseRules(backendName string, currentRules, desiredRules models.HTTPAfterResponseRules) []Operation {
+	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.HTTPAfterResponseRule) bool {
+		return a.Equal(*b)
+	})
+	edits := collapseEdits(diffs)
+
 	var operations []Operation
-
-	// Compare rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
-
-		if !hasCurrentRule && hasDesiredRule {
-			// Rule added at this position
-			rule := desiredRules[i]
-			operations = append(operations, sections.NewHTTPAfterResponseRuleBackendCreate(backendName, rule, i))
-		} else if hasCurrentRule && !hasDesiredRule {
-			// Rule removed at this position
-			rule := currentRules[i]
-			operations = append(operations, sections.NewHTTPAfterResponseRuleBackendDelete(backendName, rule, i))
-		} else if hasCurrentRule && hasDesiredRule {
-			// Both exist - check if modified
-			currentRule := currentRules[i]
-			desiredRule := desiredRules[i]
-
-			if !currentRule.Equal(*desiredRule) {
-				operations = append(operations, sections.NewHTTPAfterResponseRuleBackendUpdate(backendName, desiredRule, i))
-			}
+	for _, e := range edits {
+		switch e.Op {
+		case editInsert:
+			operations = append(operations, sections.NewHTTPAfterResponseRuleBackendCreate(backendName, e.New, e.NewIndex))
+		case editDelete:
+			operations = append(operations, sections.NewHTTPAfterResponseRuleBackendDelete(backendName, e.Old, e.OldIndex))
+		case editUpdate:
+			operations = append(operations, sections.NewHTTPAfterResponseRuleBackendUpdate(backendName, e.New, e.OldIndex))
 		}
 	}
 
@@ -418,32 +337,22 @@ func (c *Comparator) compareHTTPAfterResponseRules(backendName string, currentRu
 }
 
 // compareBackendSwitchingRules compares backend switching rule configurations within a frontend.
-// Rules are compared by position since they don't have unique identifiers.
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareBackendSwitchingRules(frontendName string, currentRules, desiredRules models.BackendSwitchingRules) []Operation {
+	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.BackendSwitchingRule) bool {
+		return a.Equal(*b)
+	})
+	edits := collapseEdits(diffs)
+
 	var operations []Operation
-
-	// Compare rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		currentRule := safeGetBackendSwitchingRule(currentRules, i)
-		desiredRule := safeGetBackendSwitchingRule(desiredRules, i)
-
-		switch {
-		case currentRule == nil && desiredRule != nil:
-			// Rule added at this position
-			operations = append(operations, sections.NewBackendSwitchingRuleFrontendCreate(frontendName, desiredRule, i))
-		case currentRule != nil && desiredRule == nil:
-			// Rule removed at this position
-			operations = append(operations, sections.NewBackendSwitchingRuleFrontendDelete(frontendName, currentRule, i))
-		case currentRule != nil && desiredRule != nil:
-			// Both exist - check if modified
-			if !currentRule.Equal(*desiredRule) {
-				operations = append(operations, sections.NewBackendSwitchingRuleFrontendUpdate(frontendName, desiredRule, i))
-			}
+	for _, e := range edits {
+		switch e.Op {
+		case editInsert:
+			operations = append(operations, sections.NewBackendSwitchingRuleFrontendCreate(frontendName, e.New, e.NewIndex))
+		case editDelete:
+			operations = append(operations, sections.NewBackendSwitchingRuleFrontendDelete(frontendName, e.Old, e.OldIndex))
+		case editUpdate:
+			operations = append(operations, sections.NewBackendSwitchingRuleFrontendUpdate(frontendName, e.New, e.OldIndex))
 		}
 	}
 
@@ -451,36 +360,22 @@ func (c *Comparator) compareBackendSwitchingRules(frontendName string, currentRu
 }
 
 // compareServerSwitchingRules compares server switching rule configurations within a backend.
-// Rules are compared by position since they don't have unique identifiers.
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareServerSwitchingRules(backendName string, currentRules, desiredRules models.ServerSwitchingRules) []Operation {
+	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.ServerSwitchingRule) bool {
+		return a.Equal(*b)
+	})
+	edits := collapseEdits(diffs)
+
 	var operations []Operation
-
-	// Compare rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
-
-		if !hasCurrentRule && hasDesiredRule {
-			// Rule added at this position
-			rule := desiredRules[i]
-			operations = append(operations, sections.NewServerSwitchingRuleBackendCreate(backendName, rule, i))
-		} else if hasCurrentRule && !hasDesiredRule {
-			// Rule removed at this position
-			rule := currentRules[i]
-			operations = append(operations, sections.NewServerSwitchingRuleBackendDelete(backendName, rule, i))
-		} else if hasCurrentRule && hasDesiredRule {
-			// Both exist - check if modified
-			currentRule := currentRules[i]
-			desiredRule := desiredRules[i]
-
-			if !currentRule.Equal(*desiredRule) {
-				operations = append(operations, sections.NewServerSwitchingRuleBackendUpdate(backendName, desiredRule, i))
-			}
+	for _, e := range edits {
+		switch e.Op {
+		case editInsert:
+			operations = append(operations, sections.NewServerSwitchingRuleBackendCreate(backendName, e.New, e.NewIndex))
+		case editDelete:
+			operations = append(operations, sections.NewServerSwitchingRuleBackendDelete(backendName, e.Old, e.OldIndex))
+		case editUpdate:
+			operations = append(operations, sections.NewServerSwitchingRuleBackendUpdate(backendName, e.New, e.OldIndex))
 		}
 	}
 
