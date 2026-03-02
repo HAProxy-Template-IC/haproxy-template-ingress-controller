@@ -12,11 +12,12 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 ### Changed
 
 - `sidecars`, `extraVolumes`, `extraVolumeMounts` (and their `haproxy.*` counterparts) now support Helm template expressions (rendered via `tpl`)
+- `haproxy.shmStats.maxObjects` default reduced from 500000 to 50000
 
 ### Added
 
 - `template` post-processor type for declarative output transformations in `postProcessing`
-- `shm-stats-file-max-objects` is now dynamically calculated from the number of `guid` directives in the rendered config
+- `/dev/shm` emptyDir volume (`medium: Memory`) automatically added to HAProxy pods when `haproxy.shmStats.enabled` is `true`, with `sizeLimit` auto-calculated from `maxObjects` or overridden via `haproxy.shmStats.shmSizeLimit`
 - `haproxy.shmStats.enabled` value to persist stats counters across HAProxy reloads via shared memory (requires HAProxy 3.3+)
 - `guid` directives on all frontends, backends, and servers for stable object identification
 - `haproxy.nbthread` value to control HAProxy thread count, auto-calculated from CPU requests by default

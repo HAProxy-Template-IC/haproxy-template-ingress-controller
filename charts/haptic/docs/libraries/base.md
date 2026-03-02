@@ -205,7 +205,9 @@ Debug headers include:
 
 When `haproxy.shmStats.enabled` is `true` and HAProxy version is 3.3 or later, the base library adds `shm-stats-file` and `shm-stats-file-max-objects` to the global section. This persists stats counters (frontend/backend/server metrics) across HAProxy reloads via shared memory, eliminating counter resets during configuration changes.
 
-The `shm-stats-file-max-objects` value is a configurable fixed value (default 500000) set via `haproxy.shmStats.maxObjects`. Since the shm-stats file is fixed-size and cannot be resized on reload, a large fixed value prevents reload failures when new ingresses are added. HAProxy allocates object slots lazily, so memory overhead is proportional to actual objects, not the configured maximum.
+The `shm-stats-file-max-objects` value is a configurable fixed value (default 50000) set via `haproxy.shmStats.maxObjects`. Since the shm-stats file is fixed-size and cannot be resized on reload, a large fixed value prevents reload failures when new ingresses are added. HAProxy allocates object slots lazily, so memory overhead is proportional to actual objects, not the configured maximum.
+
+When shmStats is enabled, the chart automatically adds a `/dev/shm` emptyDir volume with `medium: Memory` to the HAProxy pod. The volume's `sizeLimit` is auto-calculated from `maxObjects` (~4KB per object with 10% margin), or can be overridden via `haproxy.shmStats.shmSizeLimit`. This volume counts against the pod's memory limit.
 
 ### Address Discovery
 
@@ -252,7 +254,7 @@ global
     tune.ssl.default-dh-param 2048
     # global-settings-250-shm-stats (when haproxy.shmStats.enabled=true and HAProxy >= 3.3)
     shm-stats-file /dev/shm/haproxy-stats
-    shm-stats-file-max-objects 2000  # dynamically calculated from guid count
+    shm-stats-file-max-objects 50000  # configurable via haproxy.shmStats.maxObjects
 
 defaults
     # defaults-settings-100-options

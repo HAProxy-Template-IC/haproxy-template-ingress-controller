@@ -886,11 +886,14 @@ haproxy:
     # backend, listen, and server directive counts as one object. The shm-stats
     # file is fixed-size once created — HAProxy cannot resize it on reload.
     # Formula: (number of backends + number of servers) * safety margin.
-    # HAProxy allocates object slots lazily, so a large value has negligible
-    # memory overhead (~275 MB virtual address space, RSS proportional to
-    # actual objects: ~11 MB for 20k objects).
-    # Default 500000 supports ~400k servers with headroom.
-    maxObjects: 500000
+    # Default 50000 supports ~40k servers with headroom.
+    maxObjects: 50000
+    # Size limit for the /dev/shm emptyDir volume (medium: Memory).
+    # Auto-calculated from maxObjects if not set (~4KB per object with 10% margin).
+    # For 50,000 objects the auto-calculated size is 215Mi.
+    # Override this if you have specific memory constraints.
+    # Note: counts against the pod's memory limit (SizeMemoryBackedVolumes).
+    # shmSizeLimit: "256Mi"
   # Number of HAProxy threads (nbthread global directive).
   # Default (key absent): auto-calculated from CPU requests (ceil of CPU cores, minimum 1).
   # Set to 0 to disable the nbthread directive entirely (HAProxy uses its built-in default).

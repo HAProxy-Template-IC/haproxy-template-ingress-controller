@@ -430,6 +430,26 @@ triggering a rolling update of HAProxy pods.
 {{- end -}}
 
 {{/*
+Calculate /dev/shm emptyDir sizeLimit for HAProxy shm-stats-file.
+Auto-calculates from maxObjects if shmSizeLimit is not explicitly set.
+Formula: ceil(maxObjects * 4096 * 1.1 / 1048576) MiB
+  - 4096 bytes per object (empirically ~3.2KB, 4KB provides safety margin)
+  - 1.1 multiplier for filesystem overhead (10%)
+  - Converted to MiB, rounded up
+*/}}
+{{- define "haptic.haproxy.shmSizeLimit" -}}
+{{- if .Values.haproxy.shmStats.shmSizeLimit -}}
+  {{- .Values.haproxy.shmStats.shmSizeLimit -}}
+{{- else -}}
+  {{- $maxObjects := .Values.haproxy.shmStats.maxObjects | int -}}
+  {{- $bytesNeeded := mul $maxObjects 4096 -}}
+  {{- $bytesWithMargin := add $bytesNeeded (div $bytesNeeded 10) -}}
+  {{- $mib := div (add $bytesWithMargin 1048575) 1048576 -}}
+  {{- printf "%dMi" $mib -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Convert a Kubernetes memory string to megabytes.
 Supports: Gi, Mi, G, M, Ki, K formats.
 Input: memory string (e.g., "256Mi", "1Gi")

@@ -132,6 +132,10 @@ spec:
               mountPath: /config
             - name: haproxy-runtime
               mountPath: /etc/haproxy
+            {{- if .Values.haproxy.shmStats.enabled }}
+            - name: devshm
+              mountPath: /dev/shm
+            {{- end }}
             {{- with .Values.haproxy.extraVolumeMounts }}
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
@@ -296,6 +300,12 @@ spec:
             name: {{ include "haptic.fullname" . }}-haproxy-config
         - name: haproxy-runtime
           emptyDir: {}
+        {{- if .Values.haproxy.shmStats.enabled }}
+        - name: devshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ include "haptic.haproxy.shmSizeLimit" . }}
+        {{- end }}
         - name: dataplane-data
           emptyDir: {}
         - name: dataplane-tmp
