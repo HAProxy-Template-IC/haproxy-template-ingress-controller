@@ -32,6 +32,7 @@ templateSnippets:
         Provides (in shared.globalFeatures):
           - sslPassthroughBackends: Array for SSL passthrough backend registrations
           - tlsCertificates: Array for TLS certificate registrations
+          - sslRedirectHosts: Array for SSL redirect host registrations
 
         Dependencies: None (this initializes the infrastructure)
 
@@ -40,6 +41,7 @@ templateSnippets:
           - features-100-gateway-tls
           - features-100-ingress-tls
           - features-100-haproxytech-ssl-passthrough
+          - features-100-haproxytech-ssl-redirect
       -#}
 
       {# Initialize SSL data structures atomically - ComputeIfAbsent ensures this runs exactly once #}
@@ -47,6 +49,7 @@ templateSnippets:
         return map[string]any{
           "sslPassthroughBackends": []any{},
           "tlsCertificates": []any{},
+          "sslRedirectHosts": []any{},
         }
       }) -%}
       {# Ensure fields exist (in case globalFeatures was created elsewhere without these fields) #}
@@ -56,6 +59,9 @@ templateSnippets:
       {%- end -%}
       {%- if gf["tlsCertificates"] == nil -%}
         {%- gf["tlsCertificates"] = []any{} -%}
+      {%- end -%}
+      {%- if gf["sslRedirectHosts"] == nil -%}
+        {%- gf["sslRedirectHosts"] = []any{} -%}
       {%- end -%}
 
   features-150-ssl-crtlist:
@@ -105,6 +111,87 @@ templateSnippets:
       {%- var crtlistContent = (crtlistLines | toStringSlice() | join("\n")) + "\n" -%}
       {%- var _, crtListErr = fileRegistry.Register("crt-list", "certificate-list.txt", crtlistContent) -%}
       {%- if crtListErr != nil -%}{{ fail("failed to register crt-list: " + tostring(crtListErr)) }}{%- end -%}
+
+  features-160-ssl-redirect-map:
+    template: |
+      {#-
+        SSL Redirect Map Generation
+
+        Purpose: Generates HAProxy map files for SSL redirect host lookups.
+
+        Extension Point: features-* (priority 160 - runs after certificate registration)
+
+        Dependencies:
+          - features-050-ssl-initialization
+          - features-100-*-ssl-redirect snippets (register redirect hosts)
+
+        Output:
+          - ssl-redirect-<code>.map files via fileRegistry.Register()
+          - One map file per distinct redirect code (e.g., ssl-redirect-302.map)
+
+        Map Format: <host> 1 (value is a presence marker for -m found)
+      -#}
+
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var redirectHosts []any = coalesce(gf["sslRedirectHosts"], []any{}) -%}
+
+      {# Group hosts by redirect code #}
+      {%- var hostsByCode = map[string][]any{} -%}
+      {%- for _, entry := range redirectHosts -%}
+        {%- var e map[string]any = entry -%}
+        {%- var code = tostring(e["code"]) -%}
+        {%- var host = tostring(e["host"]) -%}
+        {%- if first_seen("ssl_redirect_map", host) -%}
+          {%- if hostsByCode[code] == nil -%}
+            {%- hostsByCode[code] = []any{} -%}
+          {%- end -%}
+          {%- hostsByCode[code] = append(hostsByCode[code], host) -%}
+        {%- end -%}
+      {%- end -%}
+
+      {# Generate one map file per redirect code #}
+      {%- for code, hosts := range hostsByCode -%}
+        {%- var lines = []any{} -%}
+        {%- for _, host := range hosts -%}
+          {%- lines = append(lines, tostring(host) + " 1") -%}
+        {%- end -%}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
+        {%- var mapFilename = "ssl-redirect-" + code + ".map" -%}
+        {%- var _, mapErr = fileRegistry.Register("map", mapFilename, mapContent) -%}
+        {%- if mapErr != nil -%}{{ fail("failed to register ssl redirect map: " + tostring(mapErr)) }}{%- end -%}
+      {%- end -%}
+
+  frontend-filters-050-ssl-redirect:
+    template: |
+      {#-
+        SSL Redirect Rules
+
+        Purpose: Emits HAProxy redirect rules using map-based host lookups.
+
+        Extension Point: frontend-filters-* (priority 050 - runs early)
+
+        Dependencies:
+          - features-160-ssl-redirect-map (generates map files)
+
+        Output:
+          - One http-request redirect rule per distinct redirect code
+      -#}
+
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var redirectHosts []any = coalesce(gf["sslRedirectHosts"], []any{}) -%}
+
+      {# Determine distinct redirect codes from registered hosts #}
+      {%- var codes = map[string]bool{} -%}
+      {%- for _, entry := range redirectHosts -%}
+        {%- var e map[string]any = entry -%}
+        {%- codes[tostring(e["code"])] = true -%}
+      {%- end -%}
+
+      {# Emit one redirect rule per code #}
+      {%- for code := range codes %}
+      # ssl/frontend-filters-ssl-redirect (code {{ code }})
+      http-request redirect scheme https code {{ code }} if !{ ssl_fc } { var(txn.host),map_str({{ pathResolver.GetPath("ssl-redirect-" + code + ".map", "map") }}) -m found }
+      {%- end -%}
 
   # Global OCSP configuration - enables automatic OCSP stapling for all SSL certificates
   global-ssl-ocsp-config:

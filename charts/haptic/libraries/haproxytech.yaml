@@ -208,14 +208,33 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  frontend-filters-400-haproxytech-ssl-redirect:
+  features-100-haproxytech-ssl-redirect:
     template: |
-      {#- HAProxy SSL redirect.
-          Annotation "true" → redirect. Annotation "false" → no redirect.
-          Annotation absent + extraContext.ssl_redirect_default == "true" → redirect.
-          Annotation absent + no default → no redirect.
+      {#-
+        HAProxy SSL Redirect Host Registration
+
+        Purpose: Populates sslRedirectHosts shared state from Ingress annotations.
+
+        Extension Point: features-* (priority 100 - runs after SSL initialization)
+
+        Annotations:
+          - haproxy.org/ssl-redirect: "true" or "false" (per-Ingress override)
+          - haproxy.org/ssl-redirect-code: redirect status code (default: "302")
+
+        Behavior:
+          - Annotation "true" → redirect
+          - Annotation "false" → no redirect
+          - Annotation absent + extraContext.ssl_redirect_default == "true" → redirect
+          - Annotation absent + no default → no redirect
+
+        Dependencies:
+          - features-050-ssl-initialization (provides sslRedirectHosts array)
+
+        Consumed By:
+          - features-160-ssl-redirect-map (generates map files from collected hosts)
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- var sslRedirectDefault = extraContext | dig("ssl_redirect_default") | fallback("") | tostring() -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
@@ -225,15 +244,13 @@ templateSnippets:
           {%- var sslRedirect = ingress | dig("metadata", "annotations", "haproxy.org/ssl-redirect") | fallback("") | tostring() %}
           {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && sslRedirectDefault == "true") %}
           {%- if shouldRedirect %}
-            {%- var hosts = []any{} %}
+            {%- var code = ingress | dig("metadata", "annotations", "haproxy.org/ssl-redirect-code") | fallback("302") | tostring() %}
             {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
               {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
-            {%- end %}
-            {%- var code = ingress | dig("metadata", "annotations", "haproxy.org/ssl-redirect-code") | fallback("302") | tostring() %}
-            {%- if len(hosts) > 0 %}
-      # haproxytech/frontend-filters-haproxytech-ssl-redirect (for {{ key }})
-      http-request redirect scheme https code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
+              {%- if h != nil %}
+                {%- var redirectHosts []any = gf["sslRedirectHosts"] -%}
+                {%- gf["sslRedirectHosts"] = append(redirectHosts, map[string]any{"host": toLower(tostring(h)), "code": code}) -%}
+              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -1614,7 +1631,7 @@ validationTests:
         description: SSL redirect must not be generated without default or annotation
 
   test-haproxytech-ssl-redirect-many-hosts:
-    description: SSL redirect works with many hosts (>30) using file-based matching to avoid 64-word limit
+    description: SSL redirect works with many hosts using map-based matching
     extraContext:
       ssl_redirect_default: "true"
     fixtures:
@@ -1646,126 +1663,6 @@ validationTests:
                 http:
                   paths:
                     - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host06.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host07.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host08.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host09.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host10.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host11.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host12.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host13.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host14.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host15.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host16.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host17.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host18.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host19.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host20.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host21.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host22.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host23.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host24.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host25.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host26.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host27.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host28.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host29.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host30.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host31.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host32.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host33.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host34.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-              - host: host35.example.com
-                http:
-                  paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
       services:
         - apiVersion: v1
           kind: Service
@@ -1790,12 +1687,12 @@ validationTests:
             - port: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with 35 hosts (file-based matching)
+        description: HAProxy config must be valid with map-based SSL redirect
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request redirect scheme https"
-        description: SSL redirect must be generated
+        pattern: "http-request redirect scheme https code 302 if.*map_str.*ssl-redirect-302\\.map.*-m found"
+        description: Must use map-based matching for SSL redirect
       - type: contains
-        target: haproxy.cfg
-        pattern: "-m str -f"
-        description: Must use file-based matching for large host lists
+        target: map:ssl-redirect-302.map
+        pattern: "host01\\.example\\.com 1"
+        description: Map file must contain redirect hosts

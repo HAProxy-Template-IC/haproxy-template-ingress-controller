@@ -70,12 +70,15 @@ func (r *Runner) resolveAuxiliaryFile(target string, auxiliaryFiles *dataplane.A
 }
 
 // findMapFile searches for a map file by name.
+// The mapName parameter can be just the filename (e.g., "host.map") or a path.
+// This method first tries exact match, then falls back to basename matching
+// for dynamically registered maps that have full paths.
 func (r *Runner) findMapFile(mapName string, auxiliaryFiles *dataplane.AuxiliaryFiles) string {
 	if auxiliaryFiles == nil {
 		return ""
 	}
 	for _, mapFile := range auxiliaryFiles.MapFiles {
-		if mapFile.Path == mapName {
+		if mapFile.Path == mapName || filepath.Base(mapFile.Path) == mapName {
 			return mapFile.Content
 		}
 	}
