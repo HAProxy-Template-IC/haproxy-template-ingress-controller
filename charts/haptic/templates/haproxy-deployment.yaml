@@ -225,6 +225,9 @@ spec:
                 host: 0.0.0.0
                 port: {{ .Values.haproxy.ports.dataplane }}
                 disable_inotify: true
+                {{- with .Values.haproxy.dataplane.debugSocketPath }}
+                debug_socket_path: {{ . }}
+                {{- end }}
                 user:
                   - name: ${DATAPLANE_USERNAME}
                     password: ${DATAPLANE_PASSWORD}

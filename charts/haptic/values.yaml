@@ -869,6 +869,12 @@ haproxy:
     # The controller already validates locally, so server-side validation is redundant.
     # Set to true if you want double-validation for extra safety.
     validateConfig: false
+    # Enable debug socket for runtime profiling (pprof, goroutines, stack traces).
+    # When set, Dataplane API listens on this Unix socket for debug commands.
+    # Usage: kubectl exec <pod> -c dataplane -- socat - UNIX-CONNECT:<path>
+    # Commands: "pprof cpu start /tmp/cpu.prof 30", "pprof mem /tmp/mem.prof",
+    #           "pprof web start 6060 300", "goroutines", "stack"
+    debugSocketPath: ""
   # Extra environment variables for HAProxy container
   # Example:
   #   extraEnv:
