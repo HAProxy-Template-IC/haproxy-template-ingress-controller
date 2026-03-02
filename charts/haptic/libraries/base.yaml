@@ -450,7 +450,7 @@ templateSnippets:
       {%- var shmEnabled bool = extraContext | dig("shmStatsEnabled") | fallback(false) -%}
       {%- if shmEnabled && semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") %}
       shm-stats-file {{ extraContext | dig("shmStatsPath") | fallback("/dev/shm/haproxy-stats") }}
-      shm-stats-file-max-objects {{ extraContext | dig("shmStatsMaxObjects") | fallback(500000) }}
+      shm-stats-file-max-objects {{ extraContext | dig("shmStatsMaxObjects") | fallback(50000) }}
       {%- end %}
 
   global-settings-300-paths:
@@ -842,5 +842,5 @@ validationTests:
         description: shm-stats-file must be present
       - type: contains
         target: haproxy.cfg
-        pattern: "shm-stats-file-max-objects 500000"
+        pattern: "shm-stats-file-max-objects 50000"
         description: Max objects must use the configured fixed value

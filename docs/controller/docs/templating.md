@@ -78,7 +78,7 @@ haproxyConfig:
         replace: "  "
 ```
 
-The `template` post-processor receives the fully rendered output as the `input` variable and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, etc.). Its output becomes the new rendered content. This is used by the base library to dynamically calculate `shm-stats-file-max-objects` from `guid` directive counts.
+The `template` post-processor receives the fully rendered output as the `input` variable and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, etc.). Its output becomes the new rendered content.
 
 ### Map Files
 
