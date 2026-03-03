@@ -284,7 +284,7 @@ controller:
       endpoints:
         apiVersion: discovery.k8s.io/v1
         resources: endpointslices
-        indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
+        indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
       secrets:
         apiVersion: v1
         resources: secrets

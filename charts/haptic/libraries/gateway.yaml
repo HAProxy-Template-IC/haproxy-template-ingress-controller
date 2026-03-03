@@ -507,7 +507,7 @@ templateSnippets:
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
         default-server check{%- if protoFlag != "" %} proto {{ protoFlag }}{%- end %}
-        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey) | indent(2, true) -}}
+        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, tostring(routeNs)) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
       {%- end -%}
@@ -592,7 +592,7 @@ templateSnippets:
       backend {{ biName }}
           guid {{ make_guid("be", biName) }}
           mode tcp
-          {{ BackendServers(refName, 10, refPort, nil, nil, biName) | indent(4, false) }}
+          {{ BackendServers(refName, 10, refPort, nil, nil, biName, tostring(biNamespace)) | indent(4, false) }}
                     {%- generated = true %}
                   {%- end %}
                 {%- end %}
