@@ -195,7 +195,7 @@ templateSnippets:
           backendName    - HAProxy backend name for slot preservation (nil = disabled)
 
         Example:
-          {{ BackendServers("my-service", 0, 80, serverOpts, nil, "default_my-ingress_svc_my-service_http") }}
+          {{ BackendServers("my-service", 0, 80, serverOpts, nil, "default_my-ingress_svc_my-service_http", "default") }}
 
         Output:
           server SRV_1 10.0.0.1:8080 check  # Pod: my-pod-abc
@@ -204,7 +204,7 @@ templateSnippets:
           ...
       -#}
       {% import "util-backend-servers-helpers" for BuildServerOptions %}
-      {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any) %}
+      {% macro BackendServers(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) %}
         {%%
           // ── 1. Resolve server slot count ──────────────────────────────────
           // Priority: maxServerSlots param > serverOpts.serverSlotsValue > default (10)
@@ -223,14 +223,13 @@ templateSnippets:
           }
 
           // ── 3. Fetch EndpointSlices for the service ───────────────────────
-          var allSlices = resources.endpoints.Fetch(serviceName)
+          var allSlices = resources.endpoints.Fetch(namespace, serviceName)
 
           // ── 4. Look up port name from Service if not provided ─────────────
           // This enables targetPort resolution (service port → pod port)
           if pn == "" && len(allSlices) > 0 {
-            var ns = allSlices[0] | dig("metadata", "namespace") | fallback("")
-            if ns != "" {
-              var svc = resources.services.GetSingle(tostring(ns), serviceName)
+            if namespace != "" {
+              var svc = resources.services.GetSingle(namespace, serviceName)
               if svc != nil {
                 for _, sp := range svc | dig("spec", "ports") | toSlice() {
                   if toint(sp | dig("port") | fallback(0)) == port {
@@ -525,12 +524,15 @@ templateSnippets:
       {%- import "util-backend-servers" for BackendServers -%}
       {%- var defaultBackendSvc = extraContext | dig("defaultBackendService") | fallback(nil) -%}
       {%- if defaultBackendSvc != nil %}
-      {%- var dbName = defaultBackendSvc | dig("name") | fallback("") | tostring() -%}
-      {%- var dbPort = defaultBackendSvc | dig("port") | fallback(80) -%}
+      {%%
+        var dbNamespace = defaultBackendSvc | dig("namespace") | fallback("") | tostring()
+        var dbName = defaultBackendSvc | dig("name") | fallback("") | tostring()
+        var dbPort = defaultBackendSvc | dig("port") | fallback(80)
+      %%}
       backend default_backend
           guid be:default_backend
           default-server check
-          {{ BackendServers(dbName, 0, toint(dbPort), nil, nil, "default_backend") | indent(2, true) }}
+          {{ BackendServers(dbName, 0, toint(dbPort), nil, nil, "default_backend", dbNamespace) | indent(2, true) }}
       {%- else %}
       backend default_backend
           guid be:default_backend
@@ -870,3 +872,112 @@ validationTests:
         target: haproxy.cfg
         pattern: "shm-stats-file-max-objects 50000"
         description: Max objects must use the configured fixed value
+
+  test-default-backend-cross-namespace:
+    description: Default backend resolves endpoints from a different namespace
+    extraContext:
+      defaultBackendService:
+        namespace: ingress-default-backend
+        name: default-backend-service
+        port: 8080
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: default-backend-service
+            namespace: ingress-default-backend
+          spec:
+            ports:
+              - name: http
+                port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: default-backend-service-abc
+            namespace: ingress-default-backend
+            labels:
+              kubernetes.io/service-name: default-backend-service
+          addressType: IPv4
+          endpoints:
+            - addresses:
+                - "10.1.0.1"
+              targetRef:
+                kind: Pod
+                name: default-backend-pod-1
+            - addresses:
+                - "10.1.0.2"
+              targetRef:
+                kind: Pod
+                name: default-backend-pod-2
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.1.0.1:8080"
+        description: First pod must appear as server
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_2 10.1.0.2:8080"
+        description: Second pod must appear as server
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "http-request return status 404"
+        description: Must not use 404 fallback when service is configured
+
+  test-default-backend-same-namespace:
+    description: Default backend works with explicit namespace
+    extraContext:
+      defaultBackendService:
+        namespace: default
+        name: fallback-svc
+        port: 80
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: fallback-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: fallback-svc-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: fallback-svc
+          addressType: IPv4
+          endpoints:
+            - addresses:
+                - "10.2.0.1"
+              targetRef:
+                kind: Pod
+                name: fallback-pod-1
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.2.0.1:8080"
+        description: Pod must appear as server
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "http-request return status 404"
+        description: Must not use 404 fallback when service is configured
