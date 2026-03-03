@@ -127,6 +127,17 @@ func runController(cmd *cobra.Command, args []string) error {
 	logger := logging.NewDynamicLogger(logLevelEnv)
 	slog.SetDefault(logger)
 
+	// Set GOGC default if not explicitly configured.
+	// The default Go value (100) causes excessive GC frequency in this workload:
+	// with high GOMAXPROCS and long idle gaps between renders, sync.Pool.pinSlow
+	// dominates allocations. GOGC=200 halves GC frequency; automemlimit's GOMEMLIMIT
+	// acts as a safety net against OOM.
+	gogc := os.Getenv("GOGC")
+	if gogc == "" {
+		gogc = "200"
+		debug.SetGCPercent(200)
+	}
+
 	// Log detected resource limits for observability
 	gomaxprocs := runtime.GOMAXPROCS(0)
 	var gomemlimit string
@@ -145,7 +156,8 @@ func runController(cmd *cobra.Command, args []string) error {
 		"debug_port", runDebugPort,
 		"log_level", logging.GetLevel(),
 		"gomaxprocs", gomaxprocs,
-		"gomemlimit", gomemlimit)
+		"gomemlimit", gomemlimit,
+		"gogc", gogc)
 
 	// Create Kubernetes client
 	k8sClient, err := client.New(client.Config{
