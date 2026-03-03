@@ -103,30 +103,6 @@ templateSnippets:
       option forwardfor
       {%- end -%}
 
-  frontend-filters-150-haproxytech-timeouts:
-    template: |
-      {#- HAProxy frontend timeouts (client, http-request, http-keep-alive) -#}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-        {%- var key = ns + "/" + name %}
-        {%- if first_seen("haproxytech_timeouts", key) %}
-          {%- var tClient = ingress | dig("metadata", "annotations", "haproxy.org/timeout-client") | fallback("") | tostring() %}
-          {%- var tHttpReq = ingress | dig("metadata", "annotations", "haproxy.org/timeout-http-request") | fallback("") | tostring() %}
-          {%- var tKeepAlive = ingress | dig("metadata", "annotations", "haproxy.org/timeout-http-keep-alive") | fallback("") | tostring() %}
-          {%- if tClient != "" %}
-      # haproxytech/frontend-filters-haproxytech-timeouts
-      timeout client {{ tClient }}
-          {% end %}
-          {%- if tHttpReq != "" %}
-      timeout http-request {{ tHttpReq }}
-          {% end %}
-          {%- if tKeepAlive != "" %}
-      timeout http-keep-alive {{ tKeepAlive }}
-          {% end %}
-        {%- end %}
-      {%- end -%}
-
   frontend-filters-200-haproxytech-access-control:
     template: |
       {#- HAProxy IP allowlist/denylist -#}

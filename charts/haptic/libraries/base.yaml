@@ -484,9 +484,17 @@ templateSnippets:
 
   defaults-settings-300-timeouts:
     template: |
-      timeout connect 5000
-      timeout client 50000
-      timeout server 50000
+      timeout connect {{ extraContext | dig("timeout_connect") | fallback("5000") }}
+      timeout client {{ extraContext | dig("timeout_client") | fallback("50000") }}
+      timeout server {{ extraContext | dig("timeout_server") | fallback("50000") }}
+      {%- var tHttpReq = extraContext | dig("timeout_http_request") | fallback("") | tostring() -%}
+      {%- var tKeepAlive = extraContext | dig("timeout_http_keep_alive") | fallback("") | tostring() -%}
+      {%- if tHttpReq != "" %}
+      timeout http-request {{ tHttpReq }}
+      {%- end -%}
+      {%- if tKeepAlive != "" %}
+      timeout http-keep-alive {{ tKeepAlive }}
+      {%- end %}
 
   defaults-settings-400-errorfiles:
     template: |
