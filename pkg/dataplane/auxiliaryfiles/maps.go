@@ -2,7 +2,6 @@ package auxiliaryfiles
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
@@ -26,18 +25,7 @@ func (o *mapFileOps) Create(ctx context.Context, id, content string) (string, er
 	if err != nil && strings.Contains(err.Error(), "already exists") {
 		// File physically exists but wasn't in the storage listing (e.g., after a raw
 		// config push + reload). Fall back to update instead of failing.
-		reloadID, updateErr := o.Update(ctx, id, content)
-		if updateErr == nil {
-			return reloadID, nil
-		}
-		// Both create and update failed. The file exists on disk (confirmed by 409
-		// from create) but not in the DataPlane API's storage registry (confirmed by
-		// 404 from update). This occurs after raw config pushes which reset the API's
-		// storage registry state. Since the file physically exists with content from
-		// a previous successful sync, treat as success to avoid blocking deployment.
-		slog.Warn("Map file exists on disk but not in API registry, treating as success",
-			"file", id, "create_error", err, "update_error", updateErr)
-		return "", nil
+		return o.Update(ctx, id, content)
 	}
 	return reloadID, err
 }
