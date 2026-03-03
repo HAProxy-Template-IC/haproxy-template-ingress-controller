@@ -366,6 +366,84 @@ backend different-backend
 		"backend names should be different")
 }
 
+// newHAProxyCfgResourceWithChecksum creates a resource with spec.checksum and generation set.
+func newHAProxyCfgResourceWithChecksum(content, checksum string, generation int64) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "haproxy-haptic.org/v1alpha1",
+			"kind":       "HAProxyCfg",
+			"metadata": map[string]interface{}{
+				"name":       "test-haproxycfg",
+				"namespace":  "default",
+				"generation": generation,
+			},
+			"spec": map[string]interface{}{
+				"content":  content,
+				"checksum": checksum,
+			},
+		},
+	}
+	return u
+}
+
+func TestStore_SkipsDecompressionWhenSpecChecksumMatches(t *testing.T) {
+	logger := newTestLogger()
+	store, err := New(logger)
+	require.NoError(t, err)
+
+	checksum := "abc123"
+
+	// First update: parses content and stores checksum
+	resource1 := newHAProxyCfgResourceWithChecksum(validHAProxyConfig, checksum, 1)
+	store.Update(resource1)
+	config1 := store.Get()
+	require.NotNil(t, config1, "config should be set after first update")
+
+	// Verify stored hash is the spec.checksum
+	store.mu.RLock()
+	storedHash := store.contentHash
+	store.mu.RUnlock()
+	assert.Equal(t, checksum, storedHash, "stored hash should be spec.checksum")
+
+	// Second update: same checksum, different generation (simulates CRD update with same content)
+	resource2 := newHAProxyCfgResourceWithChecksum(validHAProxyConfig, checksum, 2)
+	store.Update(resource2)
+	config2 := store.Get()
+	require.NotNil(t, config2, "config should still be set")
+
+	// Config pointer should be the same (no re-parse occurred — checksum match skipped decompression)
+	assert.Same(t, config1, config2, "config pointer should be same when spec.checksum matches")
+
+	// Generation should have been updated despite skipping parse
+	store.mu.RLock()
+	gen := store.lastGeneration
+	store.mu.RUnlock()
+	assert.Equal(t, int64(2), gen, "generation should be updated even when parse is skipped")
+}
+
+func TestStore_FallsBackToSHA256WhenChecksumEmpty(t *testing.T) {
+	logger := newTestLogger()
+	store, err := New(logger)
+	require.NoError(t, err)
+
+	// Update with no spec.checksum (empty string) — should fall back to SHA256
+	resource := newHAProxyCfgResource(validHAProxyConfig)
+	resource.Object["metadata"] = map[string]interface{}{
+		"name":       "test-haproxycfg",
+		"namespace":  "default",
+		"generation": int64(1),
+	}
+	store.Update(resource)
+	config := store.Get()
+	require.NotNil(t, config, "config should be set")
+
+	// The stored hash should be a SHA256 hex string (64 chars), not empty
+	store.mu.RLock()
+	hash := store.contentHash
+	store.mu.RUnlock()
+	assert.Len(t, hash, 64, "hash should be SHA256 hex (64 chars) when spec.checksum is empty")
+}
+
 func TestStore_ClearResetsHash(t *testing.T) {
 	logger := newTestLogger()
 	store, err := New(logger)

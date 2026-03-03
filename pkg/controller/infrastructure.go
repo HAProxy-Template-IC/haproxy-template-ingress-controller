@@ -18,13 +18,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"strconv"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
-	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
 )
 
 // createEarlyHealthChecker creates a health checker that reports unhealthy until config is loaded.
@@ -108,28 +105,23 @@ func startEarlyInfrastructureServers(
 		logger.Info("Reusing existing infrastructure servers (reinitialization)")
 	}
 
-	// Start metrics HTTP server with default port
-	// We use a default because config hasn't been loaded yet
-	defaultMetricsPort := 9090
-	if envPort := os.Getenv("METRICS_PORT"); envPort != "" {
-		if port, err := strconv.Atoi(envPort); err == nil {
-			defaultMetricsPort = port
-		}
-	}
+	// Swap metrics registry for this iteration and start server if first time
+	if infra.MetricsServer != nil {
+		infra.MetricsServer.SetRegistry(setup.MetricsRegistry)
 
-	if defaultMetricsPort > 0 {
-		metricsServer := pkgmetrics.NewServer(fmt.Sprintf(":%d", defaultMetricsPort), setup.MetricsRegistry)
-		go func() {
-			if err := metricsServer.Start(ctx); err != nil {
-				logger.Error("metrics server failed", "error", err, "port", defaultMetricsPort)
-			}
-		}()
-		logger.Info("Metrics HTTP server scheduled (early startup)",
-			"port", defaultMetricsPort,
-			"bind_address", fmt.Sprintf("0.0.0.0:%d", defaultMetricsPort),
-			"endpoint", "/metrics")
-	} else {
-		logger.Debug("Metrics HTTP server disabled (port=0)")
+		if !infra.metricsServerStarted {
+			go func() {
+				if err := infra.MetricsServer.Start(ctx); err != nil {
+					logger.Error("metrics server failed", "error", err)
+				}
+			}()
+			logger.Info("Metrics HTTP server started (first iteration)",
+				"addr", infra.MetricsServer.Addr(),
+				"endpoint", "/metrics")
+			infra.metricsServerStarted = true
+		} else {
+			logger.Info("Metrics registry swapped (reinitialization)")
+		}
 	}
 }
 

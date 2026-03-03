@@ -1,6 +1,6 @@
 .PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
         test test-integration test-acceptance test-acceptance-parallel build-integration-test \
-        test-coverage test-integration-coverage test-coverage-combined \
+        test-coverage test-integration-coverage test-coverage-combined bench \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         tidy verify verify-generate generate clean fmt vet install-tools dev \
         release-controller release-chart goreleaser-snapshot \
@@ -206,6 +206,16 @@ test-coverage-combined: ## Run unit and integration tests with combined coverage
 	$(GO) tool cover -func=coverage/combined.out
 	$(GO) tool cover -html=coverage/combined.out -o coverage/combined.html
 	@echo "Combined coverage report generated at coverage/combined.html"
+
+bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=BenchmarkVMPool COUNT=6)
+	@echo "Running benchmarks..."
+	$(GO) tool gotestsum --format testname -- \
+		-run='^$$' \
+		-bench=$${BENCH:-'.'} \
+		-benchmem \
+		-count=$${COUNT:-1} \
+		-timeout=$${TIMEOUT:-5m} \
+		$${PKG:-./...}
 
 ## Build targets
 

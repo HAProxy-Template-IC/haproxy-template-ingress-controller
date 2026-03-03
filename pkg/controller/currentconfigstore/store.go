@@ -111,6 +111,27 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 		}
 	}
 
+	// Fast path: Use spec.checksum (set by the controller when publishing the CRD)
+	// to skip decompression + SHA256 + parsing when content hasn't changed.
+	// This is the dominant optimization: generation changes on every spec update, but
+	// spec.checksum only changes when the actual config content differs.
+	specChecksum, _, _ := unstructured.NestedString(u.Object, "spec", "checksum")
+	if specChecksum != "" {
+		s.mu.RLock()
+		checksumMatch := s.contentHash == specChecksum && s.currentConfig != nil
+		s.mu.RUnlock()
+
+		if checksumMatch {
+			// Content unchanged — update generation without decompressing or parsing
+			s.mu.Lock()
+			s.lastGeneration = generation
+			s.mu.Unlock()
+			s.logger.Debug("current config unchanged (spec.checksum match), skipping decompression",
+				"generation", generation)
+			return
+		}
+	}
+
 	// Decompress if needed
 	isCompressed, _, _ := unstructured.NestedBool(u.Object, "spec", "compressed")
 	if isCompressed {
@@ -122,10 +143,14 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 		content = decompressed
 	}
 
-	// Compute hash to detect content changes and skip redundant parsing.
-	// This is a fallback for when generation is 0 (shouldn't happen with CRD subresource).
-	hash := sha256.Sum256([]byte(content))
-	hashStr := hex.EncodeToString(hash[:])
+	// Determine content hash: use spec.checksum if available, otherwise compute SHA256.
+	// The spec.checksum is set by the controller when publishing the CRD and covers
+	// the same content, so recomputing SHA256 is redundant.
+	hashStr := specChecksum
+	if hashStr == "" {
+		hash := sha256.Sum256([]byte(content))
+		hashStr = hex.EncodeToString(hash[:])
+	}
 
 	s.mu.RLock()
 	unchanged := s.contentHash == hashStr

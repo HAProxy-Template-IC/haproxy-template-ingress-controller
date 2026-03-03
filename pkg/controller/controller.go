@@ -27,6 +27,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -46,6 +48,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
 )
 
 const (
@@ -133,7 +136,9 @@ func (s *configState) Message() string {
 type persistentInfra struct {
 	IntrospectionRegistry *introspection.Registry
 	IntrospectionServer   *introspection.Server
+	MetricsServer         *pkgmetrics.Server
 	serverStarted         bool // True after first iteration has started the server
+	metricsServerStarted  bool // True after first iteration has started the metrics server
 }
 
 // Run is the main entry point for the controller.
@@ -179,6 +184,18 @@ func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, web
 		infra.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), infra.IntrospectionRegistry)
 		// Note: Setup() and Serve() will be called in startEarlyInfrastructureServers
 		// on the first iteration only
+	}
+
+	// Create the metrics server once, before the loop.
+	// The registry will be swapped via SetRegistry() on each iteration.
+	metricsPort := 9090
+	if envPort := os.Getenv("METRICS_PORT"); envPort != "" {
+		if port, err := strconv.Atoi(envPort); err == nil {
+			metricsPort = port
+		}
+	}
+	if metricsPort > 0 {
+		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())
 	}
 
 	// Main reinitialization loop

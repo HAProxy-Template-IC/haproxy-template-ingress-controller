@@ -280,6 +280,65 @@ func TestServer_StartFailsWhenPortInUse(t *testing.T) {
 	}
 }
 
+func TestServer_SetRegistry(t *testing.T) {
+	// Create first registry with a counter
+	registry1 := prometheus.NewRegistry()
+	counter1 := NewCounter(registry1, "registry1_metric", "Metric from registry 1")
+	counter1.Add(42)
+
+	// Start server with registry1
+	server, cancel := startServer(t, registry1)
+	defer cancel()
+
+	// Verify registry1 metrics are served
+	resp, err := http.Get("http://" + server.Addr() + "/metrics")
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	bodyStr := string(body)
+	assert.Contains(t, bodyStr, "registry1_metric")
+	assert.Contains(t, bodyStr, "42")
+
+	// Create second registry with a different counter
+	registry2 := prometheus.NewRegistry()
+	counter2 := NewCounter(registry2, "registry2_metric", "Metric from registry 2")
+	counter2.Add(99)
+
+	// Swap registry
+	server.SetRegistry(registry2)
+
+	// Verify registry2 metrics are now served (and registry1 metrics are gone)
+	resp, err = http.Get("http://" + server.Addr() + "/metrics")
+	require.NoError(t, err)
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	bodyStr = string(body)
+	assert.Contains(t, bodyStr, "registry2_metric")
+	assert.Contains(t, bodyStr, "99")
+	assert.NotContains(t, bodyStr, "registry1_metric")
+}
+
+func TestServer_SetRegistry_NoPortRebind(t *testing.T) {
+	registry1 := prometheus.NewRegistry()
+	server, cancel := startServer(t, registry1)
+	defer cancel()
+
+	addrBefore := server.Addr()
+
+	// Swap registry
+	registry2 := prometheus.NewRegistry()
+	server.SetRegistry(registry2)
+
+	// Address should remain the same (no port rebind)
+	assert.Equal(t, addrBefore, server.Addr())
+
+	// Server should still respond
+	resp, err := http.Get("http://" + server.Addr() + "/metrics")
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func BenchmarkServer_MetricsEndpoint(b *testing.B) {
 	registry := prometheus.NewRegistry()
 
