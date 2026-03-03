@@ -35,11 +35,12 @@ import (
 // The server provides a /metrics endpoint for Prometheus scraping and gracefully shuts down
 // when the context is cancelled.
 type Server struct {
-	addr     string
-	addrMu   sync.RWMutex
-	registry prometheus.Gatherer
-	server   *http.Server
-	logger   *slog.Logger
+	addr       string
+	addrMu     sync.RWMutex
+	registry   prometheus.Gatherer
+	registryMu sync.RWMutex
+	server     *http.Server
+	logger     *slog.Logger
 }
 
 // NewServer creates a new metrics server.
@@ -68,9 +69,7 @@ func NewServer(addr string, registry prometheus.Gatherer) *Server {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{
-		EnableOpenMetrics: true,
-	}))
+	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/", s.handleRoot)
 
 	s.server = &http.Server{
@@ -139,6 +138,27 @@ func (s *Server) Start(ctx context.Context) error {
 	case err := <-serverErr:
 		return fmt.Errorf("server error: %w", err)
 	}
+}
+
+// SetRegistry replaces the Prometheus registry used to serve metrics.
+// This allows reusing the same server across controller iterations while swapping
+// the registry (which contains iteration-specific metrics).
+func (s *Server) SetRegistry(registry prometheus.Gatherer) {
+	s.registryMu.Lock()
+	defer s.registryMu.Unlock()
+	s.registry = registry
+}
+
+// handleMetrics serves Prometheus metrics from the current registry.
+// The registry is read under a read lock so it can be swapped via SetRegistry.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	s.registryMu.RLock()
+	registry := s.registry
+	s.registryMu.RUnlock()
+
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{
+		EnableOpenMetrics: true,
+	}).ServeHTTP(w, r)
 }
 
 // handleRoot provides a simple landing page with link to metrics endpoint.
