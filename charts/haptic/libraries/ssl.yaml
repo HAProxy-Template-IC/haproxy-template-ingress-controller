@@ -191,7 +191,7 @@ templateSnippets:
       {%- for code := range codes %}
       # ssl/frontend-filters-ssl-redirect (code {{ code }})
       http-request redirect scheme https code {{ code }} if !{ ssl_fc } { var(txn.host),map_str({{ pathResolver.GetPath("ssl-redirect-" + code + ".map", "map") }}) -m found }
-      {%- end -%}
+      {%- end %}
 
   # Global OCSP configuration - enables automatic OCSP stapling for all SSL certificates
   global-ssl-ocsp-config:
