@@ -160,6 +160,7 @@ func TestFileRegistry_GetFiles(t *testing.T) {
 	files := registry.GetFiles()
 
 	require.Len(t, files.MapFiles, 1)
+	assert.Equal(t, "hosts.map", files.MapFiles[0].Path, "MapFile.Path should be just the filename, not the full path from pathResolver")
 	assert.Equal(t, "host content", files.MapFiles[0].Content)
 
 	require.Len(t, files.SSLCertificates, 1)

@@ -169,7 +169,7 @@ func (r *FileRegistry) GetFiles() *dataplane.AuxiliaryFiles {
 
 		case "map":
 			files.MapFiles = append(files.MapFiles, auxiliaryfiles.MapFile{
-				Path:    reg.Path,
+				Path:    reg.Filename,
 				Content: reg.Content,
 			})
 
