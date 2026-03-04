@@ -237,22 +237,38 @@ func parseIndentBool(args []interface{}, index int, name string) (bool, error) {
 }
 
 // applyIndentation applies indentation to each line based on the flags.
+// Uses index-based scanning instead of strings.Split to avoid allocating a []string slice.
 func applyIndentation(s, indentStr string, indentFirst, indentBlank bool) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) == 0 {
+	if s == "" {
 		return s
 	}
 
+	// Pre-allocate builder: original length + indent per line
+	newlines := strings.Count(s, "\n")
 	var result strings.Builder
-	for i, line := range lines {
-		if shouldIndentLine(i, line, indentFirst, indentBlank) {
+	result.Grow(len(s) + (newlines+1)*len(indentStr))
+
+	lineIndex := 0
+	for {
+		nlPos := strings.IndexByte(s, '\n')
+		var line string
+		if nlPos == -1 {
+			line = s
+		} else {
+			line = s[:nlPos]
+		}
+
+		if shouldIndentLine(lineIndex, line, indentFirst, indentBlank) {
 			result.WriteString(indentStr)
 		}
 		result.WriteString(line)
 
-		if i < len(lines)-1 {
-			result.WriteString("\n")
+		if nlPos == -1 {
+			break
 		}
+		result.WriteByte('\n')
+		s = s[nlPos+1:]
+		lineIndex++
 	}
 
 	return result.String()

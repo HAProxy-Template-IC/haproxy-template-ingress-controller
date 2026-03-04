@@ -17,7 +17,6 @@ package templating
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strings"
 )
 
@@ -38,7 +37,7 @@ const guidHashLen = 8
 func scriggoMakeGUID(parts ...interface{}) string {
 	strs := make([]string, len(parts))
 	for i, p := range parts {
-		strs[i] = fmt.Sprint(p)
+		strs[i] = scriggoToString(p)
 	}
 
 	guid := strings.Join(strs, ":")

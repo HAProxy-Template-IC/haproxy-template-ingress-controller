@@ -20,18 +20,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"gitlab.com/haproxy-haptic/scriggo/native"
 )
-
-// stringBuilderPool pools strings.Builder instances for reuse.
-// Used by scriggoFirstSeen to avoid allocating a new builder on every call.
-var stringBuilderPool = sync.Pool{
-	New: func() interface{} {
-		return &strings.Builder{}
-	},
-}
 
 // scriggoSortBy sorts a slice of items by multiple criteria.
 // Criteria are JSONPath expressions with optional modifiers:
@@ -187,22 +178,17 @@ func scriggoFirstSeen(env native.Env, parts ...interface{}) bool {
 		return true // No shared context = treat as first time
 	}
 
-	// Get pooled builder to avoid allocating a new one on every call.
-	b := stringBuilderPool.Get().(*strings.Builder)
-	b.Reset()
+	var b strings.Builder
 	b.Grow(len(parts) * 24) // Estimate: ~20 chars per part + separators
 
 	for i, part := range parts {
 		if i > 0 {
 			b.WriteByte('_')
 		}
-		writeToBuilder(b, part)
+		writeToBuilder(&b, part)
 	}
 
-	// Extract key string before returning builder to pool.
-	// b.String() allocates - this is unavoidable since ComputeIfAbsent needs a string key.
 	key := b.String()
-	stringBuilderPool.Put(b)
 
 	// Use ComputeIfAbsent - wasComputed tells us if this is the first occurrence.
 	// The compute function just stores a marker value; what matters is wasComputed.
@@ -234,7 +220,7 @@ func writeToBuilder(b *strings.Builder, v interface{}) {
 		if val == nil {
 			return
 		}
-		fmt.Fprintf(b, "%v", v)
+		b.WriteString(scriggoToString(v))
 	}
 }
 
