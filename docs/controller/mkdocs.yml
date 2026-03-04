@@ -76,6 +76,7 @@ nav:
     - High Availability: operations/high-availability.md
     - Monitoring: operations/monitoring.md
     - Security: operations/security.md
+    - SPIFFE/SPIRE mTLS: operations/spiffe-mtls.md
     - Performance: operations/performance.md
     - Debugging: operations/debugging.md
     - Troubleshooting: troubleshooting.md
