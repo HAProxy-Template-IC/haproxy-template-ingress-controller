@@ -238,6 +238,16 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `haproxy.dataplaneBin` | string | Auto-detected | Dataplane API binary path |
 | `haproxy.user` | string | Auto-detected | HAProxy user |
 
+## HAProxy Pod Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.shareProcessNamespace` | bool | `false` | Share process namespace between containers (required for signal-based sidecar reload) |
+| `haproxy.sidecars` | list | `[]` | Additional sidecar containers for HAProxy pod |
+| `haproxy.initContainers` | list | `[]` | Init containers for HAProxy pod |
+| `haproxy.extraVolumes` | list | `[]` | Extra volumes for HAProxy pod |
+| `haproxy.extraVolumeMounts` | list | `[]` | Extra volume mounts for HAProxy container |
+
 ## HAProxy Ports
 
 | Parameter | Type | Default | Description |

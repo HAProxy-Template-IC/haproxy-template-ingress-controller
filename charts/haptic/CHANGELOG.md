@@ -18,6 +18,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Added
 
+- `haproxy.shareProcessNamespace` value to enable process namespace sharing between containers (required for signal-based sidecar reload, e.g., SPIFFE/SPIRE mTLS agents)
 - `template` post-processor type for declarative output transformations in `postProcessing`
 - `/dev/shm` emptyDir volume (`medium: Memory`) automatically added to HAProxy pods when `haproxy.shmStats.enabled` is `true`, with `sizeLimit` auto-calculated from `maxObjects` or overridden via `haproxy.shmStats.shmSizeLimit`
 - `haproxy.shmStats.enabled` value to persist stats counters across HAProxy reloads via shared memory (requires HAProxy 3.3+)
