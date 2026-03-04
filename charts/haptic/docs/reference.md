@@ -242,6 +242,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `haproxy.podAnnotations` | map | `{}` | Extra pod annotations for HAProxy pods (supports template expressions) |
 | `haproxy.shareProcessNamespace` | bool | `false` | Share process namespace between containers (required for signal-based sidecar reload) |
 | `haproxy.sidecars` | list | `[]` | Additional sidecar containers for HAProxy pod |
 | `haproxy.initContainers` | list | `[]` | Init containers for HAProxy pod |
