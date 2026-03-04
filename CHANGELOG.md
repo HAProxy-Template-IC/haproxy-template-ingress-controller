@@ -16,6 +16,19 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - **Status patch helper functions**: `condition()`, `transitionTime()`, and `toJSON()` template functions for building Kubernetes status conditions with stable transition timestamps
 - **StatusApplier component**: Applies status patches via Server-Side Apply to `/status` subresource with checksum-based skip optimization and leadership-aware cache management
 
+### Fixed
+
+- **Metrics server lifecycle**: Persist metrics server across controller iterations instead of recreating on each cycle
+- **FileRegistry map file paths**: Use filename instead of full path for map file registration, fixing deployment path mismatches
+- **Dataplane sync rule comparison**: Replace index-based rule comparison with LCS content matching for reliable HAProxy config updates
+
+### Performance
+
+- **Scriggo callNative fast-path**: Expanded type-switch cases eliminate `reflect.Value.Call` for frequent template function signatures
+- **Channel-based VM pool**: Replace `sync.Pool` with channel pool and tune GOGC for more predictable memory behavior
+- **Eliminated `fmt.Sprint` allocations**: Direct type conversions in hot template functions
+- **Removed `argsPool` sync.Pool**: Reduce allocation hotspots in template argument passing
+
 ## [0.1.0-alpha.12] - 2026-02-27
 
 ### Added

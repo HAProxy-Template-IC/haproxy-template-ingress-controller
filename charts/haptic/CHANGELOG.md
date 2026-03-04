@@ -13,6 +13,8 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 - `sidecars`, `extraVolumes`, `extraVolumeMounts` (and their `haproxy.*` counterparts) now support Helm template expressions (rendered via `tpl`)
 - `haproxy.shmStats.maxObjects` default reduced from 500000 to 50000
+- Frontend timeout annotations (`haproxy.org/timeout-*`) moved from per-frontend rules to `defaults` section via `extraContext`
+- SSL redirect rules consolidated from per-Ingress ACLs to a shared map file for reduced configuration size
 
 ### Added
 
@@ -31,10 +33,15 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 - HAProxy built-in Prometheus exporter enabled by default on the status frontend (`/metrics` on port 8404)
 - `controllerName` injected into `extraContext` when Gateway library is enabled
 - `extraDeploy` value for deploying arbitrary Kubernetes resources alongside the chart (supports Helm templating)
+- `haproxy.dataplane.debugSocket` value to enable Unix socket for runtime profiling of the Dataplane API sidecar
+- Namespace dimension added to EndpointSlice store index for correct multi-namespace backend resolution
 
 ### Fixed
 
 - `HostMatchCondition` now uses compact `-m str` form for small host lists and file-based matching for large host lists (>30 hosts), avoiding HAProxy's 64-word-per-line config parser limit
+- `${HOSTNAME}` in peers template now properly quoted for environment variable expansion
+- Bootstrap config changes (shmStats, nbthread) now trigger HAProxy pod recreation via checksum annotation
+- HAProxy GUIDs exceeding 127-character limit now truncated with valid separator character
 
 ### Removed
 
