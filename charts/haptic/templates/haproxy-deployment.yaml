@@ -33,6 +33,9 @@ spec:
       annotations:
         checksum/secret: {{ printf "%s-%s" (include "haptic.dataplane.username" .) (include "haptic.dataplane.password" .) | sha256sum }}
         checksum/config: {{ include "haptic.haproxy.bootstrapConfigChecksum" . }}
+        {{- with .Values.haproxy.podAnnotations }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
       labels:
         {{- include "haptic.selectorLabels" . | nindent 8 }}
         {{- include "haptic.componentLabels" "loadbalancer" | nindent 8 }}
