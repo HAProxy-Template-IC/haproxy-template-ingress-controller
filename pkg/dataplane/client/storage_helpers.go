@@ -140,12 +140,15 @@ func readRawStorageContent(resp *http.Response, resourceType, name string) (stri
 		return "", fmt.Errorf("get %s '%s' failed with status %d", resourceType, name, resp.StatusCode)
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
+	var sb strings.Builder
+	if resp.ContentLength > 0 {
+		sb.Grow(int(resp.ContentLength))
+	}
+	if _, err := io.Copy(&sb, resp.Body); err != nil {
 		return "", fmt.Errorf("failed to read response body for %s '%s': %w", resourceType, name, err)
 	}
 
-	return string(bodyBytes), nil
+	return sb.String(), nil
 }
 
 // SanitizeStorageName sanitizes a filename for HAProxy storage.

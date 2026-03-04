@@ -12,7 +12,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -144,11 +143,9 @@ func CacheStats() (hits, misses int64) {
 }
 
 // hashConfig computes a SHA256 hash of the configuration string.
-// Uses streaming hash to avoid allocating a []byte copy of the config.
 func hashConfig(config string) string {
-	h := sha256.New()
-	_, _ = io.WriteString(h, config) // sha256.Write never returns an error
-	return hex.EncodeToString(h.Sum(nil))
+	hash := sha256.Sum256([]byte(config))
+	return hex.EncodeToString(hash[:])
 }
 
 // Parser wraps client-native's config-parser for parsing HAProxy configurations.
