@@ -429,7 +429,7 @@ func scriggoJoin(items interface{}, sep string) string {
 	case []interface{}:
 		strs := make([]string, len(v))
 		for i, item := range v {
-			strs[i] = fmt.Sprintf("%v", item)
+			strs[i] = scriggoToString(item)
 		}
 		return strings.Join(strs, sep)
 	default:
