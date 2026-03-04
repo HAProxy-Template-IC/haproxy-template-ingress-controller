@@ -1027,6 +1027,18 @@ haproxy:
     # Triggers (required when keda.enabled is true)
     # See: https://keda.sh/docs/2.17/scalers/
     triggers: []
+    # Example: Scale based on CPU/memory utilization of the haproxy container
+    # (use containerName to target only haproxy, excluding sidecar overhead)
+    # - type: cpu
+    #   metricType: Utilization
+    #   metadata:
+    #     value: "80"
+    #     containerName: "haproxy"
+    # - type: memory
+    #   metricType: Utilization
+    #   metadata:
+    #     value: "80"
+    #     containerName: "haproxy"
     # Example: Scale based on HAProxy connection count
     # - type: prometheus
     #   metadata:
