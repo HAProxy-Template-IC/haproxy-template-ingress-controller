@@ -976,6 +976,8 @@ haproxy:
   # - name: init-config
   #   image: busybox:1.36
   #   command: ['sh', '-c', 'echo "Initializing..."']
+  # Share process namespace between containers (required for signal-based sidecar reload)
+  shareProcessNamespace: false
   # Sidecar containers for HAProxy pod
   sidecars: []
   # - name: log-shipper

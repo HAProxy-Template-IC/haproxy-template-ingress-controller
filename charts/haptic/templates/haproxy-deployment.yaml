@@ -62,6 +62,9 @@ spec:
       dnsConfig:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.haproxy.shareProcessNamespace }}
+      shareProcessNamespace: true
+      {{- end }}
       {{- with .Values.haproxy.hostAliases }}
       hostAliases:
         {{- toYaml . | nindent 8 }}
