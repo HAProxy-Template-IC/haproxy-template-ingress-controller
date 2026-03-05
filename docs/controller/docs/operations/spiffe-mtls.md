@@ -11,7 +11,7 @@ When integrated with HAPTIC, SPIRE enables zero-trust mTLS to backends without m
 - **Automatic identity** — SPIRE attests HAProxy pods and issues X.509-SVIDs based on Kubernetes service account identity
 - **Short-lived certificates** — SVIDs are automatically rotated at half of their TTL (e.g. every 12 hours with a 24h TTL), reducing the impact of credential compromise
 - **No secrets in cluster** — Private keys are generated in-memory by the SPIRE agent and never stored as Kubernetes Secrets
-- **Seamless reload** — Certificate rotation triggers a graceful HAProxy reload via SIGUSR2 with no connection drops
+- **Zero-reload rotation** — Certificate updates are pushed to HAProxy via the Runtime API (`set ssl cert`/`set ssl ca-file`), avoiding process restarts entirely
 
 ## Prerequisites
 
@@ -20,32 +20,37 @@ Before following this guide, ensure:
 - **SPIRE server and agents** are deployed in your cluster
 - **SPIRE CSI driver** (`csi.spiffe.io`) is installed for exposing the Workload API socket to pods
 - **Workload registration** exists for the HAProxy pod's service account and namespace
-- **HAPTIC Helm chart** version with `shareProcessNamespace` and `podAnnotations` support
+- **HAPTIC Helm chart** version with `podAnnotations` and `sidecars` support
 
 ## Architecture
 
 The integration uses four components working together inside the HAProxy pod:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ HAProxy Pod (shareProcessNamespace: true)               │
-│                                                         │
-│  ┌──────────┐   ┌───────────────┐   ┌────────────────┐  │
-│  │ init:    │   │  haproxy      │   │ spiffe-helper  │  │
-│  │ create-  │   │               │   │                │  │
-│  │ spiffe-  │──▶│ Reads certs   │◀──│ Fetches SVIDs  │  │
-│  │ dir      │   │ from shared   │   │ from SPIRE     │  │
-│  │          │   │ volume        │   │ agent via CSI  │  │
-│  └──────────┘   │               │   │                │  │
-│                 │ /etc/haproxy/ │   │ Writes certs   │  │
-│                 │   spiffe/     │   │ to shared vol  │  │
-│                 │   ├ svid.pem  │   │                │  │
-│                 │   ├ svid-key  │   │ Sends SIGUSR2  │──┤
-│                 │   └ bundle    │   │ on renewal     │  │
-│                 └───────────────┘   └────────────────┘  │
-│                                                         │
-│  CSI Volume: /spiffe-workload-api/spire-agent.sock      │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│ HAProxy Pod                                                   │
+│                                                               │
+│  ┌──────────┐   ┌───────────────┐   ┌────────────────┐        │
+│  │ init:    │   │  haproxy      │   │ spiffe-helper  │        │
+│  │ create-  │   │               │   │                │        │
+│  │ spiffe-  │──▶│ Reads certs   │◀──│ Fetches SVIDs  │        │
+│  │ dir      │   │ from shared   │   │ from SPIRE     │        │
+│  │          │   │ volume        │   │ agent via CSI  │        │
+│  └──────────┘   │               │   │                │        │
+│                 │ /etc/haproxy/ │   │ Writes certs   │        │
+│                 │   spiffe/     │   │ to shared vol  │        │
+│                 │   ├ svid.pem  │   └────────────────┘        │
+│                 │   ├ svid.pem  │                             │
+│                 │   │   .key    │   ┌────────────────┐        │
+│                 │   └ bundle    │   │ cert-reloader  │        │
+│                 │       .pem    │   │                │        │
+│                 │               │   │ Polls certs,   │        │
+│                 │  master sock  │◀──│ pushes updates │        │
+│                 │  (Runtime API)│   │ via Runtime API│        │
+│                 └───────────────┘   └────────────────┘        │
+│                                                               │
+│  CSI Volume: /spiffe-workload-api/spire-agent.sock            │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 **How it works:**
@@ -54,7 +59,7 @@ The integration uses four components working together inside the HAProxy pod:
 2. The **spiffe-helper** sidecar connects to the SPIRE agent via the CSI-mounted Workload API socket
 3. SPIRE attests the pod's identity and issues an X.509-SVID
 4. spiffe-helper writes the certificate, private key, and trust bundle to the shared volume
-5. On certificate renewal, spiffe-helper sends **SIGUSR2** to HAProxy (requires `shareProcessNamespace: true`) which triggers a graceful reload
+5. The **cert-reloader** sidecar polls for file changes every 5 seconds and pushes updated certificates to HAProxy via the Runtime API (`set ssl cert`, `set ssl ca-file`) — no process restart required
 6. HAProxy uses these certificates for mTLS connections to backend services
 
 ## Configuration
@@ -65,9 +70,6 @@ Add the following to your Helm values to configure the HAProxy pod with spiffe-h
 
 ```yaml
 haproxy:
-  # Required: allows spiffe-helper to send SIGUSR2 to HAProxy for cert rotation
-  shareProcessNamespace: true
-
   # Restart pods when spiffe-helper or other sidecar configs change
   podAnnotations:
     checksum/extra-config: '{{ toJson .Values.extraDeploy | sha256sum }}'
@@ -128,7 +130,55 @@ haproxy:
         allowPrivilegeEscalation: false
         capabilities:
           drop: [ALL]
-        # Must match HAProxy UID (99) for SIGUSR2 signal delivery
+        # Must match HAProxy UID (99) for file ownership
+        runAsUser: 99
+        runAsNonRoot: true
+    - name: cert-reloader
+      image: haproxytech/haproxy-debian:3.3
+      command: ["sh", "-c"]
+      args:
+        - |
+          CERT=/etc/haproxy/spiffe/svid.pem
+          KEY=/etc/haproxy/spiffe/svid.pem.key
+          BUNDLE=/etc/haproxy/spiffe/bundle.pem
+          SOCK=/etc/haproxy/haproxy-master.sock
+          PREV_MTIME=""
+          echo "cert-reloader: polling for cert changes"
+          while true; do
+            sleep 5
+            [ -f "$CERT" ] && [ -f "$KEY" ] && [ -f "$BUNDLE" ] || continue
+            MTIME=$(stat -c %Y "$CERT" "$KEY" "$BUNDLE" 2>/dev/null | tr '\n' ':')
+            [ "$MTIME" = "$PREV_MTIME" ] && continue
+            [ -z "$PREV_MTIME" ] && { PREV_MTIME="$MTIME"; continue; }
+            PREV_MTIME="$MTIME"
+            sleep 1
+            LOADED=$(echo "@1 show ssl cert $CERT" | socat - unix-connect:$SOCK 2>/dev/null | grep -c "^Filename:")
+            if [ "$LOADED" -eq 0 ]; then
+              echo "cert-reloader: cert not loaded in HAProxy, skipping runtime update"
+              continue
+            fi
+            printf "@1 set ssl cert $CERT <<\n$(cat $CERT)\n$(cat $KEY)\n\n" | socat - unix-connect:$SOCK
+            echo "@1 commit ssl cert $CERT" | socat - unix-connect:$SOCK
+            CA_LOADED=$(echo "@1 show ssl ca-file $BUNDLE" | socat - unix-connect:$SOCK 2>/dev/null | grep -c "^Filename:")
+            if [ "$CA_LOADED" -gt 0 ]; then
+              printf "@1 set ssl ca-file $BUNDLE <<\n$(cat $BUNDLE)\n\n" | socat - unix-connect:$SOCK
+              echo "@1 commit ssl ca-file $BUNDLE" | socat - unix-connect:$SOCK
+            fi
+            echo "cert-reloader: certificates updated via runtime API at $(date -Iseconds)"
+          done
+      volumeMounts:
+        - name: haproxy-runtime
+          mountPath: /etc/haproxy
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 32Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
         runAsUser: 99
         runAsNonRoot: true
 
@@ -142,24 +192,13 @@ haproxy:
         name: '{{ include "haptic.fullname" . }}-spiffe-helper-config'
 ```
 
-!!! warning
-    The spiffe-helper container must run as **UID 99** (the same as HAProxy). Without `shareProcessNamespace` and matching UIDs, spiffe-helper cannot send SIGUSR2 to HAProxy for certificate rotation reloads. No `CAP_KILL` capability is needed when both processes share the same UID.
+!!! note
+    Both spiffe-helper and cert-reloader must run as **UID 99** (matching HAProxy) so that certificate files have the correct ownership.
 
 !!! note
     The spiffe-helper container image tags do **not** use a `v` prefix — use `0.11.0`, not `v0.11.0`.
 
-### PID File for Signal Delivery
-
-spiffe-helper needs HAProxy's PID file to send SIGUSR2. Add a `templateSnippet` that writes the PID file in the HAProxy global section:
-
-```yaml
-controller:
-  config:
-    templateSnippets:
-      global-settings-050-pidfile:
-        template: |
-          pidfile /etc/haproxy/haproxy.pid
-```
+The cert-reloader sidecar reuses the `haproxytech/haproxy-debian` image (already pulled for the main container) which includes `socat` and `stat`. It uses the `@1` prefix to route Runtime API commands to the current HAProxy worker process via the master socket. If the SPIFFE certificate is not loaded in HAProxy (e.g. no Ingress uses the annotation), it logs a skip message and waits for the next change.
 
 ### spiffe-helper Configuration
 
@@ -180,11 +219,9 @@ extraDeploy:
         agent_address = "/spiffe-workload-api/spire-agent.sock"
         cert_dir = "/etc/haproxy/spiffe"
         svid_file_name = "svid.pem"
-        svid_key_file_name = "svid-key.pem"
+        svid_key_file_name = "svid.pem.key"
         svid_bundle_file_name = "bundle.pem"
         daemon_mode = true
-        pid_file_name = "/etc/haproxy/haproxy.pid"
-        renew_signal = "SIGUSR2"
 
         health_checks {
           listener_enabled = true
@@ -238,11 +275,13 @@ controller:
               {%- end %}
 
               {#- Add SPIRE mTLS flags to default-server -#}
+              {%- var serviceDns = tostring(svcName) + "." +
+                  tostring(ns) + ".svc" %}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any),
                   "ssl verify required " +
                   "ca-file /etc/haproxy/spiffe/bundle.pem " +
                   "crt /etc/haproxy/spiffe/svid.pem " +
-                  "key /etc/haproxy/spiffe/svid-key.pem") %}
+                  "sni str(" + serviceDns + ")") %}
             {%- end %}
           {%- end %}
 ```
@@ -250,8 +289,12 @@ controller:
 This snippet:
 
 - Runs at **priority 800** (before `backend-directives-900-haproxytech-advanced`), so conflicts are detected before the built-in annotations are processed
-- Uses **absolute paths** for the certificate files because HAProxy's `crt-base` directive points to the `ssl/` directory, and the SPIRE certs are in `/etc/haproxy/spiffe/`
+- Uses **absolute paths** for the certificate files because HAProxy's `crt-base` directive points to the `ssl/` directory, and the SPIRE certs are in `/etc/haproxy/spiffe/`. HAProxy auto-discovers the private key at `<certfile>.key` (i.e. `svid.pem.key`), so no explicit `key` keyword is needed
 - **Fails the render** if the annotation is used together with `haproxy.org/server-ssl`, `haproxy.org/server-crt`, or `haproxy.org/server-ca`, since these configure conflicting SSL modes
+- Sets **`sni str(<service>.<namespace>.svc)`** to send the Kubernetes service DNS name as SNI, enabling hostname verification against DNS SANs populated by SPIRE's `autoPopulateDNSNames` (see [DNS SAN configuration](#dns-san-configuration) below)
+
+!!! note "Why explicit SNI matters"
+    HAProxy 3.3+ automatically sends the server address as SNI (`sni-auto`). In Kubernetes, backends are addressed by pod IP, so the verify callback tries to match the IP against DNS-type SANs — which SPIFFE certificates don't have. Setting `sni str(...)` explicitly overrides `sni-auto` on all HAProxy versions and provides proper hostname verification via the service DNS name.
 
 To use it, annotate your Ingress:
 
@@ -280,31 +323,36 @@ This produces the following `default-server` line in the generated HAProxy confi
 
 ```haproxy
 backend default_my-backend_svc_my-backend_https
-    default-server check ssl verify required ca-file /etc/haproxy/spiffe/bundle.pem crt /etc/haproxy/spiffe/svid.pem key /etc/haproxy/spiffe/svid-key.pem
+    default-server check ssl verify required ca-file /etc/haproxy/spiffe/bundle.pem crt /etc/haproxy/spiffe/svid.pem sni str(my-backend.default.svc)
 ```
 
-### Tuning SVID Rotation Frequency
+### DNS SAN Configuration
 
-SPIRE rotates SVIDs at 50% of their TTL (the "half-life"). The default server TTL is 1h, meaning HAProxy reloads via SIGUSR2 roughly every 30 minutes. To reduce reload frequency, create a dedicated [`ClusterSPIFFEID`](https://github.com/spiffe/spire-controller-manager/blob/main/docs/clusterspiffeid-crd.md) with an extended `ttl` for the HAProxy pods:
+The `sni str(...)` directive in the snippet above requires that backend SVIDs include DNS SANs matching the Kubernetes service name. Enable [`autoPopulateDNSNames`](https://github.com/spiffe/spire-controller-manager/blob/main/docs/clusterspiffeid-crd.md) on the default ClusterSPIFFEID so that SPIRE automatically adds service DNS names (e.g. `my-backend`, `my-backend.default.svc`, `my-backend.default.svc.cluster.local`) as DNS SANs in all SVIDs:
 
 ```yaml
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
-  name: <release-name>-haproxy
+  name: spire-default
 spec:
   spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: haptic
-      app.kubernetes.io/component: loadbalancer
-  ttl: "24h"
+  autoPopulateDNSNames: true
 ```
 
-With a 24h TTL, SVID rotation (and thus HAProxy reload) happens roughly every 12 hours. The `spiffeIDTemplate` should match the one used by your SPIRE deployment's default ClusterSPIFFEID. Adjust the `podSelector` labels to match your HAProxy pods.
+If you use the [SPIRE Helm chart](https://artifacthub.io/packages/helm/spiffe/spire), set this via values:
+
+```yaml
+spire-server:
+  controllerManager:
+    identities:
+      clusterSPIFFEIDs:
+        default:
+          autoPopulateDNSNames: true
+```
 
 !!! note
-    This ClusterSPIFFEID can coexist with the default one created by the SPIRE Helm chart. When both match the same pods, the SPIRE controller manager masks the duplicate entry. Verify the TTL is applied by checking the certificate validity period on the HAProxy pod (see [Verification](#verification)).
+    `autoPopulateDNSNames` populates DNS SANs based on the Kubernetes services each pod is an endpoint of. Both HAProxy and backend pods receive DNS SANs for their respective services. Since certificate updates are pushed via the Runtime API without process restarts, using the default SVID TTL (typically 1h) is fine.
 
 ## Controller Validation
 
@@ -358,7 +406,7 @@ extraDeploy:
       svid.pem: |
         <paste generated certificate PEM here>
       # DUMMY KEY — validation placeholder, not a real secret
-      svid-key.pem: |
+      svid.pem.key: |
         <paste generated private key PEM here>
       # DUMMY CA — validation placeholder, not a real secret
       bundle.pem: |
@@ -385,7 +433,7 @@ kubectl -n <namespace> logs <haproxy-pod> -c spiffe-helper
 # Verify certificate files exist on the HAProxy pod
 kubectl -n <namespace> exec <haproxy-pod> -c haproxy -- ls -la /etc/haproxy/spiffe/
 
-# Expected: svid.pem, svid-key.pem, bundle.pem owned by UID 99
+# Expected: svid.pem, svid.pem.key, bundle.pem owned by UID 99
 ```
 
 ```bash
@@ -401,6 +449,18 @@ kubectl -n <namespace> exec <haproxy-pod> -c haproxy -- \
 # Verify the backend mTLS annotation is reflected in HAProxy config
 kubectl -n <namespace> exec <haproxy-pod> -c haproxy -- \
   cat /etc/haproxy/haproxy.cfg | grep -A2 'default-server.*ssl.*verify'
+```
+
+```bash
+# Check cert-reloader is running and updating certificates
+kubectl -n <namespace> logs <haproxy-pod> -c cert-reloader
+
+# Expected output after a rotation:
+# cert-reloader: polling for cert changes
+# Transaction created for certificate /etc/haproxy/spiffe/svid.pem!
+# Committing /etc/haproxy/spiffe/svid.pem..........
+# Success!
+# cert-reloader: certificates updated via runtime API at <timestamp>
 ```
 
 ## Troubleshooting
@@ -460,13 +520,13 @@ If the controller logs show validation failures referencing `/etc/haproxy/spiffe
 
 ```bash
 kubectl -n <namespace> exec <controller-pod> -- ls /etc/haproxy/spiffe/
-# Should list: bundle.pem  svid-key.pem  svid.pem
+# Should list: bundle.pem  svid.pem  svid.pem.key
 ```
 
 ## See Also
 
 - [Security Guide](./security.md) — TLS configuration and credential management
-- [Helm Chart Reference](https://haproxy-haptic.org/helm-chart/latest/) — `haproxy.shareProcessNamespace`, `haproxy.sidecars`, `haproxy.initContainers`, `extraDeploy`
+- [Helm Chart Reference](https://haproxy-haptic.org/helm-chart/latest/) — `haproxy.sidecars`, `haproxy.initContainers`, `extraDeploy`
 - [SPIFFE/SPIRE Documentation](https://spiffe.io/docs/latest/) — SPIFFE concepts, SPIRE deployment, workload registration
 - [spiffe-helper on GitHub](https://github.com/spiffe/spiffe-helper) — Configuration reference and release notes
 - [Templating Guide](../templating.md) — Writing custom `templateSnippets`
