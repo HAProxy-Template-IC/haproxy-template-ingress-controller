@@ -88,6 +88,10 @@ spec:
         seccompProfile:
           {{- toYaml . | nindent 10 }}
         {{- end }}
+        {{- with .Values.haproxy.podSecurityContext.sysctls }}
+        sysctls:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       containers:
         # HAProxy container
         - name: haproxy
