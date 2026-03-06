@@ -1075,6 +1075,11 @@ haproxy:
   podSecurityContext:
     seccompProfile:
       type: RuntimeDefault
+    # Pod-level sysctls (requires kubelet allowedUnsafeSysctls for unsafe sysctls)
+    sysctls: []
+    # Example:
+    #   - name: net.ipv4.tcp_wmem
+    #     value: "4096 16384 536870912"
   # Initial HAProxy configuration
   # This provides a minimal working config until the controller deploys the full config
   initialConfig: |
