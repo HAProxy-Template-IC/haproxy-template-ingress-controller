@@ -669,12 +669,8 @@ github.com/yuin/goldmark v1.4.1/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 gitlab.com/bosi/decorder v0.4.2 h1:qbQaV3zgwnBZ4zPMhGLW4KZe7A7NwxEhJx39R3shffo=
 gitlab.com/bosi/decorder v0.4.2/go.mod h1:muuhHoaJkA9QLcYHq4Mj8FJUwDZ+EirSHRiaTcTf6T8=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260303213619-92fd787751ed h1:5Ck1rENwexqRbP7+rvL7bufKvAB/+Cqfd1axnBoa6E8=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260303213619-92fd787751ed/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260303223706-ef51bf467731 h1:CofrOXnv0HtBOpWCZOjYwVAf9e4e5hhOjqePmLgLA7w=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260303223706-ef51bf467731/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260304090935-950c82d58c31 h1:sua0+aZAzcJ69VywL9jLKB7hJU08VJ/v/rR4KlWU12g=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260304090935-950c82d58c31/go.mod h1:b1cFaMJlxrKTC26rbkXsVC8lgZQLwvtWT7kjnspHPhE=
+gitlab.com/haproxy-haptic/scriggo v0.0.0-20260306202902-df09a8d26285 h1:E/3oDdHN/o40UJD+tkyP9ZUmOPJBa1BsexCzYZAZr4I=
+gitlab.com/haproxy-haptic/scriggo v0.0.0-20260306202902-df09a8d26285/go.mod h1:cOU8c/bZNEYMyqMVFHN+6Y0+SE3CIA8WWBX6LVGNvMs=
 go-simpler.org/assert v0.9.0 h1:PfpmcSvL7yAnWyChSjOz6Sp6m9j5lyK8Ok9pEL31YkQ=
 go-simpler.org/assert v0.9.0/go.mod h1:74Eqh5eI6vCK6Y5l3PI8ZYFXG4Sa+tkr70OIPJAUr28=
 go-simpler.org/musttag v0.14.0 h1:XGySZATqQYSEV3/YTy+iX+aofbZZllJaqwFWs+RTtSo=
