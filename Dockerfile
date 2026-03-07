@@ -2,7 +2,7 @@
 
 # Build arguments for version control
 # renovate: datasource=docker depName=golang
-ARG GO_VERSION=1.25
+ARG GO_VERSION=1.26
 # Must match DEFAULT_HAPROXY in versions.env
 # renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=semver
 ARG HAPROXY_VERSION=3.2

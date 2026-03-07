@@ -7,7 +7,7 @@
 
 # Global ARGs must be declared before the first FROM to be available to all stages
 # renovate: datasource=docker depName=golang
-ARG GO_VERSION=1.25
+ARG GO_VERSION=1.26
 # renovate: datasource=github-tags depName=haproxy/haproxy versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)$
 ARG HAPROXY_VERSION=3.2
 
