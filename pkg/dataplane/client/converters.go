@@ -24,7 +24,7 @@ import (
 //
 // This centralizes the marshal + metadata transformation that both the dispatcher
 // helpers and validator need when converting client-native models to API models.
-func MarshalForVersion(model interface{}) ([]byte, error) {
+func MarshalForVersion(model any) ([]byte, error) {
 	jsonData, err := json.Marshal(model)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal model: %w", err)
@@ -45,7 +45,7 @@ func MarshalForVersion(model interface{}) ([]byte, error) {
 // Usage:
 //
 //	apiModel, err := ConvertToVersioned[v32.Server, v31.Server, v30.Server](jsonData, version.Minor)
-func ConvertToVersioned[TV32, TV31, TV30 any](jsonData []byte, versionMinor int) (interface{}, error) {
+func ConvertToVersioned[TV32, TV31, TV30 any](jsonData []byte, versionMinor int) (any, error) {
 	switch {
 	case versionMinor >= 2:
 		var m TV32

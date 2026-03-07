@@ -34,13 +34,15 @@ import (
 func validateAPISchema(parsed *parser.StructuredConfig, version *Version) error {
 	cv := getCachedValidatorForVersion(version)
 
-	var validationErrors []string
+	backendErrors := validateBackendSectionsGenerated(cv, parsed.Backends, parsed.ServerIndex, parsed.ServerTemplateIndex)
+	frontendErrors := validateFrontendSectionsGenerated(cv, parsed.Frontends, parsed.BindIndex)
+	validationErrors := make([]string, 0, len(backendErrors)+len(frontendErrors))
 
 	// Validate backend sections using pointer indexes
-	validationErrors = append(validationErrors, validateBackendSectionsGenerated(cv, parsed.Backends, parsed.ServerIndex, parsed.ServerTemplateIndex)...)
+	validationErrors = append(validationErrors, backendErrors...)
 
 	// Validate frontend sections using pointer indexes
-	validationErrors = append(validationErrors, validateFrontendSectionsGenerated(cv, parsed.Frontends, parsed.BindIndex)...)
+	validationErrors = append(validationErrors, frontendErrors...)
 
 	if len(validationErrors) > 0 {
 		return fmt.Errorf("API schema validation failed:\n  - %s",
@@ -53,7 +55,7 @@ func validateAPISchema(parsed *parser.StructuredConfig, version *Version) error 
 // validateBackendSectionsGenerated validates backend sections using generated validators.
 // Uses pointer indexes for zero-copy iteration over servers and server templates.
 func validateBackendSectionsGenerated(cv *validators.CachedValidator, backends []*models.Backend, serverIndex map[string]map[string]*models.Server, serverTemplateIndex map[string]map[string]*models.ServerTemplate) []string {
-	var errors []string
+	errors := make([]string, 0, len(backends))
 	for i := range backends {
 		backend := backends[i]
 		errors = append(errors, validateBackendServersGenerated(cv, backend.Name, serverIndex, serverTemplateIndex)...)
@@ -66,7 +68,7 @@ func validateBackendSectionsGenerated(cv *validators.CachedValidator, backends [
 // validateFrontendSectionsGenerated validates frontend sections using generated validators.
 // Uses pointer indexes for zero-copy iteration over binds.
 func validateFrontendSectionsGenerated(cv *validators.CachedValidator, frontends []*models.Frontend, bindIndex map[string]map[string]*models.Bind) []string {
-	var errors []string
+	errors := make([]string, 0, len(frontends))
 	for i := range frontends {
 		frontend := frontends[i]
 		errors = append(errors, validateFrontendBindsGenerated(cv, frontend.Name, bindIndex)...)

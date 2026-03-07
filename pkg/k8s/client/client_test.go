@@ -60,14 +60,14 @@ func TestClient_Getters(t *testing.T) {
 func TestClient_GetResource_Success(t *testing.T) {
 	// Create a ConfigMap as an unstructured object
 	configMap := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test-config",
 				"namespace": "default",
 			},
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"key": "value",
 			},
 		},
@@ -112,8 +112,8 @@ func TestClient_GetResource_NoNamespace(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no namespace available")
 
-	var clientErr *ClientError
-	require.True(t, errors.As(err, &clientErr))
+	clientErr, ok := errors.AsType[*ClientError](err)
+	require.True(t, ok)
 	assert.Equal(t, "get resource", clientErr.Operation)
 }
 
@@ -136,8 +136,8 @@ func TestClient_GetResource_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 
-	var clientErr *ClientError
-	require.True(t, errors.As(err, &clientErr))
+	clientErr, ok := errors.AsType[*ClientError](err)
+	require.True(t, ok)
 	assert.Contains(t, clientErr.Operation, "get resource")
 }
 
@@ -159,8 +159,8 @@ func TestDiscoverNamespaceFromFile_FileNotExists(t *testing.T) {
 
 	require.Error(t, err)
 
-	var nsErr *NamespaceDiscoveryError
-	require.True(t, errors.As(err, &nsErr))
+	nsErr, ok := errors.AsType[*NamespaceDiscoveryError](err)
+	require.True(t, ok)
 	assert.Equal(t, "/nonexistent/path/namespace", nsErr.Path)
 	assert.True(t, os.IsNotExist(nsErr.Unwrap()))
 }
@@ -176,8 +176,8 @@ func TestDiscoverNamespaceFromFile_EmptyFile(t *testing.T) {
 
 	require.Error(t, err)
 
-	var nsErr *NamespaceDiscoveryError
-	require.True(t, errors.As(err, &nsErr))
+	nsErr, ok := errors.AsType[*NamespaceDiscoveryError](err)
+	require.True(t, ok)
 	assert.ErrorIs(t, nsErr.Unwrap(), os.ErrInvalid)
 }
 
@@ -188,8 +188,8 @@ func TestDiscoverNamespace_UsesDefaultPath(t *testing.T) {
 
 	require.Error(t, err)
 
-	var nsErr *NamespaceDiscoveryError
-	require.True(t, errors.As(err, &nsErr))
+	nsErr, ok := errors.AsType[*NamespaceDiscoveryError](err)
+	require.True(t, ok)
 	assert.Equal(t, DefaultNamespaceFile, nsErr.Path)
 }
 
@@ -246,8 +246,8 @@ func TestNew_InvalidKubeconfig(t *testing.T) {
 
 	require.Error(t, err)
 
-	var clientErr *ClientError
-	require.True(t, errors.As(err, &clientErr))
+	clientErr, ok := errors.AsType[*ClientError](err)
+	require.True(t, ok)
 	assert.Equal(t, "build kubeconfig", clientErr.Operation)
 }
 
@@ -256,8 +256,8 @@ func TestNew_NonexistentKubeconfig(t *testing.T) {
 
 	require.Error(t, err)
 
-	var clientErr *ClientError
-	require.True(t, errors.As(err, &clientErr))
+	clientErr, ok := errors.AsType[*ClientError](err)
+	require.True(t, ok)
 	assert.Equal(t, "build kubeconfig", clientErr.Operation)
 }
 
@@ -267,8 +267,8 @@ func TestNew_InClusterNotAvailable(t *testing.T) {
 
 	require.Error(t, err)
 
-	var clientErr *ClientError
-	require.True(t, errors.As(err, &clientErr))
+	clientErr, ok := errors.AsType[*ClientError](err)
+	require.True(t, ok)
 	assert.Equal(t, "get in-cluster config", clientErr.Operation)
 }
 
@@ -294,10 +294,10 @@ func TestNewFromClientset_EmptyNamespace(t *testing.T) {
 
 func TestClient_GetResource_WithContext(t *testing.T) {
 	configMap := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test-config",
 				"namespace": "default",
 			},

@@ -21,13 +21,13 @@ import "time"
 // This event is published by the resource watcher when the Secret resource
 // is created, updated, or modified.
 type CertResourceChangedEvent struct {
-	Resource interface{} // *unstructured.Unstructured
+	Resource any // *unstructured.Unstructured
 
 	timestamp time.Time
 }
 
 // NewCertResourceChangedEvent creates a new CertResourceChangedEvent.
-func NewCertResourceChangedEvent(resource interface{}) *CertResourceChangedEvent {
+func NewCertResourceChangedEvent(resource any) *CertResourceChangedEvent {
 	return &CertResourceChangedEvent{
 		Resource:  resource,
 		timestamp: time.Now(),

@@ -139,16 +139,16 @@ func (c *ValidationContext) HasHTTPOverlay() bool {
 // implementing these methods (like k8s/Store) automatically satisfies this.
 type Store interface {
 	// Get retrieves all resources matching the provided index keys.
-	Get(keys ...string) ([]interface{}, error)
+	Get(keys ...string) ([]any, error)
 
 	// List returns all resources in the store.
-	List() ([]interface{}, error)
+	List() ([]any, error)
 
 	// Add inserts a new resource into the store with the provided index keys.
-	Add(resource interface{}, keys []string) error
+	Add(resource any, keys []string) error
 
 	// Update modifies an existing resource in the store.
-	Update(resource interface{}, keys []string) error
+	Update(resource any, keys []string) error
 
 	// Delete removes a resource from the store using its index keys.
 	Delete(keys ...string) error
@@ -207,32 +207,32 @@ type TypesStoreAdapter struct {
 	// It must implement Get, List, Add, Update, Delete, Clear methods
 	// with the same signatures as stores.Store.
 	Inner interface {
-		Get(keys ...string) ([]interface{}, error)
-		List() ([]interface{}, error)
-		Add(resource interface{}, keys []string) error
-		Update(resource interface{}, keys []string) error
+		Get(keys ...string) ([]any, error)
+		List() ([]any, error)
+		Add(resource any, keys []string) error
+		Update(resource any, keys []string) error
 		Delete(keys ...string) error
 		Clear() error
 	}
 }
 
 // Get implements Store by delegating to Inner.
-func (a *TypesStoreAdapter) Get(keys ...string) ([]interface{}, error) {
+func (a *TypesStoreAdapter) Get(keys ...string) ([]any, error) {
 	return a.Inner.Get(keys...)
 }
 
 // List implements Store by delegating to Inner.
-func (a *TypesStoreAdapter) List() ([]interface{}, error) {
+func (a *TypesStoreAdapter) List() ([]any, error) {
 	return a.Inner.List()
 }
 
 // Add implements Store by delegating to Inner.
-func (a *TypesStoreAdapter) Add(resource interface{}, keys []string) error {
+func (a *TypesStoreAdapter) Add(resource any, keys []string) error {
 	return a.Inner.Add(resource, keys)
 }
 
 // Update implements Store by delegating to Inner.
-func (a *TypesStoreAdapter) Update(resource interface{}, keys []string) error {
+func (a *TypesStoreAdapter) Update(resource any, keys []string) error {
 	return a.Inner.Update(resource, keys)
 }
 

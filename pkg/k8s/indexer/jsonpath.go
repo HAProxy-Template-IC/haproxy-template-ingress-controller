@@ -54,7 +54,7 @@ func NewJSONPathEvaluator(expression string) (*JSONPathEvaluator, error) {
 //   - An error if evaluation fails or the result is not a string
 //
 // If the expression matches multiple values, only the first is returned.
-func (e *JSONPathEvaluator) Evaluate(resource interface{}) (string, error) {
+func (e *JSONPathEvaluator) Evaluate(resource any) (string, error) {
 	// Convert unstructured.Unstructured to its underlying map
 	// The JSONPath library needs the actual data map, not the wrapper
 	data := unwrapUnstructured(resource)
@@ -98,7 +98,7 @@ func reflectValueToString(v reflect.Value) string {
 	}
 
 	// Dereference pointers
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return ""
 		}
@@ -128,10 +128,10 @@ func reflectValueToString(v reflect.Value) string {
 // The k8s.io/client-go/util/jsonpath library expects to work with plain maps,
 // not the Unstructured wrapper. This function extracts the Object field which
 // contains the actual Kubernetes resource data.
-func unwrapUnstructured(resource interface{}) interface{} {
+func unwrapUnstructured(resource any) any {
 	// Type assert to *unstructured.Unstructured
 	type unstructuredInterface interface {
-		UnstructuredContent() map[string]interface{}
+		UnstructuredContent() map[string]any
 	}
 
 	if u, ok := resource.(unstructuredInterface); ok {

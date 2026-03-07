@@ -34,15 +34,15 @@ import (
 
 // mockStore implements stores.Store for testing.
 type mockStore struct {
-	items []interface{}
+	items []any
 }
 
-func (m *mockStore) Add(resource interface{}, keys []string) error {
+func (m *mockStore) Add(resource any, keys []string) error {
 	m.items = append(m.items, resource)
 	return nil
 }
 
-func (m *mockStore) Update(resource interface{}, keys []string) error {
+func (m *mockStore) Update(resource any, keys []string) error {
 	return nil
 }
 
@@ -50,11 +50,11 @@ func (m *mockStore) Delete(keys ...string) error {
 	return nil
 }
 
-func (m *mockStore) List() ([]interface{}, error) {
+func (m *mockStore) List() ([]any, error) {
 	return m.items, nil
 }
 
-func (m *mockStore) Get(keys ...string) ([]interface{}, error) {
+func (m *mockStore) Get(keys ...string) ([]any, error) {
 	return nil, nil
 }
 
@@ -109,8 +109,7 @@ backend servers
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start components
 	go rendererComponent.Start(ctx)
@@ -196,8 +195,7 @@ backend servers
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)
@@ -280,8 +278,7 @@ backend servers
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)
@@ -370,8 +367,7 @@ backend servers
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)
@@ -436,8 +432,7 @@ func TestHAProxyValidator_HandleBecameLeader_NoState(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validatorComponent.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -494,8 +489,7 @@ backend servers
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validatorComponent.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -588,8 +582,7 @@ backend servers
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)

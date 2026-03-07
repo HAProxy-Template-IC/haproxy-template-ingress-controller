@@ -24,17 +24,17 @@ import (
 )
 
 func TestExtractField(t *testing.T) {
-	testData := map[string]interface{}{
+	testData := map[string]any{
 		"version": "1.2.3",
-		"config": map[string]interface{}{
+		"config": map[string]any{
 			"templates": map[string]string{
 				"main": "template-content",
 			},
 			"enabled": true,
 		},
-		"items": []interface{}{
-			map[string]interface{}{"name": "item1"},
-			map[string]interface{}{"name": "item2"},
+		"items": []any{
+			map[string]any{"name": "item1"},
+			map[string]any{"name": "item2"},
 		},
 	}
 

@@ -858,7 +858,7 @@ func TestServer_ExtractMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Parse object as unstructured (same as server does)
-			var obj map[string]interface{}
+			var obj map[string]any
 			err := json.Unmarshal([]byte(tt.objectJSON), &obj)
 			require.NoError(t, err)
 
@@ -933,7 +933,7 @@ func TestServer_ConcurrentValidation(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numRequests)
 
-	for i := 0; i < numRequests; i++ {
+	for range numRequests {
 		go func() {
 			defer wg.Done()
 

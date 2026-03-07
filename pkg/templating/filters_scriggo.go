@@ -78,10 +78,10 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 	decl["controller"] = (*map[string]ResourceStore)(nil)
 	decl["templateSnippets"] = (*[]string)(nil)
 	decl["fileRegistry"] = (*FileRegistrar)(nil)
-	decl["dataplane"] = (*map[string]interface{})(nil)
-	decl["capabilities"] = (*map[string]interface{})(nil)
+	decl["dataplane"] = (*map[string]any)(nil)
+	decl["capabilities"] = (*map[string]any)(nil)
 	decl["shared"] = (*SharedContext)(nil)
-	decl["extraContext"] = (*map[string]interface{})(nil)
+	decl["extraContext"] = (*map[string]any)(nil)
 	decl["http"] = (*HTTPFetcher)(nil)                      // HTTP store for fetching remote content
 	decl["runtimeEnvironment"] = (*RuntimeEnvironment)(nil) // Runtime environment info (GOMAXPROCS, etc.)
 	// Note: Domain-specific types like currentConfig are registered via additionalDeclarations
@@ -264,15 +264,15 @@ func registerScriggoBuiltinStrings(decl native.Declarations) {
 // wrapFilterForScriggo wraps a FilterFunc to be callable from Scriggo templates.
 // FilterFunc signature: func(in interface{}, args ...interface{}) (interface{}, error)
 // Scriggo needs a concrete function signature, so we wrap it.
-func wrapFilterForScriggo(filter FilterFunc) func(in interface{}, args ...interface{}) (interface{}, error) {
-	return func(in interface{}, args ...interface{}) (interface{}, error) {
+func wrapFilterForScriggo(filter FilterFunc) func(in any, args ...any) (any, error) {
+	return func(in any, args ...any) (any, error) {
 		return filter(in, args...)
 	}
 }
 
 // wrapFunctionForScriggo wraps a GlobalFunc to be callable from Scriggo templates.
-func wrapFunctionForScriggo(fn GlobalFunc) func(args ...interface{}) (interface{}, error) {
-	return func(args ...interface{}) (interface{}, error) {
+func wrapFunctionForScriggo(fn GlobalFunc) func(args ...any) (any, error) {
+	return func(args ...any) (any, error) {
 		return fn(args...)
 	}
 }

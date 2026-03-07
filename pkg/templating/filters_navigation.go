@@ -16,7 +16,9 @@ package templating
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -36,7 +38,7 @@ func getSharedContext(env native.Env) *SharedContext {
 	if ctx == nil {
 		return nil
 	}
-	renderCtx, ok := ctx.Value(RenderContextContextKey).(map[string]interface{})
+	renderCtx, ok := ctx.Value(RenderContextContextKey).(map[string]any)
 	if !ok {
 		return nil
 	}
@@ -71,14 +73,14 @@ func scriggoFail(env native.Env, msg string) string {
 //	{{ ingress | dig("metadata", "namespace") | fallback("") }}
 //	{{ path | dig("backend", "service", "name") | fallback("unknown") }}
 //	{%- var port = path | dig("backend", "service", "port", "number") | fallback(80) %}
-func scriggoDig(obj interface{}, keys ...string) interface{} {
+func scriggoDig(obj any, keys ...string) any {
 	if obj == nil || len(keys) == 0 {
 		return obj
 	}
 
 	// Fast path: direct map[string]interface{} (99% of cases in K8s templates)
 	// Avoids reflection overhead from isNilValue() on every iteration
-	if m, ok := obj.(map[string]interface{}); ok {
+	if m, ok := obj.(map[string]any); ok {
 		return digMapFast(m, keys)
 	}
 
@@ -88,7 +90,7 @@ func scriggoDig(obj interface{}, keys ...string) interface{} {
 
 // digMapFast is the optimized path for map[string]interface{} traversal.
 // Handles nested maps without reflection overhead.
-func digMapFast(m map[string]interface{}, keys []string) interface{} {
+func digMapFast(m map[string]any, keys []string) any {
 	for i, key := range keys {
 		val, ok := m[key]
 		if !ok || val == nil {
@@ -101,7 +103,7 @@ func digMapFast(m map[string]interface{}, keys []string) interface{} {
 		}
 
 		// Try to continue traversal with nested map
-		next, ok := val.(map[string]interface{})
+		next, ok := val.(map[string]any)
 		if !ok {
 			// Check for map[string]string on last key
 			if strMap, ok := val.(map[string]string); ok {
@@ -121,7 +123,7 @@ func digMapFast(m map[string]interface{}, keys []string) interface{} {
 
 // digReflect handles typed nil pointers and other edge cases with reflection.
 // This is the slow path, used for non-standard map types.
-func digReflect(obj interface{}, keys []string) interface{} {
+func digReflect(obj any, keys []string) any {
 	// Handle typed nil values (e.g., *map[string]interface{} with nil pointer)
 	if isNilValue(obj) {
 		return nil
@@ -134,7 +136,7 @@ func digReflect(obj interface{}, keys []string) interface{} {
 		}
 
 		switch v := current.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			val, ok := v[key]
 			if !ok {
 				return nil
@@ -169,8 +171,8 @@ func digReflect(obj interface{}, keys []string) interface{} {
 //   - selectattr(items, "attr", "eq", value) - items where attr equals value
 //   - selectattr(items, "attr", "ne", value) - items where attr does not equal value
 //   - selectattr(items, "attr", "in", list) - items where attr value is in list
-func scriggoSelectAttr(items interface{}, attr string, args ...interface{}) []interface{} {
-	result := []interface{}{}
+func scriggoSelectAttr(items any, attr string, args ...any) []any {
+	result := []any{}
 
 	// Handle nil input
 	if items == nil {
@@ -185,7 +187,7 @@ func scriggoSelectAttr(items interface{}, attr string, args ...interface{}) []in
 
 	// Parse optional test and value arguments
 	var test string
-	var testValue interface{}
+	var testValue any
 	if len(args) >= 2 {
 		test, _ = args[0].(string)
 		testValue = args[1]
@@ -229,7 +231,7 @@ func scriggoSelectAttr(items interface{}, attr string, args ...interface{}) []in
 }
 
 // isValueInList checks if a value is in a list (for selectattr "in" test).
-func isValueInList(value, list interface{}) bool {
+func isValueInList(value, list any) bool {
 	if list == nil {
 		return false
 	}
@@ -238,16 +240,11 @@ func isValueInList(value, list interface{}) bool {
 
 	// Handle []string
 	if strList, ok := list.([]string); ok {
-		for _, item := range strList {
-			if item == valueStr {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(strList, valueStr)
 	}
 
 	// Handle []interface{}
-	if anyList, ok := list.([]interface{}); ok {
+	if anyList, ok := list.([]any); ok {
 		for _, item := range anyList {
 			if scriggoToString(item) == valueStr {
 				return true
@@ -271,7 +268,7 @@ func isValueInList(value, list interface{}) bool {
 }
 
 // isEmpty checks if a value is "empty" (for selectattr truthiness test).
-func isEmpty(value interface{}) bool {
+func isEmpty(value any) bool {
 	if value == nil {
 		return true
 	}
@@ -283,9 +280,9 @@ func isEmpty(value interface{}) bool {
 		return false // Numbers are not empty
 	case bool:
 		return !v
-	case []interface{}:
+	case []any:
 		return len(v) == 0
-	case map[string]interface{}:
+	case map[string]any:
 		return len(v) == 0
 	default:
 		// Try reflection for other slice/map types
@@ -293,7 +290,7 @@ func isEmpty(value interface{}) bool {
 		switch rv.Kind() {
 		case reflect.Slice, reflect.Map, reflect.Array:
 			return rv.Len() == 0
-		case reflect.Ptr:
+		case reflect.Pointer:
 			return rv.IsNil()
 		}
 		return false
@@ -310,7 +307,7 @@ func isEmpty(value interface{}) bool {
 // This is cleaner than:
 //
 //	{%- var key = tostring(ns) + "_" + tostring(name) + "_" + tostring(svc) + "_" + tostring(port) %}
-func scriggoJoinKey(sep string, parts ...interface{}) string {
+func scriggoJoinKey(sep string, parts ...any) string {
 	if len(parts) == 0 {
 		return ""
 	}
@@ -330,14 +327,10 @@ func scriggoJoinKey(sep string, parts ...interface{}) string {
 //	{% var config = map[string]interface{}{"a": 1, "b": 2} %}
 //	{% config = merge(config, map[string]interface{}{"b": 3, "c": 4}) %}
 //	{# Result: {"a": 1, "b": 3, "c": 4} #}
-func scriggoMerge(dict, updates map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{}, len(dict)+len(updates))
-	for k, v := range dict {
-		result[k] = v
-	}
-	for k, v := range updates {
-		result[k] = v
-	}
+func scriggoMerge(dict, updates map[string]any) map[string]any {
+	result := make(map[string]any, len(dict)+len(updates))
+	maps.Copy(result, dict)
+	maps.Copy(result, updates)
 	return result
 }
 
@@ -389,9 +382,9 @@ func scriggoKeys(dict any) []string {
 //
 //	{# Empty namespace #}
 //	{%- var ns = namespace(nil) -%}
-func scriggoNamespace(init map[string]interface{}) map[string]interface{} {
+func scriggoNamespace(init map[string]any) map[string]any {
 	if init == nil {
-		return make(map[string]interface{})
+		return make(map[string]any)
 	}
 	return init
 }
@@ -408,7 +401,7 @@ func scriggoNamespace(init map[string]interface{}) map[string]interface{} {
 //
 //	{%- var items = coalesce(obj.field, []any{}) -%}
 //	{%- var name = coalesce(user.name, "anonymous") -%}
-func scriggoCoalesce(value, defaultVal interface{}) interface{} {
+func scriggoCoalesce(value, defaultVal any) any {
 	if value == nil {
 		return defaultVal
 	}
@@ -422,11 +415,11 @@ func scriggoCoalesce(value, defaultVal interface{}) interface{} {
 //
 //	{%- var list = join(hosts, ", ") -%}
 //	{{ items | join(" ") }}
-func scriggoJoin(items interface{}, sep string) string {
+func scriggoJoin(items any, sep string) string {
 	switch v := items.(type) {
 	case []string:
 		return strings.Join(v, sep)
-	case []interface{}:
+	case []any:
 		strs := make([]string, len(v))
 		for i, item := range v {
 			strs[i] = scriggoToString(item)

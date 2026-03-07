@@ -33,16 +33,16 @@ import (
 // Example:
 //
 //	sort_by(items, []string{"$.priority:desc", "$.name"})
-func scriggoSortBy(items []interface{}, criteria []string) ([]interface{}, error) {
+func scriggoSortBy(items []any, criteria []string) ([]any, error) {
 	if len(items) == 0 || len(criteria) == 0 {
 		// Return a copy for consistency with normal path (avoids modifying original slice)
-		result := make([]interface{}, len(items))
+		result := make([]any, len(items))
 		copy(result, items)
 		return result, nil
 	}
 
 	// Make a copy to avoid modifying the original
-	result := make([]interface{}, len(items))
+	result := make([]any, len(items))
 	copy(result, items)
 
 	// Create sortable wrapper
@@ -68,7 +68,7 @@ func scriggoSortBy(items []interface{}, criteria []string) ([]interface{}, error
 // Example:
 //
 //	glob_match(snippetNames, "backend-*")
-func scriggoGlobMatch(items interface{}, pattern string) []string {
+func scriggoGlobMatch(items any, pattern string) []string {
 	if items == nil || pattern == "" {
 		return []string{}
 	}
@@ -76,7 +76,7 @@ func scriggoGlobMatch(items interface{}, pattern string) []string {
 	switch v := items.(type) {
 	case []string:
 		return globMatchStrings(v, pattern)
-	case []interface{}:
+	case []any:
 		return globMatchInterfaces(v, pattern)
 	default:
 		panic(fmt.Sprintf("glob_match: expected []string or []interface{}, got %T", items))
@@ -100,7 +100,7 @@ func globMatchStrings(items []string, pattern string) []string {
 
 // globMatchInterfaces matches a pattern against a slice of interface{} values.
 // Each item can be a string or a map with a "name" field.
-func globMatchInterfaces(items []interface{}, pattern string) []string {
+func globMatchInterfaces(items []any, pattern string) []string {
 	result := make([]string, 0, len(items))
 	for _, item := range items {
 		name := extractStringName(item)
@@ -120,11 +120,11 @@ func globMatchInterfaces(items []interface{}, pattern string) []string {
 
 // extractStringName extracts a string name from an interface{} value.
 // Supports string values directly or maps with a "name" field.
-func extractStringName(item interface{}) string {
+func extractStringName(item any) string {
 	switch s := item.(type) {
 	case string:
 		return s
-	case map[string]interface{}:
+	case map[string]any:
 		if n, ok := s["name"].(string); ok {
 			return n
 		}
@@ -141,7 +141,7 @@ func extractStringName(item interface{}) string {
 //	{% var items = []any{"c", "a", "b"} %}
 //	{% var sorted = sort_strings(items) %}
 //	{# sorted is []string{"a", "b", "c"} #}
-func scriggoSortStrings(items []interface{}) []string {
+func scriggoSortStrings(items []any) []string {
 	result := make([]string, 0, len(items))
 	for _, item := range items {
 		switch v := item.(type) {
@@ -168,7 +168,7 @@ func scriggoSortStrings(items []interface{}) []string {
 //	{%- end %}
 //
 // The key is built by joining all parts with "_", e.g.: "ingress_tls_default_my-secret".
-func scriggoFirstSeen(env native.Env, parts ...interface{}) bool {
+func scriggoFirstSeen(env native.Env, parts ...any) bool {
 	if len(parts) == 0 {
 		return true // No key parts = treat as always first
 	}
@@ -192,7 +192,7 @@ func scriggoFirstSeen(env native.Env, parts ...interface{}) bool {
 
 	// Use ComputeIfAbsent - wasComputed tells us if this is the first occurrence.
 	// The compute function just stores a marker value; what matters is wasComputed.
-	_, wasFirst := shared.ComputeIfAbsent(key, func() interface{} {
+	_, wasFirst := shared.ComputeIfAbsent(key, func() any {
 		return true
 	})
 	return wasFirst
@@ -200,7 +200,7 @@ func scriggoFirstSeen(env native.Env, parts ...interface{}) bool {
 
 // writeToBuilder writes a value to a strings.Builder, inlining common type conversions.
 // This avoids allocations from fmt.Sprintf for common types.
-func writeToBuilder(b *strings.Builder, v interface{}) {
+func writeToBuilder(b *strings.Builder, v any) {
 	switch val := v.(type) {
 	case string:
 		b.WriteString(val)
@@ -238,19 +238,19 @@ func writeToBuilder(b *strings.Builder, v interface{}) {
 //
 //	{# Works with []any directly #}
 //	{%- items = append(items, item) -%}
-func scriggoAppendAny(slice, item interface{}) []interface{} {
+func scriggoAppendAny(slice, item any) []any {
 	if slice == nil {
-		return []interface{}{item}
+		return []any{item}
 	}
 
 	// Try to convert to []interface{} ([]any is an alias for []interface{})
-	if s, ok := slice.([]interface{}); ok {
+	if s, ok := slice.([]any); ok {
 		return append(s, item)
 	}
 
 	// Can't append - return new slice with just the item
 	// This handles edge cases like receiving a non-slice type
-	return []interface{}{item}
+	return []any{item}
 }
 
 // scriggoShardSlice divides a slice into N shards and returns the portion for a given shard index.
@@ -270,11 +270,11 @@ func scriggoAppendAny(slice, item interface{}) []interface{} {
 //	{%- for _, item := range shard %}
 //	  ... process item in parallel shard ...
 //	{%- end %}
-func scriggoShardSlice(items interface{}, shardIndex, totalShards int) []interface{} {
+func scriggoShardSlice(items any, shardIndex, totalShards int) []any {
 	// Convert items to slice
 	itemsSlice, ok := toSlice(items)
 	if !ok || len(itemsSlice) == 0 {
-		return []interface{}{}
+		return []any{}
 	}
 
 	// If sharding is disabled or invalid, return full slice
@@ -297,7 +297,7 @@ func scriggoShardSlice(items interface{}, shardIndex, totalShards int) []interfa
 
 	// Ensure bounds are valid
 	if start >= totalItems {
-		return []interface{}{}
+		return []any{}
 	}
 	if end > totalItems {
 		end = totalItems

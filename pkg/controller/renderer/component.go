@@ -444,7 +444,7 @@ func (c *Component) renderSingle(pathResolver *templating.PathResolver) (*single
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) in parallel.
 // It respects the caller's context for cancellation.
-func (c *Component) renderAuxiliaryFiles(ctx context.Context, renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+func (c *Component) renderAuxiliaryFiles(ctx context.Context, renderCtx map[string]any) (*dataplane.AuxiliaryFiles, error) {
 	totalFiles := len(c.config.Maps) + len(c.config.Files) + len(c.config.SSLCertificates)
 	if totalFiles == 0 {
 		return &dataplane.AuxiliaryFiles{}, nil

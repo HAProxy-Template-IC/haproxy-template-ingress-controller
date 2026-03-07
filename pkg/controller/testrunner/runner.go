@@ -295,10 +295,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 	}
 
 	// Determine number of workers (use 1 worker if only 1 test)
-	numWorkers := r.workers
-	if len(runnableTests) < numWorkers {
-		numWorkers = len(runnableTests)
-	}
+	numWorkers := min(len(runnableTests), r.workers)
 
 	r.logger.Log(context.Background(), logging.LevelTrace, "Starting test execution",
 		"total_tests", len(runnableTests),
@@ -621,7 +618,7 @@ func (r *Runner) executeAssertions(
 	test *config.ValidationTest,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
-	templateContext map[string]interface{},
+	templateContext map[string]any,
 	validationPaths *dataplane.ValidationPaths,
 	renderDeps *RenderDependencies,
 ) {
@@ -652,7 +649,7 @@ func (r *Runner) runAssertion(
 	assertion *config.ValidationAssertion,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
-	templateContext map[string]interface{},
+	templateContext map[string]any,
 	renderError string,
 	validationPaths *dataplane.ValidationPaths,
 	renderDeps *RenderDependencies,

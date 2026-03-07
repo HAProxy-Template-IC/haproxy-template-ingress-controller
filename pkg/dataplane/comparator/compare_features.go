@@ -12,10 +12,7 @@ func (c *Comparator) compareFilters(parentType, parentName string, currentFilter
 	var operations []Operation
 
 	// Compare filters by position
-	maxLen := len(currentFilters)
-	if len(desiredFilters) > maxLen {
-		maxLen = len(desiredFilters)
-	}
+	maxLen := max(len(desiredFilters), len(currentFilters))
 
 	for i := 0; i < maxLen; i++ {
 		hasCurrentFilter := i < len(currentFilters)
@@ -66,10 +63,7 @@ func (c *Comparator) compareHTTPChecks(backendName string, currentChecks, desire
 	var operations []Operation
 
 	// Compare checks by position
-	maxLen := len(currentChecks)
-	if len(desiredChecks) > maxLen {
-		maxLen = len(desiredChecks)
-	}
+	maxLen := max(len(desiredChecks), len(currentChecks))
 
 	for i := 0; i < maxLen; i++ {
 		hasCurrentCheck := i < len(currentChecks)
@@ -103,10 +97,7 @@ func (c *Comparator) compareTCPChecks(backendName string, currentChecks, desired
 	var operations []Operation
 
 	// Compare checks by position
-	maxLen := len(currentChecks)
-	if len(desiredChecks) > maxLen {
-		maxLen = len(desiredChecks)
-	}
+	maxLen := max(len(desiredChecks), len(currentChecks))
 
 	for i := 0; i < maxLen; i++ {
 		hasCurrentCheck := i < len(currentChecks)

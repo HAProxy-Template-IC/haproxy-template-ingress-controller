@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -334,9 +335,7 @@ func (s *HTTPStore) GetEntry(url string) *CacheEntry {
 		authCopy := *entry.Auth
 		if entry.Auth.Headers != nil {
 			authCopy.Headers = make(map[string]string, len(entry.Auth.Headers))
-			for k, v := range entry.Auth.Headers {
-				authCopy.Headers[k] = v
-			}
+			maps.Copy(authCopy.Headers, entry.Auth.Headers)
 		}
 		entryCopy.Auth = &authCopy
 	}

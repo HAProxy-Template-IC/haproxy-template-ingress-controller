@@ -76,7 +76,7 @@ func NewFileRegistry(pathResolver *templating.PathResolver) *FileRegistry {
 // Conflict Detection:
 //   - If the same filename is registered multiple times with different content, returns error
 //   - If the same filename is registered with identical content, no error (idempotent)
-func (r *FileRegistry) Register(args ...interface{}) (string, error) {
+func (r *FileRegistry) Register(args ...any) (string, error) {
 	// Validate argument count
 	if len(args) != 3 {
 		return "", fmt.Errorf("file_registry.Register requires 3 arguments (type, filename, content), got %d", len(args))

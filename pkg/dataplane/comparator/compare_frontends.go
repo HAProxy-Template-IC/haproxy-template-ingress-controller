@@ -266,10 +266,7 @@ func (c *Comparator) compareCaptures(frontendName string, currentCaptures, desir
 	var operations []Operation
 
 	// Compare captures by position
-	maxLen := len(currentCaptures)
-	if len(desiredCaptures) > maxLen {
-		maxLen = len(desiredCaptures)
-	}
+	maxLen := max(len(desiredCaptures), len(currentCaptures))
 
 	for i := 0; i < maxLen; i++ {
 		hasCurrentCapture := i < len(currentCaptures)

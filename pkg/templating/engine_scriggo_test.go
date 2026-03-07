@@ -230,11 +230,9 @@ func TestScriggoEngine_Tracing_Concurrent(t *testing.T) {
 	const numGoroutines = 10
 	var wg sync.WaitGroup
 
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 5; j++ {
+	for range numGoroutines {
+		wg.Go(func() {
+			for j := range 5 {
 				tmpl := "test1"
 				if j%2 == 0 {
 					tmpl = "test2"
@@ -242,7 +240,7 @@ func TestScriggoEngine_Tracing_Concurrent(t *testing.T) {
 				_, err := engine.Render(context.Background(), tmpl, nil)
 				assert.NoError(t, err)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -360,7 +358,7 @@ func TestScriggoEngine_CustomFunctions(t *testing.T) {
 	}
 
 	customFunctions := map[string]GlobalFunc{
-		"greet": func(args ...interface{}) (interface{}, error) {
+		"greet": func(args ...any) (any, error) {
 			return "Hello, World!", nil
 		},
 	}
@@ -544,20 +542,20 @@ func TestScriggoEngine_SharedContextAccess(t *testing.T) {
 
 // mockResourceStore implements ResourceStore for testing direct method calls.
 type mockResourceStore struct {
-	listResult      []interface{}
-	fetchResult     []interface{}
-	getSingleResult interface{}
+	listResult      []any
+	fetchResult     []any
+	getSingleResult any
 }
 
-func (m *mockResourceStore) List() []interface{} {
+func (m *mockResourceStore) List() []any {
 	return m.listResult
 }
 
-func (m *mockResourceStore) Fetch(keys ...interface{}) []interface{} {
+func (m *mockResourceStore) Fetch(keys ...any) []any {
 	return m.fetchResult
 }
 
-func (m *mockResourceStore) GetSingle(keys ...interface{}) interface{} {
+func (m *mockResourceStore) GetSingle(keys ...any) any {
 	return m.getSingleResult
 }
 
@@ -581,18 +579,18 @@ Secret: {{ secret.(map[string]any)["name"] }}`,
 
 	// Create mock stores with test data
 	ingressStore := &mockResourceStore{
-		listResult: []interface{}{
-			map[string]interface{}{"name": "ingress-1"},
-			map[string]interface{}{"name": "ingress-2"},
+		listResult: []any{
+			map[string]any{"name": "ingress-1"},
+			map[string]any{"name": "ingress-2"},
 		},
 	}
 	secretStore := &mockResourceStore{
-		getSingleResult: map[string]interface{}{"name": "my-secret"},
+		getSingleResult: map[string]any{"name": "my-secret"},
 	}
 	endpointStore := &mockResourceStore{
-		fetchResult: []interface{}{
-			map[string]interface{}{"name": "endpoint-1"},
-			map[string]interface{}{"name": "endpoint-2"},
+		fetchResult: []any{
+			map[string]any{"name": "endpoint-1"},
+			map[string]any{"name": "endpoint-2"},
 		},
 	}
 
@@ -603,7 +601,7 @@ Secret: {{ secret.(map[string]any)["name"] }}`,
 		"endpoints": endpointStore,
 	}
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources":        resources,
 		"templateSnippets": []string{},
 	}
@@ -640,10 +638,10 @@ Pod count: {{ len(pods) }}`,
 
 	// Create mock store with test data
 	podStore := &mockResourceStore{
-		listResult: []interface{}{
-			map[string]interface{}{"name": "haproxy-pod-1"},
-			map[string]interface{}{"name": "haproxy-pod-2"},
-			map[string]interface{}{"name": "haproxy-pod-3"},
+		listResult: []any{
+			map[string]any{"name": "haproxy-pod-1"},
+			map[string]any{"name": "haproxy-pod-2"},
+			map[string]any{"name": "haproxy-pod-3"},
 		},
 	}
 
@@ -652,7 +650,7 @@ Pod count: {{ len(pods) }}`,
 		"haproxy_pods": podStore,
 	}
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"controller":       controller,
 		"templateSnippets": []string{},
 	}
@@ -677,9 +675,9 @@ func TestScriggoEngine_DotNotationMethodCallsOnResourceStore(t *testing.T) {
 
 	// Create mock store with test data
 	ingressStore := &mockResourceStore{
-		listResult: []interface{}{
-			map[string]interface{}{"name": "ingress-1"},
-			map[string]interface{}{"name": "ingress-2"},
+		listResult: []any{
+			map[string]any{"name": "ingress-1"},
+			map[string]any{"name": "ingress-2"},
 		},
 	}
 
@@ -688,7 +686,7 @@ func TestScriggoEngine_DotNotationMethodCallsOnResourceStore(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources":        resources,
 		"templateSnippets": []string{},
 	}
@@ -730,12 +728,12 @@ count={{ len(analysisMap["backends"].([]any)) }}`,
 
 	// Create mock store with test data
 	ingressStore := &mockResourceStore{
-		listResult: []interface{}{
-			map[string]interface{}{
-				"metadata": map[string]interface{}{
+		listResult: []any{
+			map[string]any{
+				"metadata": map[string]any{
 					"namespace": "default",
 					"name":      "test-ingress",
-					"annotations": map[string]interface{}{
+					"annotations": map[string]any{
 						"haproxy.org/ssl-passthrough": "true",
 					},
 				},
@@ -747,7 +745,7 @@ count={{ len(analysisMap["backends"].([]any)) }}`,
 		"ingresses": ingressStore,
 	}
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources": resources,
 	}
 
@@ -797,8 +795,8 @@ Output: {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 
 	// Create mock store with test data
 	ingressStore := &mockResourceStore{
-		listResult: []interface{}{
-			map[string]interface{}{"name": "test-ingress"},
+		listResult: []any{
+			map[string]any{"name": "test-ingress"},
 		},
 	}
 
@@ -807,7 +805,7 @@ Output: {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 		"ingresses": ingressStore,
 	}
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources":        resources,
 		"templateSnippets": []string{},
 	}
@@ -868,9 +866,9 @@ func TestMacroWithRenderGlobInheritContext(t *testing.T) {
 
 	// Create mock store with test data
 	ingressStore := &mockResourceStore{
-		listResult: []interface{}{
-			map[string]interface{}{"name": "test-1"},
-			map[string]interface{}{"name": "test-2"},
+		listResult: []any{
+			map[string]any{"name": "test-1"},
+			map[string]any{"name": "test-2"},
 		},
 	}
 
@@ -879,7 +877,7 @@ func TestMacroWithRenderGlobInheritContext(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources":        resources,
 		"templateSnippets": []string{"backend-directives-100", "backend-directives-200"},
 	}
@@ -971,17 +969,17 @@ backend {{ BackendNameIngress(ingress, path) }}
 
 	// Create mock store with test data matching real structure
 	ingressStore := &mockResourceStore{
-		listResult: []interface{}{
-			map[string]interface{}{
-				"metadata": map[string]interface{}{"namespace": "default", "name": "ing1"},
-				"spec": map[string]interface{}{
-					"rules": []interface{}{
-						map[string]interface{}{
-							"http": map[string]interface{}{
-								"paths": []interface{}{
-									map[string]interface{}{
-										"backend": map[string]interface{}{
-											"service": map[string]interface{}{"name": "svc1", "port": map[string]interface{}{"number": 80}},
+		listResult: []any{
+			map[string]any{
+				"metadata": map[string]any{"namespace": "default", "name": "ing1"},
+				"spec": map[string]any{
+					"rules": []any{
+						map[string]any{
+							"http": map[string]any{
+								"paths": []any{
+									map[string]any{
+										"backend": map[string]any{
+											"service": map[string]any{"name": "svc1", "port": map[string]any{"number": 80}},
 										},
 									},
 								},
@@ -1005,7 +1003,7 @@ backend {{ BackendNameIngress(ingress, path) }}
 		}
 	}
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources":        resources,
 		"templateSnippets": snippetNames,
 	}
@@ -1070,17 +1068,17 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 
 	// Create mock stores with test data
 	ingressStore := &mockResourceStore{
-		listResult: []interface{}{
-			map[string]interface{}{
-				"metadata": map[string]interface{}{"namespace": "default", "name": "ing1"},
-				"spec": map[string]interface{}{
-					"rules": []interface{}{
-						map[string]interface{}{
-							"http": map[string]interface{}{
-								"paths": []interface{}{
-									map[string]interface{}{
-										"backend": map[string]interface{}{
-											"service": map[string]interface{}{"name": "svc1", "port": map[string]interface{}{"number": 80}},
+		listResult: []any{
+			map[string]any{
+				"metadata": map[string]any{"namespace": "default", "name": "ing1"},
+				"spec": map[string]any{
+					"rules": []any{
+						map[string]any{
+							"http": map[string]any{
+								"paths": []any{
+									map[string]any{
+										"backend": map[string]any{
+											"service": map[string]any{"name": "svc1", "port": map[string]any{"number": 80}},
 										},
 									},
 								},
@@ -1113,13 +1111,13 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 	}
 
 	// Full context matching testrunner's buildRenderingContext
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources":        resources,
 		"templateSnippets": snippetNames,
 		"pathResolver":     pathResolver,
-		"shared":           make(map[string]interface{}),
-		"globalFeatures":   make(map[string]interface{}),
-		"dataplane":        map[string]interface{}{},
+		"shared":           make(map[string]any),
+		"globalFeatures":   make(map[string]any),
+		"dataplane":        map[string]any{},
 		"controller":       map[string]ResourceStore{},
 		// Note: fileRegistry and http are also used but require more complex setup
 	}
@@ -1147,7 +1145,7 @@ func TestNestedLoopWithSharedGetPassedToFunction(t *testing.T) {
 	require.NoError(t, err)
 
 	shared := NewSharedContext()
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"shared": shared,
 	}
 
@@ -1186,7 +1184,7 @@ func TestTripleNestedLoopWithSharedGet(t *testing.T) {
 	require.NoError(t, err)
 
 	shared := NewSharedContext()
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"shared": shared,
 	}
 
@@ -1240,19 +1238,19 @@ Count: {{ count }}`,
 // nested loops over ingresses/rules/paths with Service lookup AND iteration over ports.
 func TestNestedLoopWithServicePortLookup(t *testing.T) {
 	// Create a service object with multiple ports
-	svc := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	svc := map[string]any{
+		"metadata": map[string]any{
 			"name":      "svc1",
 			"namespace": "default",
 		},
-		"spec": map[string]interface{}{
-			"ports": []interface{}{
-				map[string]interface{}{
+		"spec": map[string]any{
+			"ports": []any{
+				map[string]any{
 					"name":       "http",
 					"port":       80,
 					"targetPort": 8080,
 				},
-				map[string]interface{}{
+				map[string]any{
 					"name":       "https",
 					"port":       443,
 					"targetPort": 8443,
@@ -1314,7 +1312,7 @@ Count: {{ count }}`,
 	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources": resources,
 	}
 
@@ -1332,14 +1330,14 @@ Count: {{ count }}`,
 // which is the actual pattern that was breaking in ingress.yaml templates.
 func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
 	// Create a service object that will be returned by GetSingle
-	svc := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	svc := map[string]any{
+		"metadata": map[string]any{
 			"name":      "svc1",
 			"namespace": "default",
 		},
-		"spec": map[string]interface{}{
-			"ports": []interface{}{
-				map[string]interface{}{
+		"spec": map[string]any{
+			"ports": []any{
+				map[string]any{
 					"name":       "http",
 					"port":       80,
 					"targetPort": 8080,
@@ -1379,7 +1377,7 @@ func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
 	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
 	require.NoError(t, err)
 
-	templateCtx := map[string]interface{}{
+	templateCtx := map[string]any{
 		"resources": resources,
 	}
 
@@ -1501,7 +1499,7 @@ func TestNestedLoopWithFilters(t *testing.T) {
 
 			// Create context with SharedContext for first_seen tests
 			shared := NewSharedContext()
-			templateCtx := map[string]interface{}{
+			templateCtx := map[string]any{
 				"shared": shared,
 			}
 

@@ -103,7 +103,7 @@ type ValidationTest struct {
 	// Fixtures contains mock Kubernetes resources for this test.
 	// The map key is the resource type name (e.g., "services", "ingresses").
 	// The map value is a list of resources in unstructured format.
-	Fixtures map[string][]interface{} `yaml:"fixtures"`
+	Fixtures map[string][]any `yaml:"fixtures"`
 
 	// HTTPFixtures contains mock HTTP responses for this test.
 	// When templates call http.Fetch() for a URL that matches a fixture,
@@ -118,7 +118,7 @@ type ValidationTest struct {
 
 	// ExtraContext provides custom variables that override the global extraContext for this test.
 	// This allows testing template behavior with different extraContext values.
-	ExtraContext map[string]interface{} `yaml:"extraContext,omitempty" json:"extraContext,omitempty"`
+	ExtraContext map[string]any `yaml:"extraContext,omitempty" json:"extraContext,omitempty"`
 
 	// MinHAProxyVersion specifies the minimum HAProxy version required to run this test.
 	// Format: "major.minor" (e.g., "3.3"). When set, the test is skipped if the local
@@ -448,7 +448,7 @@ type TemplatingSettings struct {
 	//     custom_value: 42
 	//
 	// Templates can then reference these variables directly: {{ debug.enabled }}, {{ environment }}, etc.
-	ExtraContext map[string]interface{} `yaml:"extra_context" json:"extraContext"`
+	ExtraContext map[string]any `yaml:"extra_context" json:"extraContext"`
 }
 
 // GetRenderTimeout returns the configured render timeout or the default.

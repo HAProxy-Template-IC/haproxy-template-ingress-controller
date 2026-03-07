@@ -88,109 +88,109 @@ func TestPathResolver_GetPath(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		filename interface{}
-		args     []interface{}
+		filename any
+		args     []any
 		want     string
 		wantErr  bool
 	}{
 		{
 			name:     "map file",
 			filename: "host.map",
-			args:     []interface{}{"map"},
+			args:     []any{"map"},
 			want:     "/etc/haproxy/maps/host.map",
 		},
 		{
 			name:     "general file",
 			filename: "503.http",
-			args:     []interface{}{"file"},
+			args:     []any{"file"},
 			want:     "/etc/haproxy/general/503.http",
 		},
 		{
 			name:     "ssl certificate",
 			filename: "cert.pem",
-			args:     []interface{}{"cert"},
+			args:     []any{"cert"},
 			want:     "/etc/haproxy/ssl/cert.pem",
 		},
 		{
 			name:     "crt-list file",
 			filename: "certificate-list.txt",
-			args:     []interface{}{"crt-list"},
+			args:     []any{"crt-list"},
 			want:     "/etc/haproxy/general/certificate-list.txt",
 		},
 		// Sanitization tests for SSL certificates
 		{
 			name:     "ssl certificate with domain dots - sanitized",
 			filename: "example.com.pem",
-			args:     []interface{}{"cert"},
+			args:     []any{"cert"},
 			want:     "/etc/haproxy/ssl/example_com.pem",
 		},
 		{
 			name:     "ssl certificate with subdomain - sanitized",
 			filename: "sub.example.com.pem",
-			args:     []interface{}{"cert"},
+			args:     []any{"cert"},
 			want:     "/etc/haproxy/ssl/sub_example_com.pem",
 		},
 		{
 			name:     "ssl certificate production pattern - sanitized",
 			filename: "keycloak_sso.example.com-tls.pem",
-			args:     []interface{}{"cert"},
+			args:     []any{"cert"},
 			want:     "/etc/haproxy/ssl/keycloak_sso_example_com-tls.pem",
 		},
 		// Sanitization tests for CRT-list files
 		{
 			name:     "crt-list with domain dots - sanitized",
 			filename: "example.com.crtlist",
-			args:     []interface{}{"crt-list"},
+			args:     []any{"crt-list"},
 			want:     "/etc/haproxy/general/example_com.crtlist",
 		},
 		// Map files should NOT be sanitized
 		{
 			name:     "map file with dots - NOT sanitized",
 			filename: "domain.map",
-			args:     []interface{}{"map"},
+			args:     []any{"map"},
 			want:     "/etc/haproxy/maps/domain.map",
 		},
 		{
 			name:     "map file with multiple dots - NOT sanitized",
 			filename: "sub.domain.com.map",
-			args:     []interface{}{"map"},
+			args:     []any{"map"},
 			want:     "/etc/haproxy/maps/sub.domain.com.map",
 		},
 		// General files should NOT be sanitized
 		{
 			name:     "general file with dots - NOT sanitized",
 			filename: "error.page.http",
-			args:     []interface{}{"file"},
+			args:     []any{"file"},
 			want:     "/etc/haproxy/general/error.page.http",
 		},
 		{
 			name:     "empty filename returns directory",
 			filename: "",
-			args:     []interface{}{"map"},
+			args:     []any{"map"},
 			want:     "/etc/haproxy/maps",
 		},
 		{
 			name:     "non-string filename",
 			filename: 123,
-			args:     []interface{}{"map"},
+			args:     []any{"map"},
 			wantErr:  true,
 		},
 		{
 			name:     "missing file type arg",
 			filename: "test.map",
-			args:     []interface{}{},
+			args:     []any{},
 			wantErr:  true,
 		},
 		{
 			name:     "invalid file type",
 			filename: "test.txt",
-			args:     []interface{}{"invalid"},
+			args:     []any{"invalid"},
 			wantErr:  true,
 		},
 		{
 			name:     "non-string file type",
 			filename: "test.map",
-			args:     []interface{}{123},
+			args:     []any{123},
 			wantErr:  true,
 		},
 	}
@@ -198,7 +198,7 @@ func TestPathResolver_GetPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// GetPath expects all arguments in a single variadic call
-			args := []interface{}{tt.filename}
+			args := []any{tt.filename}
 			args = append(args, tt.args...)
 			got, err := resolver.GetPath(args...)
 
@@ -216,44 +216,44 @@ func TestPathResolver_GetPath(t *testing.T) {
 func TestGlobMatch(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   interface{}
+		input   any
 		pattern string
-		want    []interface{}
+		want    []any
 		wantErr bool
 	}{
 		{
 			name:    "simple wildcard match",
-			input:   []interface{}{"backend-annotation-auth", "backend-annotation-rate-limit", "frontend-config"},
+			input:   []any{"backend-annotation-auth", "backend-annotation-rate-limit", "frontend-config"},
 			pattern: "backend-annotation-*",
-			want:    []interface{}{"backend-annotation-auth", "backend-annotation-rate-limit"},
+			want:    []any{"backend-annotation-auth", "backend-annotation-rate-limit"},
 		},
 		{
 			name:    "no matches",
-			input:   []interface{}{"frontend-config", "global-config"},
+			input:   []any{"frontend-config", "global-config"},
 			pattern: "backend-*",
 			want:    nil,
 		},
 		{
 			name:    "question mark wildcard",
-			input:   []interface{}{"test1", "test2", "test10", "prod1"},
+			input:   []any{"test1", "test2", "test10", "prod1"},
 			pattern: "test?",
-			want:    []interface{}{"test1", "test2"},
+			want:    []any{"test1", "test2"},
 		},
 		{
 			name:    "exact match",
-			input:   []interface{}{"exact", "exact-match", "not-exact"},
+			input:   []any{"exact", "exact-match", "not-exact"},
 			pattern: "exact",
-			want:    []interface{}{"exact"},
+			want:    []any{"exact"},
 		},
 		{
 			name:    "all match",
-			input:   []interface{}{"one", "two", "three"},
+			input:   []any{"one", "two", "three"},
 			pattern: "*",
-			want:    []interface{}{"one", "two", "three"},
+			want:    []any{"one", "two", "three"},
 		},
 		{
 			name:    "empty list",
-			input:   []interface{}{},
+			input:   []any{},
 			pattern: "*",
 			want:    nil,
 		},
@@ -261,13 +261,13 @@ func TestGlobMatch(t *testing.T) {
 			name:    "string slice input",
 			input:   []string{"backend-annotation-auth", "backend-annotation-rate-limit"},
 			pattern: "backend-*",
-			want:    []interface{}{"backend-annotation-auth", "backend-annotation-rate-limit"},
+			want:    []any{"backend-annotation-auth", "backend-annotation-rate-limit"},
 		},
 		{
 			name:    "mixed types in list - skips non-strings",
-			input:   []interface{}{"valid", 123, "another-valid", true},
+			input:   []any{"valid", 123, "another-valid", true},
 			pattern: "*valid",
-			want:    []interface{}{"valid", "another-valid"},
+			want:    []any{"valid", "another-valid"},
 		},
 		{
 			name:    "non-list input",
@@ -277,13 +277,13 @@ func TestGlobMatch(t *testing.T) {
 		},
 		{
 			name:    "missing pattern argument",
-			input:   []interface{}{"test"},
+			input:   []any{"test"},
 			pattern: "",
 			wantErr: true,
 		},
 		{
 			name:    "invalid glob pattern",
-			input:   []interface{}{"test"},
+			input:   []any{"test"},
 			pattern: "[invalid",
 			wantErr: true,
 		},
@@ -291,9 +291,9 @@ func TestGlobMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var args []interface{}
+			var args []any
 			if tt.pattern != "" {
-				args = []interface{}{tt.pattern}
+				args = []any{tt.pattern}
 			}
 
 			got, err := GlobMatch(tt.input, args...)
@@ -312,7 +312,7 @@ func TestGlobMatch(t *testing.T) {
 func TestB64Decode(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   interface{}
+		input   any
 		want    string
 		wantErr bool
 	}{
@@ -422,13 +422,13 @@ func TestStrip(t *testing.T) {
 func TestDebug(t *testing.T) {
 	tests := []struct {
 		name         string
-		value        interface{}
+		value        any
 		label        string
 		wantContains []string
 	}{
 		{
 			name: "simple object without label",
-			value: map[string]interface{}{
+			value: map[string]any{
 				"key": "value",
 			},
 			label: "",
@@ -439,7 +439,7 @@ func TestDebug(t *testing.T) {
 		},
 		{
 			name: "simple object with label",
-			value: map[string]interface{}{
+			value: map[string]any{
 				"name": "test",
 			},
 			label: "my-label",
@@ -461,7 +461,7 @@ func TestDebug(t *testing.T) {
 		},
 		{
 			name:  "nested structure",
-			value: map[string]interface{}{"outer": map[string]interface{}{"inner": "value"}},
+			value: map[string]any{"outer": map[string]any{"inner": "value"}},
 			label: "nested",
 			wantContains: []string{
 				"# DEBUG nested:",

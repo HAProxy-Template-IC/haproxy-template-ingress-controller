@@ -77,7 +77,7 @@ type RenderService struct {
 
 	// capabilitiesMap is the pre-computed map representation of capabilities.
 	// Cached at construction time to avoid creating the same map on every render.
-	capabilitiesMap map[string]interface{}
+	capabilitiesMap map[string]any
 
 	// Optional dependencies for building render context
 	haproxyPodStore    stores.Store
@@ -220,8 +220,8 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 }
 
 // buildRenderingContext constructs the template rendering context from stores.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]interface{}, *rendercontext.FileRegistry, *templating.StatusPatchCollector) {
-	renderContext := make(map[string]interface{})
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]any, *rendercontext.FileRegistry, *templating.StatusPatchCollector) {
+	renderContext := make(map[string]any)
 
 	// Add path resolver for file path resolution in templates
 	renderContext["pathResolver"] = s.pathResolver
@@ -316,7 +316,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.
 // It respects the caller's context for cancellation.
-func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[string]interface{}) (*dataplane.AuxiliaryFiles, error) {
+func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[string]any) (*dataplane.AuxiliaryFiles, error) {
 	totalFiles := len(s.config.Maps) + len(s.config.Files) + len(s.config.SSLCertificates)
 	if totalFiles == 0 {
 		return &dataplane.AuxiliaryFiles{}, nil

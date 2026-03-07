@@ -82,7 +82,7 @@ func New(cfg Config) (*Indexer, error) {
 //	// For IndexBy: ["metadata.namespace", "metadata.name"]
 //	keys, err := indexer.ExtractKeys(ingress)
 //	// keys = ["default", "my-ingress"]
-func (idx *Indexer) ExtractKeys(resource interface{}) ([]string, error) {
+func (idx *Indexer) ExtractKeys(resource any) ([]string, error) {
 	keys := make([]string, len(idx.evaluators))
 
 	for i, eval := range idx.evaluators {
@@ -109,7 +109,7 @@ func (idx *Indexer) ExtractKeys(resource interface{}) ([]string, error) {
 //
 //	err := indexer.FilterFields(ingress)
 //	// ingress.Metadata.ManagedFields is now removed
-func (idx *Indexer) FilterFields(resource interface{}) error {
+func (idx *Indexer) FilterFields(resource any) error {
 	return idx.filter.Filter(resource)
 }
 
@@ -121,7 +121,7 @@ type ProcessResult struct {
 	// ConvertedResource is the resource with floats converted to ints,
 	// ready for use in templates. This is stored instead of the original
 	// unstructured.Unstructured to avoid conversion on every access.
-	ConvertedResource map[string]interface{}
+	ConvertedResource map[string]any
 }
 
 // Process filters fields, extracts keys, and converts the resource for template use.
@@ -142,7 +142,7 @@ type ProcessResult struct {
 //	    return err
 //	}
 //	store.Add(result.ConvertedResource, result.Keys)
-func (idx *Indexer) Process(resource interface{}) (*ProcessResult, error) {
+func (idx *Indexer) Process(resource any) (*ProcessResult, error) {
 	// Filter fields first to reduce memory
 	if err := idx.FilterFields(resource); err != nil {
 		return nil, err

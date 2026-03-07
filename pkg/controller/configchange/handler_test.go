@@ -57,8 +57,7 @@ func TestConfigChangeHandler_StartAndStop(t *testing.T) {
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start handler in goroutine
 	done := make(chan struct{})
@@ -118,8 +117,7 @@ func TestConfigChangeHandler_HandleConfigParsed_NoValidators(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -142,8 +140,7 @@ func TestConfigChangeHandler_HandleConfigValidated_SignalController(t *testing.T
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -175,8 +172,7 @@ func TestConfigChangeHandler_HandleConfigValidated_InitialVersion_SkipsSignal(t 
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -202,8 +198,7 @@ func TestConfigChangeHandler_HandleConfigValidated_InvalidConfigType(t *testing.
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -229,8 +224,7 @@ func TestConfigChangeHandler_HandleConfigValidated_ChannelFull(t *testing.T) {
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -252,8 +246,7 @@ func TestConfigChangeHandler_HandleBecameLeader_NoValidatedConfig(t *testing.T) 
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -274,8 +267,7 @@ func TestConfigChangeHandler_HandleBecameLeader_WithValidatedConfig(t *testing.T
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -304,8 +296,7 @@ func TestConfigChangeHandler_StateCaching(t *testing.T) {
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -332,8 +323,7 @@ func TestConfigChangeHandler_IgnoresOtherEvents(t *testing.T) {
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -361,8 +351,7 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_AllValid(t *testi
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 
@@ -416,8 +405,7 @@ func TestConfigChangeHandler_HandleConfigParsed_WithValidators_ValidationFailed(
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 
@@ -544,8 +532,7 @@ func TestConfigChangeHandler_RapidConfigChangesDebounced(t *testing.T) {
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, debounceInterval)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -589,8 +576,7 @@ func TestConfigChangeHandler_DebounceTimerResetOnEachChange(t *testing.T) {
 	handler := NewConfigChangeHandler(bus, logger, configCh, nil, debounceInterval)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -731,8 +717,7 @@ func TestConfigChangeHandler_EventsSkippedDuringBootstrap(t *testing.T) {
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -784,8 +769,7 @@ func TestConfigChangeHandler_BootstrapEventOrderingSyntheticThenReal(t *testing.
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go handler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)

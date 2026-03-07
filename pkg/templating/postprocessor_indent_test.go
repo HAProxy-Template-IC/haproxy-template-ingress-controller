@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -171,14 +172,14 @@ func BenchmarkIndentNormalizerProcessor(b *testing.B) {
 
 	b.Run("IndentNormalizer", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = indent.Process(input)
 		}
 	})
 
 	b.Run("RegexReplace", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = regex.Process(input)
 		}
 	})
@@ -186,8 +187,8 @@ func BenchmarkIndentNormalizerProcessor(b *testing.B) {
 
 func buildBenchmarkInput() string {
 	// Simulate a ~2000 line HAProxy config
-	var lines []string
-	for i := 0; i < 500; i++ {
+	lines := make([]string, 0, 500*6)
+	for i := range 500 {
 		lines = append(lines,
 			"frontend http_"+string(rune('a'+i%26)),
 			"    bind *:80",
@@ -197,9 +198,9 @@ func buildBenchmarkInput() string {
 			"    default_backend servers",
 		)
 	}
-	result := ""
+	var result strings.Builder
 	for _, l := range lines {
-		result += l + "\n"
+		result.WriteString(l + "\n")
 	}
-	return result
+	return result.String()
 }

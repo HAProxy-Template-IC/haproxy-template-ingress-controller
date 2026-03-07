@@ -37,15 +37,15 @@ import (
 
 // mockStore implements stores.Store for testing.
 type mockStore struct {
-	items []interface{}
+	items []any
 }
 
-func (m *mockStore) Add(resource interface{}, keys []string) error {
+func (m *mockStore) Add(resource any, keys []string) error {
 	m.items = append(m.items, resource)
 	return nil
 }
 
-func (m *mockStore) Update(resource interface{}, keys []string) error {
+func (m *mockStore) Update(resource any, keys []string) error {
 	return nil
 }
 
@@ -53,11 +53,11 @@ func (m *mockStore) Delete(keys ...string) error {
 	return nil
 }
 
-func (m *mockStore) List() ([]interface{}, error) {
+func (m *mockStore) List() ([]any, error) {
 	return m.items, nil
 }
 
-func (m *mockStore) Get(keys ...string) ([]interface{}, error) {
+func (m *mockStore) Get(keys ...string) ([]any, error) {
 	return nil, nil
 }
 
@@ -141,8 +141,8 @@ defaults
 
 	// Create mock store with sample ingress
 	ingressStore := &mockStore{
-		items: []interface{}{
-			map[string]interface{}{
+		items: []any{
+			map[string]any{
 				"name":      "test-ingress",
 				"namespace": "default",
 			},
@@ -160,8 +160,7 @@ defaults
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start renderer
 	go renderer.Start(ctx)
@@ -206,9 +205,9 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	}
 
 	ingressStore := &mockStore{
-		items: []interface{}{
-			map[string]interface{}{
-				"metadata": map[string]interface{}{
+		items: []any{
+			map[string]any{
+				"metadata": map[string]any{
 					"name": "test-ingress",
 				},
 			},
@@ -225,8 +224,7 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -288,7 +286,7 @@ func TestRenderer_EmptyStores(t *testing.T) {
 	}
 
 	storeMap := map[string]stores.Store{
-		"ingresses": &mockStore{items: []interface{}{}}, // Empty store
+		"ingresses": &mockStore{items: []any{}}, // Empty store
 	}
 
 	renderer, err := New(bus, cfg, storeMap, &mockStore{}, nil, defaultCapabilities(), logger)
@@ -297,8 +295,7 @@ func TestRenderer_EmptyStores(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -329,21 +326,21 @@ func TestRenderer_MultipleStores(t *testing.T) {
 
 	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{
-			items: []interface{}{
-				map[string]interface{}{"kind": "Ingress"},
-				map[string]interface{}{"kind": "Ingress"},
+			items: []any{
+				map[string]any{"kind": "Ingress"},
+				map[string]any{"kind": "Ingress"},
 			},
 		},
 		"services": &mockStore{
-			items: []interface{}{
-				map[string]interface{}{"kind": "Service"},
+			items: []any{
+				map[string]any{"kind": "Service"},
 			},
 		},
 		"pods": &mockStore{
-			items: []interface{}{
-				map[string]interface{}{"kind": "Pod"},
-				map[string]interface{}{"kind": "Pod"},
-				map[string]interface{}{"kind": "Pod"},
+			items: []any{
+				map[string]any{"kind": "Pod"},
+				map[string]any{"kind": "Pod"},
+				map[string]any{"kind": "Pod"},
 			},
 		},
 	}
@@ -354,8 +351,7 @@ func TestRenderer_MultipleStores(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -422,8 +418,8 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	}
 
 	ingressStore := &mockStore{
-		items: []interface{}{
-			map[string]interface{}{"name": "ing1"},
+		items: []any{
+			map[string]any{"name": "ing1"},
 		},
 	}
 
@@ -437,8 +433,7 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -450,7 +445,7 @@ func TestRenderer_MultipleReconciliations(t *testing.T) {
 	_ = testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.EventTimeout)
 
 	// Add more ingresses to store
-	ingressStore.items = append(ingressStore.items, map[string]interface{}{"name": "ing2"})
+	ingressStore.items = append(ingressStore.items, map[string]any{"name": "ing2"})
 
 	// Trigger second reconciliation
 	bus.Publish(events.NewReconciliationTriggeredEvent("second", true))
@@ -473,14 +468,14 @@ func TestBuildRenderingContext(t *testing.T) {
 
 	storeMap := map[string]stores.Store{
 		"ingresses": &mockStore{
-			items: []interface{}{
-				map[string]interface{}{"name": "ing1"},
-				map[string]interface{}{"name": "ing2"},
+			items: []any{
+				map[string]any{"name": "ing1"},
+				map[string]any{"name": "ing2"},
 			},
 		},
 		"services": &mockStore{
-			items: []interface{}{
-				map[string]interface{}{"name": "svc1"},
+			items: []any{
+				map[string]any{"name": "svc1"},
 			},
 		},
 	}
@@ -594,8 +589,7 @@ frontend test
 			eventChan := bus.Subscribe("test-sub", 50)
 			bus.Start()
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 
 			go renderer.Start(ctx)
 			time.Sleep(testutil.StartupDelay)
@@ -655,8 +649,7 @@ frontend test
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -753,8 +746,7 @@ func TestRenderer_WithPostProcessors(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -805,8 +797,7 @@ frontend fe1
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -824,37 +815,37 @@ frontend fe1
 func TestFailFunction(t *testing.T) {
 	tests := []struct {
 		name        string
-		args        []interface{}
+		args        []any
 		wantErr     bool
 		errContains string
 	}{
 		{
 			name:        "valid string argument",
-			args:        []interface{}{"Secret 'foo/bar' not found"},
+			args:        []any{"Secret 'foo/bar' not found"},
 			wantErr:     true,
 			errContains: "Secret 'foo/bar' not found",
 		},
 		{
 			name:        "no arguments",
-			args:        []interface{}{},
+			args:        []any{},
 			wantErr:     true,
 			errContains: "requires exactly one string argument",
 		},
 		{
 			name:        "too many arguments",
-			args:        []interface{}{"first", "second"},
+			args:        []any{"first", "second"},
 			wantErr:     true,
 			errContains: "requires exactly one string argument",
 		},
 		{
 			name:        "non-string argument (int)",
-			args:        []interface{}{42},
+			args:        []any{42},
 			wantErr:     true,
 			errContains: "must be a string",
 		},
 		{
 			name:        "non-string argument (nil)",
-			args:        []interface{}{nil},
+			args:        []any{nil},
 			wantErr:     true,
 			errContains: "must be a string",
 		},
@@ -986,15 +977,14 @@ func TestRenderer_ReconciliationCoalescing_LatestWins(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
 
 	// Publish multiple reconciliation triggers rapidly
 	// The renderer should coalesce these and process fewer events
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		bus.Publish(events.NewReconciliationTriggeredEvent("batch_test", true))
 	}
 
@@ -1028,8 +1018,7 @@ func TestRenderer_TriggerReasonPropagation(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -1084,8 +1073,7 @@ func TestRenderer_WithHTTPStoreComponent(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start both components
 	go httpStoreComponent.Start(ctx)
@@ -1127,8 +1115,7 @@ func TestRenderer_WithoutHTTPStoreComponent(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go renderer.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -1184,8 +1171,7 @@ func TestRenderer_HTTPStoreContextAvailability(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go httpStoreComponent.Start(ctx)
 	go renderer.Start(ctx)

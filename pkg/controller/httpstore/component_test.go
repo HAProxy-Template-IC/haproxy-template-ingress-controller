@@ -155,8 +155,7 @@ func TestComponent_HandleValidationCompleted_NoPending(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -183,8 +182,7 @@ func TestComponent_HandleValidationFailed_NoPending(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -211,8 +209,7 @@ func TestComponent_HandleValidationFailed_EmptyErrors(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -237,8 +234,7 @@ func TestComponent_IgnoresOtherEvents(t *testing.T) {
 	component := New(bus, logger, 0)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -392,8 +388,7 @@ func TestComponent_HandleValidationCompleted_WithPending(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -423,8 +418,7 @@ func TestComponent_HandleValidationFailed_WithErrors(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -453,8 +447,7 @@ func TestComponent_RegisterURL_WithDelay(t *testing.T) {
 
 	// Start component to set up context
 	bus.Start()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -475,8 +468,7 @@ func TestComponent_RefreshURL_EntryNotFound(t *testing.T) {
 	bus.Start()
 
 	// Set up context directly to avoid race with Start()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	component.ctx = ctx
 
 	// Refresh URL that doesn't exist in store
@@ -492,8 +484,7 @@ func TestComponent_RefreshURL_WithExistingTimer(t *testing.T) {
 	bus.Start()
 
 	// Set up context directly to avoid race with Start()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	component.ctx = ctx
 
 	// Pre-add a timer for testing the reset path
@@ -593,8 +584,7 @@ func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -663,8 +653,7 @@ func TestComponent_ValidationFailed_WithActualPendingContent(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)

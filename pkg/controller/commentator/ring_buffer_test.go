@@ -31,7 +31,7 @@ func TestRingBuffer_Add(t *testing.T) {
 	rb := NewRingBuffer(5)
 
 	// Add events
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		rb.Add(mockEvent{
 			eventType: "test.event",
 			timestamp: time.Now(),
@@ -45,7 +45,7 @@ func TestRingBuffer_Add_Wraparound(t *testing.T) {
 	rb := NewRingBuffer(3)
 
 	// Fill buffer
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		rb.Add(mockEvent{
 			eventType: "test.event",
 			timestamp: time.Now().Add(time.Duration(i) * time.Second),
@@ -127,7 +127,7 @@ func TestRingBuffer_FindRecent(t *testing.T) {
 	rb := NewRingBuffer(10)
 
 	// Add events
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		rb.Add(mockEvent{
 			eventType: "test",
 			timestamp: time.Now().Add(time.Duration(i) * time.Second),
@@ -147,7 +147,7 @@ func TestRingBuffer_FindRecent_RequestMoreThanSize(t *testing.T) {
 	rb := NewRingBuffer(10)
 
 	// Add only 3 events
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		rb.Add(mockEvent{
 			eventType: "test",
 			timestamp: time.Now(),
@@ -180,7 +180,7 @@ func TestRingBuffer_FindRecentByPredicate_MaxCount(t *testing.T) {
 	rb := NewRingBuffer(10)
 
 	// Add many matching events
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		rb.Add(mockEvent{eventType: "test", timestamp: time.Now()})
 	}
 
@@ -196,12 +196,12 @@ func TestRingBuffer_TypeIndex_LazyCleanup(t *testing.T) {
 	rb := NewRingBuffer(3)
 
 	// Fill buffer with one type
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		rb.Add(mockEvent{eventType: "type1", timestamp: time.Now()})
 	}
 
 	// Overwrite with different type (triggers wraparound)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		rb.Add(mockEvent{eventType: "type2", timestamp: time.Now()})
 	}
 
@@ -219,9 +219,9 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 
 	// Spawn multiple goroutines adding events
 	done := make(chan bool)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
-			for j := 0; j < 20; j++ {
+			for range 20 {
 				rb.Add(mockEvent{
 					eventType: "concurrent.test",
 					timestamp: time.Now(),
@@ -232,7 +232,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		<-done
 	}
 

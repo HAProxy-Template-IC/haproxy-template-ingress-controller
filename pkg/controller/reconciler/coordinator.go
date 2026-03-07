@@ -251,10 +251,9 @@ func (c *Coordinator) handlePipelineFailure(
 		"correlation_id", correlationID,
 		"duration_ms", duration)
 
-	// Extract phase from structured PipelineError using errors.As
+	// Extract phase from structured PipelineError
 	phase := "render" // Default to render for unexpected errors
-	var pipelineErr *pipeline.PipelineError
-	if errors.As(err, &pipelineErr) {
+	if pipelineErr, ok := errors.AsType[*pipeline.PipelineError](err); ok {
 		phase = string(pipelineErr.Phase)
 	}
 

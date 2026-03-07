@@ -22,6 +22,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - **FileRegistry map file paths**: Use filename instead of full path for map file registration, fixing deployment path mismatches
 - **Dataplane sync rule comparison**: Replace index-based rule comparison with LCS content matching for reliable HAProxy config updates
 
+### Changed
+
+- **Go runtime upgraded to 1.26.1**: GOGC override removed — Green Tea GC provides equivalent throughput improvement by default
+
 ### Performance
 
 - **Scriggo callNative fast-path**: Expanded type-switch cases eliminate `reflect.Value.Call` for frequent template function signatures

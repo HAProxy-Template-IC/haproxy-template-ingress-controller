@@ -86,7 +86,7 @@ func benchmarkRenderSimple(b *testing.B) {
 		b.Fatalf("failed to create engine: %v", err)
 	}
 
-	ctx := map[string]interface{}{
+	ctx := map[string]any{
 		"name":     "World",
 		"location": "HAProxy",
 	}
@@ -95,7 +95,7 @@ func benchmarkRenderSimple(b *testing.B) {
 	b.ReportAllocs()
 
 	var r string
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = engine.Render(context.Background(), "simple", ctx)
 	}
 	benchResultString = r
@@ -117,8 +117,8 @@ server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}
 		b.Fatalf("failed to create engine: %v", err)
 	}
 
-	ctx := map[string]interface{}{
-		"servers": []map[string]interface{}{
+	ctx := map[string]any{
+		"servers": []map[string]any{
 			{"name": "srv1", "address": "192.168.1.1", "port": 8080, "weight": 100, "check": true},
 			{"name": "srv2", "address": "192.168.1.2", "port": 8080, "weight": 50, "check": true},
 			{"name": "srv3", "address": "192.168.1.3", "port": 8080, "weight": 25, "check": false},
@@ -131,7 +131,7 @@ server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}
 	b.ReportAllocs()
 
 	var r string
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = engine.Render(context.Background(), "medium", ctx)
 	}
 	benchResultString = r
@@ -189,24 +189,24 @@ backend {{ .backend.name }}
 		b.Fatalf("failed to create engine: %v", err)
 	}
 
-	ctx := map[string]interface{}{
-		"global": map[string]interface{}{
+	ctx := map[string]any{
+		"global": map[string]any{
 			"maxconn": 10000,
 		},
-		"defaults": map[string]interface{}{
+		"defaults": map[string]any{
 			"connect_timeout": "10s",
 			"client_timeout":  "30s",
 			"server_timeout":  "30s",
 		},
-		"frontends": []map[string]interface{}{
+		"frontends": []map[string]any{
 			{
 				"name": "http_front",
 				"port": 80,
-				"acls": []map[string]interface{}{
+				"acls": []map[string]any{
 					{"name": "is_api", "condition": "path_beg /api"},
 					{"name": "is_static", "condition": "path_beg /static"},
 				},
-				"rules": []map[string]interface{}{
+				"rules": []map[string]any{
 					{"backend": "api_backend", "condition": "is_api"},
 					{"backend": "static_backend", "condition": "is_static"},
 				},
@@ -215,27 +215,27 @@ backend {{ .backend.name }}
 			{
 				"name": "https_front",
 				"port": 443,
-				"acls": []map[string]interface{}{
+				"acls": []map[string]any{
 					{"name": "is_admin", "condition": "path_beg /admin"},
 				},
-				"rules": []map[string]interface{}{
+				"rules": []map[string]any{
 					{"backend": "admin_backend", "condition": "is_admin"},
 				},
 				"default_backend": "main_backend",
 			},
 		},
-		"backends": []map[string]interface{}{
+		"backends": []map[string]any{
 			{
 				"name":    "api_backend",
 				"balance": "leastconn",
-				"servers": []map[string]interface{}{
+				"servers": []map[string]any{
 					{"name": "api1", "address": "10.0.0.1", "port": 8080, "weight": 100, "check": true},
 					{"name": "api2", "address": "10.0.0.2", "port": 8080, "weight": 100, "check": true},
 				},
 			},
 			{
 				"name": "main_backend",
-				"servers": []map[string]interface{}{
+				"servers": []map[string]any{
 					{"name": "main1", "address": "10.0.1.1", "port": 8080, "check": true},
 					{"name": "main2", "address": "10.0.1.2", "port": 8080, "check": true},
 					{"name": "main3", "address": "10.0.1.3", "port": 8080, "check": true},
@@ -244,13 +244,13 @@ backend {{ .backend.name }}
 			{
 				"name":    "static_backend",
 				"balance": "roundrobin",
-				"servers": []map[string]interface{}{
+				"servers": []map[string]any{
 					{"name": "static1", "address": "10.0.2.1", "port": 80},
 				},
 			},
 			{
 				"name": "admin_backend",
-				"servers": []map[string]interface{}{
+				"servers": []map[string]any{
 					{"name": "admin1", "address": "10.0.3.1", "port": 9000, "check": true},
 				},
 			},
@@ -261,7 +261,7 @@ backend {{ .backend.name }}
 	b.ReportAllocs()
 
 	var r string
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = engine.Render(context.Background(), "large", ctx)
 	}
 	benchResultString = r
@@ -284,8 +284,8 @@ func benchmarkFilterSortBy(b *testing.B) {
 		b.Fatalf("failed to create engine: %v", err)
 	}
 
-	ctx := map[string]interface{}{
-		"items": []map[string]interface{}{
+	ctx := map[string]any{
+		"items": []map[string]any{
 			{"name": "alpha", "priority": 1},
 			{"name": "beta", "priority": 3},
 			{"name": "gamma", "priority": 2},
@@ -301,7 +301,7 @@ func benchmarkFilterSortBy(b *testing.B) {
 	b.ReportAllocs()
 
 	var r string
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = engine.Render(context.Background(), "sort", ctx)
 	}
 	benchResultString = r
@@ -324,16 +324,16 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 	}
 
 	// Generate test data
-	servers := make([]map[string]interface{}, itemCount)
-	for i := 0; i < itemCount; i++ {
-		servers[i] = map[string]interface{}{
+	servers := make([]map[string]any, itemCount)
+	for i := range itemCount {
+		servers[i] = map[string]any{
 			"name":    fmt.Sprintf("srv%d", i),
 			"address": fmt.Sprintf("10.0.%d.%d", i/256, i%256),
 			"port":    8080 + (i % 10),
 		}
 	}
 
-	ctx := map[string]interface{}{
+	ctx := map[string]any{
 		"servers": servers,
 	}
 
@@ -341,7 +341,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 	b.ReportAllocs()
 
 	var r string
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = engine.Render(context.Background(), "scale", ctx)
 	}
 	benchResultString = r
@@ -359,7 +359,7 @@ func benchmarkCompileSmall(b *testing.B) {
 
 	var engine Engine
 	var err error
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
 			b.Fatalf("failed to create engine: %v", err)
@@ -387,7 +387,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 
 	var engine Engine
 	var err error
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
 			b.Fatalf("failed to create engine: %v", err)
@@ -438,7 +438,7 @@ frontend {{ .frontend.name }}
 
 	var engine Engine
 	var err error
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
 			b.Fatalf("failed to create engine: %v", err)

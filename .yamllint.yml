@@ -20,3 +20,4 @@ ignore:
   - charts/haptic/templates/  # Helm templates contain Go template syntax
   - pkg/generated/
   - node_modules/
+  - vendor/

@@ -69,5 +69,5 @@ type Var interface {
 	//
 	// Implementations must be thread-safe, as Get() may be called concurrently
 	// from multiple HTTP requests.
-	Get() (interface{}, error)
+	Get() (any, error)
 }

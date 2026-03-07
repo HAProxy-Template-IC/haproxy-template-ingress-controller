@@ -263,8 +263,7 @@ func TestServer_StartFailsWhenPortInUse(t *testing.T) {
 
 	// Try to start second server on same port
 	server2 := NewServer(server1.Addr(), registry)
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	defer cancel2()
+	ctx2 := t.Context()
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -342,14 +341,13 @@ func TestServer_SetRegistry_NoPortRebind(t *testing.T) {
 func BenchmarkServer_MetricsEndpoint(b *testing.B) {
 	registry := prometheus.NewRegistry()
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		counter := NewCounter(registry, fmt.Sprintf("bench_counter_%d", i), "Benchmark counter")
 		counter.Add(float64(i * 100))
 	}
 
 	server := NewServer("localhost:0", registry)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := b.Context()
 
 	go server.Start(ctx)
 
@@ -369,7 +367,7 @@ func BenchmarkServer_MetricsEndpoint(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		resp, err := http.Get("http://" + server.Addr() + "/metrics")
 		if err != nil {
 			b.Fatal(err)

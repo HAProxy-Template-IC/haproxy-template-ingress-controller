@@ -32,7 +32,7 @@ type TypedFunc[T any] func() (T, error)
 
 // Get implements the Var interface by calling the underlying typed function.
 // The typed result is returned as interface{} to satisfy the Var interface.
-func (f TypedFunc[T]) Get() (interface{}, error) {
+func (f TypedFunc[T]) Get() (any, error) {
 	return f()
 }
 
@@ -55,7 +55,7 @@ func NewTypedVar[T any](getter func() (T, error)) *TypedVar[T] {
 }
 
 // Get implements the Var interface.
-func (v *TypedVar[T]) Get() (interface{}, error) {
+func (v *TypedVar[T]) Get() (any, error) {
 	return v.getter()
 }
 

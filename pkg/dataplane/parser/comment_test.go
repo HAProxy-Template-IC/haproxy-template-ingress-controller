@@ -87,7 +87,7 @@ func testCommentParsing(t *testing.T, config, label string) {
 	t.Logf("\n[%s] === Summary: Found %d rules with %d comments in metadata ===", label, len(frontend.HTTPRequestRuleList), commentsFound)
 }
 
-func getKeys(m map[string]interface{}) []string {
+func getKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

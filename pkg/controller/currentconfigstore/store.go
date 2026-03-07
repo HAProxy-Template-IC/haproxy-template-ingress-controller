@@ -60,7 +60,7 @@ func (s *Store) clear(reason string) {
 
 // Update parses and stores the config from an unstructured HAProxyCfg resource.
 // Pass nil to clear the stored config.
-func (s *Store) Update(resource interface{}) {
+func (s *Store) Update(resource any) {
 	// Handle both untyped nil and typed nil (e.g., (*unstructured.Unstructured)(nil))
 	if resource == nil {
 		s.clear("current config cleared (no HAProxyCfg)")

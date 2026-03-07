@@ -39,14 +39,14 @@ type Store interface {
 	// Example:
 	//   // For index_by: ["metadata.namespace", "metadata.name"]
 	//   resources, err := store.Get("default", "my-ingress")
-	Get(keys ...string) ([]interface{}, error)
+	Get(keys ...string) ([]any, error)
 
 	// List returns all resources in the store.
 	//
 	// Returns:
 	//   - A slice of all stored resources
 	//   - An error if the operation fails
-	List() ([]interface{}, error)
+	List() ([]any, error)
 
 	// Add inserts a new resource into the store with the provided index keys.
 	//
@@ -55,7 +55,7 @@ type Store interface {
 	//   - keys: Index keys extracted from the resource
 	//
 	// Returns an error if the operation fails.
-	Add(resource interface{}, keys []string) error
+	Add(resource any, keys []string) error
 
 	// Update modifies an existing resource in the store.
 	// If the resource doesn't exist, it will be added.
@@ -65,7 +65,7 @@ type Store interface {
 	//   - keys: Index keys extracted from the resource
 	//
 	// Returns an error if the operation fails.
-	Update(resource interface{}, keys []string) error
+	Update(resource any, keys []string) error
 
 	// Delete removes a resource from the store using its index keys.
 	//
@@ -165,7 +165,7 @@ type OnSyncCompleteCallback func(store Store, initialCount int)
 //   - obj: The Kubernetes resource that changed (runtime.Object)
 //
 // Returns an error if resource processing fails.
-type OnResourceChangeCallback func(obj interface{}) error
+type OnResourceChangeCallback func(obj any) error
 
 // WatcherConfig configures a Kubernetes resource watcher.
 type WatcherConfig struct {

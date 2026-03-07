@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -223,8 +224,6 @@ func (t *IndexSynchronizationTracker) GetAllResourceCounts() map[string]int {
 	defer t.mu.Unlock()
 
 	counts := make(map[string]int, len(t.resourceCounts))
-	for k, v := range t.resourceCounts {
-		counts[k] = v
-	}
+	maps.Copy(counts, t.resourceCounts)
 	return counts
 }

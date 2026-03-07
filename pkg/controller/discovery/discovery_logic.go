@@ -322,10 +322,7 @@ func (c *Component) scheduleRetryTimerLocked() {
 	}
 
 	// Calculate delay (minimum 1 second to avoid tight loops)
-	delay := time.Until(nextRetry)
-	if delay < time.Second {
-		delay = time.Second
-	}
+	delay := max(time.Until(nextRetry), time.Second)
 
 	c.logger.Debug("scheduling retry timer for pending pods",
 		"pending_count", len(c.pendingRetries),

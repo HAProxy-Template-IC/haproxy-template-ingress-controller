@@ -23,8 +23,8 @@ import (
 func TestConvertClientMetadataToAPI(t *testing.T) {
 	tests := []struct {
 		name  string
-		input map[string]interface{}
-		want  map[string]map[string]interface{}
+		input map[string]any
+		want  map[string]map[string]any
 	}{
 		{
 			name:  "nil input returns nil",
@@ -33,26 +33,26 @@ func TestConvertClientMetadataToAPI(t *testing.T) {
 		},
 		{
 			name:  "empty map returns nil",
-			input: map[string]interface{}{},
+			input: map[string]any{},
 			want:  nil,
 		},
 		{
 			name: "single comment is converted",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"comment": "Pod: echo-server-v2",
 			},
-			want: map[string]map[string]interface{}{
+			want: map[string]map[string]any{
 				"comment": {"value": "Pod: echo-server-v2"},
 			},
 		},
 		{
 			name: "multiple metadata fields including comment",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"comment":  "server comment",
 				"disabled": true,
 				"weight":   100,
 			},
-			want: map[string]map[string]interface{}{
+			want: map[string]map[string]any{
 				"comment":  {"value": "server comment"},
 				"disabled": {"value": true},
 				"weight":   {"value": 100},
@@ -60,11 +60,11 @@ func TestConvertClientMetadataToAPI(t *testing.T) {
 		},
 		{
 			name: "non-comment metadata is preserved",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"custom_field": "custom value",
 				"number":       42,
 			},
-			want: map[string]map[string]interface{}{
+			want: map[string]map[string]any{
 				"custom_field": {"value": "custom value"},
 				"number":       {"value": 42},
 			},
@@ -82,8 +82,8 @@ func TestConvertClientMetadataToAPI(t *testing.T) {
 func TestConvertAPIMetadataToClient(t *testing.T) {
 	tests := []struct {
 		name  string
-		input map[string]map[string]interface{}
-		want  map[string]interface{}
+		input map[string]map[string]any
+		want  map[string]any
 	}{
 		{
 			name:  "nil input returns nil",
@@ -92,26 +92,26 @@ func TestConvertAPIMetadataToClient(t *testing.T) {
 		},
 		{
 			name:  "empty map returns nil",
-			input: map[string]map[string]interface{}{},
+			input: map[string]map[string]any{},
 			want:  nil,
 		},
 		{
 			name: "single comment",
-			input: map[string]map[string]interface{}{
+			input: map[string]map[string]any{
 				"comment": {"value": "Pod: echo-server-v2"},
 			},
-			want: map[string]interface{}{
+			want: map[string]any{
 				"comment": "Pod: echo-server-v2",
 			},
 		},
 		{
 			name: "multiple metadata fields",
-			input: map[string]map[string]interface{}{
+			input: map[string]map[string]any{
 				"comment":  {"value": "server comment"},
 				"disabled": {"value": true},
 				"weight":   {"value": 100},
 			},
-			want: map[string]interface{}{
+			want: map[string]any{
 				"comment":  "server comment",
 				"disabled": true,
 				"weight":   100,
@@ -119,11 +119,11 @@ func TestConvertAPIMetadataToClient(t *testing.T) {
 		},
 		{
 			name: "nested map without value key is ignored",
-			input: map[string]map[string]interface{}{
+			input: map[string]map[string]any{
 				"comment": {"value": "has value"},
 				"invalid": {"other_key": "no value key"},
 			},
-			want: map[string]interface{}{
+			want: map[string]any{
 				"comment": "has value",
 			},
 		},
@@ -139,7 +139,7 @@ func TestConvertAPIMetadataToClient(t *testing.T) {
 
 func TestMetadataRoundTrip(t *testing.T) {
 	// Test that converting to API and back yields original
-	original := map[string]interface{}{
+	original := map[string]any{
 		"custom_field": "custom value",
 		"weight":       100,
 	}
@@ -152,7 +152,7 @@ func TestMetadataRoundTrip(t *testing.T) {
 
 func TestMetadataRoundTrip_WithComment(t *testing.T) {
 	// Comments are included in the round-trip
-	original := map[string]interface{}{
+	original := map[string]any{
 		"comment": "Pod: echo-server-v2",
 		"weight":  100,
 	}
@@ -238,25 +238,25 @@ func TestTransformClientMetadataInJSON(t *testing.T) {
 func TestNeedsMetadataTransformation(t *testing.T) {
 	tests := []struct {
 		name     string
-		metadata map[string]interface{}
+		metadata map[string]any
 		want     bool
 	}{
 		{
 			name:     "empty map does not need transformation",
-			metadata: map[string]interface{}{},
+			metadata: map[string]any{},
 			want:     false,
 		},
 		{
 			name: "flat string value needs transformation",
-			metadata: map[string]interface{}{
+			metadata: map[string]any{
 				"comment": "Pod: test-pod",
 			},
 			want: true,
 		},
 		{
 			name: "nested map with value key does not need transformation",
-			metadata: map[string]interface{}{
-				"comment": map[string]interface{}{
+			metadata: map[string]any{
+				"comment": map[string]any{
 					"value": "Pod: test-pod",
 				},
 			},
@@ -264,8 +264,8 @@ func TestNeedsMetadataTransformation(t *testing.T) {
 		},
 		{
 			name: "nested map without value key needs transformation",
-			metadata: map[string]interface{}{
-				"comment": map[string]interface{}{
+			metadata: map[string]any{
+				"comment": map[string]any{
 					"other": "Pod: test-pod",
 				},
 			},

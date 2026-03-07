@@ -55,8 +55,8 @@ func IsDockerInDocker() bool {
 func GetDindHostname() string {
 	dockerHost := os.Getenv("DOCKER_HOST")
 	// Remove tcp:// prefix
-	if strings.HasPrefix(dockerHost, "tcp://") {
-		hostPort := strings.TrimPrefix(dockerHost, "tcp://")
+	if after, ok := strings.CutPrefix(dockerHost, "tcp://"); ok {
+		hostPort := after
 		// Remove port suffix
 		if idx := strings.LastIndex(hostPort, ":"); idx != -1 {
 			return hostPort[:idx]

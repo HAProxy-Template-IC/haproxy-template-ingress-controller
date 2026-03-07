@@ -195,6 +195,6 @@ func (p *HTTPResponses) GetEEActions() []*EEHTTPResponseAction {
 
 // HTTPResponsesData holds both CE and EE http-response actions.
 type HTTPResponsesData struct {
-	CEActions interface{}
+	CEActions any
 	EEActions []*EEHTTPResponseAction
 }

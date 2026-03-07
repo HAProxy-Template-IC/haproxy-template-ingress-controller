@@ -15,6 +15,7 @@
 package events
 
 import (
+	"maps"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -61,7 +62,7 @@ func (e *DeploymentStartedEvent) Timestamp() time.Time { return e.timestamp }
 //
 // This event propagates the correlation ID from DeploymentStartedEvent.
 type InstanceDeployedEvent struct {
-	Endpoint       interface{} // The HAProxy endpoint that was deployed to
+	Endpoint       any // The HAProxy endpoint that was deployed to
 	DurationMs     int64
 	ReloadRequired bool // Whether this deployment required an HAProxy reload
 	timestamp      time.Time
@@ -76,7 +77,7 @@ type InstanceDeployedEvent struct {
 //
 //	event := events.NewInstanceDeployedEvent(endpoint, durationMs, reloadRequired,
 //	    events.PropagateCorrelation(startedEvent))
-func NewInstanceDeployedEvent(endpoint interface{}, durationMs int64, reloadRequired bool, opts ...CorrelationOption) *InstanceDeployedEvent {
+func NewInstanceDeployedEvent(endpoint any, durationMs int64, reloadRequired bool, opts ...CorrelationOption) *InstanceDeployedEvent {
 	return &InstanceDeployedEvent{
 		Endpoint:       endpoint,
 		DurationMs:     durationMs,
@@ -93,7 +94,7 @@ func (e *InstanceDeployedEvent) Timestamp() time.Time { return e.timestamp }
 //
 // This event propagates the correlation ID from DeploymentStartedEvent.
 type InstanceDeploymentFailedEvent struct {
-	Endpoint  interface{}
+	Endpoint  any
 	Error     string
 	Retryable bool // Whether this failure is retryable
 	timestamp time.Time
@@ -108,7 +109,7 @@ type InstanceDeploymentFailedEvent struct {
 //
 //	event := events.NewInstanceDeploymentFailedEvent(endpoint, err, retryable,
 //	    events.PropagateCorrelation(startedEvent))
-func NewInstanceDeploymentFailedEvent(endpoint interface{}, err string, retryable bool, opts ...CorrelationOption) *InstanceDeploymentFailedEvent {
+func NewInstanceDeploymentFailedEvent(endpoint any, err string, retryable bool, opts ...CorrelationOption) *InstanceDeploymentFailedEvent {
 	return &InstanceDeploymentFailedEvent{
 		Endpoint:    endpoint,
 		Error:       err,
@@ -177,9 +178,7 @@ func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOpt
 	var breakdownCopy map[string]int
 	if result.OperationBreakdown != nil {
 		breakdownCopy = make(map[string]int, len(result.OperationBreakdown))
-		for k, v := range result.OperationBreakdown {
-			breakdownCopy[k] = v
-		}
+		maps.Copy(breakdownCopy, result.OperationBreakdown)
 	}
 
 	return &DeploymentCompletedEvent{

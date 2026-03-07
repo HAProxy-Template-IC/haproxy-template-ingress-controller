@@ -161,8 +161,9 @@ func TestServerUpdate_DelegatesToWithReloadTracking(t *testing.T) {
 	require.NoError(t, err)
 }
 
+//go:fix inline
 func ptrInt64(v int64) *int64 {
-	return &v
+	return new(v)
 }
 
 func TestServerUpdateWithReloadTracking_TransactionPath_ServerError(t *testing.T) {

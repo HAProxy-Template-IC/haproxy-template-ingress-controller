@@ -30,9 +30,9 @@ import (
 // objects within are still references to internal data and must not be mutated.
 type MemoryStore struct {
 	mu       sync.RWMutex
-	data     map[string][]interface{} // Flat map: composite key -> slice of resources (pre-sorted)
-	numKeys  int                      // Number of index keys
-	modCount uint64                   // Incremented on every mutation for cache invalidation
+	data     map[string][]any // Flat map: composite key -> slice of resources (pre-sorted)
+	numKeys  int              // Number of index keys
+	modCount uint64           // Incremented on every mutation for cache invalidation
 }
 
 // NewMemoryStore creates a new memory-backed store.
@@ -45,7 +45,7 @@ func NewMemoryStore(numKeys int) *MemoryStore {
 	}
 
 	return &MemoryStore{
-		data:    make(map[string][]interface{}),
+		data:    make(map[string][]any),
 		numKeys: numKeys,
 	}
 }
@@ -57,7 +57,7 @@ func NewMemoryStore(numKeys int) *MemoryStore {
 //
 // For partial key matches, a new slice is constructed from matching entries
 // and sorted for deterministic order.
-func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
+func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -85,13 +85,13 @@ func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
 			// Callers must not modify (see Immutability Contract)
 			return items, nil
 		}
-		return []interface{}{}, nil
+		return []any{}, nil
 	}
 
 	// Partial match: return all resources matching prefix
 	// Must construct new slice as it aggregates from multiple internal slices
 	prefix := makeKeyString(keys) + "/"
-	var results []interface{}
+	var results []any
 
 	for key, items := range s.data {
 		// Check if key starts with prefix
@@ -115,12 +115,12 @@ func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
 
 // List returns all resources in the store.
 // Returns a fresh copy of all resources to avoid race conditions.
-func (s *MemoryStore) List() ([]interface{}, error) {
+func (s *MemoryStore) List() ([]any, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	// Build fresh slice from data map - eliminates race condition from lock upgrade
-	items := make([]interface{}, 0)
+	items := make([]any, 0)
 	for _, resourceSlice := range s.data {
 		items = append(items, resourceSlice...)
 	}
@@ -143,7 +143,7 @@ func (s *MemoryStore) List() ([]interface{}, error) {
 // Add inserts a new resource into the store.
 // If resources with the same index keys already exist, the new resource is appended.
 // The slice is kept sorted by namespace/name for deterministic Get() results.
-func (s *MemoryStore) Add(resource interface{}, keys []string) error {
+func (s *MemoryStore) Add(resource any, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -168,7 +168,7 @@ func (s *MemoryStore) Add(resource interface{}, keys []string) error {
 
 // sortResourceSlice sorts a slice of resources by namespace and name.
 // Used to maintain sorted order at insert time for zero-copy reads.
-func sortResourceSlice(items []interface{}) {
+func sortResourceSlice(items []any) {
 	sort.Slice(items, func(i, j int) bool {
 		nsI, nameI := extractNamespaceName(items[i])
 		nsJ, nameJ := extractNamespaceName(items[j])
@@ -182,7 +182,7 @@ func sortResourceSlice(items []interface{}) {
 // Update modifies an existing resource or adds it if it doesn't exist.
 // For non-unique index keys, it finds the resource by namespace+name and replaces it.
 // The slice is kept sorted by namespace/name for deterministic Get() results.
-func (s *MemoryStore) Update(resource interface{}, keys []string) error {
+func (s *MemoryStore) Update(resource any, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -198,7 +198,7 @@ func (s *MemoryStore) Update(resource interface{}, keys []string) error {
 	resources, ok := s.data[keyStr]
 	if !ok {
 		// No resources with these keys - add new (single element, already sorted)
-		s.data[keyStr] = []interface{}{resource}
+		s.data[keyStr] = []any{resource}
 		s.modCount++
 		return nil
 	}
@@ -254,7 +254,7 @@ func (s *MemoryStore) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.data = make(map[string][]interface{})
+	s.data = make(map[string][]any)
 	s.modCount++
 
 	return nil

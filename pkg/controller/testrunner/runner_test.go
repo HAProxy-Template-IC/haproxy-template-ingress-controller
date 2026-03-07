@@ -33,7 +33,7 @@ import (
 )
 
 // Helper function to create RawExtension from map.
-func mustMarshalRawExtension(obj map[string]interface{}) runtime.RawExtension {
+func mustMarshalRawExtension(obj map[string]any) runtime.RawExtension {
 	data, err := json.Marshal(obj)
 	if err != nil {
 		panic(err)
@@ -340,12 +340,12 @@ backend {{ svcMeta["namespace"] }}-{{ svcMeta["name"] }}
 				Description: "Test with service fixture",
 				Fixtures: map[string][]runtime.RawExtension{
 					"services": {
-						mustMarshalRawExtension(map[string]interface{}{
-							"metadata": map[string]interface{}{
+						mustMarshalRawExtension(map[string]any{
+							"metadata": map[string]any{
 								"name":      "test-service",
 								"namespace": "default",
 							},
-							"spec": map[string]interface{}{
+							"spec": map[string]any{
 								"clusterIP": "10.0.0.1",
 							},
 						}),

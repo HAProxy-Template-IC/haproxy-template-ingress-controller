@@ -33,7 +33,7 @@ type OverlayStore struct {
 	baseStore Store
 	namespace string
 	name      string
-	object    interface{} // The changed resource (nil for DELETE)
+	object    any // The changed resource (nil for DELETE)
 	operation Operation
 }
 
@@ -48,7 +48,7 @@ type OverlayStore struct {
 //
 // Returns:
 //   - An immutable overlay store
-func NewOverlayStore(baseStore Store, namespace, name string, obj interface{}, op Operation) *OverlayStore {
+func NewOverlayStore(baseStore Store, namespace, name string, obj any, op Operation) *OverlayStore {
 	return &OverlayStore{
 		baseStore: baseStore,
 		namespace: namespace,
@@ -67,18 +67,18 @@ func NewOverlayStore(baseStore Store, namespace, name string, obj interface{}, o
 // - Otherwise: falls back to the base store.
 //
 // Performance: O(1) for overlay hit, O(k) for base store where k = number of matches
-func (o *OverlayStore) Get(keys ...string) ([]interface{}, error) {
+func (o *OverlayStore) Get(keys ...string) ([]any, error) {
 	// Check if the keys match our overlay resource
 	// Assumes index_by: ["metadata.namespace", "metadata.name"]
 	if len(keys) >= 2 && keys[0] == o.namespace && keys[1] == o.name {
 		switch o.operation {
 		case OperationDelete:
 			// Resource is deleted in overlay - return empty
-			return []interface{}{}, nil
+			return []any{}, nil
 
 		case OperationCreate, OperationUpdate:
 			// Return the overlay object
-			return []interface{}{o.object}, nil
+			return []any{o.object}, nil
 		}
 	}
 
@@ -96,13 +96,13 @@ func (o *OverlayStore) Get(keys ...string) ([]interface{}, error) {
 // - FOR CREATE: adds the new resource.
 //
 // Performance: O(n) where n = number of resources in base store
-func (o *OverlayStore) List() ([]interface{}, error) {
+func (o *OverlayStore) List() ([]any, error) {
 	baseResources, err := o.baseStore.List()
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]interface{}, 0, len(baseResources)+1)
+	result := make([]any, 0, len(baseResources)+1)
 	foundInBase := false
 
 	// Process base store resources
@@ -143,12 +143,12 @@ func (o *OverlayStore) List() ([]interface{}, error) {
 }
 
 // Add is not supported on overlay stores (read-only).
-func (o *OverlayStore) Add(resource interface{}, keys []string) error {
+func (o *OverlayStore) Add(resource any, keys []string) error {
 	return fmt.Errorf("overlay store is read-only: Add not supported")
 }
 
 // Update is not supported on overlay stores (read-only).
-func (o *OverlayStore) Update(resource interface{}, keys []string) error {
+func (o *OverlayStore) Update(resource any, keys []string) error {
 	return fmt.Errorf("overlay store is read-only: Update not supported")
 }
 
@@ -172,19 +172,19 @@ func (o *OverlayStore) Clear() error {
 // Returns:
 //   - namespace: The resource namespace (empty string if not found)
 //   - name: The resource name (empty string if not found)
-func extractMetadata(resource interface{}) (namespace, name string) {
+func extractMetadata(resource any) (namespace, name string) {
 	// First, try to get the content map from Unstructured
-	var content map[string]interface{}
+	var content map[string]any
 
 	// Type assert to interface with UnstructuredContent method (handles k8s Unstructured)
 	type unstructuredInterface interface {
-		UnstructuredContent() map[string]interface{}
+		UnstructuredContent() map[string]any
 	}
 
 	switch v := resource.(type) {
 	case unstructuredInterface:
 		content = v.UnstructuredContent()
-	case map[string]interface{}:
+	case map[string]any:
 		// Already a map (overlay object)
 		content = v
 	default:
@@ -193,7 +193,7 @@ func extractMetadata(resource interface{}) (namespace, name string) {
 	}
 
 	// Extract metadata from the content map
-	metadata, ok := content["metadata"].(map[string]interface{})
+	metadata, ok := content["metadata"].(map[string]any)
 	if !ok {
 		return "", ""
 	}

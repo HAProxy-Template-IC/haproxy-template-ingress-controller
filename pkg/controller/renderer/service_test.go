@@ -48,15 +48,15 @@ func (m *mockStoreProvider) StoreNames() []string {
 
 // mockTypedStore implements both stores.Store and types.Store for testing.
 type mockTypedStore struct {
-	items []interface{}
+	items []any
 }
 
-func (m *mockTypedStore) Add(resource interface{}, keys []string) error {
+func (m *mockTypedStore) Add(resource any, keys []string) error {
 	m.items = append(m.items, resource)
 	return nil
 }
 
-func (m *mockTypedStore) Update(resource interface{}, keys []string) error {
+func (m *mockTypedStore) Update(resource any, keys []string) error {
 	return nil
 }
 
@@ -64,11 +64,11 @@ func (m *mockTypedStore) Delete(keys ...string) error {
 	return nil
 }
 
-func (m *mockTypedStore) List() ([]interface{}, error) {
+func (m *mockTypedStore) List() ([]any, error) {
 	return m.items, nil
 }
 
-func (m *mockTypedStore) Get(keys ...string) ([]interface{}, error) {
+func (m *mockTypedStore) Get(keys ...string) ([]any, error) {
 	return nil, nil
 }
 
@@ -232,7 +232,7 @@ func TestRenderService_Render_WithStores(t *testing.T) {
 	})
 
 	ingressStore := &mockTypedStore{
-		items: []interface{}{"ingress1", "ingress2"},
+		items: []any{"ingress1", "ingress2"},
 	}
 
 	provider := &mockStoreProvider{

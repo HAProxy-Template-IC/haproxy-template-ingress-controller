@@ -84,60 +84,60 @@ func TestParseArgs_InvalidAuth(t *testing.T) {
 func TestParseFetchOptions(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   map[string]interface{}
+		input   map[string]any
 		want    purehttpstore.FetchOptions
 		wantErr bool
 	}{
 		{
 			name:  "empty options",
-			input: map[string]interface{}{},
+			input: map[string]any{},
 			want:  purehttpstore.FetchOptions{},
 		},
 		{
 			name: "delay string",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"delay": "5m",
 			},
 			want: purehttpstore.FetchOptions{Delay: 5 * time.Minute},
 		},
 		{
 			name: "timeout string",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"timeout": "30s",
 			},
 			want: purehttpstore.FetchOptions{Timeout: 30 * time.Second},
 		},
 		{
 			name: "retries int",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"retries": 3,
 			},
 			want: purehttpstore.FetchOptions{Retries: 3},
 		},
 		{
 			name: "retries int64",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"retries": int64(5),
 			},
 			want: purehttpstore.FetchOptions{Retries: 5},
 		},
 		{
 			name: "retries float64",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"retries": float64(2),
 			},
 			want: purehttpstore.FetchOptions{Retries: 2},
 		},
 		{
 			name: "critical bool",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"critical": true,
 			},
 			want: purehttpstore.FetchOptions{Critical: true},
 		},
 		{
 			name: "all options",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"delay":    "1h",
 				"timeout":  "60s",
 				"retries":  5,
@@ -152,28 +152,28 @@ func TestParseFetchOptions(t *testing.T) {
 		},
 		{
 			name: "invalid delay",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"delay": "invalid",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid timeout",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"timeout": "invalid",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid retries type",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"retries": "not-a-number",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid critical type",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"critical": "not-a-bool",
 			},
 			wantErr: true,
@@ -197,18 +197,18 @@ func TestParseFetchOptions(t *testing.T) {
 func TestParseAuthConfig(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   map[string]interface{}
+		input   map[string]any
 		want    *purehttpstore.AuthConfig
 		wantErr bool
 	}{
 		{
 			name:  "empty auth",
-			input: map[string]interface{}{},
+			input: map[string]any{},
 			want:  &purehttpstore.AuthConfig{},
 		},
 		{
 			name: "bearer auth",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"type":  "bearer",
 				"token": "my-token",
 			},
@@ -219,7 +219,7 @@ func TestParseAuthConfig(t *testing.T) {
 		},
 		{
 			name: "basic auth",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"type":     "basic",
 				"username": "user",
 				"password": "pass",
@@ -232,9 +232,9 @@ func TestParseAuthConfig(t *testing.T) {
 		},
 		{
 			name: "headers auth",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"type": "header",
-				"headers": map[string]interface{}{
+				"headers": map[string]any{
 					"X-Api-Key": "api-key-value",
 				},
 			},
@@ -247,43 +247,43 @@ func TestParseAuthConfig(t *testing.T) {
 		},
 		{
 			name: "invalid type",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"type": 12345,
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid username",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"username": 12345,
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid password",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"password": 12345,
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid token",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"token": 12345,
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid headers type",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"headers": "not-a-map",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid header value",
-			input: map[string]interface{}{
-				"headers": map[string]interface{}{
+			input: map[string]any{
+				"headers": map[string]any{
 					"X-Api-Key": 12345,
 				},
 			},
@@ -308,7 +308,7 @@ func TestParseAuthConfig(t *testing.T) {
 func TestToString(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   interface{}
+		input   any
 		want    string
 		wantErr bool
 	}{
@@ -360,23 +360,23 @@ func (s stringerType) String() string {
 func TestToMap(t *testing.T) {
 	tests := []struct {
 		name  string
-		input interface{}
-		want  map[string]interface{}
+		input any
+		want  map[string]any
 		ok    bool
 	}{
 		{
 			name:  "map[string]interface{}",
-			input: map[string]interface{}{"key": "value"},
-			want:  map[string]interface{}{"key": "value"},
+			input: map[string]any{"key": "value"},
+			want:  map[string]any{"key": "value"},
 			ok:    true,
 		},
 		{
 			name: "map[interface{}]interface{} with string keys",
-			input: map[interface{}]interface{}{
+			input: map[any]any{
 				"key1": "value1",
 				"key2": "value2",
 			},
-			want: map[string]interface{}{
+			want: map[string]any{
 				"key1": "value1",
 				"key2": "value2",
 			},
@@ -384,10 +384,10 @@ func TestToMap(t *testing.T) {
 		},
 		{
 			name: "map[interface{}]interface{} with stringer keys",
-			input: map[interface{}]interface{}{
+			input: map[any]any{
 				stringerType{"key1"}: "value1",
 			},
-			want: map[string]interface{}{
+			want: map[string]any{
 				"key1": "value1",
 			},
 			ok: true,
@@ -419,7 +419,7 @@ func TestToMap(t *testing.T) {
 func TestToInt(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   interface{}
+		input   any
 		want    int
 		wantErr bool
 	}{
@@ -467,7 +467,7 @@ func TestToInt(t *testing.T) {
 func TestToBool(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   interface{}
+		input   any
 		want    bool
 		wantErr bool
 	}{
@@ -515,7 +515,7 @@ func TestToBool(t *testing.T) {
 func TestParseDuration(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   interface{}
+		input   any
 		want    time.Duration
 		wantErr bool
 	}{
@@ -567,14 +567,14 @@ func TestParseDuration(t *testing.T) {
 
 func TestParseOptionsArg_NilArgs(t *testing.T) {
 	// Test with nil second argument
-	opts, err := parseOptionsArg([]interface{}{"http://example.com", nil})
+	opts, err := parseOptionsArg([]any{"http://example.com", nil})
 	require.NoError(t, err)
 	assert.Equal(t, purehttpstore.FetchOptions{}, opts)
 }
 
 func TestParseOptionsArg_SingleArg(t *testing.T) {
 	// Test with only URL
-	opts, err := parseOptionsArg([]interface{}{"http://example.com"})
+	opts, err := parseOptionsArg([]any{"http://example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, purehttpstore.FetchOptions{}, opts)
 }

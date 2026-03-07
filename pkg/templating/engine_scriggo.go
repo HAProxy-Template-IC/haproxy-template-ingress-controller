@@ -17,6 +17,7 @@ package templating
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -186,9 +187,7 @@ func newScriggoEngine(templates map[string]string, entryPoints []string, customF
 	engine.globals = buildScriggoGlobals(customFilters, customFunctions, additionalDeclarations)
 
 	// Store raw templates (all templates, not just entry points)
-	for name, content := range templates {
-		engine.rawTemplates[name] = content
-	}
+	maps.Copy(engine.rawTemplates, templates)
 
 	// Compile only entry points (snippets compiled on-demand by Scriggo)
 	if err := engine.compileTemplates(templates, entryPoints); err != nil {
@@ -241,7 +240,7 @@ func (e *ScriggoEngine) compileTemplates(allTemplates map[string]string, entryPo
 }
 
 // Render executes a template with the given context and returns the output.
-func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, error) {
+func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templateContext map[string]any) (string, error) {
 	template, exists := e.compiledTemplates[templateName]
 	if !exists {
 		return "", e.templateNotFoundError(templateName)
@@ -251,7 +250,7 @@ func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templat
 	// This allows first_seen and other cache functions to work even when caller
 	// passes nil context (e.g., in tests).
 	if templateContext == nil {
-		templateContext = make(map[string]interface{})
+		templateContext = make(map[string]any)
 	}
 	if _, ok := templateContext["shared"]; !ok {
 		templateContext["shared"] = NewSharedContext()
@@ -328,7 +327,7 @@ func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templat
 // When profiling is enabled (via NewScriggoWithProfiling), this method returns
 // aggregated include timing statistics. When profiling is disabled, returns nil
 // for the stats slice.
-func (e *ScriggoEngine) RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, []IncludeStats, error) {
+func (e *ScriggoEngine) RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]any) (string, []IncludeStats, error) {
 	output, err := e.Render(ctx, templateName, templateContext)
 	if err != nil {
 		return "", nil, err

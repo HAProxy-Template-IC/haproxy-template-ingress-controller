@@ -166,8 +166,8 @@ func TestNewConnectionError(t *testing.T) {
 	require.NotEmpty(t, syncErr.Hints)
 	assert.Contains(t, syncErr.Hints[0], "Verify the dataplane API URL")
 
-	var connErr *ConnectionError
-	require.True(t, errors.As(syncErr, &connErr))
+	connErr, ok := errors.AsType[*ConnectionError](syncErr)
+	require.True(t, ok)
 	assert.Equal(t, "http://haproxy:5555", connErr.Endpoint)
 }
 
@@ -207,8 +207,8 @@ func TestNewParseError(t *testing.T) {
 			}
 			assert.True(t, hasExpectedHint, "expected hint not found: %s", tt.wantHint)
 
-			var parseErr *ParseError
-			require.True(t, errors.As(syncErr, &parseErr))
+			parseErr, ok := errors.AsType[*ParseError](syncErr)
+			require.True(t, ok)
 			assert.Equal(t, tt.configType, parseErr.ConfigType)
 		})
 	}
@@ -223,8 +223,8 @@ func TestNewValidationError(t *testing.T) {
 	assert.Contains(t, syncErr.Message, "rejected the configuration")
 	require.NotEmpty(t, syncErr.Hints)
 
-	var valErr *ValidationError
-	require.True(t, errors.As(syncErr, &valErr))
+	valErr, ok := errors.AsType[*ValidationError](syncErr)
+	require.True(t, ok)
 	assert.Equal(t, "semantic", valErr.Phase)
 }
 
@@ -236,8 +236,8 @@ func TestNewConflictError(t *testing.T) {
 	assert.Contains(t, syncErr.Message, "5 retries")
 	require.NotEmpty(t, syncErr.Hints)
 
-	var conflictErr *ConflictError
-	require.True(t, errors.As(syncErr, &conflictErr))
+	conflictErr, ok := errors.AsType[*ConflictError](syncErr)
+	require.True(t, ok)
 	assert.Equal(t, 5, conflictErr.Retries)
 	assert.Equal(t, int64(100), conflictErr.ExpectedVersion)
 	assert.Equal(t, "105", conflictErr.ActualVersion)
@@ -254,8 +254,8 @@ func TestNewOperationError(t *testing.T) {
 	assert.Contains(t, syncErr.Message, "web1")
 	require.NotEmpty(t, syncErr.Hints)
 
-	var opErr *OperationError
-	require.True(t, errors.As(syncErr, &opErr))
+	opErr, ok := errors.AsType[*OperationError](syncErr)
+	require.True(t, ok)
 	assert.Equal(t, "create", opErr.OperationType)
 	assert.Equal(t, "server", opErr.Section)
 	assert.Equal(t, "web1", opErr.Resource)
@@ -272,8 +272,8 @@ func TestNewFallbackError(t *testing.T) {
 	assert.Contains(t, syncErr.Message, "fallback failed")
 	require.NotEmpty(t, syncErr.Hints)
 
-	var fallbackErr *FallbackError
-	require.True(t, errors.As(syncErr, &fallbackErr))
+	fallbackErr, ok := errors.AsType[*FallbackError](syncErr)
+	require.True(t, ok)
 	assert.Equal(t, originalErr, fallbackErr.OriginalError)
 	assert.Equal(t, fallbackCause, fallbackErr.FallbackCause)
 }

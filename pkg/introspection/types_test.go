@@ -25,7 +25,7 @@ import (
 
 func TestFunc_Get(t *testing.T) {
 	t.Run("returns value from function", func(t *testing.T) {
-		f := Func(func() (interface{}, error) {
+		f := Func(func() (any, error) {
 			return "computed value", nil
 		})
 
@@ -36,7 +36,7 @@ func TestFunc_Get(t *testing.T) {
 	})
 
 	t.Run("returns error from function", func(t *testing.T) {
-		f := Func(func() (interface{}, error) {
+		f := Func(func() (any, error) {
 			return nil, errors.New("computation failed")
 		})
 
@@ -48,7 +48,7 @@ func TestFunc_Get(t *testing.T) {
 
 	t.Run("computes value on each call", func(t *testing.T) {
 		counter := 0
-		f := Func(func() (interface{}, error) {
+		f := Func(func() (any, error) {
 			counter++
 			return counter, nil
 		})
@@ -101,12 +101,10 @@ func TestIntVar(t *testing.T) {
 		v := NewInt(0)
 		var wg sync.WaitGroup
 
-		for i := 0; i < 100; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 100 {
+			wg.Go(func() {
 				v.Add(1)
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -142,7 +140,7 @@ func TestStringVar(t *testing.T) {
 		v := NewString("start")
 		var wg sync.WaitGroup
 
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
@@ -197,7 +195,7 @@ func TestFloatVar(t *testing.T) {
 		v := NewFloat(0.0)
 		var wg sync.WaitGroup
 
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
@@ -231,7 +229,7 @@ func TestMapVar(t *testing.T) {
 		data, err := v.Get()
 		require.NoError(t, err)
 
-		m := data.(map[string]interface{})
+		m := data.(map[string]any)
 		assert.Equal(t, "value1", m["key1"])
 		assert.Equal(t, 42, m["key2"])
 	})
@@ -244,11 +242,11 @@ func TestMapVar(t *testing.T) {
 		data2, _ := v.Get()
 
 		// Modify first copy
-		m1 := data1.(map[string]interface{})
+		m1 := data1.(map[string]any)
 		m1["key"] = "modified"
 
 		// Second copy should be unaffected
-		m2 := data2.(map[string]interface{})
+		m2 := data2.(map[string]any)
 		assert.Equal(t, "value", m2["key"])
 	})
 
@@ -261,7 +259,7 @@ func TestMapVar(t *testing.T) {
 
 		assert.Equal(t, 1, v.Len())
 		data, _ := v.Get()
-		m := data.(map[string]interface{})
+		m := data.(map[string]any)
 		_, exists := m["key1"]
 		assert.False(t, exists)
 	})
@@ -284,7 +282,7 @@ func TestMapVar(t *testing.T) {
 		v := NewMap()
 		var wg sync.WaitGroup
 
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			wg.Add(3)
 			idx := i
 			go func() {

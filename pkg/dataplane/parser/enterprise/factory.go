@@ -453,7 +453,7 @@ func (p *SectionHeader) PreParse(line string, parts, preComments []string, comme
 }
 
 // Get returns all parsed data.
-func (p *SectionHeader) Get(createIfNotExist bool) (interface{}, error) {
+func (p *SectionHeader) Get(createIfNotExist bool) (any, error) {
 	if p.data == nil {
 		return nil, errors.ErrFetch
 	}
@@ -466,7 +466,7 @@ func (p *SectionHeader) GetPreComments() ([]string, error) {
 }
 
 // GetOne returns parsed data at index.
-func (p *SectionHeader) GetOne(index int) (interface{}, error) {
+func (p *SectionHeader) GetOne(index int) (any, error) {
 	if index != 0 || p.data == nil {
 		return nil, errors.ErrFetch
 	}
@@ -482,7 +482,7 @@ func (p *SectionHeader) Delete(index int) error {
 }
 
 // Insert inserts data at index.
-func (p *SectionHeader) Insert(data interface{}, index int) error {
+func (p *SectionHeader) Insert(data any, index int) error {
 	if d, ok := data.(*SectionHeaderData); ok {
 		p.data = d
 	}
@@ -490,7 +490,7 @@ func (p *SectionHeader) Insert(data interface{}, index int) error {
 }
 
 // Set sets data at index.
-func (p *SectionHeader) Set(data interface{}, index int) error {
+func (p *SectionHeader) Set(data any, index int) error {
 	return p.Insert(data, index)
 }
 
@@ -500,9 +500,9 @@ func (p *SectionHeader) SetPreComments(preComment []string) {
 }
 
 // ResultAll returns all results for serialization.
-func (p *SectionHeader) ResultAll() (results []interface{}, preComments []string, err error) {
+func (p *SectionHeader) ResultAll() (results []any, preComments []string, err error) {
 	if p.data == nil {
 		return nil, nil, nil
 	}
-	return []interface{}{p.data}, p.preComments, nil
+	return []any{p.data}, p.preComments, nil
 }

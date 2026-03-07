@@ -398,10 +398,7 @@ func printIncludeProfile(stats []templating.IncludeStats) {
 	fmt.Printf("%-45s %8s %10s %10s %10s\n", "Include", "Count", "Total(ms)", "Avg(ms)", "Max(ms)")
 	fmt.Println(strings.Repeat("-", 80))
 
-	limit := 20
-	if len(stats) < limit {
-		limit = len(stats)
-	}
+	limit := min(len(stats), 20)
 
 	for i := 0; i < limit; i++ {
 		stat := stats[i]

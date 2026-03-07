@@ -33,11 +33,11 @@ type SchemaDefinition struct {
 	AllOf                []json.RawMessage          `json:"allOf"`
 	Ref                  string                     `json:"$ref"`
 	Pattern              string                     `json:"pattern"`
-	Enum                 []interface{}              `json:"enum"` // Can be strings or integers
+	Enum                 []any                      `json:"enum"` // Can be strings or integers
 	Minimum              *float64                   `json:"minimum"`
 	Maximum              *float64                   `json:"maximum"`
 	Nullable             bool                       `json:"nullable"`
-	AdditionalProperties interface{}                `json:"additionalProperties"`
+	AdditionalProperties any                        `json:"additionalProperties"`
 	Items                json.RawMessage            `json:"items"`
 }
 
@@ -110,7 +110,7 @@ func convertEnumValues(prop *Property, def *SchemaDefinition) {
 }
 
 // convertIntEnumValues converts interface slice to int64 slice.
-func convertIntEnumValues(values []interface{}) []int64 {
+func convertIntEnumValues(values []any) []int64 {
 	result := make([]int64, 0, len(values))
 	for _, v := range values {
 		switch val := v.(type) {
@@ -126,7 +126,7 @@ func convertIntEnumValues(values []interface{}) []int64 {
 }
 
 // convertStringEnumValues converts interface slice to string slice.
-func convertStringEnumValues(values []interface{}) []string {
+func convertStringEnumValues(values []any) []string {
 	result := make([]string, 0, len(values))
 	for _, v := range values {
 		if s, ok := v.(string); ok {

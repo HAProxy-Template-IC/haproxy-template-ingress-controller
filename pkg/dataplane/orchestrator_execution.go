@@ -329,7 +329,7 @@ func (o *orchestrator) executeServerUpdateWithRetry(
 ) (reloadTriggered bool, err error) {
 	const maxRetries = 3
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		reloaded, err := executors.ServerUpdateWithReloadTracking(
 			ctx, o.client, op.BackendName(), op.ServerName(), op.Server(), "", *version)
 
@@ -340,8 +340,8 @@ func (o *orchestrator) executeServerUpdateWithRetry(
 		}
 
 		// Check for version conflict
-		var conflictErr *client.VersionConflictError
-		if !errors.As(err, &conflictErr) {
+		conflictErr, ok := errors.AsType[*client.VersionConflictError](err)
+		if !ok {
 			// Not a version conflict - return the error
 			return false, err
 		}
@@ -432,9 +432,8 @@ func (o *orchestrator) executeConfigOperations(
 
 	if err != nil {
 		// Check if it's a version conflict error
-		var conflictErr *client.VersionConflictError
-		if errors.As(err, &conflictErr) {
-			return nil, false, "", retries, NewConflictError(retries, conflictErr.ExpectedVersion, conflictErr.ActualVersion)
+		if versionConflictErr, ok := errors.AsType[*client.VersionConflictError](err); ok {
+			return nil, false, "", retries, NewConflictError(retries, versionConflictErr.ExpectedVersion, versionConflictErr.ActualVersion)
 		}
 
 		// Other errors - return with details

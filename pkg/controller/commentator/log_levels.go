@@ -136,28 +136,19 @@ func (ec *EventCommentator) computeReconciliationSummary(
 	// Trigger → Render queue wait
 	if !triggerTimestamp.IsZero() && !renderTimestamp.IsZero() && summary.RenderMs > 0 {
 		renderStartTime := renderTimestamp.Add(-time.Duration(summary.RenderMs) * time.Millisecond)
-		summary.TriggerToRenderQueueMs = renderStartTime.Sub(triggerTimestamp).Milliseconds()
-		if summary.TriggerToRenderQueueMs < 0 {
-			summary.TriggerToRenderQueueMs = 0
-		}
+		summary.TriggerToRenderQueueMs = max(renderStartTime.Sub(triggerTimestamp).Milliseconds(), 0)
 	}
 
 	// Render → Validate queue wait
 	if !renderTimestamp.IsZero() && !validateTimestamp.IsZero() && summary.ValidateMs > 0 {
 		validateStartTime := validateTimestamp.Add(-time.Duration(summary.ValidateMs) * time.Millisecond)
-		summary.RenderToValidateQueueMs = validateStartTime.Sub(renderTimestamp).Milliseconds()
-		if summary.RenderToValidateQueueMs < 0 {
-			summary.RenderToValidateQueueMs = 0
-		}
+		summary.RenderToValidateQueueMs = max(validateStartTime.Sub(renderTimestamp).Milliseconds(), 0)
 	}
 
 	// Validate → Deploy queue wait
 	if !validateTimestamp.IsZero() && summary.DeployMs > 0 {
 		deployStartTime := deploymentEvent.Timestamp().Add(-time.Duration(summary.DeployMs) * time.Millisecond)
-		summary.ValidateToDeployQueueMs = deployStartTime.Sub(validateTimestamp).Milliseconds()
-		if summary.ValidateToDeployQueueMs < 0 {
-			summary.ValidateToDeployQueueMs = 0
-		}
+		summary.ValidateToDeployQueueMs = max(deployStartTime.Sub(validateTimestamp).Milliseconds(), 0)
 	}
 
 	// Total queue overhead

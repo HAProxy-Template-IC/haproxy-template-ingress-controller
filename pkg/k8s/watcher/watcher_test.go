@@ -410,14 +410,14 @@ func TestWatcher_WaitForSync_ContextCancelled(t *testing.T) {
 
 func TestWatcher_HandleAdd(t *testing.T) {
 	configMap := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test-config",
 				"namespace": "default",
 			},
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"key": "value",
 			},
 		},
@@ -478,10 +478,10 @@ func TestWatcher_ConvertToUnstructured_Unstructured(t *testing.T) {
 	require.NoError(t, err)
 
 	obj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test",
 				"namespace": "default",
 			},
@@ -521,10 +521,10 @@ func TestWatcher_HandleUpdate_SkipsResyncEvent(t *testing.T) {
 
 	// Create old and new objects with SAME resourceVersion (simulates resync)
 	oldObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":            "test-config",
 				"namespace":       "default",
 				"resourceVersion": "12345",
@@ -532,10 +532,10 @@ func TestWatcher_HandleUpdate_SkipsResyncEvent(t *testing.T) {
 		},
 	}
 	newObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":            "test-config",
 				"namespace":       "default",
 				"resourceVersion": "12345", // Same version - resync event
@@ -583,10 +583,10 @@ func TestWatcher_HandleUpdate_ProcessesRealUpdate(t *testing.T) {
 
 	// Create old and new objects with different resourceVersion AND generation
 	oldObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":            "test-config",
 				"namespace":       "default",
 				"resourceVersion": "12345",
@@ -595,10 +595,10 @@ func TestWatcher_HandleUpdate_ProcessesRealUpdate(t *testing.T) {
 		},
 	}
 	newObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":            "test-config",
 				"namespace":       "default",
 				"resourceVersion": "12346",
@@ -648,10 +648,10 @@ func TestWatcher_HandleUpdate_ProcessesZeroGeneration(t *testing.T) {
 
 	// Create objects with generation=0 (like EndpointSlices)
 	oldObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "discovery.k8s.io/v1",
 			"kind":       "EndpointSlice",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":            "test-endpoints",
 				"namespace":       "default",
 				"resourceVersion": "12345",
@@ -660,10 +660,10 @@ func TestWatcher_HandleUpdate_ProcessesZeroGeneration(t *testing.T) {
 		},
 	}
 	newObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "discovery.k8s.io/v1",
 			"kind":       "EndpointSlice",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":            "test-endpoints",
 				"namespace":       "default",
 				"resourceVersion": "12346", // Different version
@@ -758,15 +758,13 @@ func TestWatcher_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent access to IsSynced and Store
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 50; j++ {
+	for range 10 {
+		wg.Go(func() {
+			for range 50 {
 				_ = watcher.IsSynced()
 				_ = watcher.Store()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

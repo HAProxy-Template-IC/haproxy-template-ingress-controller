@@ -75,7 +75,7 @@ func TestConvertSpec(t *testing.T) {
 				},
 				Controller: v1alpha1.ControllerConfig{
 					LeaderElection: v1alpha1.LeaderElectionConfig{
-						Enabled:       boolPtr(true),
+						Enabled:       new(true),
 						LeaseName:     "haproxy-leader",
 						LeaseDuration: "15s",
 						RenewDeadline: "10s",
@@ -198,7 +198,7 @@ func TestConvertSpec(t *testing.T) {
 				},
 				Controller: v1alpha1.ControllerConfig{
 					LeaderElection: v1alpha1.LeaderElectionConfig{
-						Enabled: boolPtr(false),
+						Enabled: new(false),
 					},
 				},
 				HAProxyConfig: v1alpha1.HAProxyConfig{
@@ -330,11 +330,6 @@ func TestParseLabelSelector(t *testing.T) {
 	}
 }
 
-// boolPtr returns a pointer to a bool value (helper for tests).
-func boolPtr(b bool) *bool {
-	return &b
-}
-
 func TestParseCRD(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -345,23 +340,23 @@ func TestParseCRD(t *testing.T) {
 		{
 			name: "valid HAProxyTemplateConfig CRD",
 			crd: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "haproxy-haptic.org/v1alpha1",
 					"kind":       "HAProxyTemplateConfig",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-config",
 						"namespace": "default",
 					},
-					"spec": map[string]interface{}{
-						"credentialsSecretRef": map[string]interface{}{
+					"spec": map[string]any{
+						"credentialsSecretRef": map[string]any{
 							"name": "haproxy-creds",
 						},
-						"podSelector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+						"podSelector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "haproxy",
 							},
 						},
-						"haproxyConfig": map[string]interface{}{
+						"haproxyConfig": map[string]any{
 							"template": "global\n  daemon",
 						},
 					},
@@ -372,10 +367,10 @@ func TestParseCRD(t *testing.T) {
 		{
 			name: "invalid kind",
 			crd: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "haproxy-haptic.org/v1alpha1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-config",
 						"namespace": "default",
 					},
@@ -387,10 +382,10 @@ func TestParseCRD(t *testing.T) {
 		{
 			name: "invalid apiVersion",
 			crd: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "HAProxyTemplateConfig",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-config",
 						"namespace": "default",
 					},
@@ -423,10 +418,10 @@ func TestParseCRD(t *testing.T) {
 
 func TestConvertSpec_WithValidationTests(t *testing.T) {
 	// Create fixture JSON
-	ingressJSON, err := json.Marshal(map[string]interface{}{
+	ingressJSON, err := json.Marshal(map[string]any{
 		"apiVersion": "networking.k8s.io/v1",
 		"kind":       "Ingress",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"name":      "test-ingress",
 			"namespace": "default",
 		},
@@ -604,7 +599,7 @@ func TestConvertSpec_ExtraContextError(t *testing.T) {
 }
 
 func TestConvertSpec_WithExtraContext(t *testing.T) {
-	extraContextJSON, err := json.Marshal(map[string]interface{}{
+	extraContextJSON, err := json.Marshal(map[string]any{
 		"environment": "production",
 		"maxConns":    1000,
 		"servers": []string{
@@ -646,19 +641,19 @@ func TestConvertFixtures(t *testing.T) {
 	})
 
 	t.Run("valid fixtures", func(t *testing.T) {
-		ingressJSON, err := json.Marshal(map[string]interface{}{
+		ingressJSON, err := json.Marshal(map[string]any{
 			"apiVersion": "networking.k8s.io/v1",
 			"kind":       "Ingress",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name": "my-ingress",
 			},
 		})
 		require.NoError(t, err)
 
-		serviceJSON, err := json.Marshal(map[string]interface{}{
+		serviceJSON, err := json.Marshal(map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Service",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name": "my-service",
 			},
 		})
@@ -675,7 +670,7 @@ func TestConvertFixtures(t *testing.T) {
 		require.Len(t, fixtures["services"], 1)
 
 		// Check ingress was parsed correctly
-		ingress := fixtures["ingresses"][0].(map[string]interface{})
+		ingress := fixtures["ingresses"][0].(map[string]any)
 		assert.Equal(t, "Ingress", ingress["kind"])
 	})
 
@@ -689,7 +684,7 @@ func TestConvertFixtures(t *testing.T) {
 		require.Len(t, fixtures["invalid"], 1)
 
 		// Should be empty map due to parse error
-		obj := fixtures["invalid"][0].(map[string]interface{})
+		obj := fixtures["invalid"][0].(map[string]any)
 		assert.Empty(t, obj)
 	})
 }

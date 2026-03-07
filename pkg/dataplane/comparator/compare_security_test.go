@@ -150,14 +150,14 @@ func TestGroupEqual(t *testing.T) {
 			g1: models.Group{
 				Name:  "authenticated-users",
 				Users: "user1,user2",
-				Metadata: map[string]interface{}{
+				Metadata: map[string]any{
 					"key1": "value1",
 				},
 			},
 			g2: models.Group{
 				Name:  "authenticated-users",
 				Users: "user2,user1", // Different order
-				Metadata: map[string]interface{}{
+				Metadata: map[string]any{
 					"key1": "value1",
 				},
 			},
@@ -168,14 +168,14 @@ func TestGroupEqual(t *testing.T) {
 			g1: models.Group{
 				Name:  "authenticated-users",
 				Users: "user1,user2",
-				Metadata: map[string]interface{}{
+				Metadata: map[string]any{
 					"key1": "value1",
 				},
 			},
 			g2: models.Group{
 				Name:  "authenticated-users",
 				Users: "user1,user2",
-				Metadata: map[string]interface{}{
+				Metadata: map[string]any{
 					"key1": "value2",
 				},
 			},
@@ -203,7 +203,7 @@ func TestGroupEqual(t *testing.T) {
 			g2: models.Group{
 				Name:     "group",
 				Users:    "user1",
-				Metadata: map[string]interface{}{},
+				Metadata: map[string]any{},
 			},
 			expected: true, // Both have len 0, semantically equivalent
 		},
@@ -480,12 +480,12 @@ func TestUserEqual(t *testing.T) {
 			u1: models.User{
 				Username: "admin",
 				Password: "secret",
-				Metadata: map[string]interface{}{"key": "value"},
+				Metadata: map[string]any{"key": "value"},
 			},
 			u2: models.User{
 				Username: "admin",
 				Password: "secret",
-				Metadata: map[string]interface{}{"key": "value"},
+				Metadata: map[string]any{"key": "value"},
 			},
 			expected: true,
 		},
@@ -494,12 +494,12 @@ func TestUserEqual(t *testing.T) {
 			u1: models.User{
 				Username: "admin",
 				Password: "secret",
-				Metadata: map[string]interface{}{"key": "value1"},
+				Metadata: map[string]any{"key": "value1"},
 			},
 			u2: models.User{
 				Username: "admin",
 				Password: "secret",
-				Metadata: map[string]interface{}{"key": "value2"},
+				Metadata: map[string]any{"key": "value2"},
 			},
 			expected: false,
 		},

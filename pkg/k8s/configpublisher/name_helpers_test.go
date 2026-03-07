@@ -1097,8 +1097,8 @@ func TestCalculateChecksum(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBoolPtr(t *testing.T) {
-	trueVal := boolPtr(true)
-	falseVal := boolPtr(false)
+	trueVal := new(true)
+	falseVal := new(false)
 
 	require.NotNil(t, trueVal)
 	assert.True(t, *trueVal)

@@ -15,7 +15,6 @@
 package credentialsloader
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -62,8 +61,7 @@ func TestCredentialsLoaderComponent_ProcessValidCredentials(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -90,8 +88,7 @@ func TestCredentialsLoaderComponent_InvalidResourceType(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -108,8 +105,7 @@ func TestCredentialsLoaderComponent_MissingDataField(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -132,8 +128,7 @@ func TestCredentialsLoaderComponent_NonStringDataValue(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -144,13 +139,13 @@ func TestCredentialsLoaderComponent_NonStringDataValue(t *testing.T) {
 	// Note: dataplane_password uses valid base64 to ensure we hit the type check error
 	// for dataplane_username regardless of map iteration order.
 	secret := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Secret",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"resourceVersion": "12345",
 			},
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"dataplane_username": float64(12345), // Invalid - should be string
 				"dataplane_password": "c2VjcmV0",     // base64("secret") - valid for base64 decode
 			},
@@ -200,8 +195,7 @@ func TestCredentialsLoaderComponent_MissingRequiredCredentials(t *testing.T) {
 			eventChan := bus.Subscribe("test-sub", 50)
 			bus.Start()
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 
 			go component.Start(ctx)
 			time.Sleep(testutil.StartupDelay)
@@ -223,8 +217,7 @@ func TestCredentialsLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)

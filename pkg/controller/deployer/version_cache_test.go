@@ -133,7 +133,7 @@ func TestConfigVersionCache_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(url string, version int64) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				cache.set(url, version+int64(j), parsed, "hash")
 			}
 		}(ep, int64(i*100))
@@ -144,29 +144,25 @@ func TestConfigVersionCache_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				cache.get(url)
 			}
 		}(ep)
 	}
 
 	// Concurrent invalidations
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for j := 0; j < 50; j++ {
+	wg.Go(func() {
+		for range 50 {
 			cache.invalidate(endpoints[0])
 		}
-	}()
+	})
 
 	// Concurrent clear
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for j := 0; j < 10; j++ {
+	wg.Go(func() {
+		for range 10 {
 			cache.clear()
 		}
-	}()
+	})
 
 	// Should not race or panic
 	wg.Wait()

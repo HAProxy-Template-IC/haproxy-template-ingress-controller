@@ -220,7 +220,7 @@ func splitFields(s string) []string {
 
 // ExtractSection extracts all parsed data for a section.
 // This is used to convert parsed results into the structured config.
-func (r *Reader) ExtractSection(section Section, name string) map[string]interface{} {
+func (r *Reader) ExtractSection(section Section, name string) map[string]any {
 	var parsers *parser.Parsers
 
 	switch section {
@@ -254,7 +254,7 @@ func (r *Reader) ExtractSection(section Section, name string) map[string]interfa
 		return nil
 	}
 
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 	for parserName, p := range parsers.Parsers {
 		if data, err := p.Get(false); err == nil && data != nil {
 			result[parserName] = data

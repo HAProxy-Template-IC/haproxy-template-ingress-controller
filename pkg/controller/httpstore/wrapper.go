@@ -86,7 +86,7 @@ func NewHTTPStoreWrapper(ctx context.Context, component *Component, logger *slog
 // Returns:
 //   - Content string (empty if fetch failed and not critical)
 //   - Error if critical fetch fails
-func (w *HTTPStoreWrapper) Fetch(args ...interface{}) (interface{}, error) {
+func (w *HTTPStoreWrapper) Fetch(args ...any) (any, error) {
 	// Parse all arguments
 	url, opts, auth, err := w.parseArgs(args)
 	if err != nil {
@@ -114,7 +114,7 @@ func (w *HTTPStoreWrapper) Fetch(args ...interface{}) (interface{}, error) {
 }
 
 // parseArgs extracts and validates URL, options, and auth from variadic arguments.
-func (w *HTTPStoreWrapper) parseArgs(args []interface{}) (string, httpstore.FetchOptions, *httpstore.AuthConfig, error) {
+func (w *HTTPStoreWrapper) parseArgs(args []any) (string, httpstore.FetchOptions, *httpstore.AuthConfig, error) {
 	if len(args) < 1 {
 		return "", httpstore.FetchOptions{}, nil, fmt.Errorf("http.Fetch requires at least 1 argument (url)")
 	}
@@ -144,7 +144,7 @@ func (w *HTTPStoreWrapper) parseArgs(args []interface{}) (string, httpstore.Fetc
 }
 
 // parseOptionsArg extracts FetchOptions from the second argument if present.
-func parseOptionsArg(args []interface{}) (httpstore.FetchOptions, error) {
+func parseOptionsArg(args []any) (httpstore.FetchOptions, error) {
 	if len(args) < 2 || args[1] == nil {
 		return httpstore.FetchOptions{}, nil
 	}
@@ -162,7 +162,7 @@ func parseOptionsArg(args []interface{}) (httpstore.FetchOptions, error) {
 }
 
 // parseAuthFromArg extracts AuthConfig from a non-nil argument.
-func parseAuthFromArg(arg interface{}) (*httpstore.AuthConfig, error) {
+func parseAuthFromArg(arg any) (*httpstore.AuthConfig, error) {
 	authMap, ok := toMap(arg)
 	if !ok {
 		return nil, fmt.Errorf("http.Fetch: auth must be a map, got %T", arg)
@@ -205,7 +205,7 @@ func (w *HTTPStoreWrapper) getCachedContent(url string) (string, bool) {
 }
 
 // parseFetchOptions parses a map into FetchOptions.
-func parseFetchOptions(m map[string]interface{}) (httpstore.FetchOptions, error) {
+func parseFetchOptions(m map[string]any) (httpstore.FetchOptions, error) {
 	opts := httpstore.FetchOptions{}
 
 	if v, ok := m["delay"]; ok {
@@ -244,7 +244,7 @@ func parseFetchOptions(m map[string]interface{}) (httpstore.FetchOptions, error)
 }
 
 // parseAuthConfig parses a map into AuthConfig.
-func parseAuthConfig(m map[string]interface{}) (*httpstore.AuthConfig, error) {
+func parseAuthConfig(m map[string]any) (*httpstore.AuthConfig, error) {
 	auth := &httpstore.AuthConfig{}
 
 	if v, ok := m["type"]; ok {
@@ -298,7 +298,7 @@ func parseAuthConfig(m map[string]interface{}) (*httpstore.AuthConfig, error) {
 }
 
 // toString converts an interface to string.
-func toString(v interface{}) (string, error) {
+func toString(v any) (string, error) {
 	switch val := v.(type) {
 	case string:
 		return val, nil
@@ -310,13 +310,13 @@ func toString(v interface{}) (string, error) {
 }
 
 // toMap converts an interface to map[string]interface{}.
-func toMap(v interface{}) (map[string]interface{}, bool) {
+func toMap(v any) (map[string]any, bool) {
 	switch val := v.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		return val, true
-	case map[interface{}]interface{}:
+	case map[any]any:
 		// Convert to string keys
-		result := make(map[string]interface{})
+		result := make(map[string]any)
 		for k, v := range val {
 			switch key := k.(type) {
 			case string:
@@ -332,7 +332,7 @@ func toMap(v interface{}) (map[string]interface{}, bool) {
 }
 
 // toInt converts an interface to int.
-func toInt(v interface{}) (int, error) {
+func toInt(v any) (int, error) {
 	switch val := v.(type) {
 	case int:
 		return val, nil
@@ -346,7 +346,7 @@ func toInt(v interface{}) (int, error) {
 }
 
 // toBool converts an interface to bool.
-func toBool(v interface{}) (bool, error) {
+func toBool(v any) (bool, error) {
 	switch val := v.(type) {
 	case bool:
 		return val, nil
@@ -356,7 +356,7 @@ func toBool(v interface{}) (bool, error) {
 }
 
 // parseDuration parses a duration from string or time.Duration.
-func parseDuration(v interface{}) (time.Duration, error) {
+func parseDuration(v any) (time.Duration, error) {
 	switch val := v.(type) {
 	case time.Duration:
 		return val, nil

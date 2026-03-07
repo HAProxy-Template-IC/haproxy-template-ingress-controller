@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,7 +85,7 @@ func (o *sslStorageOps[T]) verifyExistsWithRetry(ctx context.Context, name strin
 	const maxRetries = 3
 	const retryDelay = 500 * time.Millisecond
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
@@ -101,10 +102,8 @@ func (o *sslStorageOps[T]) verifyExistsWithRetry(ctx context.Context, name strin
 			continue
 		}
 
-		for _, f := range files {
-			if f == name {
-				return true
-			}
+		if slices.Contains(files, name) {
+			return true
 		}
 
 		slog.Debug("SSL storage verification: file not found yet",

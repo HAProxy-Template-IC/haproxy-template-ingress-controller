@@ -91,8 +91,7 @@ func TestEventBuffer_StartAndCapture(t *testing.T) {
 	bus := events.NewEventBus(100)
 	buffer := NewEventBuffer(100, bus)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start the buffer first (it subscribes during Start)
 	go buffer.Start(ctx)
@@ -130,15 +129,14 @@ func TestEventBuffer_GetLast(t *testing.T) {
 	bus := events.NewEventBus(100)
 	buffer := NewEventBuffer(100, bus)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go buffer.Start(ctx)
 	time.Sleep(10 * time.Millisecond)
 	bus.Start()
 
 	// Publish 5 events
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		bus.Publish(&testEvent{name: "test.event"})
 	}
 
@@ -157,8 +155,7 @@ func TestEventBuffer_Len(t *testing.T) {
 	bus := events.NewEventBus(100)
 	buffer := NewEventBuffer(100, bus)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go buffer.Start(ctx)
 	time.Sleep(10 * time.Millisecond)
@@ -182,8 +179,7 @@ func TestEventBuffer_FindByCorrelationID(t *testing.T) {
 	bus := events.NewEventBus(100)
 	buffer := NewEventBuffer(100, bus)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go buffer.Start(ctx)
 	time.Sleep(10 * time.Millisecond)
@@ -266,15 +262,14 @@ func TestEventBuffer_RingBufferOverflow(t *testing.T) {
 	// Small buffer size to test overflow
 	buffer := NewEventBuffer(5, bus)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go buffer.Start(ctx)
 	time.Sleep(10 * time.Millisecond)
 	bus.Start()
 
 	// Publish more events than buffer can hold
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		bus.Publish(&testEvent{name: "overflow.test"})
 	}
 
@@ -313,15 +308,14 @@ func TestEventsVar_Get(t *testing.T) {
 	bus := events.NewEventBus(100)
 	buffer := NewEventBuffer(100, bus)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go buffer.Start(ctx)
 	time.Sleep(10 * time.Millisecond)
 	bus.Start()
 
 	// Publish some events
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		bus.Publish(&testEvent{name: "var.test"})
 	}
 
@@ -345,15 +339,14 @@ func TestEventsVar_Get_WithLimit(t *testing.T) {
 	bus := events.NewEventBus(100)
 	buffer := NewEventBuffer(100, bus)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go buffer.Start(ctx)
 	time.Sleep(10 * time.Millisecond)
 	bus.Start()
 
 	// Publish 20 events
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		bus.Publish(&testEvent{name: "limit.test"})
 	}
 

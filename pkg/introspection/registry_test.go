@@ -24,11 +24,11 @@ import (
 
 // mockVar is a simple test implementation of Var.
 type mockVar struct {
-	value interface{}
+	value any
 	err   error
 }
 
-func (m *mockVar) Get() (interface{}, error) {
+func (m *mockVar) Get() (any, error) {
 	return m.value, m.err
 }
 

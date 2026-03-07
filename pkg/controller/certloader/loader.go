@@ -147,7 +147,7 @@ func (c *CertLoaderComponent) processCertChange(event *events.CertResourceChange
 // decodeBase64SecretValue decodes a base64-encoded Secret value.
 //
 // Secret data values can be either strings (for base64-encoded) or byte slices.
-func decodeBase64SecretValue(value interface{}) ([]byte, error) {
+func decodeBase64SecretValue(value any) ([]byte, error) {
 	switch v := value.(type) {
 	case string:
 		// Decode base64

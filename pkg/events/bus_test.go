@@ -81,7 +81,7 @@ func TestEventBus_MultipleSubscribers(t *testing.T) {
 
 	// Create 5 subscribers
 	subs := make([]<-chan Event, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		subs[i] = bus.Subscribe("test-sub", 10)
 	}
 
@@ -149,7 +149,7 @@ func TestEventBus_ConcurrentPublish(t *testing.T) {
 
 	// Publish 100 events concurrently
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -287,7 +287,7 @@ func TestEventBus_RequestConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	errors := make(chan error, 10)
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -570,7 +570,7 @@ func TestEventBus_Start_MultipleSubscribers(t *testing.T) {
 
 	// Create 3 subscribers
 	subs := make([]<-chan Event, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		subs[i] = bus.Subscribe("test-sub", 10)
 	}
 
@@ -597,7 +597,7 @@ func TestEventBus_Start_ConcurrentPublish(t *testing.T) {
 	bus := NewEventBus(100)
 
 	// Publish some events before Start
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		bus.Publish(testEvent{message: fmt.Sprintf("pre-%d", i)})
 	}
 
@@ -606,14 +606,12 @@ func TestEventBus_Start_ConcurrentPublish(t *testing.T) {
 
 	// Concurrently publish more events while calling Start
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 5; i++ {
+	wg.Go(func() {
+		for i := range 5 {
 			bus.Publish(testEvent{message: fmt.Sprintf("concurrent-%d", i)})
 			time.Sleep(1 * time.Millisecond)
 		}
-	}()
+	})
 
 	// Start the bus (may happen during concurrent publishing)
 	time.Sleep(2 * time.Millisecond)
@@ -697,7 +695,7 @@ func BenchmarkEventBus_PublishWithSubscribers(b *testing.B) {
 	event := testEvent{message: "benchmark"}
 
 	// Create 10 subscribers
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		sub := bus.Subscribe("test-sub", 1000)
 		// Drain events in background
 		go func(ch <-chan Event) {
@@ -857,8 +855,7 @@ func TestEventBus_SubscribeTypes_BufferedBeforeStart(t *testing.T) {
 func TestEventBus_Subscribe_Generic(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Use generic Subscribe function
 	typedChan := Subscribe[testEvent](ctx, bus, 10)
@@ -930,8 +927,7 @@ func TestEventBus_Subscribe_Generic_ContextCancellation(t *testing.T) {
 func TestEventBus_SubscribeMultiple(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Subscribe to specific event types
 	multiChan := SubscribeMultiple(ctx, bus, 10, "test.event", "test.request")
@@ -1225,7 +1221,7 @@ func TestEventBus_SubscribeLossy_SilentDrop(t *testing.T) {
 	bus.Start()
 
 	// Fill buffer and cause drops
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
 	}
 
@@ -1255,7 +1251,7 @@ func TestEventBus_Subscribe_CriticalDrop(t *testing.T) {
 	bus.Start()
 
 	// Fill buffer and cause drops
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
 	}
 
@@ -1285,7 +1281,7 @@ func TestEventBus_SubscribeTypesLossy_SilentDrop(t *testing.T) {
 	bus.Start()
 
 	// Fill buffer and cause drops
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
 	}
 
@@ -1315,7 +1311,7 @@ func TestEventBus_SubscribeTypes_CriticalDrop(t *testing.T) {
 	bus.Start()
 
 	// Fill buffer and cause drops
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
 	}
 
@@ -1340,7 +1336,7 @@ func TestEventBus_DroppedEvents_CombinedTotal(t *testing.T) {
 	bus.Start()
 
 	// Cause drops on both
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
 	}
 
@@ -1369,7 +1365,7 @@ func TestEventBus_MixedSubscribers_DropCounters(t *testing.T) {
 	bus.Start()
 
 	// Cause drops
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
 	}
 

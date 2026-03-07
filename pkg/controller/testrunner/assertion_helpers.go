@@ -50,20 +50,20 @@ func (r *Runner) resolveAuxiliaryFile(target string, auxiliaryFiles *dataplane.A
 		return ""
 	}
 
-	if strings.HasPrefix(target, "map:") {
-		return r.findMapFile(strings.TrimPrefix(target, "map:"), auxiliaryFiles)
+	if after, ok := strings.CutPrefix(target, "map:"); ok {
+		return r.findMapFile(after, auxiliaryFiles)
 	}
 
-	if strings.HasPrefix(target, "file:") {
-		return r.findGeneralFile(strings.TrimPrefix(target, "file:"), auxiliaryFiles)
+	if after, ok := strings.CutPrefix(target, "file:"); ok {
+		return r.findGeneralFile(after, auxiliaryFiles)
 	}
 
-	if strings.HasPrefix(target, "cert:") {
-		return r.findCertificate(strings.TrimPrefix(target, "cert:"), auxiliaryFiles)
+	if after, ok := strings.CutPrefix(target, "cert:"); ok {
+		return r.findCertificate(after, auxiliaryFiles)
 	}
 
-	if strings.HasPrefix(target, "crt-list:") {
-		return r.findCRTListFile(strings.TrimPrefix(target, "crt-list:"), auxiliaryFiles)
+	if after, ok := strings.CutPrefix(target, "crt-list:"); ok {
+		return r.findCRTListFile(after, auxiliaryFiles)
 	}
 
 	return ""

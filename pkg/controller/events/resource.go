@@ -15,6 +15,7 @@
 package events
 
 import (
+	"maps"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -86,9 +87,7 @@ type IndexSynchronizedEvent struct {
 func NewIndexSynchronizedEvent(resourceCounts map[string]int) *IndexSynchronizedEvent {
 	// Defensive copy of map
 	countsCopy := make(map[string]int, len(resourceCounts))
-	for k, v := range resourceCounts {
-		countsCopy[k] = v
-	}
+	maps.Copy(countsCopy, resourceCounts)
 
 	return &IndexSynchronizedEvent{
 		ResourceCounts: countsCopy,

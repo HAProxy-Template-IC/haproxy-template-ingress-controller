@@ -363,7 +363,7 @@ func (c *Clientset) IsEnterprise() bool {
 //   - v3.2+ client if server is v3.2+
 //   - v3.1 client if server is v3.1
 //   - v3.0 client if server is v3.0 or unknown
-func (c *Clientset) PreferredClient() interface{} {
+func (c *Clientset) PreferredClient() any {
 	if c.isEnterprise {
 		switch c.minorVersion {
 		case 3:

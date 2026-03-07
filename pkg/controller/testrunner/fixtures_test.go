@@ -36,17 +36,17 @@ import (
 func TestCollectResourceTypes(t *testing.T) {
 	tests := []struct {
 		name        string
-		fixtureMaps []map[string][]interface{}
+		fixtureMaps []map[string][]any
 		wantTypes   map[string]bool
 	}{
 		{
 			name:        "empty input",
-			fixtureMaps: []map[string][]interface{}{},
+			fixtureMaps: []map[string][]any{},
 			wantTypes:   map[string]bool{},
 		},
 		{
 			name: "single fixture map",
-			fixtureMaps: []map[string][]interface{}{
+			fixtureMaps: []map[string][]any{
 				{
 					"ingresses": {},
 					"services":  {},
@@ -59,7 +59,7 @@ func TestCollectResourceTypes(t *testing.T) {
 		},
 		{
 			name: "multiple fixture maps with overlap",
-			fixtureMaps: []map[string][]interface{}{
+			fixtureMaps: []map[string][]any{
 				{
 					"ingresses": {},
 					"services":  {},
@@ -77,7 +77,7 @@ func TestCollectResourceTypes(t *testing.T) {
 		},
 		{
 			name: "nil maps are handled",
-			fixtureMaps: []map[string][]interface{}{
+			fixtureMaps: []map[string][]any{
 				nil,
 				{
 					"ingresses": {},
@@ -101,16 +101,16 @@ func TestBuildResourceIdentity(t *testing.T) {
 	tests := []struct {
 		name         string
 		resourceType string
-		resourceMap  map[string]interface{}
+		resourceMap  map[string]any
 		wantIdentity string
 	}{
 		{
 			name:         "basic resource",
 			resourceType: "ingresses",
-			resourceMap: map[string]interface{}{
+			resourceMap: map[string]any{
 				"apiVersion": "networking.k8s.io/v1",
 				"kind":       "Ingress",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "my-ingress",
 					"namespace": "default",
 				},
@@ -120,10 +120,10 @@ func TestBuildResourceIdentity(t *testing.T) {
 		{
 			name:         "cluster-scoped resource",
 			resourceType: "clusterroles",
-			resourceMap: map[string]interface{}{
+			resourceMap: map[string]any{
 				"apiVersion": "rbac.authorization.k8s.io/v1",
 				"kind":       "ClusterRole",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name": "admin",
 				},
 			},
@@ -132,10 +132,10 @@ func TestBuildResourceIdentity(t *testing.T) {
 		{
 			name:         "resource with empty metadata",
 			resourceType: "services",
-			resourceMap: map[string]interface{}{
+			resourceMap: map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Service",
-				"metadata":   map[string]interface{}{},
+				"metadata":   map[string]any{},
 			},
 			wantIdentity: "services|v1|Service||",
 		},
@@ -154,9 +154,9 @@ func TestMergeResourceType(t *testing.T) {
 	tests := []struct {
 		name            string
 		resourceType    string
-		globalResources []interface{}
-		testResources   []interface{}
-		testIdentities  map[string]interface{}
+		globalResources []any
+		testResources   []any
+		testIdentities  map[string]any
 		wantCount       int
 	}{
 		{
@@ -164,73 +164,73 @@ func TestMergeResourceType(t *testing.T) {
 			resourceType:    "ingresses",
 			globalResources: nil,
 			testResources:   nil,
-			testIdentities:  map[string]interface{}{},
+			testIdentities:  map[string]any{},
 			wantCount:       0,
 		},
 		{
 			name:         "only global resources",
 			resourceType: "ingresses",
-			globalResources: []interface{}{
-				map[string]interface{}{
+			globalResources: []any{
+				map[string]any{
 					"apiVersion": "networking.k8s.io/v1",
 					"kind":       "Ingress",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "global-ingress",
 						"namespace": "default",
 					},
 				},
 			},
 			testResources:  nil,
-			testIdentities: map[string]interface{}{},
+			testIdentities: map[string]any{},
 			wantCount:      1,
 		},
 		{
 			name:            "only test resources",
 			resourceType:    "services",
 			globalResources: nil,
-			testResources: []interface{}{
-				map[string]interface{}{
+			testResources: []any{
+				map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Service",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-service",
 						"namespace": "default",
 					},
 				},
 			},
-			testIdentities: map[string]interface{}{},
+			testIdentities: map[string]any{},
 			wantCount:      1,
 		},
 		{
 			name:         "test overrides global",
 			resourceType: "services",
-			globalResources: []interface{}{
-				map[string]interface{}{
+			globalResources: []any{
+				map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Service",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "my-service",
 						"namespace": "default",
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"clusterIP": "10.0.0.1",
 					},
 				},
 			},
-			testResources: []interface{}{
-				map[string]interface{}{
+			testResources: []any{
+				map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Service",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "my-service",
 						"namespace": "default",
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"clusterIP": "10.0.0.2", // Different IP
 					},
 				},
 			},
-			testIdentities: map[string]interface{}{
+			testIdentities: map[string]any{
 				"services|v1|Service|default|my-service": struct{}{},
 			},
 			wantCount: 1, // Only test resource, global was overridden
@@ -238,27 +238,27 @@ func TestMergeResourceType(t *testing.T) {
 		{
 			name:         "global and test merged",
 			resourceType: "services",
-			globalResources: []interface{}{
-				map[string]interface{}{
+			globalResources: []any{
+				map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Service",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "global-service",
 						"namespace": "default",
 					},
 				},
 			},
-			testResources: []interface{}{
-				map[string]interface{}{
+			testResources: []any{
+				map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Service",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-service",
 						"namespace": "default",
 					},
 				},
 			},
-			testIdentities: map[string]interface{}{
+			testIdentities: map[string]any{
 				"services|v1|Service|default|test-service": struct{}{},
 			},
 			wantCount: 2, // Both resources included
@@ -276,39 +276,39 @@ func TestMergeResourceType(t *testing.T) {
 func TestMergeFixtures(t *testing.T) {
 	tests := []struct {
 		name           string
-		globalFixtures map[string][]interface{}
-		testFixtures   map[string][]interface{}
+		globalFixtures map[string][]any
+		testFixtures   map[string][]any
 		wantTypes      []string
 	}{
 		{
 			name:           "both empty",
-			globalFixtures: map[string][]interface{}{},
-			testFixtures:   map[string][]interface{}{},
+			globalFixtures: map[string][]any{},
+			testFixtures:   map[string][]any{},
 			wantTypes:      []string{},
 		},
 		{
 			name: "only global fixtures with resources",
-			globalFixtures: map[string][]interface{}{
+			globalFixtures: map[string][]any{
 				"services": {
-					map[string]interface{}{
+					map[string]any{
 						"apiVersion": "v1",
 						"kind":       "Service",
-						"metadata":   map[string]interface{}{"name": "svc1", "namespace": "default"},
+						"metadata":   map[string]any{"name": "svc1", "namespace": "default"},
 					},
 				},
 			},
-			testFixtures: map[string][]interface{}{},
+			testFixtures: map[string][]any{},
 			wantTypes:    []string{"services"},
 		},
 		{
 			name:           "only test fixtures with resources",
-			globalFixtures: map[string][]interface{}{},
-			testFixtures: map[string][]interface{}{
+			globalFixtures: map[string][]any{},
+			testFixtures: map[string][]any{
 				"ingresses": {
-					map[string]interface{}{
+					map[string]any{
 						"apiVersion": "networking.k8s.io/v1",
 						"kind":       "Ingress",
-						"metadata":   map[string]interface{}{"name": "ing1", "namespace": "default"},
+						"metadata":   map[string]any{"name": "ing1", "namespace": "default"},
 					},
 				},
 			},
@@ -316,21 +316,21 @@ func TestMergeFixtures(t *testing.T) {
 		},
 		{
 			name: "merges different resource types",
-			globalFixtures: map[string][]interface{}{
+			globalFixtures: map[string][]any{
 				"services": {
-					map[string]interface{}{
+					map[string]any{
 						"apiVersion": "v1",
 						"kind":       "Service",
-						"metadata":   map[string]interface{}{"name": "svc1", "namespace": "default"},
+						"metadata":   map[string]any{"name": "svc1", "namespace": "default"},
 					},
 				},
 			},
-			testFixtures: map[string][]interface{}{
+			testFixtures: map[string][]any{
 				"ingresses": {
-					map[string]interface{}{
+					map[string]any{
 						"apiVersion": "networking.k8s.io/v1",
 						"kind":       "Ingress",
-						"metadata":   map[string]interface{}{"name": "ing1", "namespace": "default"},
+						"metadata":   map[string]any{"name": "ing1", "namespace": "default"},
 					},
 				},
 			},
@@ -355,20 +355,20 @@ func TestMergeFixtures(t *testing.T) {
 }
 
 func TestBuildFixtureIdentityMap(t *testing.T) {
-	fixtures := map[string][]interface{}{
+	fixtures := map[string][]any{
 		"services": {
-			map[string]interface{}{
+			map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Service",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "svc1",
 					"namespace": "default",
 				},
 			},
-			map[string]interface{}{
+			map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Service",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "svc2",
 					"namespace": "other",
 				},
@@ -390,13 +390,13 @@ func TestBuildFixtureIdentityMap(t *testing.T) {
 }
 
 func TestBuildFixtureIdentityMap_InvalidResources(t *testing.T) {
-	fixtures := map[string][]interface{}{
+	fixtures := map[string][]any{
 		"services": {
 			"invalid-string-resource", // Not a map
-			map[string]interface{}{
+			map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Service",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "valid-svc",
 					"namespace": "default",
 				},
@@ -491,7 +491,7 @@ func TestMergeHTTPFixtures(t *testing.T) {
 func TestFixtureToString(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   interface{}
+		input   any
 		want    string
 		wantErr bool
 	}{
@@ -587,7 +587,7 @@ func TestFixtureHTTPStoreWrapper_Fetch(t *testing.T) {
 
 	t.Run("fetch with options (options are ignored)", func(t *testing.T) {
 		// Options should be ignored in fixture mode
-		result, err := wrapper.Fetch("http://example.com/data.txt", map[string]interface{}{"delay": "5m"})
+		result, err := wrapper.Fetch("http://example.com/data.txt", map[string]any{"delay": "5m"})
 		require.NoError(t, err)
 		assert.Equal(t, "test content", result)
 	})
@@ -631,10 +631,10 @@ func TestCreateStoresFromFixtures_HAProxyPods(t *testing.T) {
 		logger: logger,
 	}
 
-	fixtures := map[string][]interface{}{
+	fixtures := map[string][]any{
 		"haproxy-pods": {
-			map[string]interface{}{
-				"metadata": map[string]interface{}{
+			map[string]any{
+				"metadata": map[string]any{
 					"name":      "haproxy-pod-1",
 					"namespace": "haproxy-system",
 				},
@@ -671,7 +671,7 @@ func TestCreateStoresFromFixtures_InvalidResource(t *testing.T) {
 		logger: logger,
 	}
 
-	fixtures := map[string][]interface{}{
+	fixtures := map[string][]any{
 		"haproxy-pods": {
 			"invalid-not-a-map", // Should cause error
 		},
@@ -692,10 +692,10 @@ func TestCreateStoresFromFixtures_UnknownResourceType(t *testing.T) {
 		logger: logger,
 	}
 
-	fixtures := map[string][]interface{}{
+	fixtures := map[string][]any{
 		"unknown-resource-type": {
-			map[string]interface{}{
-				"metadata": map[string]interface{}{
+			map[string]any{
+				"metadata": map[string]any{
 					"name":      "test",
 					"namespace": "default",
 				},
@@ -730,7 +730,7 @@ func TestCreateStoresFromFixtures_EmptyStoresCreated(t *testing.T) {
 	}
 
 	// Empty fixtures should still create empty stores for all watched resources
-	fixtures := map[string][]interface{}{}
+	fixtures := map[string][]any{}
 
 	storeMap, err := runner.CreateStoresFromFixtures(fixtures)
 	require.NoError(t, err)
@@ -765,14 +765,14 @@ func TestCreateStoresFromFixtures_TypeMetaInference(t *testing.T) {
 	}
 
 	// Fixture without apiVersion and kind - should be inferred
-	fixtures := map[string][]interface{}{
+	fixtures := map[string][]any{
 		"services": {
-			map[string]interface{}{
-				"metadata": map[string]interface{}{
+			map[string]any{
+				"metadata": map[string]any{
 					"name":      "my-service",
 					"namespace": "default",
 				},
-				"spec": map[string]interface{}{
+				"spec": map[string]any{
 					"clusterIP": "10.0.0.1",
 				},
 			},
@@ -1046,7 +1046,7 @@ func TestRunAssertion(t *testing.T) {
 			Expected: "value",
 		}
 
-		templateCtx := map[string]interface{}{
+		templateCtx := map[string]any{
 			"test": "value",
 		}
 
@@ -1218,7 +1218,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		renderCtx := map[string]interface{}{}
+		renderCtx := map[string]any{}
 
 		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 		require.NoError(t, err)
@@ -1245,7 +1245,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		renderCtx := map[string]interface{}{}
+		renderCtx := map[string]any{}
 
 		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 		require.NoError(t, err)
@@ -1272,7 +1272,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		renderCtx := map[string]interface{}{}
+		renderCtx := map[string]any{}
 
 		auxFiles, err := runner.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 		require.NoError(t, err)
@@ -1294,7 +1294,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		auxFiles, err := runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
+		auxFiles, err := runner.renderAuxiliaryFiles(engine, map[string]any{}, validationPaths)
 		require.NoError(t, err)
 		assert.Empty(t, auxFiles.MapFiles)
 		assert.Empty(t, auxFiles.GeneralFiles)
@@ -1318,7 +1318,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
+		_, err = runner.renderAuxiliaryFiles(engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to render map file")
 	})
@@ -1340,7 +1340,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
+		_, err = runner.renderAuxiliaryFiles(engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to render general file")
 	})
@@ -1362,7 +1362,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			logger: logger,
 		}
 
-		_, err = runner.renderAuxiliaryFiles(engine, map[string]interface{}{}, validationPaths)
+		_, err = runner.renderAuxiliaryFiles(engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to render SSL certificate")
 	})

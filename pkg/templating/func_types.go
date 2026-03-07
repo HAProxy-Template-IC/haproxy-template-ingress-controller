@@ -32,7 +32,7 @@ package templating
 //	    }
 //	    return strings.ToUpper(str), nil
 //	}
-type FilterFunc func(in interface{}, args ...interface{}) (interface{}, error)
+type FilterFunc func(in any, args ...any) (any, error)
 
 // GlobalFunc is a template global function signature.
 // Global functions are called directly in templates:
@@ -49,7 +49,7 @@ type FilterFunc func(in interface{}, args ...interface{}) (interface{}, error)
 //	    }
 //	    // ... merge logic
 //	}
-type GlobalFunc func(args ...interface{}) (interface{}, error)
+type GlobalFunc func(args ...any) (any, error)
 
 // IncludeStats represents timing statistics for template includes/renders.
 // Used for performance profiling to identify slow templates.

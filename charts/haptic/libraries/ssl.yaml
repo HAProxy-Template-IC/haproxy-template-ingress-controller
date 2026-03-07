@@ -519,3 +519,23 @@ validationTests:
         target: crt-list:certificate-list.txt
         pattern: "default_api_example_com-tls\\.pem"
         description: CRT-list must reference sanitized filename (underscores replace dots in secret name)
+
+  test-ssl-certificate-custom-namespace:
+    description: Default SSL certificate from a custom namespace (e.g. cert-manager) loads correctly
+    extraContext:
+      default_ssl_cert_namespace: cert-manager
+      default_ssl_cert_name: cluster-cert
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: cluster-cert
+            namespace: cert-manager
+          data:
+            tls.crt: *test_tls_crt
+            tls.key: *test_tls_key
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid when default SSL cert is in a custom namespace

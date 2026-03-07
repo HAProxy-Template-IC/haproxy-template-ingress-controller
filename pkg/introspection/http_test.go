@@ -27,7 +27,7 @@ import (
 func TestWriteJSON(t *testing.T) {
 	tests := []struct {
 		name     string
-		data     interface{}
+		data     any
 		wantBody string
 	}{
 		{
@@ -37,7 +37,7 @@ func TestWriteJSON(t *testing.T) {
 		},
 		{
 			name:     "nested structure",
-			data:     map[string]interface{}{"items": []int{1, 2, 3}},
+			data:     map[string]any{"items": []int{1, 2, 3}},
 			wantBody: `{"items":[1,2,3]}`,
 		},
 		{
@@ -79,7 +79,7 @@ func TestWriteJSONField(t *testing.T) {
 
 	t.Run("valid field selection", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		WriteJSONField(w, map[string]interface{}{"name": "testname"}, "{.name}")
+		WriteJSONField(w, map[string]any{"name": "testname"}, "{.name}")
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Body.String(), "testname")

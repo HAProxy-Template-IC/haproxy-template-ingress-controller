@@ -294,7 +294,7 @@ func TestRunner_AssertJSONPath(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		context    map[string]interface{}
+		context    map[string]any
 		jsonpath   string
 		expected   string
 		wantPassed bool
@@ -302,7 +302,7 @@ func TestRunner_AssertJSONPath(t *testing.T) {
 	}{
 		{
 			name: "simple field access - passes",
-			context: map[string]interface{}{
+			context: map[string]any{
 				"name": "test-service",
 			},
 			jsonpath:   "{.name}",
@@ -311,8 +311,8 @@ func TestRunner_AssertJSONPath(t *testing.T) {
 		},
 		{
 			name: "nested field access - passes",
-			context: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			context: map[string]any{
+				"metadata": map[string]any{
 					"name":      "my-pod",
 					"namespace": "default",
 				},
@@ -323,7 +323,7 @@ func TestRunner_AssertJSONPath(t *testing.T) {
 		},
 		{
 			name: "value mismatch - fails",
-			context: map[string]interface{}{
+			context: map[string]any{
 				"status": "running",
 			},
 			jsonpath:   "{.status}",
@@ -333,7 +333,7 @@ func TestRunner_AssertJSONPath(t *testing.T) {
 		},
 		{
 			name: "field not found - fails",
-			context: map[string]interface{}{
+			context: map[string]any{
 				"name": "test",
 			},
 			jsonpath:   "{.missing}",
@@ -343,7 +343,7 @@ func TestRunner_AssertJSONPath(t *testing.T) {
 		},
 		{
 			name:       "invalid jsonpath syntax - fails",
-			context:    map[string]interface{}{},
+			context:    map[string]any{},
 			jsonpath:   "{invalid",
 			expected:   "",
 			wantPassed: false,
@@ -351,8 +351,8 @@ func TestRunner_AssertJSONPath(t *testing.T) {
 		},
 		{
 			name: "array index access - passes",
-			context: map[string]interface{}{
-				"items": []interface{}{"first", "second", "third"},
+			context: map[string]any{
+				"items": []any{"first", "second", "third"},
 			},
 			jsonpath:   "{.items[1]}",
 			expected:   "second",
@@ -360,7 +360,7 @@ func TestRunner_AssertJSONPath(t *testing.T) {
 		},
 		{
 			name: "no expected value - passes if path exists",
-			context: map[string]interface{}{
+			context: map[string]any{
 				"exists": "yes",
 			},
 			jsonpath:   "{.exists}",

@@ -40,7 +40,7 @@ func TestNewSingle(t *testing.T) {
 				},
 				Namespace: "default",
 				Name:      "test-config",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -56,7 +56,7 @@ func TestNewSingle(t *testing.T) {
 				},
 				Namespace: "default",
 				Name:      "test-config",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -72,7 +72,7 @@ func TestNewSingle(t *testing.T) {
 					Resource: "configmaps",
 				},
 				Name: "test-config",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -88,7 +88,7 @@ func TestNewSingle(t *testing.T) {
 					Resource: "configmaps",
 				},
 				Namespace: "default",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -119,7 +119,7 @@ func TestNewSingle(t *testing.T) {
 				},
 				Namespace: "default",
 				Name:      "test-config",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -163,7 +163,7 @@ func TestSingleWatcher_IsSynced(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			return nil
 		},
 	}
@@ -213,7 +213,7 @@ func TestSingleWatcher_WaitForSyncTimeout(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			return nil
 		},
 	}
@@ -253,7 +253,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 				},
 				Namespace: "default",
 				Name:      "test-config",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -268,7 +268,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 				},
 				Namespace: "default",
 				Name:      "test-config",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -284,7 +284,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 					Resource: "configmaps",
 				},
 				Name: "test-config",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -300,7 +300,7 @@ func TestSingleWatcherConfig_Validate(t *testing.T) {
 					Resource: "configmaps",
 				},
 				Namespace: "default",
-				OnChange: func(obj interface{}) error {
+				OnChange: func(obj any) error {
 					return nil
 				},
 			},
@@ -354,7 +354,7 @@ func TestSingleWatcherConfig_SetDefaults(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			return nil
 		},
 		// Context is nil
@@ -388,7 +388,7 @@ func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			callbackCount++
 			return nil
 		},
@@ -401,10 +401,10 @@ func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 
 	// Simulate Add event before sync completes
 	mockResource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test-config",
 				"namespace": "default",
 			},
@@ -448,7 +448,7 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			callbackCount++
 			return nil
 		},
@@ -503,7 +503,7 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			callbackCount++
 			return nil
 		},
@@ -516,10 +516,10 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 
 	// Simulate Delete event before sync completes
 	mockResource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test-config",
 				"namespace": "default",
 			},
@@ -556,7 +556,7 @@ func TestSingleWatcher_StopIdempotency(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			return nil
 		},
 	}
@@ -599,7 +599,7 @@ func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			mu.Lock()
 			callbackCount++
 			mu.Unlock()
@@ -618,10 +618,10 @@ func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
 
 	// Trigger callbacks concurrently
 	mockResource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test-config",
 				"namespace": "default",
 			},
@@ -631,12 +631,10 @@ func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
 	var wg sync.WaitGroup
 	numGoroutines := 10
 
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numGoroutines {
+		wg.Go(func() {
 			w.handleAdd(mockResource)
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -670,7 +668,7 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			return nil
 		},
 	}
@@ -694,7 +692,7 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 	numStarts := 3
 	errs := make([]error, numStarts)
 
-	for i := 0; i < numStarts; i++ {
+	for i := range numStarts {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -897,7 +895,7 @@ func validSingleWatcherConfig() *types.SingleWatcherConfig {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			return nil
 		},
 	}
@@ -906,10 +904,10 @@ func validSingleWatcherConfig() *types.SingleWatcherConfig {
 // createUnstructuredConfigMap creates an unstructured ConfigMap for testing.
 func createUnstructuredConfigMap(name, namespace, resourceVersion string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      name,
 				"namespace": namespace,
 			},
@@ -944,7 +942,7 @@ func TestSingleWatcher_SkipsStatusOnlyUpdates(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			callbackCount++
 			return nil
 		},
@@ -1004,7 +1002,7 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			callbackCount++
 			return nil
 		},
@@ -1072,13 +1070,13 @@ func TestSingleWatcher_OnSyncComplete_CalledAfterSync(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			mu.Lock()
 			onChangeCount++
 			mu.Unlock()
 			return nil
 		},
-		OnSyncComplete: func(obj interface{}) error {
+		OnSyncComplete: func(obj any) error {
 			mu.Lock()
 			onSyncCompleteCount++
 			if u, ok := obj.(*unstructured.Unstructured); ok {
@@ -1152,10 +1150,10 @@ func TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			return nil
 		},
-		OnSyncComplete: func(obj interface{}) error {
+		OnSyncComplete: func(obj any) error {
 			mu.Lock()
 			if u, ok := obj.(*unstructured.Unstructured); ok {
 				syncCompleteResource = u
@@ -1228,7 +1226,7 @@ func TestSingleWatcher_OnSyncComplete_Optional(t *testing.T) {
 		},
 		Namespace: "default",
 		Name:      "test-config",
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			return nil
 		},
 		// OnSyncComplete is nil - should be optional

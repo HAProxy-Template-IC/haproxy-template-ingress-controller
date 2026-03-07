@@ -26,7 +26,7 @@ import (
 )
 
 func TestScriggoSortBy_EmptySlice(t *testing.T) {
-	items := []interface{}{}
+	items := []any{}
 	criteria := []string{"$.name"}
 
 	result, err := scriggoSortBy(items, criteria)
@@ -35,24 +35,24 @@ func TestScriggoSortBy_EmptySlice(t *testing.T) {
 }
 
 func TestScriggoSortBy_EmptyCriteria(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"name": "b"},
-		map[string]interface{}{"name": "a"},
+	items := []any{
+		map[string]any{"name": "b"},
+		map[string]any{"name": "a"},
 	}
 
 	result, err := scriggoSortBy(items, []string{})
 	require.NoError(t, err)
 	assert.Len(t, result, 2)
 	// Should return original order when no criteria
-	assert.Equal(t, "b", result[0].(map[string]interface{})["name"])
-	assert.Equal(t, "a", result[1].(map[string]interface{})["name"])
+	assert.Equal(t, "b", result[0].(map[string]any)["name"])
+	assert.Equal(t, "a", result[1].(map[string]any)["name"])
 }
 
 func TestScriggoSortBy_SingleCriteria(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"name": "charlie"},
-		map[string]interface{}{"name": "alice"},
-		map[string]interface{}{"name": "bob"},
+	items := []any{
+		map[string]any{"name": "charlie"},
+		map[string]any{"name": "alice"},
+		map[string]any{"name": "bob"},
 	}
 	criteria := []string{"$.name"}
 
@@ -60,16 +60,16 @@ func TestScriggoSortBy_SingleCriteria(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result, 3)
 
-	assert.Equal(t, "alice", result[0].(map[string]interface{})["name"])
-	assert.Equal(t, "bob", result[1].(map[string]interface{})["name"])
-	assert.Equal(t, "charlie", result[2].(map[string]interface{})["name"])
+	assert.Equal(t, "alice", result[0].(map[string]any)["name"])
+	assert.Equal(t, "bob", result[1].(map[string]any)["name"])
+	assert.Equal(t, "charlie", result[2].(map[string]any)["name"])
 }
 
 func TestScriggoSortBy_Descending(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"priority": 1},
-		map[string]interface{}{"priority": 3},
-		map[string]interface{}{"priority": 2},
+	items := []any{
+		map[string]any{"priority": 1},
+		map[string]any{"priority": 3},
+		map[string]any{"priority": 2},
 	}
 	criteria := []string{"$.priority:desc"}
 
@@ -77,16 +77,16 @@ func TestScriggoSortBy_Descending(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result, 3)
 
-	assert.Equal(t, 3, result[0].(map[string]interface{})["priority"])
-	assert.Equal(t, 2, result[1].(map[string]interface{})["priority"])
-	assert.Equal(t, 1, result[2].(map[string]interface{})["priority"])
+	assert.Equal(t, 3, result[0].(map[string]any)["priority"])
+	assert.Equal(t, 2, result[1].(map[string]any)["priority"])
+	assert.Equal(t, 1, result[2].(map[string]any)["priority"])
 }
 
 func TestScriggoSortBy_MultipleCriteria(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"type": "b", "priority": 1},
-		map[string]interface{}{"type": "a", "priority": 2},
-		map[string]interface{}{"type": "a", "priority": 1},
+	items := []any{
+		map[string]any{"type": "b", "priority": 1},
+		map[string]any{"type": "a", "priority": 2},
+		map[string]any{"type": "a", "priority": 1},
 	}
 	criteria := []string{"$.type", "$.priority"}
 
@@ -95,18 +95,18 @@ func TestScriggoSortBy_MultipleCriteria(t *testing.T) {
 	require.Len(t, result, 3)
 
 	// First sort by type (a, a, b), then by priority within same type
-	assert.Equal(t, "a", result[0].(map[string]interface{})["type"])
-	assert.Equal(t, 1, result[0].(map[string]interface{})["priority"])
-	assert.Equal(t, "a", result[1].(map[string]interface{})["type"])
-	assert.Equal(t, 2, result[1].(map[string]interface{})["priority"])
-	assert.Equal(t, "b", result[2].(map[string]interface{})["type"])
+	assert.Equal(t, "a", result[0].(map[string]any)["type"])
+	assert.Equal(t, 1, result[0].(map[string]any)["priority"])
+	assert.Equal(t, "a", result[1].(map[string]any)["type"])
+	assert.Equal(t, 2, result[1].(map[string]any)["priority"])
+	assert.Equal(t, "b", result[2].(map[string]any)["type"])
 }
 
 func TestScriggoSortBy_ExistsModifier(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"name": "without-method"},
-		map[string]interface{}{"name": "with-method", "method": "GET"},
-		map[string]interface{}{"name": "also-without"},
+	items := []any{
+		map[string]any{"name": "without-method"},
+		map[string]any{"name": "with-method", "method": "GET"},
+		map[string]any{"name": "also-without"},
 	}
 	criteria := []string{"$.method:exists:desc"}
 
@@ -115,14 +115,14 @@ func TestScriggoSortBy_ExistsModifier(t *testing.T) {
 	require.Len(t, result, 3)
 
 	// Items with method field should come first (exists:desc)
-	assert.Equal(t, "with-method", result[0].(map[string]interface{})["name"])
+	assert.Equal(t, "with-method", result[0].(map[string]any)["name"])
 }
 
 func TestScriggoSortBy_LengthModifier(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"name": "a", "items": []interface{}{"x", "y"}},
-		map[string]interface{}{"name": "b", "items": []interface{}{"x", "y", "z"}},
-		map[string]interface{}{"name": "c", "items": []interface{}{"x"}},
+	items := []any{
+		map[string]any{"name": "a", "items": []any{"x", "y"}},
+		map[string]any{"name": "b", "items": []any{"x", "y", "z"}},
+		map[string]any{"name": "c", "items": []any{"x"}},
 	}
 	criteria := []string{"$.items | length:desc"}
 
@@ -131,33 +131,33 @@ func TestScriggoSortBy_LengthModifier(t *testing.T) {
 	require.Len(t, result, 3)
 
 	// Sort by items length descending
-	assert.Equal(t, "b", result[0].(map[string]interface{})["name"]) // 3 items
-	assert.Equal(t, "a", result[1].(map[string]interface{})["name"]) // 2 items
-	assert.Equal(t, "c", result[2].(map[string]interface{})["name"]) // 1 item
+	assert.Equal(t, "b", result[0].(map[string]any)["name"]) // 3 items
+	assert.Equal(t, "a", result[1].(map[string]any)["name"]) // 2 items
+	assert.Equal(t, "c", result[2].(map[string]any)["name"]) // 1 item
 }
 
 func TestScriggoSortBy_DoesNotModifyOriginal(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"name": "c"},
-		map[string]interface{}{"name": "a"},
-		map[string]interface{}{"name": "b"},
+	items := []any{
+		map[string]any{"name": "c"},
+		map[string]any{"name": "a"},
+		map[string]any{"name": "b"},
 	}
 	criteria := []string{"$.name"}
 
 	// Keep original order reference
-	originalFirst := items[0].(map[string]interface{})["name"]
+	originalFirst := items[0].(map[string]any)["name"]
 
 	result, err := scriggoSortBy(items, criteria)
 	require.NoError(t, err)
 
 	// Original slice should not be modified
-	assert.Equal(t, originalFirst, items[0].(map[string]interface{})["name"])
+	assert.Equal(t, originalFirst, items[0].(map[string]any)["name"])
 	// Result should be sorted
-	assert.Equal(t, "a", result[0].(map[string]interface{})["name"])
+	assert.Equal(t, "a", result[0].(map[string]any)["name"])
 }
 
 func TestScriggoGlobMatch_EmptySlice(t *testing.T) {
-	items := []interface{}{}
+	items := []any{}
 	pattern := "*"
 
 	result := scriggoGlobMatch(items, pattern)
@@ -165,7 +165,7 @@ func TestScriggoGlobMatch_EmptySlice(t *testing.T) {
 }
 
 func TestScriggoGlobMatch_EmptyPattern(t *testing.T) {
-	items := []interface{}{"a", "b", "c"}
+	items := []any{"a", "b", "c"}
 
 	// Empty pattern returns empty slice (early return optimization)
 	result := scriggoGlobMatch(items, "")
@@ -173,7 +173,7 @@ func TestScriggoGlobMatch_EmptyPattern(t *testing.T) {
 }
 
 func TestScriggoGlobMatch_StringItems(t *testing.T) {
-	items := []interface{}{"backend-api", "backend-web", "frontend-ui", "frontend-admin"}
+	items := []any{"backend-api", "backend-web", "frontend-ui", "frontend-admin"}
 	pattern := "backend-*"
 
 	result := scriggoGlobMatch(items, pattern)
@@ -184,10 +184,10 @@ func TestScriggoGlobMatch_StringItems(t *testing.T) {
 }
 
 func TestScriggoGlobMatch_MapItems(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"name": "backend-api"},
-		map[string]interface{}{"name": "backend-web"},
-		map[string]interface{}{"name": "frontend-ui"},
+	items := []any{
+		map[string]any{"name": "backend-api"},
+		map[string]any{"name": "backend-web"},
+		map[string]any{"name": "frontend-ui"},
 	}
 	pattern := "backend-*"
 
@@ -200,7 +200,7 @@ func TestScriggoGlobMatch_MapItems(t *testing.T) {
 }
 
 func TestScriggoGlobMatch_NoMatches(t *testing.T) {
-	items := []interface{}{"abc", "def", "ghi"}
+	items := []any{"abc", "def", "ghi"}
 	pattern := "xyz*"
 
 	result := scriggoGlobMatch(items, pattern)
@@ -208,7 +208,7 @@ func TestScriggoGlobMatch_NoMatches(t *testing.T) {
 }
 
 func TestScriggoGlobMatch_InvalidPattern(t *testing.T) {
-	items := []interface{}{"test"}
+	items := []any{"test"}
 	pattern := "[" // Invalid glob pattern
 
 	// scriggoGlobMatch panics on invalid pattern
@@ -218,9 +218,9 @@ func TestScriggoGlobMatch_InvalidPattern(t *testing.T) {
 }
 
 func TestScriggoGlobMatch_ItemsWithoutName(t *testing.T) {
-	items := []interface{}{
-		map[string]interface{}{"other": "field"},
-		map[string]interface{}{"name": "valid"},
+	items := []any{
+		map[string]any{"other": "field"},
+		map[string]any{"name": "valid"},
 		123, // Non-string, non-map item
 	}
 	pattern := "*"
@@ -330,7 +330,7 @@ func TestScriggoB64Decode_InvalidInput(t *testing.T) {
 func TestScriggoStrip_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{"string", "  hello  ", "hello"},
@@ -341,7 +341,7 @@ func TestScriggoStrip_TypeConversion(t *testing.T) {
 		{"bool false", false, "false"},
 		{"nil", nil, ""},
 		{"empty string", "", ""},
-		{"interface with string", interface{}("  test  "), "test"},
+		{"interface with string", any("  test  "), "test"},
 	}
 
 	for _, tt := range tests {
@@ -355,8 +355,8 @@ func TestScriggoStrip_TypeConversion(t *testing.T) {
 func TestScriggoStringsContains_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name     string
-		s        interface{}
-		substr   interface{}
+		s        any
+		substr   any
 		expected bool
 	}{
 		{"both strings", "hello world", "world", true},
@@ -380,9 +380,9 @@ func TestScriggoStringsContains_TypeConversion(t *testing.T) {
 func TestScriggoStringsReplace_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name        string
-		s           interface{}
-		old         interface{}
-		replacement interface{}
+		s           any
+		old         any
+		replacement any
 		expected    string
 	}{
 		{"all strings", "hello world", "world", "universe", "hello universe"},
@@ -404,7 +404,7 @@ func TestScriggoStringsReplace_TypeConversion(t *testing.T) {
 func TestScriggoB64Decode_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 		wantErr  bool
 	}{
@@ -427,7 +427,7 @@ func TestScriggoB64Decode_TypeConversion(t *testing.T) {
 }
 
 func TestScriggoDebug_Basic(t *testing.T) {
-	value := map[string]interface{}{
+	value := map[string]any{
 		"name": "test",
 		"port": 8080,
 	}
@@ -474,8 +474,8 @@ func TestScriggoDebug_NilValue(t *testing.T) {
 }
 
 func TestScriggoDebug_ComplexStructure(t *testing.T) {
-	value := map[string]interface{}{
-		"routes": []map[string]interface{}{
+	value := map[string]any{
+		"routes": []map[string]any{
 			{"name": "api", "priority": 10},
 			{"name": "web", "priority": 5},
 		},
@@ -492,7 +492,7 @@ func TestScriggoDebug_ComplexStructure(t *testing.T) {
 
 func TestWrapFilterForScriggo(t *testing.T) {
 	// Create a simple filter
-	filter := func(in interface{}, args ...interface{}) (interface{}, error) {
+	filter := func(in any, args ...any) (any, error) {
 		return "filtered: " + in.(string), nil
 	}
 
@@ -505,7 +505,7 @@ func TestWrapFilterForScriggo(t *testing.T) {
 
 func TestWrapFunctionForScriggo(t *testing.T) {
 	// Create a simple function
-	fn := func(args ...interface{}) (interface{}, error) {
+	fn := func(args ...any) (any, error) {
 		if len(args) == 0 {
 			return "no args", nil
 		}
@@ -527,13 +527,13 @@ func TestWrapFunctionForScriggo(t *testing.T) {
 
 func TestBuildScriggoGlobals(t *testing.T) {
 	customFilters := map[string]FilterFunc{
-		"custom_filter": func(in interface{}, args ...interface{}) (interface{}, error) {
+		"custom_filter": func(in any, args ...any) (any, error) {
 			return "custom: " + in.(string), nil
 		},
 	}
 
 	customFunctions := map[string]GlobalFunc{
-		"custom_func": func(args ...interface{}) (interface{}, error) {
+		"custom_func": func(args ...any) (any, error) {
 			return "function result", nil
 		},
 	}
@@ -648,7 +648,7 @@ func TestScriggo_FailFunction(t *testing.T) {
 
 		// Register a function with concrete signature that returns error
 		customFunctions := map[string]GlobalFunc{
-			"errorFunc": func(args ...interface{}) (interface{}, error) {
+			"errorFunc": func(args ...any) (any, error) {
 				msg := args[0].(string)
 				return nil, fmt.Errorf("%s", msg)
 			},
@@ -700,7 +700,7 @@ func TestScriggo_FailFunction_DirectSignature(t *testing.T) {
 		[]string{"test"},
 		nil,
 		map[string]GlobalFunc{
-			"fail": func(args ...interface{}) (interface{}, error) {
+			"fail": func(args ...any) (any, error) {
 				if len(args) != 1 {
 					return nil, fmt.Errorf("fail() requires one argument")
 				}
@@ -722,48 +722,48 @@ func TestScriggo_FailFunction_DirectSignature(t *testing.T) {
 func TestScriggoMerge(t *testing.T) {
 	t.Run("merge empty maps", func(t *testing.T) {
 		result := scriggoMerge(
-			map[string]interface{}{},
-			map[string]interface{}{},
+			map[string]any{},
+			map[string]any{},
 		)
 		assert.Empty(t, result)
 	})
 
 	t.Run("merge into empty map", func(t *testing.T) {
 		result := scriggoMerge(
-			map[string]interface{}{},
-			map[string]interface{}{"a": 1, "b": 2},
+			map[string]any{},
+			map[string]any{"a": 1, "b": 2},
 		)
-		assert.Equal(t, map[string]interface{}{"a": 1, "b": 2}, result)
+		assert.Equal(t, map[string]any{"a": 1, "b": 2}, result)
 	})
 
 	t.Run("merge empty into populated", func(t *testing.T) {
 		result := scriggoMerge(
-			map[string]interface{}{"a": 1, "b": 2},
-			map[string]interface{}{},
+			map[string]any{"a": 1, "b": 2},
+			map[string]any{},
 		)
-		assert.Equal(t, map[string]interface{}{"a": 1, "b": 2}, result)
+		assert.Equal(t, map[string]any{"a": 1, "b": 2}, result)
 	})
 
 	t.Run("merge with override", func(t *testing.T) {
 		result := scriggoMerge(
-			map[string]interface{}{"a": 1, "b": 2},
-			map[string]interface{}{"b": 3, "c": 4},
+			map[string]any{"a": 1, "b": 2},
+			map[string]any{"b": 3, "c": 4},
 		)
-		assert.Equal(t, map[string]interface{}{"a": 1, "b": 3, "c": 4}, result)
+		assert.Equal(t, map[string]any{"a": 1, "b": 3, "c": 4}, result)
 	})
 
 	t.Run("does not modify original", func(t *testing.T) {
-		original := map[string]interface{}{"a": 1}
-		updates := map[string]interface{}{"b": 2}
+		original := map[string]any{"a": 1}
+		updates := map[string]any{"b": 2}
 
 		result := scriggoMerge(original, updates)
 
 		// Result has both
-		assert.Equal(t, map[string]interface{}{"a": 1, "b": 2}, result)
+		assert.Equal(t, map[string]any{"a": 1, "b": 2}, result)
 		// Original unchanged
-		assert.Equal(t, map[string]interface{}{"a": 1}, original)
+		assert.Equal(t, map[string]any{"a": 1}, original)
 		// Updates unchanged
-		assert.Equal(t, map[string]interface{}{"b": 2}, updates)
+		assert.Equal(t, map[string]any{"b": 2}, updates)
 	})
 }
 
@@ -804,17 +804,17 @@ b={{ config["b"] }}`,
 
 func TestScriggoKeys(t *testing.T) {
 	t.Run("empty map", func(t *testing.T) {
-		result := scriggoKeys(map[string]interface{}{})
+		result := scriggoKeys(map[string]any{})
 		assert.Empty(t, result)
 	})
 
 	t.Run("single key", func(t *testing.T) {
-		result := scriggoKeys(map[string]interface{}{"a": 1})
+		result := scriggoKeys(map[string]any{"a": 1})
 		assert.Equal(t, []string{"a"}, result)
 	})
 
 	t.Run("keys are sorted", func(t *testing.T) {
-		result := scriggoKeys(map[string]interface{}{
+		result := scriggoKeys(map[string]any{
 			"c": 3,
 			"a": 1,
 			"b": 2,
@@ -823,7 +823,7 @@ func TestScriggoKeys(t *testing.T) {
 	})
 
 	t.Run("many keys sorted", func(t *testing.T) {
-		result := scriggoKeys(map[string]interface{}{
+		result := scriggoKeys(map[string]any{
 			"zebra":   1,
 			"apple":   2,
 			"banana":  3,
@@ -1028,7 +1028,7 @@ func TestScriggoSelectAttr_NilInput(t *testing.T) {
 }
 
 func TestScriggoSelectAttr_EmptySlice(t *testing.T) {
-	result := scriggoSelectAttr([]interface{}{}, "attr")
+	result := scriggoSelectAttr([]any{}, "attr")
 	assert.Empty(t, result)
 }
 
@@ -1082,7 +1082,7 @@ func TestScriggoJoinKey_NilValues(t *testing.T) {
 func TestIsEmpty(t *testing.T) {
 	tests := []struct {
 		name     string
-		value    interface{}
+		value    any
 		expected bool
 	}{
 		{"nil", nil, true},
@@ -1092,10 +1092,10 @@ func TestIsEmpty(t *testing.T) {
 		{"non-zero int", 42, false},
 		{"false bool", false, true},
 		{"true bool", true, false},
-		{"empty slice", []interface{}{}, true},
-		{"non-empty slice", []interface{}{"a"}, false},
-		{"empty map", map[string]interface{}{}, true},
-		{"non-empty map", map[string]interface{}{"key": "val"}, false},
+		{"empty slice", []any{}, true},
+		{"non-empty slice", []any{"a"}, false},
+		{"empty map", map[string]any{}, true},
+		{"non-empty map", map[string]any{"key": "val"}, false},
 	}
 
 	for _, tt := range tests {
@@ -1115,7 +1115,7 @@ func TestIsValueInList(t *testing.T) {
 	})
 
 	t.Run("interface slice", func(t *testing.T) {
-		list := []interface{}{"a", "b", "c"}
+		list := []any{"a", "b", "c"}
 		assert.True(t, isValueInList("a", list))
 		assert.True(t, isValueInList("b", list))
 		assert.False(t, isValueInList("d", list))

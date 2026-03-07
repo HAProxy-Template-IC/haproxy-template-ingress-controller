@@ -71,18 +71,19 @@ func formatMultilineError(errorMsg, indent string) string {
 
 	// Multi-line - indent all non-empty lines after the first
 	lines := strings.Split(errorMsg, "\n")
-	result := lines[0] + "\n"
+	var result strings.Builder
+	result.WriteString(lines[0] + "\n")
 	for i := 1; i < len(lines); i++ {
 		if lines[i] != "" {
 			// Non-empty line - add indent
-			result += indent + lines[i]
+			result.WriteString(indent + lines[i])
 		}
 		// Add newline if not the last line
 		if i < len(lines)-1 {
-			result += "\n"
+			result.WriteString("\n")
 		}
 	}
-	return result
+	return result.String()
 }
 
 // formatSummary formats results as a human-readable summary.
@@ -101,56 +102,56 @@ func formatSummary(results *TestResults, verbose bool) string {
 		test := &results.TestResults[i]
 		// Test header
 		if test.Skipped {
-			out.WriteString(fmt.Sprintf("⊘ %s [skipped]\n", test.TestName))
-			out.WriteString(fmt.Sprintf("  %s\n", test.SkipReason))
+			fmt.Fprintf(&out, "⊘ %s [skipped]\n", test.TestName)
+			fmt.Fprintf(&out, "  %s\n", test.SkipReason)
 			out.WriteString("\n")
 			continue
 		} else if test.Passed {
-			out.WriteString(fmt.Sprintf("✓ %s (%.3fs)\n", test.TestName, test.Duration.Seconds()))
+			fmt.Fprintf(&out, "✓ %s (%.3fs)\n", test.TestName, test.Duration.Seconds())
 		} else {
-			out.WriteString(fmt.Sprintf("✗ %s (%.3fs)\n", test.TestName, test.Duration.Seconds()))
+			fmt.Fprintf(&out, "✗ %s (%.3fs)\n", test.TestName, test.Duration.Seconds())
 		}
 
 		// Test description if present
 		if test.Description != "" {
-			out.WriteString(fmt.Sprintf("  %s\n", test.Description))
+			fmt.Fprintf(&out, "  %s\n", test.Description)
 		}
 
 		// Render error if present
 		if test.RenderError != "" {
 			out.WriteString("  ✗ Template rendering failed\n")
-			out.WriteString(fmt.Sprintf("    Error: %s\n", formatMultilineError(test.RenderError, "           ")))
+			fmt.Fprintf(&out, "    Error: %s\n", formatMultilineError(test.RenderError, "           "))
 		}
 
 		// Print assertions
 		for _, assertion := range test.Assertions {
 			if assertion.Passed {
 				if assertion.Description != "" {
-					out.WriteString(fmt.Sprintf("  ✓ %s\n", assertion.Description))
+					fmt.Fprintf(&out, "  ✓ %s\n", assertion.Description)
 				} else {
-					out.WriteString(fmt.Sprintf("  ✓ %s\n", assertion.Type))
+					fmt.Fprintf(&out, "  ✓ %s\n", assertion.Type)
 				}
 			} else {
 				if assertion.Description != "" {
-					out.WriteString(fmt.Sprintf("  ✗ %s\n", assertion.Description))
+					fmt.Fprintf(&out, "  ✗ %s\n", assertion.Description)
 				} else {
-					out.WriteString(fmt.Sprintf("  ✗ %s\n", assertion.Type))
+					fmt.Fprintf(&out, "  ✗ %s\n", assertion.Type)
 				}
 				if assertion.Error != "" {
-					out.WriteString(fmt.Sprintf("    Error: %s\n", formatMultilineError(assertion.Error, "           ")))
+					fmt.Fprintf(&out, "    Error: %s\n", formatMultilineError(assertion.Error, "           "))
 				}
 
 				// Verbose mode: show target metadata for failed assertions
 				if verbose {
 					if assertion.Target != "" {
-						out.WriteString(fmt.Sprintf("    Target: %s (%d bytes)\n", assertion.Target, assertion.TargetSize))
+						fmt.Fprintf(&out, "    Target: %s (%d bytes)\n", assertion.Target, assertion.TargetSize)
 					}
 					if assertion.TargetPreview != "" {
 						out.WriteString("    Content preview:\n")
 						// Indent each line of the preview
-						lines := strings.Split(assertion.TargetPreview, "\n")
-						for _, line := range lines {
-							out.WriteString(fmt.Sprintf("      %s\n", line))
+						lines := strings.SplitSeq(assertion.TargetPreview, "\n")
+						for line := range lines {
+							fmt.Fprintf(&out, "      %s\n", line)
 						}
 					}
 					if assertion.TargetSize > 200 {
@@ -165,18 +166,18 @@ func formatSummary(results *TestResults, verbose bool) string {
 
 	// Summary line
 	if results.SkippedTests > 0 {
-		out.WriteString(fmt.Sprintf("Tests: %d passed, %d failed, %d skipped, %d total (%.3fs)\n",
+		fmt.Fprintf(&out, "Tests: %d passed, %d failed, %d skipped, %d total (%.3fs)\n",
 			results.PassedTests,
 			results.FailedTests,
 			results.SkippedTests,
 			results.TotalTests+results.SkippedTests,
-			results.Duration.Seconds()))
+			results.Duration.Seconds())
 	} else {
-		out.WriteString(fmt.Sprintf("Tests: %d passed, %d failed, %d total (%.3fs)\n",
+		fmt.Fprintf(&out, "Tests: %d passed, %d failed, %d total (%.3fs)\n",
 			results.PassedTests,
 			results.FailedTests,
 			results.TotalTests,
-			results.Duration.Seconds()))
+			results.Duration.Seconds())
 	}
 
 	return out.String()

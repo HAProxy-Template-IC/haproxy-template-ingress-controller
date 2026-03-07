@@ -54,8 +54,8 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 			Kind:               "HAProxyCfg",
 			Name:               owner.Name,
 			UID:                owner.UID,
-			Controller:         boolPtr(true),
-			BlockOwnerDeletion: boolPtr(true),
+			Controller:         new(true),
+			BlockOwnerDeletion: new(true),
 		},
 	}
 
@@ -151,8 +151,8 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 					Kind:               "HAProxyCfg",
 					Name:               owner.Name,
 					UID:                owner.UID,
-					Controller:         boolPtr(true),
-					BlockOwnerDeletion: boolPtr(true),
+					Controller:         new(true),
+					BlockOwnerDeletion: new(true),
 				},
 			},
 		},
@@ -229,8 +229,8 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 			Kind:               "HAProxyCfg",
 			Name:               owner.Name,
 			UID:                owner.UID,
-			Controller:         boolPtr(true),
-			BlockOwnerDeletion: boolPtr(true),
+			Controller:         new(true),
+			BlockOwnerDeletion: new(true),
 		},
 	}
 
@@ -325,8 +325,8 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 			Kind:               "HAProxyCfg",
 			Name:               owner.Name,
 			UID:                owner.UID,
-			Controller:         boolPtr(true),
-			BlockOwnerDeletion: boolPtr(true),
+			Controller:         new(true),
+			BlockOwnerDeletion: new(true),
 		},
 	}
 

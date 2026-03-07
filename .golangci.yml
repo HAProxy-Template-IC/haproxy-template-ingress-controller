@@ -2,7 +2,7 @@ version: "2"
 
 run:
   timeout: 10m
-  go: '1.25'
+  go: '1.26'
   allow-parallel-runners: true
 
 formatters:
@@ -216,6 +216,28 @@ linters:
       - path: examples/
         linters:
           - godox
+
+      # G118: context cancel not deferred — false positive for struct-field cancel pattern
+      # (cancel stored in struct and called in Stop/Close lifecycle methods)
+      - path: pkg/controller/(controller|leader|webhook/component|httpstore/component)\.go
+        linters:
+          - gosec
+        text: "G118"
+      - path: pkg/controller/testrunner/runner\.go
+        linters:
+          - gosec
+        text: "G118"
+      - path: pkg/dataplane/client/adapter\.go
+        linters:
+          - gosec
+        text: "G118"
+
+      # G602: slice index out of range — false positive when index is validated
+      # by the enclosing loop that found the element
+      - path: pkg/k8s/configpublisher/name_helpers\.go
+        linters:
+          - gosec
+        text: "G602"
 
       # Exclude godot false positives for correctly formatted comments
       # These comments all end with periods but godot incorrectly flags them

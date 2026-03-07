@@ -58,8 +58,8 @@ func TestExtractKeys(t *testing.T) {
 		t.Fatalf("failed to create indexer: %v", err)
 	}
 
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "test-resource",
 		},
@@ -93,15 +93,15 @@ func TestFilterFields(t *testing.T) {
 		t.Fatalf("failed to create indexer: %v", err)
 	}
 
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"name":          "test-resource",
-			"managedFields": []interface{}{map[string]interface{}{"manager": "kubectl"}},
+			"managedFields": []any{map[string]any{"manager": "kubectl"}},
 		},
-		"spec": map[string]interface{}{
+		"spec": map[string]any{
 			"replicas": 3,
 		},
-		"status": map[string]interface{}{
+		"status": map[string]any{
 			"ready": true,
 		},
 	}
@@ -112,7 +112,7 @@ func TestFilterFields(t *testing.T) {
 	}
 
 	// Verify managedFields was removed
-	metadata := resource["metadata"].(map[string]interface{})
+	metadata := resource["metadata"].(map[string]any)
 	if _, ok := metadata["managedFields"]; ok {
 		t.Error("managedFields should have been removed")
 	}
@@ -138,11 +138,11 @@ func TestProcess(t *testing.T) {
 		t.Fatalf("failed to create indexer: %v", err)
 	}
 
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"namespace":     "kube-system",
 			"name":          "coredns",
-			"managedFields": []interface{}{},
+			"managedFields": []any{},
 		},
 	}
 
@@ -157,7 +157,7 @@ func TestProcess(t *testing.T) {
 	}
 
 	// Verify managedFields was removed
-	metadata := resource["metadata"].(map[string]interface{})
+	metadata := resource["metadata"].(map[string]any)
 	if _, ok := metadata["managedFields"]; ok {
 		t.Error("managedFields should have been removed")
 	}
@@ -325,7 +325,7 @@ func TestJSONPathEvaluator_Expression(t *testing.T) {
 func TestReflectValueToString(t *testing.T) {
 	tests := []struct {
 		name     string
-		value    interface{}
+		value    any
 		expected string
 	}{
 		{name: "string", value: "hello", expected: "hello"},
@@ -344,7 +344,7 @@ func TestReflectValueToString(t *testing.T) {
 				t.Fatalf("failed to create evaluator: %v", err)
 			}
 
-			resource := map[string]interface{}{"value": tt.value}
+			resource := map[string]any{"value": tt.value}
 			result, err := eval.Evaluate(resource)
 			if err != nil {
 				t.Fatalf("Evaluate failed: %v", err)
@@ -370,10 +370,10 @@ func TestProcessWithFilterError(t *testing.T) {
 	}
 
 	// Test with a valid resource
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"name": "test",
-			"annotations": map[string]interface{}{
+			"annotations": map[string]any{
 				"kubectl.kubernetes.io/last-applied-configuration": "{}",
 			},
 		},
@@ -389,8 +389,8 @@ func TestProcessWithFilterError(t *testing.T) {
 	}
 
 	// Verify the annotation was removed
-	metadata := resource["metadata"].(map[string]interface{})
-	annotations := metadata["annotations"].(map[string]interface{})
+	metadata := resource["metadata"].(map[string]any)
+	annotations := metadata["annotations"].(map[string]any)
 	if _, ok := annotations["kubectl.kubernetes.io/last-applied-configuration"]; ok {
 		t.Error("annotation should have been removed")
 	}
@@ -420,22 +420,22 @@ func TestFilterFields_DeepNested(t *testing.T) {
 		t.Fatalf("failed to create indexer: %v", err)
 	}
 
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"name":          "test",
-			"managedFields": []interface{}{"a", "b"},
-			"annotations": map[string]interface{}{
+			"managedFields": []any{"a", "b"},
+			"annotations": map[string]any{
 				"kubectl.kubernetes.io/last-applied-configuration": "{}",
 				"other/annotation": "keep-me",
 			},
-			"labels": map[string]interface{}{
+			"labels": map[string]any{
 				"app": "test",
 			},
 		},
-		"spec": map[string]interface{}{
+		"spec": map[string]any{
 			"replicas": 3,
 		},
-		"status": map[string]interface{}{
+		"status": map[string]any{
 			"ready": true,
 		},
 	}
@@ -446,7 +446,7 @@ func TestFilterFields_DeepNested(t *testing.T) {
 	}
 
 	// Verify deeply nested fields were handled
-	metadata := resource["metadata"].(map[string]interface{})
+	metadata := resource["metadata"].(map[string]any)
 
 	// managedFields should be removed
 	if _, ok := metadata["managedFields"]; ok {
@@ -454,7 +454,7 @@ func TestFilterFields_DeepNested(t *testing.T) {
 	}
 
 	// annotations map should exist with other annotation preserved
-	annotations := metadata["annotations"].(map[string]interface{})
+	annotations := metadata["annotations"].(map[string]any)
 	if _, ok := annotations["kubectl.kubernetes.io/last-applied-configuration"]; ok {
 		t.Error("last-applied-configuration annotation should have been removed")
 	}
@@ -487,14 +487,14 @@ func TestFilterFields_NonExistentPath(t *testing.T) {
 		t.Fatalf("failed to create indexer: %v", err)
 	}
 
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"name": "test",
-			"annotations": map[string]interface{}{
+			"annotations": map[string]any{
 				"existing/annotation": "value",
 			},
 		},
-		"spec": map[string]interface{}{
+		"spec": map[string]any{
 			"replicas": 3,
 		},
 	}
@@ -506,7 +506,7 @@ func TestFilterFields_NonExistentPath(t *testing.T) {
 	}
 
 	// Verify existing fields are untouched
-	metadata := resource["metadata"].(map[string]interface{})
+	metadata := resource["metadata"].(map[string]any)
 	if metadata["name"] != "test" {
 		t.Error("name should be preserved")
 	}
@@ -521,8 +521,8 @@ func TestExtractKeys_MissingField(t *testing.T) {
 		t.Fatalf("failed to create indexer: %v", err)
 	}
 
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "test",
 		},
@@ -546,7 +546,7 @@ func TestFilterFields_EmptyResource(t *testing.T) {
 	}
 
 	// Empty resource
-	resource := map[string]interface{}{}
+	resource := map[string]any{}
 
 	// Should not error on empty resource
 	err = idx.FilterFields(resource)
@@ -563,8 +563,8 @@ func TestEvaluate_InvalidPath(t *testing.T) {
 	}
 
 	// Resource without the path
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"name": "test",
 		},
 	}
@@ -586,15 +586,15 @@ func TestFilterWithUnstructured(t *testing.T) {
 	}
 
 	// Simulate unstructured.Unstructured.Object
-	resource := map[string]interface{}{
+	resource := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "ConfigMap",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"namespace":     "default",
 			"name":          "test",
-			"managedFields": []interface{}{map[string]interface{}{"manager": "kubectl"}},
+			"managedFields": []any{map[string]any{"manager": "kubectl"}},
 		},
-		"data": map[string]interface{}{
+		"data": map[string]any{
 			"key": "value",
 		},
 	}
@@ -608,7 +608,7 @@ func TestFilterWithUnstructured(t *testing.T) {
 		t.Errorf("unexpected keys: %v", result.Keys)
 	}
 
-	metadata := resource["metadata"].(map[string]interface{})
+	metadata := resource["metadata"].(map[string]any)
 	if _, ok := metadata["managedFields"]; ok {
 		t.Error("managedFields should have been removed")
 	}

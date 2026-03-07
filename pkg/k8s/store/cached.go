@@ -19,7 +19,7 @@ import (
 
 // cacheEntry holds a cached resource with its expiration time.
 type cacheEntry struct {
-	resource  interface{}
+	resource  any
 	expiresAt time.Time
 }
 
@@ -128,7 +128,7 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 }
 
 // Get retrieves all resources matching the provided index keys.
-func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
+func (s *CachedStore) Get(keys ...string) ([]any, error) {
 	if len(keys) == 0 {
 		return nil, &StoreError{
 			Operation: "get",
@@ -169,7 +169,7 @@ func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
 	// Fetch resources using namespace+name from references
 	// IMPORTANT: Don't hold any locks while calling fetchResourceByRef,
 	// as it may need to acquire a Lock to reset TTL
-	results := make([]interface{}, 0, len(matchingRefs))
+	results := make([]any, 0, len(matchingRefs))
 	for _, ref := range matchingRefs {
 		resource, err := s.fetchResourceByRef(ref)
 		if err != nil {
@@ -183,7 +183,7 @@ func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
 }
 
 // List returns all resources in the store.
-func (s *CachedStore) List() ([]interface{}, error) {
+func (s *CachedStore) List() ([]any, error) {
 	s.mu.RLock()
 	allRefs := make([]resourceRef, 0)
 	for _, refs := range s.refs {
@@ -198,7 +198,7 @@ func (s *CachedStore) List() ([]interface{}, error) {
 		"recommendation", "consider using store=full for frequently listed resources")
 
 	// Fetch all resources
-	results := make([]interface{}, 0, len(allRefs))
+	results := make([]any, 0, len(allRefs))
 	for _, ref := range allRefs {
 		resource, err := s.fetchResourceByRef(ref)
 		if err != nil {
@@ -212,7 +212,7 @@ func (s *CachedStore) List() ([]interface{}, error) {
 }
 
 // Add inserts a new resource into the store.
-func (s *CachedStore) Add(resource interface{}, keys []string) error {
+func (s *CachedStore) Add(resource any, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -250,7 +250,7 @@ func (s *CachedStore) Add(resource interface{}, keys []string) error {
 }
 
 // Update modifies an existing resource or adds it if it doesn't exist.
-func (s *CachedStore) Update(resource interface{}, keys []string) error {
+func (s *CachedStore) Update(resource any, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -358,7 +358,7 @@ func (s *CachedStore) Clear() error {
 }
 
 // fetchResourceByRef fetches a resource from cache or API using a resource reference.
-func (s *CachedStore) fetchResourceByRef(ref resourceRef) (interface{}, error) {
+func (s *CachedStore) fetchResourceByRef(ref resourceRef) (any, error) {
 	cacheKey := ref.namespace + "/" + ref.name
 
 	// Check cache first using Peek to avoid promoting before TTL check

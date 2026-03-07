@@ -11,8 +11,6 @@ import (
 // compareACLs compares ACL configurations within a frontend or backend.
 // ACLs are identified by their name (ACLName field).
 func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, desiredACLs models.Acls, _ *DiffSummary) []Operation {
-	var operations []Operation
-
 	// Build maps for easier comparison using ACL names
 	currentACLMap := make(map[string]int) // name -> index
 	for i, acl := range currentACLs {
@@ -30,14 +28,14 @@ func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, des
 
 	// Find added ACLs
 	addedOps := c.compareAddedACLs(parentType, parentName, desiredACLMap, currentACLMap, desiredACLs)
-	operations = append(operations, addedOps...)
-
 	// Find deleted ACLs
 	deletedOps := c.compareDeletedACLs(parentType, parentName, currentACLMap, desiredACLMap, currentACLs)
-	operations = append(operations, deletedOps...)
-
 	// Find modified ACLs
 	modifiedOps := c.compareModifiedACLs(parentType, parentName, desiredACLMap, currentACLMap, currentACLs, desiredACLs)
+
+	operations := make([]Operation, 0, len(addedOps)+len(deletedOps)+len(modifiedOps))
+	operations = append(operations, addedOps...)
+	operations = append(operations, deletedOps...)
 	operations = append(operations, modifiedOps...)
 
 	return operations

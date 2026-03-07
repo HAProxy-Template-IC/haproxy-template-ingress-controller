@@ -23,7 +23,7 @@ type Renderer interface {
 	// Returns RenderError if template execution fails, RenderTimeoutError if
 	// the context deadline is exceeded, or TemplateNotFoundError if the
 	// template doesn't exist.
-	Render(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, error)
+	Render(ctx context.Context, templateName string, templateContext map[string]any) (string, error)
 }
 
 // ProfilingRenderer extends Renderer with profiling support.
@@ -38,7 +38,7 @@ type ProfilingRenderer interface {
 	//
 	// Stats are aggregated by template name - multiple renders of the same
 	// template are combined into a single IncludeStats entry with count > 1.
-	RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, []IncludeStats, error)
+	RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]any) (string, []IncludeStats, error)
 }
 
 // TemplateIntrospector provides template inspection capabilities.

@@ -147,12 +147,17 @@ func auxDiffsToOperations(auxDiffs *auxiliaryFileDiffs) []AppliedOperation {
 		return nil
 	}
 
-	var ops []AppliedOperation
-	ops = append(ops, fileDiffToOperations(auxDiffs.fileDiff)...)
-	ops = append(ops, sslDiffToOperations(auxDiffs.sslDiff)...)
-	ops = append(ops, caFileDiffToOperations(auxDiffs.caFileDiff)...)
-	ops = append(ops, mapDiffToOperations(auxDiffs.mapDiff)...)
-	ops = append(ops, crtlistDiffToOperations(auxDiffs.crtlistDiff)...)
+	fileOps := fileDiffToOperations(auxDiffs.fileDiff)
+	sslOps := sslDiffToOperations(auxDiffs.sslDiff)
+	caOps := caFileDiffToOperations(auxDiffs.caFileDiff)
+	mapOps := mapDiffToOperations(auxDiffs.mapDiff)
+	crtlistOps := crtlistDiffToOperations(auxDiffs.crtlistDiff)
+	ops := make([]AppliedOperation, 0, len(fileOps)+len(sslOps)+len(caOps)+len(mapOps)+len(crtlistOps))
+	ops = append(ops, fileOps...)
+	ops = append(ops, sslOps...)
+	ops = append(ops, caOps...)
+	ops = append(ops, mapOps...)
+	ops = append(ops, crtlistOps...)
 	return ops
 }
 

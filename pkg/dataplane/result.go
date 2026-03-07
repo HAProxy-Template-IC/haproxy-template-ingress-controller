@@ -374,7 +374,7 @@ func (r *DiffResult) String() string {
 		return "No changes detected"
 	}
 
-	var parts []string
+	parts := make([]string, 0, 2)
 	parts = append(parts,
 		fmt.Sprintf("Total operations: %d", len(r.PlannedOperations)),
 		fmt.Sprintf("\n%s", r.Details.String()))

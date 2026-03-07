@@ -34,7 +34,7 @@ const guidHashLen = 8
 //
 //	guid {{ make_guid("be", backendKey) }}
 //	guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}
-func scriggoMakeGUID(parts ...interface{}) string {
+func scriggoMakeGUID(parts ...any) string {
 	strs := make([]string, len(parts))
 	for i, p := range parts {
 		strs[i] = scriggoToString(p)

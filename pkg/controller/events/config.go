@@ -28,12 +28,12 @@ type ConfigParsedEvent struct {
 	// Config contains the parsed configuration.
 	// Type: interface{} to avoid circular dependencies.
 	// Consumers should type-assert to their expected config type.
-	Config interface{}
+	Config any
 
 	// TemplateConfig is the original HAProxyTemplateConfig CRD.
 	// Type: interface{} to avoid circular dependencies.
 	// Needed by ConfigPublisher to extract Kubernetes metadata (name, namespace, UID).
-	TemplateConfig interface{}
+	TemplateConfig any
 
 	// Version is the resourceVersion of the ConfigMap.
 	Version string
@@ -45,7 +45,7 @@ type ConfigParsedEvent struct {
 }
 
 // NewConfigParsedEvent creates a new ConfigParsedEvent.
-func NewConfigParsedEvent(config, templateConfig interface{}, version, secretVersion string) *ConfigParsedEvent {
+func NewConfigParsedEvent(config, templateConfig any, version, secretVersion string) *ConfigParsedEvent {
 	return &ConfigParsedEvent{
 		Config:         config,
 		TemplateConfig: templateConfig,
@@ -66,7 +66,7 @@ type ConfigValidationRequest struct {
 	reqID string
 
 	// Config contains the configuration to validate.
-	Config interface{}
+	Config any
 
 	// Version is the resourceVersion being validated.
 	Version string
@@ -75,7 +75,7 @@ type ConfigValidationRequest struct {
 }
 
 // NewConfigValidationRequest creates a new ConfigValidationRequest.
-func NewConfigValidationRequest(config interface{}, version string) *ConfigValidationRequest {
+func NewConfigValidationRequest(config any, version string) *ConfigValidationRequest {
 	return &ConfigValidationRequest{
 		reqID:     fmt.Sprintf("config-validation-%s-%d", version, time.Now().UnixNano()),
 		Config:    config,
@@ -138,12 +138,12 @@ func (e *ConfigValidationResponse) Responder() string    { return e.responder }
 // After receiving this event, the controller proceeds to start resource watchers.
 // with the validated configuration.
 type ConfigValidatedEvent struct {
-	Config interface{}
+	Config any
 
 	// TemplateConfig is the original HAProxyTemplateConfig CRD.
 	// Type: interface{} to avoid circular dependencies.
 	// Needed by ConfigPublisher to extract Kubernetes metadata (name, namespace, UID).
-	TemplateConfig interface{}
+	TemplateConfig any
 
 	Version       string
 	SecretVersion string
@@ -151,7 +151,7 @@ type ConfigValidatedEvent struct {
 }
 
 // NewConfigValidatedEvent creates a new ConfigValidatedEvent.
-func NewConfigValidatedEvent(config, templateConfig interface{}, version, secretVersion string) *ConfigValidatedEvent {
+func NewConfigValidatedEvent(config, templateConfig any, version, secretVersion string) *ConfigValidatedEvent {
 	return &ConfigValidatedEvent{
 		Config:         config,
 		TemplateConfig: templateConfig,
@@ -174,7 +174,7 @@ type ConfigInvalidEvent struct {
 	// TemplateConfig is the original HAProxyTemplateConfig CRD.
 	// Type: interface{} to avoid circular dependencies.
 	// Used by status updater to set validation errors on the CRD status.
-	TemplateConfig interface{}
+	TemplateConfig any
 
 	// ValidationErrors maps validator names to their error messages.
 	ValidationErrors map[string][]string
@@ -184,7 +184,7 @@ type ConfigInvalidEvent struct {
 
 // NewConfigInvalidEvent creates a new ConfigInvalidEvent.
 // Performs defensive copy of the validation errors map and its slice values.
-func NewConfigInvalidEvent(version string, templateConfig interface{}, validationErrors map[string][]string) *ConfigInvalidEvent {
+func NewConfigInvalidEvent(version string, templateConfig any, validationErrors map[string][]string) *ConfigInvalidEvent {
 	// Defensive copy of map with slice values
 	errorsCopy := make(map[string][]string, len(validationErrors))
 	for k, v := range validationErrors {
@@ -216,13 +216,13 @@ type ConfigResourceChangedEvent struct {
 	// Resource contains the raw ConfigMap resource.
 	// Type: interface{} to avoid circular dependencies.
 	// Consumers should type-assert to *unstructured.Unstructured or *corev1.ConfigMap.
-	Resource interface{}
+	Resource any
 
 	timestamp time.Time
 }
 
 // NewConfigResourceChangedEvent creates a new ConfigResourceChangedEvent.
-func NewConfigResourceChangedEvent(resource interface{}) *ConfigResourceChangedEvent {
+func NewConfigResourceChangedEvent(resource any) *ConfigResourceChangedEvent {
 	return &ConfigResourceChangedEvent{
 		Resource:  resource,
 		timestamp: time.Now(),

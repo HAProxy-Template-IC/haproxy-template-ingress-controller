@@ -23,32 +23,32 @@ import (
 
 // mockStore implements Store for testing.
 type mockStore struct {
-	resources []interface{}
+	resources []any
 }
 
-func (m *mockStore) Get(keys ...string) ([]interface{}, error) {
+func (m *mockStore) Get(keys ...string) ([]any, error) {
 	// Simple matching by namespace/name
 	if len(keys) >= 2 {
 		for _, r := range m.resources {
 			ns, name := extractMetadata(r)
 			if ns == keys[0] && name == keys[1] {
-				return []interface{}{r}, nil
+				return []any{r}, nil
 			}
 		}
 	}
-	return []interface{}{}, nil
+	return []any{}, nil
 }
 
-func (m *mockStore) List() ([]interface{}, error) {
+func (m *mockStore) List() ([]any, error) {
 	return m.resources, nil
 }
 
-func (m *mockStore) Add(resource interface{}, keys []string) error {
+func (m *mockStore) Add(resource any, keys []string) error {
 	m.resources = append(m.resources, resource)
 	return nil
 }
 
-func (m *mockStore) Update(resource interface{}, keys []string) error {
+func (m *mockStore) Update(resource any, keys []string) error {
 	// For testing, just append
 	return m.Add(resource, keys)
 }
@@ -63,9 +63,9 @@ func (m *mockStore) Clear() error {
 }
 
 // newMockResource creates a mock Kubernetes resource as map[string]interface{}.
-func newMockResource(namespace, name string) map[string]interface{} {
-	return map[string]interface{}{
-		"metadata": map[string]interface{}{
+func newMockResource(namespace, name string) map[string]any {
+	return map[string]any{
+		"metadata": map[string]any{
 			"namespace": namespace,
 			"name":      name,
 		},
@@ -99,8 +99,8 @@ func TestManager_RegisterAndGetStore(t *testing.T) {
 
 func TestManager_RegisterStore_Replace(t *testing.T) {
 	manager := NewManager()
-	store1 := &mockStore{resources: []interface{}{"first"}}
-	store2 := &mockStore{resources: []interface{}{"second"}}
+	store1 := &mockStore{resources: []any{"first"}}
+	store2 := &mockStore{resources: []any{"second"}}
 
 	// Register first store
 	manager.RegisterStore("ingresses", store1)
@@ -164,7 +164,7 @@ func TestManager_ResourceCount(t *testing.T) {
 func TestManager_CreateOverlay(t *testing.T) {
 	manager := NewManager()
 	baseStore := &mockStore{
-		resources: []interface{}{
+		resources: []any{
 			newMockResource("default", "existing"),
 		},
 	}
@@ -193,8 +193,8 @@ func TestManager_CreateOverlay_NonexistentStore(t *testing.T) {
 
 func TestManager_CreateOverlayMap(t *testing.T) {
 	manager := NewManager()
-	ingressStore := &mockStore{resources: []interface{}{newMockResource("default", "ing1")}}
-	serviceStore := &mockStore{resources: []interface{}{newMockResource("default", "svc1")}}
+	ingressStore := &mockStore{resources: []any{newMockResource("default", "ing1")}}
+	serviceStore := &mockStore{resources: []any{newMockResource("default", "svc1")}}
 
 	manager.RegisterStore("ingresses", ingressStore)
 	manager.RegisterStore("services", serviceStore)

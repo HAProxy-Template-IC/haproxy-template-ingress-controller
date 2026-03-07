@@ -100,8 +100,8 @@ func TestWithRetry_ExhaustsMaxAttempts(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, "", result)
 	assert.Equal(t, 3, attempts, "should exhaust all attempts")
-	var vce *VersionConflictError
-	assert.True(t, errors.As(err, &vce), "should return version conflict error")
+	_, ok := errors.AsType[*VersionConflictError](err)
+	assert.True(t, ok, "should return version conflict error")
 }
 
 func TestWithRetry_ContextCancellation(t *testing.T) {

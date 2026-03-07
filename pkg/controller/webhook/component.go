@@ -82,7 +82,7 @@ type MetricsRecorder interface {
 // DryRunValidator defines the interface for dry-run validation.
 // This allows the webhook to validate resources without scatter-gather events.
 type DryRunValidator interface {
-	ValidateDirect(ctx context.Context, gvk, namespace, name string, object interface{}, operation string) (allowed bool, reason string)
+	ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string)
 }
 
 // Config configures the webhook component.
@@ -408,7 +408,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 // Checks:
 //   - Object is a valid unstructured resource
 //   - Metadata.name or metadata.generateName exists
-func (c *Component) validateBasicStructure(object interface{}) error {
+func (c *Component) validateBasicStructure(object any) error {
 	obj, ok := object.(*unstructured.Unstructured)
 	if !ok {
 		return fmt.Errorf("invalid object type: %T", object)

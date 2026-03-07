@@ -54,8 +54,7 @@ func TestSecretWatcher_StartAndStop(t *testing.T) {
 	watcher := NewSecretWatcher(client, bus, logger, "test-ns", "test-secret")
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	done := make(chan error)
 	go func() {

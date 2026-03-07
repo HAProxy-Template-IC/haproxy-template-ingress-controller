@@ -819,7 +819,7 @@ func TestPublishingEvents(t *testing.T) {
 
 func TestWebhookEvents(t *testing.T) {
 	t.Run("WebhookValidationRequest", func(t *testing.T) {
-		obj := map[string]interface{}{"metadata": map[string]interface{}{"name": "test"}}
+		obj := map[string]any{"metadata": map[string]any{"name": "test"}}
 		event := NewWebhookValidationRequest(
 			"networking.k8s.io/v1.Ingress",
 			"default",

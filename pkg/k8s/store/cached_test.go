@@ -20,14 +20,14 @@ func createTestIndexer() *indexer.Indexer {
 // createTestResource creates a test resource with metadata.
 func createTestResource(namespace, name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": namespace,
 				"name":      name,
 			},
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"key": "value",
 			},
 		},

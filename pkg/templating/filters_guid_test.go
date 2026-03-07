@@ -25,48 +25,48 @@ import (
 func TestScriggoMakeGUID(t *testing.T) {
 	tests := []struct {
 		name      string
-		parts     []interface{}
+		parts     []any
 		wantExact string // if set, exact match
 		wantMax   int    // if set, max length check
 	}{
 		{
 			name:      "short frontend GUID",
-			parts:     []interface{}{"fe", "status"},
+			parts:     []any{"fe", "status"},
 			wantExact: "fe:status",
 		},
 		{
 			name:      "short backend GUID",
-			parts:     []interface{}{"be", "default_backend"},
+			parts:     []any{"be", "default_backend"},
 			wantExact: "be:default_backend",
 		},
 		{
 			name:      "short server GUID",
-			parts:     []interface{}{"srv", "ing_default_my-svc_80", "SRV_1"},
+			parts:     []any{"srv", "ing_default_my-svc_80", "SRV_1"},
 			wantExact: "srv:ing_default_my-svc_80:SRV_1",
 		},
 		{
 			name:    "long backend GUID truncated",
-			parts:   []interface{}{"be", "ing_backend-dev_document-translation-web-gateway-pro-api-document-internal_document-translation-web-gateway-pro_grpc-ingress-extra"},
+			parts:   []any{"be", "ing_backend-dev_document-translation-web-gateway-pro-api-document-internal_document-translation-web-gateway-pro_grpc-ingress-extra"},
 			wantMax: haproxyGUIDMaxLen,
 		},
 		{
 			name:    "long server GUID truncated",
-			parts:   []interface{}{"srv", "ing_backend-dev_document-translation-web-gateway-pro-api-document-internal_document-translation-web-gateway-pro_grpc-ingress", "SRV_10"},
+			parts:   []any{"srv", "ing_backend-dev_document-translation-web-gateway-pro-api-document-internal_document-translation-web-gateway-pro_grpc-ingress", "SRV_10"},
 			wantMax: haproxyGUIDMaxLen,
 		},
 		{
 			name:      "exactly 127 chars not truncated",
-			parts:     []interface{}{"be", strings.Repeat("a", 124)},
+			parts:     []any{"be", strings.Repeat("a", 124)},
 			wantExact: "be:" + strings.Repeat("a", 124),
 		},
 		{
 			name:    "128 chars truncated",
-			parts:   []interface{}{"be", strings.Repeat("a", 125)},
+			parts:   []any{"be", strings.Repeat("a", 125)},
 			wantMax: haproxyGUIDMaxLen,
 		},
 		{
 			name:      "integer part converted to string",
-			parts:     []interface{}{"srv", "mybackend", 42},
+			parts:     []any{"srv", "mybackend", 42},
 			wantExact: "srv:mybackend:42",
 		},
 	}
@@ -99,7 +99,7 @@ func TestScriggoMakeGUID_Uniqueness(t *testing.T) {
 }
 
 func TestScriggoMakeGUID_Deterministic(t *testing.T) {
-	parts := []interface{}{"srv", strings.Repeat("x", 150), "SRV_5"}
+	parts := []any{"srv", strings.Repeat("x", 150), "SRV_5"}
 	guid1 := scriggoMakeGUID(parts...)
 	guid2 := scriggoMakeGUID(parts...)
 

@@ -105,12 +105,10 @@ func TestBaseValidator_StopIdempotent(t *testing.T) {
 
 	// Call Stop() multiple times - should not panic
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			validator.Stop()
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -125,8 +123,7 @@ func TestBaseValidator_PanicRecovery(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -190,8 +187,7 @@ func TestBasicValidator_InvalidConfigType(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -219,8 +215,7 @@ func TestTemplateValidator_InvalidConfigType(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -248,8 +243,7 @@ func TestJSONPathValidator_InvalidConfigType(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -277,8 +271,7 @@ func TestTemplateValidator_SnippetErrors(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -321,8 +314,7 @@ func TestTemplateValidator_MapErrors(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -363,8 +355,7 @@ func TestTemplateValidator_FileErrors(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -407,8 +398,7 @@ func TestTemplateValidator_CurrentConfigDeclaration(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -447,8 +437,7 @@ func TestJSONPathValidator_IndexByErrors(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -493,8 +482,7 @@ func TestBaseValidator_IgnoresOtherEvents(t *testing.T) {
 
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go validator.Start(ctx)
 	time.Sleep(50 * time.Millisecond)

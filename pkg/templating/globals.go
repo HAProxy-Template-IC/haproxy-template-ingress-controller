@@ -27,7 +27,7 @@ import "fmt"
 //
 // The error message from fail() is extracted by dataplane.SimplifyRenderingError()
 // to provide user-friendly feedback in admission webhooks and validation tests.
-func FailFunction(args ...interface{}) (interface{}, error) {
+func FailFunction(args ...any) (any, error) {
 	// Validate arguments
 	if len(args) != 1 {
 		return nil, fmt.Errorf("fail() requires exactly one string argument, got %d arguments", len(args))

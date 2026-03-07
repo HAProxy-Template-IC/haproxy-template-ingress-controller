@@ -13,10 +13,7 @@ func (c *Comparator) compareQUICInitialRules(parentType, parentName string, curr
 	var operations []Operation
 
 	// Compare QUIC initial rules by position
-	maxLen := len(currentRules)
-	if len(desiredRules) > maxLen {
-		maxLen = len(desiredRules)
-	}
+	maxLen := max(len(desiredRules), len(currentRules))
 
 	for i := 0; i < maxLen; i++ {
 		hasCurrentRule := i < len(currentRules)

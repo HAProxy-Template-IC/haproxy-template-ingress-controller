@@ -95,8 +95,7 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 		// Create transaction
 		tx, err := a.client.CreateTransaction(ctx, version)
 		if err != nil {
-			var versionErr *VersionConflictError
-			if errors.As(err, &versionErr) {
+			if _, ok := errors.AsType[*VersionConflictError](err); ok {
 				// Version conflict on transaction creation - retry with new version
 				lastErr = err
 				continue
@@ -117,8 +116,7 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 		// Commit transaction
 		commitResult, err := tx.Commit(ctx)
 		if err != nil {
-			var versionErr *VersionConflictError
-			if errors.As(err, &versionErr) {
+			if _, ok := errors.AsType[*VersionConflictError](err); ok {
 				// Version conflict on commit - retry with new version
 				lastErr = err
 				abortCtx, abortCancel := abortContext()
@@ -169,8 +167,7 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 		// Create transaction
 		tx, err := a.client.CreateTransaction(ctx, currentVersion)
 		if err != nil {
-			var versionErr *VersionConflictError
-			if errors.As(err, &versionErr) {
+			if _, ok := errors.AsType[*VersionConflictError](err); ok {
 				lastErr = err
 				continue
 			}
@@ -189,8 +186,7 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 		// Commit transaction
 		_, err = tx.Commit(ctx)
 		if err != nil {
-			var versionErr *VersionConflictError
-			if errors.As(err, &versionErr) {
+			if _, ok := errors.AsType[*VersionConflictError](err); ok {
 				lastErr = err
 				abortCtx, abortCancel := abortContext()
 				_ = tx.Abort(abortCtx)

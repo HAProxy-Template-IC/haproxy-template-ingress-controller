@@ -30,7 +30,7 @@ import "fmt"
 //   - string
 //   - []interface{} (arrays)
 //   - map[string]interface{} (objects)
-func ValidateExtraContext(ctx map[string]interface{}) error {
+func ValidateExtraContext(ctx map[string]any) error {
 	for key, val := range ctx {
 		if err := validateJSONValue(val); err != nil {
 			return fmt.Errorf("extra_context.%s: %w", key, err)
@@ -40,7 +40,7 @@ func ValidateExtraContext(ctx map[string]interface{}) error {
 }
 
 // validateJSONValue recursively validates that a value is JSON-compatible.
-func validateJSONValue(val interface{}) error {
+func validateJSONValue(val any) error {
 	switch v := val.(type) {
 	case nil, bool, float64, string:
 		// Primitive types that JSON supports directly
@@ -51,7 +51,7 @@ func validateJSONValue(val interface{}) error {
 		// but allow them anyway as they're JSON-compatible
 		return nil
 
-	case []interface{}:
+	case []any:
 		// Validate each array element
 		for i, elem := range v {
 			if err := validateJSONValue(elem); err != nil {
@@ -60,7 +60,7 @@ func validateJSONValue(val interface{}) error {
 		}
 		return nil
 
-	case map[string]interface{}:
+	case map[string]any:
 		// Validate each map value
 		for k, elem := range v {
 			if err := validateJSONValue(elem); err != nil {

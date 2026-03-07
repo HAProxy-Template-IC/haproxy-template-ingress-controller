@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
@@ -89,7 +90,7 @@ func BenchmarkSync_NoChanges(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *SyncResult
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = sync.Sync(context.Background(), current, desired, opts)
 	}
 	benchResultSync = r
@@ -129,7 +130,7 @@ func benchmarkSyncDryRunSmall(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *SyncResult
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = sync.Sync(context.Background(), current, desired, opts)
 	}
 	benchResultSync = r
@@ -160,7 +161,7 @@ func benchmarkSyncDryRunMedium(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *SyncResult
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = sync.Sync(context.Background(), current, desired, opts)
 	}
 	benchResultSync = r
@@ -191,7 +192,7 @@ func benchmarkSyncDryRunLarge(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *SyncResult
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = sync.Sync(context.Background(), current, desired, opts)
 	}
 	benchResultSync = r
@@ -222,7 +223,7 @@ func benchmarkSyncDryRunScale(b *testing.B, backendCount int) {
 	b.ReportAllocs()
 
 	var r *SyncResult
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = sync.Sync(context.Background(), current, desired, opts)
 	}
 	benchResultSync = r
@@ -386,7 +387,8 @@ func generateLargeConfigWithChanges() string {
 }
 
 func generateScaledConfig(backendCount, serversPerBackend int) string {
-	config := `
+	var config strings.Builder
+	config.WriteString(`
 global
     daemon
 
@@ -400,20 +402,21 @@ frontend http_front
     bind *:80
     default_backend backend_0
 
-`
-	for i := 0; i < backendCount; i++ {
-		config += fmt.Sprintf("backend backend_%d\n", i)
-		config += "    balance roundrobin\n"
-		for j := 0; j < serversPerBackend; j++ {
-			config += fmt.Sprintf("    server srv%d_%d 10.%d.%d.1:%d check\n", i, j, i/256, i%256, 8080+j)
+`)
+	for i := range backendCount {
+		fmt.Fprintf(&config, "backend backend_%d\n", i)
+		config.WriteString("    balance roundrobin\n")
+		for j := range serversPerBackend {
+			fmt.Fprintf(&config, "    server srv%d_%d 10.%d.%d.1:%d check\n", i, j, i/256, i%256, 8080+j)
 		}
-		config += "\n"
+		config.WriteString("\n")
 	}
-	return config
+	return config.String()
 }
 
 func generateScaledConfigWithChanges(backendCount, serversPerBackend int) string {
-	config := `
+	var config strings.Builder
+	config.WriteString(`
 global
     daemon
 
@@ -427,14 +430,14 @@ frontend http_front
     bind *:80
     default_backend backend_0
 
-`
+`)
 	// Change balance method on half the backends, add servers to others
-	for i := 0; i < backendCount; i++ {
-		config += fmt.Sprintf("backend backend_%d\n", i)
+	for i := range backendCount {
+		fmt.Fprintf(&config, "backend backend_%d\n", i)
 		if i%2 == 0 {
-			config += "    balance leastconn\n"
+			config.WriteString("    balance leastconn\n")
 		} else {
-			config += "    balance roundrobin\n"
+			config.WriteString("    balance roundrobin\n")
 		}
 		serverCount := serversPerBackend
 		if i%3 == 0 {
@@ -445,9 +448,9 @@ frontend http_front
 			if j == 0 && i%2 == 0 {
 				weight = " weight 100"
 			}
-			config += fmt.Sprintf("    server srv%d_%d 10.%d.%d.1:%d check%s\n", i, j, i/256, i%256, 8080+j, weight)
+			fmt.Fprintf(&config, "    server srv%d_%d 10.%d.%d.1:%d check%s\n", i, j, i/256, i%256, 8080+j, weight)
 		}
-		config += "\n"
+		config.WriteString("\n")
 	}
-	return config
+	return config.String()
 }

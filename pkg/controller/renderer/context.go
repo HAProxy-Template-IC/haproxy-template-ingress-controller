@@ -31,7 +31,7 @@ import (
 // context creation across all usages (renderer, testrunner, benchmark, dryrunvalidator).
 //
 // See rendercontext.Builder for the full context structure documentation.
-func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *templating.PathResolver, isValidation bool) (map[string]interface{}, *rendercontext.FileRegistry, *templating.StatusPatchCollector) {
+func (c *Component) buildRenderingContext(ctx context.Context, pathResolver *templating.PathResolver, isValidation bool) (map[string]any, *rendercontext.FileRegistry, *templating.StatusPatchCollector) {
 	// Create HTTP fetcher if available
 	// The overlay determines content retrieval behavior:
 	// - nil overlay (production mode): returns accepted content only

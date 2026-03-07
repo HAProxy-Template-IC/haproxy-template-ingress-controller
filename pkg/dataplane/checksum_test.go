@@ -165,7 +165,7 @@ func TestComputeContentChecksum_StableAcrossMultipleCalls(t *testing.T) {
 
 	// Call multiple times to ensure stability
 	checksums := make([]string, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		checksums[i] = ComputeContentChecksum(config, auxFiles)
 	}
 
