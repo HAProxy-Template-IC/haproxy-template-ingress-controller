@@ -24,13 +24,13 @@ type SecretResourceChangedEvent struct {
 	// Resource contains the raw Secret resource.
 	// Type: interface{} to avoid circular dependencies.
 	// Consumers should type-assert to *unstructured.Unstructured or *corev1.Secret.
-	Resource interface{}
+	Resource any
 
 	timestamp time.Time
 }
 
 // NewSecretResourceChangedEvent creates a new SecretResourceChangedEvent.
-func NewSecretResourceChangedEvent(resource interface{}) *SecretResourceChangedEvent {
+func NewSecretResourceChangedEvent(resource any) *SecretResourceChangedEvent {
 	return &SecretResourceChangedEvent{
 		Resource:  resource,
 		timestamp: time.Now(),
@@ -46,7 +46,7 @@ type CredentialsUpdatedEvent struct {
 	// Credentials contains the validated credentials.
 	// Type: interface{} to avoid circular dependencies.
 	// Consumers should type-assert to their expected credentials type.
-	Credentials interface{}
+	Credentials any
 
 	// SecretVersion is the resourceVersion of the Secret.
 	SecretVersion string
@@ -55,7 +55,7 @@ type CredentialsUpdatedEvent struct {
 }
 
 // NewCredentialsUpdatedEvent creates a new CredentialsUpdatedEvent.
-func NewCredentialsUpdatedEvent(credentials interface{}, secretVersion string) *CredentialsUpdatedEvent {
+func NewCredentialsUpdatedEvent(credentials any, secretVersion string) *CredentialsUpdatedEvent {
 	return &CredentialsUpdatedEvent{
 		Credentials:   credentials,
 		SecretVersion: secretVersion,

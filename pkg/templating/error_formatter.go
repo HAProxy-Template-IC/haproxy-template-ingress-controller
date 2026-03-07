@@ -75,26 +75,26 @@ func FormatRenderError(err error, templateName, templateContent string) string {
 	var builder strings.Builder
 
 	// Header
-	builder.WriteString(fmt.Sprintf("Template Rendering Error: %s\n", templateName))
+	fmt.Fprintf(&builder, "Template Rendering Error: %s\n", templateName)
 	builder.WriteString(strings.Repeat("─", 60))
 	builder.WriteString("\n")
 
 	// Location
 	if parsed.Location != nil {
-		builder.WriteString(fmt.Sprintf("Location: Line %d, Column %d\n",
-			parsed.Location.Line, parsed.Location.Column))
+		fmt.Fprintf(&builder, "Location: Line %d, Column %d\n",
+			parsed.Location.Line, parsed.Location.Column)
 	}
 
 	// Problem
 	if parsed.Problem != "" {
-		builder.WriteString(fmt.Sprintf("Problem:  %s\n", parsed.Problem))
+		fmt.Fprintf(&builder, "Problem:  %s\n", parsed.Problem)
 	} else {
 		// Fallback: show truncated original error
 		problem := err.Error()
 		if len(problem) > 100 {
 			problem = problem[:97] + "..."
 		}
-		builder.WriteString(fmt.Sprintf("Problem:  %s\n", problem))
+		fmt.Fprintf(&builder, "Problem:  %s\n", problem)
 	}
 
 	// Template context (show the line with the error)
@@ -150,30 +150,30 @@ func FormatCompilationError(err error, templateName, templateContent string) str
 	var builder strings.Builder
 
 	// Header
-	builder.WriteString(fmt.Sprintf("Template Compilation Error: %s\n", templateName))
+	fmt.Fprintf(&builder, "Template Compilation Error: %s\n", templateName)
 	builder.WriteString(strings.Repeat("─", 60))
 	builder.WriteString("\n")
 
 	// Location
 	if parsed.Location != nil {
 		if parsed.Location.Column > 0 {
-			builder.WriteString(fmt.Sprintf("Location: Line %d, Column %d\n",
-				parsed.Location.Line, parsed.Location.Column))
+			fmt.Fprintf(&builder, "Location: Line %d, Column %d\n",
+				parsed.Location.Line, parsed.Location.Column)
 		} else {
-			builder.WriteString(fmt.Sprintf("Location: Line %d\n", parsed.Location.Line))
+			fmt.Fprintf(&builder, "Location: Line %d\n", parsed.Location.Line)
 		}
 	}
 
 	// Problem
 	if parsed.Problem != "" {
-		builder.WriteString(fmt.Sprintf("Problem:  %s\n", parsed.Problem))
+		fmt.Fprintf(&builder, "Problem:  %s\n", parsed.Problem)
 	} else {
 		// Fallback: show truncated original error
 		problem := err.Error()
 		if len(problem) > 100 {
 			problem = problem[:97] + "..."
 		}
-		builder.WriteString(fmt.Sprintf("Problem:  %s\n", problem))
+		fmt.Fprintf(&builder, "Problem:  %s\n", problem)
 	}
 
 	// Template context (show the line with the error and surrounding lines)
@@ -333,8 +333,8 @@ func extractProblem(errorStr string) string {
 	// Generic patterns
 	if strings.Contains(errorStr, "unable to evaluate") {
 		// Extract the part after "unable to evaluate"
-		if idx := strings.Index(errorStr, "unable to evaluate"); idx >= 0 {
-			rest := errorStr[idx+len("unable to evaluate"):]
+		if _, after, ok := strings.Cut(errorStr, "unable to evaluate"); ok {
+			rest := after
 			// Find the next colon to get the expression
 			if colonIdx := strings.Index(rest, ":"); colonIdx > 0 {
 				expr := strings.TrimSpace(rest[:colonIdx])
@@ -409,21 +409,18 @@ func extractTemplateContext(templateContent string, line, column int) string {
 	lineIndex := line - 1
 
 	// Calculate the width needed for line numbers (for alignment)
-	maxLineNum := line + 1
-	if maxLineNum > len(lines) {
-		maxLineNum = len(lines)
-	}
+	maxLineNum := min(line+1, len(lines))
 	lineNumWidth := len(fmt.Sprintf("%d", maxLineNum))
 
 	// Show line above (if it exists)
 	if lineIndex > 0 {
 		prevLine := lines[lineIndex-1]
-		builder.WriteString(fmt.Sprintf("%*d | %s\n", lineNumWidth, line-1, prevLine))
+		fmt.Fprintf(&builder, "%*d | %s\n", lineNumWidth, line-1, prevLine)
 	}
 
 	// Show the error line
 	errorLine := lines[lineIndex]
-	builder.WriteString(fmt.Sprintf("%*d | %s\n", lineNumWidth, line, errorLine))
+	fmt.Fprintf(&builder, "%*d | %s\n", lineNumWidth, line, errorLine)
 
 	// Add caret pointing to the column if we have it
 	if column > 0 && column <= len(errorLine)+1 {
@@ -436,7 +433,7 @@ func extractTemplateContext(templateContent string, line, column int) string {
 	// Show line below (if it exists)
 	if lineIndex < len(lines)-1 {
 		nextLine := lines[lineIndex+1]
-		builder.WriteString(fmt.Sprintf("%*d | %s\n", lineNumWidth, line+1, nextLine))
+		fmt.Fprintf(&builder, "%*d | %s\n", lineNumWidth, line+1, nextLine)
 	}
 
 	return builder.String()

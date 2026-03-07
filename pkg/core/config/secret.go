@@ -17,7 +17,7 @@ import (
 // Returns:
 //   - map[string][]byte: Decoded secret data ready for use
 //   - error: If any value is not a string or fails base64 decoding
-func ParseSecretData(dataRaw map[string]interface{}) (map[string][]byte, error) {
+func ParseSecretData(dataRaw map[string]any) (map[string][]byte, error) {
 	data := make(map[string][]byte)
 	for key, value := range dataRaw {
 		strValue, ok := value.(string)

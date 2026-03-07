@@ -106,7 +106,7 @@ func TestServer_SetHealthChecker(t *testing.T) {
 
 func TestServer_StartAndShutdown(t *testing.T) {
 	registry := NewRegistry()
-	registry.Publish("test", Func(func() (interface{}, error) {
+	registry.Publish("test", Func(func() (any, error) {
 		return "test-value", nil
 	}))
 
@@ -143,10 +143,10 @@ func TestServer_StartAndShutdown(t *testing.T) {
 
 func TestServer_HandleIndex(t *testing.T) {
 	registry := NewRegistry()
-	registry.Publish("config", Func(func() (interface{}, error) {
+	registry.Publish("config", Func(func() (any, error) {
 		return map[string]string{"version": "1.0"}, nil
 	}))
-	registry.Publish("status", Func(func() (interface{}, error) {
+	registry.Publish("status", Func(func() (any, error) {
 		return "running", nil
 	}))
 
@@ -160,7 +160,7 @@ func TestServer_HandleIndex(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.NewDecoder(resp.Body).Decode(&result)
 	require.NoError(t, err)
 
@@ -171,7 +171,7 @@ func TestServer_HandleIndex(t *testing.T) {
 
 func TestServer_HandleAllVars(t *testing.T) {
 	registry := NewRegistry()
-	registry.Publish("config", Func(func() (interface{}, error) {
+	registry.Publish("config", Func(func() (any, error) {
 		return map[string]string{"version": "1.0"}, nil
 	}))
 
@@ -185,7 +185,7 @@ func TestServer_HandleAllVars(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.NewDecoder(resp.Body).Decode(&result)
 	require.NoError(t, err)
 
@@ -194,8 +194,8 @@ func TestServer_HandleAllVars(t *testing.T) {
 
 func TestServer_HandleVar(t *testing.T) {
 	registry := NewRegistry()
-	registry.Publish("config", Func(func() (interface{}, error) {
-		return map[string]interface{}{
+	registry.Publish("config", Func(func() (any, error) {
+		return map[string]any{
 			"version": "1.0",
 			"name":    "test",
 		}, nil
@@ -212,7 +212,7 @@ func TestServer_HandleVar(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&result)
 		require.NoError(t, err)
 
@@ -253,7 +253,7 @@ func TestServer_HandleHealth(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&result)
 		require.NoError(t, err)
 
@@ -278,7 +278,7 @@ func TestServer_HandleHealth(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&result)
 		require.NoError(t, err)
 
@@ -303,7 +303,7 @@ func TestServer_HandleHealth(t *testing.T) {
 
 		assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&result)
 		require.NoError(t, err)
 
@@ -347,8 +347,7 @@ func TestServer_PortInUse(t *testing.T) {
 
 	// Try to start second server on same port
 	server2 := NewServer(server1.Addr(), registry)
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	defer cancel2()
+	ctx2 := t.Context()
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -366,7 +365,7 @@ func TestServer_PortInUse(t *testing.T) {
 
 func TestServer_HandleVarEdgeCases(t *testing.T) {
 	registry := NewRegistry()
-	registry.Publish("test", Func(func() (interface{}, error) {
+	registry.Publish("test", Func(func() (any, error) {
 		return "value", nil
 	}))
 
@@ -381,7 +380,7 @@ func TestServer_HandleVarEdgeCases(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&result)
 		require.NoError(t, err)
 
@@ -392,7 +391,7 @@ func TestServer_HandleVarEdgeCases(t *testing.T) {
 func TestServer_TwoPhaseInitialization(t *testing.T) {
 	t.Run("setup then serve", func(t *testing.T) {
 		registry := NewRegistry()
-		registry.Publish("test", Func(func() (interface{}, error) {
+		registry.Publish("test", Func(func() (any, error) {
 			return "test-value", nil
 		}))
 
@@ -423,8 +422,7 @@ func TestServer_TwoPhaseInitialization(t *testing.T) {
 		registry := NewRegistry()
 		server := NewServer("localhost:0", registry)
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		err := server.Serve(ctx)
 		require.Error(t, err)
@@ -433,7 +431,7 @@ func TestServer_TwoPhaseInitialization(t *testing.T) {
 
 	t.Run("start calls setup implicitly", func(t *testing.T) {
 		registry := NewRegistry()
-		registry.Publish("test", Func(func() (interface{}, error) {
+		registry.Publish("test", Func(func() (any, error) {
 			return "implicit-setup", nil
 		}))
 

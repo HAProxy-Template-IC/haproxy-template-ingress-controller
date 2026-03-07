@@ -28,12 +28,12 @@ import "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 //	resource["spec"]["rules"]
 //
 // Returns nil if the resource type is not supported.
-func ConvertResource(resource interface{}) map[string]interface{} {
+func ConvertResource(resource any) map[string]any {
 	switch r := resource.(type) {
 	case *unstructured.Unstructured:
-		return convertFloatsToInts(r.Object).(map[string]interface{})
-	case map[string]interface{}:
-		return convertFloatsToInts(r).(map[string]interface{})
+		return convertFloatsToInts(r.Object).(map[string]any)
+	case map[string]any:
+		return convertFloatsToInts(r).(map[string]any)
 	default:
 		return nil
 	}
@@ -61,16 +61,16 @@ func ConvertResource(resource interface{}) map[string]interface{} {
 //   - 3.14 → 3.14 (preserved as-is)
 //   - "string" → "string" (unchanged)
 //   - nested maps/slices processed recursively
-func convertFloatsToInts(data interface{}) interface{} {
+func convertFloatsToInts(data any) any {
 	switch v := data.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		// Mutate map values in-place (safe: resources are freshly deserialized and owned by us)
 		for k, val := range v {
 			v[k] = convertFloatsToInts(val)
 		}
 		return v
 
-	case []interface{}:
+	case []any:
 		// Mutate slice elements in-place
 		for i, val := range v {
 			v[i] = convertFloatsToInts(val)

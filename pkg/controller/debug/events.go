@@ -32,11 +32,11 @@ const ComponentName = "event-buffer"
 // This is a simplified representation of controller events for debug purposes.
 // It captures the essential information without exposing internal event structures.
 type Event struct {
-	Timestamp     time.Time   `json:"timestamp"`
-	Type          string      `json:"type"`
-	Summary       string      `json:"summary"`
-	Details       interface{} `json:"details,omitempty"`
-	CorrelationID string      `json:"correlation_id,omitempty"`
+	Timestamp     time.Time `json:"timestamp"`
+	Type          string    `json:"type"`
+	Summary       string    `json:"summary"`
+	Details       any       `json:"details,omitempty"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
 }
 
 // EventBuffer maintains a ring buffer of recent events for debug purposes.
@@ -170,7 +170,7 @@ func (eb *EventBuffer) convertEvent(event busevents.Event) Event {
 }
 
 // createSummary generates a human-readable summary for an event.
-func (eb *EventBuffer) createSummary(event interface{}, eventType string) string {
+func (eb *EventBuffer) createSummary(event any, eventType string) string {
 	// For now, just use the event type as the summary
 	// In the future, we could add more sophisticated summarization
 	// based on specific event types
@@ -201,6 +201,6 @@ type EventsVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *EventsVar) Get() (interface{}, error) {
+func (v *EventsVar) Get() (any, error) {
 	return v.buffer.GetLast(v.defaultLimit), nil
 }

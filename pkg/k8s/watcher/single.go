@@ -167,7 +167,7 @@ func (w *SingleWatcher) handleWatchError(_ *cache.Reflector, err error) {
 }
 
 // handleAdd handles resource addition events.
-func (w *SingleWatcher) handleAdd(obj interface{}) {
+func (w *SingleWatcher) handleAdd(obj any) {
 	// Track last event time for health monitoring
 	w.lastEventTime.Store(time.Now().Unix())
 
@@ -213,7 +213,7 @@ func (w *SingleWatcher) handleAdd(obj interface{}) {
 }
 
 // handleUpdate handles resource update events.
-func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
+func (w *SingleWatcher) handleUpdate(oldObj, newObj any) {
 	// Track last event time for health monitoring
 	w.lastEventTime.Store(time.Now().Unix())
 
@@ -295,7 +295,7 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj interface{}) {
 }
 
 // handleDelete handles resource deletion events.
-func (w *SingleWatcher) handleDelete(obj interface{}) {
+func (w *SingleWatcher) handleDelete(obj any) {
 	// Track last event time for health monitoring
 	w.lastEventTime.Store(time.Now().Unix())
 
@@ -346,7 +346,7 @@ func (w *SingleWatcher) handleDelete(obj interface{}) {
 }
 
 // convertToUnstructured converts a resource to *unstructured.Unstructured.
-func (w *SingleWatcher) convertToUnstructured(obj interface{}) *unstructured.Unstructured {
+func (w *SingleWatcher) convertToUnstructured(obj any) *unstructured.Unstructured {
 	if u, ok := obj.(*unstructured.Unstructured); ok {
 		return u
 	}

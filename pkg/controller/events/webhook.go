@@ -58,7 +58,7 @@ type WebhookValidationRequest struct {
 
 	// Object is the full resource object from the AdmissionRequest.
 	// Typically map[string]interface{} parsed from JSON.
-	Object interface{}
+	Object any
 
 	// Operation indicates the admission operation type.
 	// Values: "CREATE", "UPDATE", "DELETE"
@@ -94,7 +94,7 @@ func (e *WebhookValidationRequest) RequestID() string {
 //
 // Returns:
 //   - Immutable WebhookValidationRequest with unique ID
-func NewWebhookValidationRequest(gvk, namespace, name string, obj interface{}, operation string) *WebhookValidationRequest {
+func NewWebhookValidationRequest(gvk, namespace, name string, obj any, operation string) *WebhookValidationRequest {
 	return &WebhookValidationRequest{
 		ID:        uuid.New().String(),
 		GVK:       gvk,

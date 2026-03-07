@@ -100,14 +100,14 @@ func setupConfigWatchers(
 		GVR:       crdGVR,
 		Namespace: k8sClient.Namespace(),
 		Name:      crdName,
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			bus.Publish(events.NewConfigResourceChangedEvent(obj))
 			return nil
 		},
 		// OnSyncComplete delivers the current state after initial sync.
 		// This ensures eventual consistency: if updates arrived during the sync window
 		// (when OnChange callbacks are suppressed), the current state is delivered here.
-		OnSyncComplete: func(obj interface{}) error {
+		OnSyncComplete: func(obj any) error {
 			if obj == nil {
 				logger.Debug("CRD watcher sync complete, no resource in cache (skipping event)")
 				return nil
@@ -125,14 +125,14 @@ func setupConfigWatchers(
 		GVR:       secretGVR,
 		Namespace: k8sClient.Namespace(),
 		Name:      secretName,
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			bus.Publish(events.NewSecretResourceChangedEvent(obj))
 			return nil
 		},
 		// OnSyncComplete delivers the current state after initial sync.
 		// This ensures eventual consistency: if updates arrived during the sync window
 		// (when OnChange callbacks are suppressed), the current state is delivered here.
-		OnSyncComplete: func(obj interface{}) error {
+		OnSyncComplete: func(obj any) error {
 			if obj == nil {
 				logger.Debug("Secret watcher sync complete, no resource in cache (skipping event)")
 				return nil
@@ -229,12 +229,12 @@ func setupCurrentConfigStore(
 		GVR:       haproxyCfgGVR,
 		Namespace: k8sClient.Namespace(),
 		Name:      haproxyCfgName,
-		OnSyncComplete: func(obj interface{}) error {
+		OnSyncComplete: func(obj any) error {
 			// Silent update - NO events published
 			store.Update(obj)
 			return nil
 		},
-		OnChange: func(obj interface{}) error {
+		OnChange: func(obj any) error {
 			// Silent update - NO events published
 			// This does NOT trigger reconciliation
 			store.Update(obj)

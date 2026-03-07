@@ -69,7 +69,7 @@ func ParseEngineType(s string) (EngineType, error) {
 //   - Predicted absolute path where the file will be located
 //   - Error if validation fails or content conflict detected
 type FileRegistrar interface {
-	Register(args ...interface{}) (string, error)
+	Register(args ...any) (string, error)
 }
 
 // ResourceStore defines the interface for resource stores accessible from templates.
@@ -85,13 +85,13 @@ type FileRegistrar interface {
 // Implementations are provided by pkg/controller/rendercontext.StoreWrapper.
 type ResourceStore interface {
 	// List returns all resources from the store.
-	List() []interface{}
+	List() []any
 
 	// Fetch returns resources matching the given keys (typically namespace, name).
-	Fetch(keys ...interface{}) []interface{}
+	Fetch(keys ...any) []any
 
 	// GetSingle returns a single resource matching the keys, or nil if not found.
-	GetSingle(keys ...interface{}) interface{}
+	GetSingle(keys ...any) any
 }
 
 // HTTPFetcher defines the interface for HTTP resource fetching accessible from templates.
@@ -107,7 +107,7 @@ type HTTPFetcher interface {
 	//   - args[0]: URL (string, required)
 	//   - args[1]: options (map, optional) - {"delay": "60s", "timeout": "30s", "retries": 3, "critical": true}
 	//   - args[2]: auth (map, optional) - {"type": "bearer"|"basic", "token": "...", ...}
-	Fetch(args ...interface{}) (interface{}, error)
+	Fetch(args ...any) (any, error)
 }
 
 // RuntimeEnvironment holds runtime information available to templates.

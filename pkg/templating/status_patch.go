@@ -16,6 +16,7 @@ package templating
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -39,7 +40,7 @@ type StatusPatch struct {
 	// Variants maps pipeline phase names to desired status payloads.
 	// Keys are phase names: "rendered", "deployed", "renderFailed", "deployFailed".
 	// Values are the desired .status content for that phase.
-	Variants map[string]map[string]interface{}
+	Variants map[string]map[string]any
 }
 
 // statusPatchKey uniquely identifies a target resource for patch merging.
@@ -71,7 +72,7 @@ func NewStatusPatchCollector() *StatusPatchCollector {
 //   - "deployed": applied after successful deployment
 //   - "renderFailed": applied when later render phases fail
 //   - "deployFailed": applied when deployment fails
-func (c *StatusPatchCollector) Register(namespace, name, apiVersion, kind string, variants map[string]map[string]interface{}) error {
+func (c *StatusPatchCollector) Register(namespace, name, apiVersion, kind string, variants map[string]map[string]any) error {
 	if namespace == "" || name == "" || apiVersion == "" || kind == "" {
 		return fmt.Errorf("statusPatch: namespace, name, apiVersion, and kind are required")
 	}
@@ -108,9 +109,7 @@ func (c *StatusPatchCollector) Register(namespace, name, apiVersion, kind string
 	}
 
 	// Merge variants into existing patch
-	for phase, status := range variants {
-		existing.Variants[phase] = status
-	}
+	maps.Copy(existing.Variants, variants)
 
 	return nil
 }

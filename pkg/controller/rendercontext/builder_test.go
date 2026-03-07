@@ -151,7 +151,7 @@ func TestBuilder_Build_WithCapabilities(t *testing.T) {
 	builder := NewBuilder(cfg, pathResolver, logger, WithCapabilities(capabilities))
 	ctx, _, _ := builder.Build()
 
-	caps := ctx["capabilities"].(map[string]interface{})
+	caps := ctx["capabilities"].(map[string]any)
 	assert.True(t, caps["supports_waf"].(bool))
 	assert.True(t, caps["supports_http2"].(bool))
 	assert.True(t, caps["is_enterprise"].(bool)) // Derived from supports_waf
@@ -160,8 +160,8 @@ func TestBuilder_Build_WithCapabilities(t *testing.T) {
 func TestBuilder_Build_WithExtraContext(t *testing.T) {
 	cfg := &config.Config{
 		TemplatingSettings: config.TemplatingSettings{
-			ExtraContext: map[string]interface{}{
-				"debug": map[string]interface{}{
+			ExtraContext: map[string]any{
+				"debug": map[string]any{
 					"enabled": true,
 				},
 				"version": "1.0",
@@ -175,7 +175,7 @@ func TestBuilder_Build_WithExtraContext(t *testing.T) {
 	ctx, _, _ := builder.Build()
 
 	// Check extraContext map is populated
-	extraContext := ctx["extraContext"].(map[string]interface{})
+	extraContext := ctx["extraContext"].(map[string]any)
 	assert.Equal(t, "1.0", extraContext["version"])
 
 	// Check values are merged to top level
@@ -234,26 +234,26 @@ func TestSortSnippetNames(t *testing.T) {
 func TestMergeExtraContextInto(t *testing.T) {
 	t.Run("nil extraContext", func(t *testing.T) {
 		cfg := &config.Config{}
-		renderCtx := make(map[string]interface{})
+		renderCtx := make(map[string]any)
 
 		MergeExtraContextInto(renderCtx, cfg)
 
 		// Should create empty extraContext to prevent nil dereference
 		assert.Contains(t, renderCtx, "extraContext")
-		extraContext := renderCtx["extraContext"].(map[string]interface{})
+		extraContext := renderCtx["extraContext"].(map[string]any)
 		assert.Empty(t, extraContext)
 	})
 
 	t.Run("with extraContext", func(t *testing.T) {
 		cfg := &config.Config{
 			TemplatingSettings: config.TemplatingSettings{
-				ExtraContext: map[string]interface{}{
+				ExtraContext: map[string]any{
 					"key1": "value1",
 					"key2": 42,
 				},
 			},
 		}
-		renderCtx := make(map[string]interface{})
+		renderCtx := make(map[string]any)
 
 		MergeExtraContextInto(renderCtx, cfg)
 
@@ -262,7 +262,7 @@ func TestMergeExtraContextInto(t *testing.T) {
 		assert.Equal(t, 42, renderCtx["key2"])
 
 		// Check extraContext map
-		extraContext := renderCtx["extraContext"].(map[string]interface{})
+		extraContext := renderCtx["extraContext"].(map[string]any)
 		assert.Equal(t, "value1", extraContext["key1"])
 	})
 }

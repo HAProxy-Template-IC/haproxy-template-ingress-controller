@@ -248,7 +248,7 @@ func renderSingleTemplate(
 	engine templating.Engine,
 	templateName string,
 	displayName string,
-	renderCtx map[string]interface{},
+	renderCtx map[string]any,
 ) (FileRenderResult, []templating.IncludeStats, error) {
 	start := time.Now()
 	var stats []templating.IncludeStats
@@ -273,7 +273,7 @@ func renderSingleTemplate(
 }
 
 // renderAllFiles renders all templates (haproxy.cfg + maps + files + certs) and returns timing for each.
-func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[string]interface{}) (IterationResult, error) {
+func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[string]any) (IterationResult, error) {
 	result := IterationResult{
 		FileResults: make([]FileRenderResult, 0),
 	}
@@ -361,7 +361,7 @@ func sortedCertKeys(certs map[string]config.SSLCertificate) []string {
 }
 
 // createStoresForBenchmark creates resource stores from test fixtures.
-func createStoresForBenchmark(cfg *config.Config, engine templating.Engine, fixtures map[string][]interface{}) (map[string]stores.Store, error) {
+func createStoresForBenchmark(cfg *config.Config, engine templating.Engine, fixtures map[string][]any) (map[string]stores.Store, error) {
 	// Create a minimal runner just to use its fixture processing
 	runner := testrunner.New(cfg, engine, nil, testrunner.Options{})
 	return runner.CreateStoresFromFixtures(fixtures)
@@ -383,7 +383,7 @@ func buildBenchmarkContext(
 	validationPaths *dataplane.ValidationPaths,
 	httpStore *testrunner.FixtureHTTPStoreWrapper,
 	logger *slog.Logger,
-) map[string]interface{} {
+) map[string]any {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -594,10 +594,7 @@ func outputBenchmarkIncludeProfile(results []*BenchmarkResult) {
 	fmt.Printf("%-45s %8s %10s %10s %10s\n", "Include", "Count", "Total(ms)", "Avg(ms)", "Max(ms)")
 	fmt.Println(strings.Repeat("-", 80))
 
-	limit := 20
-	if len(stats) < limit {
-		limit = len(stats)
-	}
+	limit := min(len(stats), 20)
 
 	for i := 0; i < limit; i++ {
 		stat := stats[i]

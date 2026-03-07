@@ -13,10 +13,7 @@ func (c *Comparator) compareLogTargets(parentType, parentName string, currentLog
 	var operations []Operation
 
 	// Compare log targets by position
-	maxLen := len(currentLogs)
-	if len(desiredLogs) > maxLen {
-		maxLen = len(desiredLogs)
-	}
+	maxLen := max(len(desiredLogs), len(currentLogs))
 
 	for i := 0; i < maxLen; i++ {
 		hasCurrentLog := i < len(currentLogs)

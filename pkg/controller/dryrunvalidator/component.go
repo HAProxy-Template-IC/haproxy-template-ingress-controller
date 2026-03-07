@@ -256,7 +256,7 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 //   - object: The Kubernetes resource object (must be runtime.Object for CREATE/UPDATE)
 //   - operation: Admission operation (CREATE, UPDATE, DELETE)
 //   - requestID: Request ID for logging (can be empty for direct validation)
-func (c *Component) createOverlay(namespace, name string, object interface{}, operation, requestID string) *stores.StoreOverlay {
+func (c *Component) createOverlay(namespace, name string, object any, operation, requestID string) *stores.StoreOverlay {
 	// Handle DELETE first - it doesn't need an object
 	if operation == "DELETE" {
 		return stores.NewStoreOverlayForDelete(namespace, name)
@@ -416,26 +416,27 @@ func (c *Component) runValidationTests(requestID string) error {
 
 // buildTestFailureError builds a detailed error message from test results.
 func (c *Component) buildTestFailureError(testResults *testrunner.TestResults) error {
-	errorMsg := fmt.Sprintf("Validation tests failed: %d/%d tests failed\n\nFailed tests:\n",
+	var errorMsg strings.Builder
+	fmt.Fprintf(&errorMsg, "Validation tests failed: %d/%d tests failed\n\nFailed tests:\n",
 		testResults.FailedTests, testResults.TotalTests)
 
 	for i := range testResults.TestResults {
 		result := &testResults.TestResults[i]
 		if !result.Passed {
-			errorMsg += fmt.Sprintf("\n- Test: %s\n", result.TestName)
+			fmt.Fprintf(&errorMsg, "\n- Test: %s\n", result.TestName)
 			if result.RenderError != "" {
-				errorMsg += fmt.Sprintf("  Rendering failed: %s\n", result.RenderError)
+				fmt.Fprintf(&errorMsg, "  Rendering failed: %s\n", result.RenderError)
 			}
 			for _, assertion := range result.Assertions {
 				if !assertion.Passed {
-					errorMsg += fmt.Sprintf("  Assertion failed: %s - %s\n",
+					fmt.Fprintf(&errorMsg, "  Assertion failed: %s - %s\n",
 						assertion.Description, assertion.Error)
 				}
 			}
 		}
 	}
 
-	return fmt.Errorf("%s", errorMsg)
+	return fmt.Errorf("%s", errorMsg.String())
 }
 
 // publishResponse publishes a WebhookValidationResponse event.
@@ -468,7 +469,7 @@ func (c *Component) publishResponse(requestID string, allowed bool, reason strin
 // Returns:
 //   - allowed: Whether the resource passed validation
 //   - reason: Denial reason if not allowed, empty otherwise
-func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object interface{}, operation string) (allowed bool, reason string) {
+func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string) {
 	c.logger.Debug("Direct validation request",
 		"gvk", gvk,
 		"namespace", namespace,

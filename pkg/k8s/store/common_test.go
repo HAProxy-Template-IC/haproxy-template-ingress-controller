@@ -115,15 +115,15 @@ func TestMakeKeyString(t *testing.T) {
 func TestExtractNamespaceName(t *testing.T) {
 	tests := []struct {
 		name              string
-		resource          interface{}
+		resource          any
 		expectedNamespace string
 		expectedName      string
 	}{
 		{
 			name: "unstructured resource",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"metadata": map[string]interface{}{
+				Object: map[string]any{
+					"metadata": map[string]any{
 						"namespace": "default",
 						"name":      "my-resource",
 					},
@@ -134,8 +134,8 @@ func TestExtractNamespaceName(t *testing.T) {
 		},
 		{
 			name: "map resource",
-			resource: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			resource: map[string]any{
+				"metadata": map[string]any{
 					"namespace": "kube-system",
 					"name":      "config",
 				},
@@ -145,8 +145,8 @@ func TestExtractNamespaceName(t *testing.T) {
 		},
 		{
 			name: "map without metadata",
-			resource: map[string]interface{}{
-				"spec": map[string]interface{}{},
+			resource: map[string]any{
+				"spec": map[string]any{},
 			},
 			expectedNamespace: "",
 			expectedName:      "",
@@ -204,9 +204,9 @@ type storeWithSize interface {
 //   - resource: a resource appropriate for the store type
 //   - keys: the index keys for the resource
 func RunUpdateToNewKeyTest(t *testing.T, store interface {
-	Update(resource interface{}, keys []string) error
-	Get(keys ...string) ([]interface{}, error)
-}, sizeGetter storeWithSize, resource interface{}, keys []string) {
+	Update(resource any, keys []string) error
+	Get(keys ...string) ([]any, error)
+}, sizeGetter storeWithSize, resource any, keys []string) {
 	t.Helper()
 
 	// Update a resource that doesn't exist (should create it)
@@ -241,9 +241,9 @@ func RunUpdateToNewKeyTest(t *testing.T, store interface {
 //   - existingKeys: keys for the existing resource
 //   - nonExistentKeys: keys for a resource that doesn't exist
 func RunDeleteNonExistentTest(t *testing.T, store interface {
-	Add(resource interface{}, keys []string) error
+	Add(resource any, keys []string) error
 	Delete(keys ...string) error
-}, sizeGetter storeWithSize, existingResource interface{}, existingKeys []string, nonExistentKeys []string) {
+}, sizeGetter storeWithSize, existingResource any, existingKeys []string, nonExistentKeys []string) {
 	t.Helper()
 
 	// Add a resource first

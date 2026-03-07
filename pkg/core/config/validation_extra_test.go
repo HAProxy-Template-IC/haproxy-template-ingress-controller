@@ -22,7 +22,7 @@ import (
 func TestValidateExtraContext(t *testing.T) {
 	tests := []struct {
 		name        string
-		ctx         map[string]interface{}
+		ctx         map[string]any
 		wantErr     bool
 		errContains string
 	}{
@@ -33,12 +33,12 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name:    "empty map",
-			ctx:     map[string]interface{}{},
+			ctx:     map[string]any{},
 			wantErr: false,
 		},
 		{
 			name: "primitive types",
-			ctx: map[string]interface{}{
+			ctx: map[string]any{
 				"string_val":  "hello",
 				"float_val":   float64(3.14),
 				"bool_val":    true,
@@ -49,8 +49,8 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name: "nested map",
-			ctx: map[string]interface{}{
-				"config": map[string]interface{}{
+			ctx: map[string]any{
+				"config": map[string]any{
 					"enabled": true,
 					"rate":    float64(100),
 					"name":    "test",
@@ -60,8 +60,8 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name: "array",
-			ctx: map[string]interface{}{
-				"items": []interface{}{
+			ctx: map[string]any{
+				"items": []any{
 					"item1",
 					"item2",
 					float64(3),
@@ -71,11 +71,11 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name: "deeply nested",
-			ctx: map[string]interface{}{
-				"level1": map[string]interface{}{
-					"level2": map[string]interface{}{
-						"level3": []interface{}{
-							map[string]interface{}{
+			ctx: map[string]any{
+				"level1": map[string]any{
+					"level2": map[string]any{
+						"level3": []any{
+							map[string]any{
 								"value": float64(42),
 							},
 						},
@@ -86,7 +86,7 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name: "function type rejected",
-			ctx: map[string]interface{}{
+			ctx: map[string]any{
 				"bad": func() {},
 			},
 			wantErr:     true,
@@ -94,7 +94,7 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name: "channel type rejected",
-			ctx: map[string]interface{}{
+			ctx: map[string]any{
 				"bad": make(chan int),
 			},
 			wantErr:     true,
@@ -102,8 +102,8 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name: "nested unsupported type",
-			ctx: map[string]interface{}{
-				"outer": map[string]interface{}{
+			ctx: map[string]any{
+				"outer": map[string]any{
 					"inner": func() {},
 				},
 			},
@@ -112,8 +112,8 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name: "unsupported type in array",
-			ctx: map[string]interface{}{
-				"items": []interface{}{
+			ctx: map[string]any{
+				"items": []any{
 					"valid",
 					func() {}, // invalid
 				},
@@ -123,7 +123,7 @@ func TestValidateExtraContext(t *testing.T) {
 		},
 		{
 			name: "integer types allowed",
-			ctx: map[string]interface{}{
+			ctx: map[string]any{
 				"int_val":   int(42),
 				"int64_val": int64(42),
 			},

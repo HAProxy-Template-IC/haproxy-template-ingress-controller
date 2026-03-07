@@ -146,7 +146,6 @@ func (r *Registry) StartAll(ctx context.Context, isLeader bool) error {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	for _, comp := range componentsToStart {
-		comp := comp // Capture loop variable
 		g.Go(func() error {
 			// Wait for dependencies to be ready
 			if err := r.waitForDependencies(gCtx, comp); err != nil {
@@ -515,7 +514,6 @@ func (r *Registry) StartLeaderOnlyComponents(ctx context.Context) error {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	for _, comp := range componentsToStart {
-		comp := comp
 		g.Go(func() error {
 			// Wait for dependencies to be ready
 			if err := r.waitForDependencies(gCtx, comp); err != nil {
@@ -601,7 +599,6 @@ func (r *Registry) StartLeaderOnlyComponentsAsync(ctx context.Context) (<-chan e
 
 	// Start all components in goroutines
 	for _, comp := range componentsToStart {
-		comp := comp
 		g.Go(func() error {
 			// Wait for dependencies to be ready
 			if err := r.waitForDependencies(gCtx, comp); err != nil {

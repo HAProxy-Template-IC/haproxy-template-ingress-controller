@@ -15,6 +15,7 @@
 package introspection
 
 import (
+	"maps"
 	"sync"
 	"sync/atomic"
 )
@@ -30,10 +31,10 @@ import (
 //	registry.Publish("uptime", Func(func() (interface{}, error) {
 //	    return time.Since(startTime).String(), nil
 //	}))
-type Func func() (interface{}, error)
+type Func func() (any, error)
 
 // Get implements the Var interface by calling the function.
-func (f Func) Get() (interface{}, error) {
+func (f Func) Get() (any, error) {
 	return f()
 }
 
@@ -59,7 +60,7 @@ func NewInt(initial int64) *IntVar {
 }
 
 // Get implements the Var interface.
-func (v *IntVar) Get() (interface{}, error) {
+func (v *IntVar) Get() (any, error) {
 	return v.value.Load(), nil
 }
 
@@ -96,7 +97,7 @@ func NewString(initial string) *StringVar {
 }
 
 // Get implements the Var interface.
-func (v *StringVar) Get() (interface{}, error) {
+func (v *StringVar) Get() (any, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.value, nil
@@ -134,7 +135,7 @@ func NewFloat(initial float64) *FloatVar {
 }
 
 // Get implements the Var interface.
-func (v *FloatVar) Get() (interface{}, error) {
+func (v *FloatVar) Get() (any, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.value, nil
@@ -173,32 +174,30 @@ func (v *FloatVar) Value() float64 {
 //	stats.Set("errors", 5)
 type MapVar struct {
 	mu   sync.RWMutex
-	data map[string]interface{}
+	data map[string]any
 }
 
 // NewMap creates a new MapVar.
 func NewMap() *MapVar {
 	return &MapVar{
-		data: make(map[string]interface{}),
+		data: make(map[string]any),
 	}
 }
 
 // Get implements the Var interface.
-func (v *MapVar) Get() (interface{}, error) {
+func (v *MapVar) Get() (any, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
 	// Return a copy to prevent external modification
-	result := make(map[string]interface{}, len(v.data))
-	for k, val := range v.data {
-		result[k] = val
-	}
+	result := make(map[string]any, len(v.data))
+	maps.Copy(result, v.data)
 
 	return result, nil
 }
 
 // Set sets a key to the specified value.
-func (v *MapVar) Set(key string, value interface{}) {
+func (v *MapVar) Set(key string, value any) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.data[key] = value

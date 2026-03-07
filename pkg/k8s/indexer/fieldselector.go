@@ -63,7 +63,7 @@ func NewFieldSelectorMatcher(expression string) (*FieldSelectorMatcher, error) {
 //
 // A missing field is treated as a non-match (not an error), allowing resources
 // without the field to be filtered out gracefully.
-func (m *FieldSelectorMatcher) Matches(resource interface{}) (bool, error) {
+func (m *FieldSelectorMatcher) Matches(resource any) (bool, error) {
 	actualValue, found := m.tryEvaluate(resource)
 	if !found {
 		// Missing field - treat as non-match.
@@ -76,7 +76,7 @@ func (m *FieldSelectorMatcher) Matches(resource interface{}) (bool, error) {
 
 // tryEvaluate attempts to evaluate the field path and returns (value, found).
 // If the field doesn't exist or evaluation fails, returns ("", false).
-func (m *FieldSelectorMatcher) tryEvaluate(resource interface{}) (string, bool) {
+func (m *FieldSelectorMatcher) tryEvaluate(resource any) (string, bool) {
 	actualValue, err := m.evaluator.Evaluate(resource)
 	if err != nil {
 		return "", false

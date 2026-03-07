@@ -17,10 +17,14 @@ func (c *Comparator) compareUserlists(current, desired *parser.StructuredConfig)
 	currentMap := buildUserlistMap(current.Userlists)
 	desiredMap := buildUserlistMap(desired.Userlists)
 
-	var operations []Operation
-	operations = append(operations, c.findAddedUserlistsWithIndexes(desiredMap, currentMap, desired.UserIndex)...)
-	operations = append(operations, findDeletedUserlists(currentMap, desiredMap)...)
-	operations = append(operations, c.findModifiedUserlistsWithIndexes(currentMap, desiredMap, current.UserIndex, desired.UserIndex, current.GroupIndex, desired.GroupIndex)...)
+	addedOps := c.findAddedUserlistsWithIndexes(desiredMap, currentMap, desired.UserIndex)
+	deletedOps := findDeletedUserlists(currentMap, desiredMap)
+	modifiedOps := c.findModifiedUserlistsWithIndexes(currentMap, desiredMap, current.UserIndex, desired.UserIndex, current.GroupIndex, desired.GroupIndex)
+
+	operations := make([]Operation, 0, len(addedOps)+len(deletedOps)+len(modifiedOps))
+	operations = append(operations, addedOps...)
+	operations = append(operations, deletedOps...)
+	operations = append(operations, modifiedOps...)
 
 	return operations
 }

@@ -315,10 +315,10 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 		}
 
 		// Build the SSA patch payload: wrap status content under .status.
-		ssaPayload := map[string]interface{}{
+		ssaPayload := map[string]any{
 			"apiVersion": patch.APIVersion,
 			"kind":       patch.Kind,
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": patch.Namespace,
 				"name":      patch.Name,
 			},
@@ -342,7 +342,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 			ssaBytes,
 			metav1.PatchOptions{
 				FieldManager: fieldManager,
-				Force:        boolPtr(true),
+				Force:        new(true),
 			},
 			"status",
 		)
@@ -381,11 +381,6 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	c.eventBus.Publish(events.NewStatusUpdateCompletedEvent(
 		phase, applied, skipped, durationMs,
 	))
-}
-
-// boolPtr returns a pointer to a bool value.
-func boolPtr(b bool) *bool {
-	return &b
 }
 
 // isRetriable returns true if the error is likely transient.

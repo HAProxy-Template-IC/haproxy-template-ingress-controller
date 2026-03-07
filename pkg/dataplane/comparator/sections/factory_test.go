@@ -48,12 +48,12 @@ func TestPtrStr(t *testing.T) {
 		},
 		{
 			name: "empty string pointer",
-			in:   ptr(""),
+			in:   new(""),
 			want: "",
 		},
 		{
 			name: "non-empty string pointer",
-			in:   ptr("test"),
+			in:   new("test"),
 			want: "test",
 		},
 	}
@@ -64,11 +64,6 @@ func TestPtrStr(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
-}
-
-// ptr returns a pointer to the given string.
-func ptr(s string) *string {
-	return &s
 }
 
 func TestBackendFactoryFunctions(t *testing.T) {

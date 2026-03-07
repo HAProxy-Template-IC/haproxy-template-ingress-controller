@@ -84,8 +84,7 @@ func TestStateCache_HandleConfigValidated(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -115,8 +114,7 @@ func TestStateCache_HandleConfigValidated_WrongType(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -138,8 +136,7 @@ func TestStateCache_HandleCredentialsUpdated(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -168,8 +165,7 @@ func TestStateCache_HandleCredentialsUpdated_WrongType(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -191,8 +187,7 @@ func TestStateCache_HandleTemplateRendered(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -243,8 +238,7 @@ func TestStateCache_HandleTemplateRenderFailed(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -268,8 +262,7 @@ func TestStateCache_HandleReconciliationTriggered(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -293,8 +286,7 @@ func TestStateCache_HandleValidationStarted(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -317,8 +309,7 @@ func TestStateCache_HandleValidationCompleted(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -354,8 +345,7 @@ func TestStateCache_HandleValidationFailed(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -384,8 +374,7 @@ func TestStateCache_HandleDeploymentStarted(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -414,8 +403,7 @@ func TestStateCache_HandleDeploymentCompleted_AllSucceeded(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -446,8 +434,7 @@ func TestStateCache_HandleDeploymentCompleted_Partial(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -475,8 +462,7 @@ func TestStateCache_HandleDeploymentCompleted_AllFailed(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -504,8 +490,7 @@ func TestStateCache_HandleInstanceDeploymentFailed(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -633,8 +618,7 @@ func TestStateCache_GetErrors_RenderError(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -655,8 +639,7 @@ func TestStateCache_GetErrors_ValidationError(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -677,8 +660,7 @@ func TestStateCache_GetErrors_DeploymentErrors(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()
@@ -709,8 +691,7 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 	logger := slog.Default()
 	cache := NewStateCache(bus, nil, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go cache.Start(ctx)
 	bus.Start()

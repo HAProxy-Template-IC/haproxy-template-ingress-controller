@@ -397,9 +397,9 @@ func TestElector_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent access to IsLeader and GetLeader
 	done := make(chan struct{})
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				_ = elector.IsLeader()
 				_ = elector.GetLeader()
 			}
@@ -408,7 +408,7 @@ func TestElector_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }

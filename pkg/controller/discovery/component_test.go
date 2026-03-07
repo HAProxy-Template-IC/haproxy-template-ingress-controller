@@ -802,11 +802,11 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 	pod.SetNamespace(namespace)
 
 	// Set spec.containers with dataplane port
-	containers := []interface{}{
-		map[string]interface{}{
+	containers := []any{
+		map[string]any{
 			"name": "dataplane",
-			"ports": []interface{}{
-				map[string]interface{}{
+			"ports": []any{
+				map[string]any{
 					"containerPort": port,
 					"name":          "dataplane",
 				},
@@ -825,12 +825,12 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 	require.NoError(t, err)
 
 	// Set Ready condition
-	conditions := []interface{}{
-		map[string]interface{}{
+	conditions := []any{
+		map[string]any{
 			"type":   "Ready",
 			"status": "True",
 		},
-		map[string]interface{}{
+		map[string]any{
 			"type":   "ContainersReady",
 			"status": "True",
 		},
@@ -839,11 +839,11 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 	require.NoError(t, err)
 
 	// Set container status (dataplane container running)
-	containerStatuses := []interface{}{
-		map[string]interface{}{
+	containerStatuses := []any{
+		map[string]any{
 			"name": "dataplane",
-			"state": map[string]interface{}{
-				"running": map[string]interface{}{
+			"state": map[string]any{
+				"running": map[string]any{
 					"startedAt": "2025-01-01T00:00:00Z",
 				},
 			},

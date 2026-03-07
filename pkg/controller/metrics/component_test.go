@@ -337,7 +337,7 @@ func TestComponent_HighEventVolume(t *testing.T) {
 	eventBus.Start()
 
 	// Publish many events rapidly
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		eventBus.Publish(events.NewReconciliationCompletedEvent(int64(i)))
 		if i%10 == 0 {
 			eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))

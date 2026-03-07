@@ -40,7 +40,7 @@ func (e *StoreError) Unwrap() error {
 
 // extractNamespaceName extracts namespace and name from a Kubernetes resource.
 // Returns empty strings if the resource doesn't have metadata.namespace or metadata.name.
-func extractNamespaceName(resource interface{}) (namespace, name string) {
+func extractNamespaceName(resource any) (namespace, name string) {
 	// Try to extract from unstructured.Unstructured or any type with GetNamespace/GetName methods
 	type metadataGetter interface {
 		GetNamespace() string
@@ -52,8 +52,8 @@ func extractNamespaceName(resource interface{}) (namespace, name string) {
 	}
 
 	// Fallback: try to access as map
-	if m, ok := resource.(map[string]interface{}); ok {
-		if metadata, ok := m["metadata"].(map[string]interface{}); ok {
+	if m, ok := resource.(map[string]any); ok {
+		if metadata, ok := m["metadata"].(map[string]any); ok {
 			ns, _ := metadata["namespace"].(string)
 			name, _ := metadata["name"].(string)
 			return ns, name

@@ -142,15 +142,13 @@ func TestScriggoProfiling_ThreadSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	errors := make(chan error, 10)
 
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			_, err := engine.Render(context.Background(), "main.html", nil)
 			if err != nil {
 				errors <- err
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

@@ -34,7 +34,7 @@ type SortDebugger interface {
 //
 // This type is used by the Scriggo template engine.
 type sortableItems struct {
-	items      []interface{}
+	items      []any
 	criteria   []string
 	debugger   SortDebugger // For filter debug logging (can be nil)
 	cachedKeys [][]sortKey  // Pre-computed sort keys: cachedKeys[itemIndex][criterionIndex]
@@ -43,8 +43,8 @@ type sortableItems struct {
 
 // sortKey holds a pre-computed value for sorting with its type preserved.
 type sortKey struct {
-	value   interface{} // The evaluated and transformed value (after length/exists operators)
-	isExist bool        // True if this was an :exists check (value is bool)
+	value   any  // The evaluated and transformed value (after length/exists operators)
+	isExist bool // True if this was an :exists check (value is bool)
 }
 
 // Sort modifier constants.

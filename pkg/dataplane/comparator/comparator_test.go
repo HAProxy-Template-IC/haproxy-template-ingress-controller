@@ -1,6 +1,7 @@
 package comparator
 
 import (
+	"slices"
 	"testing"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
@@ -124,10 +125,8 @@ func verifyOperationOrdering(t *testing.T, operations []Operation) {
 
 func findOperationIndex(operations []Operation, sectionNames ...string) int {
 	for i, op := range operations {
-		for _, section := range sectionNames {
-			if op.Section() == section {
-				return i
-			}
+		if slices.Contains(sectionNames, op.Section()) {
+			return i
 		}
 	}
 	return -1

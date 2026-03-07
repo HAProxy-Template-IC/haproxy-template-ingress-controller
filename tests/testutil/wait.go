@@ -107,10 +107,7 @@ func WaitForCondition(ctx context.Context, cfg WaitConfig, condition func(contex
 			}
 
 			// Exponential backoff
-			interval = time.Duration(float64(interval) * cfg.Multiplier)
-			if interval > cfg.MaxInterval {
-				interval = cfg.MaxInterval
-			}
+			interval = min(time.Duration(float64(interval)*cfg.Multiplier), cfg.MaxInterval)
 		}
 	}
 }
@@ -163,10 +160,7 @@ func WaitForConditionWithProgress(
 			}
 
 			// Exponential backoff
-			interval = time.Duration(float64(interval) * cfg.Multiplier)
-			if interval > cfg.MaxInterval {
-				interval = cfg.MaxInterval
-			}
+			interval = min(time.Duration(float64(interval)*cfg.Multiplier), cfg.MaxInterval)
 		}
 	}
 }
@@ -217,10 +211,7 @@ func WaitForConditionWithDescription(
 			}
 
 			// Exponential backoff
-			interval = time.Duration(float64(interval) * cfg.Multiplier)
-			if interval > cfg.MaxInterval {
-				interval = cfg.MaxInterval
-			}
+			interval = min(time.Duration(float64(interval)*cfg.Multiplier), cfg.MaxInterval)
 		}
 	}
 }

@@ -127,15 +127,12 @@ func runController(cmd *cobra.Command, args []string) error {
 	logger := logging.NewDynamicLogger(logLevelEnv)
 	slog.SetDefault(logger)
 
-	// Set GOGC default if not explicitly configured.
-	// The default Go value (100) causes excessive GC frequency in this workload:
-	// with high GOMAXPROCS and long idle gaps between renders, sync.Pool.pinSlow
-	// dominates allocations. GOGC=200 halves GC frequency; automemlimit's GOMEMLIMIT
-	// acts as a safety net against OOM.
+	// GOGC: use environment variable if set, otherwise rely on Go's default GC tuning.
+	// Go 1.26's Green Tea GC reduces per-cycle overhead by 10–40%, making manual GOGC
+	// tuning unnecessary. automemlimit's GOMEMLIMIT provides the OOM safety net.
 	gogc := os.Getenv("GOGC")
 	if gogc == "" {
-		gogc = "200"
-		debug.SetGCPercent(200)
+		gogc = "default"
 	}
 
 	// Log detected resource limits for observability

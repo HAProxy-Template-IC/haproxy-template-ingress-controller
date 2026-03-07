@@ -400,7 +400,7 @@ type mockDryRunValidator struct {
 	reason  string
 }
 
-func (m *mockDryRunValidator) ValidateDirect(_ context.Context, _, _, _ string, _ interface{}, _ string) (allowed bool, reason string) {
+func (m *mockDryRunValidator) ValidateDirect(_ context.Context, _, _, _ string, _ any, _ string) (allowed bool, reason string) {
 	return m.allowed, m.reason
 }
 

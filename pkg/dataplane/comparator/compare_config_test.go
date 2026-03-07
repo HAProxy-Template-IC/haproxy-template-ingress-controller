@@ -158,10 +158,8 @@ func (m *testOp) Execute(_ context.Context, _ *client.DataplaneClient, _ string)
 	return nil
 }
 
-// Helper functions for test pointers.
-func ptrStr(s string) *string    { return &s }
-func ptrInt64(i int64) *int64    { return &i }
-func ptrString(s string) *string { return &s }
+// ptrInt64 returns a pointer to an int64 value (helper for tests).
+func ptrInt64(i int64) *int64 { return new(i) }
 
 func TestCompareHTTPErrors(t *testing.T) {
 	comp := New()
@@ -442,7 +440,7 @@ func TestComparePeers(t *testing.T) {
 				"my-peers": {},
 			},
 		}
-		peer1 := &models.PeerEntry{Name: "peer1", Address: ptrStr("192.168.1.1"), Port: ptrInt64(10000)}
+		peer1 := &models.PeerEntry{Name: "peer1", Address: new("192.168.1.1"), Port: ptrInt64(10000)}
 		desired := &parser.StructuredConfig{
 			Peers: []*models.PeerSection{
 				{
@@ -499,8 +497,8 @@ func TestPeersEqualWithoutPeerEntries(t *testing.T) {
 
 func TestPeerEntriesEqual(t *testing.T) {
 	t.Run("equal entries", func(t *testing.T) {
-		e1 := &models.PeerEntry{Name: "peer1", Address: ptrStr("192.168.1.1"), Port: ptrInt64(10000)}
-		e2 := &models.PeerEntry{Name: "peer1", Address: ptrStr("192.168.1.1"), Port: ptrInt64(10000)}
+		e1 := &models.PeerEntry{Name: "peer1", Address: new("192.168.1.1"), Port: ptrInt64(10000)}
+		e2 := &models.PeerEntry{Name: "peer1", Address: new("192.168.1.1"), Port: ptrInt64(10000)}
 		assert.True(t, e1.Equal(*e2))
 	})
 
@@ -520,7 +518,7 @@ func TestCompareCaches(t *testing.T) {
 		}
 		desired := &parser.StructuredConfig{
 			Caches: []*models.Cache{
-				{Name: ptrStr("my-cache")},
+				{Name: new("my-cache")},
 			},
 		}
 
@@ -533,7 +531,7 @@ func TestCompareCaches(t *testing.T) {
 	t.Run("delete cache section", func(t *testing.T) {
 		current := &parser.StructuredConfig{
 			Caches: []*models.Cache{
-				{Name: ptrStr("old-cache")},
+				{Name: new("old-cache")},
 			},
 		}
 		desired := &parser.StructuredConfig{
@@ -548,12 +546,12 @@ func TestCompareCaches(t *testing.T) {
 	t.Run("update cache section", func(t *testing.T) {
 		current := &parser.StructuredConfig{
 			Caches: []*models.Cache{
-				{Name: ptrStr("my-cache"), MaxAge: 60},
+				{Name: new("my-cache"), MaxAge: 60},
 			},
 		}
 		desired := &parser.StructuredConfig{
 			Caches: []*models.Cache{
-				{Name: ptrStr("my-cache"), MaxAge: 120},
+				{Name: new("my-cache"), MaxAge: 120},
 			},
 		}
 
@@ -565,12 +563,12 @@ func TestCompareCaches(t *testing.T) {
 	t.Run("empty name ignored", func(t *testing.T) {
 		current := &parser.StructuredConfig{
 			Caches: []*models.Cache{
-				{Name: ptrStr("")},
+				{Name: new("")},
 			},
 		}
 		desired := &parser.StructuredConfig{
 			Caches: []*models.Cache{
-				{Name: ptrStr("")},
+				{Name: new("")},
 			},
 		}
 
@@ -597,14 +595,14 @@ func TestCompareCaches(t *testing.T) {
 
 func TestCacheEqual(t *testing.T) {
 	t.Run("equal caches", func(t *testing.T) {
-		c1 := &models.Cache{Name: ptrStr("cache")}
-		c2 := &models.Cache{Name: ptrStr("cache")}
+		c1 := &models.Cache{Name: new("cache")}
+		c2 := &models.Cache{Name: new("cache")}
 		assert.True(t, cacheEqual(c1, c2))
 	})
 
 	t.Run("different names", func(t *testing.T) {
-		c1 := &models.Cache{Name: ptrStr("cache1")}
-		c2 := &models.Cache{Name: ptrStr("cache2")}
+		c1 := &models.Cache{Name: new("cache1")}
+		c2 := &models.Cache{Name: new("cache2")}
 		assert.False(t, cacheEqual(c1, c2))
 	})
 }
@@ -684,7 +682,7 @@ func TestComparePrograms(t *testing.T) {
 		}
 		desired := &parser.StructuredConfig{
 			Programs: []*models.Program{
-				{Name: "my-program", Command: ptrStr("/usr/bin/test")},
+				{Name: "my-program", Command: new("/usr/bin/test")},
 			},
 		}
 
@@ -712,12 +710,12 @@ func TestComparePrograms(t *testing.T) {
 	t.Run("update program section", func(t *testing.T) {
 		current := &parser.StructuredConfig{
 			Programs: []*models.Program{
-				{Name: "my-program", Command: ptrStr("/usr/bin/old")},
+				{Name: "my-program", Command: new("/usr/bin/old")},
 			},
 		}
 		desired := &parser.StructuredConfig{
 			Programs: []*models.Program{
-				{Name: "my-program", Command: ptrStr("/usr/bin/new")},
+				{Name: "my-program", Command: new("/usr/bin/new")},
 			},
 		}
 
@@ -729,14 +727,14 @@ func TestComparePrograms(t *testing.T) {
 
 func TestProgramEqual(t *testing.T) {
 	t.Run("equal programs", func(t *testing.T) {
-		p1 := &models.Program{Name: "prog", Command: ptrStr("/usr/bin/test")}
-		p2 := &models.Program{Name: "prog", Command: ptrStr("/usr/bin/test")}
+		p1 := &models.Program{Name: "prog", Command: new("/usr/bin/test")}
+		p2 := &models.Program{Name: "prog", Command: new("/usr/bin/test")}
 		assert.True(t, programEqual(p1, p2))
 	})
 
 	t.Run("different commands", func(t *testing.T) {
-		p1 := &models.Program{Name: "prog", Command: ptrStr("/usr/bin/old")}
-		p2 := &models.Program{Name: "prog", Command: ptrStr("/usr/bin/new")}
+		p1 := &models.Program{Name: "prog", Command: new("/usr/bin/old")}
+		p2 := &models.Program{Name: "prog", Command: new("/usr/bin/new")}
 		assert.False(t, programEqual(p1, p2))
 	})
 }
@@ -778,12 +776,12 @@ func TestCompareFCGIApps(t *testing.T) {
 	t.Run("update fcgi-app section", func(t *testing.T) {
 		current := &parser.StructuredConfig{
 			FCGIApps: []*models.FCGIApp{
-				{FCGIAppBase: models.FCGIAppBase{Name: "my-fcgi", Docroot: ptrStr("/var/www/old")}},
+				{FCGIAppBase: models.FCGIAppBase{Name: "my-fcgi", Docroot: new("/var/www/old")}},
 			},
 		}
 		desired := &parser.StructuredConfig{
 			FCGIApps: []*models.FCGIApp{
-				{FCGIAppBase: models.FCGIAppBase{Name: "my-fcgi", Docroot: ptrStr("/var/www/new")}},
+				{FCGIAppBase: models.FCGIAppBase{Name: "my-fcgi", Docroot: new("/var/www/new")}},
 			},
 		}
 
@@ -795,14 +793,14 @@ func TestCompareFCGIApps(t *testing.T) {
 
 func TestFCGIAppEqual(t *testing.T) {
 	t.Run("equal fcgi-apps", func(t *testing.T) {
-		f1 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: ptrStr("/var/www")}}
-		f2 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: ptrStr("/var/www")}}
+		f1 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: new("/var/www")}}
+		f2 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: new("/var/www")}}
 		assert.True(t, fcgiAppEqual(f1, f2))
 	})
 
 	t.Run("different docroot", func(t *testing.T) {
-		f1 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: ptrStr("/var/www/old")}}
-		f2 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: ptrStr("/var/www/new")}}
+		f1 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: new("/var/www/old")}}
+		f2 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: new("/var/www/new")}}
 		assert.False(t, fcgiAppEqual(f1, f2))
 	})
 }
@@ -2126,7 +2124,7 @@ func TestCompareResolvers(t *testing.T) {
 				"mydns": {},
 			},
 		}
-		dns1 := &models.Nameserver{Name: "dns1", Address: ptrString("8.8.8.8"), Port: ptrInt64(53)}
+		dns1 := &models.Nameserver{Name: "dns1", Address: new("8.8.8.8"), Port: ptrInt64(53)}
 		desired := &parser.StructuredConfig{
 			Resolvers: []*models.Resolver{
 				{

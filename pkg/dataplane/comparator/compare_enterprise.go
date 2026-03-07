@@ -19,19 +19,20 @@ import (
 // compareEnterpriseSections compares all Enterprise Edition sections.
 // This function is extracted from the main Compare function to reduce statement count.
 func (c *Comparator) compareEnterpriseSections(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
 	// Bot management profiles (v3.0+ EE)
-	operations = append(operations, c.compareBotMgmtProfiles(current, desired)...)
-
+	botMgmtOps := c.compareBotMgmtProfiles(current, desired)
 	// Captchas (v3.0+ EE)
-	operations = append(operations, c.compareCaptchas(current, desired)...)
-
+	captchaOps := c.compareCaptchas(current, desired)
 	// WAF global (v3.2+ EE, singleton)
-	operations = append(operations, c.compareWAFGlobal(current, desired)...)
-
+	wafGlobalOps := c.compareWAFGlobal(current, desired)
 	// WAF profiles (v3.2+ EE)
-	operations = append(operations, c.compareWAFProfiles(current, desired)...)
+	wafProfilesOps := c.compareWAFProfiles(current, desired)
+
+	operations := make([]Operation, 0, len(botMgmtOps)+len(captchaOps)+len(wafGlobalOps)+len(wafProfilesOps))
+	operations = append(operations, botMgmtOps...)
+	operations = append(operations, captchaOps...)
+	operations = append(operations, wafGlobalOps...)
+	operations = append(operations, wafProfilesOps...)
 
 	return operations
 }

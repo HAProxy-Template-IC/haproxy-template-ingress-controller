@@ -33,13 +33,13 @@ package parser
 // This function mutates the map in-place to avoid allocating a new map on every call.
 // This is safe because maps come from the client-native parser (freshly allocated per parse)
 // and parsed configs are cached after normalization.
-func NormalizeMetadata(m map[string]interface{}) map[string]interface{} {
+func NormalizeMetadata(m map[string]any) map[string]any {
 	if len(m) == 0 {
 		return nil
 	}
 
 	for key, value := range m {
-		if nested, ok := value.(map[string]interface{}); ok {
+		if nested, ok := value.(map[string]any); ok {
 			if v, hasValue := nested["value"]; hasValue {
 				m[key] = v
 			}

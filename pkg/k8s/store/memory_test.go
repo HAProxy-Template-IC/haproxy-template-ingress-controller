@@ -161,7 +161,7 @@ func TestMemoryStore_List(t *testing.T) {
 	store := NewMemoryStore(2)
 
 	// Add multiple resources
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		resource := map[string]int{"index": i}
 		keys := []string{"default", string(rune('a' + i))}
 		if err := store.Add(resource, keys); err != nil {
@@ -185,7 +185,7 @@ func TestMemoryStore_Clear(t *testing.T) {
 	store := NewMemoryStore(2)
 
 	// Add resources
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		resource := map[string]int{"index": i}
 		keys := []string{"default", string(rune('a' + i))}
 		if err := store.Add(resource, keys); err != nil {
@@ -331,8 +331,8 @@ func TestMemoryStore_GetErrors(t *testing.T) {
 func TestMemoryStore_UpdateToNewKey(t *testing.T) {
 	store := NewMemoryStore(2)
 
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "new-resource",
 		},
@@ -358,9 +358,9 @@ func TestMemoryStore_ListRebuildsCache(t *testing.T) {
 	store := NewMemoryStore(2)
 
 	// Add multiple resources
-	for i := 0; i < 3; i++ {
-		resource := map[string]interface{}{
-			"metadata": map[string]interface{}{
+	for i := range 3 {
+		resource := map[string]any{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      string(rune('a' + i)),
 			},
@@ -389,8 +389,8 @@ func TestMemoryStore_ListRebuildsCache(t *testing.T) {
 	}
 
 	// Add another resource (makes dirty)
-	resource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	resource := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "d",
 		},
@@ -416,23 +416,23 @@ func TestMemoryStore_NonUniqueKeys(t *testing.T) {
 
 	// Add multiple EndpointSlices for the same service
 	// They share the same index key (service-name) but have different namespace+name
-	resources := []map[string]interface{}{
+	resources := []map[string]any{
 		{
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      "nginx-slice-1",
 			},
 			"endpoints": []string{"10.0.0.1:80"},
 		},
 		{
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      "nginx-slice-2",
 			},
 			"endpoints": []string{"10.0.0.2:80"},
 		},
 		{
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      "nginx-slice-3",
 			},
@@ -465,8 +465,8 @@ func TestMemoryStore_NonUniqueKeys(t *testing.T) {
 	// Verify we got all three slices
 	names := make(map[string]bool)
 	for _, res := range results {
-		r := res.(map[string]interface{})
-		metadata := r["metadata"].(map[string]interface{})
+		r := res.(map[string]any)
+		metadata := r["metadata"].(map[string]any)
 		name := metadata["name"].(string)
 		names[name] = true
 	}
@@ -485,15 +485,15 @@ func TestMemoryStore_UpdateWithNonUniqueKeys(t *testing.T) {
 	store := NewMemoryStore(1) // Index by service name only
 
 	// Add two EndpointSlices for the same service
-	slice1 := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	slice1 := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "nginx-slice-1",
 		},
 		"version": "v1",
 	}
-	slice2 := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	slice2 := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "nginx-slice-2",
 		},
@@ -508,8 +508,8 @@ func TestMemoryStore_UpdateWithNonUniqueKeys(t *testing.T) {
 	}
 
 	// Update slice1 specifically
-	updatedSlice1 := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	updatedSlice1 := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "nginx-slice-1",
 		},
@@ -531,12 +531,12 @@ func TestMemoryStore_UpdateWithNonUniqueKeys(t *testing.T) {
 	}
 
 	// Find slice1 and verify it was updated
-	var foundSlice1 *map[string]interface{}
-	var foundSlice2 *map[string]interface{}
+	var foundSlice1 *map[string]any
+	var foundSlice2 *map[string]any
 
 	for _, res := range results {
-		r := res.(map[string]interface{})
-		metadata := r["metadata"].(map[string]interface{})
+		r := res.(map[string]any)
+		metadata := r["metadata"].(map[string]any)
 		name := metadata["name"].(string)
 
 		switch name {
@@ -571,14 +571,14 @@ func TestMemoryStore_DeleteWithNonUniqueKeys(t *testing.T) {
 	store := NewMemoryStore(1)
 
 	// Add multiple resources with the same index key
-	slice1 := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	slice1 := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "nginx-slice-1",
 		},
 	}
-	slice2 := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	slice2 := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "nginx-slice-2",
 		},
@@ -635,8 +635,8 @@ func TestMemoryStore_ListWithNonUniqueKeys(t *testing.T) {
 	}
 
 	for _, r := range resources {
-		resource := map[string]interface{}{
-			"metadata": map[string]interface{}{
+		resource := map[string]any{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      r.sliceName,
 			},
@@ -660,8 +660,8 @@ func TestMemoryStore_ListWithNonUniqueKeys(t *testing.T) {
 	// Verify all slice names are present
 	names := make(map[string]bool)
 	for _, res := range results {
-		r := res.(map[string]interface{})
-		metadata := r["metadata"].(map[string]interface{})
+		r := res.(map[string]any)
+		metadata := r["metadata"].(map[string]any)
 		name := metadata["name"].(string)
 		names[name] = true
 	}
@@ -683,8 +683,8 @@ func TestMemoryStore_UpdateCreatesIfNotExists(t *testing.T) {
 	store := NewMemoryStore(1)
 
 	// Add one resource
-	slice1 := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	slice1 := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "nginx-slice-1",
 		},
@@ -695,8 +695,8 @@ func TestMemoryStore_UpdateCreatesIfNotExists(t *testing.T) {
 	}
 
 	// Update a different resource (doesn't exist yet)
-	slice2 := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	slice2 := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "nginx-slice-2",
 		},
@@ -725,33 +725,33 @@ func TestMemoryStore_GetReturnsSortedResults(t *testing.T) {
 
 	// Add resources in intentionally random order (by name: c, a, b, e, d)
 	// to verify that Get() returns them sorted
-	resources := []map[string]interface{}{
+	resources := []map[string]any{
 		{
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      "slice-c",
 			},
 		},
 		{
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      "slice-a",
 			},
 		},
 		{
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      "slice-b",
 			},
 		},
 		{
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      "slice-e",
 			},
 		},
 		{
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": "default",
 				"name":      "slice-d",
 			},
@@ -777,8 +777,8 @@ func TestMemoryStore_GetReturnsSortedResults(t *testing.T) {
 	// Verify they are in sorted order (a, b, c, d, e)
 	expectedOrder := []string{"slice-a", "slice-b", "slice-c", "slice-d", "slice-e"}
 	for i, res := range results {
-		r := res.(map[string]interface{})
-		metadata := r["metadata"].(map[string]interface{})
+		r := res.(map[string]any)
+		metadata := r["metadata"].(map[string]any)
 		name := metadata["name"].(string)
 		if name != expectedOrder[i] {
 			t.Errorf("position %d: expected %q, got %q", i, expectedOrder[i], name)
@@ -804,8 +804,8 @@ func TestMemoryStore_GetReturnsSortedResultsPartialMatch(t *testing.T) {
 	}
 
 	for _, r := range resources {
-		res := map[string]interface{}{
-			"metadata": map[string]interface{}{
+		res := map[string]any{
+			"metadata": map[string]any{
 				"namespace": r.namespace,
 				"name":      r.name,
 			},
@@ -827,10 +827,10 @@ func TestMemoryStore_GetReturnsSortedResultsPartialMatch(t *testing.T) {
 	}
 
 	// Verify sorted order: a-first, z-last
-	r0 := results[0].(map[string]interface{})
-	r1 := results[1].(map[string]interface{})
-	name0 := r0["metadata"].(map[string]interface{})["name"].(string)
-	name1 := r1["metadata"].(map[string]interface{})["name"].(string)
+	r0 := results[0].(map[string]any)
+	r1 := results[1].(map[string]any)
+	name0 := r0["metadata"].(map[string]any)["name"].(string)
+	name1 := r1["metadata"].(map[string]any)["name"].(string)
 
 	if name0 != "a-first" {
 		t.Errorf("position 0: expected 'a-first', got %q", name0)

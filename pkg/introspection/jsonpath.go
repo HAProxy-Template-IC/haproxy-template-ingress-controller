@@ -49,7 +49,7 @@ import (
 //
 //	templates, err := ExtractField(config, "{.templates}")
 //	// Returns: map[string]string{"main": "..."}
-func ExtractField(data interface{}, jsonPathExpr string) (interface{}, error) {
+func ExtractField(data any, jsonPathExpr string) (any, error) {
 	if jsonPathExpr == "" {
 		return data, nil
 	}
@@ -69,7 +69,7 @@ func ExtractField(data interface{}, jsonPathExpr string) (interface{}, error) {
 		return nil, fmt.Errorf("failed to marshal data: %w", err)
 	}
 
-	var unmarshaled interface{}
+	var unmarshaled any
 	if err := json.Unmarshal(jsonData, &unmarshaled); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal data: %w", err)
 	}
@@ -82,7 +82,7 @@ func ExtractField(data interface{}, jsonPathExpr string) (interface{}, error) {
 
 	// Parse the result back to interface{}
 	// The jsonpath library returns formatted text, so we need to parse it
-	var result interface{}
+	var result any
 	if buf.Len() > 0 {
 		// Try to parse as JSON first (for objects/arrays)
 		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {

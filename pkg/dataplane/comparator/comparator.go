@@ -204,82 +204,52 @@ func (c *Comparator) Compare(current, desired *parser.StructuredConfig) (*Config
 	}
 
 	summary := NewDiffSummary()
-	var operations []Operation
 
-	// Compare global section
+	// Compute all section operations before allocating to allow exact preallocation.
 	globalOps := c.compareGlobal(current, desired, &summary)
-	operations = append(operations, globalOps...)
-
-	// Compare defaults sections
 	defaultsOps := c.compareDefaults(current, desired, &summary)
-	operations = append(operations, defaultsOps...)
-
-	// Compare http-errors sections
 	httpErrorsOps := c.compareHTTPErrors(current, desired)
-	operations = append(operations, httpErrorsOps...)
-
-	// Compare resolvers
 	resolversOps := c.compareResolvers(current, desired)
-	operations = append(operations, resolversOps...)
-
-	// Compare mailers
 	mailersOps := c.compareMailers(current, desired)
-	operations = append(operations, mailersOps...)
-
-	// Compare peers
 	peersOps := c.comparePeers(current, desired)
-	operations = append(operations, peersOps...)
-
-	// Compare caches
 	cachesOps := c.compareCaches(current, desired)
-	operations = append(operations, cachesOps...)
-
-	// Compare rings
 	ringsOps := c.compareRings(current, desired)
-	operations = append(operations, ringsOps...)
-
-	// Compare userlists
 	userlistsOps := c.compareUserlists(current, desired)
-	operations = append(operations, userlistsOps...)
-
-	// Compare programs
 	programsOps := c.comparePrograms(current, desired)
-	operations = append(operations, programsOps...)
-
-	// Compare log-forwards
 	logForwardsOps := c.compareLogForwards(current, desired)
-	operations = append(operations, logForwardsOps...)
-
-	// Compare log-profiles (v3.1+ only)
-	logProfilesOps := c.compareLogProfiles(current, desired)
-	operations = append(operations, logProfilesOps...)
-
-	// Compare traces (v3.1+ only, singleton)
-	tracesOps := c.compareTraces(current, desired)
-	operations = append(operations, tracesOps...)
-
-	// Compare acme-providers (v3.2+ only)
-	acmeProvidersOps := c.compareAcmeProviders(current, desired)
-	operations = append(operations, acmeProvidersOps...)
-
-	// Compare Enterprise Edition sections (EE only)
-	eeOps := c.compareEnterpriseSections(current, desired)
-	operations = append(operations, eeOps...)
-
-	// Compare fcgi-apps
+	logProfilesOps := c.compareLogProfiles(current, desired)     // v3.1+ only
+	tracesOps := c.compareTraces(current, desired)               // v3.1+ only, singleton
+	acmeProvidersOps := c.compareAcmeProviders(current, desired) // v3.2+ only
+	eeOps := c.compareEnterpriseSections(current, desired)       // EE only
 	fcgiAppsOps := c.compareFCGIApps(current, desired)
-	operations = append(operations, fcgiAppsOps...)
-
-	// Compare crt-stores
 	crtStoresOps := c.compareCrtStores(current, desired)
-	operations = append(operations, crtStoresOps...)
-
-	// Compare frontends
 	frontendOps := c.compareFrontends(current, desired, &summary)
-	operations = append(operations, frontendOps...)
-
-	// Compare backends
 	backendOps := c.compareBackends(current, desired, &summary)
+
+	capacity := len(globalOps) + len(defaultsOps) + len(httpErrorsOps) + len(resolversOps) +
+		len(mailersOps) + len(peersOps) + len(cachesOps) + len(ringsOps) + len(userlistsOps) +
+		len(programsOps) + len(logForwardsOps) + len(logProfilesOps) + len(tracesOps) +
+		len(acmeProvidersOps) + len(eeOps) + len(fcgiAppsOps) + len(crtStoresOps) +
+		len(frontendOps) + len(backendOps)
+	operations := make([]Operation, 0, capacity)
+	operations = append(operations, globalOps...)
+	operations = append(operations, defaultsOps...)
+	operations = append(operations, httpErrorsOps...)
+	operations = append(operations, resolversOps...)
+	operations = append(operations, mailersOps...)
+	operations = append(operations, peersOps...)
+	operations = append(operations, cachesOps...)
+	operations = append(operations, ringsOps...)
+	operations = append(operations, userlistsOps...)
+	operations = append(operations, programsOps...)
+	operations = append(operations, logForwardsOps...)
+	operations = append(operations, logProfilesOps...)
+	operations = append(operations, tracesOps...)
+	operations = append(operations, acmeProvidersOps...)
+	operations = append(operations, eeOps...)
+	operations = append(operations, fcgiAppsOps...)
+	operations = append(operations, crtStoresOps...)
+	operations = append(operations, frontendOps...)
 	operations = append(operations, backendOps...)
 
 	// Update summary counts from operations

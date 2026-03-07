@@ -359,30 +359,30 @@ func TestDiscovery_DiscoverEndpoints_StoreListError(t *testing.T) {
 // This is the actual format stored in production after float-to-int conversion.
 func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
 	// Create pod as map[string]interface{} (production format after conversion)
-	pod := map[string]interface{}{
+	pod := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Pod",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"name":      "haproxy-0",
 			"namespace": "default",
 		},
-		"spec": map[string]interface{}{
-			"containers": []interface{}{
-				map[string]interface{}{
+		"spec": map[string]any{
+			"containers": []any{
+				map[string]any{
 					"name": "dataplane",
-					"ports": []interface{}{
-						map[string]interface{}{
+					"ports": []any{
+						map[string]any{
 							"containerPort": int64(5555),
 						},
 					},
 				},
 			},
 		},
-		"status": map[string]interface{}{
+		"status": map[string]any{
 			"podIP": "10.0.0.1",
 			"phase": "Running",
-			"containerStatuses": []interface{}{
-				map[string]interface{}{
+			"containerStatuses": []any{
+				map[string]any{
 					"name":  "dataplane",
 					"ready": true,
 				},
@@ -444,21 +444,21 @@ func createPodWithPortAndPhase(name, podIP, phase string, dataplanePort int) *un
 	_ = unstructured.SetNestedField(pod.Object, phase, "status", "phase")
 
 	// Set spec.containers with dataplane container
-	containers := []interface{}{
-		map[string]interface{}{
+	containers := []any{
+		map[string]any{
 			"name": "haproxy",
-			"ports": []interface{}{
-				map[string]interface{}{
+			"ports": []any{
+				map[string]any{
 					"name":          "http",
 					"containerPort": int64(80),
 					"protocol":      "TCP",
 				},
 			},
 		},
-		map[string]interface{}{
+		map[string]any{
 			"name": "dataplane",
-			"ports": []interface{}{
-				map[string]interface{}{
+			"ports": []any{
+				map[string]any{
 					"name":          "dataplane",
 					"containerPort": int64(dataplanePort),
 					"protocol":      "TCP",
@@ -469,12 +469,12 @@ func createPodWithPortAndPhase(name, podIP, phase string, dataplanePort int) *un
 	_ = unstructured.SetNestedSlice(pod.Object, containers, "spec", "containers")
 
 	// Set status.containerStatuses with ready containers
-	containerStatuses := []interface{}{
-		map[string]interface{}{
+	containerStatuses := []any{
+		map[string]any{
 			"name":  "haproxy",
 			"ready": true,
 		},
-		map[string]interface{}{
+		map[string]any{
 			"name":  "dataplane",
 			"ready": true,
 		},
@@ -517,22 +517,22 @@ type mockStore struct {
 	listErr error
 }
 
-func (m *mockStore) List() ([]interface{}, error) {
+func (m *mockStore) List() ([]any, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
-	return []interface{}{}, nil
+	return []any{}, nil
 }
 
-func (m *mockStore) Get(keys ...string) ([]interface{}, error) {
+func (m *mockStore) Get(keys ...string) ([]any, error) {
 	return nil, nil
 }
 
-func (m *mockStore) Add(resource interface{}, keys []string) error {
+func (m *mockStore) Add(resource any, keys []string) error {
 	return nil
 }
 
-func (m *mockStore) Update(resource interface{}, keys []string) error {
+func (m *mockStore) Update(resource any, keys []string) error {
 	return nil
 }
 
@@ -544,11 +544,11 @@ func (m *mockStore) Clear() error {
 	return nil
 }
 
-func (m *mockStore) GetKeys(resource interface{}, indexBy []string) ([]string, error) {
+func (m *mockStore) GetKeys(resource any, indexBy []string) ([]string, error) {
 	return nil, nil
 }
 
-func (m *mockStore) Refresh(resource interface{}, oldKeys, newKeys []string) (changed, deleted bool) {
+func (m *mockStore) Refresh(resource any, oldKeys, newKeys []string) (changed, deleted bool) {
 	return false, false
 }
 

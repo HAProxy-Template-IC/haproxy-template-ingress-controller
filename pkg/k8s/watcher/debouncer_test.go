@@ -29,13 +29,13 @@ import (
 // mockStore implements types.Store for testing.
 type mockStore struct{}
 
-func (m *mockStore) Get(_ ...string) ([]interface{}, error)             { return nil, nil }
-func (m *mockStore) List() ([]interface{}, error)                       { return nil, nil }
-func (m *mockStore) Add(_ interface{}, _ []string) error                { return nil }
-func (m *mockStore) Update(_ interface{}, _ []string) error             { return nil }
-func (m *mockStore) Delete(_ ...string) error                           { return nil }
-func (m *mockStore) Clear() error                                       { return nil }
-func (m *mockStore) GetByPartialKey(_ ...string) ([]interface{}, error) { return nil, nil }
+func (m *mockStore) Get(_ ...string) ([]any, error)             { return nil, nil }
+func (m *mockStore) List() ([]any, error)                       { return nil, nil }
+func (m *mockStore) Add(_ any, _ []string) error                { return nil }
+func (m *mockStore) Update(_ any, _ []string) error             { return nil }
+func (m *mockStore) Delete(_ ...string) error                   { return nil }
+func (m *mockStore) Clear() error                               { return nil }
+func (m *mockStore) GetByPartialKey(_ ...string) ([]any, error) { return nil, nil }
 
 // callbackRecorder provides thread-safe callback recording with channel-based waiting.
 // This eliminates flaky time.Sleep-based tests by using proper synchronization.
@@ -247,7 +247,7 @@ func TestDebouncer_DebounceBatching(t *testing.T) {
 	debouncer.SetSyncMode(false)
 
 	// Record many changes in quick succession
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		debouncer.RecordCreate()
 		time.Sleep(10 * time.Millisecond) // Less than debounce interval
 	}
@@ -496,11 +496,9 @@ func TestDebouncer_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent access from multiple goroutines
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 10 {
+		wg.Go(func() {
+			for j := range 100 {
 				switch j % 3 {
 				case 0:
 					debouncer.RecordCreate()
@@ -510,7 +508,7 @@ func TestDebouncer_ConcurrentAccess(t *testing.T) {
 					debouncer.RecordDelete()
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

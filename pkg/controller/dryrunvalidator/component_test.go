@@ -283,7 +283,7 @@ func TestCreateOverlay(t *testing.T) {
 	tests := []struct {
 		name                string
 		operation           string
-		object              interface{}
+		object              any
 		expectAdditions     int
 		expectModifications int
 		expectDeletions     int
@@ -1143,15 +1143,15 @@ func createMockProposalValidator(bus *busevents.EventBus, logger *slog.Logger) *
 // createTestIngress creates a test unstructured ingress object.
 func createTestIngress(name, namespace string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "networking.k8s.io/v1",
 			"kind":       "Ingress",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      name,
 				"namespace": namespace,
 			},
-			"spec": map[string]interface{}{
-				"rules": []interface{}{},
+			"spec": map[string]any{
+				"rules": []any{},
 			},
 		},
 	}
@@ -1160,9 +1160,9 @@ func createTestIngress(name, namespace string) *unstructured.Unstructured {
 // mockStore implements stores.Store for testing purposes.
 type mockStore struct{}
 
-func (m *mockStore) Get(_ ...string) ([]interface{}, error) { return nil, nil }
-func (m *mockStore) List() ([]interface{}, error)           { return nil, nil }
-func (m *mockStore) Add(_ interface{}, _ []string) error    { return nil }
-func (m *mockStore) Update(_ interface{}, _ []string) error { return nil }
-func (m *mockStore) Delete(_ ...string) error               { return nil }
-func (m *mockStore) Clear() error                           { return nil }
+func (m *mockStore) Get(_ ...string) ([]any, error) { return nil, nil }
+func (m *mockStore) List() ([]any, error)           { return nil, nil }
+func (m *mockStore) Add(_ any, _ []string) error    { return nil }
+func (m *mockStore) Update(_ any, _ []string) error { return nil }
+func (m *mockStore) Delete(_ ...string) error       { return nil }
+func (m *mockStore) Clear() error                   { return nil }

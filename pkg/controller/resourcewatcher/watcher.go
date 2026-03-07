@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 
@@ -99,9 +100,7 @@ func New(
 	resourcesWithHAProxyPods := make(map[string]coreconfig.WatchedResource)
 
 	// Copy user-configured resources
-	for k, v := range cfg.WatchedResources {
-		resourcesWithHAProxyPods[k] = v
-	}
+	maps.Copy(resourcesWithHAProxyPods, cfg.WatchedResources)
 
 	// Add haproxy-pods watcher (or override if user configured it)
 	resourcesWithHAProxyPods[names.HAProxyPodsResourceType] = coreconfig.WatchedResource{
@@ -281,9 +280,7 @@ func (r *ResourceWatcherComponent) GetStore(resourceTypeName string) types.Store
 // Returns a copy of the internal map to prevent external modification.
 func (r *ResourceWatcherComponent) GetAllStores() map[string]types.Store {
 	stores := make(map[string]types.Store, len(r.stores))
-	for k, v := range r.stores {
-		stores[k] = v
-	}
+	maps.Copy(stores, r.stores)
 	return stores
 }
 

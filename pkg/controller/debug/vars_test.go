@@ -71,7 +71,7 @@ func (m *mockStateProvider) GetResourceCounts() (map[string]int, error) {
 	return m.resourceCounts, m.resourceCountErr
 }
 
-func (m *mockStateProvider) GetResourcesByType(_ string) ([]interface{}, error) {
+func (m *mockStateProvider) GetResourcesByType(_ string) ([]any, error) {
 	return nil, nil
 }
 
@@ -104,7 +104,7 @@ func TestConfigVar_Get_Success(t *testing.T) {
 	result, err := configVar.Get()
 
 	require.NoError(t, err)
-	data, ok := result.(map[string]interface{})
+	data, ok := result.(map[string]any)
 	require.True(t, ok)
 
 	assert.Equal(t, testConfig, data["config"])
@@ -140,7 +140,7 @@ func TestCredentialsVar_Get_Success(t *testing.T) {
 	result, err := credVar.Get()
 
 	require.NoError(t, err)
-	data, ok := result.(map[string]interface{})
+	data, ok := result.(map[string]any)
 	require.True(t, ok)
 
 	assert.Equal(t, "v456", data["version"])
@@ -162,7 +162,7 @@ func TestCredentialsVar_Get_NoCredentials(t *testing.T) {
 	result, err := credVar.Get()
 
 	require.NoError(t, err)
-	data := result.(map[string]interface{})
+	data := result.(map[string]any)
 	assert.False(t, data["has_dataplane_creds"].(bool))
 }
 
@@ -193,7 +193,7 @@ func TestRenderedVar_Get_Success(t *testing.T) {
 	result, err := renderedVar.Get()
 
 	require.NoError(t, err)
-	data := result.(map[string]interface{})
+	data := result.(map[string]any)
 
 	assert.Equal(t, testConfig, data["config"])
 	assert.Equal(t, testTime, data["timestamp"])
@@ -237,7 +237,7 @@ func TestAuxFilesVar_Get_Success(t *testing.T) {
 	result, err := auxVar.Get()
 
 	require.NoError(t, err)
-	data := result.(map[string]interface{})
+	data := result.(map[string]any)
 
 	assert.Equal(t, testAuxFiles, data["files"])
 	assert.Equal(t, testTime, data["timestamp"])
@@ -439,7 +439,7 @@ func TestFullStateVar_Get_Success(t *testing.T) {
 	result, err := fullStateVar.Get()
 
 	require.NoError(t, err)
-	data := result.(map[string]interface{})
+	data := result.(map[string]any)
 
 	assert.NotNil(t, data["config"])
 	assert.NotNil(t, data["rendered"])
@@ -467,9 +467,9 @@ func TestFullStateVar_Get_PartialState(t *testing.T) {
 
 	// Should succeed even with errors - best effort approach
 	require.NoError(t, err)
-	data := result.(map[string]interface{})
+	data := result.(map[string]any)
 
 	// Config should contain nil config due to error
-	configData := data["config"].(map[string]interface{})
+	configData := data["config"].(map[string]any)
 	assert.Nil(t, configData["config"])
 }

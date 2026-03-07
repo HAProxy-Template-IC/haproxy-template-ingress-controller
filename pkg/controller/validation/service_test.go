@@ -275,7 +275,7 @@ backend http_back
 `
 
 	// Run validation multiple times to ensure temp dirs are cleaned up
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		result := svc.Validate(context.Background(), config, nil)
 		require.NotNil(t, result)
 		assert.True(t, result.Valid, "iteration %d: expected valid config, got error: %v", i, result.Error)
@@ -312,7 +312,7 @@ backend http_back
 	const concurrency = 5
 	results := make(chan *ValidationResult, concurrency)
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			result := svc.Validate(context.Background(), config, nil)
 			results <- result
@@ -320,7 +320,7 @@ backend http_back
 	}
 
 	// Collect all results
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		result := <-results
 		require.NotNil(t, result)
 		assert.True(t, result.Valid, "concurrent validation %d: expected valid config, got error: %v", i, result.Error)
@@ -492,7 +492,7 @@ func TestValidationService_CacheConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			defer wg.Done()
 			r := svc.Validate(context.Background(), validConfig, nil)

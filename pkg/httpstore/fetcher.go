@@ -53,10 +53,7 @@ func (s *HTTPStore) fetchWithRetry(
 		if attempt > 0 {
 			// Wait before retry with exponential backoff
 			// Cap the exponent to prevent overflow (max ~32x multiplier)
-			exp := attempt - 1
-			if exp > 5 {
-				exp = 5
-			}
+			exp := min(attempt-1, 5)
 			delay := opts.RetryDelay * time.Duration(1<<exp)
 			s.logger.Log(context.Background(), levelTrace, "retrying HTTP fetch",
 				"url", url,

@@ -84,10 +84,10 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("status unchanged preserves existing time", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"conditions": []interface{}{
-					map[string]interface{}{
+		resource := map[string]any{
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
 						"type":               "Accepted",
 						"status":             "True",
 						"lastTransitionTime": "2025-01-15T10:30:00Z",
@@ -101,10 +101,10 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("status changed returns now", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"conditions": []interface{}{
-					map[string]interface{}{
+		resource := map[string]any{
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
 						"type":               "Accepted",
 						"status":             "True",
 						"lastTransitionTime": "2025-01-15T10:30:00Z",
@@ -125,10 +125,10 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("condition not found returns now", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"conditions": []interface{}{
-					map[string]interface{}{
+		resource := map[string]any{
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
 						"type":               "Ready",
 						"status":             "True",
 						"lastTransitionTime": "2025-01-15T10:30:00Z",
@@ -148,8 +148,8 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("no status field returns now", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"metadata": map[string]interface{}{
+		resource := map[string]any{
+			"metadata": map[string]any{
 				"name": "test",
 			},
 		}
@@ -160,9 +160,9 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("empty conditions returns now", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"conditions": []interface{}{},
+		resource := map[string]any{
+			"status": map[string]any{
+				"conditions": []any{},
 			},
 		}
 
@@ -172,10 +172,10 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("status unchanged but no lastTransitionTime returns now", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"conditions": []interface{}{
-					map[string]interface{}{
+		resource := map[string]any{
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
 						"type":   "Accepted",
 						"status": "True",
 					},
@@ -189,20 +189,20 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("multiple conditions finds matching one", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"conditions": []interface{}{
-					map[string]interface{}{
+		resource := map[string]any{
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
 						"type":               "Ready",
 						"status":             "True",
 						"lastTransitionTime": "2025-01-10T00:00:00Z",
 					},
-					map[string]interface{}{
+					map[string]any{
 						"type":               "Accepted",
 						"status":             "True",
 						"lastTransitionTime": "2025-01-15T10:30:00Z",
 					},
-					map[string]interface{}{
+					map[string]any{
 						"type":               "ResolvedRefs",
 						"status":             "True",
 						"lastTransitionTime": "2025-01-12T00:00:00Z",
@@ -218,21 +218,21 @@ func TestScriggoTransitionTime(t *testing.T) {
 
 func TestScriggoTransitionTime_ParentConditions(t *testing.T) {
 	t.Run("finds condition in parent by index", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"parents": []interface{}{
-					map[string]interface{}{
-						"conditions": []interface{}{
-							map[string]interface{}{
+		resource := map[string]any{
+			"status": map[string]any{
+				"parents": []any{
+					map[string]any{
+						"conditions": []any{
+							map[string]any{
 								"type":               "Accepted",
 								"status":             "True",
 								"lastTransitionTime": "2025-02-01T00:00:00Z",
 							},
 						},
 					},
-					map[string]interface{}{
-						"conditions": []interface{}{
-							map[string]interface{}{
+					map[string]any{
+						"conditions": []any{
+							map[string]any{
 								"type":               "Accepted",
 								"status":             "False",
 								"lastTransitionTime": "2025-03-01T00:00:00Z",
@@ -255,11 +255,11 @@ func TestScriggoTransitionTime_ParentConditions(t *testing.T) {
 	})
 
 	t.Run("parent index out of range returns now", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"parents": []interface{}{
-					map[string]interface{}{
-						"conditions": []interface{}{},
+		resource := map[string]any{
+			"status": map[string]any{
+				"parents": []any{
+					map[string]any{
+						"conditions": []any{},
 					},
 				},
 			},
@@ -271,9 +271,9 @@ func TestScriggoTransitionTime_ParentConditions(t *testing.T) {
 	})
 
 	t.Run("negative parent index returns now", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"parents": []interface{}{},
+		resource := map[string]any{
+			"status": map[string]any{
+				"parents": []any{},
 			},
 		}
 
@@ -283,8 +283,8 @@ func TestScriggoTransitionTime_ParentConditions(t *testing.T) {
 	})
 
 	t.Run("no parents field returns now", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{},
+		resource := map[string]any{
+			"status": map[string]any{},
 		}
 
 		result := scriggoTransitionTime(resource, "Accepted", "True", 0)
@@ -315,7 +315,7 @@ func TestScriggoToJSON(t *testing.T) {
 	})
 
 	t.Run("map", func(t *testing.T) {
-		result := scriggoToJSON(map[string]interface{}{
+		result := scriggoToJSON(map[string]any{
 			"key": "value",
 		})
 		assert.Contains(t, result, `"key"`)
@@ -323,15 +323,15 @@ func TestScriggoToJSON(t *testing.T) {
 	})
 
 	t.Run("slice", func(t *testing.T) {
-		result := scriggoToJSON([]interface{}{"a", "b", "c"})
+		result := scriggoToJSON([]any{"a", "b", "c"})
 		assert.Equal(t, `["a","b","c"]`, result)
 	})
 
 	t.Run("nested structure", func(t *testing.T) {
-		result := scriggoToJSON(map[string]interface{}{
-			"loadBalancer": map[string]interface{}{
-				"ingress": []interface{}{
-					map[string]interface{}{"ip": "10.0.0.1"},
+		result := scriggoToJSON(map[string]any{
+			"loadBalancer": map[string]any{
+				"ingress": []any{
+					map[string]any{"ip": "10.0.0.1"},
 				},
 			},
 		})
@@ -340,20 +340,20 @@ func TestScriggoToJSON(t *testing.T) {
 	})
 
 	t.Run("empty map", func(t *testing.T) {
-		assert.Equal(t, "{}", scriggoToJSON(map[string]interface{}{}))
+		assert.Equal(t, "{}", scriggoToJSON(map[string]any{}))
 	})
 
 	t.Run("empty slice", func(t *testing.T) {
-		assert.Equal(t, "[]", scriggoToJSON([]interface{}{}))
+		assert.Equal(t, "[]", scriggoToJSON([]any{}))
 	})
 }
 
 func TestFindTopLevelConditions(t *testing.T) {
 	t.Run("extracts conditions from status", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"conditions": []interface{}{
-					map[string]interface{}{"type": "Ready"},
+		resource := map[string]any{
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{"type": "Ready"},
 				},
 			},
 		}
@@ -363,20 +363,20 @@ func TestFindTopLevelConditions(t *testing.T) {
 	})
 
 	t.Run("returns nil for missing status", func(t *testing.T) {
-		resource := map[string]interface{}{}
+		resource := map[string]any{}
 		assert.Nil(t, findTopLevelConditions(resource))
 	})
 
 	t.Run("returns nil for missing conditions", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{},
+		resource := map[string]any{
+			"status": map[string]any{},
 		}
 		assert.Nil(t, findTopLevelConditions(resource))
 	})
 
 	t.Run("returns nil for non-slice conditions", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
+		resource := map[string]any{
+			"status": map[string]any{
 				"conditions": "not-a-slice",
 			},
 		}
@@ -386,12 +386,12 @@ func TestFindTopLevelConditions(t *testing.T) {
 
 func TestFindParentConditions(t *testing.T) {
 	t.Run("extracts conditions from parent by index", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"parents": []interface{}{
-					map[string]interface{}{
-						"conditions": []interface{}{
-							map[string]interface{}{"type": "Accepted"},
+		resource := map[string]any{
+			"status": map[string]any{
+				"parents": []any{
+					map[string]any{
+						"conditions": []any{
+							map[string]any{"type": "Accepted"},
 						},
 					},
 				},
@@ -403,24 +403,24 @@ func TestFindParentConditions(t *testing.T) {
 	})
 
 	t.Run("returns nil for out of range index", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
-				"parents": []interface{}{},
+		resource := map[string]any{
+			"status": map[string]any{
+				"parents": []any{},
 			},
 		}
 		assert.Nil(t, findParentConditions(resource, 0))
 	})
 
 	t.Run("returns nil for missing parents", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{},
+		resource := map[string]any{
+			"status": map[string]any{},
 		}
 		assert.Nil(t, findParentConditions(resource, 0))
 	})
 
 	t.Run("returns nil for non-slice parents", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"status": map[string]interface{}{
+		resource := map[string]any{
+			"status": map[string]any{
 				"parents": "not-a-slice",
 			},
 		}

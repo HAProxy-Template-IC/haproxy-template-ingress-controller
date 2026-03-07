@@ -16,6 +16,7 @@ package comparator
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
@@ -63,7 +64,7 @@ func BenchmarkCompare_NoChanges(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *ConfigDiff
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
@@ -92,7 +93,7 @@ func BenchmarkCompare_OnlyAdditions(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *ConfigDiff
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
@@ -121,7 +122,7 @@ func BenchmarkCompare_OnlyDeletions(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *ConfigDiff
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
@@ -150,7 +151,7 @@ func BenchmarkCompare_MixedChanges(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *ConfigDiff
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
@@ -204,7 +205,7 @@ func benchmarkCompareSmall(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *ConfigDiff
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
@@ -234,7 +235,7 @@ func benchmarkCompareMedium(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *ConfigDiff
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
@@ -264,7 +265,7 @@ func benchmarkCompareLarge(b *testing.B) {
 	b.ReportAllocs()
 
 	var r *ConfigDiff
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
@@ -294,7 +295,7 @@ func benchmarkCompareBackendScale(b *testing.B, backendCount int) {
 	b.ReportAllocs()
 
 	var r *ConfigDiff
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
@@ -309,7 +310,7 @@ func benchmarkOrderSmall(b *testing.B) {
 	b.ReportAllocs()
 
 	var r []Operation
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r = OrderOperations(ops)
 	}
 	_ = r
@@ -324,7 +325,7 @@ func benchmarkOrderMedium(b *testing.B) {
 	b.ReportAllocs()
 
 	var r []Operation
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r = OrderOperations(ops)
 	}
 	_ = r
@@ -339,7 +340,7 @@ func benchmarkOrderLarge(b *testing.B) {
 	b.ReportAllocs()
 
 	var r []Operation
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r = OrderOperations(ops)
 	}
 	_ = r
@@ -503,7 +504,8 @@ func generateLargeConfigWithChanges() string {
 }
 
 func generateScaledConfig(backendCount, serversPerBackend int) string {
-	config := `
+	var config strings.Builder
+	config.WriteString(`
 global
     daemon
 
@@ -517,20 +519,21 @@ frontend http_front
     bind *:80
     default_backend backend_0
 
-`
-	for i := 0; i < backendCount; i++ {
-		config += fmt.Sprintf("backend backend_%d\n", i)
-		config += "    balance roundrobin\n"
-		for j := 0; j < serversPerBackend; j++ {
-			config += fmt.Sprintf("    server srv%d_%d 10.%d.%d.1:%d check\n", i, j, i/256, i%256, 8080+j)
+`)
+	for i := range backendCount {
+		fmt.Fprintf(&config, "backend backend_%d\n", i)
+		config.WriteString("    balance roundrobin\n")
+		for j := range serversPerBackend {
+			fmt.Fprintf(&config, "    server srv%d_%d 10.%d.%d.1:%d check\n", i, j, i/256, i%256, 8080+j)
 		}
-		config += "\n"
+		config.WriteString("\n")
 	}
-	return config
+	return config.String()
 }
 
 func generateScaledConfigWithChanges(backendCount, serversPerBackend int) string {
-	config := `
+	var config strings.Builder
+	config.WriteString(`
 global
     daemon
 
@@ -544,14 +547,14 @@ frontend http_front
     bind *:80
     default_backend backend_0
 
-`
+`)
 	// Change balance method on half the backends, add servers to others
-	for i := 0; i < backendCount; i++ {
-		config += fmt.Sprintf("backend backend_%d\n", i)
+	for i := range backendCount {
+		fmt.Fprintf(&config, "backend backend_%d\n", i)
 		if i%2 == 0 {
-			config += "    balance leastconn\n"
+			config.WriteString("    balance leastconn\n")
 		} else {
-			config += "    balance roundrobin\n"
+			config.WriteString("    balance roundrobin\n")
 		}
 		serverCount := serversPerBackend
 		if i%3 == 0 {
@@ -562,9 +565,9 @@ frontend http_front
 			if j == 0 && i%2 == 0 {
 				weight = " weight 100"
 			}
-			config += fmt.Sprintf("    server srv%d_%d 10.%d.%d.1:%d check%s\n", i, j, i/256, i%256, 8080+j, weight)
+			fmt.Fprintf(&config, "    server srv%d_%d 10.%d.%d.1:%d check%s\n", i, j, i/256, i%256, 8080+j, weight)
 		}
-		config += "\n"
+		config.WriteString("\n")
 	}
-	return config
+	return config.String()
 }

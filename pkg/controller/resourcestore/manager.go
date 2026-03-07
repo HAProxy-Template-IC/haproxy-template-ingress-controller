@@ -16,6 +16,7 @@ package resourcestore
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -80,9 +81,7 @@ func (m *Manager) GetAllStores() map[string]Store {
 
 	// Create shallow copy
 	result := make(map[string]Store, len(m.stores))
-	for k, v := range m.stores {
-		result[k] = v
-	}
+	maps.Copy(result, m.stores)
 
 	return result
 }
@@ -114,7 +113,7 @@ func (m *Manager) GetAllStores() map[string]Store {
 //
 //	// Use overlay for dry-run validation
 //	resources, _ := overlay.List() // Includes updated ingress
-func (m *Manager) CreateOverlay(resourceType, namespace, name string, obj interface{}, op Operation) (Store, error) {
+func (m *Manager) CreateOverlay(resourceType, namespace, name string, obj any, op Operation) (Store, error) {
 	baseStore, exists := m.GetStore(resourceType)
 	if !exists {
 		return nil, fmt.Errorf("no store registered for resource type: %s", resourceType)
@@ -149,7 +148,7 @@ func (m *Manager) CreateOverlay(resourceType, namespace, name string, obj interf
 //
 //	// Use for dry-run reconciliation
 //	err = executor.DryRunReconcile(ctx, stores)
-func (m *Manager) CreateOverlayMap(resourceType, namespace, name string, obj interface{}, op Operation) (map[string]Store, error) {
+func (m *Manager) CreateOverlayMap(resourceType, namespace, name string, obj any, op Operation) (map[string]Store, error) {
 	// Get all stores
 	stores := m.GetAllStores()
 

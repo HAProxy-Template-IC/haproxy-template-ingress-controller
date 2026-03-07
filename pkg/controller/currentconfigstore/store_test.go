@@ -52,14 +52,14 @@ func newTestLogger() *slog.Logger {
 // newHAProxyCfgResource creates an unstructured HAProxyCfg resource for testing.
 func newHAProxyCfgResource(content string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "haproxy-haptic.org/v1alpha1",
 			"kind":       "HAProxyCfg",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test-haproxycfg",
 				"namespace": "default",
 			},
-			"spec": map[string]interface{}{
+			"spec": map[string]any{
 				"content": content,
 			},
 		},
@@ -186,13 +186,13 @@ func TestStore_UpdateWithMissingContent(t *testing.T) {
 
 	// Update with resource missing spec.content should clear config
 	resourceWithoutContent := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "haproxy-haptic.org/v1alpha1",
 			"kind":       "HAProxyCfg",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name": "test-haproxycfg",
 			},
-			"spec": map[string]interface{}{
+			"spec": map[string]any{
 				// No content field
 			},
 		},
@@ -239,21 +239,21 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 	wg.Add(numGoroutines * 2)
 
 	// Start writers
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		go func() {
 			defer wg.Done()
 			resource := newHAProxyCfgResource(validHAProxyConfig)
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				store.Update(resource)
 			}
 		}()
 	}
 
 	// Start readers
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				_ = store.Get()
 			}
 		}()
@@ -273,7 +273,7 @@ func TestStore_MultipleUpdates(t *testing.T) {
 	require.NoError(t, err)
 
 	// Multiple sequential updates
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		resource := newHAProxyCfgResource(validHAProxyConfig)
 		store.Update(resource)
 
@@ -369,15 +369,15 @@ backend different-backend
 // newHAProxyCfgResourceWithChecksum creates a resource with spec.checksum and generation set.
 func newHAProxyCfgResourceWithChecksum(content, checksum string, generation int64) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "haproxy-haptic.org/v1alpha1",
 			"kind":       "HAProxyCfg",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":       "test-haproxycfg",
 				"namespace":  "default",
 				"generation": generation,
 			},
-			"spec": map[string]interface{}{
+			"spec": map[string]any{
 				"content":  content,
 				"checksum": checksum,
 			},
@@ -428,7 +428,7 @@ func TestStore_FallsBackToSHA256WhenChecksumEmpty(t *testing.T) {
 
 	// Update with no spec.checksum (empty string) — should fall back to SHA256
 	resource := newHAProxyCfgResource(validHAProxyConfig)
-	resource.Object["metadata"] = map[string]interface{}{
+	resource.Object["metadata"] = map[string]any{
 		"name":       "test-haproxycfg",
 		"namespace":  "default",
 		"generation": int64(1),

@@ -116,7 +116,7 @@ func clearValidationDirectories(paths *ValidationPaths) error {
 // between MkdirAll and ReadDir (e.g., by concurrent cleanup).
 func clearDirectory(dir string) error {
 	var entries []os.DirEntry
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -389,15 +389,11 @@ func buildErrorBlock(lines []string, alertIdx int, configLines []string, configC
 
 // calculateContextRange calculates the start and end indices for context lines (3 before/after).
 func calculateContextRange(alertIdx, totalLines int) (start, end int) {
-	start = alertIdx - 3
-	if start < 0 {
-		start = 0
-	}
+	start = max(alertIdx-3, 0)
 
-	end = alertIdx + 4 // +4 because we want 3 lines after (inclusive range)
-	if end > totalLines {
-		end = totalLines
-	}
+	end = min(
+		// +4 because we want 3 lines after (inclusive range)
+		alertIdx+4, totalLines)
 
 	return start, end
 }
@@ -422,20 +418,20 @@ func extractConfigContext(alertLine string, configLines []string) string {
 	// or: [ALERT] ... : [haproxy.cfg:90] : ...
 
 	// Find [filename:linenum] pattern - look for second [ (after [ALERT])
-	firstBracket := strings.Index(alertLine, "[")
-	if firstBracket == -1 {
+	_, after, ok := strings.Cut(alertLine, "[")
+	if !ok {
 		return ""
 	}
 
 	// Look for second bracket after [ALERT]
-	remaining := alertLine[firstBracket+1:]
-	secondBracket := strings.Index(remaining, "[")
-	if secondBracket == -1 {
+	remaining := after
+	_, after, ok = strings.Cut(remaining, "[")
+	if !ok {
 		return ""
 	}
 
 	// Now parse the [filename:line] part
-	fileLinePart := remaining[secondBracket+1:]
+	fileLinePart := after
 	colonIdx := strings.Index(fileLinePart, ":")
 	if colonIdx == -1 {
 		return ""
@@ -460,15 +456,11 @@ func extractConfigContext(alertLine string, configLines []string) string {
 	}
 
 	// Calculate context range (3 lines before and after)
-	startIdx := errorLineIdx - 3
-	if startIdx < 0 {
-		startIdx = 0
-	}
+	startIdx := max(errorLineIdx-3, 0)
 
-	endIdx := errorLineIdx + 4 // +4 because we want 3 lines after
-	if endIdx > len(configLines) {
-		endIdx = len(configLines)
-	}
+	endIdx := min(
+		// +4 because we want 3 lines after
+		errorLineIdx+4, len(configLines))
 
 	// Build context block with line numbers
 	var contextLines []string

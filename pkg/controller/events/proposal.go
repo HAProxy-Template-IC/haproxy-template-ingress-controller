@@ -15,6 +15,7 @@
 package events
 
 import (
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -90,9 +91,7 @@ func (e *ProposalValidationRequestedEvent) RequestID() string {
 func NewProposalValidationRequestedEvent(overlays map[string]*stores.StoreOverlay, httpOverlay stores.HTTPContentOverlay, source, sourceContext string) *ProposalValidationRequestedEvent {
 	// Defensive copy of overlays map
 	overlaysCopy := make(map[string]*stores.StoreOverlay, len(overlays))
-	for name, overlay := range overlays {
-		overlaysCopy[name] = overlay
-	}
+	maps.Copy(overlaysCopy, overlays)
 
 	return &ProposalValidationRequestedEvent{
 		ID:            uuid.New().String(),

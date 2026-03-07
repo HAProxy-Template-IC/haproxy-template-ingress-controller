@@ -40,7 +40,7 @@ func generateMockOperations(count int) []Operation {
 	ops := make([]Operation, count)
 	types := []sections.OperationType{sections.OperationCreate, sections.OperationUpdate, sections.OperationDelete}
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		ops[i] = &mockOperation{
 			opType:   types[i%3],
 			section:  fmt.Sprintf("section_%d", i%10),

@@ -23,8 +23,8 @@ import (
 func TestScriggoSemverGte(t *testing.T) {
 	tests := []struct {
 		name       string
-		version    interface{}
-		minVersion interface{}
+		version    any
+		minVersion any
 		want       bool
 	}{
 		{name: "equal versions", version: "3.3", minVersion: "3.3", want: true},

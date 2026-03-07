@@ -1,6 +1,7 @@
 package stores
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,37 +10,37 @@ import (
 
 // mockStore is a simple in-memory store for testing.
 type mockStore struct {
-	resources map[string]interface{}
+	resources map[string]any
 }
 
 func newMockStore() *mockStore {
 	return &mockStore{
-		resources: make(map[string]interface{}),
+		resources: make(map[string]any),
 	}
 }
 
-func (s *mockStore) Get(keys ...string) ([]interface{}, error) {
+func (s *mockStore) Get(keys ...string) ([]any, error) {
 	key := keyString(keys)
 	if res, ok := s.resources[key]; ok {
-		return []interface{}{res}, nil
+		return []any{res}, nil
 	}
 	return nil, nil
 }
 
-func (s *mockStore) List() ([]interface{}, error) {
-	result := make([]interface{}, 0, len(s.resources))
+func (s *mockStore) List() ([]any, error) {
+	result := make([]any, 0, len(s.resources))
 	for _, res := range s.resources {
 		result = append(result, res)
 	}
 	return result, nil
 }
 
-func (s *mockStore) Add(resource interface{}, keys []string) error {
+func (s *mockStore) Add(resource any, keys []string) error {
 	s.resources[keyString(keys)] = resource
 	return nil
 }
 
-func (s *mockStore) Update(resource interface{}, keys []string) error {
+func (s *mockStore) Update(resource any, keys []string) error {
 	s.resources[keyString(keys)] = resource
 	return nil
 }
@@ -50,19 +51,19 @@ func (s *mockStore) Delete(keys ...string) error {
 }
 
 func (s *mockStore) Clear() error {
-	s.resources = make(map[string]interface{})
+	s.resources = make(map[string]any)
 	return nil
 }
 
 func keyString(keys []string) string {
-	result := ""
+	var result strings.Builder
 	for i, k := range keys {
 		if i > 0 {
-			result += "/"
+			result.WriteString("/")
 		}
-		result += k
+		result.WriteString(k)
 	}
-	return result
+	return result.String()
 }
 
 func TestRealStoreProvider_GetStore(t *testing.T) {

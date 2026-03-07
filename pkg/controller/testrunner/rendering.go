@@ -17,6 +17,7 @@ package testrunner
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -86,7 +87,7 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 // When profileIncludes is enabled, it returns timing statistics for included templates.
 // The currentConfig parameter enables slot-aware server assignment testing (nil for first deployment).
 // The testExtraContext parameter allows test-specific extraContext values to override global ones.
-func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]interface{}) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
+func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]any) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
 	// Build rendering context with fixture stores
 	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig)
 
@@ -94,11 +95,9 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 	// IMPORTANT: Make a copy to avoid modifying the shared config map which would
 	// cause state leakage between parallel test runs.
 	if testExtraContext != nil {
-		globalExtraContext := renderCtx["extraContext"].(map[string]interface{})
-		mergedExtraContext := make(map[string]interface{}, len(globalExtraContext)+len(testExtraContext))
-		for key, value := range globalExtraContext {
-			mergedExtraContext[key] = value
-		}
+		globalExtraContext := renderCtx["extraContext"].(map[string]any)
+		mergedExtraContext := make(map[string]any, len(globalExtraContext)+len(testExtraContext))
+		maps.Copy(mergedExtraContext, globalExtraContext)
 		for key, value := range testExtraContext {
 			mergedExtraContext[key] = value
 			// Also merge into top-level context for direct access
@@ -155,7 +154,7 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 //   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
 //   - Separates haproxy-pods store from resource stores
 //   - Accepts optional currentConfig for slot-aware server assignment testing
-func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig) map[string]interface{} {
+func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig) map[string]any {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -181,7 +180,7 @@ func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validat
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.
-func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[string]interface{}, validationPaths *dataplane.ValidationPaths) (*dataplane.AuxiliaryFiles, error) {
+func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[string]any, validationPaths *dataplane.ValidationPaths) (*dataplane.AuxiliaryFiles, error) {
 	auxFiles := &dataplane.AuxiliaryFiles{}
 
 	// Render map files using worker-specific engine

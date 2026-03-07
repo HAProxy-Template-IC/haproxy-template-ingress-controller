@@ -17,6 +17,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 )
 
@@ -110,9 +111,7 @@ func resolveInlineSchema(def *SchemaDefinition) (*ResolvedSchema, error) {
 // mergeSchema merges source schema into target.
 func mergeSchema(target, source *ResolvedSchema) {
 	// Merge properties (source overwrites target)
-	for name, prop := range source.Properties {
-		target.Properties[name] = prop
-	}
+	maps.Copy(target.Properties, source.Properties)
 
 	// Merge required fields (deduplicate)
 	seen := make(map[string]bool)
@@ -131,8 +130,8 @@ func mergeSchema(target, source *ResolvedSchema) {
 // Example: "#/components/schemas/server_params" -> "server_params".
 func extractRefName(ref string) string {
 	const prefix = "#/components/schemas/"
-	if strings.HasPrefix(ref, prefix) {
-		return strings.TrimPrefix(ref, prefix)
+	if after, ok := strings.CutPrefix(ref, prefix); ok {
+		return after
 	}
 	return ref
 }

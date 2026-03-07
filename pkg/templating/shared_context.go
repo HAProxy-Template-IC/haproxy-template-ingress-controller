@@ -17,20 +17,20 @@ import (
 //   - The wasComputed return value enables deduplication (FirstSeen pattern)
 type SharedContext struct {
 	mu    sync.RWMutex
-	data  map[string]interface{}
+	data  map[string]any
 	group singleflight.Group
 }
 
 // NewSharedContext creates a new thread-safe shared context.
 func NewSharedContext() *SharedContext {
 	return &SharedContext{
-		data: make(map[string]interface{}),
+		data: make(map[string]any),
 	}
 }
 
 // Get returns the value for key, or nil if not found.
 // This is a read-only operation - use ComputeIfAbsent for initialization.
-func (s *SharedContext) Get(key string) interface{} {
+func (s *SharedContext) Get(key string) any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.data[key]
@@ -57,7 +57,7 @@ func (s *SharedContext) Get(key string) interface{} {
 //
 // IMPORTANT: The compute function is called WITHOUT holding the mutex, so it
 // may safely call ComputeIfAbsent for other keys (nested/recursive calls).
-func (s *SharedContext) ComputeIfAbsent(key string, compute func() interface{}) (interface{}, bool) {
+func (s *SharedContext) ComputeIfAbsent(key string, compute func() any) (any, bool) {
 	// Fast path: check if already computed
 	s.mu.RLock()
 	if val, ok := s.data[key]; ok {
@@ -74,7 +74,7 @@ func (s *SharedContext) ComputeIfAbsent(key string, compute func() interface{}) 
 	var weComputed bool
 
 	// Slow path: use singleflight to compute exactly once
-	r, _, _ := s.group.Do(key, func() (interface{}, error) {
+	r, _, _ := s.group.Do(key, func() (any, error) {
 		// Double-check under lock before computing
 		s.mu.Lock()
 		if val, ok := s.data[key]; ok {

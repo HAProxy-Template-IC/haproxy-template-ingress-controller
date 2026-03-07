@@ -44,9 +44,9 @@ func BenchmarkVMPool(b *testing.B) {
 	)
 
 	// Generate test data: 2000 items to be sharded across ~20 goroutines per operation.
-	items := make([]interface{}, 2000)
+	items := make([]any, 2000)
 	for i := range items {
-		items[i] = map[string]interface{}{
+		items[i] = map[string]any{
 			"name":    fmt.Sprintf("srv%d", i),
 			"address": fmt.Sprintf("10.0.%d.%d", i/256, i%256),
 			"port":    8080 + (i % 10),
@@ -84,7 +84,7 @@ server {{ item.(map[string]any)["name"] }} {{ item.(map[string]any)["address"] }
 	// The nil pointer tells Scriggo the type at compile time; the actual value is
 	// provided at render time via the context map.
 	declarations := map[string]any{
-		"shards":     (*[]interface{})(nil),
+		"shards":     (*[]any)(nil),
 		"operations": (*int)(nil),
 	}
 	engine, err := NewScriggoWithDeclarations(templates, []string{"main"}, nil, nil, nil, declarations)
@@ -94,18 +94,15 @@ server {{ item.(map[string]any)["name"] }} {{ item.(map[string]any)["address"] }
 
 	// Split items into shardCount chunks, each passed as a separate shard.
 	// This causes `go ProcessShard(...)` to spawn shardCount goroutines per operation.
-	shards := make([]interface{}, shardCount)
+	shards := make([]any, shardCount)
 	chunkSize := (len(items) + shardCount - 1) / shardCount
 	for i := range shards {
 		start := i * chunkSize
-		end := start + chunkSize
-		if end > len(items) {
-			end = len(items)
-		}
+		end := min(start+chunkSize, len(items))
 		shards[i] = items[start:end]
 	}
 
-	ctx := map[string]interface{}{
+	ctx := map[string]any{
 		"shards":     shards,
 		"operations": operationCount,
 	}
@@ -125,7 +122,7 @@ server {{ item.(map[string]any)["name"] }} {{ item.(map[string]any)["address"] }
 	b.Run("with_clear", func(b *testing.B) {
 		b.ReportAllocs()
 		var r string
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			r, _ = engine.Render(context.Background(), "main", ctx)
 			engine.ClearVMPool()
 		}
@@ -135,7 +132,7 @@ server {{ item.(map[string]any)["name"] }} {{ item.(map[string]any)["address"] }
 	b.Run("without_clear", func(b *testing.B) {
 		b.ReportAllocs()
 		var r string
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			r, _ = engine.Render(context.Background(), "main", ctx)
 		}
 		benchResultString = r
@@ -146,7 +143,7 @@ server {{ item.(map[string]any)["name"] }} {{ item.(map[string]any)["address"] }
 		b.ReportAllocs()
 
 		// Warm up pool.
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			engine.Render(context.Background(), "main", ctx)
 		}
 
@@ -154,7 +151,7 @@ server {{ item.(map[string]any)["name"] }} {{ item.(map[string]any)["address"] }
 		runtime.GC()
 		runtime.ReadMemStats(&mBefore)
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			engine.Render(context.Background(), "main", ctx)
 			// No ClearVMPool — measure steady-state pool memory.
 		}

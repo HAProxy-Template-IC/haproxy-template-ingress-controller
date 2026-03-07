@@ -28,16 +28,16 @@ import "strings"
 //   - "configmaps" → "ConfigMap"
 func SingularizeResourceType(plural string) string {
 	// Remove trailing 's' for simple plurals
-	if strings.HasSuffix(plural, "es") {
+	if before, ok := strings.CutSuffix(plural, "es"); ok {
 		// "ingresses" → "ingress"
-		singular := strings.TrimSuffix(plural, "es")
+		singular := before
 		// Capitalize first letter: "ingress" → "Ingress"
 		return strings.ToUpper(singular[:1]) + singular[1:]
 	}
 
-	if strings.HasSuffix(plural, "s") {
+	if before, ok := strings.CutSuffix(plural, "s"); ok {
 		// "pods" → "pod"
-		singular := strings.TrimSuffix(plural, "s")
+		singular := before
 		// Capitalize first letter: "pod" → "Pod"
 		return strings.ToUpper(singular[:1]) + singular[1:]
 	}

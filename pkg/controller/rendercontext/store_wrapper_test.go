@@ -30,19 +30,19 @@ type mockStoreWithError struct {
 	getErr  error
 }
 
-func (m *mockStoreWithError) List() ([]interface{}, error) {
+func (m *mockStoreWithError) List() ([]any, error) {
 	return nil, m.listErr
 }
 
-func (m *mockStoreWithError) Get(_ ...string) ([]interface{}, error) {
+func (m *mockStoreWithError) Get(_ ...string) ([]any, error) {
 	return nil, m.getErr
 }
 
-func (m *mockStoreWithError) Add(_ interface{}, _ []string) error {
+func (m *mockStoreWithError) Add(_ any, _ []string) error {
 	return nil
 }
 
-func (m *mockStoreWithError) Update(_ interface{}, _ []string) error {
+func (m *mockStoreWithError) Update(_ any, _ []string) error {
 	return nil
 }
 
@@ -56,14 +56,14 @@ func (m *mockStoreWithError) Clear() error {
 
 // mockStoreWithItems returns pre-converted map items (as stores now contain).
 type mockStoreWithItems struct {
-	items []interface{}
+	items []any
 }
 
-func (m *mockStoreWithItems) List() ([]interface{}, error) {
+func (m *mockStoreWithItems) List() ([]any, error) {
 	return m.items, nil
 }
 
-func (m *mockStoreWithItems) Get(keys ...string) ([]interface{}, error) {
+func (m *mockStoreWithItems) Get(keys ...string) ([]any, error) {
 	// Simple key matching for testing
 	if len(keys) > 0 && len(m.items) > 0 {
 		return m.items, nil
@@ -71,11 +71,11 @@ func (m *mockStoreWithItems) Get(keys ...string) ([]interface{}, error) {
 	return nil, nil
 }
 
-func (m *mockStoreWithItems) Add(_ interface{}, _ []string) error {
+func (m *mockStoreWithItems) Add(_ any, _ []string) error {
 	return nil
 }
 
-func (m *mockStoreWithItems) Update(_ interface{}, _ []string) error {
+func (m *mockStoreWithItems) Update(_ any, _ []string) error {
 	return nil
 }
 
@@ -92,11 +92,11 @@ func testLogger() *slog.Logger {
 }
 
 // createResourceMap creates a pre-converted resource map (as stores now contain).
-func createResourceMap(name string) map[string]interface{} {
-	return map[string]interface{}{
+func createResourceMap(name string) map[string]any {
+	return map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Service",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"name":      name,
 			"namespace": "default",
 		},
@@ -104,7 +104,7 @@ func createResourceMap(name string) map[string]interface{} {
 }
 
 func TestStoreWrapper_List_Empty(t *testing.T) {
-	store := &mockStoreWithItems{items: []interface{}{}}
+	store := &mockStoreWithItems{items: []any{}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
@@ -120,7 +120,7 @@ func TestStoreWrapper_List_WithItems(t *testing.T) {
 	item1 := createResourceMap("item1")
 	item2 := createResourceMap("item2")
 
-	store := &mockStoreWithItems{items: []interface{}{item1, item2}}
+	store := &mockStoreWithItems{items: []any{item1, item2}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
@@ -131,9 +131,9 @@ func TestStoreWrapper_List_WithItems(t *testing.T) {
 	require.Len(t, result, 2)
 
 	// Items are already maps, returned as-is
-	m1, ok := result[0].(map[string]interface{})
+	m1, ok := result[0].(map[string]any)
 	require.True(t, ok, "item should be a map")
-	assert.Equal(t, "item1", m1["metadata"].(map[string]interface{})["name"])
+	assert.Equal(t, "item1", m1["metadata"].(map[string]any)["name"])
 }
 
 func TestStoreWrapper_List_Error(t *testing.T) {
@@ -151,7 +151,7 @@ func TestStoreWrapper_List_Error(t *testing.T) {
 func TestStoreWrapper_Fetch(t *testing.T) {
 	item := createResourceMap("test-item")
 
-	store := &mockStoreWithItems{items: []interface{}{item}}
+	store := &mockStoreWithItems{items: []any{item}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
@@ -177,7 +177,7 @@ func TestStoreWrapper_Fetch_Error(t *testing.T) {
 func TestStoreWrapper_GetSingle(t *testing.T) {
 	item := createResourceMap("single-item")
 
-	store := &mockStoreWithItems{items: []interface{}{item}}
+	store := &mockStoreWithItems{items: []any{item}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
@@ -187,13 +187,13 @@ func TestStoreWrapper_GetSingle(t *testing.T) {
 	result := wrapper.GetSingle("default", "single-item")
 	require.NotNil(t, result)
 
-	m, ok := result.(map[string]interface{})
+	m, ok := result.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "single-item", m["metadata"].(map[string]interface{})["name"])
+	assert.Equal(t, "single-item", m["metadata"].(map[string]any)["name"])
 }
 
 func TestStoreWrapper_GetSingle_NotFound(t *testing.T) {
-	store := &mockStoreWithItems{items: []interface{}{}}
+	store := &mockStoreWithItems{items: []any{}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
@@ -208,7 +208,7 @@ func TestStoreWrapper_GetSingle_Ambiguous(t *testing.T) {
 	item1 := createResourceMap("item1")
 	item2 := createResourceMap("item2")
 
-	store := &mockStoreWithItems{items: []interface{}{item1, item2}}
+	store := &mockStoreWithItems{items: []any{item1, item2}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",

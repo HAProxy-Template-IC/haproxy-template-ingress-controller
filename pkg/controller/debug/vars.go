@@ -40,13 +40,13 @@ type ConfigVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *ConfigVar) Get() (interface{}, error) {
+func (v *ConfigVar) Get() (any, error) {
 	cfg, version, err := v.provider.GetConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"config":  cfg,
 		"version": version,
 		"updated": time.Now(),
@@ -73,14 +73,14 @@ type CredentialsVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *CredentialsVar) Get() (interface{}, error) {
+func (v *CredentialsVar) Get() (any, error) {
 	creds, version, err := v.provider.GetCredentials()
 	if err != nil {
 		return nil, err
 	}
 
 	// Don't expose actual credentials - only metadata
-	return map[string]interface{}{
+	return map[string]any{
 		"version":             version,
 		"updated":             time.Now(),
 		"has_dataplane_creds": creds != nil && creds.DataplaneUsername != "" && creds.DataplanePassword != "",
@@ -106,13 +106,13 @@ type RenderedVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *RenderedVar) Get() (interface{}, error) {
+func (v *RenderedVar) Get() (any, error) {
 	rendered, timestamp, err := v.provider.GetRenderedConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"config":    rendered,
 		"timestamp": timestamp,
 		"size":      len(rendered),
@@ -146,7 +146,7 @@ type AuxFilesVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *AuxFilesVar) Get() (interface{}, error) {
+func (v *AuxFilesVar) Get() (any, error) {
 	auxFiles, timestamp, err := v.provider.GetAuxiliaryFiles()
 	if err != nil {
 		return nil, err
@@ -158,7 +158,7 @@ func (v *AuxFilesVar) Get() (interface{}, error) {
 		"general_count": len(auxFiles.GeneralFiles),
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"files":     auxFiles,
 		"timestamp": timestamp,
 		"summary":   summary,
@@ -181,7 +181,7 @@ type ResourcesVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *ResourcesVar) Get() (interface{}, error) {
+func (v *ResourcesVar) Get() (any, error) {
 	return v.provider.GetResourceCounts()
 }
 
@@ -203,7 +203,7 @@ type FullStateVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *FullStateVar) Get() (interface{}, error) {
+func (v *FullStateVar) Get() (any, error) {
 	// Gather all state (best effort - don't fail if some parts are unavailable)
 	cfg, cfgVer, _ := v.provider.GetConfig()
 	rendered, renderedTime, _ := v.provider.GetRenderedConfig()
@@ -215,16 +215,16 @@ func (v *FullStateVar) Get() (interface{}, error) {
 		recentEvents = v.eventBuffer.GetLast(100)
 	}
 
-	return map[string]interface{}{
-		"config": map[string]interface{}{
+	return map[string]any{
+		"config": map[string]any{
 			"config":  cfg,
 			"version": cfgVer,
 		},
-		"rendered": map[string]interface{}{
+		"rendered": map[string]any{
 			"config":    rendered,
 			"timestamp": renderedTime,
 		},
-		"auxfiles": map[string]interface{}{
+		"auxfiles": map[string]any{
 			"files":     auxFiles,
 			"timestamp": auxTime,
 		},
@@ -255,7 +255,7 @@ type PipelineVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *PipelineVar) Get() (interface{}, error) {
+func (v *PipelineVar) Get() (any, error) {
 	return v.provider.GetPipelineStatus()
 }
 
@@ -277,7 +277,7 @@ type ValidatedVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *ValidatedVar) Get() (interface{}, error) {
+func (v *ValidatedVar) Get() (any, error) {
 	return v.provider.GetValidatedConfig()
 }
 
@@ -304,6 +304,6 @@ type ErrorsVar struct {
 }
 
 // Get implements introspection.Var.
-func (v *ErrorsVar) Get() (interface{}, error) {
+func (v *ErrorsVar) Get() (any, error) {
 	return v.provider.GetErrors()
 }

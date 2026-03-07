@@ -67,7 +67,7 @@ func NewFixtureHTTPStoreWrapper(store *httpstore.HTTPStore, logger *slog.Logger)
 // Returns:
 //   - Content string if URL has fixture
 //   - Error if URL is not in fixtures
-func (w *FixtureHTTPStoreWrapper) Fetch(args ...interface{}) (interface{}, error) {
+func (w *FixtureHTTPStoreWrapper) Fetch(args ...any) (any, error) {
 	if len(args) < 1 {
 		return nil, fmt.Errorf("http.Fetch requires at least 1 argument (url)")
 	}
@@ -92,7 +92,7 @@ func (w *FixtureHTTPStoreWrapper) Fetch(args ...interface{}) (interface{}, error
 }
 
 // fixtureToString converts an interface to string for fixture lookup.
-func fixtureToString(v interface{}) (string, error) {
+func fixtureToString(v any) (string, error) {
 	switch val := v.(type) {
 	case string:
 		return val, nil

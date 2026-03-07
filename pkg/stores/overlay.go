@@ -30,8 +30,8 @@ type StoreOverlay struct {
 
 	// Pre-converted resources for template use (computed once at construction).
 	// These are the template-friendly representations with floats converted to ints.
-	convertedAdditions     []interface{}
-	convertedModifications []interface{}
+	convertedAdditions     []any
+	convertedModifications []any
 }
 
 // NewStoreOverlay creates a new empty StoreOverlay.
@@ -40,8 +40,8 @@ func NewStoreOverlay() *StoreOverlay {
 		Additions:              make([]runtime.Object, 0),
 		Modifications:          make([]runtime.Object, 0),
 		Deletions:              make([]ktypes.NamespacedName, 0),
-		convertedAdditions:     make([]interface{}, 0),
-		convertedModifications: make([]interface{}, 0),
+		convertedAdditions:     make([]any, 0),
+		convertedModifications: make([]any, 0),
 	}
 }
 
@@ -53,8 +53,8 @@ func NewStoreOverlayForCreate(obj runtime.Object) *StoreOverlay {
 		Additions:              []runtime.Object{obj},
 		Modifications:          make([]runtime.Object, 0),
 		Deletions:              make([]ktypes.NamespacedName, 0),
-		convertedAdditions:     []interface{}{converted},
-		convertedModifications: make([]interface{}, 0),
+		convertedAdditions:     []any{converted},
+		convertedModifications: make([]any, 0),
 	}
 }
 
@@ -66,8 +66,8 @@ func NewStoreOverlayForUpdate(obj runtime.Object) *StoreOverlay {
 		Additions:              make([]runtime.Object, 0),
 		Modifications:          []runtime.Object{obj},
 		Deletions:              make([]ktypes.NamespacedName, 0),
-		convertedAdditions:     make([]interface{}, 0),
-		convertedModifications: []interface{}{converted},
+		convertedAdditions:     make([]any, 0),
+		convertedModifications: []any{converted},
 	}
 }
 
@@ -77,8 +77,8 @@ func NewStoreOverlayForDelete(namespace, name string) *StoreOverlay {
 		Additions:              make([]runtime.Object, 0),
 		Modifications:          make([]runtime.Object, 0),
 		Deletions:              []ktypes.NamespacedName{{Namespace: namespace, Name: name}},
-		convertedAdditions:     make([]interface{}, 0),
-		convertedModifications: make([]interface{}, 0),
+		convertedAdditions:     make([]any, 0),
+		convertedModifications: make([]any, 0),
 	}
 }
 
@@ -128,7 +128,7 @@ type CompositeStore struct {
 
 // KeyExtractor extracts index keys from a resource.
 // The keys are used to index resources in the store.
-type KeyExtractor func(resource interface{}) ([]string, error)
+type KeyExtractor func(resource any) ([]string, error)
 
 // NewCompositeStore creates a new CompositeStore.
 //
@@ -160,7 +160,7 @@ func NewCompositeStoreWithKeyExtractor(base Store, overlay *StoreOverlay, keyExt
 //   - Resources from the base store (excluding deletions)
 //   - Modifications (replacing base resources with same keys)
 //   - Additions that match the keys
-func (s *CompositeStore) Get(keys ...string) ([]interface{}, error) {
+func (s *CompositeStore) Get(keys ...string) ([]any, error) {
 	// Get base results
 	baseResults, err := s.base.Get(keys...)
 	if err != nil {
@@ -168,7 +168,7 @@ func (s *CompositeStore) Get(keys ...string) ([]interface{}, error) {
 	}
 
 	// Filter out deleted and modified resources
-	filtered := make([]interface{}, 0, len(baseResults))
+	filtered := make([]any, 0, len(baseResults))
 	for _, res := range baseResults {
 		if !s.isDeleted(res) && !s.isModified(res) {
 			filtered = append(filtered, res)
@@ -193,7 +193,7 @@ func (s *CompositeStore) Get(keys ...string) ([]interface{}, error) {
 }
 
 // List returns all resources from the merged view.
-func (s *CompositeStore) List() ([]interface{}, error) {
+func (s *CompositeStore) List() ([]any, error) {
 	// Get all base resources
 	baseResults, err := s.base.List()
 	if err != nil {
@@ -201,7 +201,7 @@ func (s *CompositeStore) List() ([]interface{}, error) {
 	}
 
 	// Filter out deleted and modified resources
-	result := make([]interface{}, 0, len(baseResults)+len(s.overlay.Additions))
+	result := make([]any, 0, len(baseResults)+len(s.overlay.Additions))
 	for _, res := range baseResults {
 		if !s.isDeleted(res) && !s.isModified(res) {
 			result = append(result, res)
@@ -219,13 +219,13 @@ func (s *CompositeStore) List() ([]interface{}, error) {
 
 // Add is not supported on CompositeStore.
 // CompositeStore is read-only; modifications should be made through the overlay.
-func (s *CompositeStore) Add(_ interface{}, _ []string) error {
+func (s *CompositeStore) Add(_ any, _ []string) error {
 	return &ReadOnlyStoreError{Operation: "Add"}
 }
 
 // Update is not supported on CompositeStore.
 // CompositeStore is read-only; modifications should be made through the overlay.
-func (s *CompositeStore) Update(_ interface{}, _ []string) error {
+func (s *CompositeStore) Update(_ any, _ []string) error {
 	return &ReadOnlyStoreError{Operation: "Update"}
 }
 
@@ -251,7 +251,7 @@ func (e *ReadOnlyStoreError) Error() string {
 }
 
 // isDeleted checks if a resource is marked for deletion in the overlay.
-func (s *CompositeStore) isDeleted(resource interface{}) bool {
+func (s *CompositeStore) isDeleted(resource any) bool {
 	resKey := s.getResourceKey(resource)
 	if resKey == nil {
 		return false
@@ -266,7 +266,7 @@ func (s *CompositeStore) isDeleted(resource interface{}) bool {
 }
 
 // isModified checks if a resource has a modification in the overlay.
-func (s *CompositeStore) isModified(resource interface{}) bool {
+func (s *CompositeStore) isModified(resource any) bool {
 	resKey := s.getResourceKey(resource)
 	if resKey == nil {
 		return false
@@ -282,7 +282,7 @@ func (s *CompositeStore) isModified(resource interface{}) bool {
 }
 
 // matchesKeys checks if a resource matches the given lookup keys.
-func (s *CompositeStore) matchesKeys(resource interface{}, keys []string) bool {
+func (s *CompositeStore) matchesKeys(resource any, keys []string) bool {
 	if s.keyExtractor == nil {
 		// Without a key extractor, we can only do basic namespace/name matching
 		resKey := s.getResourceKey(resource)
@@ -318,7 +318,7 @@ func (s *CompositeStore) matchesKeys(resource interface{}, keys []string) bool {
 }
 
 // getResourceKey extracts namespace/name from a resource.
-func (s *CompositeStore) getResourceKey(resource interface{}) *ktypes.NamespacedName {
+func (s *CompositeStore) getResourceKey(resource any) *ktypes.NamespacedName {
 	// Try to get metadata via accessor
 	if accessor, ok := resource.(interface {
 		GetNamespace() string
@@ -337,7 +337,7 @@ func (s *CompositeStore) getResourceKey(resource interface{}) *ktypes.Namespaced
 //
 // The conversion extracts the underlying map from unstructured resources and
 // converts float64 values to int64 where they have no fractional part.
-func convertOverlayResource(obj runtime.Object) interface{} {
+func convertOverlayResource(obj runtime.Object) any {
 	// Extract map from unstructured
 	if u, ok := obj.(*unstructured.Unstructured); ok {
 		return convertFloatsToInts(u.Object)
@@ -353,16 +353,16 @@ func convertOverlayResource(obj runtime.Object) interface{} {
 // when the target type is interface{}. For Kubernetes resources, this causes
 // integer fields like ports (80) to appear as floats (80.0) in templates.
 // HAProxy configuration syntax requires integers (port 80), not floats (port 80.0).
-func convertFloatsToInts(data interface{}) interface{} {
+func convertFloatsToInts(data any) any {
 	switch v := data.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		// Mutate map values in-place (safe: resources are freshly deserialized and owned by us)
 		for k, val := range v {
 			v[k] = convertFloatsToInts(val)
 		}
 		return v
 
-	case []interface{}:
+	case []any:
 		// Mutate slice elements in-place
 		for i, val := range v {
 			v[i] = convertFloatsToInts(val)

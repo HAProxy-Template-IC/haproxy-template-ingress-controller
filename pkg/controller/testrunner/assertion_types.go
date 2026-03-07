@@ -248,7 +248,7 @@ func (r *Runner) assertEquals(
 
 // assertJSONPath evaluates a JSONPath expression against the template context.
 func (r *Runner) assertJSONPath(
-	templateContext map[string]interface{},
+	templateContext map[string]any,
 	assertion *config.ValidationAssertion,
 ) AssertionResult {
 	result := AssertionResult{

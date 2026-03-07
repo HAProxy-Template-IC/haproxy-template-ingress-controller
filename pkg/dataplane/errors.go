@@ -378,9 +378,9 @@ func simplifySchemaError(errStr string) string {
 	// Try to extract value if present
 	// Format: Value:\n  "value"
 	var value string
-	valueIndex := strings.Index(remaining, "Value:\n")
-	if valueIndex != -1 {
-		valueText := remaining[valueIndex+7:] // Skip "Value:\n"
+	_, after, ok := strings.Cut(remaining, "Value:\n")
+	if ok {
+		valueText := after // Skip "Value:\n"
 		valueLines := strings.Split(valueText, "\n")
 		if len(valueLines) > 0 {
 			value = strings.TrimSpace(valueLines[0])
@@ -425,14 +425,14 @@ func SimplifyRenderingError(err error) string {
 	// Look for the fail() function error pattern
 	// This is the marker that indicates a template-level validation error
 	marker := "invalid call to function 'fail': "
-	idx := strings.Index(errStr, marker)
-	if idx == -1 {
+	_, after, ok := strings.Cut(errStr, marker)
+	if !ok {
 		// Not a fail() error, return original (could be syntax error, missing variable, etc.)
 		return errStr
 	}
 
 	// Extract everything after the marker (the user-provided message)
-	message := errStr[idx+len(marker):]
+	message := after
 
 	// The message should be the last part of the error chain, but may have trailing whitespace
 	return strings.TrimSpace(message)

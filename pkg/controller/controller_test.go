@@ -34,14 +34,14 @@ func TestParseSecret(t *testing.T) {
 		{
 			name: "valid secret with credentials",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-secret",
 						"namespace": "default",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"dataplane_username": base64.StdEncoding.EncodeToString([]byte("admin")),
 						"dataplane_password": base64.StdEncoding.EncodeToString([]byte("secret123")),
 					},
@@ -52,10 +52,10 @@ func TestParseSecret(t *testing.T) {
 		{
 			name: "secret without data field",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "test-secret",
 					},
 				},
@@ -66,13 +66,13 @@ func TestParseSecret(t *testing.T) {
 		{
 			name: "secret with invalid base64",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "test-secret",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"dataplane_username": "not-valid-base64!!!",
 					},
 				},
@@ -83,13 +83,13 @@ func TestParseSecret(t *testing.T) {
 		{
 			name: "secret missing required credentials",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "test-secret",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"some_other_key": base64.StdEncoding.EncodeToString([]byte("value")),
 					},
 				},
@@ -128,16 +128,16 @@ func TestParseWebhookCertSecret(t *testing.T) {
 		{
 			name: "valid TLS secret",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":            "webhook-certs",
 						"namespace":       "default",
 						"resourceVersion": "12345",
 					},
 					"type": "kubernetes.io/tls",
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"tls.crt": base64.StdEncoding.EncodeToString(validCert),
 						"tls.key": base64.StdEncoding.EncodeToString(validKey),
 					},
@@ -148,10 +148,10 @@ func TestParseWebhookCertSecret(t *testing.T) {
 		{
 			name: "secret without data field",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "webhook-certs",
 					},
 				},
@@ -162,13 +162,13 @@ func TestParseWebhookCertSecret(t *testing.T) {
 		{
 			name: "secret missing tls.crt",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "webhook-certs",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"tls.key": base64.StdEncoding.EncodeToString(validKey),
 					},
 				},
@@ -179,13 +179,13 @@ func TestParseWebhookCertSecret(t *testing.T) {
 		{
 			name: "secret missing tls.key",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "webhook-certs",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"tls.crt": base64.StdEncoding.EncodeToString(validCert),
 					},
 				},
@@ -196,13 +196,13 @@ func TestParseWebhookCertSecret(t *testing.T) {
 		{
 			name: "secret with invalid base64 cert",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "webhook-certs",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"tls.crt": "not-valid-base64!!!",
 						"tls.key": base64.StdEncoding.EncodeToString(validKey),
 					},
@@ -214,13 +214,13 @@ func TestParseWebhookCertSecret(t *testing.T) {
 		{
 			name: "secret with invalid base64 key",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "webhook-certs",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"tls.crt": base64.StdEncoding.EncodeToString(validCert),
 						"tls.key": "not-valid-base64!!!",
 					},
@@ -236,13 +236,13 @@ func TestParseWebhookCertSecret(t *testing.T) {
 		{
 			name: "secret with empty tls.crt",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "webhook-certs",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"tls.crt": base64.StdEncoding.EncodeToString([]byte("")),
 						"tls.key": base64.StdEncoding.EncodeToString(validKey),
 					},
@@ -254,13 +254,13 @@ func TestParseWebhookCertSecret(t *testing.T) {
 		{
 			name: "secret with empty tls.key",
 			resource: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Secret",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "webhook-certs",
 					},
-					"data": map[string]interface{}{
+					"data": map[string]any{
 						"tls.crt": base64.StdEncoding.EncodeToString(validCert),
 						"tls.key": base64.StdEncoding.EncodeToString([]byte("")),
 					},
@@ -328,7 +328,7 @@ func TestLeaderCallbackState_ConcurrentAccess(t *testing.T) {
 	done := make(chan bool)
 
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			state.mu.Lock()
 			state.components = &leaderOnlyComponents{}
 			state.mu.Unlock()
@@ -337,7 +337,7 @@ func TestLeaderCallbackState_ConcurrentAccess(t *testing.T) {
 	}()
 
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			state.mu.Lock()
 			_ = state.components
 			state.mu.Unlock()

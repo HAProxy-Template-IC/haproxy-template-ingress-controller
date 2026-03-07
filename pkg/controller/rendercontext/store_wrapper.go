@@ -38,7 +38,7 @@ var _ templating.ResourceStore = (*StoreWrapper)(nil)
 // - other types: formatted using fmt.Sprintf
 //
 // This allows template methods to accept interface{} arguments.
-func toString(v interface{}) string {
+func toString(v any) string {
 	switch val := v.(type) {
 	case string:
 		// Fast path for regular strings
@@ -78,13 +78,13 @@ type StoreWrapper struct {
 // so this method simply returns the store contents directly.
 //
 // If an error occurs, it's logged and an empty slice is returned.
-func (w *StoreWrapper) List() []interface{} {
+func (w *StoreWrapper) List() []any {
 	items, err := w.Store.List()
 	if err != nil {
 		w.Logger.Warn("failed to list resources from store",
 			"resource_type", w.ResourceType,
 			"error", err)
-		return []interface{}{}
+		return []any{}
 	}
 
 	w.Logger.Log(context.Background(), logging.LevelTrace, "store list called",
@@ -117,7 +117,7 @@ func (w *StoreWrapper) List() []interface{} {
 // Accepts interface{} arguments for template compatibility.
 //
 // If an error occurs, it's logged and an empty slice is returned.
-func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
+func (w *StoreWrapper) Fetch(keys ...any) []any {
 	// Convert interface{} arguments to strings
 	stringKeys := make([]string, len(keys))
 	for i, key := range keys {
@@ -130,7 +130,7 @@ func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
 			"resource_type", w.ResourceType,
 			"keys", keys,
 			"error", err)
-		return []interface{}{}
+		return []any{}
 	}
 
 	w.Logger.Log(context.Background(), logging.LevelTrace, "store fetch called",
@@ -162,7 +162,7 @@ func (w *StoreWrapper) Fetch(keys ...interface{}) []interface{} {
 //   - nil + logs error if multiple resources match (ambiguous lookup)
 //
 // If an error occurs during the store operation, it's logged and nil is returned.
-func (w *StoreWrapper) GetSingle(keys ...interface{}) interface{} {
+func (w *StoreWrapper) GetSingle(keys ...any) any {
 	// Convert interface{} arguments to strings
 	stringKeys := make([]string, len(keys))
 	for i, key := range keys {

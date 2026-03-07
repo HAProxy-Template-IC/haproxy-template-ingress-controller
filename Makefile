@@ -9,9 +9,11 @@
 .DEFAULT_GOAL := help
 
 # Variables
-GO := go
+# env -u GOROOT: strips stale GOROOT set by IDEs (e.g. IntelliJ) so the asdf-managed
+# Go toolchain is used consistently across all make targets including lint and audit.
+GO := env -u GOROOT go
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION := v2.7.2
+GOLANGCI_LINT_VERSION := v2.11.1
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck
 ARCH_GO := $(shell which arch-go 2>/dev/null || echo "$(GO) run github.com/arch-go/arch-go/v2")
@@ -56,7 +58,7 @@ lint: ## Run all linters (YAML, JSON, Markdown, Go)
 		jq empty "$$f" || exit 1; \
 	done
 	@echo "Linting Markdown files..."
-	markdownlint-cli2 "**/*.md" "#node_modules" "#.claude"
+	markdownlint-cli2 "**/*.md" "#node_modules" "#.claude" "#vendor"
 	@echo "Running golangci-lint..."
 ifdef CI
 	$(GOLANGCI_LINT) run --output.code-climate.path=gl-code-quality-report.json \
@@ -74,7 +76,7 @@ endif
 	@echo "Running event immutability checker..."
 	@mkdir -p bin
 	@cd tools/linters/eventimmutability && $(GO) build -o ../../../bin/eventimmutability ./cmd/eventimmutability
-	@./bin/eventimmutability ./...
+	@env -u GOROOT ./bin/eventimmutability ./...
 	@echo "Verifying generated code..."
 	@$(MAKE) verify-generate
 
@@ -441,6 +443,12 @@ clean: ## Clean build artifacts
 ## Development helpers
 
 fmt: ## Format code with gofmt
+	@echo "Formatting code..."
+	$(GO) fmt ./...
+
+fix: ## Run automated code modernizers (go fix + gofmt)
+	@echo "Running go fix..."
+	$(GO) fix ./cmd/... ./examples/... ./pkg/... ./tests/... ./tools/...
 	@echo "Formatting code..."
 	$(GO) fmt ./...
 

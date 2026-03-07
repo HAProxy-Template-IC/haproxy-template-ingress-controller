@@ -16,6 +16,7 @@ package templating
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/scriggo"
@@ -57,9 +58,7 @@ func NewTemplatePostProcessor(source string, globals native.Declarations) (*Temp
 	// The nil pointer pattern tells Scriggo the TYPE at compile time;
 	// the actual VALUE is provided at runtime via template.Run(vars).
 	ppGlobals := make(native.Declarations, len(globals)+1)
-	for k, v := range globals {
-		ppGlobals[k] = v
-	}
+	maps.Copy(ppGlobals, globals)
 	ppGlobals["input"] = (*string)(nil)
 
 	// Compile the post-processor template using a single-file filesystem.
@@ -88,7 +87,7 @@ func NewTemplatePostProcessor(source string, globals native.Declarations) (*Temp
 // The input (previously rendered template output) is passed as the `input` variable.
 // The template's output becomes the new rendered content.
 func (p *TemplatePostProcessor) Process(input string) (string, error) {
-	vars := map[string]interface{}{
+	vars := map[string]any{
 		"input": input,
 	}
 

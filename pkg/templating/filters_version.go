@@ -27,7 +27,7 @@ import (
 // Usage in Scriggo templates:
 //
 //	{%- if semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") -%}
-func scriggoSemverGte(version, minVersion interface{}) bool {
+func scriggoSemverGte(version, minVersion any) bool {
 	vMajor, vMinor, ok := parseSemver(fmt.Sprint(version))
 	if !ok {
 		return false

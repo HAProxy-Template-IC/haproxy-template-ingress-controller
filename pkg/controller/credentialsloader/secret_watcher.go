@@ -128,7 +128,7 @@ func (w *SecretWatcher) Stop() {
 }
 
 // onAdd handles Secret add events.
-func (w *SecretWatcher) onAdd(obj interface{}) {
+func (w *SecretWatcher) onAdd(obj any) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
 		w.logger.Warn("onAdd: unexpected object type", "type", obj)
@@ -160,7 +160,7 @@ func (w *SecretWatcher) onAdd(obj interface{}) {
 }
 
 // onUpdate handles Secret update events.
-func (w *SecretWatcher) onUpdate(oldObj, newObj interface{}) {
+func (w *SecretWatcher) onUpdate(oldObj, newObj any) {
 	oldSecret, oldOk := oldObj.(*corev1.Secret)
 	newSecret, newOk := newObj.(*corev1.Secret)
 
@@ -202,7 +202,7 @@ func (w *SecretWatcher) onUpdate(oldObj, newObj interface{}) {
 }
 
 // onDelete handles Secret delete events.
-func (w *SecretWatcher) onDelete(obj interface{}) {
+func (w *SecretWatcher) onDelete(obj any) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
 		// Handle DeletedFinalStateUnknown

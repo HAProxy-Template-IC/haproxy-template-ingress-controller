@@ -30,7 +30,7 @@ import (
 //	    "status": "ok",
 //	    "count": 42,
 //	})
-func WriteJSON(w http.ResponseWriter, data interface{}) {
+func WriteJSON(w http.ResponseWriter, data any) {
 	WriteJSONWithStatus(w, http.StatusOK, data)
 }
 
@@ -44,7 +44,7 @@ func WriteJSON(w http.ResponseWriter, data interface{}) {
 //	    "status": "degraded",
 //	    "components": components,
 //	})
-func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data interface{}) {
+func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
@@ -72,7 +72,7 @@ func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data interface{}
 //
 //	// Get specific field
 //	WriteJSONField(w, config, "{.version}")  // Returns: "1.2.3"
-func WriteJSONField(w http.ResponseWriter, data interface{}, field string) {
+func WriteJSONField(w http.ResponseWriter, data any, field string) {
 	if field == "" {
 		WriteJSON(w, data)
 		return

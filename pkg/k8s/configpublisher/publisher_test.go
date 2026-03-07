@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -548,19 +549,19 @@ func TestPublishConfig_WithCompression(t *testing.T) {
 
 	// Create large content that will benefit from compression
 	// Repeating patterns compress well
-	largeContent := ""
-	for i := 0; i < 1000; i++ {
-		largeContent += "backend app_backend_" + string(rune('a'+i%26)) + "\n"
-		largeContent += "  server server1 10.0.0.1:8080 check\n"
-		largeContent += "  server server2 10.0.0.2:8080 check\n"
-		largeContent += "\n"
+	var largeContent strings.Builder
+	for i := range 1000 {
+		largeContent.WriteString("backend app_backend_" + string(rune('a'+i%26)) + "\n")
+		largeContent.WriteString("  server server1 10.0.0.1:8080 check\n")
+		largeContent.WriteString("  server server2 10.0.0.2:8080 check\n")
+		largeContent.WriteString("\n")
 	}
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
 		TemplateConfigNamespace: "default",
 		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  largeContent,
+		Config:                  largeContent.String(),
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
 		RenderedAt:              time.Now(),
@@ -581,7 +582,7 @@ func TestPublishConfig_WithCompression(t *testing.T) {
 	require.NoError(t, err)
 	// Content should be compressed (shorter than original)
 	assert.True(t, runtimeConfig.Spec.Compressed, "Large config should be compressed")
-	assert.Less(t, len(runtimeConfig.Spec.Content), len(largeContent),
+	assert.Less(t, len(runtimeConfig.Spec.Content), len(largeContent.String()),
 		"Compressed content should be smaller than original")
 }
 
@@ -593,17 +594,17 @@ func TestPublishConfig_CompressionDisabled(t *testing.T) {
 	publisher := New(k8sClient, crdClient, testLogger())
 
 	// Create large content
-	largeContent := ""
-	for i := 0; i < 1000; i++ {
-		largeContent += "backend app_backend_" + string(rune('a'+i%26)) + "\n"
-		largeContent += "  server server1 10.0.0.1:8080 check\n"
+	var largeContent strings.Builder
+	for i := range 1000 {
+		largeContent.WriteString("backend app_backend_" + string(rune('a'+i%26)) + "\n")
+		largeContent.WriteString("  server server1 10.0.0.1:8080 check\n")
 	}
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
 		TemplateConfigNamespace: "default",
 		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  largeContent,
+		Config:                  largeContent.String(),
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
 		RenderedAt:              time.Now(),
@@ -623,7 +624,7 @@ func TestPublishConfig_CompressionDisabled(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.False(t, runtimeConfig.Spec.Compressed, "Compression should be disabled")
-	assert.Equal(t, largeContent, runtimeConfig.Spec.Content, "Content should be unchanged")
+	assert.Equal(t, largeContent.String(), runtimeConfig.Spec.Content, "Content should be unchanged")
 }
 
 func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {

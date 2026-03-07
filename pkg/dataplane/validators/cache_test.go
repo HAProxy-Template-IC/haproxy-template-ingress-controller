@@ -49,7 +49,7 @@ func TestCache_LRUEviction(t *testing.T) {
 
 	// All entries go to shard 0 (hash % 64 == 0)
 	// Fill shard beyond capacity
-	for i := 0; i < ShardSize+10; i++ {
+	for i := range ShardSize + 10 {
 		hash := uint64(i * NumShards) // All map to shard 0
 		cache.Add(hash, nil)
 	}
@@ -76,10 +76,10 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 	opsPerGoroutine := 1000
 
 	wg.Add(goroutines)
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		go func(id int) {
 			defer wg.Done()
-			for i := 0; i < opsPerGoroutine; i++ {
+			for i := range opsPerGoroutine {
 				hash := uint64(id*opsPerGoroutine + i)
 				cache.Add(hash, nil)
 				cache.Get(hash)
@@ -97,7 +97,7 @@ func TestCache_Purge(t *testing.T) {
 	cache := NewCache()
 
 	// Add entries across multiple shards
-	for i := uint64(0); i < 100; i++ {
+	for i := range uint64(100) {
 		cache.Add(i, nil)
 	}
 	require.Greater(t, cache.Len(), 0)
@@ -119,7 +119,7 @@ func TestCache_Stats(t *testing.T) {
 	assert.Equal(t, NumShards, stats.Shards)
 
 	// Add some entries
-	for i := uint64(0); i < 50; i++ {
+	for i := range uint64(50) {
 		cache.Add(i, nil)
 	}
 
@@ -134,7 +134,7 @@ func TestCache_Len(t *testing.T) {
 	assert.Equal(t, 0, cache.Len())
 
 	// Add entries that go to different shards
-	for i := uint64(0); i < 200; i++ {
+	for i := range uint64(200) {
 		cache.Add(i, nil)
 	}
 

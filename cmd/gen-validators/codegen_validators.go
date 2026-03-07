@@ -48,7 +48,7 @@ var (
 		varName := patternVarName(pattern)
 		// Escape backticks in patterns
 		escapedPattern := strings.ReplaceAll(pattern, "`", "` + \"`\" + `")
-		buf.WriteString(fmt.Sprintf("\t%s = regexp.MustCompile(`%s`)\n", varName, escapedPattern))
+		fmt.Fprintf(&buf, "\t%s = regexp.MustCompile(`%s`)\n", varName, escapedPattern)
 	}
 
 	buf.WriteString(")\n")
@@ -61,7 +61,7 @@ func generateVersionFile(outputDir, version string, schemas map[string]*Resolved
 	var buf bytes.Buffer
 
 	buf.WriteString(generatedHeader)
-	buf.WriteString(fmt.Sprintf(`package validators
+	fmt.Fprintf(&buf, `package validators
 
 import (
 	"encoding/binary"
@@ -73,7 +73,7 @@ import (
 // Version-specific validators for %s.
 // These functions validate client-native models directly without JSON conversion.
 
-`, version))
+`, version)
 
 	// Sort schema names for deterministic output
 	schemaNames := make([]string, 0, len(schemas))

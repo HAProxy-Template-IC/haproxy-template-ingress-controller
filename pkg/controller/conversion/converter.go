@@ -166,7 +166,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 	if len(spec.TemplatingSettings.ExtraContext.Raw) > 0 {
 		// Unmarshal runtime.RawExtension JSON to map[string]interface{}
-		var extraContext map[string]interface{}
+		var extraContext map[string]any
 		if err := json.Unmarshal(spec.TemplatingSettings.ExtraContext.Raw, &extraContext); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal templating_settings.extra_context: %w", err)
 		}
@@ -225,7 +225,7 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 		}
 		// Parse test-specific extraContext if present
 		if len(crdTest.ExtraContext.Raw) > 0 {
-			var testExtraContext map[string]interface{}
+			var testExtraContext map[string]any
 			if err := json.Unmarshal(crdTest.ExtraContext.Raw, &testExtraContext); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal validation_tests[%s].extra_context: %w", testName, err)
 			}
@@ -239,17 +239,17 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 
 // convertFixtures converts CRD fixtures to internal config format.
 // This converts from map[string][]runtime.RawExtension to map[string][]interface{}.
-func convertFixtures(crdFixtures map[string][]runtime.RawExtension) map[string][]interface{} {
-	fixtures := make(map[string][]interface{})
+func convertFixtures(crdFixtures map[string][]runtime.RawExtension) map[string][]any {
+	fixtures := make(map[string][]any)
 	for resourceType, resources := range crdFixtures {
-		interfaceSlice := make([]interface{}, len(resources))
+		interfaceSlice := make([]any, len(resources))
 		for i, rawExt := range resources {
 			// Parse RawExtension.Raw ([]byte) into unstructured object
 			obj := &unstructured.Unstructured{}
 			if err := json.Unmarshal(rawExt.Raw, &obj.Object); err != nil {
 				// If parsing fails, use empty object to avoid breaking fixture processing
 				// The error will be caught during test execution
-				obj.Object = make(map[string]interface{})
+				obj.Object = make(map[string]any)
 			}
 			interfaceSlice[i] = obj.Object
 		}
@@ -320,7 +320,7 @@ func parseLabelSelector(selector string) map[string]string {
 	result := make(map[string]string)
 
 	// Split by comma to get individual label assignments
-	for _, pair := range strings.Split(selector, ",") {
+	for pair := range strings.SplitSeq(selector, ",") {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
 			continue

@@ -16,6 +16,7 @@ package templating
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -108,14 +109,14 @@ func TestTemplatePostProcessor_LargeInput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Build a large input string (~100KB)
-	var large string
-	for i := 0; i < 1000; i++ {
-		large += "  server SRV_" + string(rune('0'+i%10)) + " 10.0.0.1:8080\n"
+	var large strings.Builder
+	for i := range 1000 {
+		large.WriteString("  server SRV_" + string(rune('0'+i%10)) + " 10.0.0.1:8080\n")
 	}
 
-	result, err := processor.Process(large)
+	result, err := processor.Process(large.String())
 	require.NoError(t, err)
-	assert.Equal(t, large, result)
+	assert.Equal(t, large.String(), result)
 }
 
 func TestTemplateEngine_WithTemplatePostProcessor(t *testing.T) {

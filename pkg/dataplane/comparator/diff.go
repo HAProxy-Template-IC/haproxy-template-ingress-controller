@@ -185,7 +185,7 @@ func (s *DiffSummary) formatOtherChanges() []string {
 	var parts []string
 
 	if len(s.OtherChanges) > 0 {
-		var otherSections []string
+		otherSections := make([]string, 0, len(s.OtherChanges))
 		for section, count := range s.OtherChanges {
 			otherSections = append(otherSections, fmt.Sprintf("%s: %d", section, count))
 		}

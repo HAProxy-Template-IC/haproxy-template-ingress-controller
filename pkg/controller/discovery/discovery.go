@@ -106,7 +106,7 @@ func (d *Discovery) findDataplaneContainerName(pod *unstructured.Unstructured) (
 	}
 
 	for _, c := range containersSpec {
-		container, ok := c.(map[string]interface{})
+		container, ok := c.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -125,14 +125,14 @@ func (d *Discovery) findDataplaneContainerName(pod *unstructured.Unstructured) (
 }
 
 // containerHasPort checks if a container spec contains the given port.
-func containerHasPort(container map[string]interface{}, targetPort int) bool {
+func containerHasPort(container map[string]any, targetPort int) bool {
 	ports, found, err := unstructured.NestedSlice(container, "ports")
 	if err != nil || !found {
 		return false
 	}
 
 	for _, p := range ports {
-		port, ok := p.(map[string]interface{})
+		port, ok := p.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -163,7 +163,7 @@ func checkContainerReady(pod *unstructured.Unstructured, containerName string, l
 	}
 
 	for _, cs := range containerStatuses {
-		status, ok := cs.(map[string]interface{})
+		status, ok := cs.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -201,7 +201,7 @@ func checkContainerReady(pod *unstructured.Unstructured, containerName string, l
 }
 
 // logContainerStatus logs detailed container status for debugging.
-func logContainerStatus(logger *slog.Logger, podName, containerName string, status map[string]interface{}, ready, readyFound bool, readyErr error) {
+func logContainerStatus(logger *slog.Logger, podName, containerName string, status map[string]any, ready, readyFound bool, readyErr error) {
 	started, _, _ := unstructured.NestedBool(status, "started")
 	restartCount, _, _ := unstructured.NestedInt64(status, "restartCount")
 
@@ -229,7 +229,7 @@ func logContainerStatus(logger *slog.Logger, podName, containerName string, stat
 		"state_type", stateType)
 }
 
-func hasKey(m map[string]interface{}, key string) bool {
+func hasKey(m map[string]any, key string) bool {
 	_, ok := m[key]
 	return ok
 }
@@ -241,11 +241,11 @@ func hasKey(m map[string]interface{}, key string) bool {
 //   - map[string]interface{} (production format after float-to-int conversion)
 //
 // Returns nil if the resource type is not supported.
-func resourceToPod(resource interface{}) *unstructured.Unstructured {
+func resourceToPod(resource any) *unstructured.Unstructured {
 	switch r := resource.(type) {
 	case *unstructured.Unstructured:
 		return r
-	case map[string]interface{}:
+	case map[string]any:
 		return &unstructured.Unstructured{Object: r}
 	default:
 		return nil
@@ -316,7 +316,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 // evaluatePod evaluates a single pod resource and returns an endpoint if it is eligible.
 // Returns ok=false if the pod should be skipped.
 func (d *Discovery) evaluatePod(
-	resource interface{},
+	resource any,
 	credentials coreconfig.Credentials,
 	logger *slog.Logger,
 ) (dataplane.Endpoint, bool, error) {

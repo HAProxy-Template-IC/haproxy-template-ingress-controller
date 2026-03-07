@@ -48,7 +48,7 @@ type testV30 struct {
 func TestMarshalForVersion(t *testing.T) {
 	tests := []struct {
 		name    string
-		model   interface{}
+		model   any
 		wantErr bool
 	}{
 		{
@@ -83,12 +83,12 @@ func TestMarshalForVersion(t *testing.T) {
 		},
 		{
 			name:    "empty map",
-			model:   map[string]interface{}{},
+			model:   map[string]any{},
 			wantErr: false,
 		},
 		{
 			name: "map with values",
-			model: map[string]interface{}{
+			model: map[string]any{
 				"key1": "value1",
 				"key2": 123,
 			},

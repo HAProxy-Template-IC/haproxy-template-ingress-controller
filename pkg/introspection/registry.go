@@ -86,7 +86,7 @@ func (r *Registry) Publish(path string, v Var) {
 //	if err != nil {
 //	    slog.Error("Failed to get config", "error", err)
 //	}
-func (r *Registry) Get(path string) (interface{}, error) {
+func (r *Registry) Get(path string) (any, error) {
 	r.mu.RLock()
 	v, ok := r.vars[path]
 	r.mu.RUnlock()
@@ -114,7 +114,7 @@ func (r *Registry) Get(path string) (interface{}, error) {
 //
 //	// Get just the version field
 //	version, err := registry.GetWithField("config", "{.version}")
-func (r *Registry) GetWithField(path, field string) (interface{}, error) {
+func (r *Registry) GetWithField(path, field string) (any, error) {
 	value, err := r.Get(path)
 	if err != nil {
 		return nil, err
@@ -142,11 +142,11 @@ func (r *Registry) GetWithField(path, field string) (interface{}, error) {
 //	for path, value := range all {
 //	    fmt.Printf("%s = %v\n", path, value)
 //	}
-func (r *Registry) All() (map[string]interface{}, error) {
+func (r *Registry) All() (map[string]any, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	result := make(map[string]interface{}, len(r.vars))
+	result := make(map[string]any, len(r.vars))
 
 	for path, v := range r.vars {
 		value, err := v.Get()

@@ -79,9 +79,9 @@ func RegisterVariables(
 
 	// Uptime (computed on-demand)
 	startTime := time.Now()
-	registry.Publish("uptime", introspection.Func(func() (interface{}, error) {
+	registry.Publish("uptime", introspection.Func(func() (any, error) {
 		uptime := time.Since(startTime)
-		return map[string]interface{}{
+		return map[string]any{
 			"started":        startTime,
 			"uptime_seconds": uptime.Seconds(),
 			"uptime_string":  uptime.String(),
@@ -111,7 +111,7 @@ func RegisterEventsHandler(server *introspection.Server, eventBuffer *EventBuffe
 		correlationID := r.URL.Query().Get("correlation_id")
 		if correlationID != "" {
 			events := eventBuffer.FindByCorrelationID(correlationID)
-			introspection.WriteJSON(w, map[string]interface{}{
+			introspection.WriteJSON(w, map[string]any{
 				"correlation_id": correlationID,
 				"events":         events,
 				"count":          len(events),
@@ -128,7 +128,7 @@ func RegisterEventsHandler(server *introspection.Server, eventBuffer *EventBuffe
 		}
 
 		events := eventBuffer.GetLast(limit)
-		introspection.WriteJSON(w, map[string]interface{}{
+		introspection.WriteJSON(w, map[string]any{
 			"events": events,
 			"count":  len(events),
 			"limit":  limit,

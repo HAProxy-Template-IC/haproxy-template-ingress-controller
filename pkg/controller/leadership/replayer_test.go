@@ -125,22 +125,18 @@ func TestStateReplayer_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent writers
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			replayer.Cache(newTestEvent("writer"))
-		}()
+		})
 	}
 
 	// Concurrent readers
 	for range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			replayer.HasState()
 			replayer.Get()
 			replayer.Replay()
-		}()
+		})
 	}
 
 	wg.Wait()

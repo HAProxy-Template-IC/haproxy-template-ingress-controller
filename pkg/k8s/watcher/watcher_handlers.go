@@ -7,7 +7,7 @@ import (
 )
 
 // handleAdd handles resource addition events.
-func (w *Watcher) handleAdd(obj interface{}) {
+func (w *Watcher) handleAdd(obj any) {
 	resource := w.convertToUnstructured(obj)
 	if resource == nil {
 		return
@@ -27,7 +27,7 @@ func (w *Watcher) handleAdd(obj interface{}) {
 }
 
 // handleUpdate handles resource update events.
-func (w *Watcher) handleUpdate(oldObj, newObj interface{}) {
+func (w *Watcher) handleUpdate(oldObj, newObj any) {
 	oldResource := w.convertToUnstructured(oldObj)
 	resource := w.convertToUnstructured(newObj)
 	if resource == nil {
@@ -76,7 +76,7 @@ func (w *Watcher) handleUpdate(oldObj, newObj interface{}) {
 }
 
 // handleDelete handles resource deletion events.
-func (w *Watcher) handleDelete(obj interface{}) {
+func (w *Watcher) handleDelete(obj any) {
 	resource := w.convertToUnstructured(obj)
 	if resource == nil {
 		// Handle DeletedFinalStateUnknown
@@ -243,7 +243,7 @@ func (w *Watcher) matchesFieldSelector(resource *unstructured.Unstructured) bool
 }
 
 // convertToUnstructured converts a resource to *unstructured.Unstructured.
-func (w *Watcher) convertToUnstructured(obj interface{}) *unstructured.Unstructured {
+func (w *Watcher) convertToUnstructured(obj any) *unstructured.Unstructured {
 	switch v := obj.(type) {
 	case *unstructured.Unstructured:
 		return v

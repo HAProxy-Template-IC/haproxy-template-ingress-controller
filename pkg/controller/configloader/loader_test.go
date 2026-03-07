@@ -76,10 +76,10 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 func TestConfigLoaderComponent_UnsupportedResourceType(t *testing.T) {
 	// Create unsupported resource (e.g., Deployment)
 	deployment := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "apps/v1",
 			"kind":       "Deployment",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":            "test-deployment",
 				"namespace":       "default",
 				"resourceVersion": "11111",
@@ -150,7 +150,7 @@ func TestConfigLoaderComponent_InvalidResourceType(t *testing.T) {
 	time.Sleep(testutil.DebounceWait)
 
 	// Publish ConfigResourceChangedEvent with non-*unstructured.Unstructured type
-	invalidResource := map[string]interface{}{
+	invalidResource := map[string]any{
 		"apiVersion": "haproxy-haptic.org/v1alpha1",
 		"kind":       "HAProxyTemplateConfig",
 	}

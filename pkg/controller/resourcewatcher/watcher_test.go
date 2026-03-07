@@ -216,15 +216,15 @@ type mockStore struct {
 	name string
 }
 
-func (m *mockStore) Get(...string) ([]interface{}, error)            { return nil, nil }
-func (m *mockStore) List() ([]interface{}, error)                    { return nil, nil }
-func (m *mockStore) Add(interface{}, []string) error                 { return nil }
-func (m *mockStore) Update(interface{}, []string) error              { return nil }
-func (m *mockStore) Delete(...string) error                          { return nil }
-func (m *mockStore) Clear() error                                    { return nil }
-func (m *mockStore) GetKeys(interface{}, []string) ([]string, error) { return nil, nil }
+func (m *mockStore) Get(...string) ([]any, error)            { return nil, nil }
+func (m *mockStore) List() ([]any, error)                    { return nil, nil }
+func (m *mockStore) Add(any, []string) error                 { return nil }
+func (m *mockStore) Update(any, []string) error              { return nil }
+func (m *mockStore) Delete(...string) error                  { return nil }
+func (m *mockStore) Clear() error                            { return nil }
+func (m *mockStore) GetKeys(any, []string) ([]string, error) { return nil, nil }
 
-func (m *mockStore) Refresh(interface{}, []string, []string) (changed, deleted bool) {
+func (m *mockStore) Refresh(any, []string, []string) (changed, deleted bool) {
 	return false, false
 }
 func (m *mockStore) Count() int { return 0 }
@@ -361,7 +361,7 @@ func TestAllSynced_ConcurrentAccess(t *testing.T) {
 
 	// Writer goroutine
 	go func() {
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			rwc.syncMu.Lock()
 			rwc.synced["services"] = i%2 == 0
 			rwc.syncMu.Unlock()
@@ -371,7 +371,7 @@ func TestAllSynced_ConcurrentAccess(t *testing.T) {
 
 	// Reader goroutine
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_ = rwc.AllSynced()
 			_ = rwc.IsSynced("services")
 		}

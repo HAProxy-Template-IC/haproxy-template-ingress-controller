@@ -109,8 +109,7 @@ backend web-servers
 
 // handleSyncError processes and returns sync errors with detailed information.
 func handleSyncError(err error) error {
-	var syncErr *dataplane.SyncError
-	if errors.As(err, &syncErr) {
+	if syncErr, ok := errors.AsType[*dataplane.SyncError](err); ok {
 		log.Printf("Sync failed at stage '%s': %s\n", syncErr.Stage, syncErr.Message)
 		if len(syncErr.Hints) > 0 {
 			log.Println("\nTroubleshooting hints:")

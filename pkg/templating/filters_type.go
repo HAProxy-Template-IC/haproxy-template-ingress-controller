@@ -26,7 +26,7 @@ import (
 // Usage in Scriggo templates:
 //
 //	{% var s = tostring(port) %}
-func scriggoToString(v interface{}) string {
+func scriggoToString(v any) string {
 	if v == nil {
 		return ""
 	}
@@ -54,7 +54,7 @@ func scriggoToString(v interface{}) string {
 // Usage in Scriggo templates:
 //
 //	{% var n = toint(port_string) %}
-func scriggoToInt(v interface{}) int {
+func scriggoToInt(v any) int {
 	if v == nil {
 		return 0
 	}
@@ -81,7 +81,7 @@ func scriggoToInt(v interface{}) int {
 // Usage in Scriggo templates:
 //
 //	{% var f = tofloat(value) %}
-func scriggoToFloat(v interface{}) (float64, error) {
+func scriggoToFloat(v any) (float64, error) {
 	if v == nil {
 		return 0, nil
 	}
@@ -105,14 +105,14 @@ func scriggoToFloat(v interface{}) (float64, error) {
 // Usage in Scriggo templates:
 //
 //	{%- var hosts = toStringSlice(hostnames) -%}
-func scriggoToStringSlice(items interface{}) []string {
+func scriggoToStringSlice(items any) []string {
 	if items == nil {
 		return []string{}
 	}
 	switch v := items.(type) {
 	case []string:
 		return v
-	case []interface{}:
+	case []any:
 		result := make([]string, len(v))
 		for i, item := range v {
 			result[i] = fmt.Sprintf("%v", item)
@@ -134,22 +134,22 @@ func scriggoToStringSlice(items interface{}) []string {
 //	{%- for _, item := range toSlice(spec_rules) %}
 //	  ... process item ...
 //	{%- end %}
-func scriggoToSlice(items interface{}) []interface{} {
+func scriggoToSlice(items any) []any {
 	if items == nil {
-		return []interface{}{}
+		return []any{}
 	}
 	result, _ := toSlice(items)
 	return result
 }
 
 // toSlice converts an interface{} to []interface{}.
-func toSlice(items interface{}) ([]interface{}, bool) {
+func toSlice(items any) ([]any, bool) {
 	if items == nil {
 		return nil, false
 	}
 
 	// Already a slice of interfaces
-	if slice, ok := items.([]interface{}); ok {
+	if slice, ok := items.([]any); ok {
 		return slice, true
 	}
 
@@ -159,7 +159,7 @@ func toSlice(items interface{}) ([]interface{}, bool) {
 		return nil, false
 	}
 
-	result := make([]interface{}, rv.Len())
+	result := make([]any, rv.Len())
 	for i := 0; i < rv.Len(); i++ {
 		result[i] = rv.Index(i).Interface()
 	}
@@ -197,13 +197,13 @@ func scriggoSeq(n int) []int {
 // isNilValue checks if a value is nil, including typed nil values like (*T)(nil).
 // In Go, a typed nil pointer stored in an interface{} is not equal to nil.
 // This function uses reflection to check for nil pointers, maps, slices, etc.
-func isNilValue(value interface{}) bool {
+func isNilValue(value any) bool {
 	if value == nil {
 		return true
 	}
 	rv := reflect.ValueOf(value)
 	switch rv.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
 		return rv.IsNil()
 	}
 	return false
@@ -221,6 +221,6 @@ func isNilValue(value interface{}) bool {
 //	{%- if !isNil(currentConfig) %}  // This works correctly
 //
 // Returns true if the value is nil (including nil pointers, maps, slices, channels, funcs).
-func scriggoIsNil(value interface{}) bool {
+func scriggoIsNil(value any) bool {
 	return isNilValue(value)
 }

@@ -1353,7 +1353,7 @@ func TestSyncOperations_IndexBasedOperationsExecuteInOrder(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		current := timings[i]
 		next := timings[i+1]
 
@@ -1426,7 +1426,7 @@ func TestSyncOperations_MaxParallel_LimitsConcurrency(t *testing.T) {
 
 	// Create operations that track concurrency
 	ops := make([]comparator.Operation, totalOps)
-	for i := 0; i < totalOps; i++ {
+	for i := range totalOps {
 		op := newMockOperation(sections.OperationCreate, fmt.Sprintf("backend-%d", i), 20) // Same priority
 		op.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
 			// Increment current concurrent count
@@ -1487,7 +1487,7 @@ func TestSyncOperations_MaxParallel_Unlimited(t *testing.T) {
 
 	// Create operations that track concurrency
 	ops := make([]comparator.Operation, totalOps)
-	for i := 0; i < totalOps; i++ {
+	for i := range totalOps {
 		op := newMockOperation(sections.OperationCreate, fmt.Sprintf("backend-%d", i), 20) // Same priority
 		op.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {
 			current := currentConcurrent.Add(1)
@@ -1538,7 +1538,7 @@ func TestExecuteOperations_MaxParallel_ContinueOnError(t *testing.T) {
 
 	// Create operations, some will fail
 	ops := make([]comparator.Operation, totalOps)
-	for i := 0; i < totalOps; i++ {
+	for i := range totalOps {
 		op := newMockOperation(sections.OperationCreate, fmt.Sprintf("backend-%d", i), 20)
 		shouldFail := i%10 == 5 // Every 10th operation at index 5 fails
 		op.executeFunc = func(_ context.Context, _ *client.DataplaneClient, _ string) error {

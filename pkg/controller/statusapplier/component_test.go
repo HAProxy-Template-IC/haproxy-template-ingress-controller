@@ -68,7 +68,7 @@ func newTestResolver() *mockGVRResolver {
 	}
 }
 
-func newTestPatches(variants map[string]map[string]interface{}) []templating.StatusPatch {
+func newTestPatches(variants map[string]map[string]any) []templating.StatusPatch {
 	return []templating.StatusPatch{
 		{
 			Namespace:  "default",
@@ -155,8 +155,8 @@ func TestHandleTemplateRendered_CachesPatches(t *testing.T) {
 	fakeClient := newFakeDynamicClient()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
 
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Ready"}}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
 	// Not leader — should cache but not apply
@@ -181,8 +181,8 @@ func TestHandleTemplateRendered_AppliesWhenLeader(t *testing.T) {
 
 	setLeader(comp)
 
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Ready"}}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
 	templateEvent := events.NewTemplateRenderedEvent(
@@ -206,8 +206,8 @@ func TestHandleTemplateRendered_SkipsWhenNotLeader(t *testing.T) {
 	bus.Start()
 
 	// Not leader
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{}},
 	})
 	templateEvent := events.NewTemplateRenderedEvent(
 		"haproxy config", nil, patches, 0, 100, "test", "abc123", false,
@@ -248,8 +248,8 @@ func TestHandleReconciliationCompleted_AppliesDeployedVariant(t *testing.T) {
 
 	// Pre-cache patches with "deployed" variant
 	comp.mu.Lock()
-	comp.cachedPatches = newTestPatches(map[string]map[string]interface{}{
-		"deployed": {"conditions": []interface{}{map[string]interface{}{"type": "Programmed", "status": "True"}}},
+	comp.cachedPatches = newTestPatches(map[string]map[string]any{
+		"deployed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "True"}}},
 	})
 	comp.mu.Unlock()
 
@@ -287,8 +287,8 @@ func TestHandleReconciliationFailed_DeployPhase(t *testing.T) {
 	setLeader(comp)
 
 	comp.mu.Lock()
-	comp.cachedPatches = newTestPatches(map[string]map[string]interface{}{
-		"deployFailed": {"conditions": []interface{}{map[string]interface{}{"type": "Programmed", "status": "False"}}},
+	comp.cachedPatches = newTestPatches(map[string]map[string]any{
+		"deployFailed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "False"}}},
 	})
 	comp.mu.Unlock()
 
@@ -310,8 +310,8 @@ func TestHandleReconciliationFailed_RenderPhase(t *testing.T) {
 	setLeader(comp)
 
 	comp.mu.Lock()
-	comp.cachedPatches = newTestPatches(map[string]map[string]interface{}{
-		"renderFailed": {"conditions": []interface{}{map[string]interface{}{"type": "Accepted", "status": "False"}}},
+	comp.cachedPatches = newTestPatches(map[string]map[string]any{
+		"renderFailed": {"conditions": []any{map[string]any{"type": "Accepted", "status": "False"}}},
 	})
 	comp.mu.Unlock()
 
@@ -332,8 +332,8 @@ func TestHandleBecameLeader_ReplaysCachedPatches(t *testing.T) {
 
 	// Pre-cache patches before becoming leader
 	comp.mu.Lock()
-	comp.cachedPatches = newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Accepted"}}},
+	comp.cachedPatches = newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Accepted"}}},
 	})
 	comp.mu.Unlock()
 
@@ -411,8 +411,8 @@ func TestApplyVariant_ChecksumSkip(t *testing.T) {
 
 	setLeader(comp)
 
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Ready"}}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
 	// First apply — should apply
@@ -438,11 +438,11 @@ func TestApplyVariant_DifferentPayloadNotSkipped(t *testing.T) {
 
 	setLeader(comp)
 
-	patches1 := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "True"}}},
+	patches1 := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
 	})
-	patches2 := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "False"}}},
+	patches2 := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready", "status": "False"}}},
 	})
 
 	// First apply
@@ -466,8 +466,8 @@ func TestApplyVariant_MissingVariantSkipsQuietly(t *testing.T) {
 	bus.Start()
 
 	// Patches only have "rendered" variant
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{}},
 	})
 
 	// Ask for "deployed" which doesn't exist
@@ -488,8 +488,8 @@ func TestApplyVariant_GVRResolveError(t *testing.T) {
 	eventChan := bus.Subscribe("test", 50)
 	bus.Start()
 
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{}},
 	})
 
 	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
@@ -516,8 +516,8 @@ func TestApplyVariant_SSAPatchError(t *testing.T) {
 	eventChan := bus.Subscribe("test", 50)
 	bus.Start()
 
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Ready"}}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
 	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
@@ -549,14 +549,14 @@ func TestApplyVariant_SSAPayloadStructure(t *testing.T) {
 		return true, nil, nil
 	})
 
-	statusPayload := map[string]interface{}{
-		"loadBalancer": map[string]interface{}{
-			"ingress": []interface{}{
-				map[string]interface{}{"ip": "10.0.0.1"},
+	statusPayload := map[string]any{
+		"loadBalancer": map[string]any{
+			"ingress": []any{
+				map[string]any{"ip": "10.0.0.1"},
 			},
 		},
 	}
-	patches := newTestPatches(map[string]map[string]interface{}{
+	patches := newTestPatches(map[string]map[string]any{
 		"deployed": statusPayload,
 	})
 
@@ -564,7 +564,7 @@ func TestApplyVariant_SSAPayloadStructure(t *testing.T) {
 
 	require.NotNil(t, capturedPatchData)
 
-	var payload map[string]interface{}
+	var payload map[string]any
 	err := json.Unmarshal(capturedPatchData, &payload)
 	require.NoError(t, err)
 
@@ -572,12 +572,12 @@ func TestApplyVariant_SSAPayloadStructure(t *testing.T) {
 	assert.Equal(t, "networking.k8s.io/v1", payload["apiVersion"])
 	assert.Equal(t, "Ingress", payload["kind"])
 
-	metadata, ok := payload["metadata"].(map[string]interface{})
+	metadata, ok := payload["metadata"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "default", metadata["namespace"])
 	assert.Equal(t, "my-ingress", metadata["name"])
 
-	status, ok := payload["status"].(map[string]interface{})
+	status, ok := payload["status"].(map[string]any)
 	require.True(t, ok)
 	assert.NotNil(t, status["loadBalancer"])
 }
@@ -596,8 +596,8 @@ func TestApplyVariant_SSAPatchOptions(t *testing.T) {
 		return true, nil, nil
 	})
 
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{}},
 	})
 
 	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
@@ -623,8 +623,8 @@ func TestApplyVariant_MultiplePatches(t *testing.T) {
 			Name:       "ingress-1",
 			APIVersion: "networking.k8s.io/v1",
 			Kind:       "Ingress",
-			Variants: map[string]map[string]interface{}{
-				"deployed": {"conditions": []interface{}{map[string]interface{}{"type": "Ready"}}},
+			Variants: map[string]map[string]any{
+				"deployed": {"conditions": []any{map[string]any{"type": "Ready"}}},
 			},
 		},
 		{
@@ -632,8 +632,8 @@ func TestApplyVariant_MultiplePatches(t *testing.T) {
 			Name:       "ingress-2",
 			APIVersion: "networking.k8s.io/v1",
 			Kind:       "Ingress",
-			Variants: map[string]map[string]interface{}{
-				"deployed": {"conditions": []interface{}{map[string]interface{}{"type": "Ready"}}},
+			Variants: map[string]map[string]any{
+				"deployed": {"conditions": []any{map[string]any{"type": "Ready"}}},
 			},
 		},
 		{
@@ -641,8 +641,8 @@ func TestApplyVariant_MultiplePatches(t *testing.T) {
 			Name:       "my-gateway",
 			APIVersion: "gateway.networking.k8s.io/v1",
 			Kind:       "Gateway",
-			Variants: map[string]map[string]interface{}{
-				"deployed": {"conditions": []interface{}{map[string]interface{}{"type": "Programmed"}}},
+			Variants: map[string]map[string]any{
+				"deployed": {"conditions": []any{map[string]any{"type": "Programmed"}}},
 			},
 		},
 	}
@@ -662,8 +662,7 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	eventChan := bus.Subscribe("test", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() {
 		_ = comp.Start(ctx)
@@ -671,8 +670,8 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	time.Sleep(testutil.StartupDelay)
 
 	// 1. Receive template rendered while not leader — caches only
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Accepted"}}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Accepted"}}},
 	})
 	bus.Publish(events.NewTemplateRenderedEvent(
 		"config", nil, patches, 0, 50, "test", "hash1", false,
@@ -691,8 +690,8 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 
 	// 4. Receive another template rendered — should not apply
 	testutil.DrainChannel(eventChan)
-	patches2 := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Accepted", "status": "True"}}},
+	patches2 := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Accepted", "status": "True"}}},
 	})
 	bus.Publish(events.NewTemplateRenderedEvent(
 		"config2", nil, patches2, 0, 50, "test", "hash2", false,
@@ -813,8 +812,8 @@ func TestApplyVariant_DoesNotCacheOnFailure(t *testing.T) {
 		return true, nil, fmt.Errorf("server unavailable")
 	})
 
-	patches := newTestPatches(map[string]map[string]interface{}{
-		"rendered": {"conditions": []interface{}{map[string]interface{}{"type": "Ready"}}},
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
 	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)

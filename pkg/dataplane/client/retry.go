@@ -63,8 +63,8 @@ func DefaultRetryConfig() RetryConfig {
 // IsVersionConflict returns a RetryCondition that retries on version conflict errors.
 func IsVersionConflict() RetryCondition {
 	return func(err error) bool {
-		var vce *VersionConflictError
-		return errors.As(err, &vce)
+		_, ok := errors.AsType[*VersionConflictError](err)
+		return ok
 	}
 }
 
@@ -101,8 +101,7 @@ func IsConnectionError() RetryCondition {
 		}
 
 		// Check for net.OpError (network operation errors)
-		var opErr *net.OpError
-		if errors.As(err, &opErr) {
+		if opErr, ok := errors.AsType[*net.OpError](err); ok {
 			// Retry on connection refused (server not ready yet)
 			if errors.Is(opErr.Err, syscall.ECONNREFUSED) {
 				return true

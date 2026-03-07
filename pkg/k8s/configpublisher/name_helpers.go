@@ -399,10 +399,6 @@ func calculateChecksum(content string) string {
 	return fmt.Sprintf("sha256:%x", hash)
 }
 
-func boolPtr(b bool) *bool {
-	return &b
-}
-
 // compressResult holds the result of a compression attempt.
 type compressResult struct {
 	content    string

@@ -289,7 +289,7 @@ func TestSingleWatcherConfig_SetDefaults(t *testing.T) {
 }
 
 func TestSingleWatcherConfig_Validate(t *testing.T) {
-	validCallback := func(interface{}) error { return nil }
+	validCallback := func(any) error { return nil }
 
 	tests := []struct {
 		name        string

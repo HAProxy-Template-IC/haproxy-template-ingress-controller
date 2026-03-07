@@ -15,7 +15,6 @@
 package debug
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -94,7 +93,7 @@ func TestRegisterVariables_UptimeIncreases(t *testing.T) {
 	// Get initial uptime
 	value1, err := registry.Get("uptime")
 	require.NoError(t, err)
-	data1 := value1.(map[string]interface{})
+	data1 := value1.(map[string]any)
 	uptime1 := data1["uptime_seconds"].(float64)
 
 	// Wait a bit
@@ -103,7 +102,7 @@ func TestRegisterVariables_UptimeIncreases(t *testing.T) {
 	// Get uptime again
 	value2, err := registry.Get("uptime")
 	require.NoError(t, err)
-	data2 := value2.(map[string]interface{})
+	data2 := value2.(map[string]any)
 	uptime2 := data2["uptime_seconds"].(float64)
 
 	// Verify uptime increased
@@ -118,8 +117,7 @@ func TestRegisterEventsHandler(t *testing.T) {
 	eventBuffer := NewEventBuffer(100, bus)
 
 	// Start the event buffer
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go eventBuffer.Start(ctx)
 	bus.Start()
 
@@ -150,7 +148,7 @@ func TestRegisterEventsHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var response map[string]interface{}
+		var response map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&response)
 		require.NoError(t, err)
 
@@ -166,7 +164,7 @@ func TestRegisterEventsHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var response map[string]interface{}
+		var response map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&response)
 		require.NoError(t, err)
 		assert.Equal(t, float64(5), response["limit"])
@@ -179,7 +177,7 @@ func TestRegisterEventsHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var response map[string]interface{}
+		var response map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&response)
 		require.NoError(t, err)
 		assert.Equal(t, "test-abc", response["correlation_id"])
@@ -200,7 +198,7 @@ func TestRegisterEventsHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var response map[string]interface{}
+		var response map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&response)
 		require.NoError(t, err)
 		assert.Equal(t, float64(100), response["limit"]) // Default
@@ -213,7 +211,7 @@ func TestRegisterEventsHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var response map[string]interface{}
+		var response map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&response)
 		require.NoError(t, err)
 		assert.Equal(t, float64(100), response["limit"]) // Default

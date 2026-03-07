@@ -27,8 +27,8 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 		c := NewStatusPatchCollector()
 
 		err := c.Register("default", "my-ingress", "networking.k8s.io/v1", "Ingress",
-			map[string]map[string]interface{}{
-				"deployed": {"loadBalancer": map[string]interface{}{"ingress": []interface{}{}}},
+			map[string]map[string]any{
+				"deployed": {"loadBalancer": map[string]any{"ingress": []any{}}},
 			})
 		require.NoError(t, err)
 
@@ -45,11 +45,11 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 		c := NewStatusPatchCollector()
 
 		require.NoError(t, c.Register("default", "ing-1", "networking.k8s.io/v1", "Ingress",
-			map[string]map[string]interface{}{"deployed": {"a": 1}}))
+			map[string]map[string]any{"deployed": {"a": 1}}))
 		require.NoError(t, c.Register("default", "ing-2", "networking.k8s.io/v1", "Ingress",
-			map[string]map[string]interface{}{"deployed": {"b": 2}}))
+			map[string]map[string]any{"deployed": {"b": 2}}))
 		require.NoError(t, c.Register("other", "gw-1", "gateway.networking.k8s.io/v1", "Gateway",
-			map[string]map[string]interface{}{"deployed": {"c": 3}}))
+			map[string]map[string]any{"deployed": {"c": 3}}))
 
 		patches := c.Patches()
 		assert.Len(t, patches, 3)
@@ -59,12 +59,12 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 		c := NewStatusPatchCollector()
 
 		require.NoError(t, c.Register("default", "my-route", "gateway.networking.k8s.io/v1", "HTTPRoute",
-			map[string]map[string]interface{}{
-				"rendered": {"conditions": []interface{}{"Accepted"}},
+			map[string]map[string]any{
+				"rendered": {"conditions": []any{"Accepted"}},
 			}))
 		require.NoError(t, c.Register("default", "my-route", "gateway.networking.k8s.io/v1", "HTTPRoute",
-			map[string]map[string]interface{}{
-				"deployed": {"conditions": []interface{}{"Accepted", "Programmed"}},
+			map[string]map[string]any{
+				"deployed": {"conditions": []any{"Accepted", "Programmed"}},
 			}))
 
 		patches := c.Patches()
@@ -77,11 +77,11 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 		c := NewStatusPatchCollector()
 
 		require.NoError(t, c.Register("default", "my-gw", "gateway.networking.k8s.io/v1", "Gateway",
-			map[string]map[string]interface{}{
+			map[string]map[string]any{
 				"deployed": {"version": "old"},
 			}))
 		require.NoError(t, c.Register("default", "my-gw", "gateway.networking.k8s.io/v1", "Gateway",
-			map[string]map[string]interface{}{
+			map[string]map[string]any{
 				"deployed": {"version": "new"},
 			}))
 
@@ -95,24 +95,24 @@ func TestStatusPatchCollector_Register_Validation(t *testing.T) {
 	c := NewStatusPatchCollector()
 
 	t.Run("empty namespace", func(t *testing.T) {
-		err := c.Register("", "name", "v1", "Pod", map[string]map[string]interface{}{"deployed": {"a": 1}})
+		err := c.Register("", "name", "v1", "Pod", map[string]map[string]any{"deployed": {"a": 1}})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "required")
 	})
 
 	t.Run("empty name", func(t *testing.T) {
-		err := c.Register("ns", "", "v1", "Pod", map[string]map[string]interface{}{"deployed": {"a": 1}})
+		err := c.Register("ns", "", "v1", "Pod", map[string]map[string]any{"deployed": {"a": 1}})
 		assert.Error(t, err)
 	})
 
 	t.Run("empty variants", func(t *testing.T) {
-		err := c.Register("ns", "name", "v1", "Pod", map[string]map[string]interface{}{})
+		err := c.Register("ns", "name", "v1", "Pod", map[string]map[string]any{})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "at least one variant")
 	})
 
 	t.Run("invalid phase key", func(t *testing.T) {
-		err := c.Register("ns", "name", "v1", "Pod", map[string]map[string]interface{}{
+		err := c.Register("ns", "name", "v1", "Pod", map[string]map[string]any{
 			"invalidPhase": {"a": 1},
 		})
 		assert.Error(t, err)
@@ -120,7 +120,7 @@ func TestStatusPatchCollector_Register_Validation(t *testing.T) {
 	})
 
 	t.Run("all valid phases accepted", func(t *testing.T) {
-		err := c.Register("ns", "name", "v1", "Pod", map[string]map[string]interface{}{
+		err := c.Register("ns", "name", "v1", "Pod", map[string]map[string]any{
 			"rendered":     {"a": 1},
 			"deployed":     {"b": 2},
 			"renderFailed": {"c": 3},
@@ -137,13 +137,13 @@ func TestStatusPatchCollector_ConcurrentWrites(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		go func(idx int) {
 			defer wg.Done()
 			ns := "default"
 			name := "resource-" + string(rune('a'+idx%26))
 			err := c.Register(ns, name, "v1", "ConfigMap",
-				map[string]map[string]interface{}{
+				map[string]map[string]any{
 					"deployed": {"idx": idx},
 				})
 			assert.NoError(t, err)
@@ -168,7 +168,7 @@ func TestStatusPatchCollector_ConcurrentWritesSameResource(t *testing.T) {
 		go func(p string, idx int) {
 			defer wg.Done()
 			err := c.Register("default", "shared-resource", "v1", "Service",
-				map[string]map[string]interface{}{
+				map[string]map[string]any{
 					p: {"idx": idx},
 				})
 			assert.NoError(t, err)
@@ -187,14 +187,14 @@ func TestStatusPatchCollector_PatchesReturnsSnapshot(t *testing.T) {
 	c := NewStatusPatchCollector()
 
 	require.NoError(t, c.Register("ns", "a", "v1", "Pod",
-		map[string]map[string]interface{}{"deployed": {"x": 1}}))
+		map[string]map[string]any{"deployed": {"x": 1}}))
 
 	snapshot := c.Patches()
 	require.Len(t, snapshot, 1)
 
 	// Adding more patches after snapshot shouldn't affect the snapshot
 	require.NoError(t, c.Register("ns", "b", "v1", "Pod",
-		map[string]map[string]interface{}{"deployed": {"y": 2}}))
+		map[string]map[string]any{"deployed": {"y": 2}}))
 
 	assert.Len(t, snapshot, 1, "snapshot should not be affected by later Register calls")
 	assert.Len(t, c.Patches(), 2, "new Patches() call should include new registrations")

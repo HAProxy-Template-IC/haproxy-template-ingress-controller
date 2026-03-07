@@ -185,7 +185,7 @@ func (c *Component) Start(ctx context.Context) error {
 }
 
 // handleEvent processes incoming events and triggers discovery as needed.
-func (c *Component) handleEvent(event interface{}) {
+func (c *Component) handleEvent(event any) {
 	switch e := event.(type) {
 	case *events.ConfigValidatedEvent:
 		c.handleConfigValidated(e)

@@ -159,7 +159,7 @@ func TestFormatResults_JSON(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify valid JSON
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	err = json.Unmarshal([]byte(output), &parsed)
 	require.NoError(t, err)
 
@@ -170,9 +170,9 @@ func TestFormatResults_JSON(t *testing.T) {
 	assert.Equal(t, 1.5, parsed["duration"]) // Seconds
 
 	// Check tests array
-	tests := parsed["tests"].([]interface{})
+	tests := parsed["tests"].([]any)
 	require.Len(t, tests, 1)
-	test := tests[0].(map[string]interface{})
+	test := tests[0].(map[string]any)
 	assert.Equal(t, "json-test", test["testName"])
 	assert.Equal(t, true, test["passed"])
 }
@@ -200,7 +200,7 @@ func TestFormatResults_YAML(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify valid YAML
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	err = yaml.Unmarshal([]byte(output), &parsed)
 	require.NoError(t, err)
 
@@ -211,9 +211,9 @@ func TestFormatResults_YAML(t *testing.T) {
 	assert.EqualValues(t, 2.0, parsed["duration"]) // Seconds
 
 	// Check tests array
-	tests := parsed["tests"].([]interface{})
+	tests := parsed["tests"].([]any)
 	require.Len(t, tests, 1)
-	test := tests[0].(map[string]interface{})
+	test := tests[0].(map[string]any)
 	assert.Equal(t, "yaml-test", test["testName"])
 	assert.Equal(t, true, test["passed"])
 }
@@ -292,12 +292,12 @@ func TestFormatResults_JSONWithRenderError(t *testing.T) {
 	output, err := FormatResults(results, OutputOptions{Format: OutputFormatJSON})
 	require.NoError(t, err)
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	err = json.Unmarshal([]byte(output), &parsed)
 	require.NoError(t, err)
 
-	tests := parsed["tests"].([]interface{})
-	test := tests[0].(map[string]interface{})
+	tests := parsed["tests"].([]any)
+	test := tests[0].(map[string]any)
 	assert.Equal(t, "template error", test["renderError"])
 }
 
@@ -430,8 +430,8 @@ func TestFormatResults_MultilineRenderError(t *testing.T) {
 	assert.Contains(t, output, "                   util-backend-servers:???")
 
 	// Stack trace lines should NOT appear at the beginning of a line (column 0)
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(output, "\n")
+	for line := range lines {
 		if strings.Contains(line, "scriggo goroutine") {
 			// Should be indented with 11 spaces
 			assert.True(t, strings.HasPrefix(line, "           "), "Stack trace line should be indented")
@@ -471,8 +471,8 @@ func TestFormatResults_MultilineAssertionError(t *testing.T) {
 	assert.Contains(t, output, "           Details: line 2")
 
 	// Multi-line error details should NOT appear at column 0
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(output, "\n")
+	for line := range lines {
 		if strings.Contains(line, "Details:") {
 			// Should be indented with 11 spaces
 			assert.True(t, strings.HasPrefix(line, "           "), "Error detail line should be indented")

@@ -29,7 +29,7 @@ func getStatusPatchCollector(env native.Env) *StatusPatchCollector {
 	if ctx == nil {
 		return nil
 	}
-	renderCtx, ok := ctx.Value(RenderContextContextKey).(map[string]interface{})
+	renderCtx, ok := ctx.Value(RenderContextContextKey).(map[string]any)
 	if !ok {
 		return nil
 	}
@@ -50,7 +50,7 @@ func getStatusPatchCollector(env native.Env) *StatusPatchCollector {
 //	            "loadBalancer": map[string]interface{}{"ingress": addresses},
 //	        },
 //	    }) %}
-func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string, variants map[string]interface{}) string {
+func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string, variants map[string]any) string {
 	collector := getStatusPatchCollector(env)
 	if collector == nil {
 		env.Stop(fmt.Errorf("statusPatch: statusPatchCollector not available in render context"))
@@ -58,9 +58,9 @@ func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string
 	}
 
 	// Convert variants from map[string]interface{} to map[string]map[string]interface{}
-	typedVariants := make(map[string]map[string]interface{}, len(variants))
+	typedVariants := make(map[string]map[string]any, len(variants))
 	for phase, val := range variants {
-		statusMap, ok := val.(map[string]interface{})
+		statusMap, ok := val.(map[string]any)
 		if !ok {
 			env.Stop(fmt.Errorf("statusPatch: variant %q must be a map[string]interface{}, got %T", phase, val))
 			return ""
@@ -81,7 +81,7 @@ func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string
 // Usage in Scriggo templates:
 //
 //	{% var cond = condition("Accepted", "True", "Accepted", "Route accepted", 5, "2025-01-01T00:00:00Z") %}
-func scriggoCondition(condType, status, reason, message string, observedGeneration interface{}, lastTransitionTime string) map[string]interface{} {
+func scriggoCondition(condType, status, reason, message string, observedGeneration any, lastTransitionTime string) map[string]any {
 	// Normalize observedGeneration to int64 (JSON numbers from K8s come as float64)
 	var gen int64
 	switch v := observedGeneration.(type) {
@@ -97,7 +97,7 @@ func scriggoCondition(condType, status, reason, message string, observedGenerati
 		gen = 0
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"type":               condType,
 		"status":             status,
 		"reason":             reason,
@@ -115,14 +115,14 @@ func scriggoCondition(condType, status, reason, message string, observedGenerati
 //
 //	{% var tt = transitionTime(resource, "Accepted", "True") %}
 //	{% var tt = transitionTime(resource, "Accepted", "True", 0) %}  // with parentIndex for route status
-func scriggoTransitionTime(resource interface{}, conditionType, newStatus string, parentIndex ...int) string {
+func scriggoTransitionTime(resource any, conditionType, newStatus string, parentIndex ...int) string {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	if resource == nil {
 		return now
 	}
 
-	var conditions []interface{}
+	var conditions []any
 
 	if len(parentIndex) > 0 {
 		// Search in .status.parents[parentIndex].conditions
@@ -133,7 +133,7 @@ func scriggoTransitionTime(resource interface{}, conditionType, newStatus string
 	}
 
 	for _, c := range conditions {
-		condMap, ok := c.(map[string]interface{})
+		condMap, ok := c.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -156,7 +156,7 @@ func scriggoTransitionTime(resource interface{}, conditionType, newStatus string
 }
 
 // findTopLevelConditions extracts .status.conditions from a resource.
-func findTopLevelConditions(resource interface{}) []interface{} {
+func findTopLevelConditions(resource any) []any {
 	status := scriggoDig(resource, "status")
 	if status == nil {
 		return nil
@@ -165,7 +165,7 @@ func findTopLevelConditions(resource interface{}) []interface{} {
 	if conditions == nil {
 		return nil
 	}
-	condSlice, ok := conditions.([]interface{})
+	condSlice, ok := conditions.([]any)
 	if !ok {
 		return nil
 	}
@@ -173,7 +173,7 @@ func findTopLevelConditions(resource interface{}) []interface{} {
 }
 
 // findParentConditions extracts .status.parents[idx].conditions from a route resource.
-func findParentConditions(resource interface{}, idx int) []interface{} {
+func findParentConditions(resource any, idx int) []any {
 	status := scriggoDig(resource, "status")
 	if status == nil {
 		return nil
@@ -182,7 +182,7 @@ func findParentConditions(resource interface{}, idx int) []interface{} {
 	if parents == nil {
 		return nil
 	}
-	parentSlice, ok := parents.([]interface{})
+	parentSlice, ok := parents.([]any)
 	if !ok {
 		return nil
 	}
@@ -194,7 +194,7 @@ func findParentConditions(resource interface{}, idx int) []interface{} {
 	if conditions == nil {
 		return nil
 	}
-	condSlice, ok := conditions.([]interface{})
+	condSlice, ok := conditions.([]any)
 	if !ok {
 		return nil
 	}
@@ -207,7 +207,7 @@ func findParentConditions(resource interface{}, idx int) []interface{} {
 //
 //	{{ myMap | toJSON }}
 //	{{ toJSON("hello") }}
-func scriggoToJSON(value interface{}) string {
+func scriggoToJSON(value any) string {
 	if value == nil {
 		return "null"
 	}

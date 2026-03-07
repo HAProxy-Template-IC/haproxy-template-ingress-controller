@@ -146,4 +146,4 @@ func (fi *scriggoFileInfo) Size() int64        { return fi.size }
 func (fi *scriggoFileInfo) Mode() fs.FileMode  { return 0o444 }
 func (fi *scriggoFileInfo) ModTime() time.Time { return time.Time{} }
 func (fi *scriggoFileInfo) IsDir() bool        { return fi.isDir }
-func (fi *scriggoFileInfo) Sys() interface{}   { return nil }
+func (fi *scriggoFileInfo) Sys() any           { return nil }

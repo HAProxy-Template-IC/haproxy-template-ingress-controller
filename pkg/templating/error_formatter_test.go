@@ -395,7 +395,7 @@ func BenchmarkFormatRenderError(b *testing.B) {
 {% endfor %}`
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		FormatRenderError(err, "host.map", templateContent)
 	}
 }
@@ -404,7 +404,7 @@ func BenchmarkFormatRenderErrorShort(b *testing.B) {
 	err := errors.New("failed to render template 'host.map': unable to execute at Line=1 Col=63: unknown method 'get'")
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		FormatRenderErrorShort(err, "host.map")
 	}
 }

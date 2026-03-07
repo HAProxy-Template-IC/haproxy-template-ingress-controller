@@ -26,22 +26,22 @@ import (
 
 // mockStore is a simple mock implementation of stores.Store for testing.
 type mockStore struct {
-	items []interface{}
+	items []any
 }
 
-func (m *mockStore) List() ([]interface{}, error) {
+func (m *mockStore) List() ([]any, error) {
 	return m.items, nil
 }
 
-func (m *mockStore) Get(_ ...string) ([]interface{}, error) {
+func (m *mockStore) Get(_ ...string) ([]any, error) {
 	return m.items, nil
 }
 
-func (m *mockStore) Add(_ interface{}, _ []string) error {
+func (m *mockStore) Add(_ any, _ []string) error {
 	return nil
 }
 
-func (m *mockStore) Update(_ interface{}, _ []string) error {
+func (m *mockStore) Update(_ any, _ []string) error {
 	return nil
 }
 

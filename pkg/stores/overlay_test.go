@@ -109,8 +109,8 @@ func TestCompositeStore_List_WithAdditions(t *testing.T) {
 			}
 		}
 		// Also check for map in case test changes to use unstructured
-		if m, ok := r.(map[string]interface{}); ok {
-			if metadata, ok := m["metadata"].(map[string]interface{}); ok {
+		if m, ok := r.(map[string]any); ok {
+			if metadata, ok := m["metadata"].(map[string]any); ok {
 				if metadata["name"] == "new-configmap" && metadata["namespace"] == "default" {
 					found = true
 					break
@@ -356,7 +356,7 @@ func TestCompositeStore_WithKeyExtractor(t *testing.T) {
 	overlay := NewStoreOverlayForCreate(newCM)
 
 	// Key extractor for namespace/name indexing (handles both runtime.Object and map)
-	keyExtractor := func(resource interface{}) ([]string, error) {
+	keyExtractor := func(resource any) ([]string, error) {
 		// Try runtime.Object first (handles typed objects from tests and base store)
 		if accessor, ok := resource.(interface {
 			GetNamespace() string
@@ -365,8 +365,8 @@ func TestCompositeStore_WithKeyExtractor(t *testing.T) {
 			return []string{accessor.GetNamespace(), accessor.GetName()}, nil
 		}
 		// Handle pre-converted map[string]interface{} (for unstructured resources)
-		if m, ok := resource.(map[string]interface{}); ok {
-			if metadata, ok := m["metadata"].(map[string]interface{}); ok {
+		if m, ok := resource.(map[string]any); ok {
+			if metadata, ok := m["metadata"].(map[string]any); ok {
 				ns, _ := metadata["namespace"].(string)
 				name, _ := metadata["name"].(string)
 				return []string{ns, name}, nil

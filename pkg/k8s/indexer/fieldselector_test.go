@@ -125,14 +125,14 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 	tests := []struct {
 		name       string
 		expression string
-		resource   map[string]interface{}
+		resource   map[string]any
 		wantMatch  bool
 	}{
 		{
 			name:       "matching field value",
 			expression: "spec.ingressClassName=haproxy-internal",
-			resource: map[string]interface{}{
-				"spec": map[string]interface{}{
+			resource: map[string]any{
+				"spec": map[string]any{
 					"ingressClassName": "haproxy-internal",
 				},
 			},
@@ -141,8 +141,8 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "non-matching field value",
 			expression: "spec.ingressClassName=haproxy-internal",
-			resource: map[string]interface{}{
-				"spec": map[string]interface{}{
+			resource: map[string]any{
+				"spec": map[string]any{
 					"ingressClassName": "haproxy-public",
 				},
 			},
@@ -151,8 +151,8 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "missing field",
 			expression: "spec.ingressClassName=haproxy-internal",
-			resource: map[string]interface{}{
-				"spec": map[string]interface{}{
+			resource: map[string]any{
+				"spec": map[string]any{
 					"otherField": "value",
 				},
 			},
@@ -161,8 +161,8 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "missing parent field",
 			expression: "spec.ingressClassName=haproxy-internal",
-			resource: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			resource: map[string]any{
+				"metadata": map[string]any{
 					"name": "test",
 				},
 			},
@@ -171,14 +171,14 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "empty resource",
 			expression: "spec.ingressClassName=haproxy-internal",
-			resource:   map[string]interface{}{},
+			resource:   map[string]any{},
 			wantMatch:  false,
 		},
 		{
 			name:       "matching empty value",
 			expression: "spec.field=",
-			resource: map[string]interface{}{
-				"spec": map[string]interface{}{
+			resource: map[string]any{
+				"spec": map[string]any{
 					"field": "",
 				},
 			},
@@ -187,9 +187,9 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "matching label",
 			expression: "metadata.labels['app']=nginx",
-			resource: map[string]interface{}{
-				"metadata": map[string]interface{}{
-					"labels": map[string]interface{}{
+			resource: map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]any{
 						"app": "nginx",
 					},
 				},
@@ -199,9 +199,9 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "non-matching label",
 			expression: "metadata.labels['app']=nginx",
-			resource: map[string]interface{}{
-				"metadata": map[string]interface{}{
-					"labels": map[string]interface{}{
+			resource: map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]any{
 						"app": "apache",
 					},
 				},
@@ -211,9 +211,9 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "missing label",
 			expression: "metadata.labels['app']=nginx",
-			resource: map[string]interface{}{
-				"metadata": map[string]interface{}{
-					"labels": map[string]interface{}{
+			resource: map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]any{
 						"other": "value",
 					},
 				},
@@ -223,8 +223,8 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "integer value matching",
 			expression: "spec.replicas=3",
-			resource: map[string]interface{}{
-				"spec": map[string]interface{}{
+			resource: map[string]any{
+				"spec": map[string]any{
 					"replicas": 3,
 				},
 			},
@@ -233,8 +233,8 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		{
 			name:       "boolean value matching",
 			expression: "spec.enabled=true",
-			resource: map[string]interface{}{
-				"spec": map[string]interface{}{
+			resource: map[string]any{
+				"spec": map[string]any{
 					"enabled": true,
 				},
 			},
@@ -269,17 +269,17 @@ func TestFieldSelectorMatcher_MatchesIngress(t *testing.T) {
 	}
 
 	// Ingress with matching class
-	internalIngress := map[string]interface{}{
+	internalIngress := map[string]any{
 		"apiVersion": "networking.k8s.io/v1",
 		"kind":       "Ingress",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"name":      "internal-app",
 			"namespace": "default",
 		},
-		"spec": map[string]interface{}{
+		"spec": map[string]any{
 			"ingressClassName": "haproxy-internal",
-			"rules": []interface{}{
-				map[string]interface{}{
+			"rules": []any{
+				map[string]any{
 					"host": "internal.example.com",
 				},
 			},
@@ -295,17 +295,17 @@ func TestFieldSelectorMatcher_MatchesIngress(t *testing.T) {
 	}
 
 	// Ingress with different class
-	publicIngress := map[string]interface{}{
+	publicIngress := map[string]any{
 		"apiVersion": "networking.k8s.io/v1",
 		"kind":       "Ingress",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"name":      "public-app",
 			"namespace": "default",
 		},
-		"spec": map[string]interface{}{
+		"spec": map[string]any{
 			"ingressClassName": "haproxy-public",
-			"rules": []interface{}{
-				map[string]interface{}{
+			"rules": []any{
+				map[string]any{
 					"host": "public.example.com",
 				},
 			},
@@ -321,16 +321,16 @@ func TestFieldSelectorMatcher_MatchesIngress(t *testing.T) {
 	}
 
 	// Ingress without ingressClassName
-	legacyIngress := map[string]interface{}{
+	legacyIngress := map[string]any{
 		"apiVersion": "networking.k8s.io/v1",
 		"kind":       "Ingress",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"name":      "legacy-app",
 			"namespace": "default",
 		},
-		"spec": map[string]interface{}{
-			"rules": []interface{}{
-				map[string]interface{}{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
 					"host": "legacy.example.com",
 				},
 			},

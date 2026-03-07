@@ -456,7 +456,9 @@ func TestCompare_HTTPRequestRuleDeleteAndInsertIndexes(t *testing.T) {
 }
 
 // ptrInt64Fn is a helper to create *int64 pointers in test data.
-func ptrInt64Fn(v int64) *int64 { return &v }
+//
+//go:fix inline
+func ptrInt64Fn(v int64) *int64 { return new(v) }
 
 // --- Cascade Elimination Tests for All 8 Rule Types ---
 
@@ -598,7 +600,7 @@ func insertHTTPResponseRule(rules models.HTTPResponseRules, pos int) models.HTTP
 func makeTCPRequestRules(n int) models.TCPRequestRules {
 	rules := make(models.TCPRequestRules, n)
 	for i := range n {
-		rules[i] = &models.TCPRequestRule{Type: "inspect-delay", Timeout: ptrInt64Fn(int64(1000 + i))}
+		rules[i] = &models.TCPRequestRule{Type: "inspect-delay", Timeout: new(int64(1000 + i))}
 	}
 	return rules
 }
@@ -614,7 +616,7 @@ func insertTCPRequestRule(rules models.TCPRequestRules, pos int) models.TCPReque
 func makeTCPResponseRules(n int) models.TCPResponseRules {
 	rules := make(models.TCPResponseRules, n)
 	for i := range n {
-		rules[i] = &models.TCPResponseRule{Type: "inspect-delay", Timeout: ptrInt64Fn(int64(2000 + i))}
+		rules[i] = &models.TCPResponseRule{Type: "inspect-delay", Timeout: new(int64(2000 + i))}
 	}
 	return rules
 }

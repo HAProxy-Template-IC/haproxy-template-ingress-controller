@@ -33,7 +33,7 @@ import (
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	paths := s.registry.Paths()
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"paths": paths,
 		"count": len(paths),
 	}
@@ -157,7 +157,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		httpStatus = http.StatusServiceUnavailable
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"status":     status,
 		"components": components,
 	}

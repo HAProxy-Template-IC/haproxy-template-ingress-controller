@@ -30,7 +30,7 @@ func NewFieldFilter(patterns []string) *FieldFilter {
 //
 //	filter := NewFieldFilter([]string{"metadata.managedFields"})
 //	err := filter.Filter(resource)
-func (f *FieldFilter) Filter(resource interface{}) error {
+func (f *FieldFilter) Filter(resource any) error {
 	if len(f.patterns) == 0 {
 		return nil
 	}
@@ -43,7 +43,7 @@ func (f *FieldFilter) Filter(resource interface{}) error {
 	rv := reflect.ValueOf(data)
 
 	// Dereference pointers
-	for rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface {
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
 		if rv.IsNil() {
 			return nil
 		}
@@ -92,7 +92,7 @@ func (f *FieldFilter) removeField(rv reflect.Value, pattern string) error {
 // navigateToField navigates to a field in the resource structure.
 func (f *FieldFilter) navigateToField(rv reflect.Value, fieldName string) (reflect.Value, error) {
 	// Dereference pointers
-	for rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface {
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
 		if rv.IsNil() {
 			return reflect.Value{}, fmt.Errorf("nil pointer")
 		}
@@ -132,7 +132,7 @@ func (f *FieldFilter) navigateToField(rv reflect.Value, fieldName string) (refle
 // deleteField removes a field from a map or struct.
 func (f *FieldFilter) deleteField(parent reflect.Value, fieldName string) error {
 	// Dereference pointers
-	for parent.Kind() == reflect.Ptr || parent.Kind() == reflect.Interface {
+	for parent.Kind() == reflect.Pointer || parent.Kind() == reflect.Interface {
 		if parent.IsNil() {
 			return nil
 		}
@@ -236,10 +236,10 @@ func parseJSONPathPattern(pattern string) []string {
 //
 // The filter needs to work with the actual data map to be able to modify fields.
 // This function returns the UnstructuredContent() map if the resource is an Unstructured object.
-func unwrapUnstructuredForFilter(resource interface{}) interface{} {
+func unwrapUnstructuredForFilter(resource any) any {
 	// Type assert to *unstructured.Unstructured
 	type unstructuredInterface interface {
-		UnstructuredContent() map[string]interface{}
+		UnstructuredContent() map[string]any
 	}
 
 	if u, ok := resource.(unstructuredInterface); ok {

@@ -89,7 +89,7 @@ func TestNewEngineFromConfig_WithGlobalFunctions(t *testing.T) {
 	}
 
 	customFuncs := map[string]templating.GlobalFunc{
-		"custom_func": func(args ...interface{}) (interface{}, error) {
+		"custom_func": func(args ...any) (any, error) {
 			return "custom_output", nil
 		},
 	}

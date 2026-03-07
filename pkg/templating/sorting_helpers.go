@@ -23,7 +23,7 @@ import (
 
 // evaluateExpression evaluates a JSONPath-like expression against an item.
 // Simplified version for Scriggo template engine.
-func evaluateExpression(item interface{}, expr string) interface{} {
+func evaluateExpression(item any, expr string) any {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -39,10 +39,10 @@ func evaluateExpression(item interface{}, expr string) interface{} {
 }
 
 // navigateJSONPath navigates through an object using JSONPath-like syntax.
-func navigateJSONPath(item interface{}, path string) interface{} {
+func navigateJSONPath(item any, path string) any {
 	// Remove leading $. if present
-	if strings.HasPrefix(path, "$.") {
-		path = strings.TrimPrefix(path, "$.")
+	if after, ok := strings.CutPrefix(path, "$."); ok {
+		path = after
 	} else if path == "$" {
 		return item
 	}
@@ -86,7 +86,7 @@ func navigateJSONPath(item interface{}, path string) interface{} {
 }
 
 // getField retrieves a field from a map or struct.
-func getField(item interface{}, fieldName string) interface{} {
+func getField(item any, fieldName string) any {
 	if item == nil {
 		return nil
 	}
@@ -101,7 +101,7 @@ func getField(item interface{}, fieldName string) interface{} {
 
 	// Try struct field access via reflection
 	val := reflect.ValueOf(item)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 
@@ -116,7 +116,7 @@ func getField(item interface{}, fieldName string) interface{} {
 }
 
 // compareValues compares two values for sorting.
-func compareValues(a, b interface{}) int {
+func compareValues(a, b any) int {
 	// Handle nil values
 	if a == nil && b == nil {
 		return 0
@@ -152,7 +152,7 @@ func compareValues(a, b interface{}) int {
 }
 
 // getLength returns the length of a value.
-func getLength(v interface{}) int {
+func getLength(v any) int {
 	if v == nil {
 		return 0
 	}
@@ -179,7 +179,7 @@ func getLength(v interface{}) int {
 }
 
 // toFloat64 converts a value to float64 if possible.
-func toFloat64(v interface{}) (float64, bool) {
+func toFloat64(v any) (float64, bool) {
 	switch val := v.(type) {
 	case float64:
 		return val, true
@@ -211,13 +211,13 @@ func toFloat64(v interface{}) (float64, bool) {
 }
 
 // convertToSlice tries to convert a value to []interface{}.
-func convertToSlice(v interface{}) ([]interface{}, bool) {
+func convertToSlice(v any) ([]any, bool) {
 	if v == nil {
 		return nil, false
 	}
 
 	// Direct type assertion for []interface{}
-	if slice, ok := v.([]interface{}); ok {
+	if slice, ok := v.([]any); ok {
 		return slice, true
 	}
 
@@ -227,7 +227,7 @@ func convertToSlice(v interface{}) ([]interface{}, bool) {
 		return nil, false
 	}
 
-	result := make([]interface{}, val.Len())
+	result := make([]any, val.Len())
 	for i := 0; i < val.Len(); i++ {
 		result[i] = val.Index(i).Interface()
 	}
@@ -235,24 +235,24 @@ func convertToSlice(v interface{}) ([]interface{}, bool) {
 }
 
 // convertToMap tries to convert a value to map[string]interface{}.
-func convertToMap(v interface{}) (map[string]interface{}, bool) {
+func convertToMap(v any) (map[string]any, bool) {
 	if v == nil {
 		return nil, false
 	}
 
 	// Direct type assertion
-	if m, ok := v.(map[string]interface{}); ok {
+	if m, ok := v.(map[string]any); ok {
 		return m, true
 	}
 
 	// Use reflection for struct to map conversion
 	val := reflect.ValueOf(v)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 
 	if val.Kind() == reflect.Map {
-		result := make(map[string]interface{})
+		result := make(map[string]any)
 		iter := val.MapRange()
 		for iter.Next() {
 			key := fmt.Sprint(iter.Key().Interface())

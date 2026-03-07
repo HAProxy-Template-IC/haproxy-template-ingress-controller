@@ -43,7 +43,7 @@ import (
 //
 // Returns:
 //   - Merged fixtures map (resource type → list of resources)
-func MergeFixtures(globalFixtures, testFixtures map[string][]interface{}) map[string][]interface{} {
+func MergeFixtures(globalFixtures, testFixtures map[string][]any) map[string][]any {
 	// Build identity map for test fixtures to detect overrides
 	testIdentities := buildFixtureIdentityMap(testFixtures)
 
@@ -51,7 +51,7 @@ func MergeFixtures(globalFixtures, testFixtures map[string][]interface{}) map[st
 	allResourceTypes := collectResourceTypes(globalFixtures, testFixtures)
 
 	// Merge fixtures for each resource type
-	merged := make(map[string][]interface{})
+	merged := make(map[string][]any)
 	for resourceType := range allResourceTypes {
 		mergedResources := mergeResourceType(
 			resourceType,
@@ -69,12 +69,12 @@ func MergeFixtures(globalFixtures, testFixtures map[string][]interface{}) map[st
 }
 
 // buildFixtureIdentityMap creates a map of resource identities for deduplication.
-func buildFixtureIdentityMap(fixtures map[string][]interface{}) map[string]interface{} {
-	identities := make(map[string]interface{})
+func buildFixtureIdentityMap(fixtures map[string][]any) map[string]any {
+	identities := make(map[string]any)
 
 	for resourceType, resources := range fixtures {
 		for _, resourceObj := range resources {
-			resourceMap, ok := resourceObj.(map[string]interface{})
+			resourceMap, ok := resourceObj.(map[string]any)
 			if !ok {
 				continue
 			}
@@ -89,7 +89,7 @@ func buildFixtureIdentityMap(fixtures map[string][]interface{}) map[string]inter
 }
 
 // collectResourceTypes collects all unique resource types from multiple fixture maps.
-func collectResourceTypes(fixtureMaps ...map[string][]interface{}) map[string]bool {
+func collectResourceTypes(fixtureMaps ...map[string][]any) map[string]bool {
 	allTypes := make(map[string]bool)
 
 	for _, fixtures := range fixtureMaps {
@@ -104,15 +104,15 @@ func collectResourceTypes(fixtureMaps ...map[string][]interface{}) map[string]bo
 // mergeResourceType merges global and test fixtures for a single resource type.
 func mergeResourceType(
 	resourceType string,
-	globalResources []interface{},
-	testResources []interface{},
-	testIdentities map[string]interface{},
-) []interface{} {
-	var merged []interface{}
+	globalResources []any,
+	testResources []any,
+	testIdentities map[string]any,
+) []any {
+	var merged []any
 
 	// Add global fixtures that are NOT overridden by test fixtures
 	for _, resourceObj := range globalResources {
-		resourceMap, ok := resourceObj.(map[string]interface{})
+		resourceMap, ok := resourceObj.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -166,7 +166,7 @@ func buildResourceIdentity(resourceType string, resource *unstructured.Unstructu
 // Returns:
 //   - Map of resource type names to resource stores
 //   - error if fixture processing fails
-func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]interface{}) (map[string]stores.Store, error) {
+func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]any) (map[string]stores.Store, error) {
 	storeMap := r.createEmptyStores()
 
 	for resourceType, resources := range fixtures {
@@ -197,10 +197,7 @@ func (r *Runner) createEmptyStores() map[string]stores.Store {
 		r.logger.Log(context.Background(), logging.LevelTrace, "Creating empty store for watched resource",
 			"resource_type", resourceType)
 
-		numKeys := len(watchedResource.IndexBy)
-		if numKeys < 1 {
-			numKeys = 1
-		}
+		numKeys := max(len(watchedResource.IndexBy), 1)
 		storeMap[resourceType] = store.NewMemoryStore(numKeys)
 	}
 
@@ -211,9 +208,9 @@ func (r *Runner) createEmptyStores() map[string]stores.Store {
 }
 
 // populateHAProxyPodsStore populates the haproxy-pods store with fixture data.
-func (r *Runner) populateHAProxyPodsStore(storeInstance stores.Store, resources []interface{}) error {
+func (r *Runner) populateHAProxyPodsStore(storeInstance stores.Store, resources []any) error {
 	for i, resourceObj := range resources {
-		resourceMap, ok := resourceObj.(map[string]interface{})
+		resourceMap, ok := resourceObj.(map[string]any)
 		if !ok {
 			return fmt.Errorf("haproxy-pods fixture at index %d is not a map", i)
 		}
@@ -245,7 +242,7 @@ func (r *Runner) populateHAProxyPodsStore(storeInstance stores.Store, resources 
 }
 
 // populateWatchedResourceStore populates a watched resource store with fixture data.
-func (r *Runner) populateWatchedResourceStore(storeMap map[string]stores.Store, resourceType string, resources []interface{}) error {
+func (r *Runner) populateWatchedResourceStore(storeMap map[string]stores.Store, resourceType string, resources []any) error {
 	watchedResource, exists := r.config.WatchedResources[resourceType]
 	if !exists {
 		return fmt.Errorf("resource type %q in fixtures not found in watched resources", resourceType)
@@ -262,7 +259,7 @@ func (r *Runner) populateWatchedResourceStore(storeMap map[string]stores.Store, 
 	storeInstance := storeMap[resourceType]
 
 	for i, resourceObj := range resources {
-		resourceMap, ok := resourceObj.(map[string]interface{})
+		resourceMap, ok := resourceObj.(map[string]any)
 		if !ok {
 			return fmt.Errorf("fixture resource at index %d in %s is not a map", i, resourceType)
 		}

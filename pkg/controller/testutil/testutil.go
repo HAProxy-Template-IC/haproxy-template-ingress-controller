@@ -230,7 +230,7 @@ func CreateTestSecretWithTLS(name, namespace, resourceVersion string, certPEM, k
 	secret.SetNamespace(namespace)
 	secret.SetResourceVersion(resourceVersion)
 
-	data := map[string]interface{}{}
+	data := map[string]any{}
 	if certPEM != nil {
 		data["tls.crt"] = base64.StdEncoding.EncodeToString(certPEM)
 	}
@@ -263,7 +263,7 @@ func CreateTestSecretWithStringData(name, namespace, resourceVersion string, dat
 	secret.SetResourceVersion(resourceVersion)
 
 	if data != nil {
-		dataMap := make(map[string]interface{})
+		dataMap := make(map[string]any)
 		for k, v := range data {
 			// Base64-encode the values to match how Kubernetes stores Secret data
 			// when accessed through the unstructured API

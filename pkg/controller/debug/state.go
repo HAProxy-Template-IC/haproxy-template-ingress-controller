@@ -105,7 +105,7 @@ type StateProvider interface {
 	//
 	// Example:
 	//   resources, err := provider.GetResourcesByType("ingresses")
-	GetResourcesByType(resourceType string) ([]interface{}, error)
+	GetResourcesByType(resourceType string) ([]any, error)
 
 	// GetPipelineStatus returns the complete status of the last reconciliation pipeline.
 	//
@@ -165,7 +165,7 @@ type ComponentStatus struct {
 
 	// Details provides additional component-specific information
 	// Optional - may be nil
-	Details map[string]interface{} `json:"details,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // PipelineStatus represents the complete status of the last reconciliation pipeline.
@@ -235,7 +235,7 @@ type ErrorSummary struct {
 	TemplateRenderError    *ErrorInfo  `json:"template_render_error,omitempty"`
 	HAProxyValidationError *ErrorInfo  `json:"haproxy_validation_error,omitempty"`
 	DeploymentErrors       []ErrorInfo `json:"deployment_errors,omitempty"`
-	LastErrorTimestamp     time.Time   `json:"last_error_timestamp,omitempty"`
+	LastErrorTimestamp     time.Time   `json:"last_error_timestamp"`
 }
 
 // ErrorInfo contains details about a specific error.

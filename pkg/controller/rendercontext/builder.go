@@ -31,6 +31,7 @@ package rendercontext
 
 import (
 	"log/slog"
+	"maps"
 	"runtime"
 	"sort"
 
@@ -55,7 +56,7 @@ type Builder struct {
 	haproxyPodStore stores.Store
 	httpFetcher     templating.HTTPFetcher
 	capabilities    *dataplane.Capabilities
-	capabilitiesMap map[string]interface{} // Pre-computed capabilities map
+	capabilitiesMap map[string]any // Pre-computed capabilities map
 	currentConfig   *parserconfig.StructuredConfig
 }
 
@@ -100,7 +101,7 @@ func WithCapabilities(caps *dataplane.Capabilities) Option {
 // This is more efficient than WithCapabilities when the same capabilities map is
 // used across multiple renders, as it avoids recreating the map each time.
 // Takes precedence over WithCapabilities if both are set.
-func WithCapabilitiesMap(capMap map[string]interface{}) Option {
+func WithCapabilitiesMap(capMap map[string]any) Option {
 	return func(b *Builder) {
 		b.capabilitiesMap = capMap
 	}
@@ -156,7 +157,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "http": HTTPFetcher (if set),
 //	  "extraContext": map from config,
 //	}
-func (b *Builder) Build() (map[string]interface{}, *FileRegistry, *templating.StatusPatchCollector) {
+func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatchCollector) {
 	// Create resources map with typed ResourceStore values
 	resources := make(map[string]templating.ResourceStore)
 	if b.stores != nil {
@@ -197,7 +198,7 @@ func (b *Builder) Build() (map[string]interface{}, *FileRegistry, *templating.St
 		"snippet_count", len(snippetNames))
 
 	// Build final context
-	templateContext := map[string]interface{}{
+	templateContext := map[string]any{
 		"resources":            resources,
 		"controller":           controller,
 		"templateSnippets":     snippetNames,
@@ -265,12 +266,10 @@ func SortSnippetNames(snippets map[string]config.TemplateSnippet) []string {
 //
 // The extraContext key is always populated (with an empty map if nil) to prevent
 // nil pointer dereferences in templates that use extraContext | dig("key") | fallback(default).
-func MergeExtraContextInto(renderCtx map[string]interface{}, cfg *config.Config) {
+func MergeExtraContextInto(renderCtx map[string]any, cfg *config.Config) {
 	if cfg.TemplatingSettings.ExtraContext != nil {
 		// Merge at top level
-		for key, value := range cfg.TemplatingSettings.ExtraContext {
-			renderCtx[key] = value
-		}
+		maps.Copy(renderCtx, cfg.TemplatingSettings.ExtraContext)
 		// Also populate the extraContext map for Scriggo templates
 		// Scriggo requires compile-time variable declarations, so templates
 		// access extraContext values via: extraContext | dig("key") | fallback(default)
@@ -278,7 +277,7 @@ func MergeExtraContextInto(renderCtx map[string]interface{}, cfg *config.Config)
 	} else {
 		// Always set extraContext, even if empty, to prevent nil pointer dereferences
 		// when templates use: extraContext | dig("key") | fallback(default)
-		renderCtx["extraContext"] = map[string]interface{}{}
+		renderCtx["extraContext"] = map[string]any{}
 	}
 }
 
@@ -287,12 +286,12 @@ func MergeExtraContextInto(renderCtx map[string]interface{}, cfg *config.Config)
 // CapabilitiesToMap converts a Capabilities struct to a map for template use.
 // The map uses snake_case keys matching the Capabilities struct field names
 // (e.g., "supports_waf" for SupportsWAF) for consistency with template conventions.
-func CapabilitiesToMap(caps *dataplane.Capabilities) map[string]interface{} {
+func CapabilitiesToMap(caps *dataplane.Capabilities) map[string]any {
 	if caps == nil {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		// Storage capabilities
 		"supports_crt_list":        caps.SupportsCrtList,
 		"supports_map_storage":     caps.SupportsMapStorage,

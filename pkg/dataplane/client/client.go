@@ -139,7 +139,7 @@ func (c *DataplaneClient) Clientset() *Clientset {
 //
 // For most operations, you should use the wrapper methods instead of this.
 // This is provided for operations that aren't wrapped yet.
-func (c *DataplaneClient) PreferredClient() interface{} {
+func (c *DataplaneClient) PreferredClient() any {
 	return c.clientset.PreferredClient()
 }
 

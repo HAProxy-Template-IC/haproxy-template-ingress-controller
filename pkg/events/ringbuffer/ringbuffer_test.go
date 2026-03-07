@@ -141,27 +141,25 @@ func TestThreadSafety(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Multiple writers
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(start int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				rb.Add(start*100 + j)
 			}
 		}(i)
 	}
 
 	// Multiple readers
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 5 {
+		wg.Go(func() {
+			for range 100 {
 				_ = rb.GetLast(10)
 				_ = rb.GetAll()
 				_ = rb.Len()
 			}
-		}()
+		})
 	}
 
 	// Should not panic or race
@@ -231,7 +229,7 @@ func BenchmarkGetLast(b *testing.B) {
 	rb := New[int](1000)
 
 	// Pre-fill buffer
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		rb.Add(i)
 	}
 
@@ -245,7 +243,7 @@ func BenchmarkGetAll(b *testing.B) {
 	rb := New[int](1000)
 
 	// Pre-fill buffer
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		rb.Add(i)
 	}
 

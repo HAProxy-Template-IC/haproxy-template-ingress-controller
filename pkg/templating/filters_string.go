@@ -35,7 +35,7 @@ import (
 //
 //	strip("  hello world  ") => "hello world"
 //	strip(123) => "123"
-func scriggoStrip(s interface{}) string {
+func scriggoStrip(s any) string {
 	str := scriggoToString(s)
 	return Strip(str)
 }
@@ -51,7 +51,7 @@ var scriggoTrim = scriggoStrip
 // Example:
 //
 //	b64decode("SGVsbG8gV29ybGQ=") => "Hello World"
-func scriggoB64Decode(s interface{}) (string, error) {
+func scriggoB64Decode(s any) (string, error) {
 	str := scriggoToString(s)
 	decoded, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
@@ -67,7 +67,7 @@ func scriggoB64Decode(s interface{}) (string, error) {
 //
 //	debug(routes)           => "# DEBUG:\n# [...]"
 //	debug(routes, "label")  => "# DEBUG label:\n# [...]"
-func scriggoDebug(value interface{}, label ...string) string {
+func scriggoDebug(value any, label ...string) string {
 	// Extract label if provided
 	labelStr := ""
 	if len(label) > 0 {
@@ -82,7 +82,7 @@ func scriggoDebug(value interface{}, label ...string) string {
 // Usage in Scriggo templates:
 //
 //	{% if strings_contains(path, "/api/") %}
-func scriggoStringsContains(s, substr interface{}) bool {
+func scriggoStringsContains(s, substr any) bool {
 	str := scriggoToString(s)
 	substrStr := scriggoToString(substr)
 	return strings.Contains(str, substrStr)
@@ -94,7 +94,7 @@ func scriggoStringsContains(s, substr interface{}) bool {
 // Usage in Scriggo templates:
 //
 //	{% for _, part := range strings_split(path, "/") %}
-func scriggoStringsSplit(s, sep interface{}) []string {
+func scriggoStringsSplit(s, sep any) []string {
 	str := scriggoToString(s)
 	sepStr := scriggoToString(sep)
 	return strings.Split(str, sepStr)
@@ -106,7 +106,7 @@ func scriggoStringsSplit(s, sep interface{}) []string {
 // Usage in Scriggo templates:
 //
 //	{% var trimmed = strings_trim(value) %}
-func scriggoStringsTrim(s interface{}) string {
+func scriggoStringsTrim(s any) string {
 	str := scriggoToString(s)
 	return strings.TrimSpace(str)
 }
@@ -118,7 +118,7 @@ func scriggoStringsTrim(s interface{}) string {
 // Usage in Scriggo templates:
 //
 //	{% var trimmed = trimSpace(value) %}
-func scriggoTrimSpace(s interface{}) string {
+func scriggoTrimSpace(s any) string {
 	str := scriggoToString(s)
 	return strings.TrimSpace(str)
 }
@@ -129,7 +129,7 @@ func scriggoTrimSpace(s interface{}) string {
 // Usage in Scriggo templates:
 //
 //	{% var lower = strings_lower(method) %}
-func scriggoStringsLower(s interface{}) string {
+func scriggoStringsLower(s any) string {
 	str := scriggoToString(s)
 	return strings.ToLower(str)
 }
@@ -140,7 +140,7 @@ func scriggoStringsLower(s interface{}) string {
 // Usage in Scriggo templates:
 //
 //	{% var escaped = strings_replace(path, "/", "\\/") %}
-func scriggoStringsReplace(s, old, replacement interface{}) string {
+func scriggoStringsReplace(s, old, replacement any) string {
 	str := scriggoToString(s)
 	oldStr := scriggoToString(old)
 	replacementStr := scriggoToString(replacement)
@@ -155,7 +155,7 @@ func scriggoStringsReplace(s, old, replacement interface{}) string {
 //	{% var parts = strings_splitn(line, " ", 2) %}
 //	{% var first = parts[0] %}
 //	{% var rest = parts[1] %}
-func scriggoStringsSplitN(s, sep interface{}, n int) []string {
+func scriggoStringsSplitN(s, sep any, n int) []string {
 	str := scriggoToString(s)
 	sepStr := scriggoToString(sep)
 	return strings.SplitN(str, sepStr, n)
@@ -181,7 +181,7 @@ func scriggoStringsSplitN(s, sep interface{}, n int) []string {
 //	{{ indent(text, 4, false, true) }}  {# include blank lines #}
 //
 // Returns indented string or error on invalid arguments.
-func scriggoIndent(s interface{}, args ...interface{}) (string, error) {
+func scriggoIndent(s any, args ...any) (string, error) {
 	str := scriggoToString(s)
 
 	// Parse arguments
@@ -205,7 +205,7 @@ func scriggoIndent(s interface{}, args ...interface{}) (string, error) {
 }
 
 // parseIndentWidth extracts and validates the width argument.
-func parseIndentWidth(args []interface{}) (string, error) {
+func parseIndentWidth(args []any) (string, error) {
 	if len(args) == 0 || args[0] == nil {
 		return "    ", nil // 4 spaces default
 	}
@@ -224,7 +224,7 @@ func parseIndentWidth(args []interface{}) (string, error) {
 }
 
 // parseIndentBool extracts and validates a boolean argument at the given index.
-func parseIndentBool(args []interface{}, index int, name string) (bool, error) {
+func parseIndentBool(args []any, index int, name string) (bool, error) {
 	if len(args) <= index || args[index] == nil {
 		return false, nil
 	}
@@ -294,7 +294,7 @@ func shouldIndentLine(lineIndex int, line string, indentFirst, indentBlank bool)
 // Usage in Scriggo templates:
 //
 //	{% var title = title(resource_type) %}
-func scriggoTitle(s interface{}) string {
+func scriggoTitle(s any) string {
 	str := scriggoToString(s)
 	return cases.Title(language.English).String(str)
 }
@@ -305,7 +305,7 @@ func scriggoTitle(s interface{}) string {
 // Usage in Scriggo templates:
 //
 //	{% var escaped = sanitize_regex(path) %}
-func scriggoSanitizeRegex(s interface{}) string {
+func scriggoSanitizeRegex(s any) string {
 	str := scriggoToString(s)
 	return regexp.QuoteMeta(str)
 }
@@ -317,7 +317,7 @@ func scriggoSanitizeRegex(s interface{}) string {
 // Usage in Scriggo templates:
 //
 //	{% if regex_search(name, "ssl.*passthrough") %}
-func scriggoRegexSearch(env native.Env, s, pattern interface{}) bool {
+func scriggoRegexSearch(env native.Env, s, pattern any) bool {
 	str := scriggoToString(s)
 	patternStr := scriggoToString(pattern)
 	re, err := regexp.Compile(patternStr)
@@ -334,7 +334,7 @@ func scriggoRegexSearch(env native.Env, s, pattern interface{}) bool {
 // Usage in Scriggo templates:
 //
 //	{% if isdigit(value) %}
-func scriggoIsDigit(s interface{}) bool {
+func scriggoIsDigit(s any) bool {
 	str := scriggoToString(s)
 	if str == "" {
 		return false

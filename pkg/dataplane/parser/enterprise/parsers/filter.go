@@ -271,6 +271,6 @@ func (p *Filters) GetEEFilters() []*EEFilter {
 
 // FiltersData holds both CE and EE filters.
 type FiltersData struct {
-	CEFilters interface{}
+	CEFilters any
 	EEFilters []*EEFilter
 }

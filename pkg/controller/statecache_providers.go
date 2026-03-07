@@ -93,7 +93,7 @@ func (sc *StateCache) GetResourceCounts() (map[string]int, error) {
 }
 
 // GetResourcesByType implements debug.StateProvider.
-func (sc *StateCache) GetResourcesByType(resourceType string) ([]interface{}, error) {
+func (sc *StateCache) GetResourcesByType(resourceType string) ([]any, error) {
 	if sc.resourceWatcher == nil {
 		return nil, fmt.Errorf("resource watcher not initialized")
 	}

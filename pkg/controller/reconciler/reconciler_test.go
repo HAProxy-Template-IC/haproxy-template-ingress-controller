@@ -41,8 +41,7 @@ func TestReconciler_LeadingEdgeTrigger(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start reconciler in background
 	go reconciler.Start(ctx)
@@ -84,8 +83,7 @@ func TestReconciler_RefractoryBatching(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 
@@ -144,8 +142,7 @@ func TestReconciler_MaxLatencyGuarantee(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -200,8 +197,7 @@ func TestReconciler_ImmediateTriggerAfterRefractoryEnds(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -247,8 +243,7 @@ func TestReconciler_IndexSynchronizedTriggersImmediate(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 
@@ -281,8 +276,7 @@ func TestReconciler_SkipInitialSyncEvents(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 
@@ -319,8 +313,7 @@ func TestReconciler_IndexSynchronizedCancelsDebounce(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 
@@ -424,8 +417,7 @@ func TestReconciler_CustomDebounceInterval(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 
@@ -504,8 +496,7 @@ func TestReconciler_SkipHAProxyPodChanges(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 
@@ -537,8 +528,7 @@ func TestReconciler_NonHAProxyPodChangesStillTrigger(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 
@@ -581,8 +571,7 @@ func TestReconciler_HandleHTTPResourceChange(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start reconciler
 	go reconciler.Start(ctx)
@@ -611,8 +600,7 @@ func TestReconciler_HandleHTTPResourceAccepted(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start reconciler
 	go reconciler.Start(ctx)
@@ -643,8 +631,7 @@ func TestReconciler_HandleBecameLeader(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start reconciler
 	go reconciler.Start(ctx)
@@ -672,8 +659,7 @@ func TestReconciler_BecameLeaderCancelsDebounce(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go reconciler.Start(ctx)
 	time.Sleep(testutil.StartupDelay)

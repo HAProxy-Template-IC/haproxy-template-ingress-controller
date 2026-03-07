@@ -36,7 +36,7 @@ type RenderDependencies struct {
 	ValidationPaths *dataplane.ValidationPaths
 	HTTPStore       *FixtureHTTPStoreWrapper
 	CurrentConfig   *parserconfig.StructuredConfig
-	ExtraContext    map[string]interface{}
+	ExtraContext    map[string]any
 }
 
 // assertDeterministic validates that rendering the template twice produces identical output.

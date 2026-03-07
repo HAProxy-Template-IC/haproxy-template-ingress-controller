@@ -25,14 +25,14 @@ import "encoding/json"
 // The Dataplane API expects a nested map structure:
 //
 //	map[string]map[string]interface{}{"comment": {"value": "Pod: echo-server-v2"}}
-func ConvertClientMetadataToAPI(clientMetadata map[string]interface{}) map[string]map[string]interface{} {
+func ConvertClientMetadataToAPI(clientMetadata map[string]any) map[string]map[string]any {
 	if len(clientMetadata) == 0 {
 		return nil
 	}
 
-	nested := make(map[string]map[string]interface{})
+	nested := make(map[string]map[string]any)
 	for key, value := range clientMetadata {
-		nested[key] = map[string]interface{}{
+		nested[key] = map[string]any{
 			"value": value,
 		}
 	}
@@ -43,14 +43,14 @@ func ConvertClientMetadataToAPI(clientMetadata map[string]interface{}) map[strin
 // convertMetadataForValidation converts client-native flat metadata to API nested format,
 // returning map[string]interface{} to ensure compatibility with schema validation.
 // This differs from ConvertClientMetadataToAPI which returns map[string]map[string]interface{}.
-func convertMetadataForValidation(clientMetadata map[string]interface{}) map[string]interface{} {
+func convertMetadataForValidation(clientMetadata map[string]any) map[string]any {
 	if len(clientMetadata) == 0 {
 		return nil
 	}
 
-	nested := make(map[string]interface{})
+	nested := make(map[string]any)
 	for key, value := range clientMetadata {
-		nested[key] = map[string]interface{}{
+		nested[key] = map[string]any{
 			"value": value,
 		}
 	}
@@ -70,12 +70,12 @@ func convertMetadataForValidation(clientMetadata map[string]interface{}) map[str
 // Converts to client-native format:
 //
 //	map[string]interface{}{"comment": "Pod: echo-server-v2"}
-func ConvertAPIMetadataToClient(apiMetadata map[string]map[string]interface{}) map[string]interface{} {
+func ConvertAPIMetadataToClient(apiMetadata map[string]map[string]any) map[string]any {
 	if len(apiMetadata) == 0 {
 		return nil
 	}
 
-	flat := make(map[string]interface{})
+	flat := make(map[string]any)
 	for key, nested := range apiMetadata {
 		if value, ok := nested["value"]; ok {
 			flat[key] = value
@@ -105,7 +105,7 @@ func ConvertAPIMetadataToClient(apiMetadata map[string]map[string]interface{}) m
 // If the JSON doesn't contain a metadata field, or the metadata is not in the
 // expected format, the original JSON is returned unchanged.
 func TransformClientMetadataInJSON(jsonData []byte) ([]byte, error) {
-	var obj map[string]interface{}
+	var obj map[string]any
 	if err := json.Unmarshal(jsonData, &obj); err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func TransformClientMetadataInJSON(jsonData []byte) ([]byte, error) {
 //
 // This is more efficient than TransformClientMetadataInJSON when you already
 // have a map and don't need JSON output, avoiding an extra marshal step.
-func TransformMetadataInPlace(obj map[string]interface{}) {
+func TransformMetadataInPlace(obj map[string]any) {
 	transformMetadataRecursive(obj)
 }
 
@@ -129,16 +129,16 @@ func TransformMetadataInPlace(obj map[string]interface{}) {
 // Unlike TransformMetadataInPlace, this ensures all nested maps are typed as
 // map[string]interface{} (not map[string]map[string]interface{}) for compatibility
 // with openapi3.Schema.VisitJSON().
-func TransformMetadataForValidation(obj map[string]interface{}) {
+func TransformMetadataForValidation(obj map[string]any) {
 	transformMetadataForValidation(obj)
 }
 
 // transformMetadataForValidation walks the JSON object tree and transforms any
 // metadata fields for schema validation, using map[string]interface{} types.
-func transformMetadataForValidation(obj map[string]interface{}) {
+func transformMetadataForValidation(obj map[string]any) {
 	for key, value := range obj {
 		switch v := value.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			if key == "metadata" {
 				if needsMetadataTransformation(v) {
 					obj[key] = convertMetadataForValidation(v)
@@ -146,9 +146,9 @@ func transformMetadataForValidation(obj map[string]interface{}) {
 			} else {
 				transformMetadataForValidation(v)
 			}
-		case []interface{}:
+		case []any:
 			for _, elem := range v {
-				if elemMap, ok := elem.(map[string]interface{}); ok {
+				if elemMap, ok := elem.(map[string]any); ok {
 					transformMetadataForValidation(elemMap)
 				}
 			}
@@ -159,10 +159,10 @@ func transformMetadataForValidation(obj map[string]interface{}) {
 // transformMetadataRecursive walks the JSON object tree and transforms any
 // metadata fields from client-native flat format to API nested format.
 // It handles both nested objects and arrays (e.g., http_request_rule_list).
-func transformMetadataRecursive(obj map[string]interface{}) {
+func transformMetadataRecursive(obj map[string]any) {
 	for key, value := range obj {
 		switch v := value.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			if key == "metadata" {
 				// Check if this is a flat metadata map (needs transformation)
 				// vs already nested (has "value" sub-key)
@@ -173,10 +173,10 @@ func transformMetadataRecursive(obj map[string]interface{}) {
 				// Recurse into nested objects
 				transformMetadataRecursive(v)
 			}
-		case []interface{}:
+		case []any:
 			// Recurse into array elements (e.g., http_request_rule_list, servers, binds)
 			for _, elem := range v {
-				if elemMap, ok := elem.(map[string]interface{}); ok {
+				if elemMap, ok := elem.(map[string]any); ok {
 					transformMetadataRecursive(elemMap)
 				}
 			}
@@ -187,10 +187,10 @@ func transformMetadataRecursive(obj map[string]interface{}) {
 // needsMetadataTransformation checks if a metadata map needs to be transformed.
 // Returns true if the map contains flat key-value pairs (client-native format).
 // Returns false if it's already in nested format (API format with {"key": {"value": ...}}).
-func needsMetadataTransformation(metadata map[string]interface{}) bool {
+func needsMetadataTransformation(metadata map[string]any) bool {
 	for _, v := range metadata {
 		// If any value is not a map with a "value" key, it needs transformation
-		if nested, ok := v.(map[string]interface{}); ok {
+		if nested, ok := v.(map[string]any); ok {
 			if _, hasValue := nested["value"]; hasValue {
 				// Already in API format
 				return false

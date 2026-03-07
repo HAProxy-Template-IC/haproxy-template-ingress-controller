@@ -15,7 +15,6 @@
 package certloader
 
 import (
-	"context"
 	"encoding/base64"
 	"testing"
 	"time"
@@ -62,8 +61,7 @@ func TestCertLoaderComponent_ProcessValidCert(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -88,8 +86,7 @@ func TestCertLoaderComponent_InvalidResourceType(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -107,8 +104,7 @@ func TestCertLoaderComponent_MissingDataField(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -130,8 +126,7 @@ func TestCertLoaderComponent_MissingTlsCrt(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -140,7 +135,7 @@ func TestCertLoaderComponent_MissingTlsCrt(t *testing.T) {
 	secret := &unstructured.Unstructured{}
 	secret.SetKind("Secret")
 	secret.SetResourceVersion("12345")
-	err := unstructured.SetNestedField(secret.Object, map[string]interface{}{
+	err := unstructured.SetNestedField(secret.Object, map[string]any{
 		"tls.key": base64.StdEncoding.EncodeToString([]byte("key data")),
 	}, "data")
 	require.NoError(t, err)
@@ -157,8 +152,7 @@ func TestCertLoaderComponent_MissingTlsKey(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -167,7 +161,7 @@ func TestCertLoaderComponent_MissingTlsKey(t *testing.T) {
 	secret := &unstructured.Unstructured{}
 	secret.SetKind("Secret")
 	secret.SetResourceVersion("12345")
-	err := unstructured.SetNestedField(secret.Object, map[string]interface{}{
+	err := unstructured.SetNestedField(secret.Object, map[string]any{
 		"tls.crt": base64.StdEncoding.EncodeToString([]byte("cert data")),
 	}, "data")
 	require.NoError(t, err)
@@ -184,8 +178,7 @@ func TestCertLoaderComponent_InvalidBase64Cert(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -194,7 +187,7 @@ func TestCertLoaderComponent_InvalidBase64Cert(t *testing.T) {
 	secret := &unstructured.Unstructured{}
 	secret.SetKind("Secret")
 	secret.SetResourceVersion("12345")
-	err := unstructured.SetNestedField(secret.Object, map[string]interface{}{
+	err := unstructured.SetNestedField(secret.Object, map[string]any{
 		"tls.crt": "not-valid-base64!!!",
 		"tls.key": base64.StdEncoding.EncodeToString([]byte("key data")),
 	}, "data")
@@ -212,8 +205,7 @@ func TestCertLoaderComponent_InvalidBase64Key(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)
@@ -222,7 +214,7 @@ func TestCertLoaderComponent_InvalidBase64Key(t *testing.T) {
 	secret := &unstructured.Unstructured{}
 	secret.SetKind("Secret")
 	secret.SetResourceVersion("12345")
-	err := unstructured.SetNestedField(secret.Object, map[string]interface{}{
+	err := unstructured.SetNestedField(secret.Object, map[string]any{
 		"tls.crt": base64.StdEncoding.EncodeToString([]byte("cert data")),
 		"tls.key": "not-valid-base64!!!",
 	}, "data")
@@ -236,7 +228,7 @@ func TestCertLoaderComponent_InvalidBase64Key(t *testing.T) {
 func TestDecodeBase64SecretValue(t *testing.T) {
 	tests := []struct {
 		name      string
-		value     interface{}
+		value     any
 		want      []byte
 		wantError bool
 	}{
@@ -306,8 +298,7 @@ func TestCertLoaderComponent_IgnoresOtherEvents(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go component.Start(ctx)
 	time.Sleep(testutil.StartupDelay)

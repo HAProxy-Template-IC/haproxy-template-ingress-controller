@@ -37,7 +37,7 @@ func TestNewOverlayStore(t *testing.T) {
 
 func TestOverlayStore_Get_OverlayHit_Create(t *testing.T) {
 	baseStore := &mockStore{
-		resources: []interface{}{
+		resources: []any{
 			newMockResource("default", "existing"),
 		},
 	}
@@ -56,14 +56,14 @@ func TestOverlayStore_Get_OverlayHit_Create(t *testing.T) {
 func TestOverlayStore_Get_OverlayHit_Update(t *testing.T) {
 	originalResource := newMockResource("default", "test-resource")
 	baseStore := &mockStore{
-		resources: []interface{}{originalResource},
+		resources: []any{originalResource},
 	}
-	updatedResource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	updatedResource := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "test-resource",
 		},
-		"spec": map[string]interface{}{
+		"spec": map[string]any{
 			"updated": true,
 		},
 	}
@@ -81,7 +81,7 @@ func TestOverlayStore_Get_OverlayHit_Update(t *testing.T) {
 func TestOverlayStore_Get_OverlayHit_Delete(t *testing.T) {
 	existingResource := newMockResource("default", "to-delete")
 	baseStore := &mockStore{
-		resources: []interface{}{existingResource},
+		resources: []any{existingResource},
 	}
 
 	overlay := NewOverlayStore(baseStore, "default", "to-delete", nil, OperationDelete)
@@ -96,7 +96,7 @@ func TestOverlayStore_Get_OverlayHit_Delete(t *testing.T) {
 func TestOverlayStore_Get_Fallback(t *testing.T) {
 	existingResource := newMockResource("default", "existing")
 	baseStore := &mockStore{
-		resources: []interface{}{existingResource},
+		resources: []any{existingResource},
 	}
 	newResource := newMockResource("default", "new-resource")
 
@@ -114,7 +114,7 @@ func TestOverlayStore_List_Delete(t *testing.T) {
 	resource1 := newMockResource("default", "keep-me")
 	resource2 := newMockResource("default", "delete-me")
 	baseStore := &mockStore{
-		resources: []interface{}{resource1, resource2},
+		resources: []any{resource1, resource2},
 	}
 
 	overlay := NewOverlayStore(baseStore, "default", "delete-me", nil, OperationDelete)
@@ -133,14 +133,14 @@ func TestOverlayStore_List_Update(t *testing.T) {
 	resource1 := newMockResource("default", "unchanged")
 	resource2 := newMockResource("default", "to-update")
 	baseStore := &mockStore{
-		resources: []interface{}{resource1, resource2},
+		resources: []any{resource1, resource2},
 	}
-	updatedResource := map[string]interface{}{
-		"metadata": map[string]interface{}{
+	updatedResource := map[string]any{
+		"metadata": map[string]any{
 			"namespace": "default",
 			"name":      "to-update",
 		},
-		"spec": map[string]interface{}{
+		"spec": map[string]any{
 			"updated": true,
 		},
 	}
@@ -158,8 +158,8 @@ func TestOverlayStore_List_Update(t *testing.T) {
 		ns, name := extractMetadata(r)
 		if ns == "default" && name == "to-update" {
 			// Verify it's the updated version
-			resMap := r.(map[string]interface{})
-			spec, ok := resMap["spec"].(map[string]interface{})
+			resMap := r.(map[string]any)
+			spec, ok := resMap["spec"].(map[string]any)
 			require.True(t, ok)
 			assert.True(t, spec["updated"].(bool))
 			foundUpdated = true
@@ -171,7 +171,7 @@ func TestOverlayStore_List_Update(t *testing.T) {
 func TestOverlayStore_List_Create(t *testing.T) {
 	existingResource := newMockResource("default", "existing")
 	baseStore := &mockStore{
-		resources: []interface{}{existingResource},
+		resources: []any{existingResource},
 	}
 	newResource := newMockResource("default", "new-resource")
 
@@ -231,8 +231,8 @@ func TestExtractMetadata(t *testing.T) {
 	})
 
 	t.Run("missing metadata", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"spec": map[string]interface{}{},
+		resource := map[string]any{
+			"spec": map[string]any{},
 		}
 
 		ns, name := extractMetadata(resource)
@@ -251,8 +251,8 @@ func TestExtractMetadata(t *testing.T) {
 	})
 
 	t.Run("cluster-scoped resource (no namespace)", func(t *testing.T) {
-		resource := map[string]interface{}{
-			"metadata": map[string]interface{}{
+		resource := map[string]any{
+			"metadata": map[string]any{
 				"name": "cluster-resource",
 			},
 		}
@@ -269,7 +269,7 @@ func TestOverlayStore_MultipleNamespaces(t *testing.T) {
 	resource2 := newMockResource("ns2", "resource")
 	resource3 := newMockResource("ns3", "resource")
 	baseStore := &mockStore{
-		resources: []interface{}{resource1, resource2, resource3},
+		resources: []any{resource1, resource2, resource3},
 	}
 
 	// Delete resource in ns2 only

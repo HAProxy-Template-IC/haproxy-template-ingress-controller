@@ -263,6 +263,6 @@ func (p *HTTPRequests) GetEEActions() []*EEHTTPRequestAction {
 
 // HTTPRequestsData holds both CE and EE http-request actions.
 type HTTPRequestsData struct {
-	CEActions interface{}
+	CEActions any
 	EEActions []*EEHTTPRequestAction
 }

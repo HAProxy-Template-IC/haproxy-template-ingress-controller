@@ -148,7 +148,7 @@ func NewCorrelation(opts ...CorrelationOption) Correlation {
 //	    newEvent := events.NewTemplateRenderedEvent(...,
 //	        events.PropagateCorrelation(sourceEvent))
 //	}
-func PropagateCorrelation(source interface{}) CorrelationOption {
+func PropagateCorrelation(source any) CorrelationOption {
 	if correlated, ok := source.(CorrelatedEvent); ok {
 		return CorrelationOption{
 			correlationID: correlated.CorrelationID(),

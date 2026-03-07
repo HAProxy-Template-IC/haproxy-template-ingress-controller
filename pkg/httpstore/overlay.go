@@ -14,6 +14,8 @@
 
 package httpstore
 
+import "slices"
+
 import "gitlab.com/haproxy-haptic/haptic/pkg/stores"
 
 // Compile-time assertion: HTTPOverlay implements stores.HTTPContentOverlay.
@@ -87,10 +89,5 @@ func (o *HTTPOverlay) PendingURLs() []string {
 
 // HasPendingURL returns true if the given URL has pending content.
 func (o *HTTPOverlay) HasPendingURL(url string) bool {
-	for _, u := range o.pendingURLs {
-		if u == url {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(o.pendingURLs, url)
 }

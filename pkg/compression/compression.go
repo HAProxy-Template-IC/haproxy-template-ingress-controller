@@ -50,10 +50,9 @@ func Compress(data string) (string, error) {
 	// Pre-allocate output buffer with estimated capacity.
 	// Typical zstd compression achieves ~70% ratio, so estimate 70% of input size.
 	dataBytes := []byte(data)
-	estimatedSize := len(dataBytes) * 7 / 10
-	if estimatedSize < 64 {
-		estimatedSize = 64 // Minimum buffer to avoid tiny allocations
-	}
+	estimatedSize := max(len(dataBytes)*7/10,
+		// Minimum buffer to avoid tiny allocations
+		64)
 	compressed := enc.EncodeAll(dataBytes, make([]byte, 0, estimatedSize))
 	return base64.StdEncoding.EncodeToString(compressed), nil
 }
@@ -68,10 +67,9 @@ func Decompress(data string) (string, error) {
 	dec := getDecoder()
 	// Pre-allocate output buffer with estimated capacity.
 	// Typical zstd decompression expands ~3x, so estimate 3x input size.
-	estimatedSize := len(decoded) * 3
-	if estimatedSize < 256 {
-		estimatedSize = 256 // Minimum buffer for small inputs
-	}
+	estimatedSize := max(len(decoded)*3,
+		// Minimum buffer for small inputs
+		256)
 	decompressed, err := dec.DecodeAll(decoded, make([]byte, 0, estimatedSize))
 	if err != nil {
 		return "", err

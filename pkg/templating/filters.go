@@ -115,7 +115,7 @@ func (pr *PathResolver) GetBaseDir() string {
 //
 // Note: The pathResolver must be added to the rendering context for templates to access this method.
 // Relative paths work with HAProxy's working directory resolution during validation.
-func (pr *PathResolver) GetPath(args ...interface{}) (interface{}, error) {
+func (pr *PathResolver) GetPath(args ...any) (any, error) {
 	// Validate argument count
 	if len(args) != 2 {
 		return nil, fmt.Errorf("GetPath requires 2 arguments (filename, fileType), got %d", len(args))
@@ -179,7 +179,7 @@ func (pr *PathResolver) GetPath(args ...interface{}) (interface{}, error) {
 //   - float64 → decimal representation
 //   - bool → "true" or "false"
 //   - other → fmt.Sprintf("%v", value)
-func convertToString(v interface{}) string {
+func convertToString(v any) string {
 	if v == nil {
 		return ""
 	}
@@ -218,16 +218,16 @@ func convertToString(v interface{}) string {
 // Returns:
 //   - Filtered list containing only matching strings
 //   - Error if input is not a list, pattern is missing, or pattern is invalid
-func GlobMatch(in interface{}, args ...interface{}) (interface{}, error) {
+func GlobMatch(in any, args ...any) (any, error) {
 	// Convert input to []interface{}
-	var list []interface{}
+	var list []any
 
 	switch v := in.(type) {
-	case []interface{}:
+	case []any:
 		list = v
 	case []string:
 		// Convert []string to []interface{}
-		list = make([]interface{}, len(v))
+		list = make([]any, len(v))
 		for i, s := range v {
 			list[i] = s
 		}
@@ -246,7 +246,7 @@ func GlobMatch(in interface{}, args ...interface{}) (interface{}, error) {
 	}
 
 	// Filter by glob pattern
-	var result []interface{}
+	var result []any
 	for _, item := range list {
 		str, ok := item.(string)
 		if !ok {
@@ -283,7 +283,7 @@ func GlobMatch(in interface{}, args ...interface{}) (interface{}, error) {
 //
 // Note: Kubernetes secrets automatically base64-encode all data values,
 // so this filter is needed to access the plain-text content.
-func B64Decode(in interface{}, args ...interface{}) (interface{}, error) {
+func B64Decode(in any, args ...any) (any, error) {
 	str := convertToString(in)
 
 	decoded, err := base64.StdEncoding.DecodeString(str)
@@ -327,12 +327,12 @@ func Strip(s string) string {
 //
 // Returns:
 //   - Formatted string with JSON data as HAProxy comments
-func Debug(value interface{}, label string) string {
+func Debug(value any, label string) string {
 	// Marshal to JSON with indentation
 	data, err := json.MarshalIndent(value, "# ", "  ")
 	if err != nil {
 		// Fallback to simple string representation
-		data = []byte(fmt.Sprintf("%v", value))
+		data = fmt.Appendf(nil, "%v", value)
 	}
 
 	// Format as HAProxy comments

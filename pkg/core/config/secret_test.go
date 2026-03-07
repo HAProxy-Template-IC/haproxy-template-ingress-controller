@@ -9,7 +9,7 @@ import (
 
 func TestParseSecretData_Success(t *testing.T) {
 	// Test values: username="admin" (base64: YWRtaW4=), password="password" (base64: cGFzc3dvcmQ=)
-	dataRaw := map[string]interface{}{
+	dataRaw := map[string]any{
 		"username": "YWRtaW4=",
 		"password": "cGFzc3dvcmQ=",
 	}
@@ -21,7 +21,7 @@ func TestParseSecretData_Success(t *testing.T) {
 }
 
 func TestParseSecretData_EmptyMap(t *testing.T) {
-	dataRaw := map[string]interface{}{}
+	dataRaw := map[string]any{}
 
 	data, err := ParseSecretData(dataRaw)
 	require.NoError(t, err)
@@ -29,7 +29,7 @@ func TestParseSecretData_EmptyMap(t *testing.T) {
 }
 
 func TestParseSecretData_InvalidBase64(t *testing.T) {
-	dataRaw := map[string]interface{}{
+	dataRaw := map[string]any{
 		"bad": "not-valid-base64!!!",
 	}
 
@@ -40,7 +40,7 @@ func TestParseSecretData_InvalidBase64(t *testing.T) {
 }
 
 func TestParseSecretData_InvalidType(t *testing.T) {
-	dataRaw := map[string]interface{}{
+	dataRaw := map[string]any{
 		"number": 123, // Not a string
 	}
 
@@ -51,7 +51,7 @@ func TestParseSecretData_InvalidType(t *testing.T) {
 }
 
 func TestParseSecretData_MixedTypes(t *testing.T) {
-	dataRaw := map[string]interface{}{
+	dataRaw := map[string]any{
 		"valid":   "YWRtaW4=",      // Valid base64
 		"invalid": []byte{1, 2, 3}, // Wrong type
 	}
@@ -64,7 +64,7 @@ func TestParseSecretData_MixedTypes(t *testing.T) {
 func TestParseSecretData_BinaryData(t *testing.T) {
 	// Test that binary data (with null bytes) is handled correctly
 	// base64 of []byte{0x00, 0x01, 0x02} = "AAEC"
-	dataRaw := map[string]interface{}{
+	dataRaw := map[string]any{
 		"binary": "AAEC",
 	}
 
