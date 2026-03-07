@@ -86,6 +86,13 @@
       "matchPackageNames": [
         "github.com/haproxytech/{/,}**"
       ]
+    },
+    {
+      "description": "Only update HAProxy to released versions listed in HAPROXY_VERSIONS. Update this constraint when adding support for a new HAProxy version.",
+      "matchPackageNames": [
+        "haproxytech/haproxy-debian"
+      ],
+      "allowedVersions": "<= 3.3"
     }
   ]
 }
