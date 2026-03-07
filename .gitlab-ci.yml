@@ -38,7 +38,7 @@ variables:
   # renovate: datasource=github-releases depName=yannh/kubeconform
   KUBECONFORM_VERSION: "0.7.0"
   # renovate: datasource=pypi depName=yamllint
-  YAMLLINT_VERSION: "1.37.1"
+  YAMLLINT_VERSION: "1.38.0"
   # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
   MARKDOWNLINT_VERSION: "0.14.0"
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
