@@ -34,7 +34,7 @@ ARG HELM_UNITTEST_VERSION=1.0.3
 # renovate: datasource=github-releases depName=yannh/kubeconform
 ARG KUBECONFORM_VERSION=0.7.0
 # renovate: datasource=pypi depName=yamllint
-ARG YAMLLINT_VERSION=1.37.1
+ARG YAMLLINT_VERSION=1.38.0
 # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
 ARG MARKDOWNLINT_VERSION=0.14.0
 # renovate: datasource=github-releases depName=goreleaser/goreleaser
