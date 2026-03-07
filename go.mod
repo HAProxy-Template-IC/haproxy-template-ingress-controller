@@ -7,7 +7,7 @@ require (
 	github.com/arch-go/arch-go/v2 v2.1.2
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/getkin/kin-openapi v0.133.0
-	github.com/golangci/golangci-lint/v2 v2.11.1
+	github.com/golangci/golangci-lint/v2 v2.11.2
 	github.com/google/uuid v1.6.0
 	github.com/haproxytech/client-native/v6 v6.3.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
