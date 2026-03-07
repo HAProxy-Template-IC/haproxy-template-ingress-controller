@@ -18,6 +18,7 @@ rules:
 
 ignore:
   - charts/haptic/templates/  # Helm templates contain Go template syntax
+  - .claude/worktrees/        # Worktrees may contain Helm templates
   - pkg/generated/
   - node_modules/
   - vendor/

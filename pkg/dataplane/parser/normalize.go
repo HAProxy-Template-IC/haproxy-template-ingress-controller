@@ -188,8 +188,10 @@ func normalizeCrtStoresMetadata(crtStores []*models.CrtStore) {
 	for _, crtStore := range crtStores {
 		if crtStore != nil {
 			crtStore.Metadata = NormalizeMetadata(crtStore.Metadata)
-			for _, crtLoad := range crtStore.Loads {
+			for k := range crtStore.CrtLoads {
+				crtLoad := crtStore.CrtLoads[k]
 				crtLoad.Metadata = NormalizeMetadata(crtLoad.Metadata)
+				crtStore.CrtLoads[k] = crtLoad
 			}
 		}
 	}
