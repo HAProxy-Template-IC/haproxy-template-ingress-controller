@@ -17,7 +17,7 @@ workflow:
 variables:
   # Language and tool versions
   # renovate: datasource=docker depName=golang
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.26"
   # renovate: datasource=docker depName=docker
   DOCKER_VERSION: "29"
   # renovate: datasource=docker depName=python
