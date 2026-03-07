@@ -1,6 +1,6 @@
 module gitlab.com/haproxy-haptic/haptic/tools/linters/eventimmutability
 
-go 1.25.5
+go 1.26.1
 
 require golang.org/x/tools v0.40.0
 
