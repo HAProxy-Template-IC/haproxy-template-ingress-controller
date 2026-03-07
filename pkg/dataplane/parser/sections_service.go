@@ -324,9 +324,8 @@ func (p *Parser) extractCrtStores() ([]*models.CrtStore, error) {
 
 	crtStores := make([]*models.CrtStore, 0, len(sections))
 	for _, sectionName := range sections {
-		// ParseCrtStore handles all fields automatically
-		crtStore, err := configuration.ParseCrtStore(p.parser, sectionName)
-		if err != nil {
+		crtStore := &models.CrtStore{CrtStoreBase: models.CrtStoreBase{Name: sectionName}}
+		if err := configuration.ParseCrtStore(p.parser, crtStore); err != nil {
 			slog.Warn("Failed to parse crt-store section", "section", sectionName, "error", err)
 			continue
 		}

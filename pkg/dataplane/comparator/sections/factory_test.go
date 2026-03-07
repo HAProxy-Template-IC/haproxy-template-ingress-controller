@@ -1306,7 +1306,7 @@ func TestRingFactoryFunctions(t *testing.T) {
 }
 
 func TestCrtStoreFactoryFunctions(t *testing.T) {
-	crtStore := &models.CrtStore{Name: "my-certs"}
+	crtStore := &models.CrtStore{CrtStoreBase: models.CrtStoreBase{Name: "my-certs"}}
 
 	tests := []struct {
 		name             string
@@ -2205,7 +2205,7 @@ func TestNameExtractors(t *testing.T) {
 	})
 
 	t.Run("CrtStoreName", func(t *testing.T) {
-		c := &models.CrtStore{Name: "store"}
+		c := &models.CrtStore{CrtStoreBase: models.CrtStoreBase{Name: "store"}}
 		assert.Equal(t, "store", CrtStoreName(c))
 	})
 

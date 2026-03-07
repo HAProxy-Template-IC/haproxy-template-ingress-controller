@@ -2171,7 +2171,7 @@ func TestCompareCrtStores(t *testing.T) {
 		current := &parser.StructuredConfig{}
 		desired := &parser.StructuredConfig{
 			CrtStores: []*models.CrtStore{
-				{Name: "mystore"},
+				{CrtStoreBase: models.CrtStoreBase{Name: "mystore"}},
 			},
 		}
 		ops := comp.compareCrtStores(current, desired)
@@ -2182,7 +2182,7 @@ func TestCompareCrtStores(t *testing.T) {
 	t.Run("delete crt-store section", func(t *testing.T) {
 		current := &parser.StructuredConfig{
 			CrtStores: []*models.CrtStore{
-				{Name: "mystore"},
+				{CrtStoreBase: models.CrtStoreBase{Name: "mystore"}},
 			},
 		}
 		desired := &parser.StructuredConfig{}
@@ -2194,12 +2194,12 @@ func TestCompareCrtStores(t *testing.T) {
 	t.Run("update crt-store section", func(t *testing.T) {
 		current := &parser.StructuredConfig{
 			CrtStores: []*models.CrtStore{
-				{Name: "mystore", CrtBase: "/old/path"},
+				{CrtStoreBase: models.CrtStoreBase{Name: "mystore", CrtBase: "/old/path"}},
 			},
 		}
 		desired := &parser.StructuredConfig{
 			CrtStores: []*models.CrtStore{
-				{Name: "mystore", CrtBase: "/new/path"},
+				{CrtStoreBase: models.CrtStoreBase{Name: "mystore", CrtBase: "/new/path"}},
 			},
 		}
 		ops := comp.compareCrtStores(current, desired)
@@ -2210,7 +2210,7 @@ func TestCompareCrtStores(t *testing.T) {
 	t.Run("no changes", func(t *testing.T) {
 		config := &parser.StructuredConfig{
 			CrtStores: []*models.CrtStore{
-				{Name: "mystore"},
+				{CrtStoreBase: models.CrtStoreBase{Name: "mystore"}},
 			},
 		}
 		ops := comp.compareCrtStores(config, config)
