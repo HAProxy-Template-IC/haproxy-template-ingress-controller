@@ -128,7 +128,7 @@ Contributions are welcome. Before submitting pull requests:
 3. Update documentation as needed
 4. Follow existing code style and patterns
 
-See [CLAUDE.md](CLAUDE.md) for detailed development context and patterns.
+See the [development documentation](docs/controller/docs/development/design.md) for architecture and patterns.
 
 ## License
 
