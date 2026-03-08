@@ -247,3 +247,14 @@ func NewHistogramVec(registry prometheus.Registerer, name, help string, labels [
 func DurationBuckets() []float64 {
 	return []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0}
 }
+
+// DeploymentDurationBuckets returns histogram buckets for HAProxy deployment duration.
+//
+// Deployments involve network calls to the dataplane API and may wait for HAProxy
+// to reload its configuration. Reloads can take several seconds on busy servers,
+// so buckets extend to 60s to capture the full tail distribution without capping.
+//
+// Buckets: [0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 15.0, 30.0, 60.0]
+func DeploymentDurationBuckets() []float64 {
+	return []float64{0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 15.0, 30.0, 60.0}
+}

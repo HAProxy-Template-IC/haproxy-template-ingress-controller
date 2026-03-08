@@ -118,7 +118,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_deployment_duration_seconds",
 			"Time spent deploying configurations",
-			pkgmetrics.DurationBuckets(),
+			pkgmetrics.DeploymentDurationBuckets(),
 		),
 		DeploymentTotal: pkgmetrics.NewCounter(
 			registry,

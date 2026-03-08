@@ -228,7 +228,7 @@ data:
           "targets": [
             {
               "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "sum(haptic_resource_count{namespace=~\"$namespace\"})",
+              "expr": "sum(max by (type) (haptic_resource_count{namespace=~\"$namespace\"}))",
               "refId": "A"
             }
           ],
@@ -835,7 +835,7 @@ data:
           "targets": [
             {
               "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "sum(haptic_resource_count{namespace=~\"$namespace\"}) by (type)",
+              "expr": "max by (type) (haptic_resource_count{namespace=~\"$namespace\"})",
               "legendFormat": "{{ "{{" }}type{{ "}}" }}",
               "refId": "A"
             }

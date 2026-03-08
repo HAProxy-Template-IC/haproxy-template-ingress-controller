@@ -219,6 +219,16 @@ func TestDurationBuckets(t *testing.T) {
 	assert.NotNil(t, histogram)
 }
 
+func TestDeploymentDurationBuckets(t *testing.T) {
+	buckets := DeploymentDurationBuckets()
+
+	expected := []float64{0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 15.0, 30.0, 60.0}
+	assert.Equal(t, expected, buckets)
+
+	// Highest bucket must exceed realistic HAProxy reload times
+	assert.GreaterOrEqual(t, buckets[len(buckets)-1], 30.0)
+}
+
 func TestMetricsRegistration(t *testing.T) {
 	// Test that metrics are properly registered with the registry
 	registry := prometheus.NewRegistry()

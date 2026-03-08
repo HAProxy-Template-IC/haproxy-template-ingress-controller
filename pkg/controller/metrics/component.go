@@ -16,6 +16,8 @@ package metrics
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -43,6 +45,9 @@ type Component struct {
 
 	// Leader election tracking
 	becameLeaderAt time.Time // When this replica became leader (zero if not leader)
+
+	// Queue wait tracking: correlationID → when ReconciliationTriggeredEvent was received
+	triggeredAt map[string]time.Time
 }
 
 // New creates a new metrics component that listens to events.
@@ -65,6 +70,8 @@ func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 	eventChan := eventBus.SubscribeTypes(ComponentName, 200,
 		events.EventTypeReconciliationCompleted,
 		events.EventTypeReconciliationFailed,
+		events.EventTypeReconciliationTriggered,
+		events.EventTypeReconciliationStarted,
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeInstanceDeploymentFailed,
 		events.EventTypeValidationCompleted,
@@ -74,6 +81,7 @@ func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 		events.EventTypeResourceIndexUpdated,
 		events.EventTypeBecameLeader,
 		events.EventTypeLostLeadership,
+		events.EventTypeCertParsed,
 	)
 
 	return &Component{
@@ -81,6 +89,7 @@ func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 		eventBus:       eventBus,
 		eventChan:      eventChan,
 		resourceCounts: make(map[string]int),
+		triggeredAt:    make(map[string]time.Time),
 	}
 }
 
@@ -103,6 +112,8 @@ func (c *Component) Start(ctx context.Context) error {
 			// Update parser cache stats
 			hits, misses := parser.CacheStats()
 			c.metrics.UpdateParserCacheStats(hits, misses)
+			// Update subscriber count
+			c.metrics.SetEventSubscribers(c.eventBus.SubscriberCount())
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -124,73 +135,81 @@ func (c *Component) handleEvent(event pkgevents.Event) {
 
 	// Handle specific event types
 	switch e := event.(type) {
-	// Reconciliation events
+	case *events.ReconciliationTriggeredEvent:
+		c.triggeredAt[e.CorrelationID()] = e.Timestamp()
+	case *events.ReconciliationStartedEvent:
+		c.handleReconciliationStarted(e)
 	case *events.ReconciliationCompletedEvent:
-		durationSeconds := float64(e.DurationMs) / 1000.0
-		c.metrics.RecordReconciliation(durationSeconds, true)
-
+		c.metrics.RecordReconciliation(float64(e.DurationMs)/1000.0, true)
 	case *events.ReconciliationFailedEvent:
+		delete(c.triggeredAt, e.CorrelationID()) // cleanup to prevent map growth
 		c.metrics.RecordReconciliation(0, false)
-
-	// Deployment events
 	case *events.DeploymentCompletedEvent:
-		durationSeconds := float64(e.DurationMs) / 1000.0
-		// Consider deployment successful if at least some instances succeeded
-		success := e.Succeeded > 0
-		c.metrics.RecordDeployment(durationSeconds, success)
-
+		c.metrics.RecordDeployment(float64(e.DurationMs)/1000.0, e.Succeeded > 0)
 	case *events.InstanceDeploymentFailedEvent:
-		// Record individual instance failures
 		c.metrics.RecordDeployment(0, false)
-
-	// Validation events
 	case *events.ValidationCompletedEvent:
 		c.metrics.RecordValidation(true)
-
 	case *events.ValidationFailedEvent:
 		c.metrics.RecordValidation(false)
-
-	// Validation test events
 	case *events.ValidationTestsCompletedEvent:
-		durationSeconds := float64(e.DurationMs) / 1000.0
-		c.metrics.RecordValidationTests(e.TotalTests, e.PassedTests, e.FailedTests, durationSeconds)
-
-	// Resource events - initialize counts from IndexSynchronizedEvent
+		c.metrics.RecordValidationTests(e.TotalTests, e.PassedTests, e.FailedTests, float64(e.DurationMs)/1000.0)
 	case *events.IndexSynchronizedEvent:
-		// Initialize all resource counts from the synchronized index
-		for resourceType, count := range e.ResourceCounts {
-			c.resourceCounts[resourceType] = count
-			c.metrics.SetResourceCount(resourceType, count)
-		}
-
-	// Resource events - update counts from ResourceIndexUpdatedEvent
+		c.handleIndexSynchronized(e)
 	case *events.ResourceIndexUpdatedEvent:
-		// Skip initial sync events - we'll get the totals from IndexSynchronizedEvent
-		if e.ChangeStats.IsInitialSync {
-			return
-		}
-
-		// Apply deltas to tracked count
-		currentCount := c.resourceCounts[e.ResourceTypeName]
-		newCount := currentCount + e.ChangeStats.Created - e.ChangeStats.Deleted
-		c.resourceCounts[e.ResourceTypeName] = newCount
-		c.metrics.SetResourceCount(e.ResourceTypeName, newCount)
-
-	// Leader election events
+		c.handleResourceIndexUpdated(e)
 	case *events.BecameLeaderEvent:
 		c.becameLeaderAt = e.Timestamp()
 		c.metrics.SetIsLeader(true)
 		c.metrics.RecordLeadershipTransition()
-
 	case *events.LostLeadershipEvent:
-		c.metrics.SetIsLeader(false)
-		c.metrics.RecordLeadershipTransition()
+		c.handleLostLeadership(e)
+	case *events.CertParsedEvent:
+		c.handleCertParsed(e)
+	}
+}
 
-		// Record time spent as leader
-		if !c.becameLeaderAt.IsZero() {
-			timeAsLeader := e.Timestamp().Sub(c.becameLeaderAt)
-			c.metrics.AddTimeAsLeader(timeAsLeader.Seconds())
-			c.becameLeaderAt = time.Time{} // Reset
-		}
+func (c *Component) handleReconciliationStarted(e *events.ReconciliationStartedEvent) {
+	if t, ok := c.triggeredAt[e.CorrelationID()]; ok {
+		c.metrics.RecordQueueWait("reconciliation", time.Since(t).Seconds())
+		delete(c.triggeredAt, e.CorrelationID())
+	}
+}
+
+func (c *Component) handleIndexSynchronized(e *events.IndexSynchronizedEvent) {
+	for resourceType, count := range e.ResourceCounts {
+		c.resourceCounts[resourceType] = count
+		c.metrics.SetResourceCount(resourceType, count)
+	}
+}
+
+func (c *Component) handleResourceIndexUpdated(e *events.ResourceIndexUpdatedEvent) {
+	// Skip initial sync events - we'll get the totals from IndexSynchronizedEvent
+	if e.ChangeStats.IsInitialSync {
+		return
+	}
+
+	newCount := c.resourceCounts[e.ResourceTypeName] + e.ChangeStats.Created - e.ChangeStats.Deleted
+	c.resourceCounts[e.ResourceTypeName] = newCount
+	c.metrics.SetResourceCount(e.ResourceTypeName, newCount)
+}
+
+func (c *Component) handleLostLeadership(e *events.LostLeadershipEvent) {
+	c.metrics.SetIsLeader(false)
+	c.metrics.RecordLeadershipTransition()
+
+	if !c.becameLeaderAt.IsZero() {
+		c.metrics.AddTimeAsLeader(e.Timestamp().Sub(c.becameLeaderAt).Seconds())
+		c.becameLeaderAt = time.Time{}
+	}
+}
+
+func (c *Component) handleCertParsed(e *events.CertParsedEvent) {
+	block, _ := pem.Decode(e.CertPEM)
+	if block == nil {
+		return
+	}
+	if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+		c.metrics.SetWebhookCertExpiry(cert.NotAfter.Unix())
 	}
 }
