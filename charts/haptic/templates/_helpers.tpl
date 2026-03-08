@@ -206,12 +206,21 @@ Example: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.12-haproxy3.2
 
 {{/*
 HAProxy image
-Uses haproxy.image.tag if set, otherwise falls back to haproxyVersion
-Example: haproxytech/haproxy-debian:3.2
+Uses haproxy.image.tag if set, otherwise looks up the patch/revision version from
+haproxyEnterprisePatchVersions (when enterprise.enabled) or haproxyPatchVersions,
+falling back to haproxyVersion itself.
+Community example:  haproxytech/haproxy-debian:3.2.13
+Enterprise example: hapee-registry.haproxy.com/haproxy-enterprise:3.2r1
 */}}
 {{- define "haptic.haproxy.image" -}}
-{{- $tag := .Values.haproxy.image.tag | default .Values.haproxyVersion -}}
-{{- printf "%s:%s" .Values.haproxy.image.repository $tag -}}
+{{- $defaultTag := "" -}}
+{{- if .Values.haproxy.enterprise.enabled -}}
+{{- $defaultTag = index .Values.haproxyEnterprisePatchVersions .Values.haproxyVersion -}}
+{{- else -}}
+{{- $defaultTag = index .Values.haproxyPatchVersions .Values.haproxyVersion -}}
+{{- end -}}
+{{- $patchTag := .Values.haproxy.image.tag | default $defaultTag | default .Values.haproxyVersion -}}
+{{- printf "%s:%s" .Values.haproxy.image.repository $patchTag -}}
 {{- end -}}
 
 {{/*

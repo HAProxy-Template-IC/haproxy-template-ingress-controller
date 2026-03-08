@@ -73,6 +73,7 @@ nav:
     - Validation Tests: validation-tests.md
     - Supported Configuration: supported-configuration.md
   - Operations:
+    - HAProxy Versions: operations/haproxy-versions.md
     - High Availability: operations/high-availability.md
     - Monitoring: operations/monitoring.md
     - Security: operations/security.md
