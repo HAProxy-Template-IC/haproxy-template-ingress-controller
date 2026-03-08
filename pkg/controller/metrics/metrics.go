@@ -76,6 +76,9 @@ type Metrics struct {
 	// Parser cache metrics
 	ParserCacheHits   prometheus.Counter
 	ParserCacheMisses prometheus.Counter
+
+	// Build info metric
+	BuildInfo *prometheus.GaugeVec
 }
 
 // New creates all controller metrics and registers them with the provided registry.
@@ -274,6 +277,14 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"haptic_parser_cache_misses_total",
 			"Total number of parser cache misses",
 		),
+
+		// Build info metric
+		BuildInfo: pkgmetrics.NewGaugeVec(
+			registry,
+			"haptic_build_info",
+			"Controller build information (version labels, value always 1)",
+			[]string{"version", "haproxy_version", "go_version"},
+		),
 	}
 }
 
@@ -428,6 +439,17 @@ func (m *Metrics) RecordEventDrop(subscriberName, eventType string) {
 // This should be called periodically since observability drops don't trigger callbacks.
 func (m *Metrics) SetObservabilityDrops(count uint64) {
 	m.EventsDroppedObservability.Set(float64(count))
+}
+
+// SetBuildInfo sets the build info metric with version labels.
+// Call once at startup with the version information for this binary.
+//
+// Parameters:
+//   - version: The controller version (e.g., "0.1.0-alpha.10")
+//   - haproxyVersion: The HAProxy major.minor version (e.g., "3.2")
+//   - goVersion: The Go runtime version (e.g., "go1.26.1")
+func (m *Metrics) SetBuildInfo(version, haproxyVersion, goVersion string) {
+	m.BuildInfo.WithLabelValues(version, haproxyVersion, goVersion).Set(1)
 }
 
 // RecordQueueWait records queue wait time for a reconciliation phase.
