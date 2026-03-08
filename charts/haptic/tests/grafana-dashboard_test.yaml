@@ -27,7 +27,7 @@ tests:
           path: metadata.labels.grafana_dashboard
           value: "1"
 
-  - it: should include grafana_folder annotation
+  - it: should include grafana_folder annotation by default
     set:
       monitoring.grafanaDashboard.enabled: true
     asserts:
@@ -35,13 +35,14 @@ tests:
           path: metadata.annotations.grafana_folder
           value: "HAProxy"
 
-  - it: should set custom folder
+  - it: should allow adding extra annotations
     set:
       monitoring.grafanaDashboard.enabled: true
-      monitoring.grafanaDashboard.folder: "Kubernetes"
+      monitoring.grafanaDashboard.annotations:
+        k8s-sidecar-target-directory: "Kubernetes"
     asserts:
       - equal:
-          path: metadata.annotations.grafana_folder
+          path: metadata.annotations["k8s-sidecar-target-directory"]
           value: "Kubernetes"
 
   - it: should include custom labels
@@ -157,6 +158,54 @@ tests:
       - matchRegex:
           path: data["haptic.json"]
           pattern: "haptic_resource_count"
+
+  - it: should include reconciliation queue wait metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_reconciliation_queue_wait_seconds"
+
+  - it: should include validation test duration metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_validation_test_duration_seconds"
+
+  - it: should include event dropping metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_events_dropped_total"
+
+  - it: should include critical event dropping metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_events_dropped_critical_total"
+
+  - it: should include webhook request metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_webhook_requests_total"
+
+  - it: should include webhook certificate expiry metrics in dashboard
+    set:
+      monitoring.grafanaDashboard.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["haptic.json"]
+          pattern: "haptic_webhook_cert_expiry_timestamp_seconds"
 
   - it: should use custom dashboard when useBuiltIn is false
     set:
