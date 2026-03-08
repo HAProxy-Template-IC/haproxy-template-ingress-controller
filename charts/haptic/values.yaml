@@ -779,11 +779,15 @@ monitoring:
     # Labels for dashboard discovery (Grafana sidecar)
     labels:
       grafana_dashboard: "1"
-    # Annotations
-    annotations: {}
-    # Dashboard folder in Grafana
-    folder: "HAProxy"
-    # Dashboard namespace (if different from release namespace)
+    # Annotations added to the dashboard ConfigMap.
+    # The folder annotation key must match grafana.sidecar.dashboards.folderAnnotation
+    # in kube-prometheus-stack (default: "grafana_folder"). The k8s-sidecar raw default
+    # is "k8s-sidecar-target-directory".
+    annotations:
+      grafana_folder: "HAProxy"
+    # Namespace for the dashboard ConfigMap (defaults to release namespace)
+    # Set to the namespace where Grafana is running if the sidecar is not configured
+    # to search all namespaces (grafana.sidecar.dashboards.searchNamespace: ALL).
     namespace: ""
     # Use built-in dashboard (includes all 11 controller metrics)
     # Set to false to provide your own dashboard JSON via customDashboard
