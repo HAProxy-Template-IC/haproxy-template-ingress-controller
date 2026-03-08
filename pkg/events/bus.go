@@ -393,3 +393,9 @@ func (b *EventBus) DroppedEventsObservability() uint64 {
 func (b *EventBus) DroppedEvents() uint64 {
 	return b.DroppedEventsCritical() + b.DroppedEventsObservability()
 }
+
+// SubscriberCount returns the number of active subscriptions (universal + typed).
+// All subscriptions are created before Start(), so this is safe to call from any goroutine.
+func (b *EventBus) SubscriberCount() int {
+	return len(b.subscribers) + len(b.typedSubscribers)
+}
