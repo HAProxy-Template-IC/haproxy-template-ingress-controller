@@ -168,8 +168,9 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 		"reason", event.Reason,
 		"correlation_id", correlationID)
 
-	// Publish reconciliation started event
-	c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason))
+	// Publish reconciliation started event, propagating the correlation ID so
+	// downstream components (e.g. metrics) can correlate it with the trigger.
+	c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason, events.PropagateCorrelation(event)))
 
 	// Execute the render-validate pipeline
 	result, err := c.pipeline.Execute(ctx, c.storeProvider)

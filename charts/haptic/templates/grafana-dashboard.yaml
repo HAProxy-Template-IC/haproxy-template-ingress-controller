@@ -216,6 +216,16 @@ data:
           },
           "gridPos": { "h": 4, "w": 5, "x": 19, "y": 1 },
           "id": 6,
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "min": 0,
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
           "options": {
             "colorMode": "value",
             "graphMode": "area",
@@ -819,6 +829,7 @@ data:
                 "stacking": { "group": "A", "mode": "none" },
                 "thresholdsStyle": { "mode": "off" }
               },
+              "min": 0,
               "mappings": [],
               "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
               "unit": "short"
@@ -1104,7 +1115,7 @@ data:
             }
           ],
           "title": "Leader Status by Pod",
-          "type": "stateTimeline"
+          "type": "state-timeline"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -1302,7 +1313,7 @@ data:
           "targets": [
             {
               "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "haptic_webhook_cert_expiry_timestamp_seconds{namespace=~\"$namespace\"} - time()",
+              "expr": "(haptic_webhook_cert_expiry_timestamp_seconds{namespace=~\"$namespace\"} > 0) - time()",
               "legendFormat": "Time until expiry",
               "refId": "A"
             }
@@ -1349,7 +1360,7 @@ data:
             }
           ],
           "title": "Haptic Version",
-          "type": "stateTimeline"
+          "type": "state-timeline"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -1382,7 +1393,7 @@ data:
             }
           ],
           "title": "HAProxy Version",
-          "type": "stateTimeline"
+          "type": "state-timeline"
         }
       ],
       "refresh": "30s",
