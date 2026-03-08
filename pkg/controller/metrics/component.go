@@ -171,7 +171,7 @@ func (c *Component) handleEvent(event pkgevents.Event) {
 
 func (c *Component) handleReconciliationStarted(e *events.ReconciliationStartedEvent) {
 	if t, ok := c.triggeredAt[e.CorrelationID()]; ok {
-		c.metrics.RecordQueueWait("reconciliation", time.Since(t).Seconds())
+		c.metrics.RecordQueueWait(time.Since(t).Seconds())
 		delete(c.triggeredAt, e.CorrelationID())
 	}
 }
