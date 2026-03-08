@@ -38,6 +38,9 @@ helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `replicaCount` | Number of controller replicas (2+ recommended for HA) | `2` |
+| `haproxyVersion` | HAProxy major.minor series (3.0, 3.1, 3.2, 3.3) | `3.2` |
+| `haproxy.image.tag` | Override HAProxy pod image tag (pin exact patch) | `""` (from `haproxyPatchVersions`) |
+| `haproxy.enterprise.enabled` | Use HAProxy Enterprise images | `false` |
 | `image.tag` | Controller image tag | Chart appVersion |
 | `controller.templateLibraries.ingress.enabled` | Enable Ingress resource support | `true` |
 | `controller.templateLibraries.gateway.enabled` | Enable Gateway API support | `true` |
