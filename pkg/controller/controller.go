@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -68,6 +69,31 @@ const (
 // errNoWebhookRules indicates that no webhook rules are configured.
 // This is used to signal that DryRunValidator should not be created.
 var errNoWebhookRules = errors.New("no webhook rules configured")
+
+// buildVersionInfo holds build-time version information exposed via haptic_build_info metric.
+// Set this before calling Run() using SetBuildInfo().
+var buildVersionInfo struct {
+	version        string
+	haproxyVersion string
+	goVersion      string
+}
+
+func init() {
+	buildVersionInfo.version = "dev"
+	buildVersionInfo.haproxyVersion = "unknown"
+	buildVersionInfo.goVersion = runtime.Version()
+}
+
+// SetBuildInfo configures version information exposed via the haptic_build_info Prometheus metric.
+// Must be called before Run() to take effect.
+//
+// Parameters:
+//   - version: Controller version (e.g., "0.1.0-alpha.10")
+//   - haproxyVersion: HAProxy version the controller was built for (e.g., "3.2")
+func SetBuildInfo(version, haproxyVersion string) {
+	buildVersionInfo.version = version
+	buildVersionInfo.haproxyVersion = haproxyVersion
+}
 
 // GVRs for Kubernetes resources used by the controller.
 var (
@@ -257,6 +283,7 @@ func setupComponents(
 
 	// Create metrics collector
 	domainMetrics := metrics.NewMetrics(registry)
+	domainMetrics.SetBuildInfo(buildVersionInfo.version, buildVersionInfo.haproxyVersion, buildVersionInfo.goVersion)
 	metricsComponent := metrics.New(domainMetrics, bus)
 
 	// Register event drop callback for observability

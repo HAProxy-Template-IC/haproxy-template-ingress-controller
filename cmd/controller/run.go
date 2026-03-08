@@ -156,6 +156,11 @@ func runController(cmd *cobra.Command, args []string) error {
 		"gomemlimit", gomemlimit,
 		"gogc", gogc)
 
+	// Configure build info for metrics.
+	// HAPROXY_MINOR is set by the haproxytech/haproxy-debian base image and contains
+	// the full semver of the bundled HAProxy (e.g. "3.2.11").
+	controller.SetBuildInfo(version, os.Getenv("HAPROXY_MINOR"))
+
 	// Create Kubernetes client
 	k8sClient, err := client.New(client.Config{
 		Kubeconfig: runKubeconfig,
