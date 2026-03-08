@@ -59,7 +59,7 @@ type Metrics struct {
 	EventsDroppedObservability prometheus.Gauge       // Drops from observability subscribers (polled, expected)
 
 	// Queue wait metrics - time events spend waiting in channels before processing
-	ReconciliationQueueWait *prometheus.HistogramVec
+	ReconciliationQueueWait prometheus.Histogram
 
 	// Webhook metrics
 	WebhookRequestsTotal   *prometheus.CounterVec
@@ -211,11 +211,10 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 		),
 
 		// Queue wait metrics
-		ReconciliationQueueWait: pkgmetrics.NewHistogramVec(
+		ReconciliationQueueWait: pkgmetrics.NewHistogramWithBuckets(
 			registry,
 			"haptic_reconciliation_queue_wait_seconds",
-			"Time events spent waiting in queue before processing",
-			[]string{"phase"},
+			"Time a reconciliation event spends waiting in the coordinator queue before processing starts",
 			pkgmetrics.DurationBuckets(),
 		),
 
@@ -452,13 +451,10 @@ func (m *Metrics) SetBuildInfo(version, haproxyVersion, goVersion string) {
 	m.BuildInfo.WithLabelValues(version, haproxyVersion, goVersion).Set(1)
 }
 
-// RecordQueueWait records queue wait time for a reconciliation phase.
-//
-// Parameters:
-//   - phase: The phase name (e.g., "trigger_to_render", "render_to_validate", "validate_to_deploy")
-//   - seconds: Time spent waiting in queue (use time.Duration.Seconds())
-func (m *Metrics) RecordQueueWait(phase string, seconds float64) {
-	m.ReconciliationQueueWait.WithLabelValues(phase).Observe(seconds)
+// RecordQueueWait records how long a reconciliation event waited in the coordinator
+// queue before processing started.
+func (m *Metrics) RecordQueueWait(seconds float64) {
+	m.ReconciliationQueueWait.Observe(seconds)
 }
 
 // UpdateParserCacheStats updates parser cache hit/miss counters from cache statistics.

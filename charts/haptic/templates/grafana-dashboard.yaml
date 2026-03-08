@@ -449,19 +449,19 @@ data:
           "targets": [
             {
               "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "histogram_quantile(0.50, sum(rate(haptic_reconciliation_queue_wait_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le, phase))",
+              "expr": "histogram_quantile(0.50, sum(rate(haptic_reconciliation_queue_wait_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le))",
               "legendFormat": "p50 {{ "{{" }}phase{{ "}}" }}",
               "refId": "A"
             },
             {
               "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "histogram_quantile(0.95, sum(rate(haptic_reconciliation_queue_wait_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le, phase))",
+              "expr": "histogram_quantile(0.95, sum(rate(haptic_reconciliation_queue_wait_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le))",
               "legendFormat": "p95 {{ "{{" }}phase{{ "}}" }}",
               "refId": "B"
             },
             {
               "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "histogram_quantile(0.99, sum(rate(haptic_reconciliation_queue_wait_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le, phase))",
+              "expr": "histogram_quantile(0.99, sum(rate(haptic_reconciliation_queue_wait_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le))",
               "legendFormat": "p99 {{ "{{" }}phase{{ "}}" }}",
               "refId": "C"
             }
@@ -1085,7 +1085,7 @@ data:
                 "thresholdsStyle": { "mode": "off" }
               },
               "mappings": [
-                { "options": { "0": { "color": "red", "index": 0, "text": "Follower" } }, "type": "value" },
+                { "options": { "0": { "color": "blue", "index": 0, "text": "Follower" } }, "type": "value" },
                 { "options": { "1": { "color": "green", "index": 1, "text": "Leader" } }, "type": "value" }
               ],
               "max": 1,
@@ -1344,10 +1344,10 @@ data:
           "id": 71,
           "options": {
             "alignValue": "center",
-            "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+            "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false },
             "mergeValues": true,
             "rowHeight": 0.9,
-            "showValue": "auto",
+            "showValue": "never",
             "tooltip": { "mode": "single", "sort": "none" }
           },
           "pluginVersion": "10.0.0",
@@ -1394,6 +1394,112 @@ data:
           ],
           "title": "HAProxy Version",
           "type": "state-timeline"
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 112 },
+          "id": 80,
+          "panels": [],
+          "title": "Controller Resources",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": { "type": "linear" },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "group": "A", "mode": "none" },
+                "thresholdsStyle": { "mode": "off" }
+              },
+              "min": 0,
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 113 },
+          "id": 81,
+          "options": {
+            "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "rate(process_cpu_seconds_total{namespace=~\"$namespace\"}[2m])",
+              "legendFormat": "{{ "{{" }}pod{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "title": "CPU Usage",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": { "type": "linear" },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "group": "A", "mode": "none" },
+                "thresholdsStyle": { "mode": "off" }
+              },
+              "min": 0,
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 113 },
+          "id": 82,
+          "options": {
+            "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "process_resident_memory_bytes{namespace=~\"$namespace\"}",
+              "legendFormat": "{{ "{{" }}pod{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "title": "Memory (RSS)",
+          "type": "timeseries"
         }
       ],
       "refresh": "30s",
