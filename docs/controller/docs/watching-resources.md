@@ -192,6 +192,8 @@ Creates composite keys like:
 {% end %}
 ```
 
+Providing **fewer parameters than `indexBy` fields** does a prefix scan and returns all matching resources (e.g., `.Fetch("default")` returns all resources in the `default` namespace). All methods return an empty slice when no resources match — never `nil` — so templates iterate safely with zero iterations.
+
 ### Common Indexing Patterns
 
 #### Pattern 1: By Namespace and Name
@@ -342,144 +344,7 @@ This is the correct behavior for one-to-many relationships.
 
 ## Accessing Resources in Templates
 
-Resources are accessed in templates through the `resources` variable, which contains stores for all configured resource types.
-
-### The resources Variable
-
-The `resources` variable structure matches your `watchedResources` configuration:
-
-```yaml
-# Configuration
-watchedResources:
-  ingresses: {...}
-  services: {...}
-  endpoints: {...}
-  secrets: {...}
-```
-
-```go
-{# Template access #}
-{{ resources.ingresses }}  {# Store for ingresses #}
-{{ resources.services }}   {# Store for services #}
-{{ resources.endpoints }}  {# Store for endpoints #}
-{{ resources.secrets }}    {# Store for secrets #}
-```
-
-Each store provides two methods: `.List()` and `.Fetch()`.
-
-### Using List() Method
-
-The `.List()` method returns all resources in the store.
-
-**Best for:**
-
-- Iterating over all resources
-- Generating configuration for every resource
-- Counting total resources
-- Memory store (efficient)
-
-**Example - Generate routing map for all ingresses:**
-
-```go
-{# maps/host.map template #}
-{% for _, ingress := range resources.ingresses.List() %}
-  {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
-    {{ rule.host }} backend_{{ ingress.metadata.name }}
-  {% end %}
-{% end %}
-```
-
-**Example - Count resources:**
-
-```go
-{# Total ingresses: {{ len(resources.ingresses.List()) }} #}
-```
-
-**Performance note**: With memory store, `.List()` returns in-memory objects (fast). With cached store, `.List()` still returns references, but template rendering will trigger fetches for each resource (slower).
-
-### Using .Fetch() Method
-
-The `.Fetch()` method returns resources matching index keys.
-
-**Best for:**
-
-- Looking up specific resources
-- Cross-resource relationships (service → endpoints)
-- Conditional resource access
-- Cached store (efficient)
-
-**Parameters**: Match the `indexBy` configuration order.
-
-**Example - Fetch specific ingress:**
-
-```yaml
-# Configuration
-indexBy: ["metadata.namespace", "metadata.name"]
-```
-
-```go
-{# Template #}
-{% for _, ingress := range resources.ingresses.Fetch("default", "my-app") %}
-  {# Usually returns 0 or 1 items #}
-{% end %}
-```
-
-**Example - Fetch all in namespace:**
-
-```go
-{# Partial key match - returns all in namespace #}
-{% for _, ingress := range resources.ingresses.Fetch("default") %}
-  {# All ingresses in 'default' namespace #}
-{% end %}
-```
-
-**Example - Cross-resource lookup:**
-
-```go
-{# Get endpoints for a service #}
-{% var service_name = path.backend.service.name %}
-{% for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
-  {# All endpoint slices for this service #}
-{% end %}
-```
-
-**Performance note**: With cached store, `.Fetch()` uses the cache effectively. Only fetches from API on cache miss.
-
-### Method Comparison
-
-| Method | Memory Store | Cached Store | Use Case |
-|--------|-------------|--------------|----------|
-| `.List()` | Fast (in-memory) | Slow (fetches all) | Iterate over all resources |
-| `.Fetch(keys)` | Fast (indexed lookup) | Fast (cached/on-demand) | Lookup specific resources |
-
-**Rule of thumb:**
-
-- Use `.List()` when you need most or all resources
-- Use `.Fetch()` when you need specific resources
-- With memory store, both are fast
-- With cached store, prefer `.Fetch()` for selective access
-
-### GetSingle() Helper
-
-For convenience, stores also provide `.GetSingle()` which returns a single resource or `nil`:
-
-```go
-{# Instead of looping #}
-{% var secret = resources.secrets.GetSingle("default", "my-secret") %}
-{% if secret != nil %}
-  {{ b64decode(secret.data.password) }}
-{% end %}
-```
-
-This is equivalent to:
-
-```go
-{% for _, secret := range resources.secrets.Fetch("default", "my-secret") %}
-  {{ b64decode(secret.data.password) }}
-{% end %}
-```
-
-See [Templating Guide](./templating.md#using-list-method) for more template patterns.
+Resources are accessed through the `resources` variable, which contains a store for each key defined in `watchedResources`. See [Templating Guide — The `resources` Variable](./templating.md#the-resources-variable) for `List()`, `Fetch()`, `GetSingle()`, and usage patterns.
 
 ## Performance Implications
 
@@ -757,7 +622,7 @@ watchedResources:
 
 **Why cached store here**: Secrets are large and accessed selectively (only those referenced in annotations). Cached store minimizes memory usage.
 
-See [Templating Guide](./templating.md#authentication-annotations) for complete authentication examples.
+See [Templating Guide](./templating.md) for complete authentication examples.
 
 ### Example 3: TLS Certificates with Cached Store
 
@@ -845,9 +710,9 @@ See [CRD Reference](./crd-reference.md#watchedresources) for namespace restricti
 
 If `.List()` or `.Fetch()` returns empty results:
 
-1. **Check initial sync**: `kubectl logs deployment/haptic-controller | grep "initial sync"`
+1. **Check initial sync**: `kubectl logs -n haptic deployment/haptic-controller | grep "initial sync"`
 2. **Verify resources exist**: `kubectl get <resource> -A`
-3. **Check RBAC**: `kubectl auth can-i list <resource> --all-namespaces --as=system:serviceaccount:<namespace>:<sa>`
+3. **Check RBAC**: `kubectl auth can-i list <resource> --all-namespaces --as=system:serviceaccount:haptic:haptic`
 4. **Verify indexBy matches template**: `.Fetch()` parameters must match `indexBy` order
 
 ### High Memory Usage

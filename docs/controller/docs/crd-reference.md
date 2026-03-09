@@ -2,14 +2,7 @@
 
 ## Overview
 
-The `HAProxyTemplateConfig` custom resource is the **recommended way** to configure the HAProxy Template Ingress Controller. It provides a Kubernetes-native API with built-in validation, type safety, and embedded testing capabilities.
-
-**Benefits over ConfigMap:**
-
-- Schema validation catches errors before deployment
-- Status conditions provide feedback on configuration health
-- Native Kubernetes resource with proper RBAC
-- Better GitOps integration with declarative configuration
+The `HAProxyTemplateConfig` custom resource configures the HAProxy Template Ingress Controller. It provides schema validation, status conditions, and embedded testing capabilities.
 
 **API Group**: `haproxy-haptic.org`
 **API Version**: `v1alpha1`
@@ -97,12 +90,8 @@ controller:
     retryPeriod: 5s
 ```
 
-**Defaults:**
-
-- `leaderElection.enabled`: true
-- `leaderElection.leaseDuration`: 60s
-- `leaderElection.renewDeadline`: 15s
-- `leaderElection.retryPeriod`: 5s
+!!! note
+    When installing via the Helm chart, these values are overridden by `values.yaml` (defaults: `leaseDuration: 15s`, `renewDeadline: 10s`, `retryPeriod: 2s`). The values above are the controller's own built-in defaults and only apply when managing the CRD directly without Helm.
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 
@@ -130,13 +119,13 @@ controller:
 
 ```bash
 # View HAProxyCfg resources
-kubectl get haproxycfg -n <namespace>
+kubectl get haproxycfg -n haptic
 
 # Fetch and decompress content (requires zstd)
-kubectl get haproxycfg <name> -n <namespace> -o jsonpath='{.spec.content}' | base64 -d | zstd -d
+kubectl get haproxycfg <name> -n haptic -o jsonpath='{.spec.content}' | base64 -d | zstd -d
 
 # If not compressed (spec.compressed is false), content is plain text
-kubectl get haproxycfg <name> -n <namespace> -o jsonpath='{.spec.content}'
+kubectl get haproxycfg <name> -n haptic -o jsonpath='{.spec.content}'
 ```
 
 ### logging
@@ -232,14 +221,13 @@ General auxiliary files (error pages, etc.).
 
 ```yaml
 files:
-  error_503:
-    path: /etc/haproxy/errors/503.http
+  503.http:
     template: |
       HTTP/1.1 503 Service Unavailable
       <html><body><h1>503</h1></body></html>
 ```
 
-Reference in config: `errorfile 503 {{ pathResolver.GetPath("error_503", "file") }}`
+Reference in config: `errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}`
 
 ### sslCertificates
 
@@ -328,7 +316,7 @@ Embedded validation tests (optional, used by webhook and CLI).
 
 ```yaml
 validationTests:
-  - name: test_basic_ingress
+  test-basic-ingress:
     description: Validate basic ingress routing
     fixtures:
       ingresses:
@@ -398,10 +386,11 @@ kubectl get htplcfg -w
 
 ```bash
 # Validate local file
-controller validate --config haproxy-config.yaml
+controller validate -f haproxy-config.yaml
 
 # Validate deployed config
-controller validate --name haproxy-config --namespace default
+kubectl get htplcfg -n haptic haptic-config -o yaml > /tmp/haptic-config.yaml
+controller validate -f /tmp/haptic-config.yaml
 ```
 
 ### Edit Configuration

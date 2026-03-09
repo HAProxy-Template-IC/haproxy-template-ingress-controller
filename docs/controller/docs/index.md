@@ -45,8 +45,8 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 - **Observability** - Prometheus metrics, structured logging, and debug endpoints
 - **HTTP resource access** - Fetch external data for use in templates
 
-!!! note "Helm Chart Features"
-    The [Helm chart](/helm-chart/latest/) includes **Template Libraries** with support for Ingress and Gateway API and predefined annotations. You can use them, but you don't have to. You can start from scratch if you want.
+!!! note "Ready to use out of the box"
+    The [Helm chart](/helm-chart/latest/) ships with [Template Libraries](/helm-chart/latest/template-libraries/) enabled by default. They cover Kubernetes Ingress and Gateway API resources with annotation support comparable to existing HAProxy ingress controllers — no template authoring required. Customizing or extending the templates is entirely optional.
 
 ## Architecture
 
@@ -87,7 +87,8 @@ For a complete walkthrough, see the [Getting Started](getting-started.md) guide 
 ### Install with Helm
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0-alpha.11
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.1.0 --namespace haptic --create-namespace
 ```
 
 The Helm chart includes template libraries that support Kubernetes Ingress resources out of the box. See the [Helm Chart Documentation](/helm-chart/latest/) for configuration options.
@@ -97,8 +98,11 @@ The Helm chart includes template libraries that support Kubernetes Ingress resou
 Check the current rendered HAProxy configuration and deployment status:
 
 ```bash
-kubectl describe haproxycfg
+kubectl describe haproxycfg -n haptic
 ```
+
+!!! note
+    `haproxycfg` is the short name for `HAProxyCfg` — a read-only resource the controller creates to expose the currently deployed configuration. To view or edit the template configuration, use `htplcfg` (short for `HAProxyTemplateConfig`). See the [CRD Reference](crd-reference.md) for all available fields.
 
 ### Create an Ingress
 
@@ -126,7 +130,7 @@ spec:
 
 ### Extend with Custom Annotations
 
-One of the key strengths of HAPTIC is how easily you can add custom behavior. For example, suppose your platform users need to inject a `X-Request-ID` header for distributed tracing. With traditional ingress controllers, you'd wait for a new release or fork the project. With HAPTIC, you add a template snippet to your Helm values:
+One of the key strengths of HAPTIC is how easily you can add custom behavior. Suppose your platform users need to inject an `X-Request-ID` header for distributed tracing. With HAPTIC, add a template snippet to your Helm values:
 
 ```yaml
 controller:
@@ -142,37 +146,9 @@ controller:
           {%- end %}
 ```
 
-!!! note "How snippet naming works"
+Users then enable it by adding `example.com/request-id-header: "X-Request-ID"` as an Ingress annotation. This pattern works for any HAProxy feature — rate limiting, health checks, header manipulation, or anything else HAProxy supports.
 
-    The snippet name `frontend-filters-request-id` follows a naming convention: the base template uses `render_glob "frontend-filters-*"` to discover and render all snippets matching the prefix, so any snippet starting with `frontend-filters-` is automatically included in the HTTP frontend section where request/response modification happens. This pattern applies to all extension points -- the prefix determines where your snippet is inserted. See the [Base Library Extension Points](/helm-chart/latest/libraries/base/#extension-points) for all available hooks.
-
-Now users can enable request tracing by adding the annotation to the Ingress from the previous example:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: example
-  annotations:
-    example.com/request-id-header: "X-Request-ID"
-spec:
-  ingressClassName: haproxy
-  rules:
-    - host: example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: example-service
-                port:
-                  number: 80
-```
-
-This pattern works for any HAProxy feature - rate limiting, custom health checks, header manipulation, or anything else HAProxy supports.
-
-The template system is fully hackable: you can override any template snippet, replace the main HAProxy template entirely, or disable all template libraries and start from scratch if you have a completely different vision for how your configuration should be rendered.
+The template system is fully hackable: override any snippet, replace the main template entirely, or disable all libraries and start from scratch. See the [Templating Guide](templating.md) for how snippets, extension points, and the full template context work.
 
 ### Check the Result
 
@@ -185,12 +161,10 @@ kubectl describe haproxycfg
 !!! note "Viewing YAML Output"
     Using `kubectl get haproxycfg -o yaml` doesn't display multiline configuration content well - literal `\n` characters appear instead of line breaks. Use `kubectl describe` for readable output.
 
-## Further Reading
+## Where to Go Next
 
-- [Getting Started](getting-started.md) - Deploy HAProxy pods, install the controller, and verify your setup
-- [Templating](templating.md) - Learn the Scriggo template syntax and available context variables
-- [Watching Resources](watching-resources.md) - Configure which Kubernetes resources the controller watches
-- [Validation Tests](validation-tests.md) - Test your templates in CI/CD pipelines
-- [Supported Configuration](supported-configuration.md) - Reference for all configuration options
-- [Troubleshooting](troubleshooting.md) - Common issues and solutions
-- [Helm Chart Documentation](/helm-chart/latest/) - Template libraries and chart configuration
+- **Essential**: [Getting Started](getting-started.md) → [Templating](templating.md) → [CRD Reference](crd-reference.md)
+- **Custom resources beyond Ingress**: [Watching Resources](watching-resources.md)
+- **Template tests for CI/CD**: [Validation Tests](validation-tests.md)
+- **Reference**: [Supported Configuration](supported-configuration.md), [Troubleshooting](troubleshooting.md)
+- **Helm chart configuration**: [Helm Chart Documentation](/helm-chart/latest/)

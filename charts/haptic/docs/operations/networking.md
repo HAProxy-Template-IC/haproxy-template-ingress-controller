@@ -11,16 +11,16 @@ For all NetworkPolicy-related Helm values, see the [Configuration Reference](../
 The controller requires network access to:
 
 1. Kubernetes API Server (watch resources)
-2. HAProxy Dataplane API pods in ANY namespace
+2. HAProxy Dataplane API pods in the controller's namespace
 3. DNS (CoreDNS/kube-dns)
 
 ## Default Configuration
 
 By default, the NetworkPolicy allows:
 
-- DNS: kube-system namespace
-- Kubernetes API: 0.0.0.0/0 (adjust for production)
-- HAProxy pods: All namespaces with matching labels
+- **DNS** (kube-system namespace): Required for name resolution
+- **Kubernetes API** (0.0.0.0/0, adjust for production): Required for watching Ingress, Gateway, Secret, and other configured resources
+- **HAProxy pods** (same namespace with matching labels): Required for pushing configuration changes via the Dataplane API
 
 ## Production Hardening
 

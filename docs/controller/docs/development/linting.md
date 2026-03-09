@@ -167,7 +167,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Run linters
         run: make lint  # Runs both golangci-lint and arch-go

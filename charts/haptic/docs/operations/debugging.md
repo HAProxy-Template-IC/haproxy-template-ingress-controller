@@ -27,7 +27,7 @@ Access introspection endpoints via port-forward:
 
 ```bash
 # Forward introspection port from controller pod
-kubectl port-forward deployment/my-controller 8080:8080
+kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 
 # Check health status
 curl http://localhost:8080/healthz

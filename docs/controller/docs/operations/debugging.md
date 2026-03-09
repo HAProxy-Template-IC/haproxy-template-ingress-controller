@@ -38,7 +38,7 @@ Use kubectl port-forward to access the debug server:
 
 ```bash
 # Forward debug port from controller pod
-kubectl port-forward -n <namespace> deployment/haptic-controller 8080:8080
+kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 
 # Access endpoints
 curl http://localhost:8080/debug/vars
@@ -50,7 +50,7 @@ Access directly via pod IP or service:
 
 ```bash
 # Get pod IP
-POD_IP=$(kubectl get pod -n <namespace> <pod-name> -o jsonpath='{.status.podIP}')
+POD_IP=$(kubectl get pod -n haptic <pod-name> -o jsonpath='{.status.podIP}')
 curl http://${POD_IP}:8080/debug/vars
 ```
 
@@ -299,13 +299,13 @@ go tool pprof -http=:8080 cpu.pprof
 2. If error "config not loaded yet", check controller logs for parsing errors:
 
    ```bash
-   kubectl logs -n <namespace> deployment/haptic-controller | grep -i error
+   kubectl logs -n haptic deployment/haptic-controller | grep -i error
    ```
 
 3. Verify HAProxyTemplateConfig exists:
 
    ```bash
-   kubectl get haproxytemplateconfig -n <namespace>
+   kubectl get haproxytemplateconfig -n haptic
    ```
 
 ### HAProxy Config Not Updating

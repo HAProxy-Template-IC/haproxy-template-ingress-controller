@@ -24,7 +24,7 @@ The Helm chart creates a service account with minimal required permissions:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: haptic-controller
+  name: haptic
 ```
 
 ### ClusterRole Permissions
@@ -337,7 +337,7 @@ dataplane:
 
 When using secrets in templates, follow these practices:
 
-```go
+```scriggo
 {#- Load secret data - automatically base64 decoded -#}
 {%- for _, secret := range resources.secrets.List() %}
 {%- if secret.metadata.name == "auth-users" %}

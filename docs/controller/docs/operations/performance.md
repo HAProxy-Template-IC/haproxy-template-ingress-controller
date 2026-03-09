@@ -286,7 +286,7 @@ grep -c '\$2[aby]\$' /path/to/haproxy.cfg
 Scale HAProxy pods for increased traffic:
 
 ```bash
-kubectl scale deployment haproxy --replicas=5
+kubectl scale deployment haptic-haproxy --replicas=5 -n haptic
 ```
 
 The controller automatically discovers new pods and deploys configuration.

@@ -17,7 +17,7 @@ The entire process takes approximately 15-20 minutes on a local Kubernetes clust
 - Helm 3.0+
 
 !!! note "Webhook Validation"
-    Production deployments should enable webhook validation for CRD schema enforcement, which requires [cert-manager](https://cert-manager.io/docs/installation/) to be installed in the cluster. This guide disables webhooks for simplicity.
+    This guide disables webhook validation for simplicity. For production, enable it with [cert-manager](https://cert-manager.io/docs/installation/) for CRD schema enforcement before applying configurations.
 
 ## Step 1: Install with Helm
 
@@ -36,7 +36,7 @@ The Helm chart deploys:
 - **Controller**: Watches Kubernetes resources and generates HAProxy configurations
 - **HAProxy pods**: Load balancers with Dataplane API sidecars (2 replicas by default)
 - **RBAC**: Permissions for watching Ingress, Service, and EndpointSlice resources
-- **HAProxyTemplateConfig**: CRD resource with the default template configuration
+- **HAProxyTemplateConfig**: CRD resource with the default template configuration, including [template libraries](/helm-chart/latest/template-libraries/) for Ingress and Gateway API out of the box
 
 Verify both components are running:
 
@@ -141,7 +141,7 @@ The controller will automatically detect this new Ingress, render the HAProxy co
 Watch the controller process the Ingress:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=50 -f
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=50 -f
 ```
 
 You should see log entries showing:
@@ -238,15 +238,9 @@ See [CRD Reference](./crd-reference.md) for all available options.
 
 ### Template Customization
 
-Learn how to write custom templates for advanced HAProxy features:
+The default [template libraries](/helm-chart/latest/template-libraries/) already cover many common use cases: path-based routing, SSL termination, and annotation-driven configuration. You do not need to write or modify templates to use these features.
 
-- **Path-based routing**: Route requests based on URL paths
-- **SSL termination**: Configure TLS certificates and HTTPS listeners
-- **Rate limiting**: Add rate limits using stick tables
-- **Authentication**: Enable HTTP basic auth on specific paths
-- **Custom error pages**: Serve custom error responses
-
-See [Templating Guide](./templating.md) for template syntax and examples.
+When you need to go beyond the default libraries — custom annotations, domain-specific logic, or HAProxy features not covered — see the [Templating Guide](./templating.md).
 
 ### Watched Resources
 
@@ -276,8 +270,8 @@ Set up Prometheus monitoring for the controller:
 
 ```bash
 # Enable ServiceMonitor if using Prometheus Operator
-helm upgrade haptic haptic/haptic -n haptic \
-  --reuse-values \
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.1.0 --reuse-values -n haptic \
   --set monitoring.serviceMonitor.enabled=true \
   --set monitoring.serviceMonitor.interval=30s
 ```
@@ -300,9 +294,9 @@ Remove all resources created in this guide:
 
 ```bash
 # Remove Ingress and echo application
-kubectl delete ingress echo-ingress
-kubectl delete deployment echo
-kubectl delete service echo
+kubectl delete ingress echo-ingress -n default
+kubectl delete deployment echo -n default
+kubectl delete service echo -n default
 
 # Uninstall HAPTIC (removes controller, HAProxy, and all related resources)
 helm uninstall haptic -n haptic
@@ -313,11 +307,3 @@ kubectl delete namespace haptic
 # Remove CRD (optional, removes all HAProxyTemplateConfig resources)
 kubectl delete crd haproxytemplateconfigs.haproxy-haptic.org
 ```
-
-## See Also
-
-- [CRD Reference](./crd-reference.md) - Complete configuration options
-- [Templating Guide](./templating.md) - Template syntax and filters
-- [HAProxy Configuration](./supported-configuration.md) - Supported HAProxy features
-- [Watching Resources](./watching-resources.md) - Resource watching configuration
-- [Helm Chart Documentation](/helm-chart/latest/) - Chart values and options

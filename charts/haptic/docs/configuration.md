@@ -101,8 +101,8 @@ The controller uses a modular template library system where configuration files 
 | SSL | Enabled | TLS certificates, HTTPS frontend |
 | Ingress | Enabled | Kubernetes Ingress support |
 | Gateway | Enabled | Gateway API (HTTPRoute, GRPCRoute) |
-| HAProxy Annotations | Enabled | `haproxy.org/*` annotation support |
-| HAProxy Ingress | Enabled | HAProxy Ingress Controller compatibility |
+| haproxytech | Enabled | `haproxy.org/*` annotation support |
+| haproxy-ingress | Enabled | HAProxy Ingress Controller compatibility |
 | Path Regex Last | Disabled | Performance-first path matching |
 
 ### Enabling/Disabling Libraries

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The controller requires a default SSL certificate for HTTPS traffic. This page covers SSL certificate configuration via cert-manager or manual management, as well as webhook certificate setup.
+By default, the controller creates a default SSL certificate for HTTPS traffic. This page covers SSL certificate configuration via cert-manager or manual management, as well as webhook certificate setup. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
 
 ## Default SSL Certificate
 
@@ -20,7 +20,7 @@ The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local dev
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.0/cert-manager.yaml
 
 # Install the chart - SSL works out of the box
-helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0-alpha.11
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
 ```
 
 !!! note

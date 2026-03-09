@@ -86,11 +86,11 @@ controller:
       frontend-filters-custom-security:
         template: |
           {%- for ingress in resources.ingresses.List() %}
-          {%- set security_level = ingress.metadata.annotations["custom.io/security-level"] | default("") %}
+          {%- var security_level = ingress.metadata.annotations["custom.io/security-level"] | fallback("") %}
           {%- if security_level == "high" %}
           http-request deny unless { ssl_fc }
-          {%- endif %}
-          {%- endfor %}
+          {%- end %}
+          {%- end %}
 ```
 
 ## Access Control & IP Filtering
@@ -1690,7 +1690,7 @@ server pod1 10.0.1.5:8080 send-proxy-v2
 
 **Description**: Create a dedicated backend for this ingress instead of sharing backends across ingresses.
 
-**Note**: This controller's architecture already generates standalone backends (one backend per ingress+service+port combination) rather than sharing backends across ingresses. Each unique combination of `namespace/ingress-name/service-name/port` gets its own dedicated backend, making this annotation redundant. Implementation is not planned.
+**Note**: This controller's architecture already generates standalone backends (one backend per ingress+service+port combination) rather than sharing backends across ingresses. Each unique combination of `<namespace>_<ingress-name>_svc_<service-name>_<port-name>` gets its own dedicated backend, making this annotation redundant. Implementation is not planned.
 
 ---
 

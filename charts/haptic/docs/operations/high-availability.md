@@ -31,14 +31,18 @@ controller:
 - Automatic failover if leader fails (within leaseDuration, default 15s)
 - Leadership transitions are logged and tracked via Prometheus metrics
 
+During a failover, the standby replica acquires the lease and resumes deploying within the `leaseDuration` window (default ~15s). HAProxy continues serving traffic throughout — no config pushes happen during this window, but the load balancers are unaffected.
+
+**Why 2 replicas by default?** Two replicas provide failover without requiring a quorum majority. Either replica can take over immediately, which is sufficient for an ingress controller that serves as a stateless configuration manager.
+
 **Check current leader:**
 
 ```bash
 # View Lease resource
-kubectl get lease haptic-leader -o yaml
+kubectl get lease -n haptic haptic-leader -o yaml
 
 # Check metrics
-kubectl port-forward deployment/haptic-controller 9090:9090
+kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
 curl http://localhost:9090/metrics | grep leader_election_is_leader
 ```
 
@@ -75,7 +79,7 @@ replicaCount: 1
 controller:
   config:
     controller:
-      leader_election:
+      leaderElection:
         enabled: false
 ```
 
