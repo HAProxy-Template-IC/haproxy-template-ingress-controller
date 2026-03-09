@@ -49,23 +49,37 @@ var serverRuntimeSupportedJSONFields = map[string]struct{}{
 // and desired are in serverRuntimeSupportedJSONFields (i.e., no reload is required).
 // Conservative: returns false on any error.
 func computeServerRuntimeEligibility(current, desired *models.Server) bool {
+	return len(ServerIneligibleFields(current, desired)) == 0
+}
+
+// ServerIneligibleFields returns the JSON field names that differ between current and desired
+// but are not in serverRuntimeSupportedJSONFields (i.e., they require a HAProxy reload).
+// Returns an empty slice when all changed fields are runtime-eligible.
+// Used for diagnostics to explain why the runtime-optimized path was skipped.
+//
+// Common causes of non-eligible fields in production:
+//   - "check": occurs when individual server lines carry the `check` keyword (e.g., `server SRV_1 10.0.0.1:8080 check enabled`)
+//     but reserved slots do not. Fix: move `check` to the `default-server` directive so all server
+//     lines stay at address:port + enabled/disabled only, making every slot-swap fully runtime-eligible.
+func ServerIneligibleFields(current, desired *models.Server) []string {
 	currentJSON, err1 := json.Marshal(current)
 	desiredJSON, err2 := json.Marshal(desired)
 	if err1 != nil || err2 != nil {
-		return false
+		return []string{"<marshal-error>"}
 	}
 	var currentMap, desiredMap map[string]json.RawMessage
 	if json.Unmarshal(currentJSON, &currentMap) != nil {
-		return false
+		return []string{"<unmarshal-error>"}
 	}
 	if json.Unmarshal(desiredJSON, &desiredMap) != nil {
-		return false
+		return []string{"<unmarshal-error>"}
 	}
-	// Check all keys present in either map
+
+	var ineligible []string
 	for key, curVal := range currentMap {
 		if !bytes.Equal(curVal, desiredMap[key]) {
 			if _, ok := serverRuntimeSupportedJSONFields[key]; !ok {
-				return false
+				ineligible = append(ineligible, key)
 			}
 		}
 	}
@@ -74,12 +88,12 @@ func computeServerRuntimeEligibility(current, desired *models.Server) bool {
 			// key only in desired — it's a new field
 			if !bytes.Equal(desVal, json.RawMessage("null")) {
 				if _, ok := serverRuntimeSupportedJSONFields[key]; !ok {
-					return false
+					ineligible = append(ineligible, key)
 				}
 			}
 		}
 	}
-	return true
+	return ineligible
 }
 
 // NewServerCreate creates an operation to create a server in a backend.
@@ -146,6 +160,10 @@ func (op *ServerUpdateOp) TriggeredReload() bool {
 // BackendName returns the name of the backend containing this server.
 // Used by the orchestrator for direct executor calls with version caching.
 func (op *ServerUpdateOp) BackendName() string { return op.backendName }
+
+// CurrentServer returns the current (pre-update) server model.
+// Used for diagnostics to identify which fields changed and why they are/aren't runtime-eligible.
+func (op *ServerUpdateOp) CurrentServer() *models.Server { return op.currentServer }
 
 // ServerName returns the name of the server being updated.
 // Used by the orchestrator for direct executor calls with version caching.

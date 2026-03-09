@@ -188,6 +188,22 @@ func TestSyncServers(t *testing.T) {
 			},
 			expectedReload: false,
 		},
+		{
+			// Reproduces the production issue: reserved slot (disabled, no check on line)
+			// transitions to active with `check` explicitly on the server line.
+			// The `check` field change requires a HAProxy reload — it cannot be applied at runtime.
+			// Fix: move `check` to `default-server` so server lines stay at address:port + enabled/disabled.
+			name:              "srv-enable-with-check-on-line-requires-reload",
+			initialConfigFile: "servers/disabled-dummy.cfg",
+			desiredConfigFile: "servers/enabled-with-check-on-line.cfg",
+			expectedCreates:   0,
+			expectedUpdates:   1,
+			expectedDeletes:   0,
+			expectedOperations: []string{
+				"Update server 'srv1' in backend 'web'",
+			},
+			expectedReload: true,
+		},
 
 		// ==================== COMPLEX MIXED OPERATIONS ====================
 		{

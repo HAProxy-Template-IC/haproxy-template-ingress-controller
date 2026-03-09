@@ -448,7 +448,24 @@ func (o *orchestrator) tryRuntimeOptimizedPath(
 	version int64,
 	startTime time.Time,
 ) *SyncResult {
-	if !o.areAllOperationsRuntimeEligible(diff.Operations) || auxDiffs.anyDiffHasChanges() {
+	// version <= 0 means GetVersion() failed; passing an invalid version to
+	// PushRawConfigurationSkipReload would cause a guaranteed 409 and a wasted
+	// API call before falling through to fine-grained sync anyway.
+	if version <= 0 || !o.areAllOperationsRuntimeEligible(diff.Operations) || auxDiffs.anyDiffHasChanges() {
+		if !o.areAllOperationsRuntimeEligible(diff.Operations) {
+			for _, op := range diff.Operations {
+				serverOp, ok := op.(*sections.ServerUpdateOp)
+				if !ok || serverOp.IsFullyRuntimeEligible() {
+					continue
+				}
+				ineligible := sections.ServerIneligibleFields(serverOp.CurrentServer(), serverOp.Server())
+				o.logger.Debug("server update requires reload: some changed fields are not runtime-eligible",
+					"backend", serverOp.BackendName(),
+					"server", serverOp.ServerName(),
+					"reload_required_fields", ineligible,
+					"tip", "move these fields to 'default-server' to enable zero-reload slot-swaps")
+			}
+		}
 		return nil
 	}
 
@@ -474,7 +491,11 @@ func (o *orchestrator) tryRuntimeOptimizedPath(
 		SyncMode:          SyncModeRuntime,
 		Duration:          time.Since(startTime),
 		Details:           convertDiffSummary(&diff.Summary),
-		Message:           fmt.Sprintf("Applied %d server updates via runtime-optimized path", len(appliedOps)),
+		// PushRawConfigurationSkipReload increments the config version by 1,
+		// same as PushRawConfiguration. Update the caller's version cache so
+		// the next reconciliation can skip GetRawConfiguration() + parse.
+		PostSyncVersion: version + 1,
+		Message:         fmt.Sprintf("Applied %d server updates via runtime-optimized path", len(appliedOps)),
 	}
 }
 
