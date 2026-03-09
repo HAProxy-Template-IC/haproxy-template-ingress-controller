@@ -75,4 +75,4 @@ kubectl create secret generic my-auth-secret \
   --from-literal=admin=$(echo -n "$HASH" | base64 -w0)
 ```
 
-See [haproxytech library — Basic Authentication](./libraries/haproxytech.md#basic-authentication) for the full reference including secret format, cross-namespace secrets, and generated HAProxy config.
+See [haproxytech library — Basic Authentication](./libraries/haproxytech.md#authentication) for the full reference including secret format, cross-namespace secrets, and generated HAProxy config.

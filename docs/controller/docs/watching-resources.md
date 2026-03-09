@@ -12,7 +12,7 @@ This configuration is critical for:
 
 The controller supports two storage strategies: **memory store** (full in-memory storage) and **cached store** (on-demand API-backed storage). Understanding when to use each is essential for optimal controller performance.
 
-For complete configuration syntax, see [CRD Reference](./crd-reference.md#watchedresources).
+For complete configuration syntax, see [CRD Reference](./crd-reference.md#watchedresources-required).
 
 ## Understanding Store Types
 
@@ -94,7 +94,7 @@ watchedResources:
     # Omitting 'store' uses memory store by default
 ```
 
-See [CRD Reference](./crd-reference.md#watchedresources) for complete field descriptions.
+See [CRD Reference](./crd-reference.md#watchedresources-required) for complete field descriptions.
 
 ## Cached Store
 
@@ -162,7 +162,7 @@ watchedResources:
 - **Longer TTL** (5-10 minutes): Fewer API calls, may show stale data between template renders
 - **Default** (2m10s): Balanced approach for most use cases
 
-See [CRD Reference](./crd-reference.md#watchedresources) for complete field descriptions.
+See [CRD Reference](./crd-reference.md#watchedresources-required) for complete field descriptions.
 
 ## Indexing with indexBy
 
@@ -227,7 +227,7 @@ watchedResources:
 {% end %}
 ```
 
-See [CRD Reference](./crd-reference.md#watchedresources) for `indexBy` syntax.
+See [CRD Reference](./crd-reference.md#watchedresources-required) for `indexBy` syntax.
 
 #### Pattern 2: By Service Name (for EndpointSlices)
 
@@ -262,7 +262,7 @@ watchedResources:
 
 This is the **most important cross-resource lookup pattern** in HAProxy configurations.
 
-See [CRD Reference](./crd-reference.md#watchedresources) for label selector syntax.
+See [CRD Reference](./crd-reference.md#watchedresources-required) for label selector syntax.
 
 #### Pattern 3: By Type (for Secrets)
 
@@ -327,7 +327,7 @@ Consider these questions when choosing `indexBy`:
 
 **Example decision**: For EndpointSlices, you need to find all slices for a service name. Index by the service name label (non-unique) rather than namespace + name (unique).
 
-See [CRD Reference](./crd-reference.md#watchedresources) for additional indexing examples.
+See [CRD Reference](./crd-reference.md#watchedresources-required) for additional indexing examples.
 
 ### Non-Unique Indexes
 
@@ -418,7 +418,7 @@ The choice between memory and cached stores affects multiple performance dimensi
 
 **Optimize for memory store:**
 
-- Use field filtering to remove unnecessary data (see [CRD Reference](./crd-reference.md#watchedresources))
+- Use field filtering to remove unnecessary data (see [CRD Reference](./crd-reference.md#watchedresources-required))
 - Watch only necessary namespaces
 - Use label selectors to limit resource count
 
@@ -512,7 +512,7 @@ watchedResources:
 
 This is the recommended approach for most deployments.
 
-See [CRD Reference](./crd-reference.md#watchedresources) for complete configuration options.
+See [CRD Reference](./crd-reference.md#watchedresources-required) for complete configuration options.
 
 ## Configuration Examples
 
@@ -702,7 +702,7 @@ watchedResources:
 {% end %}
 ```
 
-See [CRD Reference](./crd-reference.md#watchedresources) for namespace restrictions.
+See [CRD Reference](./crd-reference.md#watchedresources-required) for namespace restrictions.
 
 ## Troubleshooting
 
