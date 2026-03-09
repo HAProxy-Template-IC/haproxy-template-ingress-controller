@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://haproxy-haptic.org/sitemap.xml
+Sitemap: https://haproxy-haptic.org/controller/latest/sitemap.xml
+Sitemap: https://haproxy-haptic.org/helm-chart/latest/sitemap.xml

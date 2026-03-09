@@ -1,3 +1,7 @@
+---
+description: "Helm chart for deploying HAPTIC, a template-driven HAProxy ingress controller for Kubernetes, with preconfigured template libraries for Ingress and Gateway API."
+---
+
 # HAPTIC Helm Chart
 
 ## Overview

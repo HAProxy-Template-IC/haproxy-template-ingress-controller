@@ -1,6 +1,6 @@
-site_name: HAPTIC
+site_name: "HAPTIC - HAProxy Ingress Controller"
 site_url: https://haproxy-haptic.org/controller/
-site_description: HAPTIC - Template-driven HAProxy Ingress Controller for Kubernetes
+site_description: "Documentation for HAPTIC, a template-driven HAProxy ingress controller for Kubernetes with Ingress and Gateway API support."
 
 repo_name: haproxy-haptic/haptic
 repo_url: https://gitlab.com/haproxy-haptic/haptic

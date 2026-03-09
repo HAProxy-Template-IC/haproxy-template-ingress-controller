@@ -1,5 +1,15 @@
 {% extends "base.html" %}
 
+{% block extrahead %}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ config.site_name }}">
+  <meta property="og:description" content="{{ config.site_description }}">
+  <meta property="og:url" content="{{ config.site_url }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{{ config.site_name }}">
+  <meta name="twitter:description" content="{{ config.site_description }}">
+{% endblock %}
+
 {% block tabs %}{% endblock %}
 
 {% block content %}
@@ -61,7 +71,7 @@ kubectl get haproxytemplateconfig</code></pre>
 <div class="doc-cards">
   <div class="doc-card">
       <h2><a href="./controller/latest/">Controller</a></h2>
-    <p>Ingests resources, renders configuration and syncs with HAProxy. Read here if you want to understand the basics.</p>
+    <p>Learn how the HAProxy ingress controller works: resource watching, template rendering, configuration validation, and HAProxy deployment.</p>
     <div class="versions">
       <h3>Available versions</h3>
       <div id="controller-versions" class="version-list">Loading...</div>
