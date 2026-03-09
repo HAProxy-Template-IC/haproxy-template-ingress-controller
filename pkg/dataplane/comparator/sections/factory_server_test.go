@@ -258,6 +258,26 @@ func TestServerUpdateOp_IsFullyRuntimeEligible(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			// Reproduces the production root cause: templates add "# Pod: <name>" comments
+			// to server lines. client-native parses these into Metadata{"comment": "..."}.
+			// When a pod is replaced the comment changes (old-pod → new-pod), making the
+			// metadata field differ. Metadata is cosmetic — it must not trigger a reload.
+			name: "pod comment (metadata) change: eligible",
+			current: &models.Server{
+				Name:     "SRV_2",
+				Address:  "10.0.0.1",
+				Port:     &port8080,
+				Metadata: map[string]any{"comment": "# Pod: old-pod-abc"},
+			},
+			desired: &models.Server{
+				Name:     "SRV_2",
+				Address:  "10.0.0.1",
+				Port:     &port8080,
+				Metadata: map[string]any{"comment": "# Pod: new-pod-xyz"},
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
