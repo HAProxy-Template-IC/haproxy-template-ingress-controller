@@ -313,12 +313,6 @@ func TestServerFactoryFunctions(t *testing.T) {
 			wantDescContains: "Create server 'web1' in backend 'api'",
 		},
 		{
-			name:             "NewServerUpdate",
-			factory:          NewServerUpdate,
-			wantType:         OperationUpdate,
-			wantDescContains: "Update server 'web1' in backend 'api'",
-		},
-		{
 			name:             "NewServerDelete",
 			factory:          NewServerDelete,
 			wantType:         OperationDelete,
@@ -332,6 +326,12 @@ func TestServerFactoryFunctions(t *testing.T) {
 			assertOperation(t, op, tt.wantType, "server", effectivePriority(PriorityServer), tt.wantDescContains)
 		})
 	}
+
+	// NewServerUpdate has a different signature (current + desired) so it's tested separately.
+	t.Run("NewServerUpdate", func(t *testing.T) {
+		op := NewServerUpdate("api", server, server)
+		assertOperation(t, op, OperationUpdate, "server", effectivePriority(PriorityServer), "Update server 'web1' in backend 'api'")
+	})
 }
 
 func TestBindFactoryFunctions(t *testing.T) {

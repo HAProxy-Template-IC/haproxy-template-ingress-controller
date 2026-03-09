@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
@@ -245,21 +246,28 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 	return result, nil
 }
 
-// areAllOperationsRuntimeEligible checks if all operations can be executed via Runtime API without reload.
+// areAllOperationsRuntimeEligible checks if all operations can be executed via the optimized
+// runtime path (skip_reload + X-Runtime-Actions) without triggering a HAProxy reload.
 //
-// Currently, only server UPDATE operations are runtime-eligible because they can modify
-// server parameters (weight, address, port, state) without requiring HAProxy reload.
+// Both conditions must hold:
+//  1. All operations are server UPDATE operations (no creates/deletes/other sections)
+//  2. All changed fields within each server update are in the runtime-supported set
+//     (weight, address, port, maintenance, agent-check, agent-addr, agent-send, health_check_port)
 //
-// All other operations (creates, deletes, structural changes) require transactions and trigger reload.
+// Condition 2 prevents the optimized path from silently skipping a reload that would be required
+// for non-runtime-eligible field changes (e.g., check, ssl). Without this guard, such changes
+// would be written to disk but not applied at runtime until the next HAProxy reload.
 func (o *orchestrator) areAllOperationsRuntimeEligible(operations []comparator.Operation) bool {
 	if len(operations) == 0 {
 		return false
 	}
 
 	for _, op := range operations {
-		// Only server UPDATE operations are runtime-eligible
-		// Server creates/deletes require transaction, other sections require transaction
-		if op.Section() != "server" || op.Type() != sections.OperationUpdate {
+		serverOp, ok := op.(*sections.ServerUpdateOp)
+		if !ok || op.Type() != sections.OperationUpdate {
+			return false
+		}
+		if !serverOp.IsFullyRuntimeEligible() {
 			return false
 		}
 	}
@@ -362,6 +370,114 @@ func (o *orchestrator) executeServerUpdateWithRetry(
 	return false, fmt.Errorf("server update failed after %d retries due to version conflicts", maxRetries)
 }
 
+// buildRuntimeActions converts server update operations into the semicolon-separated
+// X-Runtime-Actions string expected by the DataPlane API's skip_reload endpoint.
+// Covers all fields from DataPlane API's RuntimeSupportedFields["server"] (handlers/runtime.go).
+// All generated commands are verified as valid X-Runtime-Actions entries in
+// the DataPlane API handler (handlers/raw.go:executeRuntimeActions).
+//
+// IMPORTANT: Keep in sync with serverRuntimeSupportedJSONFields in
+// pkg/dataplane/comparator/sections/factory_server.go. Every field listed there must have
+// a corresponding action generated here; otherwise IsFullyRuntimeEligible() will approve
+// a change that this function silently ignores.
+func buildRuntimeActions(operations []comparator.Operation) string {
+	var actions []string
+	for _, op := range operations {
+		serverOp, ok := op.(*sections.ServerUpdateOp)
+		if !ok {
+			continue
+		}
+		s := serverOp.Server()
+		b := serverOp.BackendName()
+		n := serverOp.ServerName()
+
+		// Address+Port: both applied atomically (matches changeThroughRuntimeAPI behavior)
+		if s.Port != nil {
+			actions = append(actions, fmt.Sprintf("SetServerAddr %s %s %s %d", b, n, s.Address, *s.Port))
+		}
+
+		// Admin state: maintenance "enabled" → maint, "disabled" → ready
+		switch s.Maintenance {
+		case "enabled":
+			actions = append(actions, fmt.Sprintf("SetServerState %s %s maint", b, n))
+		case "disabled":
+			actions = append(actions, fmt.Sprintf("SetServerState %s %s ready", b, n))
+		}
+
+		// Weight (if set)
+		if s.Weight != nil {
+			actions = append(actions, fmt.Sprintf("SetServerWeight %s %s %d", b, n, *s.Weight))
+		}
+
+		// Health check port (if set)
+		if s.HealthCheckPort != nil {
+			actions = append(actions, fmt.Sprintf("SetServerCheckPort %s %s %d", b, n, *s.HealthCheckPort))
+		}
+
+		// Agent check enable/disable
+		switch s.AgentCheck {
+		case "enabled":
+			actions = append(actions, fmt.Sprintf("EnableAgentCheck %s %s", b, n))
+		case "disabled":
+			actions = append(actions, fmt.Sprintf("DisableAgentCheck %s %s", b, n))
+		}
+
+		// Agent address (if set)
+		if s.AgentAddr != "" {
+			actions = append(actions, fmt.Sprintf("SetServerAgentAddr %s %s %s", b, n, s.AgentAddr))
+		}
+
+		// Agent send string (if set)
+		if s.AgentSend != "" {
+			actions = append(actions, fmt.Sprintf("SetServerAgentSend %s %s %s", b, n, s.AgentSend))
+		}
+	}
+	return strings.Join(actions, ";")
+}
+
+// tryRuntimeOptimizedPath attempts the runtime-optimized path when all operations are
+// pure server updates with runtime-eligible field changes and no auxiliary file changes.
+// Returns a non-nil result if the optimized path succeeded (caller should return it).
+// Returns nil if conditions are not met or if the path failed (caller falls through to
+// fine-grained sync).
+func (o *orchestrator) tryRuntimeOptimizedPath(
+	ctx context.Context,
+	desiredConfig string,
+	diff *comparator.ConfigDiff,
+	auxDiffs *auxiliaryFileDiffs,
+	version int64,
+	startTime time.Time,
+) *SyncResult {
+	if !o.areAllOperationsRuntimeEligible(diff.Operations) || auxDiffs.anyDiffHasChanges() {
+		return nil
+	}
+
+	o.logger.Debug("Using runtime-optimized path: single raw push with skip_reload",
+		"operation_count", len(diff.Operations))
+
+	runtimeActions := buildRuntimeActions(diff.Operations)
+	o.logger.Debug("Executing runtime-optimized path",
+		"operation_count", len(diff.Operations),
+		"action_count", strings.Count(runtimeActions, ";")+1)
+
+	if err := o.client.PushRawConfigurationSkipReload(ctx, desiredConfig, version, runtimeActions); err != nil {
+		o.logger.Warn("Runtime-optimized path failed, falling back to fine-grained sync",
+			"error", err)
+		return nil
+	}
+
+	appliedOps := convertOperationsToApplied(diff.Operations)
+	return &SyncResult{
+		Success:           true,
+		AppliedOperations: appliedOps,
+		ReloadTriggered:   false,
+		SyncMode:          SyncModeRuntime,
+		Duration:          time.Since(startTime),
+		Details:           convertDiffSummary(&diff.Summary),
+		Message:           fmt.Sprintf("Applied %d server updates via runtime-optimized path", len(appliedOps)),
+	}
+}
+
 // executeConfigOperations executes configuration operations with retry logic.
 // Returns applied operations, reload status, reload ID, retry count, and error.
 func (o *orchestrator) executeConfigOperations(
@@ -386,9 +502,9 @@ func (o *orchestrator) executeConfigOperations(
 	var commitResult *client.CommitResult
 
 	if allRuntimeEligible {
-		// Execute runtime-eligible operations without transaction
-		// Note: Runtime API may still trigger reloads if server fields outside
-		// the runtime-supported set are modified (returns 202 instead of 200)
+		// Execute runtime-eligible operations without transaction.
+		// areAllOperationsRuntimeEligible guarantees all changed fields are in the
+		// runtime-supported set, so each ReplaceServerBackend call returns 200 (no reload).
 		o.logger.Debug("All operations are runtime-eligible, executing without transaction")
 
 		var runtimeReloads int

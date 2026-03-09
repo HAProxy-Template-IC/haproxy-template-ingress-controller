@@ -236,7 +236,15 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawThreshold, false)
 	}
 
-	// Step 8: Attempt fine-grained sync with retry logic (pass pre-computed diffs)
+	// Step 8: If all operations are server-only updates with runtime-eligible field changes
+	// and no aux file changes, use the optimized path: single raw push with skip_reload=true
+	// + X-Runtime-Actions. This replaces N serial ReplaceServerBackend calls (each re-reads
+	// haproxy.cfg) with one atomic write + N runtime socket commands. No reload triggered.
+	if result := o.tryRuntimeOptimizedPath(ctx, desiredConfig, diff, auxDiffs, version, startTime); result != nil {
+		return result, nil
+	}
+
+	// Step 9: Attempt fine-grained sync with retry logic (pass pre-computed diffs)
 	// The function returns whether Phase 1 (aux files) completed successfully
 	result, auxFilesSynced, err := o.attemptFineGrainedSyncWithDiffs(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
 

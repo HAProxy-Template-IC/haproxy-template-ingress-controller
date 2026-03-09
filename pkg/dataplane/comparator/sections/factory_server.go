@@ -15,13 +15,72 @@
 package sections
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 
 	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
+
+// serverRuntimeSupportedJSONFields is the set of models.Server JSON field names that can be
+// changed via the runtime API without triggering a HAProxy reload.
+// Matches DataPlane API's RuntimeSupportedFields["server"] in handlers/runtime.go.
+// JSON tags are taken from github.com/haproxytech/client-native/v6/models/server_params.go.
+//
+// IMPORTANT: Keep in sync with buildRuntimeActions in orchestrator_execution.go, which must
+// generate a runtime action for every field listed here. If a field is added here but not
+// handled in buildRuntimeActions, the change will be written to disk but never applied at
+// runtime — silently deferring it until the next reload.
+var serverRuntimeSupportedJSONFields = map[string]struct{}{
+	"weight":            {},
+	"address":           {},
+	"port":              {},
+	"maintenance":       {},
+	"agent-check":       {},
+	"agent-addr":        {},
+	"agent-send":        {},
+	"health_check_port": {},
+}
+
+// computeServerRuntimeEligibility returns true if all fields that differ between current
+// and desired are in serverRuntimeSupportedJSONFields (i.e., no reload is required).
+// Conservative: returns false on any error.
+func computeServerRuntimeEligibility(current, desired *models.Server) bool {
+	currentJSON, err1 := json.Marshal(current)
+	desiredJSON, err2 := json.Marshal(desired)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	var currentMap, desiredMap map[string]json.RawMessage
+	if json.Unmarshal(currentJSON, &currentMap) != nil {
+		return false
+	}
+	if json.Unmarshal(desiredJSON, &desiredMap) != nil {
+		return false
+	}
+	// Check all keys present in either map
+	for key, curVal := range currentMap {
+		if !bytes.Equal(curVal, desiredMap[key]) {
+			if _, ok := serverRuntimeSupportedJSONFields[key]; !ok {
+				return false
+			}
+		}
+	}
+	for key, desVal := range desiredMap {
+		if _, exists := currentMap[key]; !exists {
+			// key only in desired — it's a new field
+			if !bytes.Equal(desVal, json.RawMessage("null")) {
+				if _, ok := serverRuntimeSupportedJSONFields[key]; !ok {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
 
 // NewServerCreate creates an operation to create a server in a backend.
 func NewServerCreate(backendName string, server *models.Server) Operation {
@@ -43,19 +102,32 @@ func NewServerCreate(backendName string, server *models.Server) Operation {
 // updates can be executed via the runtime API (without transaction) and the
 // DataPlane API returns 202 if a reload was required.
 type ServerUpdateOp struct {
-	backendName     string
-	server          *models.Server
-	reloadTriggered bool
+	backendName          string
+	currentServer        *models.Server
+	server               *models.Server
+	reloadTriggered      bool
+	fullyRuntimeEligible bool
 }
 
 // NewServerUpdate creates an operation to update a server in a backend.
 // Unlike other operations, server updates use a specialized type that tracks
 // reload status for runtime-eligible operations.
-func NewServerUpdate(backendName string, server *models.Server) Operation {
+// Both current and desired server models are required to determine whether
+// all changed fields are runtime-eligible (no reload needed).
+func NewServerUpdate(backendName string, current, desired *models.Server) Operation {
 	return &ServerUpdateOp{
-		backendName: backendName,
-		server:      server,
+		backendName:          backendName,
+		currentServer:        current,
+		server:               desired,
+		fullyRuntimeEligible: computeServerRuntimeEligibility(current, desired),
 	}
+}
+
+// IsFullyRuntimeEligible returns true if all changed server fields are in the
+// runtime-supported set (no reload required for this update).
+// Computed once at construction time from current vs desired server models.
+func (op *ServerUpdateOp) IsFullyRuntimeEligible() bool {
+	return op.fullyRuntimeEligible
 }
 
 func (op *ServerUpdateOp) Type() OperationType { return OperationUpdate }
