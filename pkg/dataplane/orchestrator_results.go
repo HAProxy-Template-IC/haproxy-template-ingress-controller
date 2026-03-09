@@ -93,6 +93,7 @@ func convertDiffSummary(summary *comparator.DiffSummary) DiffDetails {
 		BackendsAdded:     summary.BackendsAdded,
 		BackendsModified:  summary.BackendsModified,
 		BackendsDeleted:   summary.BackendsDeleted,
+		BackendDiffFields: summary.BackendDiffFields,
 		ServersAdded:      summary.ServersAdded,
 		ServersModified:   summary.ServersModified,
 		ServersDeleted:    summary.ServersDeleted,
