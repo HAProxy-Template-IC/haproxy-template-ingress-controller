@@ -36,6 +36,28 @@ data:
             "iconColor": "rgba(0, 211, 255, 1)",
             "name": "Annotations & Alerts",
             "type": "dashboard"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${datasource}" },
+            "enable": true,
+            "expr": "sum(increase(haptic_leader_election_transitions_total{namespace=~\"$namespace\"}[$__rate_interval])) > 0",
+            "hide": false,
+            "iconColor": "yellow",
+            "name": "Leader Transition",
+            "step": "$__interval",
+            "titleFormat": "Leader Transition",
+            "type": "dashboard"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${datasource}" },
+            "enable": true,
+            "expr": "changes(count(haptic_build_info{namespace=~\"$namespace\"})[$__rate_interval:$__interval]) > 0",
+            "hide": false,
+            "iconColor": "blue",
+            "name": "Pod Start",
+            "step": "$__interval",
+            "titleFormat": "Pod Start",
+            "type": "dashboard"
           }
         ]
       },
