@@ -34,6 +34,9 @@ import (
 // generate a runtime action for every field listed here. If a field is added here but not
 // handled in buildRuntimeActions, the change will be written to disk but never applied at
 // runtime — silently deferring it until the next reload.
+//
+// Exception: "metadata" (inline comments, e.g. "# Pod: my-pod-abc") requires no runtime
+// action — changes are written to disk by the skip_reload push and are purely cosmetic.
 var serverRuntimeSupportedJSONFields = map[string]struct{}{
 	"weight":            {},
 	"address":           {},
@@ -43,6 +46,7 @@ var serverRuntimeSupportedJSONFields = map[string]struct{}{
 	"agent-addr":        {},
 	"agent-send":        {},
 	"health_check_port": {},
+	"metadata":          {}, // inline comments (e.g. "# Pod: <name>") — cosmetic only, no runtime action needed
 }
 
 // computeServerRuntimeEligibility returns true if all fields that differ between current
