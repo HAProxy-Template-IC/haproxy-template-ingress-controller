@@ -18,6 +18,9 @@ const (
 	SyncModeRawThreshold SyncMode = "raw_threshold"
 	// SyncModeRawFallback indicates raw push was used as fallback after fine-grained failure.
 	SyncModeRawFallback SyncMode = "raw_fallback"
+	// SyncModeRuntime indicates the optimized runtime path was used:
+	// single raw push with skip_reload=true + X-Runtime-Actions.
+	SyncModeRuntime SyncMode = "runtime"
 )
 
 // SyncResult contains detailed information about a sync operation.
@@ -70,8 +73,9 @@ type SyncResult struct {
 
 // UsedRawPush returns true if raw configuration push was used instead of fine-grained sync.
 // This is a convenience helper for code that needs to know whether any form of raw push was used.
+// The runtime-optimized path (SyncModeRuntime) is not considered a raw push.
 func (r *SyncResult) UsedRawPush() bool {
-	return r.SyncMode != SyncModeFineGrained && r.SyncMode != ""
+	return r.SyncMode != SyncModeFineGrained && r.SyncMode != SyncModeRuntime && r.SyncMode != ""
 }
 
 // AppliedOperation represents a single applied configuration change.
@@ -209,6 +213,8 @@ func (r *SyncResult) String() string {
 		parts = append(parts, "Mode: Raw config push (threshold exceeded)")
 	case SyncModeRawFallback:
 		parts = append(parts, "Mode: Raw config push (fallback)")
+	case SyncModeRuntime:
+		parts = append(parts, "Mode: Runtime-optimized (skip_reload + X-Runtime-Actions)")
 	default:
 		parts = append(parts, "Mode: Fine-grained sync")
 	}

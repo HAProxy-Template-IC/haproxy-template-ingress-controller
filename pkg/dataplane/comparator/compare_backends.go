@@ -258,7 +258,7 @@ func (c *Comparator) compareModifiedServersWithIndex(backendName string, current
 
 		// Compare server attributes using built-in Equal() method
 		if !serversEqual(currentServer, desiredServer) {
-			operations = append(operations, sections.NewServerUpdate(backendName, desiredServer))
+			operations = append(operations, sections.NewServerUpdate(backendName, currentServer, desiredServer))
 			if summary.ServersModified[backendName] == nil {
 				summary.ServersModified[backendName] = []string{}
 			}
