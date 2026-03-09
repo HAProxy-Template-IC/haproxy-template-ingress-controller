@@ -202,6 +202,62 @@ func TestServerUpdateOp_IsFullyRuntimeEligible(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			// Reproduces the production regression where templates put `check` on individual
+			// active server lines but not on reserved (disabled) slots.
+			// Reserved slot: `server SRV_1 127.0.0.1:1 disabled`       (no check)
+			// Active server: `server SRV_1 10.0.0.1:8080 check enabled` (check on server line)
+			// Fix: move `check` to `default-server` so server lines stay at address:port + enabled/disabled.
+			name: "reserved-to-active with check on server line: not eligible (check requires reload)",
+			current: &models.Server{
+				Name:         "SRV_1",
+				Address:      "127.0.0.1",
+				Port:         &port8080,
+				ServerParams: models.ServerParams{Maintenance: "enabled"},
+			},
+			desired: &models.Server{
+				Name:         "SRV_1",
+				Address:      "10.0.0.1",
+				Port:         &port8080,
+				ServerParams: models.ServerParams{Maintenance: "disabled", Check: "enabled"},
+			},
+			want: false,
+		},
+		{
+			// Same as above but in reverse: active → reserved also not eligible when check differs.
+			name: "active-to-reserved with check removal: not eligible (check requires reload)",
+			current: &models.Server{
+				Name:         "SRV_1",
+				Address:      "10.0.0.1",
+				Port:         &port8080,
+				ServerParams: models.ServerParams{Maintenance: "disabled", Check: "enabled"},
+			},
+			desired: &models.Server{
+				Name:         "SRV_1",
+				Address:      "127.0.0.1",
+				Port:         &port8080,
+				ServerParams: models.ServerParams{Maintenance: "enabled"},
+			},
+			want: false,
+		},
+		{
+			// The correct template pattern: check in default-server, server line has only
+			// address:port + enabled/disabled. Slot-swap is fully runtime-eligible.
+			name: "reserved-to-active with check in default-server only: eligible",
+			current: &models.Server{
+				Name:         "SRV_1",
+				Address:      "127.0.0.1",
+				Port:         &port8080,
+				ServerParams: models.ServerParams{Maintenance: "enabled"},
+			},
+			desired: &models.Server{
+				Name:         "SRV_1",
+				Address:      "10.0.0.1",
+				Port:         &port8080,
+				ServerParams: models.ServerParams{Maintenance: "disabled"},
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {

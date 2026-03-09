@@ -198,8 +198,8 @@ templateSnippets:
           {{ BackendServers("my-service", 0, 80, serverOpts, nil, "default_my-ingress_svc_my-service_http", "default") }}
 
         Output:
-          server SRV_1 10.0.0.1:8080 check  # Pod: my-pod-abc
-          server SRV_2 10.0.0.2:8080 check  # Pod: my-pod-def
+          server SRV_1 10.0.0.1:8080 enabled  # Pod: my-pod-abc
+          server SRV_2 10.0.0.2:8080 enabled  # Pod: my-pod-def
           server SRV_3 127.0.0.1:1 disabled  # Placeholder
           ...
       -#}
