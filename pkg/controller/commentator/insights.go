@@ -303,6 +303,11 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 			}
 		}
 
+		// Add backend diff field diagnostics when backend updates are caused by attribute diffs
+		if e.BackendDiffFields != "" {
+			attrs = append(attrs, "backend_diff_fields", e.BackendDiffFields)
+		}
+
 		return "Reconciliation", attrs
 
 	// HAProxy Pod Events

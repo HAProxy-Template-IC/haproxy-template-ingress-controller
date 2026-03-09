@@ -145,6 +145,10 @@ type DiffDetails struct {
 	BackendsModified []string
 	BackendsDeleted  []string
 
+	// Backend diff fields: for each modified backend, the BackendBase fields that differ.
+	// Only populated when backend attribute changes (not nested collections) cause the update.
+	BackendDiffFields map[string][]string
+
 	// Server changes (map of backend -> server names)
 	ServersAdded    map[string][]string
 	ServersModified map[string][]string

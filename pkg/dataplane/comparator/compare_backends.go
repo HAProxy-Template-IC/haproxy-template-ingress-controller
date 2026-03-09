@@ -175,9 +175,10 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 		appendOperationsIfNotEmpty(&operations, serverTemplateOps, &backendModified)
 
 		// Compare backend attributes (excluding servers, ACLs, and rules which we already compared)
-		if !backendsEqualWithoutNestedCollections(currentBackend, desiredBackend) {
+		if diffFields := backendBaseDiffFields(currentBackend, desiredBackend); len(diffFields) > 0 {
 			operations = append(operations, sections.NewBackendUpdate(desiredBackend))
 			backendModified = true
+			summary.BackendDiffFields[name] = diffFields
 		}
 
 		if backendModified {
@@ -312,45 +313,45 @@ func serversEqual(s1, s2 *models.Server) bool {
 	return s1.Equal(*s2)
 }
 
-// backendsEqualWithoutNestedCollections checks if two backends are equal, excluding servers, ACLs, and HTTP rules.
-// Uses the HAProxy models' built-in Equal() method to compare ALL backend attributes
-// (mode, balance algorithm, timeouts, health checks, etc.) automatically, excluding nested collections we compare separately.
-func backendsEqualWithoutNestedCollections(b1, b2 *models.Backend) bool {
-	// Create copies to avoid modifying originals
+// clearNestedCollections zeroes all nested collection fields on a Backend copy
+// so they don't affect attribute-level comparison.
+func clearNestedCollections(b *models.Backend) {
+	b.Servers = nil
+	b.ACLList = nil
+	b.HTTPRequestRuleList = nil
+	b.HTTPResponseRuleList = nil
+	b.HTTPAfterResponseRuleList = nil
+	b.TCPRequestRuleList = nil
+	b.TCPResponseRuleList = nil
+	b.ServerSwitchingRuleList = nil
+	b.LogTargetList = nil
+	b.StickRuleList = nil
+	b.FilterList = nil
+	b.HTTPCheckList = nil
+	b.TCPCheckRuleList = nil
+	b.ServerTemplates = nil
+}
+
+// backendBaseDiffFields returns the list of BackendBase field names that differ
+// between two backends (excluding nested collections which are compared separately).
+// Returns nil if the backends are equal.
+func backendBaseDiffFields(b1, b2 *models.Backend) []string {
 	b1Copy := *b1
 	b2Copy := *b2
+	clearNestedCollections(&b1Copy)
+	clearNestedCollections(&b2Copy)
 
-	// Clear nested collections so they don't affect comparison
-	b1Copy.Servers = nil
-	b2Copy.Servers = nil
-	b1Copy.ACLList = nil
-	b2Copy.ACLList = nil
-	b1Copy.HTTPRequestRuleList = nil
-	b2Copy.HTTPRequestRuleList = nil
-	b1Copy.HTTPResponseRuleList = nil
-	b2Copy.HTTPResponseRuleList = nil
-	b1Copy.HTTPAfterResponseRuleList = nil
-	b2Copy.HTTPAfterResponseRuleList = nil
-	b1Copy.TCPRequestRuleList = nil
-	b2Copy.TCPRequestRuleList = nil
-	b1Copy.TCPResponseRuleList = nil
-	b2Copy.TCPResponseRuleList = nil
-	b1Copy.ServerSwitchingRuleList = nil
-	b2Copy.ServerSwitchingRuleList = nil
-	b1Copy.LogTargetList = nil
-	b2Copy.LogTargetList = nil
-	b1Copy.StickRuleList = nil
-	b2Copy.StickRuleList = nil
-	b1Copy.FilterList = nil
-	b2Copy.FilterList = nil
-	b1Copy.HTTPCheckList = nil
-	b2Copy.HTTPCheckList = nil
-	b1Copy.TCPCheckRuleList = nil
-	b2Copy.TCPCheckRuleList = nil
-	b1Copy.ServerTemplates = nil
-	b2Copy.ServerTemplates = nil
+	if b1Copy.Equal(b2Copy) {
+		return nil
+	}
 
-	return b1Copy.Equal(b2Copy)
+	// Use client-native's Diff to identify which BackendBase fields differ.
+	diff := b1Copy.BackendBase.Diff(b2Copy.BackendBase)
+	fields := make([]string, 0, len(diff))
+	for field := range diff {
+		fields = append(fields, field)
+	}
+	return fields
 }
 
 // getServerIndexes retrieves server indexes for a backend, returning empty maps if not found.

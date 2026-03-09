@@ -49,6 +49,11 @@ type DiffSummary struct {
 	ServersModified map[string][]string
 	ServersDeleted  map[string][]string
 
+	// Backend diff fields: for each modified backend, the list of BackendBase fields that differ.
+	// Populated only when backend attributes (not nested collections) cause the update.
+	// Useful for diagnosing false diffs from parser round-trip asymmetries.
+	BackendDiffFields map[string][]string
+
 	// Other section changes (extensible for future sections)
 	OtherChanges map[string]int // section name -> count of changes
 }
@@ -56,10 +61,11 @@ type DiffSummary struct {
 // NewDiffSummary creates an empty DiffSummary with initialized maps.
 func NewDiffSummary() DiffSummary {
 	return DiffSummary{
-		ServersAdded:    make(map[string][]string),
-		ServersModified: make(map[string][]string),
-		ServersDeleted:  make(map[string][]string),
-		OtherChanges:    make(map[string]int),
+		ServersAdded:      make(map[string][]string),
+		ServersModified:   make(map[string][]string),
+		ServersDeleted:    make(map[string][]string),
+		BackendDiffFields: make(map[string][]string),
+		OtherChanges:      make(map[string]int),
 	}
 }
 
@@ -113,6 +119,7 @@ func (s *DiffSummary) String() string {
 	// Append section-specific changes
 	parts = append(parts, s.formatFrontendChanges()...)
 	parts = append(parts, s.formatBackendChanges()...)
+	parts = append(parts, s.formatBackendDiffFields()...)
 	parts = append(parts, s.formatServerChanges()...)
 	parts = append(parts, s.formatOtherChanges()...)
 
@@ -178,6 +185,31 @@ func (s *DiffSummary) formatServerMapChanges(serverMap map[string][]string, chan
 	}
 	sort.Strings(serverChanges)
 	return fmt.Sprintf("- Servers %s: %s", changeType, strings.Join(serverChanges, ", "))
+}
+
+// formatBackendDiffFields formats the backend diff field diagnostics.
+// Groups backends by their differing fields to produce compact output like:
+//
+//	"- Backend diff fields: [GUID] (48 backends)"
+func (s *DiffSummary) formatBackendDiffFields() []string {
+	if len(s.BackendDiffFields) == 0 {
+		return nil
+	}
+
+	// Group backends by their diff field signature for compact output.
+	groups := make(map[string]int) // "Field1, Field2" -> count
+	for _, fields := range s.BackendDiffFields {
+		sort.Strings(fields)
+		key := strings.Join(fields, ", ")
+		groups[key]++
+	}
+
+	var parts []string
+	for fields, count := range groups {
+		parts = append(parts, fmt.Sprintf("- Backend diff fields: [%s] (%d backends)", fields, count))
+	}
+	sort.Strings(parts)
+	return parts
 }
 
 // formatOtherChanges formats the other changes section.

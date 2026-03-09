@@ -140,6 +140,11 @@ type DeploymentCompletedEvent struct {
 	// Aggregated across all successfully deployed instances.
 	OperationBreakdown map[string]int
 
+	// BackendDiffFields summarizes which BackendBase fields caused backend updates.
+	// Empty when no backend attribute diffs were detected.
+	// Example: "[GUID] (48 backends)" or "[Mode, Balance] (3 backends)"
+	BackendDiffFields string
+
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
 }
@@ -158,6 +163,10 @@ type DeploymentResult struct {
 	// Keys are formatted as "section_type" (e.g., "backend_create", "server_update", "global_update").
 	// Values are the count of operations of that type.
 	OperationBreakdown map[string]int
+
+	// BackendDiffFields summarizes which BackendBase fields caused backend updates.
+	// Empty when no backend attribute diffs were detected.
+	BackendDiffFields string
 }
 
 // NewDeploymentCompletedEvent creates a new DeploymentCompletedEvent.
@@ -189,6 +198,7 @@ func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOpt
 		ReloadsTriggered:   result.ReloadsTriggered,
 		TotalAPIOperations: result.TotalAPIOperations,
 		OperationBreakdown: breakdownCopy,
+		BackendDiffFields:  result.BackendDiffFields,
 		timestamp:          time.Now(),
 		Correlation:        NewCorrelation(opts...),
 	}

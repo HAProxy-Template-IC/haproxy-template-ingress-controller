@@ -20,6 +20,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -214,6 +216,7 @@ func (c *Component) deployToEndpoints(
 			ReloadsTriggered:   int(state.reloadsTriggered),
 			TotalAPIOperations: int(state.totalOperations),
 			OperationBreakdown: state.operationBreakdown,
+			BackendDiffFields:  state.backendDiffFields,
 		},
 		events.WithCorrelation(correlationID, correlationID),
 	))
@@ -227,6 +230,7 @@ type deploymentState struct {
 	totalOperations    int32
 	breakdownMu        sync.Mutex
 	operationBreakdown map[string]int
+	backendDiffFields  string // set from first endpoint's diff fields (same for all)
 }
 
 // processEndpointDeployment handles deployment to a single endpoint and updates shared state.
@@ -384,6 +388,10 @@ func (c *Component) handleEndpointSuccess(
 		key := op.Section + "_" + op.Type
 		state.operationBreakdown[key]++
 	}
+	// Capture backend diff fields from first endpoint (same for all since config is identical)
+	if state.backendDiffFields == "" {
+		state.backendDiffFields = formatBackendDiffFields(syncResult.Details.BackendDiffFields)
+	}
 	state.breakdownMu.Unlock()
 }
 
@@ -455,6 +463,33 @@ func (c *Component) deployToSingleEndpoint(
 		"duration", result.Duration)
 
 	return result, nil
+}
+
+// formatBackendDiffFields produces a compact summary of which BackendBase fields
+// caused backend updates, grouped by field signature.
+func formatBackendDiffFields(diffFields map[string][]string) string {
+	if len(diffFields) == 0 {
+		return ""
+	}
+
+	// Group by field signature for compact output.
+	groups := make(map[string]int) // "Field1, Field2" -> count
+	for _, fields := range diffFields {
+		sort.Strings(fields)
+		key := strings.Join(fields, ", ")
+		groups[key]++
+	}
+
+	parts := make([]string, 0, len(groups))
+	for fields, count := range groups {
+		noun := "backends"
+		if count == 1 {
+			noun = "backend"
+		}
+		parts = append(parts, fmt.Sprintf("[%s] (%d %s)", fields, count, noun))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
 
 // safeIntToInt32 converts int to int32 with bounds checking to prevent overflow.
