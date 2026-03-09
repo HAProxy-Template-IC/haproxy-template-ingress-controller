@@ -91,8 +91,8 @@ If clock skew exceeds this tolerance, brief split-brain may occur where two repl
 Deploy with 2-3 replicas (default Helm configuration):
 
 ```bash
-helm install haproxy-ic charts/haptic \
-  --set replicaCount=2
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.1.0 --set replicaCount=2
 ```
 
 ### Scaling
@@ -101,10 +101,10 @@ Scale the deployment dynamically:
 
 ```bash
 # Scale to 3 replicas
-kubectl scale deployment haptic-controller --replicas=3
+kubectl scale deployment haptic-controller -n haptic --replicas=3
 
 # Scale back to 2
-kubectl scale deployment haptic-controller --replicas=2
+kubectl scale deployment haptic-controller -n haptic --replicas=2
 ```
 
 ### RBAC Requirements
@@ -125,7 +125,7 @@ These are automatically configured in the Helm chart's ClusterRole.
 
 ```bash
 # View Lease resource
-kubectl get lease -n <namespace> haptic-leader -o yaml
+kubectl get lease -n haptic haptic-leader -o yaml
 
 # Output shows current leader:
 # spec:
@@ -136,7 +136,7 @@ kubectl get lease -n <namespace> haptic-leader -o yaml
 
 ```bash
 # Leader logs show:
-kubectl logs -n <namespace> deployment/haptic-controller | grep -E "leader|election"
+kubectl logs -n haptic deployment/haptic-controller | grep -E "leader|election"
 
 # Example output:
 # level=INFO msg="Leader election started" identity=pod-abc12 lease=haptic-leader
@@ -148,7 +148,7 @@ kubectl logs -n <namespace> deployment/haptic-controller | grep -E "leader|elect
 Monitor leader election via metrics endpoint:
 
 ```bash
-kubectl port-forward -n <namespace> deployment/haptic-controller 9090:9090
+kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
 curl http://localhost:9090/metrics | grep leader_election
 ```
 
@@ -236,7 +236,7 @@ Check these areas in order of likelihood:
 3. Restart all controller pods:
 
    ```bash
-   kubectl rollout restart deployment haptic-controller
+   kubectl rollout restart deployment haptic-controller -n haptic
    ```
 
 ### Frequent Leadership Changes
@@ -252,7 +252,7 @@ Check these areas in order of likelihood:
 1. **Resource contention** - Leader pod can't renew lease in time:
 
    ```bash
-   kubectl top pods -n <namespace>
+   kubectl top pods -n haptic
    kubectl describe pod <leader-pod> | grep -A10 "Limits\|Requests"
    ```
 
@@ -261,7 +261,7 @@ Check these areas in order of likelihood:
 2. **Network issues** - API server communication delays:
 
    ```bash
-   kubectl logs <pod-name> | grep "lease renew\|deadline"
+   kubectl logs -n haptic <pod-name> | grep "lease renew\|deadline"
    ```
 
    **Solution:** Increase `lease_duration` and `renew_deadline`
@@ -286,10 +286,10 @@ Check these areas in order of likelihood:
 
 ```bash
 # Check leader logs for deployment activity
-kubectl logs <leader-pod> | grep -i "deploy"
+kubectl logs -n haptic <leader-pod> | grep -i "deploy"
 
 # Verify leader-only components started
-kubectl logs <leader-pod> | grep "Started.*Deployer\|DeploymentScheduler"
+kubectl logs -n haptic <leader-pod> | grep "Started.*Deployer\|DeploymentScheduler"
 ```
 
 **Common causes:**
@@ -402,27 +402,27 @@ To migrate an existing single-replica deployment to HA:
 3. **Upgrade with Helm:**
 
    ```bash
-   helm upgrade haproxy-ic charts/haptic \
-     --reuse-values \
+   helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+     -n haptic --reuse-values \
      -f new-values.yaml
    ```
 
 4. **Verify leadership:**
 
    ```bash
-   kubectl logs -f deployment/haptic-controller | grep leader
+   kubectl logs -f -n haptic deployment/haptic-controller | grep leader
    ```
 
 5. **Confirm one leader:**
 
    ```bash
-   kubectl get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller \
+   kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller \
      -o custom-columns=NAME:.metadata.name,LEADER:.status.podIP
 
    # Check metrics to identify leader
-   for pod in $(kubectl get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o name); do
+   for pod in $(kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o name); do
      echo "$pod:"
-     kubectl exec $pod -- wget -qO- localhost:9090/metrics | grep is_leader
+     kubectl exec -n haptic $pod -- wget -qO- localhost:9090/metrics | grep is_leader
    done
    ```
 

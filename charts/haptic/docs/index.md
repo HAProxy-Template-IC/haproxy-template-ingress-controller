@@ -27,14 +27,14 @@ For controller architecture and behavior documentation, see the [controller docs
 ## Installation
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0-alpha.11
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
 ```
 
 With custom values:
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0-alpha.11 \
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.1.0 \
   -f my-values.yaml
 ```
 
@@ -50,50 +50,35 @@ The chart deploys:
 - Optional **ServiceMonitor** -- Prometheus integration for metrics scraping
 - Optional **admission webhook** -- configuration validation before deployment
 
-If you are new to HAPTIC, start with the [Getting Started guide](https://haproxy-haptic.org/controller/latest/getting-started/) to deploy your first template-driven configuration.
+If you are new to HAPTIC, start with the [Getting Started guide](https://haproxy-haptic.org/controller/latest/getting-started/) to deploy your first template-driven configuration, then come back here for chart-specific topics.
 
 ## Documentation Sections
 
-### Configuration
+Use this chart to find what you need:
 
-- [Configuration](./configuration.md) - Key values, controller config, ingress class filtering
-- [IngressClass](./ingress-class.md) - IngressClass configuration and multi-controller environments
-- [GatewayClass](./gateway-class.md) - GatewayClass, parametersRef, and advanced scenarios
-- [SSL Certificates](./ssl-certificates.md) - SSL and webhook certificate management
-- [Annotations](./annotations.md) - Supported Ingress annotations
-
-### HAProxy Deployment
-
-- [HAProxy Deployment](./haproxy-deployment.md) - Resource limits, service architecture, pod requirements
-
-### Template Libraries
-
-- [Template Libraries Overview](./template-libraries.md) - Library system and extension points
-- Individual library documentation in [Libraries](./libraries/base.md)
-
-### Operations
-
-- [High Availability](./operations/high-availability.md) - Leader election and replica configuration
-- [Monitoring](./operations/monitoring.md) - Prometheus ServiceMonitor setup
-- [Networking](./operations/networking.md) - NetworkPolicy configuration
-- [Debugging](./operations/debugging.md) - Introspection endpoints
-- [Troubleshooting](./operations/troubleshooting.md) - Common issues
-
-### Reference
-
-- [Configuration Reference](./reference.md) - Complete list of all Helm values
+| I want to… | See |
+|------------|-----|
+| Configure ingress class or filter namespaces | [Configuration](./configuration.md) |
+| Set up TLS/HTTPS | [SSL Certificates](./ssl-certificates.md) |
+| Use Ingress annotations (auth, rate limiting, etc.) | [Annotations](./annotations.md) |
+| Tune HAProxy resource limits or service type | [HAProxy Deployment](./haproxy-deployment.md) |
+| Enable or disable template libraries | [Template Libraries](./template-libraries.md) |
+| Run multiple controller replicas | [High Availability](./operations/high-availability.md) |
+| Set up Prometheus scraping | [Monitoring](./operations/monitoring.md) |
+| Restrict network access with NetworkPolicy | [Networking](./operations/networking.md) |
+| Diagnose problems | [Troubleshooting](./operations/troubleshooting.md) |
 
 ## Upgrading
 
 ```bash
-helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0-alpha.11
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.1.0
 ```
 
 ## Uninstalling
 
 ```bash
-helm uninstall my-controller
+helm uninstall haptic
 ```
 
 This removes all resources created by the chart.

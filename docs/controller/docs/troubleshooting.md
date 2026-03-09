@@ -2,6 +2,24 @@
 
 Common issues and solutions for the HAProxy Template Ingress Controller.
 
+!!! note "Namespace"
+    All `kubectl` commands below assume the default installation namespace `haptic`. Replace `-n haptic` with your namespace if you installed elsewhere.
+
+## Quick Symptom Reference
+
+| Symptom | Section |
+|---------|---------|
+| Pod in CrashLoopBackOff | [Controller Not Starting](#controller-not-starting) |
+| Pods running, no reconciliation activity | [Controller Running But Not Processing](#controller-running-but-not-processing) |
+| "template rendering failed" in logs | [Invalid Template Syntax](#invalid-template-syntax) |
+| "validation failed" / HAProxy errors | [Configuration Validation Failures](#configuration-validation-failures) |
+| "connection refused" to Dataplane API | [Cannot Connect to Dataplane API](#cannot-connect-to-dataplane-api) |
+| Controller reports success but HAProxy unchanged | [Configuration Not Updating](#configuration-not-updating) |
+| 503 errors / no servers in HAProxy stats | [Requests Not Reaching Backend](#requests-not-reaching-backend) |
+| SSL handshake failures | [SSL/TLS Issues](#ssltls-issues) |
+| High CPU or slow reconciliation | [Slow Reconciliation](#slow-reconciliation) |
+| OOMKilled / gradual memory growth | [High Memory Usage](#high-memory-usage) |
+
 ## Controller Issues
 
 ### Controller Not Starting
@@ -57,7 +75,12 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 **Solution**:
 
 1. Check template syntax in HAProxyTemplateConfig
-2. Use debug server: `curl http://localhost:8080/debug/vars/rendered`
+2. Inspect the last rendered output via the debug server (see [Enable Debug Server](#enable-debug-server) below):
+
+   ```bash
+   curl http://localhost:6060/debug/vars/rendered
+   ```
+
 3. See [Templating Guide](./templating.md)
 
 ### Configuration Validation Failures
@@ -271,8 +294,9 @@ controller:
 ### Enable Debug Server
 
 ```bash
-helm upgrade haproxy-ic ./charts/haptic --reuse-values --set controller.debugPort=6060
-kubectl port-forward deployment/haptic-controller 6060:6060
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --reuse-values -n haptic --set controller.debugPort=6060
+kubectl port-forward deployment/haptic-controller 6060:6060 -n haptic
 ```
 
 **Available endpoints**:

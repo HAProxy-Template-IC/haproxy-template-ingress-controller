@@ -19,8 +19,8 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 | [SSL](libraries/ssl.md) | Enabled | TLS certificate management, HTTPS frontend |
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTPRoute, GRPCRoute) support |
-| [HAProxy Annotations](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotation support |
-| [HAProxy Ingress](libraries/haproxy-ingress.md) | Enabled | HAProxy Ingress Controller compatibility |
+| [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotation support |
+| [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotation support |
 | [Path Regex Last](libraries/path-regex-last.md) | Disabled | Performance-first path matching order |
 
 ## Enabling and Disabling Libraries
@@ -71,9 +71,9 @@ Extension points are the core mechanism for library extensibility. The base libr
 
 The base library uses `include_matching("prefix-*")` to automatically include all template snippets matching a glob pattern:
 
-```jinja2
+```scriggo
 {# In base.yaml #}
-{%- from "util-macros" import include_matching -%}
+{%- import "util-macros" for include_matching -%}
 {{ include_matching("backends-*") }}
 ```
 
@@ -181,8 +181,8 @@ Default priority is 100 if not specified.
 | SSL | `features-*`, `frontends-*`, `backends-*`, `global-top-*` |
 | Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*`, `status-patches-*` |
 | Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |
-| HAProxy Annotations | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
-| HAProxy Ingress | `map-path-regex-*` |
+| haproxytech | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
+| haproxy-ingress | `map-path-regex-*` |
 | Path Regex Last | Overrides `frontend-routing-logic` (not an extension point pattern) |
 
 ## Custom Libraries
@@ -206,21 +206,21 @@ controller:
       backends-configmap-routes:
         template: |
           {%- for cm in resources.configmaps.List() %}
-          {%- if cm.metadata.labels.get("routing", "") == "enabled" %}
+          {%- if cm.metadata.labels["routing"] | fallback("") == "enabled" %}
           backend cm_{{ cm.metadata.namespace }}_{{ cm.metadata.name }}
               # Generate backend from ConfigMap data
-              server app {{ cm.data.target }}
-          {%- endif %}
-          {%- endfor %}
+              server app {{ cm.data["target"] }}
+          {%- end %}
+          {%- end %}
 
       # Generate host map entries
       map-host-configmap-routes:
         template: |
           {%- for cm in resources.configmaps.List() %}
-          {%- if cm.metadata.labels.get("routing", "") == "enabled" %}
-          {{ cm.data.hostname }} {{ cm.data.hostname }}
-          {%- endif %}
-          {%- endfor %}
+          {%- if cm.metadata.labels["routing"] | fallback("") == "enabled" %}
+          {{ cm.data["hostname"] }} {{ cm.data["hostname"] }}
+          {%- end %}
+          {%- end %}
 ```
 
 ## Library Architecture
@@ -252,6 +252,10 @@ controller:
 
 ## See Also
 
-- [Base Library](libraries/base.md) - Extension point definitions
-- [Gateway API Library](libraries/gateway.md) - Gateway API features
-- [HAProxy Annotations Library](libraries/haproxytech.md) - HAProxy annotations
+- [Base Library](libraries/base.md) - Core template and extension point definitions
+- [SSL Library](libraries/ssl.md) - TLS certificate management and HTTPS frontend
+- [Ingress Library](libraries/ingress.md) - Kubernetes Ingress resource support
+- [Gateway API Library](libraries/gateway.md) - HTTPRoute and GRPCRoute support
+- [HAProxy Annotations Library](libraries/haproxytech.md) - `haproxy.org/*` annotation support
+- [HAProxy Ingress Library](libraries/haproxy-ingress.md) - `haproxy-ingress.github.io/*` annotation support
+- [Path Regex Last Library](libraries/path-regex-last.md) - Alternative path matching order

@@ -15,6 +15,9 @@ The Gateway API library implements the [Kubernetes Gateway API](https://gateway-
 
 This library is **enabled by default**.
 
+!!! warning "Gateway API CRDs Required"
+    The Gateway API library requires Gateway API CRDs to be installed in your cluster. Without them, the library will not be merged into the configuration.
+
 ## Configuration
 
 ```yaml
@@ -23,9 +26,6 @@ controller:
     gateway:
       enabled: true  # Enabled by default
 ```
-
-!!! warning "Gateway API CRDs Required"
-    The Gateway API library requires Gateway API CRDs to be installed in your cluster. Without them, the library will not be merged into the configuration.
 
 ## Extension Points
 
@@ -86,6 +86,8 @@ The `gateway.yaml` library:
 This architecture allows the controller to remain resource-agnostic while the chart provides specific resource support.
 
 ---
+
+**Status legend:** ✅ Supported · ⚠️ Partial or untested · ❌ Not implemented
 
 ## HTTPRoute Support
 

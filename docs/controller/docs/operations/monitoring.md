@@ -67,7 +67,7 @@ serviceMonitor:
 
 ```bash
 # Port-forward to metrics endpoint
-kubectl port-forward -n <namespace> deployment/haptic-controller 9090:9090
+kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
 
 # Fetch metrics
 curl http://localhost:9090/metrics
@@ -356,7 +356,7 @@ increase(haptic_leader_election_transitions_total[1h])
 
 ### Dashboard JSON Template
 
-A basic Grafana dashboard template can be imported from:
+Example Grafana dashboard structure (use as a starting point):
 
 ```json
 {

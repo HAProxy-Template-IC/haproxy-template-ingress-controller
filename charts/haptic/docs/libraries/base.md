@@ -140,8 +140,8 @@ http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_
 
 Includes all snippets matching a glob pattern:
 
-```jinja2
-{%- from "util-macros" import include_matching -%}
+```scriggo
+{%- import "util-macros" for include_matching -%}
 {{ include_matching("backends-*") }}
 ```
 
@@ -149,8 +149,8 @@ Includes all snippets matching a glob pattern:
 
 Escapes regex patterns for HAProxy's double-quoted context:
 
-```jinja2
-{%- from "util-regex-sanitize" import sanitize_regex -%}
+```scriggo
+{%- import "util-regex-sanitize" for sanitize_regex -%}
 {{ sanitize_regex("^/api/v[0-9]+$") }}
 ```
 
@@ -162,10 +162,10 @@ The `util-backend-servers` snippet generates server lines with:
 - Health check configuration
 - Support for per-server options (maxconn, SSL, etc.)
 
-```jinja2
-{%- set service_name = "my-service" %}
-{%- set port = 8080 %}
-{% include "util-backend-servers" %}
+```scriggo
+{%- var service_name = "my-service" %}
+{%- var port = 8080 %}
+{{ render "util-backend-servers" inherit_context }}
 ```
 
 ### Error Pages

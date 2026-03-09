@@ -273,13 +273,6 @@ Operations are automatically ordered by:
 
 This ensures that, for example, a Backend is created before its Servers, and Servers are deleted before the Backend is removed.
 
-### Code References
-
-All comparison logic is implemented in:
-
-- **Main Comparator:** `pkg/dataplane/comparator/comparator.go`
-- **Operation Definitions:** `pkg/dataplane/comparator/sections/*.go`
-
 The comparator uses the `haproxytech/client-native` models' built-in `.Equal()` methods for comprehensive attribute comparison, ensuring zero-maintenance compatibility with future HAProxy features.
 
 ## Summary
@@ -293,10 +286,3 @@ HAPTIC provides complete HAProxy Dataplane API coverage:
 - Dependency-aware operation ordering for safe deployments
 - Future-proof comparison using HAProxy models' `.Equal()` methods
 - Listen sections not supported (Dataplane API limitation)
-
-For implementation details, see:
-
-- Architecture: `docs/design.md`
-- Parser: `pkg/dataplane/parser/`
-- Comparator: `pkg/dataplane/comparator/`
-- Operations: `pkg/dataplane/comparator/sections/`

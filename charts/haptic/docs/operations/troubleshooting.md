@@ -4,7 +4,7 @@
 
 This page covers common issues when deploying and operating the HAPTIC Helm chart.
 
-For controller behavior troubleshooting, see the [controller debugging guide](https://haproxy-haptic.org/controller/latest/operations/debugging/).
+For controller behavior troubleshooting, see the [controller troubleshooting guide](https://haproxy-haptic.org/controller/latest/troubleshooting/).
 
 ## Controller Not Starting
 
@@ -16,9 +16,60 @@ kubectl logs -f -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=con
 
 Common issues:
 
-- HAProxyTemplateConfig CRD or Secret missing
-- RBAC permissions incorrect
-- NetworkPolicy blocking access
+- **HAProxyTemplateConfig missing**: `kubectl get haproxytemplateconfig` — reinstall the Helm chart if absent
+- **Credentials Secret missing**: `kubectl get secret haptic-dataplane-credentials` — recreate with the correct keys
+- **RBAC permissions incorrect**: `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<namespace>:<serviceaccount>`
+- **NetworkPolicy blocking access**: see [Networking](./networking.md)
+
+## Image Pull Errors
+
+If pods are stuck in `ImagePullBackOff`:
+
+```bash
+kubectl describe pod -l app.kubernetes.io/name=haptic
+```
+
+Verify the `haproxyVersion` value matches an available image tag:
+
+```bash
+helm get values haptic | grep haproxyVersion
+```
+
+The controller image tag is derived from both the chart `version` and `haproxyVersion`. If pulling from a private registry, configure `imagePullSecrets`.
+
+## CRD Not Found
+
+If the controller fails with "no kind HAProxyTemplateConfig is registered":
+
+```bash
+kubectl get crd haproxytemplateconfigs.haproxy-haptic.org
+```
+
+CRDs are installed by the chart. If missing, reinstall:
+
+```bash
+helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version <version> --namespace haptic
+```
+
+## Ingress Not Processed
+
+If creating an Ingress produces no HAProxy configuration change:
+
+1. **Verify the IngressClass**: the Ingress must reference the class created by the chart
+
+   ```bash
+   kubectl get ingressclass
+   kubectl get ingress <name> -o jsonpath='{.spec.ingressClassName}'
+   ```
+
+2. **Check namespace filtering**: if `controller.config.watchedResources.ingresses.namespace` is set, the Ingress must be in that namespace
+
+3. **Check controller logs** for watch events:
+
+   ```bash
+   kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i ingress
+   ```
 
 ## Cannot Connect to HAProxy Pods
 
@@ -39,6 +90,62 @@ Common issues:
 
    ```bash
    kubectl describe networkpolicy
+   ```
+
+## Dataplane API Authentication Failure
+
+If the controller logs show "401 Unauthorized" or "403 Forbidden" when connecting to HAProxy:
+
+```bash
+kubectl get secret haptic-dataplane-credentials -o jsonpath='{.data}' | base64 -d
+```
+
+The username and password in the Secret must match what is configured in the HAProxy Dataplane API. After updating the Secret, restart the controller:
+
+```bash
+kubectl rollout restart deployment haptic-controller
+```
+
+## HAProxy Returning 503
+
+A 503 usually means HAProxy has no healthy servers for the backend:
+
+1. **Check that backend pods are running and ready**
+
+   ```bash
+   kubectl get pods -l app=<your-app>
+   kubectl get endpointslices -l kubernetes.io/service-name=<service-name>
+   ```
+
+2. **Verify servers appear in HAProxy config**
+
+   ```bash
+   kubectl exec <haproxy-pod> -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A5 "backend"
+   ```
+
+3. **Check HAProxy stats** for server state (UP/DOWN):
+
+   ```bash
+   kubectl port-forward svc/haptic-haproxy 8404:8404
+   curl http://localhost:8404/stats
+   ```
+
+## Configuration Not Updating After Ingress Change
+
+If controller logs show successful deployment but HAProxy still serves the old config:
+
+1. **Confirm the config file was written**
+
+   ```bash
+   kubectl exec <haproxy-pod> -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
+   ```
+
+2. **Check that both containers share the config volume** — HAProxy and Dataplane API must mount the same volume
+
+3. **Check Dataplane API reload logs**
+
+   ```bash
+   kubectl logs <haproxy-pod> -c dataplane | tail -20
    ```
 
 ## NetworkPolicy Issues in kind

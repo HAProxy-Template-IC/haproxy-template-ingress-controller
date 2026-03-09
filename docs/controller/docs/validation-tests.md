@@ -6,6 +6,19 @@ Validation tests verify that your templates render correctly and produce valid H
 
 ## Quick Start
 
+`controller validate` is the controller binary running in validation mode. Download it for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) and run it locally:
+
+```bash
+controller validate -f my-config.yaml
+```
+
+To validate the config currently deployed in your cluster:
+
+```bash
+kubectl get haproxytemplateconfig -n haptic haptic-config -o yaml > /tmp/haptic-config.yaml
+controller validate -f /tmp/haptic-config.yaml
+```
+
 Add a `validationTests` section to your HAProxyTemplateConfig:
 
 ```yaml

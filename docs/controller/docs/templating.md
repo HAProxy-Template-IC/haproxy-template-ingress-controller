@@ -2,7 +2,7 @@
 
 ## Overview
 
-The HAProxy Template Ingress Controller uses [Scriggo](https://scriggo.com/), a Go template engine, to generate HAProxy configurations from Kubernetes resources. You define templates that access watched Kubernetes resources, and the controller renders these templates whenever resources change, validates the output, and deploys it to HAProxy instances.
+The HAProxy Template Ingress Controller uses [Scriggo](https://scriggo.com/), a Go template engine, to generate HAProxy configurations from Kubernetes resources. The Helm chart ships with ready-to-use [template libraries](/helm-chart/latest/template-libraries/) that cover standard Ingress and Gateway API use cases — you only need to write templates when you want to extend or replace that default behavior. Templates access watched Kubernetes resources, and the controller renders them whenever resources change, validates the output, and deploys it to HAProxy instances.
 
 Templates are rendered automatically when any watched resource changes, during initial synchronization, or periodically for drift detection.
 
@@ -45,40 +45,6 @@ haproxyConfig:
 
 !!! important
     All auxiliary file references should use `pathResolver.GetPath()` to generate correct paths.
-
-#### Post-Processing
-
-The `haproxyConfig` section supports a `postProcessing` list that transforms the rendered output before deployment. Post-processors run sequentially on the rendered configuration.
-
-Available types:
-
-| Type | Description |
-|------|-------------|
-| `regex_replace` | Line-by-line regex find/replace (`pattern` and `replace` params) |
-| `template` | Scriggo template transformation with access to the rendered output via the `input` variable (`source` param) |
-
-```yaml
-haproxyConfig:
-  template: |
-    global
-        daemon
-    # ...
-  postProcessing:
-    - type: template
-      params:
-        source: |
-          {%- if strings_contains(input, "__PLACEHOLDER__") -%}
-          {{ replace(input, "__PLACEHOLDER__", "computed-value") }}
-          {%- else -%}
-          {{ input }}
-          {%- end -%}
-    - type: regex_replace
-      params:
-        pattern: "^[ ]+"
-        replace: "  "
-```
-
-The `template` post-processor receives the fully rendered output as the `input` variable and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, etc.). Its output becomes the new rendered content.
 
 ### Map Files
 
@@ -171,6 +137,40 @@ Pass local variables to rendered snippets with `inherit_context`:
 {{ render "backend-servers" inherit_context }}
 ```
 
+### Post-Processing
+
+The `haproxyConfig` section supports a `postProcessing` list that transforms the rendered output before deployment. Post-processors run sequentially on the rendered configuration.
+
+Available types:
+
+| Type | Description |
+|------|-------------|
+| `regex_replace` | Line-by-line regex find/replace (`pattern` and `replace` params) |
+| `template` | Scriggo template transformation with access to the rendered output via the `input` variable (`source` param) |
+
+```yaml
+haproxyConfig:
+  template: |
+    global
+        daemon
+    # ...
+  postProcessing:
+    - type: template
+      params:
+        source: |
+          {%- if strings_contains(input, "__PLACEHOLDER__") -%}
+          {{ replace(input, "__PLACEHOLDER__", "computed-value") }}
+          {%- else -%}
+          {{ input }}
+          {%- end -%}
+    - type: regex_replace
+      params:
+        pattern: "^[ ]+"
+        replace: "  "
+```
+
+The `template` post-processor receives the fully rendered output as the `input` variable and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, etc.). Its output becomes the new rendered content.
+
 ## Template Syntax
 
 Templates use Scriggo's template syntax. For complete syntax reference, see the [Scriggo documentation](https://scriggo.com/templates).
@@ -251,9 +251,27 @@ bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 
 ## Available Template Data
 
+### Context Variables
+
+All templates have access to the following top-level variables:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config |
+| `pathResolver` | object | Resolves filenames to HAProxy paths — use `GetPath(name, type)` |
+| `haproxyVersion` | string | HAProxy version string, e.g. `"3.2"` — use with `semver_gte` filter |
+| `currentConfig` | string | The currently deployed HAProxy configuration — used for slot-preserving updates |
+| `shared` | map | Mutable cross-template cache for expensive computations |
+| `templateSnippets` | list | Names of all available template snippets — useful for dynamic `render_glob` patterns |
+
+Custom variables defined in `templatingSettings.extraContext` are also available directly by name. See [Custom Template Variables](#custom-template-variables).
+
 ### The `resources` Variable
 
 Templates access watched resources through the `resources` variable. Each store provides `List()`, `Fetch()`, and `GetSingle()` methods.
+
+!!! note
+    The keys available under `resources.*` are determined by the `watchedResources` configuration. See [Watching Resources](./watching-resources.md) to add resource types beyond the defaults.
 
 ```go
 {# List all resources #}
@@ -312,156 +330,6 @@ Access in templates:
 global
   maxconn {{ limits.maxConn }}
 ```
-
-## Authentication Annotations
-
-Enable HTTP basic authentication via Ingress annotations:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: protected-app
-  annotations:
-    haproxy.org/auth-type: "basic-auth"
-    haproxy.org/auth-secret: "my-auth-secret"
-    haproxy.org/auth-realm: "Protected"
-spec:
-  rules:
-    - host: app.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: my-service
-                port:
-                  number: 80
-```
-
-**Create authentication secrets** with crypt(3) SHA-512 password hashes:
-
-```bash
-HASH=$(openssl passwd -6 mypassword)
-kubectl create secret generic my-auth-secret \
-  --from-literal=admin=$(echo -n "$HASH" | base64 -w0)
-```
-
-Configure secrets store with `store: on-demand` to fetch secrets on-demand rather than watching all cluster secrets.
-
-## Status Patches
-
-Templates can register status patches for Kubernetes resources using the `statusPatch()` function. The controller applies these patches to the `/status` subresource via Server-Side Apply (SSA) after each reconciliation phase.
-
-This allows templates to report processing results back to resources (e.g., setting `Accepted` and `Programmed` conditions on Gateways, or propagating LoadBalancer addresses to Ingress status) without the controller needing to understand any specific resource's status schema.
-
-### statusPatch()
-
-Registers a status patch for a Kubernetes resource with outcome-keyed variants:
-
-```go
-{% statusPatch(namespace, name, apiVersion, kind, map[string]any{
-    "deployed": map[string]any{
-        "status": map[string]any{
-            "conditions": []any{
-                condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(resource, "Accepted", "True")),
-            },
-        },
-    },
-    "deployFailed": map[string]any{
-        "status": map[string]any{
-            "conditions": []any{
-                condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(resource, "Accepted", "True")),
-                condition("Programmed", "False", "AddressNotAssigned", "No address available", generation, transitionTime(resource, "Programmed", "False")),
-            },
-        },
-    },
-}) %}
-```
-
-**Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `namespace` | `string` | Resource namespace |
-| `name` | `string` | Resource name |
-| `apiVersion` | `string` | Resource API version (e.g., `networking.k8s.io/v1`) |
-| `kind` | `string` | Resource kind (e.g., `Ingress`, `Gateway`) |
-| `variants` | `map[string]any` | Status payloads keyed by pipeline phase |
-
-**Variants:**
-
-| Key | Applied When |
-|-----|-------------|
-| `rendered` | After successful template rendering (before deployment) |
-| `deployed` | After successful HAProxy deployment |
-| `renderFailed` | When a later rendering phase fails |
-| `deployFailed` | When HAProxy deployment fails |
-
-Templates render all variants upfront. The controller selects the appropriate variant based on the pipeline outcome.
-
-### condition()
-
-Creates a `metav1.Condition`-compatible map:
-
-```go
-{{ condition("Accepted", "True", "Accepted", "Resource is accepted", observedGeneration, lastTransitionTime) }}
-```
-
-**Parameters:** `type`, `status`, `reason`, `message`, `observedGeneration`, `lastTransitionTime`
-
-### transitionTime()
-
-Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet:
-
-```go
-{{ transitionTime(resource, "Accepted", "True") }}
-```
-
-For resources with nested condition arrays (e.g., Gateway API Route `parents[]`), pass the parent index:
-
-```go
-{{ transitionTime(resource, "Accepted", "True", parentIndex) }}
-```
-
-### toJSON()
-
-Converts any value to its JSON representation:
-
-```go
-{{ myMap | toJSON() }}
-```
-
-### Using Status Patches in Custom Templates
-
-Status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
-
-```yaml
-controller:
-  config:
-    templateSnippets:
-      status-patches-200-custom:
-        template: |
-          {%- for _, resource := range resources.myresources.List() %}
-            {%%
-              var ns = resource | dig("metadata", "namespace") | fallback("") | tostring()
-              var name = resource | dig("metadata", "name") | fallback("") | tostring()
-              var gen = resource | dig("metadata", "generation") | fallback(0)
-            %%}
-            {%- statusPatch(ns, name, "example.com/v1", "MyResource", map[string]any{
-                "deployed": map[string]any{
-                    "status": map[string]any{
-                        "conditions": []any{
-                            condition("Ready", "True", "Deployed", "Successfully deployed", gen, transitionTime(resource, "Ready", "True")),
-                        },
-                    },
-                },
-            }) %}
-          {%- end %}
-```
-
-The built-in Ingress and Gateway API libraries already include status patch snippets. You only need custom status patches for resources not covered by the default libraries.
 
 ## Common Patterns
 
@@ -591,6 +459,111 @@ Accumulate values across loop iterations using Go-style variable assignment:
 {% for _, item := range items -%}   {# Strip after #}
 {%- for _, item := range items -%}  {# Strip both #}
 ```
+
+## Status Patches
+
+Templates can register status patches for Kubernetes resources using the `statusPatch()` function. The controller applies these patches to the `/status` subresource via Server-Side Apply (SSA) after each reconciliation phase.
+
+This allows templates to report processing results back to resources (e.g., setting `Accepted` and `Programmed` conditions on Gateways, or propagating LoadBalancer addresses to Ingress status) without the controller needing to understand any specific resource's status schema.
+
+### statusPatch()
+
+Registers a status patch for a Kubernetes resource with outcome-keyed variants:
+
+```go
+{% statusPatch(namespace, name, apiVersion, kind, map[string]any{
+    "deployed": map[string]any{
+        "status": map[string]any{
+            "conditions": []any{
+                condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(resource, "Accepted", "True")),
+            },
+        },
+    },
+    "deployFailed": map[string]any{
+        "status": map[string]any{
+            "conditions": []any{
+                condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(resource, "Accepted", "True")),
+                condition("Programmed", "False", "AddressNotAssigned", "No address available", generation, transitionTime(resource, "Programmed", "False")),
+            },
+        },
+    },
+}) %}
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `namespace` | `string` | Resource namespace |
+| `name` | `string` | Resource name |
+| `apiVersion` | `string` | Resource API version (e.g., `networking.k8s.io/v1`) |
+| `kind` | `string` | Resource kind (e.g., `Ingress`, `Gateway`) |
+| `variants` | `map[string]any` | Status payloads keyed by pipeline phase |
+
+**Variants:**
+
+| Key | Applied When |
+|-----|-------------|
+| `rendered` | After successful template rendering (before deployment) |
+| `deployed` | After successful HAProxy deployment |
+| `renderFailed` | When a later rendering phase fails |
+| `deployFailed` | When HAProxy deployment fails |
+
+Templates render all variants upfront. The controller selects the appropriate variant based on the pipeline outcome.
+
+### condition()
+
+Creates a `metav1.Condition`-compatible map:
+
+```go
+{{ condition("Accepted", "True", "Accepted", "Resource is accepted", observedGeneration, lastTransitionTime) }}
+```
+
+**Parameters:** `type`, `status`, `reason`, `message`, `observedGeneration`, `lastTransitionTime`
+
+### transitionTime()
+
+Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet:
+
+```go
+{{ transitionTime(resource, "Accepted", "True") }}
+```
+
+For resources with nested condition arrays (e.g., Gateway API Route `parents[]`), pass the parent index:
+
+```go
+{{ transitionTime(resource, "Accepted", "True", parentIndex) }}
+```
+
+### Using Status Patches in Custom Templates
+
+Status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      status-patches-200-custom:
+        template: |
+          {%- for _, resource := range resources.myresources.List() %}
+            {%%
+              var ns = resource | dig("metadata", "namespace") | fallback("") | tostring()
+              var name = resource | dig("metadata", "name") | fallback("") | tostring()
+              var gen = resource | dig("metadata", "generation") | fallback(0)
+            %%}
+            {%- statusPatch(ns, name, "example.com/v1", "MyResource", map[string]any{
+                "deployed": map[string]any{
+                    "status": map[string]any{
+                        "conditions": []any{
+                            condition("Ready", "True", "Deployed", "Successfully deployed", gen, transitionTime(resource, "Ready", "True")),
+                        },
+                    },
+                },
+            }) %}
+          {%- end %}
+```
+
+The built-in Ingress and Gateway API libraries already include status patch snippets. You only need custom status patches for resources not covered by the default libraries.
 
 ## Complete Example
 

@@ -10,7 +10,7 @@ The controller automatically detects and respects container resource limits:
 
 ### CPU Limits (GOMAXPROCS)
 
-**Go 1.25+ Native Support**: The controller uses Go 1.25, which includes built-in container-aware GOMAXPROCS. The Go runtime automatically:
+**Go 1.26+ Native Support**: The controller uses Go 1.26, which includes built-in container-aware GOMAXPROCS. The Go runtime automatically:
 
 - Detects cgroup CPU limits (v1 and v2)
 - Sets GOMAXPROCS to match the container's CPU limit (not the host's core count)

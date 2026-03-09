@@ -21,10 +21,7 @@ The controller exposes 11 Prometheus metrics covering:
 Access metrics directly via port-forward:
 
 ```bash
-# Port-forward to controller pod
-kubectl port-forward -n <namespace> pod/<controller-pod> 9090:9090
-
-# Fetch metrics
+kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
 curl http://localhost:9090/metrics
 ```
 

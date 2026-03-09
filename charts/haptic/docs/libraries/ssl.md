@@ -59,18 +59,20 @@ The SSL library provides infrastructure for other libraries to register TLS feat
 
 | Data Structure | Purpose | How to Use |
 |----------------|---------|------------|
-| `global_features.tls_certificates` | Array of TLS certificates to include in CRT-list | Append `{secret_namespace, secret_name, sni_patterns[]}` |
-| `global_features.ssl_passthrough_backends` | Array of SSL passthrough backends | Append `{name, sni}` |
+| `gf["tlsCertificates"]` | Array of TLS certificates to include in CRT-list | Append `{secret_namespace, secret_name, sni_patterns[]}` |
+| `gf["sslPassthroughBackends"]` | Array of SSL passthrough backends | Append `{name, sni}` |
 
 **Example - Registering a TLS certificate (from ingress.yaml):**
 
-```jinja2
-{%- set cert = {
-    "secret_namespace": tls.secretName.split("/")[0] | default(ingress.metadata.namespace),
-    "secret_name": tls.secretName.split("/")[-1],
-    "sni_patterns": tls.hosts
+```scriggo
+{%- var parts = split(tls.secretName, "/") %}
+{%- var cert = map[string]any{
+    "secret_namespace": len(parts) > 1 ? parts[0] : ingress.metadata.namespace,
+    "secret_name": parts[len(parts)-1],
+    "sni_patterns": tls.hosts,
 } %}
-{%- set global_features.tls_certificates = global_features.tls_certificates.append(cert) %}
+{%- var certs []any = gf["tlsCertificates"].([]any) %}
+{%- gf["tlsCertificates"] = append(certs, cert) %}
 ```
 
 ## Features

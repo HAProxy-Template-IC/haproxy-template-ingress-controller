@@ -155,8 +155,10 @@ Backends are generated with:
 **Generated backend naming convention:**
 
 ```
-ing_<namespace>_<ingress-name>_<service-name>_<port>
+<namespace>_<ingress-name>_svc_<service-name>_<port-name>
 ```
+
+`<port-name>` is the port name from the Service spec (e.g. `http`, `https`), not the numeric port number.
 
 **Example generated configuration:**
 

@@ -422,7 +422,7 @@ After deploying, verify the integration is working:
 
 ```bash
 # Check spiffe-helper received certificates
-kubectl -n <namespace> logs <haproxy-pod> -c spiffe-helper
+kubectl -n haptic logs <haproxy-pod> -c spiffe-helper
 
 # Expected output:
 # level=info msg="Received update" spiffe_id="spiffe://..." system=spiffe-helper
@@ -431,14 +431,14 @@ kubectl -n <namespace> logs <haproxy-pod> -c spiffe-helper
 
 ```bash
 # Verify certificate files exist on the HAProxy pod
-kubectl -n <namespace> exec <haproxy-pod> -c haproxy -- ls -la /etc/haproxy/spiffe/
+kubectl -n haptic exec <haproxy-pod> -c haproxy -- ls -la /etc/haproxy/spiffe/
 
 # Expected: svid.pem, svid.pem.key, bundle.pem owned by UID 99
 ```
 
 ```bash
 # Inspect the SPIFFE ID in the issued certificate
-kubectl -n <namespace> exec <haproxy-pod> -c haproxy -- \
+kubectl -n haptic exec <haproxy-pod> -c haproxy -- \
   openssl x509 -in /etc/haproxy/spiffe/svid.pem -noout -text \
   | grep -A1 "Subject Alternative Name"
 
@@ -447,13 +447,13 @@ kubectl -n <namespace> exec <haproxy-pod> -c haproxy -- \
 
 ```bash
 # Verify the backend mTLS annotation is reflected in HAProxy config
-kubectl -n <namespace> exec <haproxy-pod> -c haproxy -- \
+kubectl -n haptic exec <haproxy-pod> -c haproxy -- \
   cat /etc/haproxy/haproxy.cfg | grep -A2 'default-server.*ssl.*verify'
 ```
 
 ```bash
 # Check cert-reloader is running and updating certificates
-kubectl -n <namespace> logs <haproxy-pod> -c cert-reloader
+kubectl -n haptic logs <haproxy-pod> -c cert-reloader
 
 # Expected output after a rotation:
 # cert-reloader: polling for cert changes
@@ -474,7 +474,7 @@ Error while watching x509 context: ... dial unix /spiffe-workload-api/agent.sock
 The SPIRE CSI driver creates the socket as `spire-agent.sock`, not `agent.sock`. Verify the correct socket name:
 
 ```bash
-kubectl -n <namespace> exec <haproxy-pod> -c spiffe-helper -- ls /spiffe-workload-api/
+kubectl -n haptic exec <haproxy-pod> -c spiffe-helper -- ls /spiffe-workload-api/
 ```
 
 Update `agent_address` in your spiffe-helper config to match.
@@ -519,7 +519,7 @@ The spiffe-helper container image uses tags **without** the `v` prefix. Use `0.1
 If the controller logs show validation failures referencing `/etc/haproxy/spiffe/*.pem`, the validation placeholder ConfigMap is not mounted on the controller pod. Verify:
 
 ```bash
-kubectl -n <namespace> exec <controller-pod> -- ls /etc/haproxy/spiffe/
+kubectl -n haptic exec <controller-pod> -- ls /etc/haproxy/spiffe/
 # Should list: bundle.pem  svid.pem  svid.pem.key
 ```
 
