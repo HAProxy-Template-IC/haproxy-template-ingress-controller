@@ -42,10 +42,23 @@
   color: var(--brand-primary-light);
 }
 
-.landing-hero .subtitle {
+.landing-hero h1 .subtitle {
+  display: block;
   font-size: 1.25rem;
+  font-weight: normal;
   color: var(--brand-text-muted);
+  margin-top: 0.5rem;
   margin-bottom: 0.5rem;
+}
+
+.landing-intro {
+  max-width: 800px;
+  margin: 0 auto 1rem;
+  padding: 0 1rem;
+  text-align: center;
+  color: var(--brand-text-muted);
+  font-size: 1rem;
+  line-height: 1.6;
 }
 
 /* Community project note */
@@ -247,7 +260,7 @@
     font-size: 1.75rem;
   }
 
-  .landing-hero .subtitle {
+  .landing-hero h1 .subtitle {
     font-size: 1rem;
   }
 
