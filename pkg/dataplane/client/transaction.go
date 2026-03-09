@@ -188,7 +188,7 @@ func (tx *Transaction) Commit(ctx context.Context) (*CommitResult, error) {
 	}
 
 	// Perform actual commit
-	forceReload := false
+	forceReload := true
 
 	resp, err := tx.client.Dispatch(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {

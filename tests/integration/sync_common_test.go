@@ -286,9 +286,11 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	}
 
 	// Step 5: Validate reload expectations
+	// With forceReload=true, synchronous reloads return no reload ID (empty string)
+	// but ReloadTriggered and ReloadVerified are both set to true.
 	if tc.expectedReload {
 		assert.True(t, result.ReloadTriggered, "expected reload to be triggered")
-		assert.NotEmpty(t, result.ReloadID, "expected reload ID to be set")
+		assert.True(t, result.ReloadVerified, "expected reload to be verified")
 	} else {
 		assert.False(t, result.ReloadTriggered, "expected no reload")
 		assert.Empty(t, result.ReloadID, "expected no reload ID")

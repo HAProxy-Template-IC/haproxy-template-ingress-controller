@@ -187,7 +187,8 @@ frontend http
 }
 
 // makePushConfigHandler creates an HTTP handler for push configuration tests.
-func makePushConfigHandler(statusCode int, reloadID string) http.HandlerFunc {
+// expectForceReload controls whether the handler expects force_reload=true in the query.
+func makePushConfigHandler(statusCode int, reloadID string, expectForceReload bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v3/info" {
 			w.WriteHeader(http.StatusOK)
@@ -196,6 +197,14 @@ func makePushConfigHandler(statusCode int, reloadID string) http.HandlerFunc {
 		}
 
 		if r.URL.Path == "/services/haproxy/configuration/raw" && r.Method == "POST" {
+			// Verify force_reload query parameter
+			gotForceReload := r.URL.Query().Get("force_reload") == "true"
+			if expectForceReload != gotForceReload {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "expected force_reload=%v, got %v", expectForceReload, gotForceReload)
+				return
+			}
+
 			if reloadID != "" {
 				w.Header().Set("Reload-ID", reloadID)
 			}
@@ -227,18 +236,18 @@ func TestPushRawConfiguration(t *testing.T) {
 		wantReloadID string
 	}{
 		{
-			name:         "success with reload",
+			name:         "synchronous reload via forceReload (201)",
+			statusCode:   http.StatusCreated,
+			reloadID:     "",
+			expectErr:    false,
+			wantReloadID: "",
+		},
+		{
+			name:         "async reload fallback (202)",
 			statusCode:   http.StatusAccepted,
 			reloadID:     "reload-123",
 			expectErr:    false,
 			wantReloadID: "reload-123",
-		},
-		{
-			name:         "success without reload",
-			statusCode:   http.StatusOK,
-			reloadID:     "",
-			expectErr:    false,
-			wantReloadID: "",
 		},
 		{
 			name:       "bad request",
@@ -254,7 +263,7 @@ func TestPushRawConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, cleanup := createTestClient(t, makePushConfigHandler(tt.statusCode, tt.reloadID))
+			client, cleanup := createTestClient(t, makePushConfigHandler(tt.statusCode, tt.reloadID, true))
 			defer cleanup()
 
 			reloadID, err := client.PushRawConfiguration(context.Background(), "global\n  daemon\n", 1)

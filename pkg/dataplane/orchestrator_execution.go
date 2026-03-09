@@ -95,8 +95,12 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 		Message:           fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
 	}
 
-	// Phase 4: Verify reload if triggered and verification enabled
-	if reloadTriggered && opts.VerifyReload {
+	// Phase 4: Verify reload if triggered and verification enabled.
+	// When reloadID is empty (synchronous forceReload), the reload already succeeded —
+	// mark as verified without polling.
+	if reloadTriggered && reloadID == "" {
+		result.ReloadVerified = true
+	} else if reloadTriggered && opts.VerifyReload {
 		if err := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); err != nil {
 			result.Success = false
 			result.ReloadVerified = false
@@ -196,11 +200,16 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 	// Merge config operations with aux file operations for consistent view
 	appliedOps = append(appliedOps, auxDiffsToOperations(auxDiffs)...)
 
+	// Raw push always triggers a reload. When reloadID is empty (synchronous forceReload),
+	// the reload already succeeded — mark as verified without polling.
+	reloadVerified := reloadID == ""
+
 	result := &SyncResult{
 		Success:           true,
 		AppliedOperations: appliedOps, // All operations including aux files
 		ReloadTriggered:   true,       // Raw push always triggers reload
 		ReloadID:          reloadID,
+		ReloadVerified:    reloadVerified,
 		SyncMode:          mode,
 		Duration:          time.Since(startTime),
 		Retries:           0,
@@ -208,8 +217,8 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 		Message:           fmt.Sprintf("Successfully applied %d operations via raw config push (%s)", len(appliedOps), mode),
 	}
 
-	// Verify reload if verification enabled (raw push always triggers reload)
-	if opts.VerifyReload {
+	// Verify reload via polling only when an async reload ID was returned
+	if !reloadVerified && opts.VerifyReload {
 		if err := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); err != nil {
 			result.Success = false
 			result.ReloadVerified = false
@@ -560,9 +569,12 @@ func (o *orchestrator) executeConfigOperations(
 			// VersionAdapter will commit the transaction after this callback returns
 		})
 
-		// Extract reload information from commit result (if successful)
+		// Extract reload information from commit result (if successful).
+		// Status 202 = async reload (has ReloadID for polling).
+		// Status 200 = synchronous reload via forceReload (no ReloadID, already done).
+		// In both cases a reload was triggered.
 		if err == nil && commitResult != nil {
-			reloadTriggered = commitResult.StatusCode == 202
+			reloadTriggered = commitResult.StatusCode == 202 || commitResult.StatusCode == 200
 			reloadID = commitResult.ReloadID
 		}
 	}
