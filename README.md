@@ -36,7 +36,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 ## Quick Start
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0-alpha.12
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
 ```
 
 The chart ships with [template libraries](https://haproxy-haptic.org/helm-chart/latest/template-libraries/) for Kubernetes Ingress and Gateway API enabled by default — standard routing works immediately without any template configuration.

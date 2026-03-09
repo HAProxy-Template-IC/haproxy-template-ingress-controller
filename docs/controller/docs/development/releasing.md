@@ -133,7 +133,7 @@ When a `v*` tag is pushed, CI will:
    - SHA256 checksums
    - Release notes from CHANGELOG.md
    - Pre-release flag (for alpha/beta/rc versions)
-3. **Build Docker images** for HAProxy 3.0, 3.1, 3.2
+3. **Build Docker images** for HAProxy 3.0, 3.1, 3.2, 3.3
 4. **Sign all artifacts** with Cosign (keyless OIDC)
 5. **Generate SBOM** (Software Bill of Materials) for each image
 6. **Attach SBOM attestation** to images via Cosign

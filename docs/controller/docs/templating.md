@@ -236,6 +236,7 @@ bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 | `sort_by` | Sort by JSONPath expressions | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
 | `debug` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
 | `toJSON` | Convert value to JSON string | `{{ myMap \| toJSON() }}` |
+| `semver_gte` | Compare HAProxy version (major.minor) | `{{ semver_gte(haproxyVersion, "3.3") }}` |
 
 **sort_by modifiers**: `:desc` (descending), `:exists` (by field presence), `| length` (by length)
 

@@ -22,14 +22,14 @@ HAPTIC:
 ## Installation
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0-alpha.12
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
 ```
 
 With custom values:
 
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0-alpha.11 \
+  --version 0.1.0 \
   -f my-values.yaml
 ```
 
@@ -86,14 +86,14 @@ Full documentation is available in the [chart docs site](./docs/):
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0-alpha.11
+  --version 0.1.0
 ```
 
 With new values:
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0-alpha.11 \
+  --version 0.1.0 \
   -f my-values.yaml
 ```
 

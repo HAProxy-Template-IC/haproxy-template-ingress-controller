@@ -9,186 +9,34 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-03-09
+
 ### Added
 
+- **Template-driven HAProxy configuration**: Generate HAProxy configs using Scriggo templates (Go-based, Jinja2-like syntax) with full access to Kubernetes resources, built-in utility functions, and modular template snippets
+- **Embedded validation tests**: Declarative test fixtures and assertions for testing HAProxy configurations within template libraries; run via `controller validate --test <name>`
+- **Dry-run validation webhook**: Admission webhook for HAProxyTemplateConfig CRD that renders templates with proposed changes and rejects invalid configurations with detailed errors
+- **Multi-architecture container images**: `linux/amd64`, `linux/arm64`, `linux/arm/v7`
+- **HAProxy version support**: 3.0, 3.1, 3.2, 3.3 — version-specific images tagged accordingly
+- **Supply chain security**: Container images, binaries, and Helm charts signed with Cosign (keyless OIDC); SBOM attestations in SPDX format
+- **Prometheus metrics**: Reconciliation timing, template rendering duration, validation results, and Kubernetes API latencies
+- **Leader election for high availability**: Multiple controller replicas with automatic leader election; hot-standby replicas continue watching and validating; configurable failover timing
+- **Stall detection**: Components detect when blocked and report unhealthy via `/healthz`, enabling automatic pod restart via Kubernetes liveness probes
+- **Configurable deployment timeout**: `deploymentTimeout` in dataplane config (default: 30s) to recover from stuck deployments
+- **Server slot preservation**: Preserve HAProxy server slots during rolling deployments to enable zero-reload runtime API updates via `currentConfig` template context
+- **HAProxy Ingress annotation compatibility**: 47 `haproxy-ingress.github.io/*` annotations via the haproxy-ingress template library
+- **Dataplane API concurrency limiting**: `maxParallel` config option to limit concurrent API operations, preventing timeouts for large configurations
+- **CRD content compression**: HAProxyCfg content compressed with zstd when exceeding `configPublishing.compressionThreshold` (default 1 MiB), reducing etcd storage
+- **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support
+- **HAProxyCRTListFile CRD**: Publish crt-list files as Kubernetes custom resources with compression support
 - **`semver_gte` template filter**: Version comparison for gating features on HAProxy version (e.g., `semver_gte(haproxyVersion, "3.3")`)
 - **Template-driven status patches**: Templates can register status patches for any Kubernetes resource via `statusPatch()` function, with outcome-keyed variants (`rendered`, `deployed`, `renderFailed`, `deployFailed`) applied automatically based on pipeline phase
 - **Backend diff field diagnostics**: Reconciliation log now includes which BackendBase fields caused backend updates, aiding diagnosis of false diffs from parser round-trip asymmetries
 - **Status patch helper functions**: `condition()`, `transitionTime()`, and `toJSON()` template functions for building Kubernetes status conditions with stable transition timestamps
-- **StatusApplier component**: Applies status patches via Server-Side Apply to `/status` subresource with checksum-based skip optimization and leadership-aware cache management
-
-### Fixed
-
-- **Metrics server lifecycle**: Persist metrics server across controller iterations instead of recreating on each cycle
-- **FileRegistry map file paths**: Use filename instead of full path for map file registration, fixing deployment path mismatches
-- **Dataplane sync rule comparison**: Replace index-based rule comparison with LCS content matching for reliable HAProxy config updates
 
 ### Changed
 
-- **Go runtime upgraded to 1.26.1**: GOGC override removed — Green Tea GC provides equivalent throughput improvement by default
-
-### Performance
-
-- **Scriggo callNative fast-path**: Expanded type-switch cases eliminate `reflect.Value.Call` for frequent template function signatures
-- **Channel-based VM pool**: Replace `sync.Pool` with channel pool and tune GOGC for more predictable memory behavior
-- **Eliminated `fmt.Sprint` allocations**: Direct type conversions in hot template functions
-- **Removed `argsPool` sync.Pool**: Reduce allocation hotspots in template argument passing
-
-## [0.1.0-alpha.12] - 2026-02-27
-
-### Added
-
-- **HAProxy 3.3 support**: DataPlane API v3.3 client generation, dispatch routing, and version-specific validators
-- **Dataplane API concurrency limiting**: New `maxParallel` config option to limit concurrent API operations during sync, preventing timeouts when syncing large configurations (default: auto-calculated from dataplane GOMAXPROCS × 10)
-- Test-specific `extraContext` overrides for validation tests
-- **CRD content compression**: HAProxyCfg content automatically compressed with zstd when exceeding `configPublishing.compressionThreshold` (default 1 MiB), reducing etcd storage
-- **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support
-- **HAProxyCRTListFile CRD**: Publish crt-list files as Kubernetes custom resources with compression support
-- **Event coalescing**: Reduce event queue buildup during high-frequency reconciliation
-
-### Changed
-
-- **Balance directive consolidation**: Moved `balance roundrobin` from per-backend to `defaults` section, preventing silent behavior change on HAProxy 3.3 (which changed the default from `roundrobin` to `random`)
-- **Parallel Dataplane API operations**: Execute operations in parallel within each priority group, reducing sync time from sequential (~10-20s) to parallel (~sub-second) for large deployments
-- **Reduced CRD API load**: Skip status updates for no-op drift checks, reducing Kubernetes API calls by 95%+ during drift prevention
-- **Removed `lastCheckedAt` field**: Removed from `PodDeploymentStatus` in all CRDs (HAProxyCfg, HAProxyMapFile, HAProxyGeneralFile, HAProxyCRTListFile) to eliminate unnecessary status updates
-
-### Fixed
-
-- **Transaction cleanup on timeout**: Use fresh context for transaction abort operations, ensuring cleanup when deployment timeout is reached
-- **Graceful shutdown errors**: Track all iteration-scoped goroutines in errgroup and reduce internal shutdown timeout to 25s to prevent pod Error state during rolling updates
-- **Compression threshold default**: Apply 1 MiB default compression threshold when `configPublishing.compressionThreshold` is not set in the CRD, fixing "etcdserver: request is too large" errors
-- **Webhook certificate loading**: Skip webhook cert Secret fetch when webhooks are disabled, allowing `--set webhook.enabled=false` to work without cert-manager
-- **Leader election disabled race condition**: Fix race condition when leader election is disabled
-- **Coordinator event buffer overflow**: Fix event buffer overflow causing dropped events
-- **Excessive CRD API requests**: Reduce unnecessary auxiliary file status updates and skip no-op drift check updates
-
-### Performance
-
-- **Memory optimization**: Zero-allocation validators, pointer-based indexes for zero-copy iteration, in-place float conversion, VM pool cleanup
-- **Caching**: LRU parser cache, validation result caching, pre-parsed config reuse, version-based config fetch skip, list result caching
-- **Reduced GC pressure**: In-place normalization, debounce tuning, Scriggo VM allocation reduction, heavyweight event filtering
-- **PGO profile**: Updated profile-guided optimization from production workload
-
-## [0.1.0-alpha.11] - 2026-01-02
-
-### Added
-
-- **HAProxy Ingress annotation compatibility**: Support for 47 haproxy-ingress annotations via the haproxy-ingress template library
-
-### Fixed
-
-- **Template validator currentConfig**: Add missing type declaration for `currentConfig` in TemplateValidator context
-
-## [0.1.0-alpha.10] - 2026-01-01
-
-### Added
-
-- **Server slot preservation**: Preserve HAProxy server slots during rolling deployments to enable zero-reload runtime API updates via `currentConfig` template context
-
-### Fixed
-
-- **Reconciliation debounce during rolling deployments**: Fix timer reset on each resource change that violated maximum latency guarantee, causing 3-4+ second delays during rapid endpoint updates
-
-## [0.1.0-alpha.9] - 2025-12-30
-
-### Fixed
-
-- **SSL certificate chain comparison**: Parse all certificates in PEM chain to match HAProxy API issuer format, fixing spurious updates for CA-signed certificates
-- **Spurious update events in bulk watcher**: Skip update events where old and new objects are identical, reducing unnecessary reconciliations
-
-## [0.1.0-alpha.8] - 2025-12-30
-
-### Added
-
-- **Configurable deployment timeout**: New `deploymentTimeout` field in dataplane config (default: 30s) to recover from stuck deployments
-
-### Fixed
-
-- **Deployment deadlock after leader transition**: Fix race condition where deployments become permanently stuck after leadership changes due to lost events between leader-only components
-
-## [0.1.0-alpha.7] - 2025-12-30
-
-### Changed
-
-- **Reconciliation debouncing**: Switch from trailing-edge to leading-edge triggering with 100ms refractory period (down from 500ms), reducing latency for isolated changes from 500ms to 0ms
-
-### Fixed
-
-- **SSL certificate comparison**: Fix identifier format mismatch causing unnecessary re-uploads every reconciliation cycle
-
-## [0.1.0-alpha.6] - 2025-12-30
-
-### Added
-
-- **Stall detection**: Components now detect when they're blocked and report unhealthy via `/healthz`, enabling automatic pod restart via Kubernetes liveness probes
-
-## [0.1.0-alpha.5] - 2025-12-30
-
-### Fixed
-
-- **Template validation errors**: Improved error messages with line/column location and template context; errors now logged at ERROR level and visible in CRD status
-
-## [0.1.0-alpha.4] - 2025-12-29
-
-### Fixed
-
-- **Scriggo template engine**: Update fork with fix for `break` statement in nested loops causing premature loop termination
-
-## [0.1.0-alpha.3] - 2025-12-28
-
-### Fixed
-
-- **Resource store ordering**: Ensure deterministic ordering when querying resources for consistent HAProxy server slot assignment
-
-## [0.1.0-alpha.2] - 2025-12-28
-
-### Fixed
-
-- **SSL certificate filenames**: Sanitize certificate filenames with dots to match HAProxy storage format
-
-## [0.1.0-alpha.1] - 2025-12-27
-
-### Added
-
-- **Template-driven HAProxy configuration**: Generate HAProxy configs using Scriggo templates (Go-based, Jinja2-like syntax)
-  - Full access to Kubernetes resources in templates via `resources.<type>.List()` and `resources.<type>.Get()`
-  - Built-in functions for common operations: sorting, filtering, deduplication, base64 encoding
-  - Template snippets for modular, reusable configuration blocks
-
-- **Embedded validation tests**: Test HAProxy configurations within template libraries
-  - Declarative test fixtures (Services, Endpoints, Ingresses, HTTPRoutes)
-  - Assertions: HAProxy config validity, pattern matching, exact content
-  - Run tests via `controller validate --test <name>`
-
-- **Dry-run validation webhook**: Validate configuration changes before applying
-  - Admission webhook for HAProxyTemplateConfig CRD
-  - Renders templates with proposed changes
-  - Validates resulting HAProxy config syntax
-  - Rejects invalid configurations with detailed errors
-
-- **Multi-architecture container images**: Support for common Kubernetes platforms
-  - linux/amd64, linux/arm64, linux/arm/v7
-  - Based on official HAProxy Docker images
-
-- **Multiple HAProxy version support**: Choose your HAProxy version
-  - HAProxy 3.0, 3.1, 3.2 variants available
-  - Version-specific images tagged accordingly
-
-- **Supply chain security**: Signed artifacts and transparency
-  - All container images signed with Cosign (keyless OIDC)
-  - SBOM (Software Bill of Materials) attestations in SPDX format
-  - Signed release binaries with SHA256 checksums
-  - Helm chart OCI artifacts signed
-
-- **Prometheus metrics**: Comprehensive observability
-  - Reconciliation timing and success/failure counts
-  - Template rendering duration
-  - HAProxy config validation results
-  - Kubernetes API request latencies
-
-- **Leader election for high availability**: Multiple controller replicas now supported with automatic leader election
-  - Only the leader replica deploys configurations to HAProxy instances
-  - All replicas continue watching resources, rendering templates, and validating configs (hot standby)
-  - Automatic failover when leader fails (~15-20 seconds downtime)
-  - Configurable timing parameters for failover speed and clock skew tolerance
+- **Reconciliation triggering**: Leading-edge triggering with 100ms refractory period; no latency for isolated changes
+- **Parallel Dataplane API operations**: Operations execute in parallel within each priority group, reducing sync time for large configurations
+- **Balance directive**: `balance roundrobin` moved to `defaults` section to prevent silent behavior change when upgrading to HAProxy 3.3 (which changed the default balance algorithm from `roundrobin` to `random`)
+- **Go runtime 1.26.1**: Green Tea GC replaces manual GOGC tuning

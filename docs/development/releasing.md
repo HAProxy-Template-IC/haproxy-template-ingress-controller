@@ -251,7 +251,7 @@ cosign verify \
 
 | Chart Version | Controller Version | Kubernetes | HAProxy |
 |---------------|-------------------|------------|---------|
-| 0.1.x | 0.1.x | 1.31-1.34 | 3.0-3.2 |
+| 0.1.x | 0.1.x | 1.31-1.35 | 3.0-3.3 |
 
 ## Supported HAProxy Versions
 
@@ -259,7 +259,8 @@ cosign verify \
 |-----------------|-----------|--------|
 | 3.0 | `haproxytech/haproxy-debian:3.0` | Supported |
 | 3.1 | `haproxytech/haproxy-debian:3.1` | Supported |
-| 3.2 | `haproxytech/haproxy-debian:3.2` | Supported (current) |
+| 3.2 | `haproxytech/haproxy-debian:3.2` | Supported |
+| 3.3 | `haproxytech/haproxy-debian:3.3` | Supported (current) |
 
 All images include multi-architecture support: `linux/amd64`, `linux/arm64`, `linux/arm/v7`.
 
