@@ -1,6 +1,6 @@
-site_name: HAPTIC Helm Chart
+site_name: "HAPTIC Helm Chart"
 site_url: https://haproxy-haptic.org/helm-chart/
-site_description: Helm chart for HAPTIC (HAProxy Template Ingress Controller)
+site_description: "Helm chart for deploying HAPTIC, a template-driven HAProxy ingress controller for Kubernetes."
 
 repo_name: haproxy-haptic/haptic
 repo_url: https://gitlab.com/haproxy-haptic/haptic
