@@ -42,7 +42,7 @@ ARG GORELEASER_VERSION=2.14.3
 # renovate: datasource=github-releases depName=sigstore/cosign
 ARG COSIGN_VERSION=3.0.5
 # renovate: datasource=github-releases depName=anchore/syft
-ARG SYFT_VERSION=1.42.1
+ARG SYFT_VERSION=1.42.2
 
 # Install git (for go modules), Docker CLI, and other build dependencies
 RUN apt-get update \
