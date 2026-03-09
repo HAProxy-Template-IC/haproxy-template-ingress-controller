@@ -27,13 +27,13 @@ For controller architecture and behavior documentation, see the [controller docs
 ## Installation
 
 ```bash
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
 ```
 
 With custom values:
 
 ```bash
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.1.0 \
   -f my-values.yaml
 ```
@@ -71,7 +71,7 @@ Use this chart to find what you need:
 ## Upgrading
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.1.0
 ```
 

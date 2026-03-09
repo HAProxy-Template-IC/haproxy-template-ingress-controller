@@ -6,7 +6,7 @@ This document provides an overview of HAProxy configuration sections and child c
 
 The controller supports all configuration sections that can be managed through the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Configuration changes are applied using fine-grained operations to minimize HAProxy reloads and maximize use of the Runtime API for zero-downtime updates.
 
-**API Version Support:** The controller supports Dataplane API versions 3.0, 3.1, and 3.2. The API version is auto-detected at runtime.
+**API Version Support:** The controller supports Dataplane API versions 3.0, 3.1, 3.2, and 3.3. The API version is auto-detected at runtime.
 
 **HAProxy Editions:** Both HAProxy Community and HAProxy Enterprise are supported. Enterprise-only features are automatically detected and enabled when connected to an Enterprise instance.
 

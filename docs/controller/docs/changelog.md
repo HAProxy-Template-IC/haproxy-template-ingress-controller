@@ -5,52 +5,37 @@ All notable changes to the HAProxy Template Ingress Controller will be documente
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
+For Helm chart changes, see the [Chart CHANGELOG](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
-## [0.1.0-alpha.1] - 2025-12-26
+## [0.1.0] - 2026-03-09
 
 ### Added
 
-- **Template-driven HAProxy configuration**: Generate HAProxy configs using Scriggo templates (Go-based, Jinja2-like syntax)
-  - Full access to Kubernetes resources in templates via `resources.<type>.List()` and `resources.<type>.Get()`
-  - Built-in functions for common operations: sorting, filtering, deduplication, base64 encoding
-  - Template snippets for modular, reusable configuration blocks
+- **Template-driven HAProxy configuration**: Generate HAProxy configs using Scriggo templates (Go-based, Jinja2-like syntax) with full access to Kubernetes resources, built-in utility functions, and modular template snippets
+- **Embedded validation tests**: Declarative test fixtures and assertions for testing HAProxy configurations within template libraries; run via `controller validate --test <name>`
+- **Dry-run validation webhook**: Admission webhook for HAProxyTemplateConfig CRD that renders templates with proposed changes and rejects invalid configurations with detailed errors
+- **Multi-architecture container images**: `linux/amd64`, `linux/arm64`, `linux/arm/v7`
+- **HAProxy version support**: 3.0, 3.1, 3.2, 3.3 — version-specific images tagged accordingly
+- **Supply chain security**: Container images, binaries, and Helm charts signed with Cosign (keyless OIDC); SBOM attestations in SPDX format
+- **Prometheus metrics**: Reconciliation timing, template rendering duration, validation results, and Kubernetes API latencies
+- **Leader election for high availability**: Multiple controller replicas with automatic leader election; hot-standby replicas continue watching and validating; configurable failover timing
+- **Stall detection**: Components detect when blocked and report unhealthy via `/healthz`, enabling automatic pod restart via Kubernetes liveness probes
+- **Configurable deployment timeout**: `deploymentTimeout` in dataplane config (default: 30s) to recover from stuck deployments
+- **Server slot preservation**: Preserve HAProxy server slots during rolling deployments to enable zero-reload runtime API updates via `currentConfig` template context
+- **HAProxy Ingress annotation compatibility**: 47 `haproxy-ingress.github.io/*` annotations via the haproxy-ingress template library
+- **Dataplane API concurrency limiting**: `maxParallel` config option to limit concurrent API operations, preventing timeouts for large configurations
+- **CRD content compression**: HAProxyCfg content compressed with zstd when exceeding `configPublishing.compressionThreshold` (default 1 MiB), reducing etcd storage
+- **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support
+- **HAProxyCRTListFile CRD**: Publish crt-list files as Kubernetes custom resources with compression support
+- **`semver_gte` template filter**: Version comparison for gating features on HAProxy version (e.g., `semver_gte(haproxyVersion, "3.3")`)
+- **Template-driven status patches**: Templates can register status patches for any Kubernetes resource via `statusPatch()` function, with outcome-keyed variants (`rendered`, `deployed`, `renderFailed`, `deployFailed`) applied automatically based on pipeline phase
+- **Status patch helper functions**: `condition()`, `transitionTime()`, and `toJSON()` template functions for building Kubernetes status conditions with stable transition timestamps
 
-- **Embedded validation tests**: Test HAProxy configurations within template libraries
-  - Declarative test fixtures (Services, Endpoints, Ingresses, HTTPRoutes)
-  - Assertions: HAProxy config validity, pattern matching, exact content
-  - Run tests via `controller validate --test <name>`
+### Changed
 
-- **Dry-run validation webhook**: Validate configuration changes before applying
-  - Admission webhook for HAProxyTemplateConfig CRD
-  - Renders templates with proposed changes
-  - Validates resulting HAProxy config syntax
-  - Rejects invalid configurations with detailed errors
-
-- **Multi-architecture container images**: Support for common Kubernetes platforms
-  - linux/amd64, linux/arm64, linux/arm/v7
-  - Based on official HAProxy Docker images
-
-- **Multiple HAProxy version support**: Choose your HAProxy version
-  - HAProxy 3.0, 3.1, 3.2 variants available
-  - Version-specific images tagged accordingly
-
-- **Supply chain security**: Signed artifacts and transparency
-  - All container images signed with Cosign (keyless OIDC)
-  - SBOM (Software Bill of Materials) attestations in SPDX format
-  - Signed release binaries with SHA256 checksums
-  - Helm chart OCI artifacts signed
-
-- **Prometheus metrics**: Comprehensive observability
-  - Reconciliation timing and success/failure counts
-  - Template rendering duration
-  - HAProxy config validation results
-  - Kubernetes API request latencies
-
-- **Leader election for high availability**: Multiple controller replicas now supported with automatic leader election
-  - Only the leader replica deploys configurations to HAProxy instances
-  - All replicas continue watching resources, rendering templates, and validating configs (hot standby)
-  - Automatic failover when leader fails (~15-20 seconds downtime)
-  - Configurable timing parameters for failover speed and clock skew tolerance
+- **Reconciliation triggering**: Leading-edge triggering with 100ms refractory period; no latency for isolated changes
+- **Parallel Dataplane API operations**: Operations execute in parallel within each priority group, reducing sync time for large configurations
+- **Balance directive**: `balance roundrobin` moved to `defaults` section to prevent silent behavior change when upgrading to HAProxy 3.3 (which changed the default balance algorithm from `roundrobin` to `random`)
+- **Go runtime 1.26.1**: Green Tea GC replaces manual GOGC tuning
