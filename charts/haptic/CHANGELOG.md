@@ -9,6 +9,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- `extraDeploy` now accepts both list and dict formats (dict enables composing across multiple values files)
+
 ## [0.1.0] - 2026-03-09
 
 ### Added
