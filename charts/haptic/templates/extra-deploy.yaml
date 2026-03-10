@@ -1,4 +1,12 @@
-{{- range .Values.extraDeploy }}
+{{- $items := list }}
+{{- if kindIs "map" .Values.extraDeploy }}
+{{- range $key, $val := .Values.extraDeploy }}
+{{- $items = append $items $val }}
+{{- end }}
+{{- else }}
+{{- $items = .Values.extraDeploy }}
+{{- end }}
+{{- range $items }}
 ---
 {{ if typeIs "string" . }}
 {{- tpl . $ }}

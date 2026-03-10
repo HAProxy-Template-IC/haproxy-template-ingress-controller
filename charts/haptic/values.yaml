@@ -1303,11 +1303,20 @@ networkPolicy:
     # Additional custom ingress rules
     additionalRules: []
 
-# Extra Kubernetes resources to deploy alongside the chart
+# Extra Kubernetes resources to deploy alongside the chart.
 # Supports Helm templating ({{ .Release.Name }}, {{ .Release.Namespace }}, etc.)
-# Example:
+#
+# Can be a list (replaced wholesale when merging values files):
 #   extraDeploy:
 #     - apiVersion: monitoring.coreos.com/v1
+#       kind: ServiceMonitor
+#       metadata:
+#         name: "{{ .Release.Name }}-haproxy-stats"
+#
+# Or a dict (keys are merge identifiers, composable across values files):
+#   extraDeploy:
+#     service-monitor:
+#       apiVersion: monitoring.coreos.com/v1
 #       kind: ServiceMonitor
 #       metadata:
 #         name: "{{ .Release.Name }}-haproxy-stats"
@@ -1318,4 +1327,4 @@ networkPolicy:
 #         endpoints:
 #           - port: stats
 #             path: /metrics
-extraDeploy: []
+extraDeploy: {}
