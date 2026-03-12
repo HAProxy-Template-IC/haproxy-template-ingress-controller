@@ -2,7 +2,7 @@
         test test-integration test-acceptance test-acceptance-parallel build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
-        tidy verify verify-generate generate clean fmt vet install-tools dev \
+        tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
         release-controller release-chart goreleaser-snapshot \
         pgo-profile pgo-merge
 
@@ -49,7 +49,7 @@ version: ## Display version information
 
 ## Linting targets
 
-lint: ## Run all linters (YAML, JSON, Markdown, Go)
+lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	@echo "Linting YAML files..."
 	yamllint -c .yamllint.yml .
 	@echo "Linting JSON files..."
@@ -138,7 +138,7 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 
 ## Security & vulnerability scanning
 
-audit: ## Run security vulnerability scanning
+audit: vendor ## Run security vulnerability scanning
 	@echo "Running govulncheck..."
 	$(GOVULNCHECK) ./...
 
@@ -332,6 +332,9 @@ docker-clean: ## Remove Docker images and build cache
 tidy: ## Run go mod tidy
 	@echo "Running go mod tidy..."
 	$(GO) mod tidy
+
+vendor: ## Sync vendor directory with go.mod (auto-runs before lint/audit)
+	@$(GO) mod vendor
 
 verify: ## Verify dependencies
 	@echo "Verifying dependencies..."

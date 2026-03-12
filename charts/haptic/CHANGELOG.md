@@ -9,9 +9,14 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- `haproxy.org/pod-maxconn` now only counts Running and Ready HAProxy pods (previously counted all pods including Pending, SysctlForbidden, CrashLoopBackOff)
+
 ### Changed
 
 - `extraDeploy` now accepts both list and dict formats (dict enables composing across multiple values files)
+- `haproxy.org/pod-maxconn` quantizes the pod count to the next power of 2 to avoid HAProxy reload cascades on scaling
 
 ## [0.1.0] - 2026-03-09
 

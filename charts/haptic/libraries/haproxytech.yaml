@@ -367,19 +367,35 @@ templateSnippets:
           {%- if val <= 0 %}
             {{- fail("Invalid value '" + podMaxconn + "' for annotation 'haproxy.org/pod-maxconn' on Ingress '" + key + "'. Must be a positive integer.") -}}
           {%- end %}
+          {#- Count only Running+Ready pods (not Pending, SysctlForbidden, etc.) -#}
           {%- var haproxyPodCount = 0 %}
           {%- if controller != nil %}
             {%- var pods = controller.haproxy_pods %}
-            {%- if pods != nil %}{%- haproxyPodCount = len(pods.List()) %}{%- end %}
+            {%- if pods != nil %}
+              {%- for _, pod := range pods.List() %}
+                {%- if (pod | dig("status", "phase") | fallback("")) == "Running" %}
+                  {%- for _, cond := range (pod | dig("status", "conditions") | fallback([]any{}) | toSlice()) %}
+                    {%- if (cond | dig("type") | fallback("")) == "Ready" && (cond | dig("status") | fallback("")) == "True" %}
+                      {%- haproxyPodCount = haproxyPodCount + 1 %}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
           {%- end %}
           {%- if haproxyPodCount > 0 %}
-            {%- var perPod = ((val | float64()) / (haproxyPodCount | float64())) | ceil() %}
+            {#- Quantize to next power of 2 to avoid reload cascades on scaling -#}
+            {%- var effectiveCount = 1 %}
+            {%- for effectiveCount < haproxyPodCount %}
+              {%- effectiveCount = effectiveCount * 2 %}
+            {%- end %}
+            {%- var perPod = ((val | float64()) / (effectiveCount | float64())) | ceil() %}
       # haproxytech/backend-directives-haproxytech-pod-maxconn
-      # pod-maxconn: {{ podMaxconn }} total / {{ haproxyPodCount }} HAProxy pods = {{ perPod }} per pod
+      # pod-maxconn: {{ podMaxconn }} total / {{ haproxyPodCount }} ready pods (effective: {{ effectiveCount }}) = {{ perPod }} per pod
             {% serverOpts["podMaxconnValue"] = perPod -%}
           {%- else %}
       # haproxytech/backend-directives-haproxytech-pod-maxconn
-      # pod-maxconn: {{ podMaxconn }} (no HAProxy pods discovered yet, using full value)
+      # pod-maxconn: {{ podMaxconn }} (no ready HAProxy pods discovered yet, using full value)
             {% serverOpts["podMaxconnValue"] = val -%}
           {%- end %}
         {%- end %}
@@ -1672,3 +1688,186 @@ validationTests:
         target: map:ssl-redirect-302.map
         pattern: "host01\\.example\\.com 1"
         description: Map file must contain redirect hosts
+
+  test-pod-maxconn-basic:
+    description: pod-maxconn divides total by ready HAProxy pod count with power-of-2 quantization
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: test-ingress
+            annotations:
+              haproxy.org/pod-maxconn: "100"
+          spec:
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: test-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: test-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+              targetRef:
+                kind: Pod
+                name: test-pod-1
+          ports:
+            - port: 8080
+      haproxy-pods:
+        - apiVersion: v1
+          kind: Pod
+          metadata:
+            namespace: haptic-system
+            name: haproxy-pod-1
+          status:
+            phase: Running
+            conditions:
+              - type: Ready
+                status: "True"
+        - apiVersion: v1
+          kind: Pod
+          metadata:
+            namespace: haptic-system
+            name: haproxy-pod-2
+          status:
+            phase: Running
+            conditions:
+              - type: Ready
+                status: "True"
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with pod-maxconn
+      - type: contains
+        target: haproxy.cfg
+        pattern: "maxconn 50"
+        description: Per-pod maxconn must be 100/2=50 (2 pods quantized to 2)
+      - type: contains
+        target: haproxy.cfg
+        pattern: "pod-maxconn: 100 total / 2 ready pods"
+        description: Comment must show ready pod count
+
+  test-pod-maxconn-only-counts-ready-pods:
+    description: pod-maxconn ignores non-Running and non-Ready pods
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: test-ingress
+            annotations:
+              haproxy.org/pod-maxconn: "100"
+          spec:
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: test-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: test-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+              targetRef:
+                kind: Pod
+                name: test-pod-1
+          ports:
+            - port: 8080
+      haproxy-pods:
+        - apiVersion: v1
+          kind: Pod
+          metadata:
+            namespace: haptic-system
+            name: haproxy-pod-1
+          status:
+            phase: Running
+            conditions:
+              - type: Ready
+                status: "True"
+        - apiVersion: v1
+          kind: Pod
+          metadata:
+            namespace: haptic-system
+            name: haproxy-pod-2
+          status:
+            phase: Running
+            conditions:
+              - type: Ready
+                status: "True"
+        - apiVersion: v1
+          kind: Pod
+          metadata:
+            namespace: haptic-system
+            name: haproxy-pod-3-pending
+          status:
+            phase: Pending
+        - apiVersion: v1
+          kind: Pod
+          metadata:
+            namespace: haptic-system
+            name: haproxy-pod-4-not-ready
+          status:
+            phase: Running
+            conditions:
+              - type: Ready
+                status: "False"
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "maxconn 50"
+        description: Per-pod maxconn must be 100/2=50 (only 2 of 4 pods are Running+Ready, quantized to 2)
+      - type: contains
+        target: haproxy.cfg
+        pattern: "2 ready pods"
+        description: Comment must show only ready pod count, not total
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "4 ready pods"
+        description: Must not count Pending or not-Ready pods
