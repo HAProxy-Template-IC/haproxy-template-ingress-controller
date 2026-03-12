@@ -19,6 +19,7 @@ Common issues and solutions for the HAProxy Template Ingress Controller.
 | SSL handshake failures | [SSL/TLS Issues](#ssltls-issues) |
 | High CPU or slow reconciliation | [Slow Reconciliation](#slow-reconciliation) |
 | OOMKilled / gradual memory growth | [High Memory Usage](#high-memory-usage) |
+| "shm-stats-file-max-objects" / reload failures | [Shared Memory Stats Limit](#shared-memory-stats-limit) |
 
 ## Controller Issues
 
@@ -153,6 +154,47 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 |-------|-------|----------|
 | Volume mount issue | `kubectl get pod $HAPROXY_POD -o yaml \| grep -A5 volumeMounts` | Ensure both containers share config volume |
 | HAProxy not reloading | `kubectl logs $HAPROXY_POD -c dataplane` | Check reload command, master socket access |
+
+### Shared Memory Stats Limit
+
+**Symptoms**: 100% deployment error rate, HAProxy reload failures with `shm-stats-file-max-objects` errors
+
+**Diagnosis**:
+
+```bash
+kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep "shm-stats"
+```
+
+Look for:
+
+```
+[ALERT] memory error while setting up shared counters for .../SRV_N server:
+Cannot add additional object to '/dev/shm/haproxy-stats' file,
+maximum number already reached (50000).
+```
+
+**Common Causes**:
+
+| Cause | Check | Solution |
+|-------|-------|----------|
+| Too many HAProxy objects for the configured limit | Count ingresses/services: `kubectl get ingresses -A --no-headers \| wc -l` | Increase `haproxy.shmStats.maxObjects` in Helm values |
+| Cluster grew beyond initial sizing | Compare object count to `maxObjects` value | Recalculate using the formula below |
+
+**Solution**:
+
+Each HAProxy frontend, backend, and server directive counts as one shm-stats object. The file is fixed-size and cannot be resized on reload. Increase `haproxy.shmStats.maxObjects` in your Helm values:
+
+```yaml
+haproxy:
+  shmStats:
+    enabled: true
+    maxObjects: 100000  # default: 50000
+```
+
+**Sizing formula**: `(number of backends + number of servers) × 1.2 safety margin`. Each object uses ~4KB of shared memory. For example, 100,000 objects require ~430Mi in `/dev/shm`, which counts against the pod's memory limit.
+
+!!! warning
+    After changing `maxObjects`, verify that `haproxy.resources.limits.memory` is large enough to accommodate the increased `/dev/shm` usage. The shm volume is memory-backed and counts against the pod's memory limit.
 
 ## Routing Issues
 
