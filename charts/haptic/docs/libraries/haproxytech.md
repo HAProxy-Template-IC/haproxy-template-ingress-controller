@@ -1106,7 +1106,7 @@ timeout check 3s
 
 **Status**: ✅ Supported
 
-**Description**: Maximum total concurrent connections for all backend pods combined, automatically divided equally among HAProxy controller replicas with ceiling rounding.
+**Description**: Maximum total concurrent connections for all backend pods combined, automatically divided equally among HAProxy controller replicas with ceiling rounding. Only Running and Ready pods are counted.
 
 **Usage**:
 
@@ -1118,9 +1118,13 @@ haproxy.org/pod-maxconn: "100"
 
 The annotation value represents the **total** maximum connections across all HAProxy replicas. The controller automatically:
 
-- Counts running HAProxy controller pods
-- Divides the total by the pod count (ceiling rounding)
+- Counts only **Running and Ready** HAProxy controller pods (Pending, CrashLoopBackOff, SysctlForbidden, and other non-ready pods are excluded)
+- Quantizes the pod count to the **next power of 2** to avoid HAProxy reload cascades when pods scale up or down
+- Divides the total by the quantized count (ceiling rounding)
 - Applies the per-pod value to each server line
+
+!!! note
+    The power-of-2 quantization means the effective per-pod maxconn only changes when the ready pod count crosses a power-of-2 boundary (1, 2, 4, 8, 16, ...). This prevents unnecessary HAProxy reloads during scaling events. The trade-off is that the actual total capacity may be lower than the annotation value when the pod count is not an exact power of 2.
 
 **Examples**:
 
@@ -1134,14 +1138,14 @@ metadata:
     haproxy.org/pod-maxconn: "100"
 ```
 
-Generated HAProxy configuration (1 HAProxy pod):
+Generated HAProxy configuration (1 ready HAProxy pod):
 
 ```haproxy
-# pod-maxconn: 100 total / 1 HAProxy pods = 100 per pod
+# pod-maxconn: 100 total / 1 ready pods (effective: 1) = 100 per pod
 server SRV_1 10.0.1.5:8080 maxconn 100 check
 ```
 
-**Multiple HAProxy pods**: Value divided equally with ceiling rounding
+**Multiple HAProxy pods**: Value divided with power-of-2 quantization
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -1151,21 +1155,31 @@ metadata:
     haproxy.org/pod-maxconn: "100"
 ```
 
-Generated HAProxy configuration (2 HAProxy pods):
+Generated HAProxy configuration (2 ready HAProxy pods, quantized to 2):
 
 ```haproxy
-# pod-maxconn: 100 total / 2 HAProxy pods = 50 per pod
+# pod-maxconn: 100 total / 2 ready pods (effective: 2) = 50 per pod
 server SRV_1 10.0.1.5:8080 maxconn 50 check
 ```
 
-Generated HAProxy configuration (3 HAProxy pods, with ceiling rounding):
+Generated HAProxy configuration (3 ready HAProxy pods, quantized to 4):
 
 ```haproxy
-# pod-maxconn: 100 total / 3 HAProxy pods = 34 per pod
-server SRV_1 10.0.1.5:8080 maxconn 34 check
+# pod-maxconn: 100 total / 3 ready pods (effective: 4) = 25 per pod
+server SRV_1 10.0.1.5:8080 maxconn 25 check
 ```
 
-**Fallback behavior**: If no HAProxy pods are discovered yet (e.g., during initial startup), the full value is used temporarily until pod discovery completes.
+**Quantization reference** (for `pod-maxconn: 200`):
+
+| Ready pods | Effective count | maxconn per pod |
+|------------|-----------------|-----------------|
+| 1          | 1               | 200             |
+| 2          | 2               | 100             |
+| 3-4        | 4               | 50              |
+| 5-8        | 8               | 25              |
+| 9-16       | 16              | 13              |
+
+**Fallback behavior**: If no Running and Ready HAProxy pods are discovered yet (e.g., during initial startup), the full annotation value is used temporarily until pod discovery completes.
 
 **Dependencies**: Requires HAProxy pod discovery to be operational for automatic division
 
