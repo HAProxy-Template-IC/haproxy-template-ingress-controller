@@ -180,6 +180,10 @@
   margin: 0;
 }
 
+#helm-version {
+  display: contents;
+}
+
 /* Doc cards */
 .doc-cards {
   display: grid;
