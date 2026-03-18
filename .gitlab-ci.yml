@@ -1167,6 +1167,21 @@ trigger-pages:
     branch: main
     strategy: depend
 
+# Trigger pages project to build versioned docs on controller release tags
+trigger-pages-release:
+  stage: deploy
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]/
+  inherit:
+    variables: false
+  variables:
+    DOC_VERSION: $CI_COMMIT_TAG
+  trigger:
+    project: haproxy-haptic/haproxy-haptic.gitlab.io
+    branch: main
+    strategy: depend
+
 # =============================================================================
 # Automatic Release Tagging (triggered when VERSION or Chart.yaml changes)
 # =============================================================================
