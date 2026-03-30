@@ -42,7 +42,7 @@ variables:
   # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
   MARKDOWNLINT_VERSION: "0.14.0"
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
-  GORELEASER_VERSION: "2.15.0"
+  GORELEASER_VERSION: "2.15.1"
   # renovate: datasource=github-releases depName=sigstore/cosign
   COSIGN_VERSION: "3.0.5"
   # renovate: datasource=github-releases depName=anchore/syft
