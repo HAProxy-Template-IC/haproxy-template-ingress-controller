@@ -9,7 +9,7 @@ require (
 	github.com/getkin/kin-openapi v0.134.0
 	github.com/golangci/golangci-lint/v2 v2.11.4
 	github.com/google/uuid v1.6.0
-	github.com/haproxytech/client-native/v6 v6.3.4
+	github.com/haproxytech/client-native/v6 v6.3.5
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.18.5
 	github.com/oapi-codegen/oapi-codegen/v2 v2.6.0
