@@ -202,7 +202,9 @@ func createReconciliationComponents(
 	if err != nil {
 		return nil, err
 	}
-	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, bus, logger)
+	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, bus, logger,
+		ctrlconfigpublisher.WithPublishInterval(cfg.Dataplane.GetConfigPublishInterval()),
+	)
 
 	// Create Status Updater (updates HAProxyTemplateConfig CRD status with validation results)
 	// This allows users to see validation errors via `kubectl describe haproxytemplateconfig`

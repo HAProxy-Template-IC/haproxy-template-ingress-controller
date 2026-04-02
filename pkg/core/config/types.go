@@ -292,6 +292,16 @@ type DataplaneConfig struct {
 	// 0 means disabled (always use fine-grained sync, except version=1).
 	// Default: 100
 	RawPushThreshold int `yaml:"raw_push_threshold"`
+
+	// ConfigPublishInterval throttles how often the HAProxyCfg CRD is updated.
+	// During endpoint churn the rendered config changes frequently, but each CRD update
+	// writes ~500 KB to etcd. This interval limits CRD publishes while deployments to
+	// HAProxy pods (via events) remain unthrottled.
+	// Uses leading-edge triggering: first change publishes immediately, subsequent
+	// changes within the interval are buffered and published when the interval expires.
+	// Format: Go duration string (e.g., "30s", "1m")
+	// Default: 30s
+	ConfigPublishInterval string `yaml:"config_publish_interval"`
 }
 
 // WatchedResource configures watching for a specific Kubernetes resource type.

@@ -233,6 +233,7 @@ func (p *Publisher) updateExistingStatus(ctx context.Context, req *PublishReques
 }
 
 // updateRuntimeConfigStatus updates the HAProxyCfg status with child resource references.
+// Skips the UpdateStatus API call if the references and total size are unchanged.
 func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, result *PublishResult) error {
 	// Get the latest version
 	current, err := p.crdClient.HaproxyTemplateICV1alpha1().
@@ -242,53 +243,23 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 		return fmt.Errorf("failed to get runtime config: %w", err)
 	}
 
-	// Update auxiliary file references
-	if current.Status.AuxiliaryFiles == nil {
-		current.Status.AuxiliaryFiles = &haproxyv1alpha1.AuxiliaryFileReferences{}
-	}
-
-	// Update map file references
-	current.Status.AuxiliaryFiles.MapFiles = []haproxyv1alpha1.ResourceReference{}
-	for _, name := range result.MapFileNames {
-		current.Status.AuxiliaryFiles.MapFiles = append(current.Status.AuxiliaryFiles.MapFiles, haproxyv1alpha1.ResourceReference{
-			Kind:      "HAProxyMapFile",
-			Name:      name,
-			Namespace: runtimeConfig.Namespace,
-		})
-	}
-
-	// Update SSL certificate references
-	current.Status.AuxiliaryFiles.SSLCertificates = []haproxyv1alpha1.ResourceReference{}
-	for _, name := range result.SecretNames {
-		current.Status.AuxiliaryFiles.SSLCertificates = append(current.Status.AuxiliaryFiles.SSLCertificates, haproxyv1alpha1.ResourceReference{
-			Kind:      "Secret",
-			Name:      name,
-			Namespace: runtimeConfig.Namespace,
-		})
-	}
-
-	// Update general file references
-	current.Status.AuxiliaryFiles.GeneralFiles = []haproxyv1alpha1.ResourceReference{}
-	for _, name := range result.GeneralFileNames {
-		current.Status.AuxiliaryFiles.GeneralFiles = append(current.Status.AuxiliaryFiles.GeneralFiles, haproxyv1alpha1.ResourceReference{
-			Kind:      "HAProxyGeneralFile",
-			Name:      name,
-			Namespace: runtimeConfig.Namespace,
-		})
-	}
-
-	// Update crt-list file references
-	current.Status.AuxiliaryFiles.CRTListFiles = []haproxyv1alpha1.ResourceReference{}
-	for _, name := range result.CRTListFileNames {
-		current.Status.AuxiliaryFiles.CRTListFiles = append(current.Status.AuxiliaryFiles.CRTListFiles, haproxyv1alpha1.ResourceReference{
-			Kind:      "HAProxyCRTListFile",
-			Name:      name,
-			Namespace: runtimeConfig.Namespace,
-		})
-	}
+	// Build new auxiliary file references
+	newAux := buildAuxiliaryFileReferences(runtimeConfig.Namespace, result)
 
 	// Calculate total size
 	totalSize := int64(len(runtimeConfig.Spec.Content))
+
+	// Skip UpdateStatus if nothing changed
+	if auxiliaryRefsEqual(current.Status.AuxiliaryFiles, newAux) &&
+		current.Status.Metadata != nil && current.Status.Metadata.TotalSize == totalSize {
+		p.logger.Debug("skipping HAProxyCfg status update, references unchanged",
+			"name", current.Name,
+		)
+		return nil
+	}
+
+	// Apply changes
+	current.Status.AuxiliaryFiles = newAux
 	if current.Status.Metadata != nil {
 		current.Status.Metadata.TotalSize = totalSize
 	}
@@ -301,4 +272,59 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 	}
 
 	return nil
+}
+
+// buildAuxiliaryFileReferences constructs an AuxiliaryFileReferences from a PublishResult.
+func buildAuxiliaryFileReferences(namespace string, result *PublishResult) *haproxyv1alpha1.AuxiliaryFileReferences {
+	aux := &haproxyv1alpha1.AuxiliaryFileReferences{}
+
+	for _, name := range result.MapFileNames {
+		aux.MapFiles = append(aux.MapFiles, haproxyv1alpha1.ResourceReference{
+			Kind: "HAProxyMapFile", Name: name, Namespace: namespace,
+		})
+	}
+	for _, name := range result.SecretNames {
+		aux.SSLCertificates = append(aux.SSLCertificates, haproxyv1alpha1.ResourceReference{
+			Kind: "Secret", Name: name, Namespace: namespace,
+		})
+	}
+	for _, name := range result.GeneralFileNames {
+		aux.GeneralFiles = append(aux.GeneralFiles, haproxyv1alpha1.ResourceReference{
+			Kind: "HAProxyGeneralFile", Name: name, Namespace: namespace,
+		})
+	}
+	for _, name := range result.CRTListFileNames {
+		aux.CRTListFiles = append(aux.CRTListFiles, haproxyv1alpha1.ResourceReference{
+			Kind: "HAProxyCRTListFile", Name: name, Namespace: namespace,
+		})
+	}
+
+	return aux
+}
+
+// auxiliaryRefsEqual compares two AuxiliaryFileReferences for equality.
+func auxiliaryRefsEqual(a, b *haproxyv1alpha1.AuxiliaryFileReferences) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return resourceRefsEqual(a.MapFiles, b.MapFiles) &&
+		resourceRefsEqual(a.SSLCertificates, b.SSLCertificates) &&
+		resourceRefsEqual(a.GeneralFiles, b.GeneralFiles) &&
+		resourceRefsEqual(a.CRTListFiles, b.CRTListFiles)
+}
+
+// resourceRefsEqual compares two slices of ResourceReference for equality.
+func resourceRefsEqual(a, b []haproxyv1alpha1.ResourceReference) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

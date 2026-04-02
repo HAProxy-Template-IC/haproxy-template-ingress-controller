@@ -27,6 +27,13 @@ const (
 	// DefaultDataplaneMapsDir is the default directory for HAProxy map files.
 	DefaultDataplaneMapsDir = "/etc/haproxy/maps"
 
+	// DefaultConfigPublishInterval is the default throttle interval for HAProxyCfg CRD updates.
+	// During endpoint churn each reconciliation changes the rendered config, but writing
+	// the ~500 KB CRD to etcd every 5 s creates significant write pressure. Throttling
+	// CRD publishes to 30 s reduces etcd writes ~6× while deployments to HAProxy pods
+	// (event-driven) remain unaffected.
+	DefaultConfigPublishInterval = 30 * time.Second
+
 	// DefaultDataplaneSSLCertsDir is the default directory for SSL certificates.
 	// This matches the values.yaml default and HAProxy container directory structure.
 	DefaultDataplaneSSLCertsDir = "/etc/haproxy/certs"
@@ -147,6 +154,17 @@ func (d *DataplaneConfig) GetDeploymentTimeout() time.Duration {
 		}
 	}
 	return DefaultDeploymentTimeout
+}
+
+// GetConfigPublishInterval returns the configured CRD publish throttle interval
+// or the default if not specified or invalid.
+func (d *DataplaneConfig) GetConfigPublishInterval() time.Duration {
+	if d.ConfigPublishInterval != "" {
+		if duration, err := time.ParseDuration(d.ConfigPublishInterval); err == nil {
+			return duration
+		}
+	}
+	return DefaultConfigPublishInterval
 }
 
 // GetLeaseDuration returns the configured lease duration
