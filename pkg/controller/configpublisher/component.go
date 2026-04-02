@@ -136,6 +136,29 @@ type Component struct {
 	// Used to skip redundant CRD updates when config content is unchanged.
 	// Protected by mu.
 	lastPublishedChecksum string
+
+	// Publish throttle: leading-edge with refractory period.
+	// Decouples CRD publish frequency from reconciliation frequency to reduce etcd
+	// write pressure. Deployments to HAProxy pods (event-driven) are unaffected.
+	publishInterval time.Duration
+	lastPublishTime time.Time        // Protected by throttleMu
+	pendingPublish  *publishWorkItem // Buffered work during refractory, protected by throttleMu
+	throttleMu      sync.Mutex
+	throttleTimerCh chan struct{} // Signals throttle timer expiry to publishWorker
+}
+
+// Option configures the Component.
+type Option func(*Component)
+
+// WithPublishInterval sets the throttle interval for CRD publishes.
+// During endpoint churn each reconciliation produces a new config, but writing
+// ~500 KB to etcd every 5 s is excessive. This interval limits CRD updates while
+// deployments to HAProxy pods (event-driven) remain unaffected.
+// A value of 0 disables throttling (every config is published immediately).
+func WithPublishInterval(d time.Duration) Option {
+	return func(c *Component) {
+		c.publishInterval = d
+	}
 }
 
 // New creates a new config publisher component.
@@ -143,6 +166,7 @@ func New(
 	publisher *configpublisher.Publisher,
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
+	opts ...Option,
 ) *Component {
 	if logger == nil {
 		logger = slog.Default()
@@ -152,7 +176,7 @@ func New(
 	// This is a leader-only component that subscribes when Start() is called
 	// (after leadership is acquired). All-replica components replay their state
 	// on BecameLeaderEvent to ensure leader-only components receive current state.
-	return &Component{
+	c := &Component{
 		publisher:            publisher,
 		eventBus:             eventBus,
 		logger:               logger.With("component", ComponentName),
@@ -162,7 +186,14 @@ func New(
 		validationFailedWork: make(chan *validationFailedWorkItem, publishWorkChannelSize),
 		statusWorkPending:    make(map[string]*statusWorkItem),
 		statusWorkTrigger:    make(chan struct{}, statusWorkTriggerSize),
+		throttleTimerCh:      make(chan struct{}, 1),
 	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
 }
 
 // Name returns the unique identifier for this component.

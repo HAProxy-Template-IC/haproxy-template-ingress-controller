@@ -17,6 +17,7 @@ package configpublisher
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
@@ -26,18 +27,26 @@ import (
 // publishWorker processes publish work items asynchronously.
 // This worker runs in a separate goroutine to prevent blocking the event loop
 // on slow K8S API calls.
+//
+// When a publish interval is configured, the worker uses leading-edge throttling:
+// the first publish after idle fires immediately, subsequent publishes within
+// the refractory period are buffered and flushed when the timer expires.
 func (c *Component) publishWorker(ctx context.Context) {
 	for {
 		select {
 		case work := <-c.publishWork:
 			c.processPublishWork(work)
+		case <-c.throttleTimerCh:
+			c.flushPendingPublish()
 		case <-ctx.Done():
+			// Flush any buffered publish before shutdown
+			c.flushPendingPublish()
 			return
 		}
 	}
 }
 
-// processPublishWork performs the actual config publishing.
+// processPublishWork decides whether to publish immediately or buffer for throttle.
 func (c *Component) processPublishWork(work *publishWorkItem) {
 	c.logger.Debug("processing publish work",
 		"config_name", work.templateConfig.Name,
@@ -67,6 +76,87 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		c.mu.Unlock()
 		return
 	}
+
+	// Throttle: if a publish interval is configured, use leading-edge refractory.
+	if c.publishInterval > 0 {
+		c.throttleMu.Lock()
+		timeSinceLast := time.Since(c.lastPublishTime)
+		if timeSinceLast < c.publishInterval {
+			// Inside refractory — buffer latest work, clean up any previously buffered entry
+			if c.pendingPublish != nil {
+				c.mu.Lock()
+				delete(c.renderedConfigs, c.pendingPublish.correlationID)
+				c.mu.Unlock()
+			}
+			c.pendingPublish = work
+			remaining := c.publishInterval - timeSinceLast
+			c.throttleMu.Unlock()
+
+			c.logger.Debug("throttling CRD publish, buffering for later",
+				"remaining", remaining,
+				"checksum", checksumHex,
+				"correlation_id", work.correlationID,
+			)
+			c.ensureThrottleTimer(remaining)
+			return
+		}
+		c.throttleMu.Unlock()
+	}
+
+	// Outside refractory (or no throttle configured) — publish immediately
+	c.executePublish(work)
+}
+
+// flushPendingPublish publishes the buffered work item (if any) when the throttle timer expires.
+func (c *Component) flushPendingPublish() {
+	c.throttleMu.Lock()
+	work := c.pendingPublish
+	c.pendingPublish = nil
+	c.throttleMu.Unlock()
+
+	if work == nil {
+		return
+	}
+
+	// Re-check content deduplication (content may have been published by another path)
+	c.mu.RLock()
+	lastChecksum := c.lastPublishedChecksum
+	c.mu.RUnlock()
+
+	if work.entry.contentChecksum != "" && work.entry.contentChecksum == lastChecksum {
+		c.logger.Debug("skipping throttled publish, config already published",
+			"checksum", work.entry.contentChecksum,
+			"correlation_id", work.correlationID,
+		)
+		c.mu.Lock()
+		delete(c.renderedConfigs, work.correlationID)
+		c.mu.Unlock()
+		return
+	}
+
+	c.logger.Debug("flushing throttled CRD publish",
+		"correlation_id", work.correlationID,
+	)
+	c.executePublish(work)
+}
+
+// ensureThrottleTimer starts a one-shot timer that signals the publishWorker via throttleTimerCh.
+// The timer fires after the remaining refractory period. Only one timer runs at a time;
+// if a timer is already pending, this is a no-op (the existing timer will flush the
+// latest buffered work).
+func (c *Component) ensureThrottleTimer(remaining time.Duration) {
+	// Non-blocking send — if a signal is already pending the worker will pick it up
+	time.AfterFunc(remaining, func() {
+		select {
+		case c.throttleTimerCh <- struct{}{}:
+		default:
+		}
+	})
+}
+
+// executePublish performs the actual K8S API call to publish the config CRD.
+func (c *Component) executePublish(work *publishWorkItem) {
+	checksumHex := work.entry.contentChecksum
 
 	// Convert auxiliary files
 	auxFiles := c.convertAuxiliaryFiles(work.entry.auxFiles)
@@ -110,11 +200,15 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		"correlation_id", work.correlationID,
 	)
 
-	// Update last published checksum and clean up the cached entry after successful publish
+	// Update last published checksum, last publish time, and clean up
 	c.mu.Lock()
 	c.lastPublishedChecksum = checksumHex
 	delete(c.renderedConfigs, work.correlationID)
 	c.mu.Unlock()
+
+	c.throttleMu.Lock()
+	c.lastPublishTime = time.Now()
+	c.throttleMu.Unlock()
 
 	// Publish success event with runtime config info
 	c.eventBus.Publish(events.NewConfigPublishedEvent(
