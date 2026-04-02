@@ -306,16 +306,57 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 // Instead of processing each update as it arrives, this worker waits for a trigger
 // signal and then processes all pending updates at once. This ensures that when
 // multiple updates arrive for the same pod, only the latest one is applied.
+//
+// When a publish interval is configured, the worker uses leading-edge throttling
+// (same pattern as the publish worker) to limit how often status is written to
+// the CRD. Each UpdateStatus writes the full ~509 KB object to etcd, so throttling
+// significantly reduces etcd write pressure.
 func (c *Component) statusWorker(ctx context.Context) {
 	for {
 		select {
 		case <-c.statusWorkTrigger:
-			// Drain all pending work items and process them
+			c.handleStatusTrigger()
+		case <-c.statusThrottleTimerCh:
 			c.processAllPendingStatusWork()
 		case <-ctx.Done():
+			// Flush any pending status updates before shutdown
+			c.processAllPendingStatusWork()
 			return
 		}
 	}
+}
+
+// handleStatusTrigger decides whether to process status updates immediately or defer.
+func (c *Component) handleStatusTrigger() {
+	if c.publishInterval <= 0 {
+		c.processAllPendingStatusWork()
+		return
+	}
+
+	c.throttleMu.Lock()
+	timeSinceLast := time.Since(c.lastStatusWriteTime)
+	if timeSinceLast >= c.publishInterval {
+		c.throttleMu.Unlock()
+		// Outside refractory — process immediately (leading-edge)
+		c.processAllPendingStatusWork()
+		return
+	}
+	remaining := c.publishInterval - timeSinceLast
+	c.throttleMu.Unlock()
+
+	// Inside refractory — ensure a timer is running to flush later.
+	// Pending updates accumulate in statusWorkPending (already coalesced per pod).
+	c.ensureStatusThrottleTimer(remaining)
+}
+
+// ensureStatusThrottleTimer starts a one-shot timer that signals the statusWorker.
+func (c *Component) ensureStatusThrottleTimer(remaining time.Duration) {
+	time.AfterFunc(remaining, func() {
+		select {
+		case c.statusThrottleTimerCh <- struct{}{}:
+		default:
+		}
+	})
 }
 
 // processAllPendingStatusWork drains the pending status work map and processes all items.
@@ -341,6 +382,13 @@ func (c *Component) processAllPendingStatusWork() {
 
 	for _, work := range pendingWork {
 		c.processStatusWork(work)
+	}
+
+	// Record write time for throttle refractory
+	if c.publishInterval > 0 {
+		c.throttleMu.Lock()
+		c.lastStatusWriteTime = time.Now()
+		c.throttleMu.Unlock()
 	}
 }
 

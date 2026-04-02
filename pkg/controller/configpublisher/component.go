@@ -145,6 +145,13 @@ type Component struct {
 	pendingPublish  *publishWorkItem // Buffered work during refractory, protected by throttleMu
 	throttleMu      sync.Mutex
 	throttleTimerCh chan struct{} // Signals throttle timer expiry to publishWorker
+
+	// Status write throttle: same leading-edge refractory as spec publishes.
+	// Each UpdateStatus writes the full ~509 KB object to etcd even though only
+	// the status subresource changed. Throttling to the same interval as spec
+	// publishes dramatically reduces etcd write pressure from deployment status updates.
+	lastStatusWriteTime   time.Time     // Protected by throttleMu
+	statusThrottleTimerCh chan struct{} // Signals status throttle timer expiry
 }
 
 // Option configures the Component.
@@ -177,16 +184,17 @@ func New(
 	// (after leadership is acquired). All-replica components replay their state
 	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	c := &Component{
-		publisher:            publisher,
-		eventBus:             eventBus,
-		logger:               logger.With("component", ComponentName),
-		renderedConfigs:      make(map[string]*renderedConfigEntry),
-		subscriptionReady:    make(chan struct{}),
-		publishWork:          make(chan *publishWorkItem, publishWorkChannelSize),
-		validationFailedWork: make(chan *validationFailedWorkItem, publishWorkChannelSize),
-		statusWorkPending:    make(map[string]*statusWorkItem),
-		statusWorkTrigger:    make(chan struct{}, statusWorkTriggerSize),
-		throttleTimerCh:      make(chan struct{}, 1),
+		publisher:             publisher,
+		eventBus:              eventBus,
+		logger:                logger.With("component", ComponentName),
+		renderedConfigs:       make(map[string]*renderedConfigEntry),
+		subscriptionReady:     make(chan struct{}),
+		publishWork:           make(chan *publishWorkItem, publishWorkChannelSize),
+		validationFailedWork:  make(chan *validationFailedWorkItem, publishWorkChannelSize),
+		statusWorkPending:     make(map[string]*statusWorkItem),
+		statusWorkTrigger:     make(chan struct{}, statusWorkTriggerSize),
+		throttleTimerCh:       make(chan struct{}, 1),
+		statusThrottleTimerCh: make(chan struct{}, 1),
 	}
 
 	for _, opt := range opts {
