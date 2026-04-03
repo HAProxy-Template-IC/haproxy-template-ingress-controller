@@ -19,12 +19,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // copyPodStatuses creates a deep copy of a PodDeploymentStatus slice.
@@ -67,100 +64,21 @@ func podStatusesEqual(a, b []haproxyv1alpha1.PodDeploymentStatus) bool {
 }
 
 // podStatusEqual compares two individual PodDeploymentStatus structs for equality.
+//
+// Compares all state fields: checksum (which config is deployed) and error state.
+// Per-event telemetry belongs in logs and Prometheus metrics, not in CRD status.
 func podStatusEqual(a, b *haproxyv1alpha1.PodDeploymentStatus) bool {
-	// Compare DeployedAt
-	if !a.DeployedAt.Equal(&b.DeployedAt) {
-		return false
-	}
-
-	// Compare simple fields
 	if a.Checksum != b.Checksum {
 		return false
 	}
-	if a.LastReloadID != b.LastReloadID {
-		return false
-	}
 	if a.LastError != b.LastError {
-		return false
-	}
-	if a.VersionConflictRetries != b.VersionConflictRetries {
-		return false
-	}
-	if a.FallbackUsed != b.FallbackUsed {
 		return false
 	}
 	if a.ConsecutiveErrors != b.ConsecutiveErrors {
 		return false
 	}
 
-	// Compare LastReloadAt (both could be nil)
-	if !metaTimeEqual(a.LastReloadAt, b.LastReloadAt) {
-		return false
-	}
-
-	// Compare LastErrorAt (both could be nil)
-	if !metaTimeEqual(a.LastErrorAt, b.LastErrorAt) {
-		return false
-	}
-
-	// Compare SyncDuration (both could be nil)
-	if !metaDurationEqual(a.SyncDuration, b.SyncDuration) {
-		return false
-	}
-
-	// Compare LastOperationSummary (both could be nil)
-	if !operationSummaryEqual(a.LastOperationSummary, b.LastOperationSummary) {
-		return false
-	}
-
 	return true
-}
-
-// metaTimeEqual compares two *metav1.Time pointers for equality.
-func metaTimeEqual(a, b *metav1.Time) bool {
-	if (a == nil) != (b == nil) {
-		return false
-	}
-	if a != nil && b != nil {
-		if !a.Equal(b) {
-			return false
-		}
-	}
-	return true
-}
-
-// metaDurationEqual compares two *metav1.Duration pointers for equality.
-func metaDurationEqual(a, b *metav1.Duration) bool {
-	if (a == nil) != (b == nil) {
-		return false
-	}
-	if a != nil && b != nil {
-		if a.Duration != b.Duration {
-			return false
-		}
-	}
-	return true
-}
-
-// operationSummaryEqual compares two *OperationSummary pointers for equality.
-func operationSummaryEqual(a, b *haproxyv1alpha1.OperationSummary) bool {
-	if (a == nil) != (b == nil) {
-		return false
-	}
-	if a == nil && b == nil {
-		return true
-	}
-	// Both are non-nil, compare all fields
-	return a.TotalAPIOperations == b.TotalAPIOperations &&
-		a.BackendsAdded == b.BackendsAdded &&
-		a.BackendsRemoved == b.BackendsRemoved &&
-		a.BackendsModified == b.BackendsModified &&
-		a.ServersAdded == b.ServersAdded &&
-		a.ServersRemoved == b.ServersRemoved &&
-		a.ServersModified == b.ServersModified &&
-		a.FrontendsAdded == b.FrontendsAdded &&
-		a.FrontendsRemoved == b.FrontendsRemoved &&
-		a.FrontendsModified == b.FrontendsModified
 }
 
 // findPodStatus finds a pod's status in a slice by name.
@@ -175,52 +93,36 @@ func findPodStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podName string) *
 }
 
 // buildAuxiliaryFilePodStatus constructs a minimal PodDeploymentStatus for auxiliary files.
-// Only tracks: PodName, Checksum, DeployedAt, and error fields.
+// Only tracks: PodName, Checksum, and error fields.
 // Preserves existing status when checksum hasn't changed, avoiding unnecessary updates.
 func buildAuxiliaryFilePodStatus(
 	podName string,
 	fileChecksum string,
 	existingStatus *haproxyv1alpha1.PodDeploymentStatus,
-	deployedAt time.Time,
 ) haproxyv1alpha1.PodDeploymentStatus {
-	// Handle zero deployedAt (drift check with no operations)
-	newDeployedAt := metav1.NewTime(deployedAt)
-	if deployedAt.IsZero() && existingStatus != nil {
-		newDeployedAt = existingStatus.DeployedAt
-	}
-
 	// Checksum unchanged - preserve existing status entirely
 	if existingStatus != nil && existingStatus.Checksum == fileChecksum {
 		return haproxyv1alpha1.PodDeploymentStatus{
 			PodName:           podName,
 			Checksum:          fileChecksum,
-			DeployedAt:        existingStatus.DeployedAt,
 			LastError:         existingStatus.LastError,
 			ConsecutiveErrors: existingStatus.ConsecutiveErrors,
-			LastErrorAt:       existingStatus.LastErrorAt,
 		}
 	}
 
 	// Checksum changed or new pod - new deployment
 	return haproxyv1alpha1.PodDeploymentStatus{
-		PodName:    podName,
-		Checksum:   fileChecksum,
-		DeployedAt: newDeployedAt,
+		PodName:  podName,
+		Checksum: fileChecksum,
 	}
 }
 
 // addOrUpdatePodStatus adds or updates a pod in the deployment status list.
 // Returns the updated slice. This helper is used for auxiliary file types
-// (MapFile, GeneralFile, CRTListFile) and includes safeguards to ensure
-// deployedAt is always set (required field in CRD schema).
+// (MapFile, GeneralFile, CRTListFile).
 func addOrUpdatePodStatus(pods []haproxyv1alpha1.PodDeploymentStatus, podStatus *haproxyv1alpha1.PodDeploymentStatus) []haproxyv1alpha1.PodDeploymentStatus {
 	for i := range pods {
 		if pods[i].PodName == podStatus.PodName {
-			// Preserve existing deployedAt if new one is zero (safeguard)
-			// This handles drift checks where no operations were performed
-			if podStatus.DeployedAt.IsZero() && !pods[i].DeployedAt.IsZero() {
-				podStatus.DeployedAt = pods[i].DeployedAt
-			}
 			pods[i] = *podStatus
 			return pods
 		}
@@ -256,21 +158,6 @@ func updateOrAppendPodStatus(
 			continue
 		}
 
-		// Preserve deployedAt if no operations were performed
-		if podStatus.DeployedAt.IsZero() {
-			podStatus.DeployedAt = pods[i].DeployedAt
-		}
-
-		// Preserve performance metrics if not being updated (e.g., drift check with no changes)
-		if podStatus.SyncDuration == nil {
-			podStatus.SyncDuration = pods[i].SyncDuration
-		}
-		if podStatus.LastOperationSummary == nil {
-			podStatus.LastOperationSummary = pods[i].LastOperationSummary
-		}
-		// Note: VersionConflictRetries and FallbackUsed are only meaningful when
-		// SyncDuration is set, so they're implicitly preserved when SyncDuration is nil
-
 		// Preserve and update consecutive error count
 		if update.Error != "" {
 			podStatus.ConsecutiveErrors = pods[i].ConsecutiveErrors + 1
@@ -293,48 +180,9 @@ func buildPodStatus(update *DeploymentStatusUpdate) haproxyv1alpha1.PodDeploymen
 		Checksum: update.Checksum,
 	}
 
-	// Set DeployedAt only when operations > 0 (actual changes made)
-	// If no operations, we'll preserve the existing DeployedAt in the caller
-	if !update.DeployedAt.IsZero() {
-		podStatus.DeployedAt = metav1.NewTime(update.DeployedAt)
-	}
-
-	// Set reload information if provided
-	if update.LastReloadAt != nil {
-		reloadTime := metav1.NewTime(*update.LastReloadAt)
-		podStatus.LastReloadAt = &reloadTime
-		podStatus.LastReloadID = update.LastReloadID
-	}
-
-	// Set performance metrics
-	if update.SyncDuration != nil {
-		duration := metav1.Duration{Duration: *update.SyncDuration}
-		podStatus.SyncDuration = &duration
-	}
-	podStatus.VersionConflictRetries = update.VersionConflictRetries
-	podStatus.FallbackUsed = update.FallbackUsed
-
-	// Set operation summary
-	if update.OperationSummary != nil {
-		podStatus.LastOperationSummary = &haproxyv1alpha1.OperationSummary{
-			TotalAPIOperations: update.OperationSummary.TotalAPIOperations,
-			BackendsAdded:      update.OperationSummary.BackendsAdded,
-			BackendsRemoved:    update.OperationSummary.BackendsRemoved,
-			BackendsModified:   update.OperationSummary.BackendsModified,
-			ServersAdded:       update.OperationSummary.ServersAdded,
-			ServersRemoved:     update.OperationSummary.ServersRemoved,
-			ServersModified:    update.OperationSummary.ServersModified,
-			FrontendsAdded:     update.OperationSummary.FrontendsAdded,
-			FrontendsRemoved:   update.OperationSummary.FrontendsRemoved,
-			FrontendsModified:  update.OperationSummary.FrontendsModified,
-		}
-	}
-
 	// Set error tracking
 	if update.Error != "" {
 		podStatus.LastError = update.Error
-		now := metav1.NewTime(update.DeployedAt)
-		podStatus.LastErrorAt = &now
 	}
 
 	return podStatus

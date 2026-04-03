@@ -17,7 +17,6 @@ package configpublisher
 import (
 	"context"
 	"fmt"
-	"time"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 
@@ -103,11 +102,7 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 
 	// Set validation error in status if provided
 	if req.ValidationError != "" {
-		if runtimeConfig.Status.Metadata == nil {
-			runtimeConfig.Status.Metadata = &haproxyv1alpha1.ConfigMetadata{}
-		}
 		runtimeConfig.Status.ValidationError = req.ValidationError
-		runtimeConfig.Status.Metadata.ValidatedAt = &metav1.Time{Time: time.Now()}
 	}
 
 	return runtimeConfig
@@ -123,7 +118,7 @@ func (p *Publisher) createRuntimeConfig(ctx context.Context, req *PublishRequest
 	}
 
 	// Update status after creation if needed
-	if req.ValidationError != "" || !req.ValidatedAt.IsZero() {
+	if req.ValidationError != "" {
 		p.updateCreatedStatus(ctx, req, created)
 	} else {
 		p.logger.Debug("created new runtime config, status will be updated on first deployment",
@@ -137,18 +132,6 @@ func (p *Publisher) createRuntimeConfig(ctx context.Context, req *PublishRequest
 
 // updateCreatedStatus updates the status of a newly created HAProxyCfg.
 func (p *Publisher) updateCreatedStatus(ctx context.Context, req *PublishRequest, created *haproxyv1alpha1.HAProxyCfg) {
-	// Initialize status metadata if needed
-	if created.Status.Metadata == nil {
-		created.Status.Metadata = &haproxyv1alpha1.ConfigMetadata{}
-	}
-
-	// Set metadata fields
-	created.Status.Metadata.ContentSize = int64(len(req.Config))
-	created.Status.Metadata.RenderedAt = &metav1.Time{Time: req.RenderedAt}
-	if !req.ValidatedAt.IsZero() {
-		created.Status.Metadata.ValidatedAt = &metav1.Time{Time: req.ValidatedAt}
-	}
-
 	// Set validation error if provided
 	if req.ValidationError != "" {
 		created.Status.ValidationError = req.ValidationError
@@ -189,6 +172,9 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 	existing.Spec = runtimeConfig.Spec
 	existing.Labels = runtimeConfig.Labels
 
+	// Capture previous validation error state before overwriting spec
+	previousValidationError := existing.Status.ValidationError
+
 	updated, err := p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(req.TemplateConfigNamespace).
 		Update(ctx, existing, metav1.UpdateOptions{})
@@ -196,22 +182,17 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 		return nil, fmt.Errorf("failed to update runtime config: %w", err)
 	}
 
-	p.updateExistingStatus(ctx, req, updated)
+	// Only update status when the validation error state transitions (ok→error or error→ok).
+	// Per-event telemetry (RenderedAt, ValidatedAt) belongs in logs and metrics, not in the CRD
+	// status — each UpdateStatus writes the full ~509 KB object to etcd.
+	if previousValidationError != req.ValidationError {
+		p.updateExistingStatus(ctx, req, updated)
+	}
 	return updated, nil
 }
 
 // updateExistingStatus updates the status of an existing HAProxyCfg.
 func (p *Publisher) updateExistingStatus(ctx context.Context, req *PublishRequest, updated *haproxyv1alpha1.HAProxyCfg) {
-	// Update status metadata
-	if updated.Status.Metadata == nil {
-		updated.Status.Metadata = &haproxyv1alpha1.ConfigMetadata{}
-	}
-	updated.Status.Metadata.ContentSize = int64(len(req.Config))
-	updated.Status.Metadata.RenderedAt = &metav1.Time{Time: req.RenderedAt}
-	if !req.ValidatedAt.IsZero() {
-		updated.Status.Metadata.ValidatedAt = &metav1.Time{Time: req.ValidatedAt}
-	}
-
 	// Update validation error (set or clear)
 	if req.ValidationError != "" {
 		updated.Status.ValidationError = req.ValidationError
@@ -246,12 +227,8 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 	// Build new auxiliary file references
 	newAux := buildAuxiliaryFileReferences(runtimeConfig.Namespace, result)
 
-	// Calculate total size
-	totalSize := int64(len(runtimeConfig.Spec.Content))
-
 	// Skip UpdateStatus if nothing changed
-	if auxiliaryRefsEqual(current.Status.AuxiliaryFiles, newAux) &&
-		current.Status.Metadata != nil && current.Status.Metadata.TotalSize == totalSize {
+	if auxiliaryRefsEqual(current.Status.AuxiliaryFiles, newAux) {
 		p.logger.Debug("skipping HAProxyCfg status update, references unchanged",
 			"name", current.Name,
 		)
@@ -260,9 +237,6 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 
 	// Apply changes
 	current.Status.AuxiliaryFiles = newAux
-	if current.Status.Metadata != nil {
-		current.Status.Metadata.TotalSize = totalSize
-	}
 
 	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(runtimeConfig.Namespace).

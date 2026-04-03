@@ -24,7 +24,6 @@ import (
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -266,14 +265,11 @@ func TestRemovePodMutation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdateAuxFileDeploymentStatus(t *testing.T) {
-	now := metav1.Now()
-
 	t.Run("skips update when cached read shows no change", func(t *testing.T) {
 		handleCalled := false
 		podStatus := &haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			Checksum:   "sha256:abc",
-			DeployedAt: now,
+			PodName:  "pod-1",
+			Checksum: "sha256:abc",
 		}
 
 		err := updateAuxFileDeploymentStatus(
@@ -281,7 +277,7 @@ func TestUpdateAuxFileDeploymentStatus(t *testing.T) {
 			func() *cachedAuxFileStatus {
 				return &cachedAuxFileStatus{
 					pods: []haproxyv1alpha1.PodDeploymentStatus{
-						{PodName: "pod-1", Checksum: "sha256:abc", DeployedAt: now},
+						{PodName: "pod-1", Checksum: "sha256:abc"},
 					},
 					checksum: "sha256:abc",
 				}
@@ -300,9 +296,8 @@ func TestUpdateAuxFileDeploymentStatus(t *testing.T) {
 	t.Run("proceeds to API when cache shows change needed", func(t *testing.T) {
 		var appliedPods []haproxyv1alpha1.PodDeploymentStatus
 		podStatus := &haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-new",
-			Checksum:   "sha256:abc",
-			DeployedAt: now,
+			PodName:  "pod-new",
+			Checksum: "sha256:abc",
 		}
 
 		err := updateAuxFileDeploymentStatus(
@@ -334,9 +329,8 @@ func TestUpdateAuxFileDeploymentStatus(t *testing.T) {
 	t.Run("proceeds to API when no cache available", func(t *testing.T) {
 		var appliedPods []haproxyv1alpha1.PodDeploymentStatus
 		podStatus := &haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			Checksum:   "sha256:abc",
-			DeployedAt: now,
+			PodName:  "pod-1",
+			Checksum: "sha256:abc",
 		}
 
 		err := updateAuxFileDeploymentStatus(
@@ -367,8 +361,7 @@ func TestUpdateAuxFileDeploymentStatus(t *testing.T) {
 			"missing",
 		)
 		podStatus := &haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			DeployedAt: now,
+			PodName: "pod-1",
 		}
 
 		err := updateAuxFileDeploymentStatus(
@@ -383,8 +376,7 @@ func TestUpdateAuxFileDeploymentStatus(t *testing.T) {
 
 	t.Run("propagates API errors", func(t *testing.T) {
 		podStatus := &haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			DeployedAt: now,
+			PodName: "pod-1",
 		}
 
 		err := updateAuxFileDeploymentStatus(
@@ -401,9 +393,8 @@ func TestUpdateAuxFileDeploymentStatus(t *testing.T) {
 	t.Run("skips API write when fresh read shows no change", func(t *testing.T) {
 		writeCalled := false
 		podStatus := &haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			Checksum:   "sha256:abc",
-			DeployedAt: now,
+			PodName:  "pod-1",
+			Checksum: "sha256:abc",
 		}
 
 		err := updateAuxFileDeploymentStatus(
@@ -412,7 +403,7 @@ func TestUpdateAuxFileDeploymentStatus(t *testing.T) {
 			func() (*auxFileHandle, error) {
 				return &auxFileHandle{
 					pods: []haproxyv1alpha1.PodDeploymentStatus{
-						{PodName: "pod-1", Checksum: "sha256:abc", DeployedAt: now},
+						{PodName: "pod-1", Checksum: "sha256:abc"},
 					},
 					checksum: "sha256:abc",
 					applyStatus: func(_ []haproxyv1alpha1.PodDeploymentStatus) error {

@@ -196,7 +196,6 @@ func updateAuxFileDeploymentStatus(
 			podStatus.PodName,
 			cached.checksum,
 			existingStatus,
-			podStatus.DeployedAt.Time,
 		)
 		newStatuses := addOrUpdatePodStatus(copyPodStatuses(cached.pods), &auxPodStatus)
 
@@ -222,7 +221,6 @@ func updateAuxFileDeploymentStatus(
 			podStatus.PodName,
 			h.checksum,
 			existingStatus,
-			podStatus.DeployedAt.Time,
 		)
 
 		newPods := addOrUpdatePodStatus(h.pods, &auxPodStatus)

@@ -17,14 +17,11 @@ package configpublisher
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ---------------------------------------------------------------------------
@@ -88,10 +85,6 @@ func TestCopyPodStatuses(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPodStatusesEqual(t *testing.T) {
-	now := metav1.Now()
-	later := metav1.NewTime(now.Add(time.Second))
-	dur := metav1.Duration{Duration: 5 * time.Second}
-
 	tests := []struct {
 		name   string
 		a, b   []haproxyv1alpha1.PodDeploymentStatus
@@ -120,10 +113,10 @@ func TestPodStatusesEqual(t *testing.T) {
 		{
 			name: "same pods same fields",
 			a: []haproxyv1alpha1.PodDeploymentStatus{
-				{PodName: "pod-1", Checksum: "abc", DeployedAt: now},
+				{PodName: "pod-1", Checksum: "abc"},
 			},
 			b: []haproxyv1alpha1.PodDeploymentStatus{
-				{PodName: "pod-1", Checksum: "abc", DeployedAt: now},
+				{PodName: "pod-1", Checksum: "abc"},
 			},
 			expect: true,
 		},
@@ -134,16 +127,6 @@ func TestPodStatusesEqual(t *testing.T) {
 			},
 			b: []haproxyv1alpha1.PodDeploymentStatus{
 				{PodName: "pod-1", Checksum: "xyz"},
-			},
-			expect: false,
-		},
-		{
-			name: "same pods different deployed time",
-			a: []haproxyv1alpha1.PodDeploymentStatus{
-				{PodName: "pod-1", DeployedAt: now},
-			},
-			b: []haproxyv1alpha1.PodDeploymentStatus{
-				{PodName: "pod-1", DeployedAt: later},
 			},
 			expect: false,
 		},
@@ -179,16 +162,6 @@ func TestPodStatusesEqual(t *testing.T) {
 			},
 			expect: false,
 		},
-		{
-			name: "different sync duration",
-			a: []haproxyv1alpha1.PodDeploymentStatus{
-				{PodName: "pod-1", SyncDuration: &dur},
-			},
-			b: []haproxyv1alpha1.PodDeploymentStatus{
-				{PodName: "pod-1", SyncDuration: nil},
-			},
-			expect: false,
-		},
 	}
 
 	for _, tt := range tests {
@@ -203,13 +176,6 @@ func TestPodStatusesEqual(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPodStatusEqual(t *testing.T) {
-	now := metav1.Now()
-	later := metav1.NewTime(now.Add(time.Second))
-	dur1 := metav1.Duration{Duration: 5 * time.Second}
-	dur2 := metav1.Duration{Duration: 10 * time.Second}
-
-	summary := &haproxyv1alpha1.OperationSummary{TotalAPIOperations: 5}
-
 	tests := []struct {
 		name   string
 		a, b   *haproxyv1alpha1.PodDeploymentStatus
@@ -222,112 +188,36 @@ func TestPodStatusEqual(t *testing.T) {
 			expect: true,
 		},
 		{
+			name:   "different last error (state transition)",
+			a:      &haproxyv1alpha1.PodDeploymentStatus{LastError: "err1"},
+			b:      &haproxyv1alpha1.PodDeploymentStatus{LastError: ""},
+			expect: false,
+		},
+		{
+			name:   "different consecutive errors (state transition)",
+			a:      &haproxyv1alpha1.PodDeploymentStatus{ConsecutiveErrors: 0},
+			b:      &haproxyv1alpha1.PodDeploymentStatus{ConsecutiveErrors: 1},
+			expect: false,
+		},
+		{
 			name:   "different checksum",
 			a:      &haproxyv1alpha1.PodDeploymentStatus{Checksum: "a"},
 			b:      &haproxyv1alpha1.PodDeploymentStatus{Checksum: "b"},
 			expect: false,
 		},
 		{
-			name:   "different last reload ID",
-			a:      &haproxyv1alpha1.PodDeploymentStatus{LastReloadID: "1"},
-			b:      &haproxyv1alpha1.PodDeploymentStatus{LastReloadID: "2"},
-			expect: false,
-		},
-		{
-			name:   "different last error",
-			a:      &haproxyv1alpha1.PodDeploymentStatus{LastError: "err1"},
-			b:      &haproxyv1alpha1.PodDeploymentStatus{LastError: ""},
-			expect: false,
-		},
-		{
-			name:   "different version conflict retries",
-			a:      &haproxyv1alpha1.PodDeploymentStatus{VersionConflictRetries: 1},
-			b:      &haproxyv1alpha1.PodDeploymentStatus{VersionConflictRetries: 0},
-			expect: false,
-		},
-		{
-			name:   "different fallback used",
-			a:      &haproxyv1alpha1.PodDeploymentStatus{FallbackUsed: true},
-			b:      &haproxyv1alpha1.PodDeploymentStatus{FallbackUsed: false},
-			expect: false,
-		},
-		{
-			name:   "different consecutive errors",
-			a:      &haproxyv1alpha1.PodDeploymentStatus{ConsecutiveErrors: 0},
-			b:      &haproxyv1alpha1.PodDeploymentStatus{ConsecutiveErrors: 1},
-			expect: false,
-		},
-		{
-			name:   "different deployed at",
-			a:      &haproxyv1alpha1.PodDeploymentStatus{DeployedAt: now},
-			b:      &haproxyv1alpha1.PodDeploymentStatus{DeployedAt: later},
-			expect: false,
-		},
-		{
-			name: "one has last reload at, other nil",
-			a: &haproxyv1alpha1.PodDeploymentStatus{
-				LastReloadAt: &now,
-			},
-			b:      &haproxyv1alpha1.PodDeploymentStatus{},
-			expect: false,
-		},
-		{
-			name: "different last error at",
-			a: &haproxyv1alpha1.PodDeploymentStatus{
-				LastErrorAt: &now,
-			},
-			b: &haproxyv1alpha1.PodDeploymentStatus{
-				LastErrorAt: &later,
-			},
-			expect: false,
-		},
-		{
-			name: "different sync duration",
-			a: &haproxyv1alpha1.PodDeploymentStatus{
-				SyncDuration: &dur1,
-			},
-			b: &haproxyv1alpha1.PodDeploymentStatus{
-				SyncDuration: &dur2,
-			},
-			expect: false,
-		},
-		{
-			name: "one has operation summary, other nil",
-			a: &haproxyv1alpha1.PodDeploymentStatus{
-				LastOperationSummary: summary,
-			},
-			b:      &haproxyv1alpha1.PodDeploymentStatus{},
-			expect: false,
-		},
-		{
 			name: "all fields identical",
 			a: &haproxyv1alpha1.PodDeploymentStatus{
-				PodName:                "pod-1",
-				Checksum:               "sha256:abc",
-				DeployedAt:             now,
-				LastReloadAt:           &now,
-				LastReloadID:           "42",
-				SyncDuration:           &dur1,
-				VersionConflictRetries: 2,
-				FallbackUsed:           true,
-				LastOperationSummary:   summary,
-				LastError:              "oops",
-				ConsecutiveErrors:      1,
-				LastErrorAt:            &now,
+				PodName:           "pod-1",
+				Checksum:          "sha256:abc",
+				LastError:         "oops",
+				ConsecutiveErrors: 1,
 			},
 			b: &haproxyv1alpha1.PodDeploymentStatus{
-				PodName:                "pod-1",
-				Checksum:               "sha256:abc",
-				DeployedAt:             now,
-				LastReloadAt:           &now,
-				LastReloadID:           "42",
-				SyncDuration:           &dur1,
-				VersionConflictRetries: 2,
-				FallbackUsed:           true,
-				LastOperationSummary:   summary,
-				LastError:              "oops",
-				ConsecutiveErrors:      1,
-				LastErrorAt:            &now,
+				PodName:           "pod-1",
+				Checksum:          "sha256:abc",
+				LastError:         "oops",
+				ConsecutiveErrors: 1,
 			},
 			expect: true,
 		},
@@ -336,142 +226,6 @@ func TestPodStatusEqual(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expect, podStatusEqual(tt.a, tt.b))
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// metaTimeEqual
-// ---------------------------------------------------------------------------
-
-func TestMetaTimeEqual(t *testing.T) {
-	now := metav1.Now()
-	later := metav1.NewTime(now.Add(time.Hour))
-
-	tests := []struct {
-		name   string
-		a, b   *metav1.Time
-		expect bool
-	}{
-		{name: "both nil", a: nil, b: nil, expect: true},
-		{name: "a nil b non-nil", a: nil, b: &now, expect: false},
-		{name: "a non-nil b nil", a: &now, b: nil, expect: false},
-		{name: "both same time", a: &now, b: &now, expect: true},
-		{name: "different times", a: &now, b: &later, expect: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expect, metaTimeEqual(tt.a, tt.b))
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// metaDurationEqual
-// ---------------------------------------------------------------------------
-
-func TestMetaDurationEqual(t *testing.T) {
-	d1 := metav1.Duration{Duration: 5 * time.Second}
-	d2 := metav1.Duration{Duration: 10 * time.Second}
-	d1copy := metav1.Duration{Duration: 5 * time.Second}
-
-	tests := []struct {
-		name   string
-		a, b   *metav1.Duration
-		expect bool
-	}{
-		{name: "both nil", a: nil, b: nil, expect: true},
-		{name: "a nil b non-nil", a: nil, b: &d1, expect: false},
-		{name: "a non-nil b nil", a: &d1, b: nil, expect: false},
-		{name: "same duration", a: &d1, b: &d1copy, expect: true},
-		{name: "different durations", a: &d1, b: &d2, expect: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expect, metaDurationEqual(tt.a, tt.b))
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// operationSummaryEqual
-// ---------------------------------------------------------------------------
-
-func TestOperationSummaryEqual(t *testing.T) {
-	s1 := &haproxyv1alpha1.OperationSummary{
-		TotalAPIOperations: 10,
-		BackendsAdded:      1,
-		BackendsRemoved:    2,
-		BackendsModified:   3,
-		ServersAdded:       4,
-		ServersRemoved:     5,
-		ServersModified:    6,
-		FrontendsAdded:     7,
-		FrontendsRemoved:   8,
-		FrontendsModified:  9,
-	}
-
-	s1copy := &haproxyv1alpha1.OperationSummary{
-		TotalAPIOperations: 10,
-		BackendsAdded:      1,
-		BackendsRemoved:    2,
-		BackendsModified:   3,
-		ServersAdded:       4,
-		ServersRemoved:     5,
-		ServersModified:    6,
-		FrontendsAdded:     7,
-		FrontendsRemoved:   8,
-		FrontendsModified:  9,
-	}
-
-	tests := []struct {
-		name   string
-		a, b   *haproxyv1alpha1.OperationSummary
-		expect bool
-	}{
-		{name: "both nil", a: nil, b: nil, expect: true},
-		{name: "a nil b non-nil", a: nil, b: s1, expect: false},
-		{name: "a non-nil b nil", a: s1, b: nil, expect: false},
-		{name: "identical summaries", a: s1, b: s1copy, expect: true},
-		{
-			name:   "different total ops",
-			a:      s1,
-			b:      &haproxyv1alpha1.OperationSummary{TotalAPIOperations: 99},
-			expect: false,
-		},
-		{
-			name: "different backends added",
-			a:    s1,
-			b: &haproxyv1alpha1.OperationSummary{
-				TotalAPIOperations: 10,
-				BackendsAdded:      999,
-			},
-			expect: false,
-		},
-		{
-			name: "different frontends modified",
-			a:    s1,
-			b: &haproxyv1alpha1.OperationSummary{
-				TotalAPIOperations: 10,
-				BackendsAdded:      1,
-				BackendsRemoved:    2,
-				BackendsModified:   3,
-				ServersAdded:       4,
-				ServersRemoved:     5,
-				ServersModified:    6,
-				FrontendsAdded:     7,
-				FrontendsRemoved:   8,
-				FrontendsModified:  999,
-			},
-			expect: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expect, operationSummaryEqual(tt.a, tt.b))
 		})
 	}
 }
@@ -519,18 +273,11 @@ func TestFindPodStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildAuxiliaryFilePodStatus(t *testing.T) {
-	now := time.Now()
-	earlier := now.Add(-time.Hour)
-	metaNow := metav1.NewTime(now)
-	metaEarlier := metav1.NewTime(earlier)
-	errAt := metav1.NewTime(earlier)
-
 	tests := []struct {
 		name           string
 		podName        string
 		fileChecksum   string
 		existing       *haproxyv1alpha1.PodDeploymentStatus
-		deployedAt     time.Time
 		expectChecksum string
 		expectPodName  string
 		expectError    string
@@ -541,7 +288,6 @@ func TestBuildAuxiliaryFilePodStatus(t *testing.T) {
 			podName:        "pod-1",
 			fileChecksum:   "sha256:new",
 			existing:       nil,
-			deployedAt:     now,
 			expectChecksum: "sha256:new",
 			expectPodName:  "pod-1",
 		},
@@ -552,12 +298,9 @@ func TestBuildAuxiliaryFilePodStatus(t *testing.T) {
 			existing: &haproxyv1alpha1.PodDeploymentStatus{
 				PodName:           "pod-1",
 				Checksum:          "sha256:same",
-				DeployedAt:        metaEarlier,
 				LastError:         "old error",
 				ConsecutiveErrors: 3,
-				LastErrorAt:       &errAt,
 			},
-			deployedAt:     now,
 			expectChecksum: "sha256:same",
 			expectPodName:  "pod-1",
 			expectError:    "old error",
@@ -570,62 +313,23 @@ func TestBuildAuxiliaryFilePodStatus(t *testing.T) {
 			existing: &haproxyv1alpha1.PodDeploymentStatus{
 				PodName:           "pod-1",
 				Checksum:          "sha256:old",
-				DeployedAt:        metaEarlier,
 				LastError:         "old error",
 				ConsecutiveErrors: 3,
 			},
-			deployedAt:     now,
 			expectChecksum: "sha256:changed",
 			expectPodName:  "pod-1",
 			expectError:    "",
 			expectErrCount: 0,
 		},
-		{
-			name:         "zero deployedAt with existing status preserves existing deployedAt",
-			podName:      "pod-1",
-			fileChecksum: "sha256:new",
-			existing: &haproxyv1alpha1.PodDeploymentStatus{
-				PodName:    "pod-1",
-				Checksum:   "sha256:old",
-				DeployedAt: metaEarlier,
-			},
-			deployedAt:     time.Time{},
-			expectChecksum: "sha256:new",
-			expectPodName:  "pod-1",
-		},
-		{
-			name:           "zero deployedAt without existing status",
-			podName:        "pod-1",
-			fileChecksum:   "sha256:new",
-			existing:       nil,
-			deployedAt:     time.Time{},
-			expectChecksum: "sha256:new",
-			expectPodName:  "pod-1",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildAuxiliaryFilePodStatus(tt.podName, tt.fileChecksum, tt.existing, tt.deployedAt)
+			result := buildAuxiliaryFilePodStatus(tt.podName, tt.fileChecksum, tt.existing)
 			assert.Equal(t, tt.expectPodName, result.PodName)
 			assert.Equal(t, tt.expectChecksum, result.Checksum)
 			assert.Equal(t, tt.expectError, result.LastError)
 			assert.Equal(t, tt.expectErrCount, result.ConsecutiveErrors)
-
-			// For unchanged checksum, verify the original deployedAt is preserved.
-			if tt.existing != nil && tt.existing.Checksum == tt.fileChecksum {
-				assert.Equal(t, tt.existing.DeployedAt, result.DeployedAt)
-			}
-
-			// For zero deployedAt with existing, verify preservation.
-			if tt.deployedAt.IsZero() && tt.existing != nil && tt.existing.Checksum != tt.fileChecksum {
-				assert.Equal(t, metaEarlier, result.DeployedAt)
-			}
-
-			// New deployment with non-zero time.
-			if !tt.deployedAt.IsZero() && (tt.existing == nil || tt.existing.Checksum != tt.fileChecksum) {
-				assert.Equal(t, metaNow, result.DeployedAt)
-			}
 		})
 	}
 }
@@ -635,8 +339,6 @@ func TestBuildAuxiliaryFilePodStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAddOrUpdatePodStatus(t *testing.T) {
-	now := metav1.Now()
-
 	tests := []struct {
 		name      string
 		pods      []haproxyv1alpha1.PodDeploymentStatus
@@ -669,15 +371,6 @@ func TestAddOrUpdatePodStatus(t *testing.T) {
 			expectLen: 1,
 			expectPod: "pod-1",
 		},
-		{
-			name: "update preserves existing deployedAt when new is zero",
-			pods: []haproxyv1alpha1.PodDeploymentStatus{
-				{PodName: "pod-1", Checksum: "old", DeployedAt: now},
-			},
-			podStatus: haproxyv1alpha1.PodDeploymentStatus{PodName: "pod-1", Checksum: "new"},
-			expectLen: 1,
-			expectPod: "pod-1",
-		},
 	}
 
 	for _, tt := range tests {
@@ -688,9 +381,6 @@ func TestAddOrUpdatePodStatus(t *testing.T) {
 			found := findPodStatus(result, tt.expectPod)
 			require.NotNil(t, found)
 
-			if tt.name == "update preserves existing deployedAt when new is zero" {
-				assert.Equal(t, now, found.DeployedAt, "should preserve existing deployedAt")
-			}
 			if tt.name == "update existing pod" {
 				assert.Equal(t, "new", found.Checksum)
 			}
@@ -763,10 +453,6 @@ func TestRemovePodFromStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdateOrAppendPodStatus(t *testing.T) {
-	now := metav1.Now()
-	dur := metav1.Duration{Duration: 2 * time.Second}
-	summary := &haproxyv1alpha1.OperationSummary{TotalAPIOperations: 5}
-
 	t.Run("append new pod to empty slice", func(t *testing.T) {
 		ps := haproxyv1alpha1.PodDeploymentStatus{
 			PodName:  "pod-1",
@@ -780,12 +466,11 @@ func TestUpdateOrAppendPodStatus(t *testing.T) {
 
 	t.Run("update existing pod resets consecutive errors on success", func(t *testing.T) {
 		pods := []haproxyv1alpha1.PodDeploymentStatus{
-			{PodName: "pod-1", ConsecutiveErrors: 5, DeployedAt: now},
+			{PodName: "pod-1", ConsecutiveErrors: 5},
 		}
 		ps := haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			Checksum:   "new",
-			DeployedAt: now,
+			PodName:  "pod-1",
+			Checksum: "new",
 		}
 		update := &DeploymentStatusUpdate{PodName: "pod-1", Error: ""}
 		result := updateOrAppendPodStatus(pods, &ps, update)
@@ -795,54 +480,15 @@ func TestUpdateOrAppendPodStatus(t *testing.T) {
 
 	t.Run("update existing pod increments consecutive errors on failure", func(t *testing.T) {
 		pods := []haproxyv1alpha1.PodDeploymentStatus{
-			{PodName: "pod-1", ConsecutiveErrors: 2, DeployedAt: now},
+			{PodName: "pod-1", ConsecutiveErrors: 2},
 		}
 		ps := haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			DeployedAt: now,
+			PodName: "pod-1",
 		}
 		update := &DeploymentStatusUpdate{PodName: "pod-1", Error: "connection refused"}
 		result := updateOrAppendPodStatus(pods, &ps, update)
 		require.Len(t, result, 1)
 		assert.Equal(t, 3, result[0].ConsecutiveErrors)
-	})
-
-	t.Run("preserves deployed at when new one is zero", func(t *testing.T) {
-		pods := []haproxyv1alpha1.PodDeploymentStatus{
-			{PodName: "pod-1", DeployedAt: now},
-		}
-		ps := haproxyv1alpha1.PodDeploymentStatus{PodName: "pod-1"}
-		update := &DeploymentStatusUpdate{PodName: "pod-1"}
-		result := updateOrAppendPodStatus(pods, &ps, update)
-		assert.Equal(t, now, result[0].DeployedAt)
-	})
-
-	t.Run("preserves sync duration when not being updated", func(t *testing.T) {
-		pods := []haproxyv1alpha1.PodDeploymentStatus{
-			{PodName: "pod-1", SyncDuration: &dur, DeployedAt: now},
-		}
-		ps := haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			DeployedAt: now,
-		}
-		update := &DeploymentStatusUpdate{PodName: "pod-1"}
-		result := updateOrAppendPodStatus(pods, &ps, update)
-		require.NotNil(t, result[0].SyncDuration)
-		assert.Equal(t, dur.Duration, result[0].SyncDuration.Duration)
-	})
-
-	t.Run("preserves operation summary when not being updated", func(t *testing.T) {
-		pods := []haproxyv1alpha1.PodDeploymentStatus{
-			{PodName: "pod-1", LastOperationSummary: summary, DeployedAt: now},
-		}
-		ps := haproxyv1alpha1.PodDeploymentStatus{
-			PodName:    "pod-1",
-			DeployedAt: now,
-		}
-		update := &DeploymentStatusUpdate{PodName: "pod-1"}
-		result := updateOrAppendPodStatus(pods, &ps, update)
-		require.NotNil(t, result[0].LastOperationSummary)
-		assert.Equal(t, 5, result[0].LastOperationSummary.TotalAPIOperations)
 	})
 }
 
@@ -851,10 +497,6 @@ func TestUpdateOrAppendPodStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildPodStatus(t *testing.T) {
-	now := time.Now()
-	reloadTime := now.Add(-time.Minute)
-	syncDur := 3 * time.Second
-
 	t.Run("minimal update with no optional fields", func(t *testing.T) {
 		update := &DeploymentStatusUpdate{
 			PodName:  "pod-1",
@@ -863,78 +505,28 @@ func TestBuildPodStatus(t *testing.T) {
 		result := buildPodStatus(update)
 		assert.Equal(t, "pod-1", result.PodName)
 		assert.Equal(t, "sha256:abc", result.Checksum)
-		assert.True(t, result.DeployedAt.IsZero(), "deployedAt should be zero when DeployedAt is zero")
-		assert.Nil(t, result.LastReloadAt)
-		assert.Empty(t, result.LastReloadID)
-		assert.Nil(t, result.SyncDuration)
-		assert.Nil(t, result.LastOperationSummary)
 		assert.Empty(t, result.LastError)
-		assert.Nil(t, result.LastErrorAt)
 	})
 
-	t.Run("full update with all fields set", func(t *testing.T) {
+	t.Run("update with error", func(t *testing.T) {
 		update := &DeploymentStatusUpdate{
-			PodName:                "pod-1",
-			Checksum:               "sha256:abc",
-			DeployedAt:             now,
-			LastReloadAt:           &reloadTime,
-			LastReloadID:           "reload-42",
-			SyncDuration:           &syncDur,
-			VersionConflictRetries: 3,
-			FallbackUsed:           true,
-			OperationSummary: &OperationSummary{
-				TotalAPIOperations: 10,
-				BackendsAdded:      1,
-				ServersRemoved:     2,
-				FrontendsModified:  3,
-			},
-			Error: "connection reset",
+			PodName:  "pod-1",
+			Checksum: "sha256:abc",
+			Error:    "connection reset",
 		}
 		result := buildPodStatus(update)
 
 		assert.Equal(t, "pod-1", result.PodName)
 		assert.Equal(t, "sha256:abc", result.Checksum)
-		assert.Equal(t, metav1.NewTime(now), result.DeployedAt)
-
-		require.NotNil(t, result.LastReloadAt)
-		assert.Equal(t, metav1.NewTime(reloadTime), *result.LastReloadAt)
-		assert.Equal(t, "reload-42", result.LastReloadID)
-
-		require.NotNil(t, result.SyncDuration)
-		assert.Equal(t, syncDur, result.SyncDuration.Duration)
-
-		assert.Equal(t, 3, result.VersionConflictRetries)
-		assert.True(t, result.FallbackUsed)
-
-		require.NotNil(t, result.LastOperationSummary)
-		assert.Equal(t, 10, result.LastOperationSummary.TotalAPIOperations)
-		assert.Equal(t, 1, result.LastOperationSummary.BackendsAdded)
-		assert.Equal(t, 2, result.LastOperationSummary.ServersRemoved)
-		assert.Equal(t, 3, result.LastOperationSummary.FrontendsModified)
-
 		assert.Equal(t, "connection reset", result.LastError)
-		require.NotNil(t, result.LastErrorAt)
 	})
 
-	t.Run("error sets lastErrorAt to deployedAt time", func(t *testing.T) {
+	t.Run("no error does not set lastError", func(t *testing.T) {
 		update := &DeploymentStatusUpdate{
-			PodName:    "pod-1",
-			DeployedAt: now,
-			Error:      "timeout",
+			PodName: "pod-1",
+			Error:   "",
 		}
 		result := buildPodStatus(update)
-		require.NotNil(t, result.LastErrorAt)
-		assert.Equal(t, metav1.NewTime(now), *result.LastErrorAt)
-	})
-
-	t.Run("no error does not set lastErrorAt", func(t *testing.T) {
-		update := &DeploymentStatusUpdate{
-			PodName:    "pod-1",
-			DeployedAt: now,
-			Error:      "",
-		}
-		result := buildPodStatus(update)
-		assert.Nil(t, result.LastErrorAt)
 		assert.Empty(t, result.LastError)
 	})
 }

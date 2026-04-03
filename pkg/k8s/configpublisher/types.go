@@ -15,8 +15,6 @@
 package configpublisher
 
 import (
-	"time"
-
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	listersv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/generated/listers/haproxytemplate/v1alpha1"
 
@@ -71,12 +69,6 @@ type PublishRequest struct {
 	// AuxiliaryFiles contains map files, SSL certificates, and general files.
 	AuxiliaryFiles *AuxiliaryFiles
 
-	// RenderedAt is the timestamp when the configuration was rendered.
-	RenderedAt time.Time
-
-	// ValidatedAt is the timestamp when the configuration was successfully validated.
-	ValidatedAt time.Time
-
 	// Checksum is the SHA-256 hash of the configuration content.
 	Checksum string
 
@@ -129,10 +121,6 @@ type DeploymentStatusUpdate struct {
 	// PodName is the name of the HAProxy pod that received the configuration.
 	PodName string
 
-	// DeployedAt is the timestamp when configuration was last changed on the pod.
-	// Only set when operations > 0.
-	DeployedAt time.Time
-
 	// Checksum is the checksum of the configuration deployed to the pod.
 	Checksum string
 
@@ -140,43 +128,9 @@ type DeploymentStatusUpdate struct {
 	// or an actual sync operation (POST/PUT/DELETE).
 	IsDriftCheck bool
 
-	// LastReloadAt is the timestamp when HAProxy was last reloaded.
-	// Only set when a reload was triggered.
-	LastReloadAt *time.Time
-
-	// LastReloadID is the reload identifier from HAProxy.
-	// Only set when a reload was triggered.
-	LastReloadID string
-
-	// SyncDuration is how long the sync operation took.
-	SyncDuration *time.Duration
-
-	// VersionConflictRetries is the number of retries due to version conflicts.
-	VersionConflictRetries int
-
-	// FallbackUsed indicates whether raw config push was used.
-	FallbackUsed bool
-
-	// OperationSummary provides a breakdown of operations performed.
-	OperationSummary *OperationSummary
-
 	// Error contains the error message if sync failed.
 	// Empty string indicates success.
 	Error string
-}
-
-// OperationSummary provides statistics about sync operations.
-type OperationSummary struct {
-	TotalAPIOperations int
-	BackendsAdded      int
-	BackendsRemoved    int
-	BackendsModified   int
-	ServersAdded       int
-	ServersRemoved     int
-	ServersModified    int
-	FrontendsAdded     int
-	FrontendsRemoved   int
-	FrontendsModified  int
 }
 
 // PodCleanupRequest contains information about a terminated pod to clean up.
