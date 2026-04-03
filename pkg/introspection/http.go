@@ -55,39 +55,6 @@ func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data any) {
 	}
 }
 
-// WriteJSONField writes a specific field from data as JSON using JSONPath.
-//
-// The field parameter should use kubectl-style JSONPath syntax (e.g., "{.version}").
-// If field is empty, writes the entire data object.
-//
-// Example:
-//
-//	config := map[string]interface{}{
-//	    "version": "1.2.3",
-//	    "templates": []string{"main", "secondary"},
-//	}
-//
-//	// Get full object
-//	WriteJSONField(w, config, "")
-//
-//	// Get specific field
-//	WriteJSONField(w, config, "{.version}")  // Returns: "1.2.3"
-func WriteJSONField(w http.ResponseWriter, data any, field string) {
-	if field == "" {
-		WriteJSON(w, data)
-		return
-	}
-
-	// Extract field using JSONPath
-	result, err := ExtractField(data, field)
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, "Invalid field query: "+err.Error())
-		return
-	}
-
-	WriteJSON(w, result)
-}
-
 // WriteError writes an error response with the specified HTTP status code.
 //
 // The error message is wrapped in a JSON object with an "error" field.
@@ -104,9 +71,13 @@ func WriteError(w http.ResponseWriter, code int, message string) {
 		"error": message,
 	}
 
-	// Best effort - if this fails, not much we can do
-	//nolint:errchkjson // Error handler itself - nowhere to report encoding errors
-	_ = json.NewEncoder(w).Encode(response)
+	// Best effort encoding - if this fails after headers are sent,
+	// there is no way to report the encoding error to the client.
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		// Headers already sent, cannot change status code.
+		// The partial/empty response body signals the error to the client.
+		return
+	}
 }
 
 // requireGET wraps an HTTP handler to enforce GET method only.

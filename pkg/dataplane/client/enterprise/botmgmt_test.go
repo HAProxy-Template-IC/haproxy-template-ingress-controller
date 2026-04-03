@@ -24,13 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewBotManagementOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	require.NotNil(t, bot)
@@ -38,14 +39,14 @@ func TestNewBotManagementOperations(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetAllProfiles_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles": jsonResponse(`[{"name": "default"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles": testutil.JSONResponse(`[{"name": "default"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	profiles, err := bot.GetAllProfiles(context.Background(), "tx-123")
@@ -55,14 +56,14 @@ func TestBotManagementOperations_GetAllProfiles_Success(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetAllProfiles_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetAllProfiles(context.Background(), "tx-123")
@@ -72,14 +73,14 @@ func TestBotManagementOperations_GetAllProfiles_ServerError(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetAllProfiles_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles": jsonResponse(`not-an-array`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles": testutil.JSONResponse(`not-an-array`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetAllProfiles(context.Background(), "tx-123")
@@ -89,12 +90,12 @@ func TestBotManagementOperations_GetAllProfiles_InvalidJSON(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetAllProfiles_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetAllProfiles(context.Background(), "tx-123")
@@ -104,14 +105,14 @@ func TestBotManagementOperations_GetAllProfiles_CommunityEdition(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetProfile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles/default": jsonResponse(`{"name": "default"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles/default": testutil.JSONResponse(`{"name": "default"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	profile, err := bot.GetProfile(context.Background(), "tx-123", "default")
@@ -121,14 +122,14 @@ func TestBotManagementOperations_GetProfile_Success(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetProfile_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetProfile(context.Background(), "tx-123", "nonexistent")
@@ -138,12 +139,12 @@ func TestBotManagementOperations_GetProfile_NotFound(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetProfile_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetProfile(context.Background(), "tx-123", "default")
@@ -153,10 +154,10 @@ func TestBotManagementOperations_GetProfile_CommunityEdition(t *testing.T) {
 }
 
 func TestBotManagementOperations_CreateProfile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -165,7 +166,7 @@ func TestBotManagementOperations_CreateProfile_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	profile := &BotmgmtProfile{}
@@ -175,16 +176,16 @@ func TestBotManagementOperations_CreateProfile_Success(t *testing.T) {
 }
 
 func TestBotManagementOperations_CreateProfile_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	profile := &BotmgmtProfile{}
@@ -195,12 +196,12 @@ func TestBotManagementOperations_CreateProfile_ServerError(t *testing.T) {
 }
 
 func TestBotManagementOperations_CreateProfile_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	profile := &BotmgmtProfile{}
@@ -211,10 +212,10 @@ func TestBotManagementOperations_CreateProfile_CommunityEdition(t *testing.T) {
 }
 
 func TestBotManagementOperations_DeleteProfile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles/default": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "default"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles/default": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "default"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -223,7 +224,7 @@ func TestBotManagementOperations_DeleteProfile_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	err := bot.DeleteProfile(context.Background(), "tx-123", "default")
@@ -232,16 +233,16 @@ func TestBotManagementOperations_DeleteProfile_Success(t *testing.T) {
 }
 
 func TestBotManagementOperations_DeleteProfile_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/botmgmt_profiles/default": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodDelete: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/botmgmt_profiles/default": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodDelete: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	err := bot.DeleteProfile(context.Background(), "tx-123", "default")
@@ -251,12 +252,12 @@ func TestBotManagementOperations_DeleteProfile_ServerError(t *testing.T) {
 }
 
 func TestBotManagementOperations_DeleteProfile_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	err := bot.DeleteProfile(context.Background(), "tx-123", "default")
@@ -266,14 +267,14 @@ func TestBotManagementOperations_DeleteProfile_CommunityEdition(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetAllCaptchas_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas": jsonResponse(`[{"name": "recaptcha"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas": testutil.JSONResponse(`[{"name": "recaptcha"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	captchas, err := bot.GetAllCaptchas(context.Background(), "tx-123")
@@ -283,14 +284,14 @@ func TestBotManagementOperations_GetAllCaptchas_Success(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetAllCaptchas_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetAllCaptchas(context.Background(), "tx-123")
@@ -300,14 +301,14 @@ func TestBotManagementOperations_GetAllCaptchas_ServerError(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetAllCaptchas_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas": jsonResponse(`not-valid`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas": testutil.JSONResponse(`not-valid`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetAllCaptchas(context.Background(), "tx-123")
@@ -317,12 +318,12 @@ func TestBotManagementOperations_GetAllCaptchas_InvalidJSON(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetAllCaptchas_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetAllCaptchas(context.Background(), "tx-123")
@@ -332,14 +333,14 @@ func TestBotManagementOperations_GetAllCaptchas_CommunityEdition(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetCaptcha_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas/recaptcha": jsonResponse(`{"name": "recaptcha"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas/recaptcha": testutil.JSONResponse(`{"name": "recaptcha"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	captcha, err := bot.GetCaptcha(context.Background(), "tx-123", "recaptcha")
@@ -349,14 +350,14 @@ func TestBotManagementOperations_GetCaptcha_Success(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetCaptcha_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetCaptcha(context.Background(), "tx-123", "nonexistent")
@@ -366,12 +367,12 @@ func TestBotManagementOperations_GetCaptcha_NotFound(t *testing.T) {
 }
 
 func TestBotManagementOperations_GetCaptcha_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	_, err := bot.GetCaptcha(context.Background(), "tx-123", "recaptcha")
@@ -381,10 +382,10 @@ func TestBotManagementOperations_GetCaptcha_CommunityEdition(t *testing.T) {
 }
 
 func TestBotManagementOperations_CreateCaptcha_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -393,7 +394,7 @@ func TestBotManagementOperations_CreateCaptcha_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	captcha := &Captcha{}
@@ -403,16 +404,16 @@ func TestBotManagementOperations_CreateCaptcha_Success(t *testing.T) {
 }
 
 func TestBotManagementOperations_CreateCaptcha_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	captcha := &Captcha{}
@@ -423,12 +424,12 @@ func TestBotManagementOperations_CreateCaptcha_ServerError(t *testing.T) {
 }
 
 func TestBotManagementOperations_CreateCaptcha_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	captcha := &Captcha{}
@@ -439,10 +440,10 @@ func TestBotManagementOperations_CreateCaptcha_CommunityEdition(t *testing.T) {
 }
 
 func TestBotManagementOperations_DeleteCaptcha_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas/recaptcha": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "recaptcha"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas/recaptcha": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "recaptcha"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -451,7 +452,7 @@ func TestBotManagementOperations_DeleteCaptcha_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	err := bot.DeleteCaptcha(context.Background(), "tx-123", "recaptcha")
@@ -460,16 +461,16 @@ func TestBotManagementOperations_DeleteCaptcha_Success(t *testing.T) {
 }
 
 func TestBotManagementOperations_DeleteCaptcha_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/captchas/recaptcha": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodDelete: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/captchas/recaptcha": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodDelete: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	err := bot.DeleteCaptcha(context.Background(), "tx-123", "recaptcha")
@@ -479,12 +480,12 @@ func TestBotManagementOperations_DeleteCaptcha_ServerError(t *testing.T) {
 }
 
 func TestBotManagementOperations_DeleteCaptcha_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	bot := NewBotManagementOperations(c)
 
 	err := bot.DeleteCaptcha(context.Background(), "tx-123", "recaptcha")

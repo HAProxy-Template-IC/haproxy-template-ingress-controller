@@ -68,33 +68,6 @@ func TestWriteJSONWithStatus(t *testing.T) {
 	assert.JSONEq(t, `{"id":"123"}`, w.Body.String())
 }
 
-func TestWriteJSONField(t *testing.T) {
-	t.Run("empty field returns full object", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		WriteJSONField(w, map[string]string{"a": "1", "b": "2"}, "")
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.JSONEq(t, `{"a":"1","b":"2"}`, w.Body.String())
-	})
-
-	t.Run("valid field selection", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		WriteJSONField(w, map[string]any{"name": "testname"}, "{.name}")
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Body.String(), "testname")
-	})
-
-	t.Run("invalid field syntax", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		// Field must start with { to be valid JSONPath
-		WriteJSONField(w, map[string]string{"a": "1"}, "{.nonexistent[}")
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "error")
-	})
-}
-
 func TestWriteError(t *testing.T) {
 	w := httptest.NewRecorder()
 	WriteError(w, http.StatusNotFound, "resource not found")

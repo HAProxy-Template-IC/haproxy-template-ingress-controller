@@ -232,12 +232,54 @@ linters:
           - gosec
         text: "G118"
 
+      # G108: pprof intentionally exposed on debug port for production debugging
+      - path: pkg/introspection/server\.go
+        linters:
+          - gosec
+        text: "G108"
+
+      # G101: Kubernetes Secret name constant, not actual credentials
+      - path: tests/acceptance/env\.go
+        linters:
+          - gosec
+        text: "G101"
+
       # G602: slice index out of range — false positive when index is validated
       # by the enclosing loop that found the element
       - path: pkg/k8s/configpublisher/name_helpers\.go
         linters:
           - gosec
         text: "G602"
+
+      # nilerr: intentional nil return on context cancellation (graceful shutdown)
+      - path: pkg/controller/controller\.go
+        linters:
+          - nilerr
+      # nilerr: intentional nil return for missing fields during filtering
+      - path: pkg/k8s/indexer/filter\.go
+        linters:
+          - nilerr
+
+      # gocritic hugeParam: Config passed by value to prevent external mutation
+      - path: pkg/k8s/watcher/watcher\.go
+        linters:
+          - gocritic
+        text: "hugeParam"
+
+      # revive cognitive-complexity: Large switch/formatting functions with acceptable complexity
+      - path: pkg/controller/commentator/insights\.go
+        linters:
+          - revive
+          - gocyclo
+      - path: pkg/controller/testrunner/output\.go
+        linters:
+          - revive
+      - path: tests/architecture_test\.go
+        linters:
+          - revive
+      - path: pkg/k8s/watcher/single_test\.go
+        linters:
+          - revive
 
       # Exclude godot false positives for correctly formatted comments
       # These comments all end with periods but godot incorrectly flags them

@@ -19,13 +19,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	ops := NewOperations(c)
 
 	require.NotNil(t, ops)
@@ -33,46 +35,46 @@ func TestNewOperations(t *testing.T) {
 }
 
 func TestOperations_Client(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	ops := NewOperations(c)
 
 	assert.Equal(t, c, ops.Client())
 }
 
 func TestOperations_IsAvailable_Enterprise(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testEnterpriseAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.EnterpriseAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	ops := NewOperations(c)
 
 	assert.True(t, ops.IsAvailable())
 }
 
 func TestOperations_IsAvailable_Community(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	ops := NewOperations(c)
 
 	assert.False(t, ops.IsAvailable())
 }
 
 func TestOperations_Capabilities_Enterprise(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testEnterpriseAPIVersion, // v3.2-ee1
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.EnterpriseAPIVersion, // v3.2-ee1
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	ops := NewOperations(c)
 
 	caps := ops.Capabilities()
@@ -90,12 +92,12 @@ func TestOperations_Capabilities_Enterprise(t *testing.T) {
 }
 
 func TestOperations_Capabilities_Community(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	ops := NewOperations(c)
 
 	caps := ops.Capabilities()

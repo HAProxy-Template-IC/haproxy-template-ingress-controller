@@ -24,13 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewKeepalivedOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	require.NotNil(t, keepalived)
@@ -38,16 +39,16 @@ func TestNewKeepalivedOperations(t *testing.T) {
 }
 
 func TestKeepalivedOperations_StartTransaction_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/transactions": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: jsonResponse(`{"id": "keepalived-tx-123", "status": "in_progress"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/transactions": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.JSONResponse(`{"id": "keepalived-tx-123", "status": "in_progress"}`),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	txID, err := keepalived.StartTransaction(context.Background())
@@ -57,16 +58,16 @@ func TestKeepalivedOperations_StartTransaction_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_StartTransaction_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/transactions": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/transactions": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusInternalServerError),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.StartTransaction(context.Background())
@@ -76,12 +77,12 @@ func TestKeepalivedOperations_StartTransaction_ServerError(t *testing.T) {
 }
 
 func TestKeepalivedOperations_StartTransaction_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.StartTransaction(context.Background())
@@ -91,16 +92,16 @@ func TestKeepalivedOperations_StartTransaction_CommunityEdition(t *testing.T) {
 }
 
 func TestKeepalivedOperations_StartTransaction_NoIDInResponse(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/transactions": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: jsonResponse(`{"status": "in_progress"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/transactions": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.JSONResponse(`{"status": "in_progress"}`),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.StartTransaction(context.Background())
@@ -110,10 +111,10 @@ func TestKeepalivedOperations_StartTransaction_NoIDInResponse(t *testing.T) {
 }
 
 func TestKeepalivedOperations_CommitTransaction_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/transactions/keepalived-tx-123": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"id": "keepalived-tx-123"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/transactions/keepalived-tx-123": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"id": "keepalived-tx-123"}`),
 				http.MethodPut: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
@@ -122,7 +123,7 @@ func TestKeepalivedOperations_CommitTransaction_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	err := keepalived.CommitTransaction(context.Background(), "keepalived-tx-123")
@@ -131,16 +132,16 @@ func TestKeepalivedOperations_CommitTransaction_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_CommitTransaction_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/transactions/keepalived-tx-123": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPut: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/transactions/keepalived-tx-123": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPut: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	err := keepalived.CommitTransaction(context.Background(), "keepalived-tx-123")
@@ -150,10 +151,10 @@ func TestKeepalivedOperations_CommitTransaction_ServerError(t *testing.T) {
 }
 
 func TestKeepalivedOperations_DeleteTransaction_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/transactions/keepalived-tx-123": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"id": "keepalived-tx-123"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/transactions/keepalived-tx-123": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"id": "keepalived-tx-123"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -162,7 +163,7 @@ func TestKeepalivedOperations_DeleteTransaction_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	err := keepalived.DeleteTransaction(context.Background(), "keepalived-tx-123")
@@ -171,14 +172,14 @@ func TestKeepalivedOperations_DeleteTransaction_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetTransaction_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/transactions/keepalived-tx-123": jsonResponse(`{"id": "keepalived-tx-123", "status": "in_progress"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/transactions/keepalived-tx-123": testutil.JSONResponse(`{"id": "keepalived-tx-123", "status": "in_progress"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	tx, err := keepalived.GetTransaction(context.Background(), "keepalived-tx-123")
@@ -188,14 +189,14 @@ func TestKeepalivedOperations_GetTransaction_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetTransaction_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/transactions/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/transactions/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetTransaction(context.Background(), "nonexistent")
@@ -205,14 +206,14 @@ func TestKeepalivedOperations_GetTransaction_NotFound(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetAllVRRPInstances_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_instances": jsonResponse(`[{"name": "VI_1"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_instances": testutil.JSONResponse(`[{"name": "VI_1"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	instances, err := keepalived.GetAllVRRPInstances(context.Background())
@@ -222,14 +223,14 @@ func TestKeepalivedOperations_GetAllVRRPInstances_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetAllVRRPInstances_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_instances": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_instances": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetAllVRRPInstances(context.Background())
@@ -239,12 +240,12 @@ func TestKeepalivedOperations_GetAllVRRPInstances_ServerError(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetAllVRRPInstances_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetAllVRRPInstances(context.Background())
@@ -254,14 +255,14 @@ func TestKeepalivedOperations_GetAllVRRPInstances_CommunityEdition(t *testing.T)
 }
 
 func TestKeepalivedOperations_GetVRRPInstance_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_instances/VI_1": jsonResponse(`{"name": "VI_1", "virtual_router_id": 51}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_instances/VI_1": testutil.JSONResponse(`{"name": "VI_1", "virtual_router_id": 51}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	instance, err := keepalived.GetVRRPInstance(context.Background(), "VI_1")
@@ -271,14 +272,14 @@ func TestKeepalivedOperations_GetVRRPInstance_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetVRRPInstance_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_instances/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_instances/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetVRRPInstance(context.Background(), "nonexistent")
@@ -288,10 +289,10 @@ func TestKeepalivedOperations_GetVRRPInstance_NotFound(t *testing.T) {
 }
 
 func TestKeepalivedOperations_CreateVRRPInstance_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_instances": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_instances": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -300,7 +301,7 @@ func TestKeepalivedOperations_CreateVRRPInstance_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	instance := &VRRPInstance{}
@@ -310,16 +311,16 @@ func TestKeepalivedOperations_CreateVRRPInstance_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_CreateVRRPInstance_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_instances": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_instances": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	instance := &VRRPInstance{}
@@ -330,10 +331,10 @@ func TestKeepalivedOperations_CreateVRRPInstance_ServerError(t *testing.T) {
 }
 
 func TestKeepalivedOperations_ReplaceVRRPInstance_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_instances/VI_1": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "VI_1"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_instances/VI_1": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "VI_1"}`),
 				http.MethodPut: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
@@ -342,7 +343,7 @@ func TestKeepalivedOperations_ReplaceVRRPInstance_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	instance := &VRRPInstance{}
@@ -352,10 +353,10 @@ func TestKeepalivedOperations_ReplaceVRRPInstance_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_DeleteVRRPInstance_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_instances/VI_1": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "VI_1"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_instances/VI_1": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "VI_1"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -364,7 +365,7 @@ func TestKeepalivedOperations_DeleteVRRPInstance_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	err := keepalived.DeleteVRRPInstance(context.Background(), "tx-123", "VI_1")
@@ -373,12 +374,12 @@ func TestKeepalivedOperations_DeleteVRRPInstance_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_DeleteVRRPInstance_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	err := keepalived.DeleteVRRPInstance(context.Background(), "tx-123", "VI_1")
@@ -388,14 +389,14 @@ func TestKeepalivedOperations_DeleteVRRPInstance_CommunityEdition(t *testing.T) 
 }
 
 func TestKeepalivedOperations_GetAllVRRPSyncGroups_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_sync_groups": jsonResponse(`[{"name": "VG_1"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_sync_groups": testutil.JSONResponse(`[{"name": "VG_1"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	groups, err := keepalived.GetAllVRRPSyncGroups(context.Background())
@@ -405,14 +406,14 @@ func TestKeepalivedOperations_GetAllVRRPSyncGroups_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetAllVRRPSyncGroups_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_sync_groups": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_sync_groups": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetAllVRRPSyncGroups(context.Background())
@@ -422,12 +423,12 @@ func TestKeepalivedOperations_GetAllVRRPSyncGroups_ServerError(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetAllVRRPSyncGroups_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetAllVRRPSyncGroups(context.Background())
@@ -437,14 +438,14 @@ func TestKeepalivedOperations_GetAllVRRPSyncGroups_CommunityEdition(t *testing.T
 }
 
 func TestKeepalivedOperations_GetVRRPSyncGroup_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_sync_groups/VG_1": jsonResponse(`{"name": "VG_1"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_sync_groups/VG_1": testutil.JSONResponse(`{"name": "VG_1"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	group, err := keepalived.GetVRRPSyncGroup(context.Background(), "VG_1")
@@ -454,14 +455,14 @@ func TestKeepalivedOperations_GetVRRPSyncGroup_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetVRRPSyncGroup_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_sync_groups/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_sync_groups/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetVRRPSyncGroup(context.Background(), "nonexistent")
@@ -471,10 +472,10 @@ func TestKeepalivedOperations_GetVRRPSyncGroup_NotFound(t *testing.T) {
 }
 
 func TestKeepalivedOperations_CreateVRRPSyncGroup_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_sync_groups": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_sync_groups": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -483,7 +484,7 @@ func TestKeepalivedOperations_CreateVRRPSyncGroup_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	group := &VRRPSyncGroup{}
@@ -493,16 +494,16 @@ func TestKeepalivedOperations_CreateVRRPSyncGroup_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_CreateVRRPSyncGroup_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_sync_groups": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_sync_groups": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	group := &VRRPSyncGroup{}
@@ -513,10 +514,10 @@ func TestKeepalivedOperations_CreateVRRPSyncGroup_ServerError(t *testing.T) {
 }
 
 func TestKeepalivedOperations_DeleteVRRPSyncGroup_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_sync_groups/VG_1": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "VG_1"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_sync_groups/VG_1": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "VG_1"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -525,7 +526,7 @@ func TestKeepalivedOperations_DeleteVRRPSyncGroup_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	err := keepalived.DeleteVRRPSyncGroup(context.Background(), "tx-123", "VG_1")
@@ -534,14 +535,14 @@ func TestKeepalivedOperations_DeleteVRRPSyncGroup_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetAllVRRPScripts_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_track_scripts": jsonResponse(`[{"name": "chk_haproxy"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_track_scripts": testutil.JSONResponse(`[{"name": "chk_haproxy"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	scripts, err := keepalived.GetAllVRRPScripts(context.Background())
@@ -551,14 +552,14 @@ func TestKeepalivedOperations_GetAllVRRPScripts_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetAllVRRPScripts_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_track_scripts": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_track_scripts": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetAllVRRPScripts(context.Background())
@@ -568,12 +569,12 @@ func TestKeepalivedOperations_GetAllVRRPScripts_ServerError(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetAllVRRPScripts_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetAllVRRPScripts(context.Background())
@@ -583,14 +584,14 @@ func TestKeepalivedOperations_GetAllVRRPScripts_CommunityEdition(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetVRRPScript_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_track_scripts/chk_haproxy": jsonResponse(`{"name": "chk_haproxy", "script": "/usr/bin/check_haproxy.sh"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_track_scripts/chk_haproxy": testutil.JSONResponse(`{"name": "chk_haproxy", "script": "/usr/bin/check_haproxy.sh"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	script, err := keepalived.GetVRRPScript(context.Background(), "chk_haproxy")
@@ -600,14 +601,14 @@ func TestKeepalivedOperations_GetVRRPScript_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_GetVRRPScript_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_track_scripts/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_track_scripts/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	_, err := keepalived.GetVRRPScript(context.Background(), "nonexistent")
@@ -617,10 +618,10 @@ func TestKeepalivedOperations_GetVRRPScript_NotFound(t *testing.T) {
 }
 
 func TestKeepalivedOperations_CreateVRRPScript_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_track_scripts": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_track_scripts": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -629,7 +630,7 @@ func TestKeepalivedOperations_CreateVRRPScript_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	script := &VRRPScript{}
@@ -639,16 +640,16 @@ func TestKeepalivedOperations_CreateVRRPScript_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_CreateVRRPScript_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_track_scripts": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_track_scripts": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	script := &VRRPScript{}
@@ -659,10 +660,10 @@ func TestKeepalivedOperations_CreateVRRPScript_ServerError(t *testing.T) {
 }
 
 func TestKeepalivedOperations_DeleteVRRPScript_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_track_scripts/chk_haproxy": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "chk_haproxy"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_track_scripts/chk_haproxy": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "chk_haproxy"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -671,7 +672,7 @@ func TestKeepalivedOperations_DeleteVRRPScript_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	err := keepalived.DeleteVRRPScript(context.Background(), "tx-123", "chk_haproxy")
@@ -680,16 +681,16 @@ func TestKeepalivedOperations_DeleteVRRPScript_Success(t *testing.T) {
 }
 
 func TestKeepalivedOperations_DeleteVRRPScript_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/keepalived/configuration/vrrp_track_scripts/chk_haproxy": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodDelete: errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/keepalived/configuration/vrrp_track_scripts/chk_haproxy": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodDelete: testutil.ErrorResponse(http.StatusNotFound),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	keepalived := NewKeepalivedOperations(c)
 
 	err := keepalived.DeleteVRRPScript(context.Background(), "tx-123", "chk_haproxy")

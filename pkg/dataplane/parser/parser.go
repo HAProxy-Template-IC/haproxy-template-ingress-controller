@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -157,6 +158,11 @@ type Parser struct {
 // This alias is provided for backward compatibility with existing code.
 // New code should import from haptic/pkg/dataplane/parser/parserconfig.
 type StructuredConfig = parserconfig.StructuredConfig
+
+// logSectionParseError logs a warning when a configuration section fails to parse.
+func logSectionParseError(sectionType, sectionName string, err error) {
+	slog.Warn("Failed to parse section", "type", sectionType, "section", sectionName, "error", err)
+}
 
 // New creates a new Parser instance.
 //

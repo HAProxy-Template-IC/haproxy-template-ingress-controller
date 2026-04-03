@@ -62,7 +62,6 @@ const (
 	ControllerCRDName = "haproxy-config"
 
 	// ControllerSecretName is the name of the controller credentials Secret.
-	//nolint:gosec // G101: This is a Kubernetes Secret name, not actual credentials
 	ControllerSecretName = "haproxy-credentials"
 
 	// ControllerServiceAccountName is the name of the controller ServiceAccount.

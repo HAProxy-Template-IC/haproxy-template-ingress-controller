@@ -87,8 +87,6 @@ func formatMultilineError(errorMsg, indent string) string {
 }
 
 // formatSummary formats results as a human-readable summary.
-//
-//nolint:revive // Complexity acceptable for formatting with multiple output conditions
 func formatSummary(results *TestResults, verbose bool) string {
 	var out strings.Builder
 

@@ -24,13 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewUDPLBOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	require.NotNil(t, udp)
@@ -38,14 +39,14 @@ func TestNewUDPLBOperations(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllUDPLbs_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs": jsonResponse(`[{"name": "dns"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs": testutil.JSONResponse(`[{"name": "dns"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	lbs, err := udp.GetAllUDPLbs(context.Background(), "tx-123")
@@ -55,14 +56,14 @@ func TestUDPLBOperations_GetAllUDPLbs_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllUDPLbs_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllUDPLbs(context.Background(), "tx-123")
@@ -72,14 +73,14 @@ func TestUDPLBOperations_GetAllUDPLbs_ServerError(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllUDPLbs_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs": jsonResponse(`not-array`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs": testutil.JSONResponse(`not-array`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllUDPLbs(context.Background(), "tx-123")
@@ -89,12 +90,12 @@ func TestUDPLBOperations_GetAllUDPLbs_InvalidJSON(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllUDPLbs_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllUDPLbs(context.Background(), "tx-123")
@@ -104,14 +105,14 @@ func TestUDPLBOperations_GetAllUDPLbs_CommunityEdition(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns": jsonResponse(`{"name": "dns"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns": testutil.JSONResponse(`{"name": "dns"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	lb, err := udp.GetUDPLb(context.Background(), "tx-123", "dns")
@@ -121,14 +122,14 @@ func TestUDPLBOperations_GetUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetUDPLb_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetUDPLb(context.Background(), "tx-123", "nonexistent")
@@ -138,12 +139,12 @@ func TestUDPLBOperations_GetUDPLb_NotFound(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetUDPLb_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetUDPLb(context.Background(), "tx-123", "dns")
@@ -153,10 +154,10 @@ func TestUDPLBOperations_GetUDPLb_CommunityEdition(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -165,7 +166,7 @@ func TestUDPLBOperations_CreateUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	lb := &UDPLb{}
@@ -175,16 +176,16 @@ func TestUDPLBOperations_CreateUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateUDPLb_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	lb := &UDPLb{}
@@ -195,12 +196,12 @@ func TestUDPLBOperations_CreateUDPLb_ServerError(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateUDPLb_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	lb := &UDPLb{}
@@ -211,10 +212,10 @@ func TestUDPLBOperations_CreateUDPLb_CommunityEdition(t *testing.T) {
 }
 
 func TestUDPLBOperations_ReplaceUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "dns"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "dns"}`),
 				http.MethodPut: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
@@ -223,7 +224,7 @@ func TestUDPLBOperations_ReplaceUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	lb := &UDPLb{}
@@ -233,10 +234,10 @@ func TestUDPLBOperations_ReplaceUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "dns"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "dns"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -245,7 +246,7 @@ func TestUDPLBOperations_DeleteUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteUDPLb(context.Background(), "tx-123", "dns")
@@ -254,12 +255,12 @@ func TestUDPLBOperations_DeleteUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteUDPLb_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteUDPLb(context.Background(), "tx-123", "dns")
@@ -269,14 +270,14 @@ func TestUDPLBOperations_DeleteUDPLb_CommunityEdition(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllACLsUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/acls": jsonResponse(`[{"acl_name": "is_dns"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/acls": testutil.JSONResponse(`[{"acl_name": "is_dns"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	acls, err := udp.GetAllACLsUDPLb(context.Background(), "tx-123", "dns")
@@ -286,12 +287,12 @@ func TestUDPLBOperations_GetAllACLsUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllACLsUDPLb_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllACLsUDPLb(context.Background(), "tx-123", "dns")
@@ -301,12 +302,12 @@ func TestUDPLBOperations_GetAllACLsUDPLb_RequiresV32(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllACLsUDPLb_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllACLsUDPLb(context.Background(), "tx-123", "dns")
@@ -315,10 +316,10 @@ func TestUDPLBOperations_GetAllACLsUDPLb_CommunityEdition(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateACLUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/acls/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/acls/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -327,7 +328,7 @@ func TestUDPLBOperations_CreateACLUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	acl := &ACL{}
@@ -337,12 +338,12 @@ func TestUDPLBOperations_CreateACLUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateACLUDPLb_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	acl := &ACL{}
@@ -353,10 +354,10 @@ func TestUDPLBOperations_CreateACLUDPLb_RequiresV32(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteACLUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/acls/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/acls/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -365,7 +366,7 @@ func TestUDPLBOperations_DeleteACLUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteACLUDPLb(context.Background(), "tx-123", "dns", 0)
@@ -374,12 +375,12 @@ func TestUDPLBOperations_DeleteACLUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteACLUDPLb_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteACLUDPLb(context.Background(), "tx-123", "dns", 0)
@@ -389,14 +390,14 @@ func TestUDPLBOperations_DeleteACLUDPLb_RequiresV32(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllDgramBindsUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds": jsonResponse(`[{"name": "udp-bind"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds": testutil.JSONResponse(`[{"name": "udp-bind"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	binds, err := udp.GetAllDgramBindsUDPLb(context.Background(), "tx-123", "dns")
@@ -406,14 +407,14 @@ func TestUDPLBOperations_GetAllDgramBindsUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllDgramBindsUDPLb_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllDgramBindsUDPLb(context.Background(), "tx-123", "dns")
@@ -423,12 +424,12 @@ func TestUDPLBOperations_GetAllDgramBindsUDPLb_ServerError(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllDgramBindsUDPLb_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllDgramBindsUDPLb(context.Background(), "tx-123", "dns")
@@ -438,10 +439,10 @@ func TestUDPLBOperations_GetAllDgramBindsUDPLb_CommunityEdition(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateDgramBindUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -450,7 +451,7 @@ func TestUDPLBOperations_CreateDgramBindUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	bind := &DgramBind{}
@@ -460,16 +461,16 @@ func TestUDPLBOperations_CreateDgramBindUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateDgramBindUDPLb_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	bind := &DgramBind{}
@@ -480,10 +481,10 @@ func TestUDPLBOperations_CreateDgramBindUDPLb_ServerError(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteDgramBindUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds/bind1": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "bind1"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds/bind1": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "bind1"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -492,7 +493,7 @@ func TestUDPLBOperations_DeleteDgramBindUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteDgramBindUDPLb(context.Background(), "tx-123", "dns", "bind1")
@@ -501,16 +502,16 @@ func TestUDPLBOperations_DeleteDgramBindUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteDgramBindUDPLb_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds/bind1": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodDelete: errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/dgram_binds/bind1": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodDelete: testutil.ErrorResponse(http.StatusNotFound),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteDgramBindUDPLb(context.Background(), "tx-123", "dns", "bind1")
@@ -520,14 +521,14 @@ func TestUDPLBOperations_DeleteDgramBindUDPLb_ServerError(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllLogTargetsUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets": jsonResponse(`[{"index": 0}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets": testutil.JSONResponse(`[{"index": 0}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	targets, err := udp.GetAllLogTargetsUDPLb(context.Background(), "tx-123", "dns")
@@ -537,14 +538,14 @@ func TestUDPLBOperations_GetAllLogTargetsUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllLogTargetsUDPLb_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllLogTargetsUDPLb(context.Background(), "tx-123", "dns")
@@ -554,12 +555,12 @@ func TestUDPLBOperations_GetAllLogTargetsUDPLb_ServerError(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllLogTargetsUDPLb_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllLogTargetsUDPLb(context.Background(), "tx-123", "dns")
@@ -569,10 +570,10 @@ func TestUDPLBOperations_GetAllLogTargetsUDPLb_CommunityEdition(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateLogTargetUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -581,7 +582,7 @@ func TestUDPLBOperations_CreateLogTargetUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	target := &LogTarget{}
@@ -591,16 +592,16 @@ func TestUDPLBOperations_CreateLogTargetUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateLogTargetUDPLb_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	target := &LogTarget{}
@@ -611,10 +612,10 @@ func TestUDPLBOperations_CreateLogTargetUDPLb_ServerError(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteLogTargetUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -623,7 +624,7 @@ func TestUDPLBOperations_DeleteLogTargetUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteLogTargetUDPLb(context.Background(), "tx-123", "dns", 0)
@@ -632,16 +633,16 @@ func TestUDPLBOperations_DeleteLogTargetUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteLogTargetUDPLb_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodDelete: errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/log_targets/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodDelete: testutil.ErrorResponse(http.StatusNotFound),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteLogTargetUDPLb(context.Background(), "tx-123", "dns", 0)
@@ -651,14 +652,14 @@ func TestUDPLBOperations_DeleteLogTargetUDPLb_ServerError(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllServerSwitchingRulesUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/server_switching_rules": jsonResponse(`[{"index": 0}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/server_switching_rules": testutil.JSONResponse(`[{"index": 0}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	rules, err := udp.GetAllServerSwitchingRulesUDPLb(context.Background(), "tx-123", "dns")
@@ -668,12 +669,12 @@ func TestUDPLBOperations_GetAllServerSwitchingRulesUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_GetAllServerSwitchingRulesUDPLb_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllServerSwitchingRulesUDPLb(context.Background(), "tx-123", "dns")
@@ -683,12 +684,12 @@ func TestUDPLBOperations_GetAllServerSwitchingRulesUDPLb_RequiresV32(t *testing.
 }
 
 func TestUDPLBOperations_GetAllServerSwitchingRulesUDPLb_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	_, err := udp.GetAllServerSwitchingRulesUDPLb(context.Background(), "tx-123", "dns")
@@ -697,10 +698,10 @@ func TestUDPLBOperations_GetAllServerSwitchingRulesUDPLb_CommunityEdition(t *tes
 }
 
 func TestUDPLBOperations_CreateServerSwitchingRuleUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/server_switching_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/server_switching_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -709,7 +710,7 @@ func TestUDPLBOperations_CreateServerSwitchingRuleUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	rule := &ServerSwitchingRule{}
@@ -719,12 +720,12 @@ func TestUDPLBOperations_CreateServerSwitchingRuleUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_CreateServerSwitchingRuleUDPLb_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	rule := &ServerSwitchingRule{}
@@ -735,10 +736,10 @@ func TestUDPLBOperations_CreateServerSwitchingRuleUDPLb_RequiresV32(t *testing.T
 }
 
 func TestUDPLBOperations_DeleteServerSwitchingRuleUDPLb_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/udp_lbs/dns/server_switching_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/udp_lbs/dns/server_switching_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -747,7 +748,7 @@ func TestUDPLBOperations_DeleteServerSwitchingRuleUDPLb_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteServerSwitchingRuleUDPLb(context.Background(), "tx-123", "dns", 0)
@@ -756,12 +757,12 @@ func TestUDPLBOperations_DeleteServerSwitchingRuleUDPLb_Success(t *testing.T) {
 }
 
 func TestUDPLBOperations_DeleteServerSwitchingRuleUDPLb_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	udp := NewUDPLBOperations(c)
 
 	err := udp.DeleteServerSwitchingRuleUDPLb(context.Background(), "tx-123", "dns", 0)

@@ -104,9 +104,8 @@ type Component struct {
 	subscriptionReady chan struct{}
 
 	// lastRenderedChecksum tracks the checksum of the last successfully rendered config.
-	// Used with HasPendingValidation() to skip redundant TemplateRenderedEvents when
-	// content hasn't changed. Cleared on leadership loss to ensure fresh render on
-	// leadership regain.
+	// Used to skip redundant TemplateRenderedEvents when content hasn't changed.
+	// Cleared on leadership loss to ensure fresh render on leadership regain.
 	// Not mutex-protected because it's only accessed from the single-threaded event loop.
 	lastRenderedChecksum string
 }

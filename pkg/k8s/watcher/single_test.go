@@ -234,8 +234,6 @@ func TestSingleWatcher_WaitForSyncTimeout(t *testing.T) {
 }
 
 // TestSingleWatcherConfig_Validate verifies configuration validation.
-//
-//nolint:revive // cognitive-complexity: Table-driven test with multiple test cases
 func TestSingleWatcherConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name      string

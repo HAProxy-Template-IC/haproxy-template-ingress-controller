@@ -11,6 +11,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
+// logSectionParseError logs a warning when a configuration section fails to parse.
+func logSectionParseError(sectionType, sectionName string, err error) {
+	slog.Warn("Failed to parse section", "type", sectionType, "section", sectionName, "error", err)
+}
+
 // extractCESections extracts standard CE sections from the client-native parser.
 // This uses client-native's configuration.Parse* functions for complete field extraction,
 // ensuring feature parity with the CE parser. Builds pointer indexes for zero-copy iteration.
@@ -91,7 +96,7 @@ func (p *Parser) extractDefaults() ([]*models.Defaults, error) {
 		def := &models.Defaults{}
 
 		if err := configuration.ParseSection(&def.DefaultsBase, clientparser.Defaults, sectionName, p.ceParser); err != nil {
-			slog.Warn("Failed to parse defaults section", "section", sectionName, "error", err)
+			logSectionParseError("defaults", sectionName, err)
 			continue
 		}
 		def.Name = sectionName
@@ -124,7 +129,7 @@ func (p *Parser) extractFrontendsWithIndexes(conf *StructuredConfig) {
 		fe := &models.Frontend{}
 
 		if err := configuration.ParseSection(&fe.FrontendBase, clientparser.Frontends, sectionName, p.ceParser); err != nil {
-			slog.Warn("Failed to parse frontend section", "section", sectionName, "error", err)
+			logSectionParseError("frontend", sectionName, err)
 			continue
 		}
 		fe.Name = sectionName
@@ -174,7 +179,7 @@ func (p *Parser) extractBackendsWithIndexes(conf *StructuredConfig) {
 		be := &models.Backend{}
 
 		if err := configuration.ParseSection(&be.BackendBase, clientparser.Backends, sectionName, p.ceParser); err != nil {
-			slog.Warn("Failed to parse backend section", "section", sectionName, "error", err)
+			logSectionParseError("backend", sectionName, err)
 			continue
 		}
 		be.Name = sectionName
@@ -255,7 +260,7 @@ func (p *Parser) extractPeersWithIndexes(conf *StructuredConfig) {
 		peer := &models.PeerSection{}
 
 		if err := configuration.ParseSection(peer, clientparser.Peers, sectionName, p.ceParser); err != nil {
-			slog.Warn("Failed to parse peers section", "section", sectionName, "error", err)
+			logSectionParseError("peers", sectionName, err)
 			continue
 		}
 		peer.Name = sectionName
@@ -291,7 +296,7 @@ func (p *Parser) extractResolversWithIndexes(conf *StructuredConfig) {
 		resolver.Name = sectionName
 
 		if err := configuration.ParseResolverSection(p.ceParser, resolver); err != nil {
-			slog.Warn("Failed to parse resolvers section", "section", sectionName, "error", err)
+			logSectionParseError("resolvers", sectionName, err)
 			continue
 		}
 
@@ -326,7 +331,7 @@ func (p *Parser) extractMailersWithIndexes(conf *StructuredConfig) {
 		mailer.Name = sectionName
 
 		if err := configuration.ParseMailersSection(p.ceParser, mailer); err != nil {
-			slog.Warn("Failed to parse mailers section", "section", sectionName, "error", err)
+			logSectionParseError("mailers", sectionName, err)
 			continue
 		}
 
@@ -387,7 +392,7 @@ func (p *Parser) extractCaches() ([]*models.Cache, error) {
 		cache.Name = &name
 
 		if err := configuration.ParseCacheSection(p.ceParser, cache); err != nil {
-			slog.Warn("Failed to parse cache section", "section", sectionName, "error", err)
+			logSectionParseError("cache", sectionName, err)
 			continue
 		}
 
@@ -410,7 +415,7 @@ func (p *Parser) extractRings() ([]*models.Ring, error) {
 		ring.Name = sectionName
 
 		if err := configuration.ParseRingSection(p.ceParser, ring); err != nil {
-			slog.Warn("Failed to parse ring section", "section", sectionName, "error", err)
+			logSectionParseError("ring", sectionName, err)
 			continue
 		}
 
@@ -453,7 +458,7 @@ func (p *Parser) extractUserlistsWithIndexes(conf *StructuredConfig) {
 		userlist.Name = sectionName
 
 		if err := configuration.ParseSection(&userlist.UserlistBase, clientparser.UserList, sectionName, p.ceParser); err != nil {
-			slog.Warn("Failed to parse userlist section", "section", sectionName, "error", err)
+			logSectionParseError("userlist", sectionName, err)
 			continue
 		}
 
@@ -515,7 +520,7 @@ func (p *Parser) extractPrograms() ([]*models.Program, error) {
 	for _, sectionName := range sections {
 		program, err := configuration.ParseProgram(p.ceParser, sectionName)
 		if err != nil {
-			slog.Warn("Failed to parse program section", "section", sectionName, "error", err)
+			logSectionParseError("program", sectionName, err)
 			continue
 		}
 
@@ -538,7 +543,7 @@ func (p *Parser) extractLogForwards() ([]*models.LogForward, error) {
 			LogForwardBase: models.LogForwardBase{Name: sectionName},
 		}
 		if err := configuration.ParseLogForward(p.ceParser, logForward); err != nil {
-			slog.Warn("Failed to parse log-forward section", "section", sectionName, "error", err)
+			logSectionParseError("log-forward", sectionName, err)
 			continue
 		}
 
@@ -559,7 +564,7 @@ func (p *Parser) extractFCGIApps() ([]*models.FCGIApp, error) {
 	for _, sectionName := range sections {
 		fcgiApp, err := configuration.ParseFCGIApp(p.ceParser, sectionName)
 		if err != nil {
-			slog.Warn("Failed to parse fcgi-app section", "section", sectionName, "error", err)
+			logSectionParseError("fcgi-app", sectionName, err)
 			continue
 		}
 
@@ -580,7 +585,7 @@ func (p *Parser) extractCrtStores() ([]*models.CrtStore, error) {
 	for _, sectionName := range sections {
 		crtStore := &models.CrtStore{CrtStoreBase: models.CrtStoreBase{Name: sectionName}}
 		if err := configuration.ParseCrtStore(p.ceParser, crtStore); err != nil {
-			slog.Warn("Failed to parse crt-store section", "section", sectionName, "error", err)
+			logSectionParseError("crt-store", sectionName, err)
 			continue
 		}
 
@@ -614,7 +619,7 @@ func (p *Parser) extractLogProfiles() ([]*models.LogProfile, error) {
 	for _, sectionName := range sections {
 		logProfile, err := configuration.ParseLogProfile(p.ceParser, sectionName)
 		if err != nil {
-			slog.Warn("Failed to parse log-profile section", "section", sectionName, "error", err)
+			logSectionParseError("log-profile", sectionName, err)
 			continue
 		}
 
@@ -632,7 +637,7 @@ func (p *Parser) extractTraces() *models.Traces {
 
 	traces, err := configuration.ParseTraces(p.ceParser)
 	if err != nil {
-		slog.Warn("Failed to parse traces section", "error", err)
+		logSectionParseError("traces", "", err)
 		return nil
 	}
 
@@ -661,7 +666,7 @@ func (p *Parser) extractAcmeProviders() ([]*models.AcmeProvider, error) {
 	for _, sectionName := range sections {
 		acmeProvider, err := configuration.ParseAcmeProvider(p.ceParser, sectionName)
 		if err != nil {
-			slog.Warn("Failed to parse acme section", "section", sectionName, "error", err)
+			logSectionParseError("acme", sectionName, err)
 			continue
 		}
 
