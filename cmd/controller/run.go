@@ -84,7 +84,7 @@ func init() {
 		"Port for debug HTTP server (0 to disable, env: DEBUG_PORT)")
 }
 
-func runController(cmd *cobra.Command, args []string) error {
+func runController(_ *cobra.Command, _ []string) error {
 	// Configuration priority: CLI flags > Environment variables > Defaults
 
 	// CRD name
