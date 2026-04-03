@@ -122,7 +122,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	}
 
 	// Store in cache
-	checksum := Checksum(content)
+	checksum := checksum(content)
 	now := time.Now()
 	s.mu.Lock()
 	s.cache[url] = &CacheEntry{
@@ -162,11 +162,11 @@ func (s *HTTPStore) Get(url string) (string, bool) {
 	return entry.AcceptedContent, true
 }
 
-// GetPending returns the pending content for a URL if it exists.
+// getPending returns the pending content for a URL if it exists.
 // This is used during validation to render with pending content.
 // Returns empty string and false if no pending content.
 // Updates LastAccessTime to track usage for cache eviction.
-func (s *HTTPStore) GetPending(url string) (string, bool) {
+func (s *HTTPStore) getPending(url string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -253,7 +253,7 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	}
 
 	// Check if content actually changed
-	newChecksum := Checksum(content)
+	newChecksum := checksum(content)
 	if newChecksum == acceptedChecksum {
 		s.logger.Log(context.Background(), levelTrace, "content unchanged (same checksum)",
 			"url", url,
@@ -291,9 +291,9 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	return true, nil
 }
 
-// GetURLsWithDelay returns all cached URLs that have a refresh delay configured.
+// getURLsWithDelay returns all cached URLs that have a refresh delay configured.
 // This is used by the event adapter to schedule refresh timers.
-func (s *HTTPStore) GetURLsWithDelay() []string {
+func (s *HTTPStore) getURLsWithDelay() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -342,8 +342,8 @@ func (s *HTTPStore) GetEntry(url string) *CacheEntry {
 	return &entryCopy
 }
 
-// Clear removes all entries from the cache.
-func (s *HTTPStore) Clear() {
+// clear removes all entries from the cache.
+func (s *HTTPStore) clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -351,8 +351,8 @@ func (s *HTTPStore) Clear() {
 	s.logger.Info("cleared HTTP store cache")
 }
 
-// Size returns the number of cached URLs.
-func (s *HTTPStore) Size() int {
+// size returns the number of cached URLs.
+func (s *HTTPStore) size() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.cache)
@@ -368,7 +368,7 @@ func (s *HTTPStore) LoadFixture(url, content string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	checksum := Checksum(content)
+	checksum := checksum(content)
 	now := time.Now()
 	s.cache[url] = &CacheEntry{
 		URL:              url,

@@ -37,23 +37,6 @@ func TestNewCounter(t *testing.T) {
 	assert.Equal(t, float64(6), testutil.ToFloat64(counter))
 }
 
-func TestNewHistogram(t *testing.T) {
-	registry := prometheus.NewRegistry()
-
-	histogram := NewHistogram(registry, "test_duration_seconds", "Test duration")
-	assert.NotNil(t, histogram)
-
-	// Record observations
-	histogram.Observe(0.5)
-	histogram.Observe(1.5)
-	histogram.Observe(2.5)
-
-	// Verify histogram recorded observations
-	// We can't easily verify count/sum without internal access,
-	// so just verify the histogram was created successfully
-	assert.NotNil(t, histogram)
-}
-
 func TestNewHistogramWithBuckets(t *testing.T) {
 	registry := prometheus.NewRegistry()
 
@@ -203,7 +186,7 @@ func TestMetricsRegistration(t *testing.T) {
 	// Create various metrics
 	NewCounter(registry, "app_requests_total", "Total requests")
 	NewGauge(registry, "app_active_connections", "Active connections")
-	NewHistogram(registry, "app_request_duration_seconds", "Request duration")
+	NewHistogramWithBuckets(registry, "app_request_duration_seconds", "Request duration", DurationBuckets())
 
 	// Gather metrics
 	metricFamilies, err := registry.Gather()
@@ -308,7 +291,7 @@ func TestMetricNaming(t *testing.T) {
 
 	// Test that metric names follow Prometheus conventions
 	counter := NewCounter(registry, "http_requests_total", "HTTP requests")
-	histogram := NewHistogram(registry, "http_request_duration_seconds", "HTTP duration")
+	histogram := NewHistogramWithBuckets(registry, "http_request_duration_seconds", "HTTP duration", DurationBuckets())
 	gauge := NewGauge(registry, "memory_usage_bytes", "Memory usage")
 
 	assert.NotNil(t, counter)
@@ -342,7 +325,7 @@ func BenchmarkCounterInc(b *testing.B) {
 
 func BenchmarkHistogramObserve(b *testing.B) {
 	registry := prometheus.NewRegistry()
-	histogram := NewHistogram(registry, "bench_histogram", "Benchmark histogram")
+	histogram := NewHistogramWithBuckets(registry, "bench_histogram", "Benchmark histogram", DurationBuckets())
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -425,7 +425,7 @@ func TestHTTPStore_EvictUnused(t *testing.T) {
 	store.LoadFixture("http://example.com/old", "old content")
 	store.LoadFixture("http://example.com/new", "new content")
 
-	assert.Equal(t, 2, store.Size())
+	assert.Equal(t, 2, store.size())
 
 	// Access one of them to update its LastAccessTime
 	time.Sleep(50 * time.Millisecond)
@@ -440,7 +440,7 @@ func TestHTTPStore_EvictUnused(t *testing.T) {
 
 	assert.Equal(t, 1, len(evictedURLs))
 	assert.Equal(t, "http://example.com/old", evictedURLs[0])
-	assert.Equal(t, 1, store.Size())
+	assert.Equal(t, 1, store.size())
 
 	// Verify correct entry was evicted
 	_, ok = store.Get("http://example.com/old")
@@ -485,7 +485,7 @@ func TestHTTPStore_EvictUnused_NeverEvictsPending(t *testing.T) {
 	// Evict - should not evict entry with pending content
 	evictedURLs := store.EvictUnused()
 	assert.Empty(t, evictedURLs)
-	assert.Equal(t, 1, store.Size())
+	assert.Equal(t, 1, store.size())
 }
 
 func TestHTTPStore_EvictUnused_DisabledWithZeroMaxAge(t *testing.T) {
@@ -499,7 +499,7 @@ func TestHTTPStore_EvictUnused_DisabledWithZeroMaxAge(t *testing.T) {
 	// Evict returns nil when disabled
 	evictedURLs := store.EvictUnused()
 	assert.Nil(t, evictedURLs)
-	assert.Equal(t, 1, store.Size())
+	assert.Equal(t, 1, store.size())
 }
 
 func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
@@ -521,7 +521,7 @@ func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
 	// Should not be evicted because access reset the timer
 	evictedURLs := store.EvictUnused()
 	assert.Empty(t, evictedURLs)
-	assert.Equal(t, 1, store.Size())
+	assert.Equal(t, 1, store.size())
 
 	// Wait for the full maxAge from last access
 	time.Sleep(40 * time.Millisecond)
@@ -530,10 +530,10 @@ func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
 	evictedURLs = store.EvictUnused()
 	assert.Equal(t, 1, len(evictedURLs))
 	assert.Equal(t, "http://example.com/test", evictedURLs[0])
-	assert.Equal(t, 0, store.Size())
+	assert.Equal(t, 0, store.size())
 }
 
-func TestHTTPStore_GetPending(t *testing.T) {
+func TestHTTPStore_getPending(t *testing.T) {
 	// Create test server
 	content := "original"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -552,12 +552,12 @@ func TestHTTPStore_GetPending(t *testing.T) {
 	require.NoError(t, err)
 
 	// No pending content yet
-	pending, ok := store.GetPending(server.URL)
+	pending, ok := store.getPending(server.URL)
 	assert.False(t, ok)
 	assert.Empty(t, pending)
 
 	// Unknown URL returns false
-	pending, ok = store.GetPending("http://unknown")
+	pending, ok = store.getPending("http://unknown")
 	assert.False(t, ok)
 	assert.Empty(t, pending)
 
@@ -567,13 +567,13 @@ func TestHTTPStore_GetPending(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 
-	// Now GetPending should return the pending content
-	pending, ok = store.GetPending(server.URL)
+	// Now getPending should return the pending content
+	pending, ok = store.getPending(server.URL)
 	assert.True(t, ok)
 	assert.Equal(t, "updated", pending)
 }
 
-func TestHTTPStore_GetURLsWithDelay(t *testing.T) {
+func TestHTTPStore_getURLsWithDelay(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("content"))
 	}))
@@ -585,7 +585,7 @@ func TestHTTPStore_GetURLsWithDelay(t *testing.T) {
 	ctx := context.Background()
 
 	// Initially empty
-	urls := store.GetURLsWithDelay()
+	urls := store.getURLsWithDelay()
 	assert.Empty(t, urls)
 
 	// Fetch with delay
@@ -596,7 +596,7 @@ func TestHTTPStore_GetURLsWithDelay(t *testing.T) {
 	store.LoadFixture("http://example.com/no-delay", "content")
 
 	// Only URL with delay should be returned
-	urls = store.GetURLsWithDelay()
+	urls = store.getURLsWithDelay()
 	assert.Equal(t, 1, len(urls))
 	assert.Equal(t, server.URL, urls[0])
 }
@@ -650,12 +650,12 @@ func TestHTTPStore_Clear(t *testing.T) {
 	store.LoadFixture("http://example.com/2", "content2")
 	store.LoadFixture("http://example.com/3", "content3")
 
-	assert.Equal(t, 3, store.Size())
+	assert.Equal(t, 3, store.size())
 
 	// Clear store
-	store.Clear()
+	store.clear()
 
-	assert.Equal(t, 0, store.Size())
+	assert.Equal(t, 0, store.size())
 
 	// Verify entries are gone
 	_, ok := store.Get("http://example.com/1")
