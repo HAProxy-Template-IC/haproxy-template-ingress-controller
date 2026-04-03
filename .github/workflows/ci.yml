@@ -61,6 +61,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Install lint tools
+        run: npm install -g markdownlint-cli2
       - run: make lint
 
   audit:
@@ -363,6 +365,7 @@ jobs:
     needs: changes
     if: github.event_name == 'pull_request' && (needs.changes.outputs.docs == 'true' || needs.changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
+    continue-on-error: true
     environment:
       name: pr-preview
       url: https://haproxy-template-ic.github.io/haproxy-template-ingress-controller/pr-preview/pr-${{ github.event.number }}/
