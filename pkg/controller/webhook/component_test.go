@@ -17,8 +17,6 @@ package webhook
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,13 +25,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
-
-// testLogger creates a slog logger for tests that discards output.
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
 
 func TestComponent_New(t *testing.T) {
 	t.Run("applies default port", func(t *testing.T) {
@@ -42,7 +36,7 @@ func TestComponent_New(t *testing.T) {
 			KeyPEM:  []byte("test-key"),
 		}
 
-		component := New(testLogger(), config, nil, nil)
+		component := New(testutil.NewTestLogger(), config, nil, nil)
 
 		assert.Equal(t, DefaultWebhookPort, component.config.Port)
 	})
@@ -53,7 +47,7 @@ func TestComponent_New(t *testing.T) {
 			KeyPEM:  []byte("test-key"),
 		}
 
-		component := New(testLogger(), config, nil, nil)
+		component := New(testutil.NewTestLogger(), config, nil, nil)
 
 		assert.Equal(t, DefaultWebhookPath, component.config.Path)
 	})
@@ -65,7 +59,7 @@ func TestComponent_New(t *testing.T) {
 			KeyPEM:  []byte("test-key"),
 		}
 
-		component := New(testLogger(), config, nil, nil)
+		component := New(testutil.NewTestLogger(), config, nil, nil)
 
 		assert.Equal(t, 8443, component.config.Port)
 	})
@@ -77,7 +71,7 @@ func TestComponent_New(t *testing.T) {
 			KeyPEM:  []byte("test-key"),
 		}
 
-		component := New(testLogger(), config, nil, nil)
+		component := New(testutil.NewTestLogger(), config, nil, nil)
 
 		assert.Equal(t, "/custom-validate", component.config.Path)
 	})
@@ -138,7 +132,7 @@ func TestComponent_New_WithMetrics(t *testing.T) {
 		KeyPEM:  []byte("test-key"),
 	}
 
-	component := New(testLogger(), config, nil, metrics)
+	component := New(testutil.NewTestLogger(), config, nil, metrics)
 
 	require.NotNil(t, component.metrics)
 }
@@ -163,7 +157,7 @@ func TestComponent_Start_MissingCertificate(t *testing.T) {
 		KeyPEM: []byte("test-key"),
 	}
 
-	component := New(testLogger(), config, nil, nil)
+	component := New(testutil.NewTestLogger(), config, nil, nil)
 
 	ctx := t.Context()
 	err := component.Start(ctx)
@@ -178,7 +172,7 @@ func TestComponent_Start_MissingKey(t *testing.T) {
 		// KeyPEM is empty
 	}
 
-	component := New(testLogger(), config, nil, nil)
+	component := New(testutil.NewTestLogger(), config, nil, nil)
 
 	ctx := t.Context()
 	err := component.Start(ctx)
@@ -193,7 +187,7 @@ func TestComponent_RegisterValidator_BeforeServerCreated(t *testing.T) {
 		KeyPEM:  []byte("test-key"),
 	}
 
-	component := New(testLogger(), config, nil, nil)
+	component := New(testutil.NewTestLogger(), config, nil, nil)
 
 	// Server is nil at this point, should log warning but not panic
 	component.RegisterValidator("v1.ConfigMap", func(_ *webhook.ValidationContext) (bool, string, error) {
@@ -217,7 +211,7 @@ func TestComponent_resolveKind_Success(t *testing.T) {
 		},
 	}
 
-	component := New(testLogger(), config, mapper, nil)
+	component := New(testutil.NewTestLogger(), config, mapper, nil)
 
 	t.Run("ingress resource", func(t *testing.T) {
 		kind, err := component.resolveKind("networking.k8s.io", "v1", "ingresses")
@@ -242,7 +236,7 @@ func TestComponent_resolveKind_Error(t *testing.T) {
 		kindForResults: map[string]string{}, // Empty - no mappings
 	}
 
-	component := New(testLogger(), config, mapper, nil)
+	component := New(testutil.NewTestLogger(), config, mapper, nil)
 
 	_, err := component.resolveKind("unknown", "v1", "unknowns")
 	require.Error(t, err)
@@ -319,7 +313,7 @@ func TestComponent_registerValidators(t *testing.T) {
 			},
 		}
 
-		component := New(testLogger(), config, mapper, nil)
+		component := New(testutil.NewTestLogger(), config, mapper, nil)
 
 		// Create server so validators can be registered
 		component.server = webhook.NewServer(&webhook.ServerConfig{
@@ -354,7 +348,7 @@ func TestComponent_registerValidators(t *testing.T) {
 			},
 		}
 
-		component := New(testLogger(), config, mapper, nil)
+		component := New(testutil.NewTestLogger(), config, mapper, nil)
 
 		// Create server
 		component.server = webhook.NewServer(&webhook.ServerConfig{
@@ -379,7 +373,7 @@ func TestComponent_registerValidators(t *testing.T) {
 			Rules:   []webhook.WebhookRule{}, // Empty rules
 		}
 
-		component := New(testLogger(), config, mapper, nil)
+		component := New(testutil.NewTestLogger(), config, mapper, nil)
 
 		// Create server
 		component.server = webhook.NewServer(&webhook.ServerConfig{
@@ -409,7 +403,7 @@ func TestComponent_createResourceValidator_ReturnsFunction(t *testing.T) {
 		CertPEM: []byte("test-cert"),
 		KeyPEM:  []byte("test-key"),
 	}
-	component := New(testLogger(), config, nil, nil)
+	component := New(testutil.NewTestLogger(), config, nil, nil)
 
 	validator := component.createResourceValidator("v1.ConfigMap")
 
@@ -422,7 +416,7 @@ func TestComponent_createResourceValidator_NilDryRunValidator(t *testing.T) {
 		KeyPEM:  []byte("test-key"),
 		// DryRunValidator is nil - fail-open behavior
 	}
-	component := New(testLogger(), config, nil, nil)
+	component := New(testutil.NewTestLogger(), config, nil, nil)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	// Create a valid unstructured object
@@ -449,7 +443,7 @@ func TestComponent_createResourceValidator_BasicValidationFails(t *testing.T) {
 		CertPEM: []byte("test-cert"),
 		KeyPEM:  []byte("test-key"),
 	}
-	component := New(testLogger(), config, nil, nil)
+	component := New(testutil.NewTestLogger(), config, nil, nil)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	// Create an invalid object (no name or generateName)
@@ -481,7 +475,7 @@ func TestComponent_createResourceValidator_DryRunValidatorAllows(t *testing.T) {
 		KeyPEM:          []byte("test-key"),
 		DryRunValidator: dryRunValidator,
 	}
-	component := New(testLogger(), config, nil, nil)
+	component := New(testutil.NewTestLogger(), config, nil, nil)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	// Create a valid unstructured object
@@ -512,7 +506,7 @@ func TestComponent_createResourceValidator_DryRunValidatorDenies(t *testing.T) {
 		KeyPEM:          []byte("test-key"),
 		DryRunValidator: dryRunValidator,
 	}
-	component := New(testLogger(), config, nil, nil)
+	component := New(testutil.NewTestLogger(), config, nil, nil)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	// Create a valid unstructured object
@@ -544,7 +538,7 @@ func TestComponent_createResourceValidator_MetricsOnSuccess(t *testing.T) {
 		KeyPEM:          []byte("test-key"),
 		DryRunValidator: dryRunValidator,
 	}
-	component := New(testLogger(), config, nil, metrics)
+	component := New(testutil.NewTestLogger(), config, nil, metrics)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	// Create a valid unstructured object
@@ -578,7 +572,7 @@ func TestComponent_createResourceValidator_MetricsOnDenial(t *testing.T) {
 		KeyPEM:          []byte("test-key"),
 		DryRunValidator: dryRunValidator,
 	}
-	component := New(testLogger(), config, nil, metrics)
+	component := New(testutil.NewTestLogger(), config, nil, metrics)
 	validator := component.createResourceValidator("v1.ConfigMap")
 
 	// Create a valid unstructured object

@@ -41,7 +41,7 @@ Registry
     ├── Status() map[string]ComponentInfo
     │       └── Returns status of all components
     │
-    └── IsHealthy() bool
+    └── isHealthy() bool  (unexported, test-only)
             └── Checks critical component health
 ```
 
@@ -136,7 +136,7 @@ if err := registry.StartLeaderOnlyComponents(ctx); err != nil {
 }
 
 // Check health
-if !registry.IsHealthy() {
+if !registry.isHealthy() {
     log.Error("System unhealthy")
 }
 ```

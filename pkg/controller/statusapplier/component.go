@@ -28,11 +28,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -383,10 +386,38 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	))
 }
 
-// isRetriable returns true if the error is likely transient.
+// isRetriable returns true if the error is likely transient and the operation
+// should be retried on the next reconciliation cycle.
 func isRetriable(err error) bool {
-	// TODO: Inspect error for transient conditions (timeout, server unavailable, etc.)
-	_ = err
+	// Kubernetes API server transient errors
+	if apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsInternalError(err) {
+		return true
+	}
+
+	// Network-level transient errors
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+
+	// Context deadline exceeded is transient
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	// Permanent errors: not found, forbidden, invalid, conflict, etc.
+	if apierrors.IsNotFound(err) ||
+		apierrors.IsForbidden(err) ||
+		apierrors.IsInvalid(err) ||
+		apierrors.IsMethodNotSupported(err) {
+		return false
+	}
+
+	// Default to retriable for unknown errors to avoid silently dropping updates
 	return true
 }
 

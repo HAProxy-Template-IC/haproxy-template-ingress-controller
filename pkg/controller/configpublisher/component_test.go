@@ -17,8 +17,6 @@ package configpublisher
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -28,6 +26,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
@@ -35,11 +34,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
-
-// testLogger creates a slog logger for tests that discards output.
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
 
 // This test verifies the full event flow:
 // 1. Component receives ConfigValidatedEvent and caches template config.
@@ -56,8 +50,8 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Subscribe to capture ConfigPublishedEvent
 	eventChan := eventBus.Subscribe("test-sub", 50)
@@ -152,8 +146,8 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
 	eventBus.Start()
@@ -209,8 +203,8 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
 	eventBus.Start()
@@ -286,8 +280,8 @@ func TestComponent_MultiplePods(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
 	eventBus.Start()
@@ -371,8 +365,8 @@ func TestComponent_Name(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Verify name
 	assert.Equal(t, ComponentName, component.Name())
@@ -388,8 +382,8 @@ func TestComponent_LostLeadership(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Subscribe to capture events
 	eventChan := eventBus.Subscribe("test-sub", 50)
@@ -480,8 +474,8 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
 	eventBus.Start()
@@ -558,8 +552,8 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
 	eventBus.Start()
@@ -598,8 +592,8 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
 	eventBus.Start()
@@ -670,8 +664,8 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
 	eventBus.Start()
@@ -735,8 +729,8 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
 	eventBus.Start()

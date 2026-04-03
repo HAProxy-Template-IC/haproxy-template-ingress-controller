@@ -15,23 +15,23 @@
 package rendercontext
 
 import (
-	"log/slog"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 func TestNewBuilder(t *testing.T) {
 	cfg := &config.Config{}
 	pathResolver := &templating.PathResolver{}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	logger := testutil.NewTestLogger()
 
 	builder := NewBuilder(cfg, pathResolver, logger)
 
@@ -44,12 +44,12 @@ func TestNewBuilder(t *testing.T) {
 func TestBuilder_WithOptions(t *testing.T) {
 	cfg := &config.Config{}
 	pathResolver := &templating.PathResolver{}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	logger := testutil.NewTestLogger()
 
 	storeMap := map[string]stores.Store{
-		"ingresses": &mockStore{},
+		"ingresses": &storetest.MockStore{},
 	}
-	haproxyPodStore := &mockStore{}
+	haproxyPodStore := &storetest.MockStore{}
 	capabilities := &dataplane.Capabilities{SupportsWAF: true}
 
 	builder := NewBuilder(
@@ -77,7 +77,7 @@ func TestBuilder_Build_BasicContext(t *testing.T) {
 	pathResolver := &templating.PathResolver{
 		MapsDir: "/etc/haproxy/maps",
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	builder := NewBuilder(cfg, pathResolver, logger)
 	ctx, fileRegistry, statusPatchCollector := builder.Build()
@@ -107,11 +107,11 @@ func TestBuilder_Build_BasicContext(t *testing.T) {
 func TestBuilder_Build_WithStores(t *testing.T) {
 	cfg := &config.Config{}
 	pathResolver := &templating.PathResolver{}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	storeMap := map[string]stores.Store{
-		"ingresses": &mockStore{},
-		"services":  &mockStore{},
+		"ingresses": &storetest.MockStore{},
+		"services":  &storetest.MockStore{},
 	}
 
 	builder := NewBuilder(cfg, pathResolver, logger, WithStores(storeMap))
@@ -126,9 +126,9 @@ func TestBuilder_Build_WithStores(t *testing.T) {
 func TestBuilder_Build_WithHAProxyPodStore(t *testing.T) {
 	cfg := &config.Config{}
 	pathResolver := &templating.PathResolver{}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
-	haproxyPodStore := &mockStore{}
+	haproxyPodStore := &storetest.MockStore{}
 
 	builder := NewBuilder(cfg, pathResolver, logger, WithHAProxyPodStore(haproxyPodStore))
 	ctx, _, _ := builder.Build()
@@ -141,7 +141,7 @@ func TestBuilder_Build_WithHAProxyPodStore(t *testing.T) {
 func TestBuilder_Build_WithCapabilities(t *testing.T) {
 	cfg := &config.Config{}
 	pathResolver := &templating.PathResolver{}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	capabilities := &dataplane.Capabilities{
 		SupportsWAF:   true,
@@ -169,7 +169,7 @@ func TestBuilder_Build_WithExtraContext(t *testing.T) {
 		},
 	}
 	pathResolver := &templating.PathResolver{}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	builder := NewBuilder(cfg, pathResolver, logger)
 	ctx, _, _ := builder.Build()

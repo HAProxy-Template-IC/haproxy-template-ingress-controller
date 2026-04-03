@@ -343,7 +343,7 @@ func TestRegistry_Status_WithHealthCheck(t *testing.T) {
 	<-errChan
 }
 
-func TestRegistry_IsHealthy(t *testing.T) {
+func TestRegistry_isHealthy(t *testing.T) {
 	t.Run("all healthy", func(t *testing.T) {
 		registry := NewRegistry()
 
@@ -364,7 +364,7 @@ func TestRegistry_IsHealthy(t *testing.T) {
 
 		require.True(t, comp.WaitStarted(200*time.Millisecond), "component should have started")
 
-		assert.True(t, registry.IsHealthy())
+		assert.True(t, registry.isHealthy())
 
 		cancel()
 		<-errChan
@@ -390,7 +390,7 @@ func TestRegistry_IsHealthy(t *testing.T) {
 
 		require.True(t, comp.WaitStarted(200*time.Millisecond), "component should have started")
 
-		assert.False(t, registry.IsHealthy())
+		assert.False(t, registry.isHealthy())
 
 		cancel()
 		<-errChan
@@ -417,7 +417,7 @@ func TestRegistry_IsHealthy(t *testing.T) {
 		require.True(t, comp.WaitStarted(200*time.Millisecond), "component should have started")
 
 		// Optional component being unhealthy shouldn't affect overall health
-		assert.True(t, registry.IsHealthy())
+		assert.True(t, registry.isHealthy())
 
 		cancel()
 		<-errChan
@@ -434,20 +434,20 @@ func TestRegistry_IsHealthy(t *testing.T) {
 
 		_ = registry.StartAll(ctx, false)
 
-		assert.False(t, registry.IsHealthy())
+		assert.False(t, registry.isHealthy())
 	})
 }
 
-func TestRegistry_GetComponent(t *testing.T) {
+func TestRegistry_getComponent(t *testing.T) {
 	registry := NewRegistry()
 
 	comp := &mockComponent{name: "test-comp"}
 	registry.Register(comp)
 
-	found := registry.GetComponent("test-comp")
+	found := registry.getComponent("test-comp")
 	assert.Equal(t, comp, found)
 
-	notFound := registry.GetComponent("nonexistent")
+	notFound := registry.getComponent("nonexistent")
 	assert.Nil(t, notFound)
 }
 
@@ -513,7 +513,7 @@ func TestRegistry_Options(t *testing.T) {
 
 		registry.Register(comp, Criticality(CriticalityOptional))
 
-		// Criticality affects IsHealthy behavior (tested above)
+		// Criticality affects isHealthy behavior (tested above)
 		assert.Equal(t, 1, registry.Count())
 	})
 }
@@ -980,13 +980,13 @@ func TestRegistry_Status_SkipsHealthCheckForPendingComponents(t *testing.T) {
 	assert.Nil(t, status["pending-comp"].Healthy, "Healthy should be nil for Pending components")
 }
 
-func TestRegistry_IsHealthy_SkipsStandbyComponents(t *testing.T) {
+func TestRegistry_isHealthy_SkipsStandbyComponents(t *testing.T) {
 	registry := NewRegistry()
 
 	// Create a leader-only component with health check that would return unhealthy
 	comp := &trackingHealthComponent{
 		mockComponent: mockComponent{name: "leader-comp"},
-		healthy:       false, // Would make IsHealthy return false if called
+		healthy:       false, // Would make isHealthy return false if called
 	}
 	registry.Register(comp, LeaderOnly(), Criticality(CriticalityCritical))
 
@@ -1002,8 +1002,8 @@ func TestRegistry_IsHealthy_SkipsStandbyComponents(t *testing.T) {
 	// Give StartAll time to set status to Standby
 	time.Sleep(50 * time.Millisecond)
 
-	// IsHealthy should return true because Standby components' health is not checked
-	assert.True(t, registry.IsHealthy(), "IsHealthy should return true when critical component is in Standby")
+	// isHealthy should return true because Standby components' health is not checked
+	assert.True(t, registry.isHealthy(), "isHealthy should return true when critical component is in Standby")
 
 	cancel()
 	<-errChan

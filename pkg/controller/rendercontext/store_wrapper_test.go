@@ -16,80 +16,14 @@ package rendercontext
 
 import (
 	"errors"
-	"log/slog"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 )
-
-// mockStoreWithError is a mock store that returns errors.
-type mockStoreWithError struct {
-	listErr error
-	getErr  error
-}
-
-func (m *mockStoreWithError) List() ([]any, error) {
-	return nil, m.listErr
-}
-
-func (m *mockStoreWithError) Get(_ ...string) ([]any, error) {
-	return nil, m.getErr
-}
-
-func (m *mockStoreWithError) Add(_ any, _ []string) error {
-	return nil
-}
-
-func (m *mockStoreWithError) Update(_ any, _ []string) error {
-	return nil
-}
-
-func (m *mockStoreWithError) Delete(_ ...string) error {
-	return nil
-}
-
-func (m *mockStoreWithError) Clear() error {
-	return nil
-}
-
-// mockStoreWithItems returns pre-converted map items (as stores now contain).
-type mockStoreWithItems struct {
-	items []any
-}
-
-func (m *mockStoreWithItems) List() ([]any, error) {
-	return m.items, nil
-}
-
-func (m *mockStoreWithItems) Get(keys ...string) ([]any, error) {
-	// Simple key matching for testing
-	if len(keys) > 0 && len(m.items) > 0 {
-		return m.items, nil
-	}
-	return nil, nil
-}
-
-func (m *mockStoreWithItems) Add(_ any, _ []string) error {
-	return nil
-}
-
-func (m *mockStoreWithItems) Update(_ any, _ []string) error {
-	return nil
-}
-
-func (m *mockStoreWithItems) Delete(_ ...string) error {
-	return nil
-}
-
-func (m *mockStoreWithItems) Clear() error {
-	return nil
-}
-
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-}
 
 // createResourceMap creates a pre-converted resource map (as stores now contain).
 func createResourceMap(name string) map[string]any {
@@ -104,11 +38,11 @@ func createResourceMap(name string) map[string]any {
 }
 
 func TestStoreWrapper_List_Empty(t *testing.T) {
-	store := &mockStoreWithItems{items: []any{}}
+	store := &storetest.MockStore{Items: []any{}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
-		Logger:       testLogger(),
+		Logger:       testutil.NewTestLogger(),
 	}
 
 	result := wrapper.List()
@@ -120,11 +54,11 @@ func TestStoreWrapper_List_WithItems(t *testing.T) {
 	item1 := createResourceMap("item1")
 	item2 := createResourceMap("item2")
 
-	store := &mockStoreWithItems{items: []any{item1, item2}}
+	store := &storetest.MockStore{Items: []any{item1, item2}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
-		Logger:       testLogger(),
+		Logger:       testutil.NewTestLogger(),
 	}
 
 	result := wrapper.List()
@@ -137,11 +71,11 @@ func TestStoreWrapper_List_WithItems(t *testing.T) {
 }
 
 func TestStoreWrapper_List_Error(t *testing.T) {
-	store := &mockStoreWithError{listErr: errors.New("list failed")}
+	store := &storetest.MockStore{ListErr: errors.New("list failed")}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
-		Logger:       testLogger(),
+		Logger:       testutil.NewTestLogger(),
 	}
 
 	result := wrapper.List()
@@ -151,11 +85,11 @@ func TestStoreWrapper_List_Error(t *testing.T) {
 func TestStoreWrapper_Fetch(t *testing.T) {
 	item := createResourceMap("test-item")
 
-	store := &mockStoreWithItems{items: []any{item}}
+	store := &storetest.MockStore{Items: []any{item}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
-		Logger:       testLogger(),
+		Logger:       testutil.NewTestLogger(),
 	}
 
 	result := wrapper.Fetch("default", "test-item")
@@ -163,11 +97,11 @@ func TestStoreWrapper_Fetch(t *testing.T) {
 }
 
 func TestStoreWrapper_Fetch_Error(t *testing.T) {
-	store := &mockStoreWithError{getErr: errors.New("get failed")}
+	store := &storetest.MockStore{GetErr: errors.New("get failed")}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
-		Logger:       testLogger(),
+		Logger:       testutil.NewTestLogger(),
 	}
 
 	result := wrapper.Fetch("default", "test-item")
@@ -177,11 +111,11 @@ func TestStoreWrapper_Fetch_Error(t *testing.T) {
 func TestStoreWrapper_GetSingle(t *testing.T) {
 	item := createResourceMap("single-item")
 
-	store := &mockStoreWithItems{items: []any{item}}
+	store := &storetest.MockStore{Items: []any{item}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
-		Logger:       testLogger(),
+		Logger:       testutil.NewTestLogger(),
 	}
 
 	result := wrapper.GetSingle("default", "single-item")
@@ -193,11 +127,11 @@ func TestStoreWrapper_GetSingle(t *testing.T) {
 }
 
 func TestStoreWrapper_GetSingle_NotFound(t *testing.T) {
-	store := &mockStoreWithItems{items: []any{}}
+	store := &storetest.MockStore{Items: []any{}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
-		Logger:       testLogger(),
+		Logger:       testutil.NewTestLogger(),
 	}
 
 	result := wrapper.GetSingle("default", "missing")
@@ -208,11 +142,11 @@ func TestStoreWrapper_GetSingle_Ambiguous(t *testing.T) {
 	item1 := createResourceMap("item1")
 	item2 := createResourceMap("item2")
 
-	store := &mockStoreWithItems{items: []any{item1, item2}}
+	store := &storetest.MockStore{Items: []any{item1, item2}}
 	wrapper := &StoreWrapper{
 		Store:        store,
 		ResourceType: "test",
-		Logger:       testLogger(),
+		Logger:       testutil.NewTestLogger(),
 	}
 
 	result := wrapper.GetSingle("default", "ambiguous")
