@@ -8,7 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
@@ -79,7 +79,7 @@ func calculateCertIdentifier(content string) string {
 	// Sort issuers alphabetically for deterministic comparison.
 	// The API stores issuers in a Go map with undefined iteration order,
 	// so both sides must normalize by sorting to ensure consistent matching.
-	sort.Strings(issuerCNs)
+	slices.Sort(issuerCNs)
 	issuersStr := strings.Join(issuerCNs, ", ")
 	return fmt.Sprintf("cert:serial:%s:issuers:%s", leafCert.SerialNumber.String(), issuersStr)
 }

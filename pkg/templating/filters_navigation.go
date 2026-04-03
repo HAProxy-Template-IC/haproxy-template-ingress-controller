@@ -19,7 +19,6 @@ import (
 	"maps"
 	"reflect"
 	"slices"
-	"sort"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/scriggo/native"
@@ -359,7 +358,7 @@ func scriggoKeys(dict any) []string {
 	for _, k := range rv.MapKeys() {
 		keys = append(keys, k.String())
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 

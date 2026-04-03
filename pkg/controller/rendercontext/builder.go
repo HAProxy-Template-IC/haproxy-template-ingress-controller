@@ -33,7 +33,7 @@ import (
 	"log/slog"
 	"maps"
 	"runtime"
-	"sort"
+	"slices"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -255,7 +255,7 @@ func SortSnippetNames(snippets map[string]config.TemplateSnippet) []string {
 	for name := range snippets {
 		sorted = append(sorted, name)
 	}
-	sort.Strings(sorted)
+	slices.Sort(sorted)
 	return sorted
 }
 

@@ -20,7 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -475,7 +475,7 @@ func formatBackendDiffFields(diffFields map[string][]string) string {
 	// Group by field signature for compact output.
 	groups := make(map[string]int) // "Field1, Field2" -> count
 	for _, fields := range diffFields {
-		sort.Strings(fields)
+		slices.Sort(fields)
 		key := strings.Join(fields, ", ")
 		groups[key]++
 	}
@@ -488,7 +488,7 @@ func formatBackendDiffFields(diffFields map[string][]string) string {
 		}
 		parts = append(parts, fmt.Sprintf("[%s] (%d %s)", fields, count, noun))
 	}
-	sort.Strings(parts)
+	slices.Sort(parts)
 	return strings.Join(parts, ", ")
 }
 

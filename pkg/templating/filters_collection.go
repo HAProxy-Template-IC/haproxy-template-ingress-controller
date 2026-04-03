@@ -17,6 +17,7 @@ package templating
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -152,7 +153,7 @@ func scriggoSortStrings(items []any) []string {
 			result = append(result, fmt.Sprintf("%v", v))
 		}
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result
 }
 

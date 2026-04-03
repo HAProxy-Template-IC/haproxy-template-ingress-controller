@@ -1,7 +1,7 @@
 package comparator
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/haproxytech/client-native/v6/models"
 
@@ -57,7 +57,7 @@ func (c *Comparator) compareAddedACLs(parentType, parentName string, desiredACLM
 	}
 
 	// Sort indices to ensure correct insertion order
-	sort.Ints(indicesToAdd)
+	slices.Sort(indicesToAdd)
 
 	// Create operations in sorted index order
 	var operations []Operation

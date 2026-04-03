@@ -15,7 +15,8 @@
 package templating
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"time"
 
 	"gitlab.com/haproxy-haptic/scriggo"
@@ -89,8 +90,8 @@ func aggregateScriggoProfile(profile *scriggo.Profile) []IncludeStats {
 	}
 
 	// Sort by total time descending
-	sort.Slice(stats, func(i, j int) bool {
-		return stats[i].TotalMs > stats[j].TotalMs
+	slices.SortFunc(stats, func(a, b IncludeStats) int {
+		return cmp.Compare(b.TotalMs, a.TotalMs)
 	})
 
 	return stats

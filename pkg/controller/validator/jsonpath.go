@@ -3,7 +3,7 @@ package validator
 import (
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -89,7 +89,7 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	for resourceName := range cfg.WatchedResources {
 		resourceNames = append(resourceNames, resourceName)
 	}
-	sort.Strings(resourceNames)
+	slices.Sort(resourceNames)
 	for _, resourceName := range resourceNames {
 		resource := cfg.WatchedResources[resourceName]
 		for i, expr := range resource.IndexBy {

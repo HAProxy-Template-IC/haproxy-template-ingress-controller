@@ -1,8 +1,9 @@
 package comparator
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
@@ -183,7 +184,7 @@ func (s *DiffSummary) formatServerMapChanges(serverMap map[string][]string, chan
 	for backend, servers := range serverMap {
 		serverChanges = append(serverChanges, fmt.Sprintf("%s: %d", backend, len(servers)))
 	}
-	sort.Strings(serverChanges)
+	slices.Sort(serverChanges)
 	return fmt.Sprintf("- Servers %s: %s", changeType, strings.Join(serverChanges, ", "))
 }
 
@@ -199,7 +200,7 @@ func (s *DiffSummary) formatBackendDiffFields() []string {
 	// Group backends by their diff field signature for compact output.
 	groups := make(map[string]int) // "Field1, Field2" -> count
 	for _, fields := range s.BackendDiffFields {
-		sort.Strings(fields)
+		slices.Sort(fields)
 		key := strings.Join(fields, ", ")
 		groups[key]++
 	}
@@ -208,7 +209,7 @@ func (s *DiffSummary) formatBackendDiffFields() []string {
 	for fields, count := range groups {
 		parts = append(parts, fmt.Sprintf("- Backend diff fields: [%s] (%d backends)", fields, count))
 	}
-	sort.Strings(parts)
+	slices.Sort(parts)
 	return parts
 }
 
@@ -221,7 +222,7 @@ func (s *DiffSummary) formatOtherChanges() []string {
 		for section, count := range s.OtherChanges {
 			otherSections = append(otherSections, fmt.Sprintf("%s: %d", section, count))
 		}
-		sort.Strings(otherSections)
+		slices.Sort(otherSections)
 		parts = append(parts, fmt.Sprintf("- Other changes: %s", strings.Join(otherSections, ", ")))
 	}
 
@@ -250,14 +251,14 @@ func OrderOperations(ops []Operation) []Operation {
 	// Sort creates by priority (ascending: parents first)
 	// Using stable sort to preserve original order when priorities are equal
 	// (e.g., ACLs must be created in index order: 0, 1, 2, not randomized)
-	sort.SliceStable(creates, func(i, j int) bool {
-		return creates[i].Priority() < creates[j].Priority()
+	slices.SortStableFunc(creates, func(a, b Operation) int {
+		return cmp.Compare(a.Priority(), b.Priority())
 	})
 
 	// Sort deletes by priority (descending: children first)
 	// Using stable sort for consistent ordering of operations with equal priority
-	sort.SliceStable(deletes, func(i, j int) bool {
-		return deletes[i].Priority() > deletes[j].Priority()
+	slices.SortStableFunc(deletes, func(a, b Operation) int {
+		return cmp.Compare(b.Priority(), a.Priority())
 	})
 
 	// Combine in execution order: deletes → creates → updates

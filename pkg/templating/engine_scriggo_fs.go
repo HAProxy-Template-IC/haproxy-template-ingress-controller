@@ -15,9 +15,10 @@
 package templating
 
 import (
+	"cmp"
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,8 +65,8 @@ func (f *scriggoTemplateFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	}
 
 	// Sort for deterministic order
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int {
+		return cmp.Compare(a.Name(), b.Name())
 	})
 
 	return entries, nil

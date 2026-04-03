@@ -132,11 +132,7 @@ func NewEngineFromConfigWithOptions(
 			additionalDeclarations,
 		)
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	return engine, nil
+	return engine, err
 }
 
 // ExtractTemplatesFromConfig extracts all templates from the configuration structure.

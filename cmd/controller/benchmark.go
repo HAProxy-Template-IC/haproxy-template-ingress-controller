@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -128,7 +128,7 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 				benchmarkTestNames = append(benchmarkTestNames, name)
 			}
 		}
-		sort.Strings(benchmarkTestNames) // Deterministic order
+		slices.Sort(benchmarkTestNames) // Deterministic order
 	}
 
 	// Validate all specified tests exist
