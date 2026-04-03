@@ -15,9 +15,11 @@
 package main
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -50,4 +52,55 @@ func sortIncludeStatsByTotalTime(stats []templating.IncludeStats) {
 	sort.Slice(stats, func(i, j int) bool {
 		return stats[i].TotalMs > stats[j].TotalMs
 	})
+}
+
+// aggregateIncludeStatsFromSlices collects and aggregates include statistics from multiple stat slices.
+func aggregateIncludeStatsFromSlices(statSlices [][]templating.IncludeStats) []templating.IncludeStats {
+	aggregated := make(map[string]*templating.IncludeStats)
+
+	for _, stats := range statSlices {
+		for _, stat := range stats {
+			mergeIncludeStat(aggregated, stat)
+		}
+	}
+
+	// Convert to slice and calculate averages
+	result := make([]templating.IncludeStats, 0, len(aggregated))
+	for _, stat := range aggregated {
+		if stat.Count > 0 {
+			stat.AvgMs = stat.TotalMs / float64(stat.Count)
+		}
+		result = append(result, *stat)
+	}
+
+	sortIncludeStatsByTotalTime(result)
+
+	return result
+}
+
+// printIncludeProfile prints the formatted include timing profile.
+func printIncludeProfile(stats []templating.IncludeStats) {
+	fmt.Println("\n" + strings.Repeat("=", 80))
+	fmt.Println("INCLUDE TIMING PROFILE (Top 20 slowest)")
+	fmt.Println(strings.Repeat("=", 80))
+	fmt.Printf("%-45s %8s %10s %10s %10s\n", "Include", "Count", "Total(ms)", "Avg(ms)", "Max(ms)")
+	fmt.Println(strings.Repeat("-", 80))
+
+	limit := min(len(stats), 20)
+
+	for i := 0; i < limit; i++ {
+		stat := stats[i]
+		fmt.Printf("%-45s %8d %10.2f %10.2f %10.2f\n",
+			stat.Name, stat.Count, stat.TotalMs, stat.AvgMs, stat.MaxMs)
+	}
+
+	// Summary
+	var totalTime float64
+	var totalCalls int
+	for _, stat := range stats {
+		totalTime += stat.TotalMs
+		totalCalls += stat.Count
+	}
+	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-45s %8d %10.2f\n", "TOTAL", totalCalls, totalTime)
 }

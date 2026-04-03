@@ -170,7 +170,7 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 	}
 
 	// Step 3: Output results for all tests
-	outputAllBenchmarkResults(results, compilationTime, cfg)
+	outputAllBenchmarkResults(results, compilationTime)
 
 	return nil
 }
@@ -382,7 +382,7 @@ type tableLayout struct {
 }
 
 // outputAllBenchmarkResults formats and prints benchmark results as a table.
-func outputAllBenchmarkResults(results []*BenchmarkResult, compilationTime time.Duration, _ *config.Config) {
+func outputAllBenchmarkResults(results []*BenchmarkResult, compilationTime time.Duration) {
 	if len(results) == 0 {
 		fmt.Println("No benchmark results to display")
 		return
@@ -552,60 +552,17 @@ func truncateString(s string, maxLen int) string {
 
 // outputBenchmarkIncludeProfile outputs aggregated include timing statistics.
 func outputBenchmarkIncludeProfile(results []*BenchmarkResult) {
-	// Aggregate stats across all tests and iterations
-	stats := aggregateBenchmarkIncludeStats(results)
+	var statSlices [][]templating.IncludeStats
+	for _, result := range results {
+		for _, iter := range result.Iterations {
+			statSlices = append(statSlices, iter.IncludeStats)
+		}
+	}
+
+	stats := aggregateIncludeStatsFromSlices(statSlices)
 	if len(stats) == 0 {
 		return
 	}
 
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Println("INCLUDE TIMING PROFILE (Top 20 slowest)")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("%-45s %8s %10s %10s %10s\n", "Include", "Count", "Total(ms)", "Avg(ms)", "Max(ms)")
-	fmt.Println(strings.Repeat("-", 80))
-
-	limit := min(len(stats), 20)
-
-	for i := 0; i < limit; i++ {
-		stat := stats[i]
-		fmt.Printf("%-45s %8d %10.2f %10.2f %10.2f\n",
-			stat.Name, stat.Count, stat.TotalMs, stat.AvgMs, stat.MaxMs)
-	}
-
-	// Summary
-	var totalTime float64
-	var totalCalls int
-	for _, stat := range stats {
-		totalTime += stat.TotalMs
-		totalCalls += stat.Count
-	}
-	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("%-45s %8d %10.2f\n", "TOTAL", totalCalls, totalTime)
-	fmt.Println()
-}
-
-// aggregateBenchmarkIncludeStats collects and aggregates include statistics from all benchmark results.
-func aggregateBenchmarkIncludeStats(results []*BenchmarkResult) []templating.IncludeStats {
-	aggregated := make(map[string]*templating.IncludeStats)
-
-	for _, result := range results {
-		for _, iter := range result.Iterations {
-			for _, stat := range iter.IncludeStats {
-				mergeIncludeStat(aggregated, stat)
-			}
-		}
-	}
-
-	// Convert to slice and calculate averages
-	stats := make([]templating.IncludeStats, 0, len(aggregated))
-	for _, stat := range aggregated {
-		if stat.Count > 0 {
-			stat.AvgMs = stat.TotalMs / float64(stat.Count)
-		}
-		stats = append(stats, *stat)
-	}
-
-	sortIncludeStatsByTotalTime(stats)
-
-	return stats
+	printIncludeProfile(stats)
 }

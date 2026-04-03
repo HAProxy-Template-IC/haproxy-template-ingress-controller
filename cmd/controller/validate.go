@@ -97,7 +97,7 @@ func init() {
 	_ = validateCmd.MarkFlagRequired("file")
 }
 
-func runValidate(cmd *cobra.Command, args []string) error {
+func runValidate(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
 	// Setup logging
@@ -327,65 +327,17 @@ func outputTemplateTrace(engine templating.Engine) {
 
 // outputIncludeProfile prints include timing statistics from test results.
 func outputIncludeProfile(results *testrunner.TestResults) {
-	stats := aggregateIncludeStats(results)
+	statSlices := make([][]templating.IncludeStats, len(results.TestResults))
+	for i := range results.TestResults {
+		statSlices[i] = results.TestResults[i].IncludeStats
+	}
+
+	stats := aggregateIncludeStatsFromSlices(statSlices)
 	if len(stats) == 0 {
 		return
 	}
 
 	printIncludeProfile(stats)
-}
-
-// aggregateIncludeStats collects and aggregates include statistics from all test results.
-func aggregateIncludeStats(results *testrunner.TestResults) []templating.IncludeStats {
-	aggregated := make(map[string]*templating.IncludeStats)
-
-	for i := range results.TestResults {
-		test := &results.TestResults[i]
-		for _, stat := range test.IncludeStats {
-			mergeIncludeStat(aggregated, stat)
-		}
-	}
-
-	// Convert to slice and calculate averages
-	stats := make([]templating.IncludeStats, 0, len(aggregated))
-	for _, stat := range aggregated {
-		if stat.Count > 0 {
-			stat.AvgMs = stat.TotalMs / float64(stat.Count)
-		}
-		stats = append(stats, *stat)
-	}
-
-	// Sort by total time (slowest first)
-	sortIncludeStatsByTotalTime(stats)
-
-	return stats
-}
-
-// printIncludeProfile prints the formatted include timing profile.
-func printIncludeProfile(stats []templating.IncludeStats) {
-	fmt.Println("\n" + strings.Repeat("=", 80))
-	fmt.Println("INCLUDE TIMING PROFILE (Top 20 slowest)")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("%-45s %8s %10s %10s %10s\n", "Include", "Count", "Total(ms)", "Avg(ms)", "Max(ms)")
-	fmt.Println(strings.Repeat("-", 80))
-
-	limit := min(len(stats), 20)
-
-	for i := 0; i < limit; i++ {
-		stat := stats[i]
-		fmt.Printf("%-45s %8d %10.2f %10.2f %10.2f\n",
-			stat.Name, stat.Count, stat.TotalMs, stat.AvgMs, stat.MaxMs)
-	}
-
-	// Summary
-	var totalTime float64
-	var totalCalls int
-	for _, stat := range stats {
-		totalTime += stat.TotalMs
-		totalCalls += stat.Count
-	}
-	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("%-45s %8d %10.2f\n", "TOTAL", totalCalls, totalTime)
 }
 
 // loadConfigFromFile loads a HAProxyTemplateConfig from a YAML file.

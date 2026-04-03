@@ -259,20 +259,6 @@ Community: /usr/local/bin/dataplaneapi
 {{- end -}}
 {{- end -}}
 
-{{/*
-HAProxy user
-Enterprise: hapee-lb
-Community: haproxy
-*/}}
-{{- define "haptic.haproxy.user" -}}
-{{- if .Values.haproxy.user -}}
-{{- .Values.haproxy.user -}}
-{{- else if .Values.haproxy.enterprise.enabled -}}
-hapee-lb
-{{- else -}}
-haproxy
-{{- end -}}
-{{- end -}}
 
 {{/*
 Component labels
