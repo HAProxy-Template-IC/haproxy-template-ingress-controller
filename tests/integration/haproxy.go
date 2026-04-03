@@ -23,6 +23,8 @@ import (
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/transport/spdy"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // HAProxyConfig holds configuration for deploying HAProxy
@@ -547,7 +549,7 @@ func (h *HAProxyInstance) waitForDataplaneAPI(timeout time.Duration) error {
 	endpoint := fmt.Sprintf("http://localhost:%d/v3/info", h.LocalPort)
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	return WaitForCondition(context.Background(), WaitConfig{
+	return testutil.WaitForCondition(context.Background(), testutil.WaitConfig{
 		InitialInterval: 100 * time.Millisecond,
 		MaxInterval:     2 * time.Second,
 		Timeout:         timeout,

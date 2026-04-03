@@ -15,6 +15,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // TestMain sets up package-scoped fixtures and runs tests
@@ -242,7 +243,7 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	// CI environments (DinD). Without this wait, idempotency checks may fail because
 	// the API returns stale data.
 	if result.ReloadTriggered {
-		err = WaitForCondition(ctx, FastWaitConfig(), func(ctx context.Context) (bool, error) {
+		err = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(ctx context.Context) (bool, error) {
 			currentConfig, err := client.GetRawConfiguration(ctx)
 			if err != nil {
 				return false, nil // Retry on error

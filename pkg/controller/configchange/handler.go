@@ -9,6 +9,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -63,7 +64,7 @@ type ConfigChangeHandler struct {
 	// Debouncing for reinitialization signals
 	// Coalesces rapid CRD config changes to prevent reinitialization from interrupting renders
 	debounceInterval time.Duration
-	debounceTimer    *time.Timer
+	debounceTimer    timers.SafeTimer
 	pendingConfig    *coreconfig.Config
 
 	// Mutex for initialConfigVersion and reinitializationEnabled
@@ -126,7 +127,6 @@ func NewConfigChangeHandler(
 		configReplayer:   leadership.NewStateReplayer[*events.ConfigValidatedEvent](eventBus),
 		stopCh:           make(chan struct{}),
 		debounceInterval: debounceInterval,
-		debounceTimer:    nil,
 		pendingConfig:    nil,
 	}
 }
@@ -187,8 +187,8 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 			h.logger.Info("ConfigChangeHandler shutting down")
 			h.cleanup()
 			return nil
-		case <-h.getDebounceTimerChan():
-			// Debounce timer expired - send pending config
+		case <-h.debounceTimer.Chan():
+			h.debounceTimer.Fired()
 			h.sendPendingConfig()
 		case event := <-h.eventChan:
 			switch e := event.(type) {
@@ -205,13 +205,15 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 
 // Stop gracefully stops the component.
 func (h *ConfigChangeHandler) Stop() {
-	h.stopDebounceTimer()
+	h.debounceTimer.Stop()
+	h.pendingConfig = nil
 	close(h.stopCh)
 }
 
 // cleanup performs cleanup when the component is shutting down.
 func (h *ConfigChangeHandler) cleanup() {
-	h.stopDebounceTimer()
+	h.debounceTimer.Stop()
+	h.pendingConfig = nil
 }
 
 // handleConfigParsed coordinates validation for a parsed config using scatter-gather pattern.
@@ -366,51 +368,7 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 	h.logger.Debug("Config validated, reinitialization debounced",
 		"version", event.Version)
 
-	h.resetDebounceTimer()
-}
-
-// resetDebounceTimer resets the debounce timer to the configured interval.
-func (h *ConfigChangeHandler) resetDebounceTimer() {
-	if h.debounceTimer == nil {
-		// Create timer on first use
-		h.debounceTimer = time.NewTimer(h.debounceInterval)
-	} else {
-		// Stop and drain existing timer before resetting
-		if !h.debounceTimer.Stop() {
-			// Timer already fired, drain the channel
-			select {
-			case <-h.debounceTimer.C:
-			default:
-			}
-		}
-		h.debounceTimer.Reset(h.debounceInterval)
-	}
-}
-
-// stopDebounceTimer stops the debounce timer if it's running.
-func (h *ConfigChangeHandler) stopDebounceTimer() {
-	if h.debounceTimer != nil {
-		if !h.debounceTimer.Stop() {
-			// Timer already fired, drain the channel
-			select {
-			case <-h.debounceTimer.C:
-			default:
-			}
-		}
-	}
-	h.pendingConfig = nil
-}
-
-// getDebounceTimerChan returns the debounce timer's channel or a nil channel
-// if the timer hasn't been created yet.
-//
-// This allows the select statement to work correctly - a nil channel blocks forever,
-// which is the desired behavior when there's no active debounce timer.
-func (h *ConfigChangeHandler) getDebounceTimerChan() <-chan time.Time {
-	if h.debounceTimer == nil {
-		return nil
-	}
-	return h.debounceTimer.C
+	h.debounceTimer.Reset(h.debounceInterval)
 }
 
 // sendPendingConfig sends the pending config to the controller.
