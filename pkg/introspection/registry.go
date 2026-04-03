@@ -16,7 +16,7 @@ package introspection
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 )
 
@@ -176,7 +176,7 @@ func (r *Registry) Paths() []string {
 		paths = append(paths, path)
 	}
 
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths
 }
 

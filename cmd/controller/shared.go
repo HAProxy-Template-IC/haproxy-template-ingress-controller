@@ -15,10 +15,10 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -49,8 +49,8 @@ func mergeIncludeStat(aggregated map[string]*templating.IncludeStats, stat templ
 
 // sortIncludeStatsByTotalTime sorts include stats by total time (slowest first).
 func sortIncludeStatsByTotalTime(stats []templating.IncludeStats) {
-	sort.Slice(stats, func(i, j int) bool {
-		return stats[i].TotalMs > stats[j].TotalMs
+	slices.SortFunc(stats, func(a, b templating.IncludeStats) int {
+		return cmp.Compare(b.TotalMs, a.TotalMs)
 	})
 }
 

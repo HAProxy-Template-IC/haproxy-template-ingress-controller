@@ -19,7 +19,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -157,7 +157,7 @@ func computePodSetHash(endpoints []dataplane.Endpoint) string {
 	for _, ep := range endpoints {
 		urls = append(urls, ep.URL)
 	}
-	sort.Strings(urls)
+	slices.Sort(urls)
 
 	for _, url := range urls {
 		h.Write([]byte(url))

@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -357,7 +357,7 @@ func (e *ScriggoEngine) templateNotFoundError(templateName string) error {
 	for name := range e.compiledTemplates {
 		available = append(available, name)
 	}
-	sort.Strings(available)
+	slices.Sort(available)
 	return NewTemplateNotFoundError(templateName, available)
 }
 
@@ -390,7 +390,7 @@ func (e *ScriggoEngine) TemplateNames() []string {
 	for name := range e.compiledTemplates {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	v30 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v30"
@@ -174,7 +174,7 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 			// The API stores issuers in a Go map with undefined iteration order,
 			// so both sides must normalize by sorting to ensure consistent matching.
 			issuers := strings.Split(*apiCert.Issuers, ", ")
-			sort.Strings(issuers)
+			slices.Sort(issuers)
 			issuersStr = strings.Join(issuers, ", ")
 		}
 		return fmt.Sprintf("cert:serial:%s:issuers:%s", *apiCert.Serial, issuersStr), nil

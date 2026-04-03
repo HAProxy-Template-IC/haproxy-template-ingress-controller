@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -538,6 +538,6 @@ func sortedPriorityKeys(groups map[int][]comparator.Operation) []int {
 	for k := range groups {
 		keys = append(keys, k)
 	}
-	sort.Ints(keys)
+	slices.Sort(keys)
 	return keys
 }

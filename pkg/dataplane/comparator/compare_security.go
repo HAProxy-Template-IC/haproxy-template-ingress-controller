@@ -2,7 +2,7 @@ package comparator
 
 import (
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/haproxytech/client-native/v6/models"
@@ -119,8 +119,8 @@ func commaSeparatedEqual(s1, s2 string) bool {
 		return false
 	}
 
-	sort.Strings(list1)
-	sort.Strings(list2)
+	slices.Sort(list1)
+	slices.Sort(list2)
 
 	for i := range list1 {
 		if list1[i] != list2[i] {
