@@ -477,7 +477,7 @@ func TestHTTPStore_EvictUnused_NeverEvictsPending(t *testing.T) {
 	require.True(t, changed)
 
 	// Entry now has pending content
-	assert.True(t, store.HasPendingValidation())
+	assert.NotEmpty(t, store.GetPendingURLs())
 
 	// Wait for maxAge to expire
 	time.Sleep(10 * time.Millisecond)
@@ -660,96 +660,6 @@ func TestHTTPStore_Clear(t *testing.T) {
 	// Verify entries are gone
 	_, ok := store.Get("http://example.com/1")
 	assert.False(t, ok)
-}
-
-func TestHTTPStore_PromoteAllPending(t *testing.T) {
-	// Create test server
-	content := "original"
-	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(content))
-	}))
-	defer server1.Close()
-
-	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(content))
-	}))
-	defer server2.Close()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger, 0)
-
-	ctx := context.Background()
-
-	// Initial fetch for both
-	_, err := store.Fetch(ctx, server1.URL, FetchOptions{Delay: time.Minute}, nil)
-	require.NoError(t, err)
-	_, err = store.Fetch(ctx, server2.URL, FetchOptions{Delay: time.Minute}, nil)
-	require.NoError(t, err)
-
-	// Update content and refresh both
-	content = "updated"
-	_, err = store.RefreshURL(ctx, server1.URL)
-	require.NoError(t, err)
-	_, err = store.RefreshURL(ctx, server2.URL)
-	require.NoError(t, err)
-
-	// Both should have pending
-	urls := store.GetPendingURLs()
-	assert.Equal(t, 2, len(urls))
-
-	// Promote all
-	promoted := store.PromoteAllPending()
-	assert.Equal(t, 2, promoted)
-
-	// No more pending
-	assert.False(t, store.HasPendingValidation())
-
-	// Both should have updated content as accepted
-	content1, ok := store.Get(server1.URL)
-	assert.True(t, ok)
-	assert.Equal(t, "updated", content1)
-
-	content2, ok := store.Get(server2.URL)
-	assert.True(t, ok)
-	assert.Equal(t, "updated", content2)
-}
-
-func TestHTTPStore_RejectAllPending(t *testing.T) {
-	// Create test server
-	content := "original"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(content))
-	}))
-	defer server.Close()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger, 0)
-
-	ctx := context.Background()
-
-	// Initial fetch
-	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute}, nil)
-	require.NoError(t, err)
-
-	// Update content and refresh
-	content = "bad content"
-	_, err = store.RefreshURL(ctx, server.URL)
-	require.NoError(t, err)
-
-	// Should have pending
-	assert.True(t, store.HasPendingValidation())
-
-	// Reject all
-	rejected := store.RejectAllPending()
-	assert.Equal(t, 1, rejected)
-
-	// No more pending
-	assert.False(t, store.HasPendingValidation())
-
-	// Accepted content should still be original
-	accepted, ok := store.Get(server.URL)
-	assert.True(t, ok)
-	assert.Equal(t, "original", accepted)
 }
 
 func TestValidationState_String(t *testing.T) {

@@ -80,7 +80,7 @@ func (f *FieldFilter) removeField(rv reflect.Value, pattern string) error {
 		if navigateErr != nil {
 			// Field doesn't exist, nothing to remove - this is not an error
 			// Intentionally return nil (not navigateErr) since missing fields are acceptable
-			return nil //nolint:nilerr // Missing fields are not errors during filtering
+			return nil // Missing fields are not errors during filtering
 		}
 	}
 

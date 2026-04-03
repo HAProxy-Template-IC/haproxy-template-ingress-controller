@@ -72,7 +72,7 @@ type Watcher struct {
 //	    },
 //	})
 //
-//nolint:gocritic // hugeParam: Config passed by value to prevent external mutation
+
 func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger) (*Watcher, error) {
 	// Set defaults
 	cfg.SetDefaults()

@@ -24,13 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewLoggingOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	logging := NewLoggingOperations(c)
 
 	require.NotNil(t, logging)
@@ -38,14 +39,14 @@ func TestNewLoggingOperations(t *testing.T) {
 }
 
 func TestLoggingOperations_GetLogConfig_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/logs/config": jsonResponse(`{"enabled": true}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/logs/config": testutil.JSONResponse(`{"enabled": true}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	logging := NewLoggingOperations(c)
 
 	config, err := logging.GetLogConfig(context.Background())
@@ -55,14 +56,14 @@ func TestLoggingOperations_GetLogConfig_Success(t *testing.T) {
 }
 
 func TestLoggingOperations_GetLogConfig_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/logs/config": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/logs/config": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	logging := NewLoggingOperations(c)
 
 	_, err := logging.GetLogConfig(context.Background())
@@ -72,14 +73,14 @@ func TestLoggingOperations_GetLogConfig_ServerError(t *testing.T) {
 }
 
 func TestLoggingOperations_GetLogConfig_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/logs/config": jsonResponse(`{not-valid-json`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/logs/config": testutil.JSONResponse(`{not-valid-json`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	logging := NewLoggingOperations(c)
 
 	_, err := logging.GetLogConfig(context.Background())
@@ -89,12 +90,12 @@ func TestLoggingOperations_GetLogConfig_InvalidJSON(t *testing.T) {
 }
 
 func TestLoggingOperations_GetLogConfig_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	logging := NewLoggingOperations(c)
 
 	_, err := logging.GetLogConfig(context.Background())
@@ -104,10 +105,10 @@ func TestLoggingOperations_GetLogConfig_CommunityEdition(t *testing.T) {
 }
 
 func TestLoggingOperations_ReplaceLogConfig_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/logs/config": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/logs/config": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
@@ -116,7 +117,7 @@ func TestLoggingOperations_ReplaceLogConfig_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	logging := NewLoggingOperations(c)
 
 	config := &LogConfiguration{}
@@ -126,16 +127,16 @@ func TestLoggingOperations_ReplaceLogConfig_Success(t *testing.T) {
 }
 
 func TestLoggingOperations_ReplaceLogConfig_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/logs/config": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/logs/config": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	logging := NewLoggingOperations(c)
 
 	config := &LogConfiguration{}
@@ -146,12 +147,12 @@ func TestLoggingOperations_ReplaceLogConfig_ServerError(t *testing.T) {
 }
 
 func TestLoggingOperations_ReplaceLogConfig_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	logging := NewLoggingOperations(c)
 
 	config := &LogConfiguration{}

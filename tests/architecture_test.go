@@ -17,8 +17,6 @@ import (
 //
 // This test runs as part of the normal test suite and will fail CI if architecture
 // constraints are violated.
-//
-//nolint:revive // cognitive-complexity: Architecture validation with detailed error reporting
 func TestArchitecture(t *testing.T) {
 	// Load module information
 	moduleInfo := configuration.Load("haptic")

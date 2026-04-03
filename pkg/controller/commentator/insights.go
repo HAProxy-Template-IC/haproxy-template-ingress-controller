@@ -21,8 +21,6 @@ const (
 // generateInsight creates a contextual message and structured attributes for the event.
 //
 // This applies domain knowledge and uses the ring buffer for event correlation.
-//
-//nolint:gocyclo,revive // Large switch statement handling many event types - refactoring would reduce readability
 func (ec *EventCommentator) generateInsight(event busevents.Event) (insight string, args []any) {
 	eventType := event.EventType()
 	attrs := []any{

@@ -25,13 +25,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewWAFOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	require.NotNil(t, waf)
@@ -39,14 +40,14 @@ func TestNewWAFOperations(t *testing.T) {
 }
 
 func TestWAFOperations_GetGlobal_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": jsonResponse(`{"enabled": true}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_global": testutil.JSONResponse(`{"enabled": true}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	global, err := waf.GetGlobal(context.Background(), "tx-123")
@@ -56,14 +57,14 @@ func TestWAFOperations_GetGlobal_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetGlobal_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_global": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetGlobal(context.Background(), "tx-123")
@@ -73,14 +74,14 @@ func TestWAFOperations_GetGlobal_NotFound(t *testing.T) {
 }
 
 func TestWAFOperations_GetGlobal_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_global": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetGlobal(context.Background(), "tx-123")
@@ -90,12 +91,12 @@ func TestWAFOperations_GetGlobal_ServerError(t *testing.T) {
 }
 
 func TestWAFOperations_GetGlobal_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetGlobal(context.Background(), "tx-123")
@@ -105,12 +106,12 @@ func TestWAFOperations_GetGlobal_RequiresV32(t *testing.T) {
 }
 
 func TestWAFOperations_GetGlobal_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetGlobal(context.Background(), "tx-123")
@@ -120,10 +121,10 @@ func TestWAFOperations_GetGlobal_CommunityEdition(t *testing.T) {
 }
 
 func TestWAFOperations_CreateGlobal_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_global": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -132,7 +133,7 @@ func TestWAFOperations_CreateGlobal_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	global := &WafGlobal{}
@@ -142,12 +143,12 @@ func TestWAFOperations_CreateGlobal_Success(t *testing.T) {
 }
 
 func TestWAFOperations_CreateGlobal_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	global := &WafGlobal{}
@@ -158,10 +159,10 @@ func TestWAFOperations_CreateGlobal_RequiresV32(t *testing.T) {
 }
 
 func TestWAFOperations_ReplaceGlobal_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_global": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{}`),
 				http.MethodPut: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
@@ -170,7 +171,7 @@ func TestWAFOperations_ReplaceGlobal_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	global := &WafGlobal{}
@@ -180,10 +181,10 @@ func TestWAFOperations_ReplaceGlobal_Success(t *testing.T) {
 }
 
 func TestWAFOperations_DeleteGlobal_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_global": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_global": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -192,7 +193,7 @@ func TestWAFOperations_DeleteGlobal_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	err := waf.DeleteGlobal(context.Background(), "tx-123")
@@ -201,14 +202,14 @@ func TestWAFOperations_DeleteGlobal_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllProfiles_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles": jsonResponse(`[{"name": "default"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_profiles": testutil.JSONResponse(`[{"name": "default"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	profiles, err := waf.GetAllProfiles(context.Background(), "tx-123")
@@ -218,12 +219,12 @@ func TestWAFOperations_GetAllProfiles_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllProfiles_RequiresV32(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetAllProfiles(context.Background(), "tx-123")
@@ -233,14 +234,14 @@ func TestWAFOperations_GetAllProfiles_RequiresV32(t *testing.T) {
 }
 
 func TestWAFOperations_GetProfile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles/default": jsonResponse(`{"name": "default"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_profiles/default": testutil.JSONResponse(`{"name": "default"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	profile, err := waf.GetProfile(context.Background(), "tx-123", "default")
@@ -250,14 +251,14 @@ func TestWAFOperations_GetProfile_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetProfile_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_profiles/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetProfile(context.Background(), "tx-123", "nonexistent")
@@ -267,10 +268,10 @@ func TestWAFOperations_GetProfile_NotFound(t *testing.T) {
 }
 
 func TestWAFOperations_CreateProfile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_profiles": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -279,7 +280,7 @@ func TestWAFOperations_CreateProfile_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	profile := &WafProfile{}
@@ -289,10 +290,10 @@ func TestWAFOperations_CreateProfile_Success(t *testing.T) {
 }
 
 func TestWAFOperations_ReplaceProfile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles/default": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "default"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_profiles/default": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "default"}`),
 				http.MethodPut: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
@@ -301,7 +302,7 @@ func TestWAFOperations_ReplaceProfile_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	profile := &WafProfile{}
@@ -311,10 +312,10 @@ func TestWAFOperations_ReplaceProfile_Success(t *testing.T) {
 }
 
 func TestWAFOperations_DeleteProfile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/waf_profiles/default": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "default"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/waf_profiles/default": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "default"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -323,7 +324,7 @@ func TestWAFOperations_DeleteProfile_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	err := waf.DeleteProfile(context.Background(), "tx-123", "default")
@@ -332,14 +333,14 @@ func TestWAFOperations_DeleteProfile_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllBodyRulesBackend_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/backends/api/waf_body_rules": jsonResponse(`[{"index": 0}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/backends/api/waf_body_rules": testutil.JSONResponse(`[{"index": 0}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	rules, err := waf.GetAllBodyRulesBackend(context.Background(), "tx-123", "api")
@@ -349,14 +350,14 @@ func TestWAFOperations_GetAllBodyRulesBackend_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllBodyRulesBackend_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/backends/api/waf_body_rules": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/backends/api/waf_body_rules": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetAllBodyRulesBackend(context.Background(), "tx-123", "api")
@@ -366,12 +367,12 @@ func TestWAFOperations_GetAllBodyRulesBackend_ServerError(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllBodyRulesBackend_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetAllBodyRulesBackend(context.Background(), "tx-123", "api")
@@ -381,10 +382,10 @@ func TestWAFOperations_GetAllBodyRulesBackend_CommunityEdition(t *testing.T) {
 }
 
 func TestWAFOperations_CreateBodyRuleBackend_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/backends/api/waf_body_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/backends/api/waf_body_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -393,7 +394,7 @@ func TestWAFOperations_CreateBodyRuleBackend_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	rule := &WafBodyRule{}
@@ -403,10 +404,10 @@ func TestWAFOperations_CreateBodyRuleBackend_Success(t *testing.T) {
 }
 
 func TestWAFOperations_DeleteBodyRuleBackend_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/backends/api/waf_body_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/backends/api/waf_body_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -415,7 +416,7 @@ func TestWAFOperations_DeleteBodyRuleBackend_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	err := waf.DeleteBodyRuleBackend(context.Background(), "tx-123", "api", 0)
@@ -424,14 +425,14 @@ func TestWAFOperations_DeleteBodyRuleBackend_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllBodyRulesFrontend_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/frontends/http/waf_body_rules": jsonResponse(`[{"index": 0}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/frontends/http/waf_body_rules": testutil.JSONResponse(`[{"index": 0}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	rules, err := waf.GetAllBodyRulesFrontend(context.Background(), "tx-123", "http")
@@ -441,10 +442,10 @@ func TestWAFOperations_GetAllBodyRulesFrontend_Success(t *testing.T) {
 }
 
 func TestWAFOperations_CreateBodyRuleFrontend_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/frontends/http/waf_body_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/frontends/http/waf_body_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -453,7 +454,7 @@ func TestWAFOperations_CreateBodyRuleFrontend_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	rule := &WafBodyRule{}
@@ -463,10 +464,10 @@ func TestWAFOperations_CreateBodyRuleFrontend_Success(t *testing.T) {
 }
 
 func TestWAFOperations_DeleteBodyRuleFrontend_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/frontends/http/waf_body_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/frontends/http/waf_body_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -475,7 +476,7 @@ func TestWAFOperations_DeleteBodyRuleFrontend_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	err := waf.DeleteBodyRuleFrontend(context.Background(), "tx-123", "http", 0)
@@ -484,14 +485,14 @@ func TestWAFOperations_DeleteBodyRuleFrontend_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllRulesets_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets": jsonResponse(`[{"name": "owasp"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets": testutil.JSONResponse(`[{"name": "owasp"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	rulesets, err := waf.GetAllRulesets(context.Background())
@@ -501,14 +502,14 @@ func TestWAFOperations_GetAllRulesets_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllRulesets_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetAllRulesets(context.Background())
@@ -518,12 +519,12 @@ func TestWAFOperations_GetAllRulesets_ServerError(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllRulesets_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetAllRulesets(context.Background())
@@ -533,14 +534,14 @@ func TestWAFOperations_GetAllRulesets_CommunityEdition(t *testing.T) {
 }
 
 func TestWAFOperations_GetRuleset_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets/owasp": jsonResponse(`{"name": "owasp"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets/owasp": testutil.JSONResponse(`{"name": "owasp"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	ruleset, err := waf.GetRuleset(context.Background(), "owasp")
@@ -550,14 +551,14 @@ func TestWAFOperations_GetRuleset_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetRuleset_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetRuleset(context.Background(), "nonexistent")
@@ -567,10 +568,10 @@ func TestWAFOperations_GetRuleset_NotFound(t *testing.T) {
 }
 
 func TestWAFOperations_CreateRuleset_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -579,7 +580,7 @@ func TestWAFOperations_CreateRuleset_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	content := bytes.NewBufferString("ruleset content")
@@ -589,10 +590,10 @@ func TestWAFOperations_CreateRuleset_Success(t *testing.T) {
 }
 
 func TestWAFOperations_DeleteRuleset_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets/owasp": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"name": "owasp"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets/owasp": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"name": "owasp"}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -601,7 +602,7 @@ func TestWAFOperations_DeleteRuleset_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	err := waf.DeleteRuleset(context.Background(), "owasp")
@@ -610,14 +611,14 @@ func TestWAFOperations_DeleteRuleset_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetAllRulesetFiles_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets/owasp/files": jsonResponse(`["rule1.conf", "rule2.conf"]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets/owasp/files": testutil.JSONResponse(`["rule1.conf", "rule2.conf"]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	files, err := waf.GetAllRulesetFiles(context.Background(), "owasp", "")
@@ -627,8 +628,8 @@ func TestWAFOperations_GetAllRulesetFiles_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetRulesetFile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
 			"/v3/services/haproxy/waf/rulesets/owasp/files/rule1.conf": func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/octet-stream")
 				w.WriteHeader(http.StatusOK)
@@ -638,7 +639,7 @@ func TestWAFOperations_GetRulesetFile_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	content, err := waf.GetRulesetFile(context.Background(), "owasp", "rule1.conf", "")
@@ -648,14 +649,14 @@ func TestWAFOperations_GetRulesetFile_Success(t *testing.T) {
 }
 
 func TestWAFOperations_GetRulesetFile_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets/owasp/files/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets/owasp/files/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	_, err := waf.GetRulesetFile(context.Background(), "owasp", "nonexistent", "")
@@ -665,10 +666,10 @@ func TestWAFOperations_GetRulesetFile_NotFound(t *testing.T) {
 }
 
 func TestWAFOperations_CreateRulesetFile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets/owasp/files": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`[]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets/owasp/files": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`[]`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -677,7 +678,7 @@ func TestWAFOperations_CreateRulesetFile_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	content := bytes.NewBufferString("rule content")
@@ -687,9 +688,9 @@ func TestWAFOperations_CreateRulesetFile_Success(t *testing.T) {
 }
 
 func TestWAFOperations_DeleteRulesetFile_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/waf/rulesets/owasp/files/rule1.conf": methodAwareHandler(map[string]http.HandlerFunc{
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/waf/rulesets/owasp/files/rule1.conf": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
 				http.MethodGet: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
@@ -701,7 +702,7 @@ func TestWAFOperations_DeleteRulesetFile_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	waf := NewWAFOperations(c)
 
 	err := waf.DeleteRulesetFile(context.Background(), "owasp", "rule1.conf", "")

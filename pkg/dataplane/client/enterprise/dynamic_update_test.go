@@ -24,13 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewDynamicUpdateOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	require.NotNil(t, du)
@@ -38,14 +39,14 @@ func TestNewDynamicUpdateOperations(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetSection_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_section": jsonResponse(`{}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_section": testutil.JSONResponse(`{}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.GetSection(context.Background(), "tx-123")
@@ -54,14 +55,14 @@ func TestDynamicUpdateOperations_GetSection_Success(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetSection_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_section": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_section": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.GetSection(context.Background(), "tx-123")
@@ -71,14 +72,14 @@ func TestDynamicUpdateOperations_GetSection_NotFound(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetSection_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_section": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_section": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.GetSection(context.Background(), "tx-123")
@@ -88,12 +89,12 @@ func TestDynamicUpdateOperations_GetSection_ServerError(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetSection_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.GetSection(context.Background(), "tx-123")
@@ -103,10 +104,10 @@ func TestDynamicUpdateOperations_GetSection_CommunityEdition(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_CreateSection_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_section": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_section": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -115,7 +116,7 @@ func TestDynamicUpdateOperations_CreateSection_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.CreateSection(context.Background(), "tx-123")
@@ -124,16 +125,16 @@ func TestDynamicUpdateOperations_CreateSection_Success(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_CreateSection_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_section": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_section": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.CreateSection(context.Background(), "tx-123")
@@ -143,12 +144,12 @@ func TestDynamicUpdateOperations_CreateSection_ServerError(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_CreateSection_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.CreateSection(context.Background(), "tx-123")
@@ -158,10 +159,10 @@ func TestDynamicUpdateOperations_CreateSection_CommunityEdition(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_DeleteSection_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_section": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_section": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -170,7 +171,7 @@ func TestDynamicUpdateOperations_DeleteSection_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.DeleteSection(context.Background(), "tx-123")
@@ -179,16 +180,16 @@ func TestDynamicUpdateOperations_DeleteSection_Success(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_DeleteSection_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_section": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodDelete: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_section": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodDelete: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.DeleteSection(context.Background(), "tx-123")
@@ -198,12 +199,12 @@ func TestDynamicUpdateOperations_DeleteSection_ServerError(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_DeleteSection_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.DeleteSection(context.Background(), "tx-123")
@@ -213,14 +214,14 @@ func TestDynamicUpdateOperations_DeleteSection_CommunityEdition(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetAllRules_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules": jsonResponse(`[{"index": 0}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules": testutil.JSONResponse(`[{"index": 0}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	rules, err := du.GetAllRules(context.Background(), "tx-123")
@@ -230,14 +231,14 @@ func TestDynamicUpdateOperations_GetAllRules_Success(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetAllRules_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	_, err := du.GetAllRules(context.Background(), "tx-123")
@@ -247,14 +248,14 @@ func TestDynamicUpdateOperations_GetAllRules_ServerError(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetAllRules_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules": jsonResponse(`[not-valid`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules": testutil.JSONResponse(`[not-valid`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	_, err := du.GetAllRules(context.Background(), "tx-123")
@@ -264,12 +265,12 @@ func TestDynamicUpdateOperations_GetAllRules_InvalidJSON(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetAllRules_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	_, err := du.GetAllRules(context.Background(), "tx-123")
@@ -279,14 +280,14 @@ func TestDynamicUpdateOperations_GetAllRules_CommunityEdition(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetRule_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules/0": jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules/0": testutil.JSONResponse(`{"index": 0}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	rule, err := du.GetRule(context.Background(), "tx-123", 0)
@@ -296,14 +297,14 @@ func TestDynamicUpdateOperations_GetRule_Success(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetRule_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules/99": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules/99": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	_, err := du.GetRule(context.Background(), "tx-123", 99)
@@ -313,14 +314,14 @@ func TestDynamicUpdateOperations_GetRule_NotFound(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetRule_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules/0": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules/0": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	_, err := du.GetRule(context.Background(), "tx-123", 0)
@@ -330,12 +331,12 @@ func TestDynamicUpdateOperations_GetRule_ServerError(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_GetRule_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	_, err := du.GetRule(context.Background(), "tx-123", 0)
@@ -345,10 +346,10 @@ func TestDynamicUpdateOperations_GetRule_CommunityEdition(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_CreateRule_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodPost: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusCreated)
 				},
@@ -357,7 +358,7 @@ func TestDynamicUpdateOperations_CreateRule_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	rule := &DynamicUpdateRule{}
@@ -367,16 +368,16 @@ func TestDynamicUpdateOperations_CreateRule_Success(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_CreateRule_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	rule := &DynamicUpdateRule{}
@@ -387,12 +388,12 @@ func TestDynamicUpdateOperations_CreateRule_ServerError(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_CreateRule_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	rule := &DynamicUpdateRule{}
@@ -403,10 +404,10 @@ func TestDynamicUpdateOperations_CreateRule_CommunityEdition(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_DeleteRule_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{"index": 0}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{"index": 0}`),
 				http.MethodDelete: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 				},
@@ -415,7 +416,7 @@ func TestDynamicUpdateOperations_DeleteRule_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.DeleteRule(context.Background(), "tx-123", 0)
@@ -424,16 +425,16 @@ func TestDynamicUpdateOperations_DeleteRule_Success(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_DeleteRule_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/dynamic_update_rules/0": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodDelete: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/dynamic_update_rules/0": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodDelete: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.DeleteRule(context.Background(), "tx-123", 0)
@@ -443,12 +444,12 @@ func TestDynamicUpdateOperations_DeleteRule_ServerError(t *testing.T) {
 }
 
 func TestDynamicUpdateOperations_DeleteRule_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	du := NewDynamicUpdateOperations(c)
 
 	err := du.DeleteRule(context.Background(), "tx-123", 0)

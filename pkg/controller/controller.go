@@ -237,7 +237,7 @@ func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, web
 				// Check if error is context cancellation (graceful shutdown)
 				if ctx.Err() != nil {
 					logger.Info("Controller shutting down during iteration", "reason", ctx.Err())
-					return nil //nolint:nilerr // Graceful shutdown is not an error
+					return nil // Graceful shutdown is not an error
 				}
 
 				// Log error and retry after delay

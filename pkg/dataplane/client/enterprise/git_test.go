@@ -24,13 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewGitOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	require.NotNil(t, git)
@@ -38,14 +39,14 @@ func TestNewGitOperations(t *testing.T) {
 }
 
 func TestGitOperations_GetSettings_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/settings": jsonResponse(`{"enabled": true, "remote_url": "git@example.com:repo.git"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/settings": testutil.JSONResponse(`{"enabled": true, "remote_url": "git@example.com:repo.git"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	settings, err := git.GetSettings(context.Background())
@@ -55,14 +56,14 @@ func TestGitOperations_GetSettings_Success(t *testing.T) {
 }
 
 func TestGitOperations_GetSettings_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/settings": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/settings": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetSettings(context.Background())
@@ -72,14 +73,14 @@ func TestGitOperations_GetSettings_ServerError(t *testing.T) {
 }
 
 func TestGitOperations_GetSettings_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/settings": jsonResponse(`{invalid`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/settings": testutil.JSONResponse(`{invalid`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetSettings(context.Background())
@@ -89,12 +90,12 @@ func TestGitOperations_GetSettings_InvalidJSON(t *testing.T) {
 }
 
 func TestGitOperations_GetSettings_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetSettings(context.Background())
@@ -104,10 +105,10 @@ func TestGitOperations_GetSettings_CommunityEdition(t *testing.T) {
 }
 
 func TestGitOperations_ReplaceSettings_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/settings": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodGet: jsonResponse(`{}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/settings": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodGet: testutil.JSONResponse(`{}`),
 				http.MethodPut: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
@@ -116,7 +117,7 @@ func TestGitOperations_ReplaceSettings_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	settings := &GitSettings{}
@@ -126,16 +127,16 @@ func TestGitOperations_ReplaceSettings_Success(t *testing.T) {
 }
 
 func TestGitOperations_ReplaceSettings_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/settings": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPut: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/settings": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPut: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	settings := &GitSettings{}
@@ -146,12 +147,12 @@ func TestGitOperations_ReplaceSettings_ServerError(t *testing.T) {
 }
 
 func TestGitOperations_ReplaceSettings_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	settings := &GitSettings{}
@@ -162,14 +163,14 @@ func TestGitOperations_ReplaceSettings_CommunityEdition(t *testing.T) {
 }
 
 func TestGitOperations_GetAllActions_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/actions": jsonResponse(`[{"id": "pull", "name": "Pull"}]`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/actions": testutil.JSONResponse(`[{"id": "pull", "name": "Pull"}]`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	actions, err := git.GetAllActions(context.Background())
@@ -179,14 +180,14 @@ func TestGitOperations_GetAllActions_Success(t *testing.T) {
 }
 
 func TestGitOperations_GetAllActions_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/actions": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/actions": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetAllActions(context.Background())
@@ -196,14 +197,14 @@ func TestGitOperations_GetAllActions_ServerError(t *testing.T) {
 }
 
 func TestGitOperations_GetAllActions_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/actions": jsonResponse(`not-array`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/actions": testutil.JSONResponse(`not-array`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetAllActions(context.Background())
@@ -213,12 +214,12 @@ func TestGitOperations_GetAllActions_InvalidJSON(t *testing.T) {
 }
 
 func TestGitOperations_GetAllActions_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetAllActions(context.Background())
@@ -228,14 +229,14 @@ func TestGitOperations_GetAllActions_CommunityEdition(t *testing.T) {
 }
 
 func TestGitOperations_GetAction_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/actions/pull": jsonResponse(`{"id": "pull", "name": "Pull"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/actions/pull": testutil.JSONResponse(`{"id": "pull", "name": "Pull"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	action, err := git.GetAction(context.Background(), "pull")
@@ -245,14 +246,14 @@ func TestGitOperations_GetAction_Success(t *testing.T) {
 }
 
 func TestGitOperations_GetAction_NotFound(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/actions/nonexistent": errorResponse(http.StatusNotFound),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/actions/nonexistent": testutil.ErrorResponse(http.StatusNotFound),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetAction(context.Background(), "nonexistent")
@@ -262,14 +263,14 @@ func TestGitOperations_GetAction_NotFound(t *testing.T) {
 }
 
 func TestGitOperations_GetAction_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/actions/pull": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/actions/pull": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetAction(context.Background(), "pull")
@@ -279,12 +280,12 @@ func TestGitOperations_GetAction_ServerError(t *testing.T) {
 }
 
 func TestGitOperations_GetAction_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	_, err := git.GetAction(context.Background(), "pull")
@@ -294,16 +295,16 @@ func TestGitOperations_GetAction_CommunityEdition(t *testing.T) {
 }
 
 func TestGitOperations_ExecuteAction_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/actions": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: jsonResponse(`{"id": "pull", "status": "completed"}`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/actions": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.JSONResponse(`{"id": "pull", "status": "completed"}`),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	action := &GitAction{}
@@ -314,16 +315,16 @@ func TestGitOperations_ExecuteAction_Success(t *testing.T) {
 }
 
 func TestGitOperations_ExecuteAction_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/git/actions": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPost: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/git/actions": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPost: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	action := &GitAction{}
@@ -334,12 +335,12 @@ func TestGitOperations_ExecuteAction_ServerError(t *testing.T) {
 }
 
 func TestGitOperations_ExecuteAction_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	git := NewGitOperations(c)
 
 	action := &GitAction{}

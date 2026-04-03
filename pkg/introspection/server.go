@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	//nolint:gosec // G108: pprof intentionally exposed for debugging
 	_ "net/http/pprof" // Register pprof handlers
 )
 

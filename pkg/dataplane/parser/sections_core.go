@@ -16,7 +16,6 @@ package parser
 
 import (
 	"fmt"
-	"log/slog"
 
 	parser "github.com/haproxytech/client-native/v6/config-parser"
 	"github.com/haproxytech/client-native/v6/configuration"
@@ -64,7 +63,7 @@ func (p *Parser) extractDefaults() ([]*models.Defaults, error) {
 
 		// ParseSection handles ALL DefaultsBase fields automatically (60+ fields)
 		if err := configuration.ParseSection(&def.DefaultsBase, parser.Defaults, sectionName, p.parser); err != nil {
-			slog.Warn("Failed to parse defaults section", "section", sectionName, "error", err)
+			logSectionParseError("defaults", sectionName, err)
 			continue
 		}
 		def.Name = sectionName
@@ -103,7 +102,7 @@ func (p *Parser) extractFrontendsWithIndexes(conf *StructuredConfig) {
 		// ParseSection handles ALL FrontendBase fields automatically (80+ fields:
 		// mode, maxconn, default_backend, timeouts, compression, forwardfor, httplog, etc.)
 		if err := configuration.ParseSection(&fe.FrontendBase, parser.Frontends, sectionName, p.parser); err != nil {
-			slog.Warn("Failed to parse frontend section", "section", sectionName, "error", err)
+			logSectionParseError("frontend", sectionName, err)
 			continue
 		}
 		fe.Name = sectionName
@@ -162,7 +161,7 @@ func (p *Parser) extractBackendsWithIndexes(conf *StructuredConfig) {
 		// ParseSection handles ALL BackendBase fields automatically (100+ fields:
 		// mode, balance, timeouts, cookie, compression, forwardfor, httpchk, etc.)
 		if err := configuration.ParseSection(&be.BackendBase, parser.Backends, sectionName, p.parser); err != nil {
-			slog.Warn("Failed to parse backend section", "section", sectionName, "error", err)
+			logSectionParseError("backend", sectionName, err)
 			continue
 		}
 		be.Name = sectionName

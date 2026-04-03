@@ -24,13 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 func TestNewMiscOperations(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{})
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	require.NotNil(t, misc)
@@ -38,15 +39,15 @@ func TestNewMiscOperations(t *testing.T) {
 }
 
 func TestMiscOperations_GetFacts_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
 			// Facts is map[string]string
-			"/v3/facts": jsonResponse(`{"os_name": "Linux", "hostname": "test-node"}`),
+			"/v3/facts": testutil.JSONResponse(`{"os_name": "Linux", "hostname": "test-node"}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	facts, err := misc.GetFacts(context.Background(), false)
@@ -58,8 +59,8 @@ func TestMiscOperations_GetFacts_Success(t *testing.T) {
 
 func TestMiscOperations_GetFacts_WithRefresh(t *testing.T) {
 	refreshCalled := false
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
 			"/v3/facts": func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Query().Get("refresh") == "true" {
 					refreshCalled = true
@@ -72,7 +73,7 @@ func TestMiscOperations_GetFacts_WithRefresh(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	_, err := misc.GetFacts(context.Background(), true)
@@ -82,14 +83,14 @@ func TestMiscOperations_GetFacts_WithRefresh(t *testing.T) {
 }
 
 func TestMiscOperations_GetFacts_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/facts": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/facts": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	_, err := misc.GetFacts(context.Background(), false)
@@ -99,14 +100,14 @@ func TestMiscOperations_GetFacts_ServerError(t *testing.T) {
 }
 
 func TestMiscOperations_GetFacts_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/facts": jsonResponse(`{invalid`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/facts": testutil.JSONResponse(`{invalid`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	_, err := misc.GetFacts(context.Background(), false)
@@ -116,12 +117,12 @@ func TestMiscOperations_GetFacts_InvalidJSON(t *testing.T) {
 }
 
 func TestMiscOperations_GetFacts_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	_, err := misc.GetFacts(context.Background(), false)
@@ -131,9 +132,9 @@ func TestMiscOperations_GetFacts_CommunityEdition(t *testing.T) {
 }
 
 func TestMiscOperations_Ping_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.2.6-ee1", // v3.2 required for ping
-		handlers: map[string]http.HandlerFunc{
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.2.6-ee1", // v3.2 required for ping
+		Handlers: map[string]http.HandlerFunc{
 			"/v3/ping": func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			},
@@ -141,7 +142,7 @@ func TestMiscOperations_Ping_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	err := misc.Ping(context.Background())
@@ -150,15 +151,15 @@ func TestMiscOperations_Ping_Success(t *testing.T) {
 }
 
 func TestMiscOperations_Ping_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.2.6-ee1",
-		handlers: map[string]http.HandlerFunc{
-			"/v3/ping": errorResponse(http.StatusServiceUnavailable),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.2.6-ee1",
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/ping": testutil.ErrorResponse(http.StatusServiceUnavailable),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	err := misc.Ping(context.Background())
@@ -169,12 +170,12 @@ func TestMiscOperations_Ping_ServerError(t *testing.T) {
 
 func TestMiscOperations_Ping_RequiresV32(t *testing.T) {
 	// v3.1 doesn't support ping endpoint
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: "v3.1.0-ee1",
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: "v3.1.0-ee1",
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	err := misc.Ping(context.Background())
@@ -184,12 +185,12 @@ func TestMiscOperations_Ping_RequiresV32(t *testing.T) {
 }
 
 func TestMiscOperations_Ping_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	err := misc.Ping(context.Background())
@@ -199,15 +200,15 @@ func TestMiscOperations_Ping_CommunityEdition(t *testing.T) {
 }
 
 func TestMiscOperations_GetStructuredConfig_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
 			// Structured config is a complex type - use minimal valid JSON
-			"/v3/services/haproxy/configuration/structured": jsonResponse(`{}`),
+			"/v3/services/haproxy/configuration/structured": testutil.JSONResponse(`{}`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	config, err := misc.GetStructuredConfig(context.Background(), "")
@@ -218,8 +219,8 @@ func TestMiscOperations_GetStructuredConfig_Success(t *testing.T) {
 
 func TestMiscOperations_GetStructuredConfig_WithTransaction(t *testing.T) {
 	var receivedTxID string
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
 			"/v3/services/haproxy/configuration/structured": func(w http.ResponseWriter, r *http.Request) {
 				receivedTxID = r.URL.Query().Get("transaction_id")
 				w.Header().Set("Content-Type", "application/json")
@@ -230,7 +231,7 @@ func TestMiscOperations_GetStructuredConfig_WithTransaction(t *testing.T) {
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	_, err := misc.GetStructuredConfig(context.Background(), "tx-123")
@@ -240,14 +241,14 @@ func TestMiscOperations_GetStructuredConfig_WithTransaction(t *testing.T) {
 }
 
 func TestMiscOperations_GetStructuredConfig_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/structured": errorResponse(http.StatusInternalServerError),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/structured": testutil.ErrorResponse(http.StatusInternalServerError),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	_, err := misc.GetStructuredConfig(context.Background(), "")
@@ -257,14 +258,14 @@ func TestMiscOperations_GetStructuredConfig_ServerError(t *testing.T) {
 }
 
 func TestMiscOperations_GetStructuredConfig_InvalidJSON(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/structured": jsonResponse(`not-json`),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/structured": testutil.JSONResponse(`not-json`),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	_, err := misc.GetStructuredConfig(context.Background(), "")
@@ -274,12 +275,12 @@ func TestMiscOperations_GetStructuredConfig_InvalidJSON(t *testing.T) {
 }
 
 func TestMiscOperations_GetStructuredConfig_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	_, err := misc.GetStructuredConfig(context.Background(), "")
@@ -289,19 +290,19 @@ func TestMiscOperations_GetStructuredConfig_CommunityEdition(t *testing.T) {
 }
 
 func TestMiscOperations_ReplaceStructuredConfig_Success(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/structured": methodAwareHandler(map[string]http.HandlerFunc{
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/structured": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
 				http.MethodPut: func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				},
-				http.MethodGet: jsonResponse(`{}`),
+				http.MethodGet: testutil.JSONResponse(`{}`),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	config := &StructuredConfig{}
@@ -311,16 +312,16 @@ func TestMiscOperations_ReplaceStructuredConfig_Success(t *testing.T) {
 }
 
 func TestMiscOperations_ReplaceStructuredConfig_ServerError(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			"/v3/services/haproxy/configuration/structured": methodAwareHandler(map[string]http.HandlerFunc{
-				http.MethodPut: errorResponse(http.StatusBadRequest),
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		Handlers: map[string]http.HandlerFunc{
+			"/v3/services/haproxy/configuration/structured": testutil.MethodAwareHandler(map[string]http.HandlerFunc{
+				http.MethodPut: testutil.ErrorResponse(http.StatusBadRequest),
 			}),
 		},
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	config := &StructuredConfig{}
@@ -331,12 +332,12 @@ func TestMiscOperations_ReplaceStructuredConfig_ServerError(t *testing.T) {
 }
 
 func TestMiscOperations_ReplaceStructuredConfig_CommunityEdition(t *testing.T) {
-	server := newMockEnterpriseServer(t, mockServerConfig{
-		apiVersion: testCommunityAPIVersion,
+	server := testutil.NewMockEnterpriseServer(t, testutil.MockServerConfig{
+		APIVersion: testutil.CommunityAPIVersion,
 	})
 	defer server.Close()
 
-	c := newTestClient(t, server)
+	c := testutil.NewTestClient(t, server)
 	misc := NewMiscOperations(c)
 
 	config := &StructuredConfig{}

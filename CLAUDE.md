@@ -17,6 +17,7 @@ Architecture documentation: `docs/controller/docs/development/design.md`
 - Run linters before commits: `make lint`
 - Table-driven tests for multiple scenarios
 - Early returns for error cases
+- **NEVER add lint rules to the global ignore list** in `.golangci.yml` `excludes` - Use localized per-file exclusions in the `exclusions.rules` section instead
 - **NEVER use //nolint directives** - Fix linting issues properly by refactoring code, not by suppressing warnings
 
 ### Error Handling
