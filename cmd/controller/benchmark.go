@@ -291,7 +291,7 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	allIncludeStats = append(allIncludeStats, stats...)
 
 	// Render map files (sorted for consistent output order)
-	mapNames := sortedMapKeys(cfg.Maps)
+	mapNames := sortedKeys(cfg.Maps)
 	for _, name := range mapNames {
 		fileResult, stats, err := renderSingleTemplate(engine, name, "map:"+name, renderCtx)
 		if err != nil {
@@ -302,7 +302,7 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	}
 
 	// Render general files (sorted for consistent output order)
-	fileNames := sortedFileKeys(cfg.Files)
+	fileNames := sortedKeys(cfg.Files)
 	for _, name := range fileNames {
 		fileResult, stats, err := renderSingleTemplate(engine, name, "file:"+name, renderCtx)
 		if err != nil {
@@ -313,7 +313,7 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	}
 
 	// Render SSL certificates (sorted for consistent output order)
-	certNames := sortedCertKeys(cfg.SSLCertificates)
+	certNames := sortedKeys(cfg.SSLCertificates)
 	for _, name := range certNames {
 		fileResult, stats, err := renderSingleTemplate(engine, name, "cert:"+name, renderCtx)
 		if err != nil {
@@ -328,36 +328,6 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 
 	result.TotalTime = time.Since(totalStart)
 	return result, nil
-}
-
-// sortedMapKeys returns sorted keys from a map config.
-func sortedMapKeys(maps map[string]config.MapFile) []string {
-	keys := make([]string, 0, len(maps))
-	for name := range maps {
-		keys = append(keys, name)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// sortedFileKeys returns sorted keys from a file config.
-func sortedFileKeys(files map[string]config.GeneralFile) []string {
-	keys := make([]string, 0, len(files))
-	for name := range files {
-		keys = append(keys, name)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// sortedCertKeys returns sorted keys from a certificate config.
-func sortedCertKeys(certs map[string]config.SSLCertificate) []string {
-	keys := make([]string, 0, len(certs))
-	for name := range certs {
-		keys = append(keys, name)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // createStoresForBenchmark creates resource stores from test fixtures.
@@ -621,7 +591,7 @@ func aggregateBenchmarkIncludeStats(results []*BenchmarkResult) []templating.Inc
 	for _, result := range results {
 		for _, iter := range result.Iterations {
 			for _, stat := range iter.IncludeStats {
-				mergeBenchmarkIncludeStat(aggregated, stat)
+				mergeIncludeStat(aggregated, stat)
 			}
 		}
 	}
@@ -635,28 +605,7 @@ func aggregateBenchmarkIncludeStats(results []*BenchmarkResult) []templating.Inc
 		stats = append(stats, *stat)
 	}
 
-	// Sort by total time (slowest first)
-	sort.Slice(stats, func(i, j int) bool {
-		return stats[i].TotalMs > stats[j].TotalMs
-	})
+	sortIncludeStatsByTotalTime(stats)
 
 	return stats
-}
-
-// mergeBenchmarkIncludeStat merges a single include stat into the aggregation map.
-func mergeBenchmarkIncludeStat(aggregated map[string]*templating.IncludeStats, stat templating.IncludeStats) {
-	if existing, ok := aggregated[stat.Name]; ok {
-		existing.Count += stat.Count
-		existing.TotalMs += stat.TotalMs
-		if stat.MaxMs > existing.MaxMs {
-			existing.MaxMs = stat.MaxMs
-		}
-	} else {
-		aggregated[stat.Name] = &templating.IncludeStats{
-			Name:    stat.Name,
-			Count:   stat.Count,
-			TotalMs: stat.TotalMs,
-			MaxMs:   stat.MaxMs,
-		}
-	}
 }

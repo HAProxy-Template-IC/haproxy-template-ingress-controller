@@ -361,35 +361,6 @@ func aggregateIncludeStats(results *testrunner.TestResults) []templating.Include
 	return stats
 }
 
-// mergeIncludeStat merges a single include stat into the aggregation map.
-func mergeIncludeStat(aggregated map[string]*templating.IncludeStats, stat templating.IncludeStats) {
-	if existing, ok := aggregated[stat.Name]; ok {
-		existing.Count += stat.Count
-		existing.TotalMs += stat.TotalMs
-		if stat.MaxMs > existing.MaxMs {
-			existing.MaxMs = stat.MaxMs
-		}
-	} else {
-		aggregated[stat.Name] = &templating.IncludeStats{
-			Name:    stat.Name,
-			Count:   stat.Count,
-			TotalMs: stat.TotalMs,
-			MaxMs:   stat.MaxMs,
-		}
-	}
-}
-
-// sortIncludeStatsByTotalTime sorts include stats by total time (slowest first).
-func sortIncludeStatsByTotalTime(stats []templating.IncludeStats) {
-	for i := 0; i < len(stats)-1; i++ {
-		for j := i + 1; j < len(stats); j++ {
-			if stats[j].TotalMs > stats[i].TotalMs {
-				stats[i], stats[j] = stats[j], stats[i]
-			}
-		}
-	}
-}
-
 // printIncludeProfile prints the formatted include timing profile.
 func printIncludeProfile(stats []templating.IncludeStats) {
 	fmt.Println("\n" + strings.Repeat("=", 80))

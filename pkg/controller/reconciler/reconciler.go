@@ -27,6 +27,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -69,7 +70,7 @@ type Reconciler struct {
 	eventChan         <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger            *slog.Logger
 	debounceInterval  time.Duration
-	debounceTimer     *time.Timer
+	debounceTimer     timers.SafeTimer
 	pendingTrigger    bool
 	lastTriggerReason string
 	lastTriggerTime   time.Time // Tracks when we last triggered for refractory period
@@ -114,12 +115,10 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config) *Rec
 	)
 
 	return &Reconciler{
-		eventBus:         eventBus,
-		eventChan:        eventChan,
-		logger:           logger,
-		debounceInterval: debounceInterval,
-		// Timer is created on first use to avoid firing immediately
-		debounceTimer:     nil,
+		eventBus:          eventBus,
+		eventChan:         eventChan,
+		logger:            logger,
+		debounceInterval:  debounceInterval,
 		pendingTrigger:    false,
 		lastTriggerReason: "",
 		healthTracker:     lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
@@ -159,9 +158,8 @@ func (r *Reconciler) Start(ctx context.Context) error {
 		case event := <-r.eventChan:
 			r.handleEvent(event)
 
-		case <-r.getDebounceTimerChan():
-			// Timer fired - clear reference so new timer can be created if needed
-			r.debounceTimer = nil
+		case <-r.debounceTimer.Chan():
+			r.debounceTimer.Fired()
 
 			// Only trigger if there are pending changes
 			if r.pendingTrigger {
@@ -356,14 +354,9 @@ func (r *Reconciler) handleBecameLeader(_ *events.BecameLeaderEvent) {
 }
 
 // ensureRefractoryTimer ensures a timer is running for the remainder of the refractory period.
-// Unlike the old resetDebounceTimer, this does NOT reset an existing timer - it only
-// starts one if none exists. This is critical for the leading-edge debounce behavior.
+// Unlike Reset, this does NOT restart an existing timer - it only starts one if none exists.
+// This is critical for the leading-edge debounce behavior.
 func (r *Reconciler) ensureRefractoryTimer(now time.Time) {
-	if r.debounceTimer != nil {
-		// Timer already running - do not reset (critical for leading-edge behavior)
-		return
-	}
-
 	// Calculate remaining time until refractory period ends
 	remaining := r.debounceInterval - now.Sub(r.lastTriggerTime)
 	if remaining <= 0 {
@@ -371,34 +364,13 @@ func (r *Reconciler) ensureRefractoryTimer(now time.Time) {
 		remaining = r.debounceInterval
 	}
 
-	r.debounceTimer = time.NewTimer(remaining)
+	r.debounceTimer.EnsureRunning(remaining)
 }
 
-// stopDebounceTimer stops the debounce timer if it's running and clears the reference.
+// stopDebounceTimer stops the debounce timer if it's running and clears pending state.
 func (r *Reconciler) stopDebounceTimer() {
-	if r.debounceTimer != nil {
-		if !r.debounceTimer.Stop() {
-			// Timer already fired, drain the channel
-			select {
-			case <-r.debounceTimer.C:
-			default:
-			}
-		}
-		r.debounceTimer = nil
-	}
+	r.debounceTimer.Stop()
 	r.pendingTrigger = false
-}
-
-// getDebounceTimerChan returns the debounce timer's channel or a nil channel
-// if the timer hasn't been created yet.
-//
-// This allows the select statement to work correctly - a nil channel blocks forever,
-// which is the desired behavior when there's no active debounce timer.
-func (r *Reconciler) getDebounceTimerChan() <-chan time.Time {
-	if r.debounceTimer == nil {
-		return nil
-	}
-	return r.debounceTimer.C
 }
 
 // triggerReconciliation publishes a ReconciliationTriggeredEvent with a new correlation ID.

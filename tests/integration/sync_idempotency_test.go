@@ -24,6 +24,8 @@ import (
 	"github.com/rekby/fixenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // TestConfigSyncIdempotencyWithComments tests that syncing a config with inline comments
@@ -103,7 +105,7 @@ func runIdempotencyTest(t *testing.T, configFile string) {
 	// Step 2: Wait for config to be applied
 	// After first sync, HAProxy config has JSON metadata comments like:
 	// # {"comment":{"value":"Pod: echo-server"}}
-	err = WaitForCondition(ctx, FastWaitConfig(), func(ctx context.Context) (bool, error) {
+	err = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(ctx context.Context) (bool, error) {
 		currentConfig, err := client.GetRawConfiguration(ctx)
 		if err != nil {
 			return false, nil
