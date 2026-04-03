@@ -59,7 +59,6 @@ registry := prometheus.NewRegistry()
 
 // Create metrics with helpers
 counter := metrics.NewCounter(registry, "requests_total", "Total requests")
-histogram := metrics.NewHistogram(registry, "request_duration_seconds", "Request duration")
 gauge := metrics.NewGauge(registry, "active_connections", "Active connections")
 
 // Create metrics with labels
@@ -129,7 +128,7 @@ Follow Prometheus naming conventions:
 requests := metrics.NewCounter(registry, "requests_total", "Total requests")
 
 // Histograms - suffix with unit
-duration := metrics.NewHistogram(registry, "duration_seconds", "Request duration")
+duration := metrics.NewHistogramWithBuckets(registry, "duration_seconds", "Request duration", metrics.DurationBuckets())
 
 // Gauges - no suffix, current state
 connections := metrics.NewGauge(registry, "active_connections", "Active connections")

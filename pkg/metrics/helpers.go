@@ -48,32 +48,6 @@ func NewCounter(registry prometheus.Registerer, name, help string) prometheus.Co
 	})
 }
 
-// NewHistogram creates and registers a histogram metric with default buckets.
-//
-// A histogram samples observations (e.g., request durations or response sizes)
-// and counts them in configurable buckets. Use histograms for measuring
-// distributions of values.
-//
-// Default buckets: [.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10]
-//
-// Parameters:
-//   - registry: The Prometheus registry to register with
-//   - name: Metric name (e.g., "http_request_duration_seconds")
-//   - help: Human-readable description of the metric
-//
-// Example:
-//
-//	registry := prometheus.NewRegistry()
-//	duration := metrics.NewHistogram(registry, "request_duration_seconds", "Request duration")
-//	duration.Observe(0.5)
-func NewHistogram(registry prometheus.Registerer, name, help string) prometheus.Histogram {
-	return promauto.With(registry).NewHistogram(prometheus.HistogramOpts{
-		Name:    name,
-		Help:    help,
-		Buckets: prometheus.DefBuckets,
-	})
-}
-
 // NewHistogramWithBuckets creates and registers a histogram with custom buckets.
 //
 // Use this when default buckets don't match your use case. For duration metrics,

@@ -152,7 +152,6 @@ func metricName(name string) string {
 // Simple metrics (no labels)
 NewCounter(registry, name, help)
 NewGauge(registry, name, help)
-NewHistogram(registry, name, help)
 NewHistogramWithBuckets(registry, name, help, buckets)
 
 // Vector metrics (with labels)
