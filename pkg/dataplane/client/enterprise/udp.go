@@ -54,15 +54,7 @@ func (u *UDPLBOperations) GetAllUDPLbs(ctx context.Context, txID string) ([]UDPL
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get UDP load balancers failed with status %d", resp.StatusCode)
-	}
-
-	var result []UDPLb
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode UDP load balancers response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[UDPLb](resp, "get UDP load balancers")
 }
 
 // GetUDPLb retrieves a specific UDP load balancer by name.
@@ -86,18 +78,7 @@ func (u *UDPLBOperations) GetUDPLb(ctx context.Context, txID, name string) (*UDP
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get UDP load balancer '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	var result UDPLb
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode UDP load balancer response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[UDPLb](resp, fmt.Sprintf("get UDP load balancer '%s'", name))
 }
 
 // CreateUDPLb creates a new UDP load balancer.
@@ -138,10 +119,7 @@ func (u *UDPLBOperations) CreateUDPLb(ctx context.Context, txID string, lb *UDPL
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create UDP load balancer failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "create UDP load balancer")
 }
 
 // ReplaceUDPLb replaces an existing UDP load balancer.
@@ -182,10 +160,7 @@ func (u *UDPLBOperations) ReplaceUDPLb(ctx context.Context, txID, name string, l
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace UDP load balancer '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("replace UDP load balancer '%s'", name))
 }
 
 // DeleteUDPLb deletes a UDP load balancer.
@@ -209,10 +184,7 @@ func (u *UDPLBOperations) DeleteUDPLb(ctx context.Context, txID, name string) er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete UDP load balancer '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("delete UDP load balancer '%s'", name))
 }
 
 // ACL represents an ACL configuration.
@@ -238,15 +210,7 @@ func (u *UDPLBOperations) GetAllACLsUDPLb(ctx context.Context, txID, lbName stri
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get ACLs for UDP LB '%s' failed with status %d", lbName, resp.StatusCode)
-	}
-
-	var result []ACL
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode ACLs response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[ACL](resp, fmt.Sprintf("get ACLs for UDP LB '%s'", lbName))
 }
 
 // CreateACLUDPLb creates a new ACL for a UDP load balancer at the specified index.
@@ -278,10 +242,7 @@ func (u *UDPLBOperations) CreateACLUDPLb(ctx context.Context, txID, lbName strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create ACL for UDP LB '%s' failed with status %d", lbName, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("create ACL for UDP LB '%s'", lbName))
 }
 
 // DeleteACLUDPLb deletes an ACL from a UDP load balancer at the specified index.
@@ -304,10 +265,7 @@ func (u *UDPLBOperations) DeleteACLUDPLb(ctx context.Context, txID, lbName strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete ACL from UDP LB '%s' at index %d failed with status %d", lbName, index, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("delete ACL from UDP LB '%s' at index %d", lbName, index))
 }
 
 // DgramBind represents a datagram bind configuration.
@@ -334,15 +292,7 @@ func (u *UDPLBOperations) GetAllDgramBindsUDPLb(ctx context.Context, txID, lbNam
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get dgram binds for UDP LB '%s' failed with status %d", lbName, resp.StatusCode)
-	}
-
-	var result []DgramBind
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode dgram binds response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[DgramBind](resp, fmt.Sprintf("get dgram binds for UDP LB '%s'", lbName))
 }
 
 // CreateDgramBindUDPLb creates a new dgram bind for a UDP load balancer.
@@ -383,10 +333,7 @@ func (u *UDPLBOperations) CreateDgramBindUDPLb(ctx context.Context, txID, lbName
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create dgram bind for UDP LB '%s' failed with status %d", lbName, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("create dgram bind for UDP LB '%s'", lbName))
 }
 
 // DeleteDgramBindUDPLb deletes a dgram bind from a UDP load balancer.
@@ -410,10 +357,7 @@ func (u *UDPLBOperations) DeleteDgramBindUDPLb(ctx context.Context, txID, lbName
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete dgram bind '%s' from UDP LB '%s' failed with status %d", bindName, lbName, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("delete dgram bind '%s' from UDP LB '%s'", bindName, lbName))
 }
 
 // LogTarget represents a log target configuration.
@@ -440,15 +384,7 @@ func (u *UDPLBOperations) GetAllLogTargetsUDPLb(ctx context.Context, txID, lbNam
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get log targets for UDP LB '%s' failed with status %d", lbName, resp.StatusCode)
-	}
-
-	var result []LogTarget
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode log targets response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[LogTarget](resp, fmt.Sprintf("get log targets for UDP LB '%s'", lbName))
 }
 
 // CreateLogTargetUDPLb creates a new log target for a UDP load balancer at the specified index.
@@ -489,10 +425,7 @@ func (u *UDPLBOperations) CreateLogTargetUDPLb(ctx context.Context, txID, lbName
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create log target for UDP LB '%s' failed with status %d", lbName, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("create log target for UDP LB '%s'", lbName))
 }
 
 // DeleteLogTargetUDPLb deletes a log target from a UDP load balancer at the specified index.
@@ -516,10 +449,7 @@ func (u *UDPLBOperations) DeleteLogTargetUDPLb(ctx context.Context, txID, lbName
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete log target from UDP LB '%s' at index %d failed with status %d", lbName, index, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("delete log target from UDP LB '%s' at index %d", lbName, index))
 }
 
 // ServerSwitchingRule represents a server switching rule configuration.
@@ -545,15 +475,7 @@ func (u *UDPLBOperations) GetAllServerSwitchingRulesUDPLb(ctx context.Context, t
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get server switching rules for UDP LB '%s' failed with status %d", lbName, resp.StatusCode)
-	}
-
-	var result []ServerSwitchingRule
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode server switching rules response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[ServerSwitchingRule](resp, fmt.Sprintf("get server switching rules for UDP LB '%s'", lbName))
 }
 
 // CreateServerSwitchingRuleUDPLb creates a new server switching rule for a UDP load balancer at the specified index.
@@ -585,10 +507,7 @@ func (u *UDPLBOperations) CreateServerSwitchingRuleUDPLb(ctx context.Context, tx
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create server switching rule for UDP LB '%s' failed with status %d", lbName, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("create server switching rule for UDP LB '%s'", lbName))
 }
 
 // DeleteServerSwitchingRuleUDPLb deletes a server switching rule from a UDP load balancer at the specified index.
@@ -611,8 +530,5 @@ func (u *UDPLBOperations) DeleteServerSwitchingRuleUDPLb(ctx context.Context, tx
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete server switching rule from UDP LB '%s' at index %d failed with status %d", lbName, index, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("delete server switching rule from UDP LB '%s' at index %d", lbName, index))
 }

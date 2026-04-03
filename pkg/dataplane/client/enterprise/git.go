@@ -43,15 +43,7 @@ func (g *GitOperations) GetSettings(ctx context.Context) (*GitSettings, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get Git settings failed with status %d", resp.StatusCode)
-	}
-
-	var result GitSettings
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode Git settings response: %w", err)
-	}
-	return &result, nil
+	return decodeResponse[GitSettings](resp, "failed to get Git settings")
 }
 
 // ReplaceSettings replaces the Git settings.
@@ -92,10 +84,7 @@ func (g *GitOperations) ReplaceSettings(ctx context.Context, settings *GitSettin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace Git settings failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to replace Git settings")
 }
 
 // GitAction represents a Git action.
@@ -119,15 +108,7 @@ func (g *GitOperations) GetAllActions(ctx context.Context) ([]GitAction, error) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get Git actions failed with status %d", resp.StatusCode)
-	}
-
-	var result []GitAction
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode Git actions response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[GitAction](resp, "failed to get Git actions")
 }
 
 // GetAction retrieves a specific Git action by ID.
@@ -148,18 +129,7 @@ func (g *GitOperations) GetAction(ctx context.Context, id string) (*GitAction, e
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get Git action '%s' failed with status %d", id, resp.StatusCode)
-	}
-
-	var result GitAction
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode Git action response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[GitAction](resp, fmt.Sprintf("failed to get Git action '%s'", id))
 }
 
 // ExecuteAction executes a Git action.
@@ -197,13 +167,5 @@ func (g *GitOperations) ExecuteAction(ctx context.Context, action *GitAction) (*
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("execute Git action failed with status %d", resp.StatusCode)
-	}
-
-	var result GitAction
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode Git action response: %w", err)
-	}
-	return &result, nil
+	return decodeResponse[GitAction](resp, "failed to execute Git action")
 }

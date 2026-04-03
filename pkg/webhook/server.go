@@ -96,15 +96,6 @@ func (s *Server) RegisterValidator(gvk string, fn ValidationFunc) {
 	s.validators[gvk] = fn
 }
 
-// UnregisterValidator removes the validation function for a resource type.
-//
-// This method is thread-safe.
-func (s *Server) UnregisterValidator(gvk string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.validators, gvk)
-}
-
 // Start starts the HTTPS webhook server.
 //
 // The server will listen on the configured port and handle AdmissionReview requests.

@@ -73,10 +73,7 @@ func (d *DynamicUpdateOperations) CreateSection(ctx context.Context, txID string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create dynamic update section failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create dynamic update section")
 }
 
 // DeleteSection deletes the dynamic update section.
@@ -100,10 +97,7 @@ func (d *DynamicUpdateOperations) DeleteSection(ctx context.Context, txID string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete dynamic update section failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to delete dynamic update section")
 }
 
 // DynamicUpdateRule represents a dynamic update rule.
@@ -167,18 +161,7 @@ func (d *DynamicUpdateOperations) GetRule(ctx context.Context, txID string, inde
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get dynamic update rule at index %d failed with status %d", index, resp.StatusCode)
-	}
-
-	var result DynamicUpdateRule
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode dynamic update rule response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[DynamicUpdateRule](resp, fmt.Sprintf("failed to get dynamic update rule at index %d", index))
 }
 
 // CreateRule creates a new dynamic update rule at the specified index.
@@ -219,10 +202,7 @@ func (d *DynamicUpdateOperations) CreateRule(ctx context.Context, txID string, i
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create dynamic update rule failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create dynamic update rule")
 }
 
 // DeleteRule deletes a dynamic update rule at the specified index.
@@ -246,8 +226,5 @@ func (d *DynamicUpdateOperations) DeleteRule(ctx context.Context, txID string, i
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete dynamic update rule at index %d failed with status %d", index, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete dynamic update rule at index %d", index))
 }

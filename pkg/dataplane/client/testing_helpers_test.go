@@ -84,221 +84,258 @@ func errorResponse(status int) http.HandlerFunc {
 
 // storageTestConfig defines configuration for storage API tests.
 type storageTestConfig struct {
-	endpoint  string
-	itemNames []string
-	itemName  string
-	content   string
+	endpoint         string
+	itemNames        []string
+	itemName         string
+	notFoundItemName string
+	content          string
 }
 
-func runGetAllStorageSuccessTest(t *testing.T, cfg storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
+// storageTestFuncs groups the CRUD function adapters for a storage type.
+type storageTestFuncs struct {
+	getAll func(context.Context, *DataplaneClient) ([]string, error)
+	create func(context.Context, *DataplaneClient, string, string) error
+	update func(context.Context, *DataplaneClient, string, string) error
+	delete func(context.Context, *DataplaneClient, string) error
+}
+
+// runGetAllStorageTests runs the standard GetAll subtests (success, empty, server error, invalid JSON).
+func runGetAllStorageTests(t *testing.T, cfg *storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
 	t.Helper()
 
-	items := make([]string, 0, len(cfg.itemNames))
-	for _, name := range cfg.itemNames {
-		items = append(items, fmt.Sprintf(`{"storage_name": %q}`, name))
+	t.Run("Success", func(t *testing.T) {
+		items := make([]string, 0, len(cfg.itemNames))
+		for _, name := range cfg.itemNames {
+			items = append(items, fmt.Sprintf(`{"storage_name": %q}`, name))
+		}
+		jsonResp := "[" + strings.Join(items, ",") + "]"
+
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint: jsonResponse(jsonResp),
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		files, err := getAllFunc(context.Background(), client)
+		require.NoError(t, err)
+		assert.Len(t, files, len(cfg.itemNames))
+		for _, name := range cfg.itemNames {
+			assert.Contains(t, files, name)
+		}
+	})
+
+	t.Run("Empty", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint: jsonResponse(`[]`),
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		files, err := getAllFunc(context.Background(), client)
+		require.NoError(t, err)
+		assert.Empty(t, files)
+	})
+
+	t.Run("ServerError", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint: errorResponse(http.StatusInternalServerError),
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		_, err := getAllFunc(context.Background(), client)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed with status 500")
+	})
+
+	t.Run("InvalidJSON", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint: jsonResponse(`{invalid json}`),
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		_, err := getAllFunc(context.Background(), client)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode")
+	})
+}
+
+// runCreateStorageTests runs the standard Create subtests (success, conflict/already exists).
+func runCreateStorageTests(t *testing.T, cfg *storageTestConfig, createFunc func(context.Context, *DataplaneClient, string, string) error) {
+	t.Helper()
+
+	t.Run("Success", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint: func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPost {
+						w.WriteHeader(http.StatusCreated)
+						fmt.Fprintf(w, `{"storage_name": "%s"}`, cfg.itemName)
+						return
+					}
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				},
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		err := createFunc(context.Background(), client, cfg.itemName, cfg.content)
+		require.NoError(t, err)
+	})
+
+	t.Run("AlreadyExists", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint: func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPost {
+						w.WriteHeader(http.StatusConflict)
+						return
+					}
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				},
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		err := createFunc(context.Background(), client, cfg.itemName, cfg.content)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "already exists")
+	})
+}
+
+// runDeleteStorageTests runs the standard Delete subtests (success, not found).
+func runDeleteStorageTests(t *testing.T, cfg *storageTestConfig, deleteFunc func(context.Context, *DataplaneClient, string) error) {
+	t.Helper()
+
+	t.Run("Success", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint + "/" + cfg.itemName: func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodDelete {
+						w.WriteHeader(http.StatusNoContent)
+						return
+					}
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				},
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		err := deleteFunc(context.Background(), client, cfg.itemName)
+		require.NoError(t, err)
+	})
+
+	notFoundName := cfg.notFoundItemName
+	if notFoundName == "" {
+		notFoundName = cfg.itemName
 	}
-	jsonResp := "[" + strings.Join(items, ",") + "]"
 
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint: jsonResponse(jsonResp),
-		},
+	t.Run("NotFound", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint + "/" + notFoundName: func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodDelete {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					w.WriteHeader(http.StatusNotFound)
+				},
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		err := deleteFunc(context.Background(), client, notFoundName)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
 	})
-	defer server.Close()
+}
 
-	client := newTestClient(t, server)
+// runUpdateStorageTests runs the standard Update subtests (success, not found).
+func runUpdateStorageTests(t *testing.T, cfg *storageTestConfig, updateFunc func(context.Context, *DataplaneClient, string, string) error) {
+	t.Helper()
 
-	files, err := getAllFunc(context.Background(), client)
-	require.NoError(t, err)
-	assert.Len(t, files, len(cfg.itemNames))
-	for _, name := range cfg.itemNames {
-		assert.Contains(t, files, name)
+	t.Run("Success", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint + "/" + cfg.itemName: func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPut {
+						w.WriteHeader(http.StatusOK)
+						return
+					}
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				},
+			},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		err := updateFunc(context.Background(), client, cfg.itemName, cfg.content)
+		require.NoError(t, err)
+	})
+
+	notFoundName := cfg.notFoundItemName
+	if notFoundName == "" {
+		notFoundName = cfg.itemName
 	}
-}
 
-func runGetAllStorageEmptyTest(t *testing.T, cfg storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
-	t.Helper()
-
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint: jsonResponse(`[]`),
-		},
-	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	files, err := getAllFunc(context.Background(), client)
-	require.NoError(t, err)
-	assert.Empty(t, files)
-}
-
-func runGetAllStorageServerErrorTest(t *testing.T, cfg storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
-	t.Helper()
-
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint: errorResponse(http.StatusInternalServerError),
-		},
-	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	_, err := getAllFunc(context.Background(), client)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed with status 500")
-}
-
-func runGetAllStorageInvalidJSONTest(t *testing.T, cfg storageTestConfig, getAllFunc func(context.Context, *DataplaneClient) ([]string, error)) {
-	t.Helper()
-
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint: jsonResponse(`{invalid json}`),
-		},
-	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	_, err := getAllFunc(context.Background(), client)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
-}
-
-func runCreateStorageSuccessTest(t *testing.T, cfg storageTestConfig, createFunc func(context.Context, *DataplaneClient, string, string) error) {
-	t.Helper()
-
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint: func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPost {
-					w.WriteHeader(http.StatusCreated)
-					fmt.Fprintf(w, `{"storage_name": "%s"}`, cfg.itemName)
-					return
-				}
-				w.WriteHeader(http.StatusMethodNotAllowed)
-			},
-		},
-	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	err := createFunc(context.Background(), client, cfg.itemName, cfg.content)
-	require.NoError(t, err)
-}
-
-func runCreateStorageConflictTest(t *testing.T, cfg storageTestConfig, createFunc func(context.Context, *DataplaneClient, string, string) error) {
-	t.Helper()
-
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint: func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPost {
-					w.WriteHeader(http.StatusConflict)
-					return
-				}
-				w.WriteHeader(http.StatusMethodNotAllowed)
-			},
-		},
-	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	err := createFunc(context.Background(), client, cfg.itemName, cfg.content)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
-}
-
-func runDeleteStorageSuccessTest(t *testing.T, cfg storageTestConfig, deleteFunc func(context.Context, *DataplaneClient, string) error) {
-	t.Helper()
-
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint + "/" + cfg.itemName: func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodDelete {
-					w.WriteHeader(http.StatusNoContent)
-					return
-				}
-				w.WriteHeader(http.StatusMethodNotAllowed)
-			},
-		},
-	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	err := deleteFunc(context.Background(), client, cfg.itemName)
-	require.NoError(t, err)
-}
-
-func runDeleteStorageNotFoundTest(t *testing.T, cfg storageTestConfig, deleteFunc func(context.Context, *DataplaneClient, string) error) {
-	t.Helper()
-
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint + "/" + cfg.itemName: func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodDelete {
+	t.Run("NotFound", func(t *testing.T) {
+		server := newMockServer(t, mockServerConfig{
+			handlers: map[string]http.HandlerFunc{
+				cfg.endpoint + "/" + notFoundName: func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPut {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
 					w.WriteHeader(http.StatusNotFound)
-					return
-				}
-				w.WriteHeader(http.StatusNotFound)
+				},
 			},
-		},
+		})
+		defer server.Close()
+
+		client := newTestClient(t, server)
+
+		err := updateFunc(context.Background(), client, notFoundName, cfg.content)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
 	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	err := deleteFunc(context.Background(), client, cfg.itemName)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
 }
 
-func runUpdateStorageSuccessTest(t *testing.T, cfg storageTestConfig, updateFunc func(context.Context, *DataplaneClient, string, string) error) {
+// runAllStorageCRUDTests runs all standard CRUD subtests for a storage type.
+func runAllStorageCRUDTests(t *testing.T, cfg *storageTestConfig, funcs storageTestFuncs) {
 	t.Helper()
 
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint + "/" + cfg.itemName: func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPut {
-					w.WriteHeader(http.StatusOK)
-					return
-				}
-				w.WriteHeader(http.StatusMethodNotAllowed)
-			},
-		},
+	t.Run("GetAll", func(t *testing.T) {
+		runGetAllStorageTests(t, cfg, funcs.getAll)
 	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	err := updateFunc(context.Background(), client, cfg.itemName, cfg.content)
-	require.NoError(t, err)
-}
-
-func runUpdateStorageNotFoundTest(t *testing.T, cfg storageTestConfig, updateFunc func(context.Context, *DataplaneClient, string, string) error) {
-	t.Helper()
-
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			cfg.endpoint + "/" + cfg.itemName: func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPut {
-					w.WriteHeader(http.StatusNotFound)
-					return
-				}
-				w.WriteHeader(http.StatusNotFound)
-			},
-		},
+	t.Run("Create", func(t *testing.T) {
+		runCreateStorageTests(t, cfg, funcs.create)
 	})
-	defer server.Close()
-
-	client := newTestClient(t, server)
-
-	err := updateFunc(context.Background(), client, cfg.itemName, cfg.content)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	t.Run("Delete", func(t *testing.T) {
+		runDeleteStorageTests(t, cfg, funcs.delete)
+	})
+	t.Run("Update", func(t *testing.T) {
+		runUpdateStorageTests(t, cfg, funcs.update)
+	})
 }

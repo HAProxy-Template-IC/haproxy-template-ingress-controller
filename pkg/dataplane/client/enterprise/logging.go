@@ -43,15 +43,7 @@ func (l *LoggingOperations) GetLogConfig(ctx context.Context) (*LogConfiguration
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get log config failed with status %d", resp.StatusCode)
-	}
-
-	var result LogConfiguration
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode log config response: %w", err)
-	}
-	return &result, nil
+	return decodeResponse[LogConfiguration](resp, "failed to get log config")
 }
 
 // ReplaceLogConfig replaces the log configuration.
@@ -89,8 +81,5 @@ func (l *LoggingOperations) ReplaceLogConfig(ctx context.Context, config *LogCon
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace log config failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to replace log config")
 }

@@ -157,39 +157,6 @@ func TestServer_RegisterValidator(t *testing.T) {
 	assert.Equal(t, "replaced", reason)
 }
 
-func TestServer_UnregisterValidator(t *testing.T) {
-	certPEM, keyPEM, err := generateTestCertificates()
-	require.NoError(t, err)
-
-	server := NewServer(&ServerConfig{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	})
-
-	// Register validator
-	server.RegisterValidator("v1.Service", func(_ *ValidationContext) (bool, string, error) {
-		return true, "", nil
-	})
-
-	// Verify registered
-	server.mu.RLock()
-	_, exists := server.validators["v1.Service"]
-	server.mu.RUnlock()
-	assert.True(t, exists)
-
-	// Unregister
-	server.UnregisterValidator("v1.Service")
-
-	// Verify unregistered
-	server.mu.RLock()
-	_, exists = server.validators["v1.Service"]
-	server.mu.RUnlock()
-	assert.False(t, exists)
-
-	// Unregistering non-existent validator should not panic
-	server.UnregisterValidator("non-existent")
-}
-
 func TestServer_GetGVK(t *testing.T) {
 	certPEM, keyPEM, err := generateTestCertificates()
 	require.NoError(t, err)

@@ -24,47 +24,37 @@ import (
 )
 
 // mapStorageConfig returns the test configuration for map storage tests.
-func mapStorageConfig() storageTestConfig {
-	return storageTestConfig{
-		endpoint:  "/services/haproxy/storage/maps",
-		itemNames: []string{"hosts.map", "backends.map"},
-		itemName:  "hosts.map",
-		content:   "example.com backend1\ntest.com backend2\n",
+func mapStorageConfig() *storageTestConfig {
+	return &storageTestConfig{
+		endpoint:         "/services/haproxy/storage/maps",
+		itemNames:        []string{"hosts.map", "backends.map"},
+		itemName:         "hosts.map",
+		notFoundItemName: "missing.map",
+		content:          "example.com backend1\ntest.com backend2\n",
 	}
 }
 
-func getAllMapFiles(ctx context.Context, c *DataplaneClient) ([]string, error) {
-	return c.GetAllMapFiles(ctx)
+func mapStorageFuncs() storageTestFuncs {
+	return storageTestFuncs{
+		getAll: func(ctx context.Context, c *DataplaneClient) ([]string, error) {
+			return c.GetAllMapFiles(ctx)
+		},
+		create: func(ctx context.Context, c *DataplaneClient, name, content string) error {
+			_, err := c.CreateMapFile(ctx, name, content)
+			return err
+		},
+		update: func(ctx context.Context, c *DataplaneClient, name, content string) error {
+			_, err := c.UpdateMapFile(ctx, name, content)
+			return err
+		},
+		delete: func(ctx context.Context, c *DataplaneClient, name string) error {
+			return c.DeleteMapFile(ctx, name)
+		},
+	}
 }
 
-func createMapFile(ctx context.Context, c *DataplaneClient, name, content string) error {
-	_, err := c.CreateMapFile(ctx, name, content)
-	return err
-}
-
-func updateMapFile(ctx context.Context, c *DataplaneClient, name, content string) error {
-	_, err := c.UpdateMapFile(ctx, name, content)
-	return err
-}
-
-func deleteMapFile(ctx context.Context, c *DataplaneClient, name string) error {
-	return c.DeleteMapFile(ctx, name)
-}
-
-func TestGetAllMapFiles_Success(t *testing.T) {
-	runGetAllStorageSuccessTest(t, mapStorageConfig(), getAllMapFiles)
-}
-
-func TestGetAllMapFiles_Empty(t *testing.T) {
-	runGetAllStorageEmptyTest(t, mapStorageConfig(), getAllMapFiles)
-}
-
-func TestGetAllMapFiles_ServerError(t *testing.T) {
-	runGetAllStorageServerErrorTest(t, mapStorageConfig(), getAllMapFiles)
-}
-
-func TestGetAllMapFiles_InvalidJSON(t *testing.T) {
-	runGetAllStorageInvalidJSONTest(t, mapStorageConfig(), getAllMapFiles)
+func TestMapFileStorage(t *testing.T) {
+	runAllStorageCRUDTests(t, mapStorageConfig(), mapStorageFuncs())
 }
 
 func TestGetMapFileContent_Success(t *testing.T) {
@@ -97,34 +87,6 @@ func TestGetMapFileContent_NotFound(t *testing.T) {
 	_, err := client.GetMapFileContent(context.Background(), "missing.map")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestCreateMapFile_Success(t *testing.T) {
-	runCreateStorageSuccessTest(t, mapStorageConfig(), createMapFile)
-}
-
-func TestCreateMapFile_AlreadyExists(t *testing.T) {
-	runCreateStorageConflictTest(t, mapStorageConfig(), createMapFile)
-}
-
-func TestUpdateMapFile_Success(t *testing.T) {
-	runUpdateStorageSuccessTest(t, mapStorageConfig(), updateMapFile)
-}
-
-func TestUpdateMapFile_NotFound(t *testing.T) {
-	cfg := mapStorageConfig()
-	cfg.itemName = "missing.map"
-	runUpdateStorageNotFoundTest(t, cfg, updateMapFile)
-}
-
-func TestDeleteMapFile_Success(t *testing.T) {
-	runDeleteStorageSuccessTest(t, mapStorageConfig(), deleteMapFile)
-}
-
-func TestDeleteMapFile_NotFound(t *testing.T) {
-	cfg := mapStorageConfig()
-	cfg.itemName = "missing.map"
-	runDeleteStorageNotFoundTest(t, cfg, deleteMapFile)
 }
 
 func TestGetAllMapFiles_NilStorageNames(t *testing.T) {
