@@ -14,7 +14,8 @@ Merge Order (lowest to highest priority):
 2. ingress.yaml       - Kubernetes Ingress support
 3. gateway.yaml       - Gateway API support
 4. haproxytech.yaml   - HAProxy annotation compatibility
-5. values.yaml        - User configuration (highest priority)
+5. nginx-ingress.yaml - nginx-ingress annotation compatibility (disabled by default)
+6. values.yaml        - User configuration (highest priority)
 ```
 
 **Merge Logic** (`templates/_helpers.tpl:69`):
@@ -49,7 +50,7 @@ Level 2: ingress.yaml, gateway.yaml
          ├── Know: base, ssl, path-regex-last
          ├── Don't know: each other
          │
-Level 3: haproxy-ingress.yaml, haproxytech.yaml
+Level 3: haproxy-ingress.yaml, haproxytech.yaml, nginx-ingress.yaml
          │
          ├── Know: all libraries above
          └── Don't know: each other
@@ -221,6 +222,7 @@ Snippets use numeric prefixes (e.g., `backends-500-ingress`) to control executio
 | 400-499 | Redirects, rewrites | `frontend-filters-400-haproxytech-ssl-redirect` |
 | 500-599 | Core functionality | `backends-500-ingress`, `map-host-500-gateway` |
 | 600-699 | Compatibility layers | `map-path-regex-600-haproxy-ingress` |
+| 700-799 | Compatibility layers (nginx) | `backend-directives-700-nginx-ingress-timeouts` |
 | 900-999 | Finalization, cleanup | `frontend-matchers-advanced-900-path-match` |
 
 ### Snippet Implementation Patterns
@@ -1805,6 +1807,7 @@ templateSnippets:
 |-------------------|---------------|
 | `haproxy.org/*` | haproxytech.yaml |
 | `haproxy-ingress.github.io/*` | haproxy-ingress.yaml |
+| `nginx.ingress.kubernetes.io/*` | nginx-ingress.yaml |
 | (none - standard fields) | ingress.yaml, gateway.yaml |
 
 **Pattern for Annotation Libraries:**
@@ -1857,6 +1860,7 @@ charts/haptic/
 │   ├── ingress.yaml            # Kubernetes Ingress support
 │   ├── gateway.yaml            # Gateway API support
 │   ├── haproxytech.yaml        # HAProxy annotation compatibility
+│   ├── nginx-ingress.yaml      # nginx-ingress annotation compatibility (disabled by default)
 │   └── path-regex-last.yaml    # Alternative path matching order
 │
 ├── templates/                   # Helm templates

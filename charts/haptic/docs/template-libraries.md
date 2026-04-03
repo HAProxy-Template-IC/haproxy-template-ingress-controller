@@ -21,6 +21,7 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTPRoute, GRPCRoute) support |
 | [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
+| [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) |
 | [Path Regex Last](libraries/path-regex-last.md) | Disabled | Performance-first path matching order |
 
 ## Enabling and Disabling Libraries
@@ -42,6 +43,8 @@ controller:
       enabled: true   # haproxy.org annotations
     haproxyIngress:
       enabled: true   # HAProxy Ingress compatibility
+    nginxIngress:
+      enabled: false  # nginx-ingress annotation compatibility
     pathRegexLast:
       enabled: false  # Performance optimization (opt-in)
 ```
@@ -57,8 +60,9 @@ Libraries are merged in a specific order, with later libraries overriding earlie
 4. gateway.yaml
 5. haproxytech.yaml
 6. haproxy-ingress.yaml
-7. path-regex-last.yaml
-8. values.yaml         (highest priority - your configuration)
+7. nginx-ingress.yaml
+8. path-regex-last.yaml
+9. values.yaml         (highest priority - your configuration)
 ```
 
 Your custom configuration in `controller.config` always takes precedence.
@@ -183,6 +187,7 @@ Default priority is 100 if not specified.
 | Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |
 | haproxytech | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
 | haproxy-ingress | `map-path-regex-*` |
+| nginx-ingress | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
 | Path Regex Last | Overrides `frontend-routing-logic` (not an extension point pattern) |
 
 ## Custom Libraries
@@ -226,28 +231,29 @@ controller:
 ## Library Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        values.yaml                          │
-│                    (highest priority)                       │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Optional Libraries (if enabled)                │
-│  path-regex-last.yaml  haproxy-ingress.yaml  gateway.yaml  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Core Libraries                             │
-│       haproxytech.yaml    ingress.yaml    ssl.yaml         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       base.yaml                             │
-│        (defines extension points, lowest priority)          │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                            values.yaml                               │
+│                        (highest priority)                            │
+└──────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Optional Libraries (if enabled)                    │
+│  path-regex-last.yaml  nginx-ingress.yaml  haproxy-ingress.yaml     │
+│                        gateway.yaml                                  │
+└──────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         Core Libraries                               │
+│          haproxytech.yaml    ingress.yaml    ssl.yaml                │
+└──────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                           base.yaml                                  │
+│            (defines extension points, lowest priority)               │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## See Also
@@ -258,4 +264,5 @@ controller:
 - [Gateway API Library](libraries/gateway.md) - HTTPRoute and GRPCRoute support
 - [haproxytech library](libraries/haproxytech.md) - `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat)
 - [haproxy-ingress library](libraries/haproxy-ingress.md) - `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat)
+- [nginx-ingress library](libraries/nginx-ingress.md) - `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat)
 - [Path Regex Last Library](libraries/path-regex-last.md) - Alternative path matching order

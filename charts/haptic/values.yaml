@@ -119,6 +119,12 @@ controller:
     # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
     haproxyIngress:
       enabled: true
+    # Nginx Ingress library: nginx.ingress.kubernetes.io annotation compatibility
+    # Provides migration support from nginx-ingress to HAPTIC
+    # Supports: timeouts, load balancing, SSL redirect, CORS, auth, rate limiting, canary, and more
+    # Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/
+    nginxIngress:
+      enabled: false
     # Path Regex Last library: Performance-first path matching order
     # Overrides default ordering to: Exact > Prefix > Regex (regex moved to last)
     # Default (de facto standard): Exact > Regex > Prefix

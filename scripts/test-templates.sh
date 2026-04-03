@@ -136,6 +136,7 @@ if ! helm template "$CHART_DIR" \
     --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
     --set controller.templateLibraries.gateway.enabled=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
+    --set controller.templateLibraries.nginxIngress.enabled=true \
     | yq 'select(.kind == "HAProxyTemplateConfig")' \
     > "$TEMP_CONFIG"; then
     echo -e "${RED}Error: Failed to render Helm chart${NC}" >&2

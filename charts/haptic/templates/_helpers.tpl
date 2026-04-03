@@ -100,7 +100,7 @@ Evaluates _helm_skip_test Go template and excludes tests where it evaluates to "
 
 {{/*
 Deep merge template libraries based on enabled flags
-Returns merged config with libraries applied in order: base -> ssl -> ingress -> gateway -> haproxytech -> haproxyIngress -> pathRegexLast -> values.yaml
+Returns merged config with libraries applied in order: base -> ssl -> ingress -> gateway -> haproxytech -> haproxyIngress -> nginxIngress -> pathRegexLast -> values.yaml
 Uses mustMergeOverwrite for deep merging of all nested structures
 */}}
 {{- define "haptic.mergeLibraries" -}}
@@ -158,6 +158,12 @@ Uses mustMergeOverwrite for deep merging of all nested structures
 {{- if $context.Values.controller.templateLibraries.haproxyIngress.enabled }}
   {{- $haproxyIngressLibrary := $context.Files.Get "libraries/haproxy-ingress.yaml" | fromYaml }}
   {{- $merged = mustMergeOverwrite $merged $haproxyIngressLibrary }}
+{{- end }}
+
+{{- /* Load nginx-ingress library if enabled */ -}}
+{{- if $context.Values.controller.templateLibraries.nginxIngress.enabled }}
+  {{- $nginxIngressLibrary := $context.Files.Get "libraries/nginx-ingress.yaml" | fromYaml }}
+  {{- $merged = mustMergeOverwrite $merged $nginxIngressLibrary }}
 {{- end }}
 
 {{- /* Load path-regex-last library if enabled (overrides routing order) */ -}}
