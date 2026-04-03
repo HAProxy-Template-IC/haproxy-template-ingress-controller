@@ -22,36 +22,8 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 )
-
-// mockStore is a simple mock implementation of stores.Store for testing.
-type mockStore struct {
-	items []any
-}
-
-func (m *mockStore) List() ([]any, error) {
-	return m.items, nil
-}
-
-func (m *mockStore) Get(_ ...string) ([]any, error) {
-	return m.items, nil
-}
-
-func (m *mockStore) Add(_ any, _ []string) error {
-	return nil
-}
-
-func (m *mockStore) Update(_ any, _ []string) error {
-	return nil
-}
-
-func (m *mockStore) Delete(_ ...string) error {
-	return nil
-}
-
-func (m *mockStore) Clear() error {
-	return nil
-}
 
 func TestSeparateHAProxyPodStore(t *testing.T) {
 	tests := []struct {
@@ -70,8 +42,8 @@ func TestSeparateHAProxyPodStore(t *testing.T) {
 		{
 			name: "only resource stores",
 			stores: map[string]stores.Store{
-				"ingresses": &mockStore{},
-				"services":  &mockStore{},
+				"ingresses": &storetest.MockStore{},
+				"services":  &storetest.MockStore{},
 			},
 			wantResourceCount:   2,
 			wantHAProxyPodStore: false,
@@ -79,7 +51,7 @@ func TestSeparateHAProxyPodStore(t *testing.T) {
 		{
 			name: "only haproxy-pods",
 			stores: map[string]stores.Store{
-				"haproxy-pods": &mockStore{},
+				"haproxy-pods": &storetest.MockStore{},
 			},
 			wantResourceCount:   0,
 			wantHAProxyPodStore: true,
@@ -87,9 +59,9 @@ func TestSeparateHAProxyPodStore(t *testing.T) {
 		{
 			name: "mixed stores",
 			stores: map[string]stores.Store{
-				"ingresses":    &mockStore{},
-				"haproxy-pods": &mockStore{},
-				"services":     &mockStore{},
+				"ingresses":    &storetest.MockStore{},
+				"haproxy-pods": &storetest.MockStore{},
+				"services":     &storetest.MockStore{},
 			},
 			wantResourceCount:   2,
 			wantHAProxyPodStore: true,

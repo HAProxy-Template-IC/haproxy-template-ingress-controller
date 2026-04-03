@@ -422,8 +422,8 @@ func (r *Registry) Status() map[string]ComponentInfo {
 	return result
 }
 
-// IsHealthy returns true if all critical components are running and healthy.
-func (r *Registry) IsHealthy() bool {
+// isHealthy returns true if all critical components are running and healthy.
+func (r *Registry) isHealthy() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -451,8 +451,8 @@ func (r *Registry) IsHealthy() bool {
 	return true
 }
 
-// GetComponent returns a component by name, or nil if not found.
-func (r *Registry) GetComponent(name string) Component {
+// getComponent returns a component by name, or nil if not found.
+func (r *Registry) getComponent(name string) Component {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

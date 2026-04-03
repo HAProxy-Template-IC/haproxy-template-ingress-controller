@@ -16,8 +16,6 @@ package validator
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 
@@ -26,46 +24,17 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 )
-
-// mockStore implements stores.Store for testing.
-type mockStore struct {
-	items []any
-}
-
-func (m *mockStore) Add(resource any, keys []string) error {
-	m.items = append(m.items, resource)
-	return nil
-}
-
-func (m *mockStore) Update(resource any, keys []string) error {
-	return nil
-}
-
-func (m *mockStore) Delete(keys ...string) error {
-	return nil
-}
-
-func (m *mockStore) List() ([]any, error) {
-	return m.items, nil
-}
-
-func (m *mockStore) Get(keys ...string) ([]any, error) {
-	return nil, nil
-}
-
-func (m *mockStore) Clear() error {
-	m.items = nil
-	return nil
-}
 
 func TestRendererToValidator_SuccessFlow(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	// Create a minimal valid HAProxy config
 	cfg := &config.Config{
@@ -90,11 +59,11 @@ backend servers
 	}
 
 	storeMap := map[string]stores.Store{
-		"ingresses": &mockStore{},
+		"ingresses": &storetest.MockStore{},
 	}
 
 	// Create mock haproxy-pods store
-	haproxyPodStore := &mockStore{}
+	haproxyPodStore := &storetest.MockStore{}
 
 	// Create renderer
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
@@ -153,7 +122,7 @@ Done:
 
 func TestRendererToValidator_ValidationFailure(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	// Create an invalid HAProxy config (semantic error)
 	cfg := &config.Config{
@@ -179,11 +148,11 @@ backend servers
 	}
 
 	storeMap := map[string]stores.Store{
-		"ingresses": &mockStore{},
+		"ingresses": &storetest.MockStore{},
 	}
 
 	// Create mock haproxy-pods store
-	haproxyPodStore := &mockStore{}
+	haproxyPodStore := &storetest.MockStore{}
 
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
@@ -232,7 +201,7 @@ Done:
 
 func TestRendererToValidator_WithMapFiles(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -262,11 +231,11 @@ backend servers
 	}
 
 	storeMap := map[string]stores.Store{
-		"ingresses": &mockStore{},
+		"ingresses": &storetest.MockStore{},
 	}
 
 	// Create mock haproxy-pods store
-	haproxyPodStore := &mockStore{}
+	haproxyPodStore := &storetest.MockStore{}
 
 	// Use HAProxy 3.2+ version to enable CRT-list support in tests
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
@@ -330,7 +299,7 @@ func waitForValidation(eventChan <-chan busevents.Event, timeout time.Duration) 
 
 func TestRendererToValidator_MultipleReconciliations(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
@@ -354,10 +323,10 @@ backend servers
 	}
 
 	storeMap := map[string]stores.Store{
-		"ingresses": &mockStore{},
+		"ingresses": &storetest.MockStore{},
 	}
 
-	haproxyPodStore := &mockStore{}
+	haproxyPodStore := &storetest.MockStore{}
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
 	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
 	require.NoError(t, err)
@@ -386,7 +355,7 @@ backend servers
 
 func TestValidator_ContextCancellation(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
@@ -415,7 +384,7 @@ func TestValidator_ContextCancellation(t *testing.T) {
 
 func TestHAProxyValidator_Name(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	validator := NewHAProxyValidator(bus, logger)
 
@@ -425,7 +394,7 @@ func TestHAProxyValidator_Name(t *testing.T) {
 
 func TestHAProxyValidator_HandleBecameLeader_NoState(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
@@ -464,7 +433,7 @@ func TestHAProxyValidator_HandleBecameLeader_NoState(t *testing.T) {
 
 func TestHAProxyValidator_HandleBecameLeader_WithState(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	// Valid HAProxy config for testing
 	validConfig := `global
@@ -544,7 +513,7 @@ backend servers
 
 func TestHAProxyValidator_HandleBecameLeader_AfterFailure(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testutil.NewTestLogger()
 
 	// Create an invalid HAProxy config
 	cfg := &config.Config{
@@ -570,11 +539,11 @@ backend servers
 	}
 
 	storeMap := map[string]stores.Store{
-		"ingresses": &mockStore{},
+		"ingresses": &storetest.MockStore{},
 	}
 
 	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, storeMap, &mockStore{}, nil, capabilities, logger)
+	rendererComponent, err := renderer.New(bus, cfg, storeMap, &storetest.MockStore{}, nil, capabilities, logger)
 	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)

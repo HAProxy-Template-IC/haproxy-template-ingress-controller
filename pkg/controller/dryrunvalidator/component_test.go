@@ -36,6 +36,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -827,8 +828,8 @@ func TestHandleValidationRequest_RenderFailure(t *testing.T) {
 	})
 
 	baseStoreProvider := stores.NewRealStoreProvider(map[string]stores.Store{
-		"ingresses": &mockStore{},
-		"services":  &mockStore{},
+		"ingresses": &storetest.MockStore{},
+		"services":  &storetest.MockStore{},
 	})
 
 	failingProposalValidator := proposalvalidator.New(&proposalvalidator.ComponentConfig{
@@ -1063,7 +1064,7 @@ func TestValidateDirect_ValidationFailure(t *testing.T) {
 	})
 
 	baseStoreProvider := stores.NewRealStoreProvider(map[string]stores.Store{
-		"ingresses": &mockStore{},
+		"ingresses": &storetest.MockStore{},
 	})
 
 	failingProposalValidator := proposalvalidator.New(&proposalvalidator.ComponentConfig{
@@ -1128,8 +1129,8 @@ func createMockProposalValidator(bus *busevents.EventBus, logger *slog.Logger) *
 
 	// Create base store provider
 	baseStoreProvider := stores.NewRealStoreProvider(map[string]stores.Store{
-		"ingresses": &mockStore{},
-		"services":  &mockStore{},
+		"ingresses": &storetest.MockStore{},
+		"services":  &storetest.MockStore{},
 	})
 
 	return proposalvalidator.New(&proposalvalidator.ComponentConfig{
@@ -1156,13 +1157,3 @@ func createTestIngress(name, namespace string) *unstructured.Unstructured {
 		},
 	}
 }
-
-// mockStore implements stores.Store for testing purposes.
-type mockStore struct{}
-
-func (m *mockStore) Get(_ ...string) ([]any, error) { return nil, nil }
-func (m *mockStore) List() ([]any, error)           { return nil, nil }
-func (m *mockStore) Add(_ any, _ []string) error    { return nil }
-func (m *mockStore) Update(_ any, _ []string) error { return nil }
-func (m *mockStore) Delete(_ ...string) error       { return nil }
-func (m *mockStore) Clear() error                   { return nil }
