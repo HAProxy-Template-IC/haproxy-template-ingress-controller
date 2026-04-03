@@ -78,7 +78,7 @@ func TestParseSecret(t *testing.T) {
 				},
 			},
 			wantErr:   true,
-			errSubstr: "failed to decode base64",
+			errSubstr: "decoding base64",
 		},
 		{
 			name: "secret missing required credentials",
@@ -209,7 +209,7 @@ func TestParseWebhookCertSecret(t *testing.T) {
 				},
 			},
 			wantErr:   true,
-			errSubstr: "failed to decode base64 tls.crt",
+			errSubstr: "decoding base64 tls.crt",
 		},
 		{
 			name: "secret with invalid base64 key",
@@ -227,7 +227,7 @@ func TestParseWebhookCertSecret(t *testing.T) {
 				},
 			},
 			wantErr:   true,
-			errSubstr: "failed to decode base64 tls.key",
+			errSubstr: "decoding base64 tls.key",
 		},
 		// Note: Tests for non-string tls.crt/tls.key values are not included because
 		// unstructured.NestedMap panics on non-JSON types (like bare integers).

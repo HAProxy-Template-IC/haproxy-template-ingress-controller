@@ -170,7 +170,7 @@ func TestSingleWatcher_IsSynced(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Initially not synced
@@ -220,7 +220,7 @@ func TestSingleWatcher_WaitForSyncTimeout(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Don't start watcher - just wait for sync with timeout
@@ -394,7 +394,7 @@ func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Simulate Add event before sync completes
@@ -454,7 +454,7 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Simulate Update event before sync completes
@@ -509,7 +509,7 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Simulate Delete event before sync completes
@@ -561,7 +561,7 @@ func TestSingleWatcher_StopIdempotency(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Call Stop() multiple times - should not panic
@@ -608,7 +608,7 @@ func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Mark as synced
@@ -673,7 +673,7 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Verify not started initially
@@ -727,7 +727,7 @@ func TestSingleWatcher_LastEventTimeUpdatesOnEvent(t *testing.T) {
 
 	w, err := NewSingle(cfg, fakeClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Initially, LastEventTime should be zero
@@ -767,7 +767,7 @@ func TestSingleWatcher_LastEventTimeUpdatesOnAllEventTypes(t *testing.T) {
 
 	w, err := NewSingle(cfg, fakeClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	testCases := []struct {
@@ -828,7 +828,7 @@ func TestSingleWatcher_LastWatchErrorInitiallyZero(t *testing.T) {
 
 	w, err := NewSingle(cfg, fakeClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Initially, LastWatchError should be zero
@@ -845,7 +845,7 @@ func TestSingleWatcher_LastWatchErrorUpdatesOnError(t *testing.T) {
 
 	w, err := NewSingle(cfg, fakeClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Initially zero
@@ -948,7 +948,7 @@ func TestSingleWatcher_SkipsStatusOnlyUpdates(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Mark as synced
@@ -1008,7 +1008,7 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Mark as synced
@@ -1087,7 +1087,7 @@ func TestSingleWatcher_OnSyncComplete_CalledAfterSync(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Start watcher
@@ -1163,7 +1163,7 @@ func TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Manually populate the informer cache by simulating what happens during sync.
@@ -1171,7 +1171,7 @@ func TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource(t *testing.T) {
 	mockResource := createUnstructuredConfigMap("test-config", "default", "12345")
 	err = w.informer.GetStore().Add(mockResource)
 	if err != nil {
-		t.Fatalf("failed to add mock resource to store: %v", err)
+		t.Fatalf("adding mock resource to store: %v", err)
 	}
 
 	// Mark sync as complete (simulating what Start() does after cache sync)
@@ -1232,7 +1232,7 @@ func TestSingleWatcher_OnSyncComplete_Optional(t *testing.T) {
 
 	w, err := NewSingle(&cfg, k8sClient)
 	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
+		t.Fatalf("creating watcher: %v", err)
 	}
 
 	// Start watcher - should not panic even with nil OnSyncComplete

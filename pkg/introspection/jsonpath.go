@@ -66,18 +66,18 @@ func ExtractField(data any, jsonPathExpr string) (any, error) {
 	// This is necessary because jsonpath expects data in a specific structure
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal data: %w", err)
+		return nil, fmt.Errorf("marshalling data: %w", err)
 	}
 
 	var unmarshaled any
 	if err := json.Unmarshal(jsonData, &unmarshaled); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal data: %w", err)
+		return nil, fmt.Errorf("unmarshalling data: %w", err)
 	}
 
 	// Execute JSONPath and capture output
 	buf := new(bytes.Buffer)
 	if err := j.Execute(buf, unmarshaled); err != nil {
-		return nil, fmt.Errorf("failed to execute jsonpath: %w", err)
+		return nil, fmt.Errorf("executing jsonpath: %w", err)
 	}
 
 	// Parse the result back to interface{}

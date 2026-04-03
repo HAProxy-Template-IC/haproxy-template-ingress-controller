@@ -62,7 +62,7 @@ func ExecuteWithVersionAndLogger[T any](
 		version, err := client.GetVersion(ctx)
 		if err != nil {
 			var zero T
-			return zero, fmt.Errorf("failed to get version: %w", err)
+			return zero, fmt.Errorf("getting version: %w", err)
 		}
 
 		// Execute the provided function with the current version
@@ -93,7 +93,7 @@ func ExecuteWithVersionCustom[T any](
 		version, err := client.GetVersion(ctx)
 		if err != nil {
 			var zero T
-			return zero, fmt.Errorf("failed to get version: %w", err)
+			return zero, fmt.Errorf("getting version: %w", err)
 		}
 
 		return fn(ctx, int(version))

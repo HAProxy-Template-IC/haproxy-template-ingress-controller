@@ -192,7 +192,7 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		// Detect server version
 		versionInfo, err := DetectVersion(ctx, endpoint, logger)
 		if err != nil {
-			return nil, fmt.Errorf("failed to detect DataPlane API version: %w", err)
+			return nil, fmt.Errorf("detecting DataPlane API version: %w", err)
 		}
 
 		// Parse version string (e.g., "v3.2.6 87ad0bcf" -> major=3, minor=2)
@@ -235,38 +235,38 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 	// Note: We create all clients regardless of detected version for maximum flexibility
 	v30Client, err := v30.NewClient(endpoint.URL, v30.WithRequestEditorFn(authEditor))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create v3.0 client: %w", err)
+		return nil, fmt.Errorf("creating v3.0 client: %w", err)
 	}
 
 	v31Client, err := v31.NewClient(endpoint.URL, v31.WithRequestEditorFn(authEditor))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create v3.1 client: %w", err)
+		return nil, fmt.Errorf("creating v3.1 client: %w", err)
 	}
 
 	v32Client, err := v32.NewClient(endpoint.URL, v32.WithRequestEditorFn(authEditor))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create v3.2 client: %w", err)
+		return nil, fmt.Errorf("creating v3.2 client: %w", err)
 	}
 
 	v33Client, err := v33.NewClient(endpoint.URL, v33.WithRequestEditorFn(authEditor))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create v3.3 client: %w", err)
+		return nil, fmt.Errorf("creating v3.3 client: %w", err)
 	}
 
 	// Create enterprise clients for all supported versions
 	v30eeClient, err := v30ee.NewClient(endpoint.URL, v30ee.WithRequestEditorFn(authEditor))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create v3.0 enterprise client: %w", err)
+		return nil, fmt.Errorf("creating v3.0 enterprise client: %w", err)
 	}
 
 	v31eeClient, err := v31ee.NewClient(endpoint.URL, v31ee.WithRequestEditorFn(authEditor))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create v3.1 enterprise client: %w", err)
+		return nil, fmt.Errorf("creating v3.1 enterprise client: %w", err)
 	}
 
 	v32eeClient, err := v32ee.NewClient(endpoint.URL, v32ee.WithRequestEditorFn(authEditor))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create v3.2 enterprise client: %w", err)
+		return nil, fmt.Errorf("creating v3.2 enterprise client: %w", err)
 	}
 
 	return &Clientset{
@@ -403,7 +403,7 @@ func DetectVersion(ctx context.Context, endpoint *Endpoint, _ *slog.Logger) (*Ve
 
 	req, err := http.NewRequestWithContext(ctx, "GET", infoURL, http.NoBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
 	req.SetBasicAuth(endpoint.Username, endpoint.Password)
@@ -411,7 +411,7 @@ func DetectVersion(ctx context.Context, endpoint *Endpoint, _ *slog.Logger) (*Ve
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch version info: %w", err)
+		return nil, fmt.Errorf("fetching version info: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -421,7 +421,7 @@ func DetectVersion(ctx context.Context, endpoint *Endpoint, _ *slog.Logger) (*Ve
 
 	var versionInfo VersionInfo
 	if err := json.NewDecoder(resp.Body).Decode(&versionInfo); err != nil {
-		return nil, fmt.Errorf("failed to decode version response: %w", err)
+		return nil, fmt.Errorf("decoding version response: %w", err)
 	}
 
 	if versionInfo.API.Version == "" {
@@ -454,12 +454,12 @@ func ParseVersion(version string) (major, minor int, err error) {
 
 	// Parse major version
 	if _, err := fmt.Sscanf(segments[0], "%d", &major); err != nil {
-		return 0, 0, fmt.Errorf("failed to parse major version: %w", err)
+		return 0, 0, fmt.Errorf("parsing major version: %w", err)
 	}
 
 	// Parse minor version
 	if _, err := fmt.Sscanf(segments[1], "%d", &minor); err != nil {
-		return 0, 0, fmt.Errorf("failed to parse minor version: %w", err)
+		return 0, 0, fmt.Errorf("parsing minor version: %w", err)
 	}
 
 	return major, minor, nil

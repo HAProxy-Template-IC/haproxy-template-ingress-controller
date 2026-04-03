@@ -105,7 +105,7 @@ func New(ctx context.Context, cfg *Config) (*DataplaneClient, error) {
 	// Create multi-version clientset with automatic version detection
 	clientset, err := NewClientset(ctx, &endpoint, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset: %w", err)
+		return nil, fmt.Errorf("creating clientset: %w", err)
 	}
 
 	logger.Debug("Created DataPlane API client",

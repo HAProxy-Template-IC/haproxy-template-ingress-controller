@@ -16,7 +16,7 @@ func decodeResponse[T any](resp *http.Response, operation string) (*T, error) {
 
 	var result T
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("%s: failed to decode response: %w", operation, err)
+		return nil, fmt.Errorf("%s: decoding response: %w", operation, err)
 	}
 
 	return &result, nil
@@ -42,7 +42,7 @@ func decodeSliceResponse[T any](resp *http.Response, operation string) ([]T, err
 
 	var result []T
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("%s: failed to decode response: %w", operation, err)
+		return nil, fmt.Errorf("%s: decoding response: %w", operation, err)
 	}
 
 	return result, nil

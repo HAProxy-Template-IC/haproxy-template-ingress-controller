@@ -54,7 +54,7 @@ type ConnectionError struct {
 
 // Error implements the error interface.
 func (e *ConnectionError) Error() string {
-	return fmt.Sprintf("failed to connect to dataplane API at %s: %v", e.Endpoint, e.Cause)
+	return fmt.Sprintf("connecting to dataplane API at %s: %v", e.Endpoint, e.Cause)
 }
 
 // Unwrap returns the underlying cause for error unwrapping.
@@ -79,7 +79,7 @@ type ParseError struct {
 
 // Error implements the error interface.
 func (e *ParseError) Error() string {
-	msg := fmt.Sprintf("failed to parse %s configuration", e.ConfigType)
+	msg := fmt.Sprintf("parsing %s configuration", e.ConfigType)
 	if e.Line > 0 {
 		msg += fmt.Sprintf(" near line %d", e.Line)
 	}
@@ -152,7 +152,7 @@ type OperationError struct {
 
 // Error implements the error interface.
 func (e *OperationError) Error() string {
-	return fmt.Sprintf("failed to %s %s '%s': %v", e.OperationType, e.Section, e.Resource, e.Cause)
+	return fmt.Sprintf("%s %s '%s': %v", e.OperationType, e.Section, e.Resource, e.Cause)
 }
 
 // Unwrap returns the underlying cause for error unwrapping.
@@ -186,7 +186,7 @@ func (e *FallbackError) Unwrap() error {
 func NewConnectionError(endpoint string, cause error) *SyncError {
 	return &SyncError{
 		Stage:   "connect",
-		Message: fmt.Sprintf("failed to connect to dataplane API at %s", endpoint),
+		Message: fmt.Sprintf("connecting to dataplane API at %s", endpoint),
 		Cause:   &ConnectionError{Endpoint: endpoint, Cause: cause},
 		Hints: []string{
 			"Verify the dataplane API URL is correct",
@@ -212,7 +212,7 @@ func NewParseError(configType, configSnippet string, cause error) *SyncError {
 
 	return &SyncError{
 		Stage:   fmt.Sprintf("parse-%s", configType),
-		Message: fmt.Sprintf("failed to parse %s configuration", configType),
+		Message: fmt.Sprintf("parsing %s configuration", configType),
 		Cause:   &ParseError{ConfigType: configType, ConfigSnippet: configSnippet, Cause: cause},
 		Hints:   hints,
 	}
@@ -252,7 +252,7 @@ func NewConflictError(retries int, expectedVersion int64, actualVersion string) 
 func NewOperationError(opType, section, resource string, cause error) *SyncError {
 	return &SyncError{
 		Stage:   "apply",
-		Message: fmt.Sprintf("failed to %s %s '%s'", opType, section, resource),
+		Message: fmt.Sprintf("%s %s '%s'", opType, section, resource),
 		Cause:   &OperationError{OperationType: opType, Section: section, Resource: resource, Cause: cause},
 		Hints: []string{
 			fmt.Sprintf("Check if %s '%s' exists and is accessible", section, resource),

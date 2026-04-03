@@ -31,7 +31,7 @@ func (c *DataplaneClient) GetAllGeneralFiles(ctx context.Context) ([]string, err
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get all general files: %w", err)
+		return nil, fmt.Errorf("getting all general files: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -48,7 +48,7 @@ func (c *DataplaneClient) GetAllGeneralFiles(ctx context.Context) ([]string, err
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiFiles); err != nil {
-		return nil, fmt.Errorf("failed to decode general files response: %w", err)
+		return nil, fmt.Errorf("decoding general files response: %w", err)
 	}
 
 	// Extract paths
@@ -81,7 +81,7 @@ func (c *DataplaneClient) GetGeneralFileContent(ctx context.Context, path string
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get general file '%s': %w", path, err)
+		return "", fmt.Errorf("getting general file '%s': %w", path, err)
 	}
 	defer resp.Body.Close()
 
@@ -94,7 +94,7 @@ func (c *DataplaneClient) GetGeneralFileContent(ctx context.Context, path string
 func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content string) (string, error) {
 	body, contentType, err := buildMultipartFilePayloadWithID(path, content, path)
 	if err != nil {
-		return "", fmt.Errorf("failed to build payload for general file '%s': %w", path, err)
+		return "", fmt.Errorf("building payload for general file '%s': %w", path, err)
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
@@ -122,7 +122,7 @@ func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content s
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to create general file '%s': %w", path, err)
+		return "", fmt.Errorf("creating general file '%s': %w", path, err)
 	}
 	defer resp.Body.Close()
 
@@ -135,7 +135,7 @@ func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content s
 func (c *DataplaneClient) UpdateGeneralFile(ctx context.Context, path, content string) (string, error) {
 	body, contentType, err := buildMultipartFilePayload(path, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to build payload for general file '%s': %w", path, err)
+		return "", fmt.Errorf("building payload for general file '%s': %w", path, err)
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
@@ -163,7 +163,7 @@ func (c *DataplaneClient) UpdateGeneralFile(ctx context.Context, path, content s
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to update general file '%s': %w", path, err)
+		return "", fmt.Errorf("updating general file '%s': %w", path, err)
 	}
 	defer resp.Body.Close()
 
@@ -184,7 +184,7 @@ func (c *DataplaneClient) DeleteGeneralFile(ctx context.Context, path string) er
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete general file '%s': %w", path, err)
+		return fmt.Errorf("deleting general file '%s': %w", path, err)
 	}
 	defer resp.Body.Close()
 

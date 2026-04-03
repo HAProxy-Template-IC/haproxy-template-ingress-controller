@@ -54,7 +54,7 @@ pod_selector:
 	cfg, err := parseConfig(yamlConfig)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "failed to unmarshal YAML")
+	assert.Contains(t, err.Error(), "unmarshalling YAML")
 }
 
 func TestParseConfig_PartialConfig(t *testing.T) {
@@ -244,7 +244,7 @@ pod_selector:
 	cfg, err := LoadConfig(yamlConfig)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "failed to unmarshal YAML")
+	assert.Contains(t, err.Error(), "unmarshalling YAML")
 }
 
 func TestParseConfig_WithAllSections(t *testing.T) {

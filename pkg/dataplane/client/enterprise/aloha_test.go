@@ -86,7 +86,7 @@ func TestALOHAOperations_GetEndpoints_InvalidJSON(t *testing.T) {
 	_, err := aloha.GetEndpoints(context.Background())
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestALOHAOperations_GetEndpoints_CommunityEdition(t *testing.T) {
@@ -152,7 +152,7 @@ func TestALOHAOperations_GetAllActions_InvalidJSON(t *testing.T) {
 	_, err := aloha.GetAllActions(context.Background())
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestALOHAOperations_GetAllActions_CommunityEdition(t *testing.T) {

@@ -363,7 +363,7 @@ func TestRenderService_Render_Error(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "failed to render haproxy.cfg")
+	assert.Contains(t, err.Error(), "rendering haproxy.cfg")
 }
 
 func TestRenderService_Render_PathResolverAvailable(t *testing.T) {

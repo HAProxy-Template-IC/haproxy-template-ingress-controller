@@ -87,7 +87,7 @@ type scriggoRootDir struct {
 }
 
 func (d *scriggoRootDir) Read(b []byte) (int, error) {
-	return 0, fmt.Errorf("cannot read directory")
+	return 0, fmt.Errorf("reading directory")
 }
 
 func (d *scriggoRootDir) Close() error {

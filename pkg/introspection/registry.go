@@ -151,7 +151,7 @@ func (r *Registry) All() (map[string]any, error) {
 	for path, v := range r.vars {
 		value, err := v.Get()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get variable %q: %w", path, err)
+			return nil, fmt.Errorf("getting variable %q: %w", path, err)
 		}
 		result[path] = value
 	}

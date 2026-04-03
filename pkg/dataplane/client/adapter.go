@@ -89,7 +89,7 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 		// Get current version
 		version, err := a.client.GetVersion(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get version: %w", err)
+			return nil, fmt.Errorf("getting version: %w", err)
 		}
 
 		// Create transaction
@@ -100,7 +100,7 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 				lastErr = err
 				continue
 			}
-			return nil, fmt.Errorf("failed to create transaction: %w", err)
+			return nil, fmt.Errorf("creating transaction: %w", err)
 		}
 
 		// Execute operations within transaction
@@ -127,7 +127,7 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 			abortCtx, abortCancel := abortContext()
 			_ = tx.Abort(abortCtx)
 			abortCancel()
-			return nil, fmt.Errorf("failed to commit transaction: %w", err)
+			return nil, fmt.Errorf("committing transaction: %w", err)
 		}
 
 		// Success - return commit result
@@ -160,7 +160,7 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 			var err error
 			currentVersion, err = a.client.GetVersion(ctx)
 			if err != nil {
-				return fmt.Errorf("failed to get version on retry: %w", err)
+				return fmt.Errorf("getting version on retry: %w", err)
 			}
 		}
 
@@ -171,7 +171,7 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 				lastErr = err
 				continue
 			}
-			return fmt.Errorf("failed to create transaction: %w", err)
+			return fmt.Errorf("creating transaction: %w", err)
 		}
 
 		// Execute operations within transaction
@@ -196,7 +196,7 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 			abortCtx, abortCancel := abortContext()
 			_ = tx.Abort(abortCtx)
 			abortCancel()
-			return fmt.Errorf("failed to commit transaction: %w", err)
+			return fmt.Errorf("committing transaction: %w", err)
 		}
 
 		return nil

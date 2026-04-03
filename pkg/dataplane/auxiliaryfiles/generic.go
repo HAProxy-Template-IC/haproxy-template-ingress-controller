@@ -112,7 +112,7 @@ func Compare[T FileItem](
 	// Fetch current file identifiers from API
 	currentIDs, err := ops.GetAll(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch current files: %w", err)
+		return nil, fmt.Errorf("fetching current files: %w", err)
 	}
 
 	// Download content for all current files in parallel
@@ -124,7 +124,7 @@ func Compare[T FileItem](
 		g.Go(func() error {
 			content, err := ops.GetContent(gCtx, id)
 			if err != nil {
-				return fmt.Errorf("failed to get content for file '%s': %w", id, err)
+				return fmt.Errorf("getting content for file '%s': %w", id, err)
 			}
 
 			// Safe to write directly - each goroutine has unique index
@@ -205,7 +205,7 @@ func Sync[T FileItem](
 	for _, file := range diff.ToCreate {
 		reloadID, err := ops.Create(ctx, file.GetIdentifier(), file.GetContent())
 		if err != nil {
-			return nil, fmt.Errorf("failed to create file '%s': %w", file.GetIdentifier(), err)
+			return nil, fmt.Errorf("creating file '%s': %w", file.GetIdentifier(), err)
 		}
 		if reloadID != "" {
 			reloadIDs = append(reloadIDs, reloadID)
@@ -216,7 +216,7 @@ func Sync[T FileItem](
 	for _, file := range diff.ToUpdate {
 		reloadID, err := ops.Update(ctx, file.GetIdentifier(), file.GetContent())
 		if err != nil {
-			return nil, fmt.Errorf("failed to update file '%s': %w", file.GetIdentifier(), err)
+			return nil, fmt.Errorf("updating file '%s': %w", file.GetIdentifier(), err)
 		}
 		if reloadID != "" {
 			reloadIDs = append(reloadIDs, reloadID)
@@ -226,7 +226,7 @@ func Sync[T FileItem](
 	// Delete obsolete files
 	for _, id := range diff.ToDelete {
 		if err := ops.Delete(ctx, id); err != nil {
-			return nil, fmt.Errorf("failed to delete file '%s': %w", id, err)
+			return nil, fmt.Errorf("deleting file '%s': %w", id, err)
 		}
 	}
 

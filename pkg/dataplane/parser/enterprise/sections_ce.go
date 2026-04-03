@@ -23,14 +23,14 @@ func (p *Parser) extractCESections(conf *StructuredConfig) error {
 	// Extract global
 	global, err := p.extractGlobal()
 	if err != nil {
-		return fmt.Errorf("failed to extract global section: %w", err)
+		return fmt.Errorf("extracting global section: %w", err)
 	}
 	conf.Global = global
 
 	// Extract defaults
 	defaults, err := p.extractDefaults()
 	if err != nil {
-		return fmt.Errorf("failed to extract defaults sections: %w", err)
+		return fmt.Errorf("extracting defaults sections: %w", err)
 	}
 	conf.Defaults = defaults
 
@@ -71,7 +71,7 @@ func (p *Parser) extractCESections(conf *StructuredConfig) error {
 func (p *Parser) extractGlobal() (*models.Global, error) {
 	global, err := configuration.ParseGlobalSection(p.ceParser)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse global section: %w", err)
+		return nil, fmt.Errorf("parsing global section: %w", err)
 	}
 
 	// Parse log targets separately (nested structure)
@@ -357,19 +357,19 @@ func (p *Parser) extractMailersWithIndexes(conf *StructuredConfig) {
 func (p *Parser) extractServiceSectionsWithIndexes(conf *StructuredConfig) error {
 	caches, err := p.extractCaches()
 	if err != nil {
-		return fmt.Errorf("failed to extract caches: %w", err)
+		return fmt.Errorf("extracting caches: %w", err)
 	}
 	conf.Caches = caches
 
 	rings, err := p.extractRings()
 	if err != nil {
-		return fmt.Errorf("failed to extract rings: %w", err)
+		return fmt.Errorf("extracting rings: %w", err)
 	}
 	conf.Rings = rings
 
 	httpErrors, err := p.extractHTTPErrors()
 	if err != nil {
-		return fmt.Errorf("failed to extract http-errors: %w", err)
+		return fmt.Errorf("extracting http-errors: %w", err)
 	}
 	conf.HTTPErrors = httpErrors
 
@@ -484,25 +484,25 @@ func (p *Parser) extractUserlistsWithIndexes(conf *StructuredConfig) {
 func (p *Parser) extractProgramSections(conf *StructuredConfig) error {
 	programs, err := p.extractPrograms()
 	if err != nil {
-		return fmt.Errorf("failed to extract programs: %w", err)
+		return fmt.Errorf("extracting programs: %w", err)
 	}
 	conf.Programs = programs
 
 	logForwards, err := p.extractLogForwards()
 	if err != nil {
-		return fmt.Errorf("failed to extract log-forwards: %w", err)
+		return fmt.Errorf("extracting log-forwards: %w", err)
 	}
 	conf.LogForwards = logForwards
 
 	fcgiApps, err := p.extractFCGIApps()
 	if err != nil {
-		return fmt.Errorf("failed to extract fcgi-apps: %w", err)
+		return fmt.Errorf("extracting fcgi-apps: %w", err)
 	}
 	conf.FCGIApps = fcgiApps
 
 	crtStores, err := p.extractCrtStores()
 	if err != nil {
-		return fmt.Errorf("failed to extract crt-stores: %w", err)
+		return fmt.Errorf("extracting crt-stores: %w", err)
 	}
 	conf.CrtStores = crtStores
 
@@ -599,7 +599,7 @@ func (p *Parser) extractCrtStores() ([]*models.CrtStore, error) {
 func (p *Parser) extractObservabilitySections(conf *StructuredConfig) error {
 	logProfiles, err := p.extractLogProfiles()
 	if err != nil {
-		return fmt.Errorf("failed to extract log-profiles: %w", err)
+		return fmt.Errorf("extracting log-profiles: %w", err)
 	}
 	conf.LogProfiles = logProfiles
 
@@ -648,7 +648,7 @@ func (p *Parser) extractTraces() *models.Traces {
 func (p *Parser) extractCertificateSections(conf *StructuredConfig) error {
 	acmeProviders, err := p.extractAcmeProviders()
 	if err != nil {
-		return fmt.Errorf("failed to extract acme providers: %w", err)
+		return fmt.Errorf("extracting acme providers: %w", err)
 	}
 	conf.AcmeProviders = acmeProviders
 

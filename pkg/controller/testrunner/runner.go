@@ -383,7 +383,7 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 					TestName:    entry.name,
 					Description: entry.test.Description,
 					Passed:      false,
-					RenderError: fmt.Sprintf("failed to create test temp directory: %v", err),
+					RenderError: fmt.Sprintf("creating test temp directory: %v", err),
 				}
 				testNum++
 				continue
@@ -496,7 +496,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	fixtureStores, err := r.CreateStoresFromFixtures(fixtures)
 	if err != nil {
 		result.Passed = false
-		result.RenderError = fmt.Sprintf("failed to create fixture stores: %v", err)
+		result.RenderError = fmt.Sprintf("creating fixture stores: %v", err)
 		result.Duration = time.Since(startTime)
 		return result
 	}
@@ -515,14 +515,14 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		p, err := parser.New()
 		if err != nil {
 			result.Passed = false
-			result.RenderError = fmt.Sprintf("failed to create parser for currentConfig: %v", err)
+			result.RenderError = fmt.Sprintf("creating parser for currentConfig: %v", err)
 			result.Duration = time.Since(startTime)
 			return result
 		}
 		currentConfig, err = p.ParseFromString(test.CurrentConfig)
 		if err != nil {
 			result.Passed = false
-			result.RenderError = fmt.Sprintf("failed to parse currentConfig: %v", err)
+			result.RenderError = fmt.Sprintf("parsing currentConfig: %v", err)
 			result.Duration = time.Since(startTime)
 			return result
 		}

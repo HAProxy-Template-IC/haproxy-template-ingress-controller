@@ -68,7 +68,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to get existing map file: %w", err)
+				return fmt.Errorf("getting existing map file: %w", err)
 			}
 
 			// Create new resource
@@ -90,7 +90,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 				if apierrors.IsAlreadyExists(createErr) {
 					return createErr
 				}
-				return fmt.Errorf("failed to create map file: %w", createErr)
+				return fmt.Errorf("creating map file: %w", createErr)
 			}
 
 			resultName = created.Name
@@ -111,7 +111,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 			HAProxyMapFiles(req.TemplateConfigNamespace).
 			Update(ctx, existing, metav1.UpdateOptions{})
 		if updateErr != nil {
-			return fmt.Errorf("failed to update map file: %w", updateErr)
+			return fmt.Errorf("updating map file: %w", updateErr)
 		}
 
 		resultName = updated.Name
@@ -170,7 +170,7 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to get existing secret: %w", err)
+			return "", fmt.Errorf("getting existing secret: %w", err)
 		}
 
 		// Create new secret
@@ -178,7 +178,7 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 			Secrets(req.TemplateConfigNamespace).
 			Create(ctx, secret, metav1.CreateOptions{})
 		if err != nil {
-			return "", fmt.Errorf("failed to create secret: %w", err)
+			return "", fmt.Errorf("creating secret: %w", err)
 		}
 
 		return created.Name, nil
@@ -198,7 +198,7 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 		Secrets(req.TemplateConfigNamespace).
 		Update(ctx, existing, metav1.UpdateOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to update secret: %w", err)
+		return "", fmt.Errorf("updating secret: %w", err)
 	}
 
 	return updated.Name, nil
@@ -243,7 +243,7 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to get existing general file: %w", err)
+				return fmt.Errorf("getting existing general file: %w", err)
 			}
 
 			// Create new resource
@@ -265,7 +265,7 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 				if apierrors.IsAlreadyExists(createErr) {
 					return createErr
 				}
-				return fmt.Errorf("failed to create general file: %w", createErr)
+				return fmt.Errorf("creating general file: %w", createErr)
 			}
 
 			resultName = created.Name
@@ -286,7 +286,7 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 			HAProxyGeneralFiles(req.TemplateConfigNamespace).
 			Update(ctx, existing, metav1.UpdateOptions{})
 		if updateErr != nil {
-			return fmt.Errorf("failed to update general file: %w", updateErr)
+			return fmt.Errorf("updating general file: %w", updateErr)
 		}
 
 		resultName = updated.Name
@@ -339,7 +339,7 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to get existing crt-list file: %w", err)
+				return fmt.Errorf("getting existing crt-list file: %w", err)
 			}
 
 			// Create new resource
@@ -361,7 +361,7 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 				if apierrors.IsAlreadyExists(createErr) {
 					return createErr
 				}
-				return fmt.Errorf("failed to create crt-list file: %w", createErr)
+				return fmt.Errorf("creating crt-list file: %w", createErr)
 			}
 
 			resultName = created.Name
@@ -382,7 +382,7 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 			HAProxyCRTListFiles(req.TemplateConfigNamespace).
 			Update(ctx, existing, metav1.UpdateOptions{})
 		if updateErr != nil {
-			return fmt.Errorf("failed to update crt-list file: %w", updateErr)
+			return fmt.Errorf("updating crt-list file: %w", updateErr)
 		}
 
 		resultName = updated.Name

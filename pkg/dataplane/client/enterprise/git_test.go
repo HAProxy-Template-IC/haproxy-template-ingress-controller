@@ -86,7 +86,7 @@ func TestGitOperations_GetSettings_InvalidJSON(t *testing.T) {
 	_, err := git.GetSettings(context.Background())
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestGitOperations_GetSettings_CommunityEdition(t *testing.T) {
@@ -210,7 +210,7 @@ func TestGitOperations_GetAllActions_InvalidJSON(t *testing.T) {
 	_, err := git.GetAllActions(context.Background())
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestGitOperations_GetAllActions_CommunityEdition(t *testing.T) {

@@ -125,7 +125,7 @@ func (f *FieldFilter) navigateToField(rv reflect.Value, fieldName string) (refle
 		return value, nil
 
 	default:
-		return reflect.Value{}, fmt.Errorf("cannot navigate into %s", rv.Kind())
+		return reflect.Value{}, fmt.Errorf("navigating into %s", rv.Kind())
 	}
 }
 
@@ -169,7 +169,7 @@ func (f *FieldFilter) deleteField(parent reflect.Value, fieldName string) error 
 		return nil
 
 	default:
-		return fmt.Errorf("cannot delete field from %s", parent.Kind())
+		return fmt.Errorf("deleting field from %s", parent.Kind())
 	}
 }
 

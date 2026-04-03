@@ -103,7 +103,7 @@ func New(
 	// Create pure elector with wrapped callbacks
 	elector, err := k8sleaderelection.New(config, clientset, wrappedCallbacks, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create elector: %w", err)
+		return nil, fmt.Errorf("creating elector: %w", err)
 	}
 
 	c.elector = elector

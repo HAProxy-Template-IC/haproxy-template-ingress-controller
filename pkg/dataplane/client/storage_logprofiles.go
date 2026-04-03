@@ -47,7 +47,7 @@ func (c *DataplaneClient) GetAllLogProfiles(ctx context.Context) ([]string, erro
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get all log profiles: %w", err)
+		return nil, fmt.Errorf("getting all log profiles: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -62,7 +62,7 @@ func (c *DataplaneClient) GetAllLogProfiles(ctx context.Context) ([]string, erro
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiLogProfiles); err != nil {
-		return nil, fmt.Errorf("failed to decode log profiles response: %w", err)
+		return nil, fmt.Errorf("decoding log profiles response: %w", err)
 	}
 
 	// Extract log profile names
@@ -103,7 +103,7 @@ func (c *DataplaneClient) GetLogProfile(ctx context.Context, name string) (*LogP
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get log profile '%s': %w", name, err)
+		return nil, fmt.Errorf("getting log profile '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -117,7 +117,7 @@ func (c *DataplaneClient) GetLogProfile(ctx context.Context, name string) (*LogP
 
 	var profile LogProfile
 	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
-		return nil, fmt.Errorf("failed to decode log profile response: %w", err)
+		return nil, fmt.Errorf("decoding log profile response: %w", err)
 	}
 
 	return &profile, nil
@@ -132,7 +132,7 @@ func (c *DataplaneClient) CreateLogProfile(ctx context.Context, profile *LogProf
 
 	jsonData, err := json.Marshal(profile)
 	if err != nil {
-		return fmt.Errorf("failed to marshal log profile '%s': %w", profile.Name, err)
+		return fmt.Errorf("marshalling log profile '%s': %w", profile.Name, err)
 	}
 
 	body := bytes.NewReader(jsonData)
@@ -161,7 +161,7 @@ func (c *DataplaneClient) CreateLogProfile(ctx context.Context, profile *LogProf
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create log profile '%s': %w", profile.Name, err)
+		return fmt.Errorf("creating log profile '%s': %w", profile.Name, err)
 	}
 	defer resp.Body.Close()
 
@@ -177,7 +177,7 @@ func (c *DataplaneClient) CreateLogProfile(ctx context.Context, profile *LogProf
 func (c *DataplaneClient) UpdateLogProfile(ctx context.Context, name string, profile *LogProfile, transactionID string) error {
 	jsonData, err := json.Marshal(profile)
 	if err != nil {
-		return fmt.Errorf("failed to marshal log profile '%s': %w", name, err)
+		return fmt.Errorf("marshalling log profile '%s': %w", name, err)
 	}
 
 	body := bytes.NewReader(jsonData)
@@ -206,7 +206,7 @@ func (c *DataplaneClient) UpdateLogProfile(ctx context.Context, name string, pro
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to update log profile '%s': %w", name, err)
+		return fmt.Errorf("updating log profile '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -244,7 +244,7 @@ func (c *DataplaneClient) DeleteLogProfile(ctx context.Context, name, transactio
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete log profile '%s': %w", name, err)
+		return fmt.Errorf("deleting log profile '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

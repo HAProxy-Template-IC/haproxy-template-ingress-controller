@@ -50,7 +50,7 @@ type Parser struct {
 func NewParser() (*Parser, error) {
 	ceParser, err := clientparser.New()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client-native parser: %w", err)
+		return nil, fmt.Errorf("creating client-native parser: %w", err)
 	}
 
 	return &Parser{
@@ -94,7 +94,7 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	// Step 2: Parse with EE reader for EE-specific sections and directives
 	reader := NewReader(p.factory)
 	if err := reader.ProcessString(config); err != nil {
-		return nil, fmt.Errorf("failed to parse EE configuration: %w", err)
+		return nil, fmt.Errorf("parsing EE configuration: %w", err)
 	}
 
 	// Step 3: Extract structured configuration from both parsers
@@ -120,7 +120,7 @@ func (p *Parser) extractConfiguration(parsed *ConfiguredParsers) (*StructuredCon
 
 	// Extract CE sections from client-native parser (complete field extraction)
 	if err := p.extractCESections(conf); err != nil {
-		return nil, fmt.Errorf("failed to extract CE sections: %w", err)
+		return nil, fmt.Errorf("extracting CE sections: %w", err)
 	}
 
 	// Extract EE standalone sections from EE reader

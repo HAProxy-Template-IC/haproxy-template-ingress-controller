@@ -86,7 +86,7 @@ func TestBotManagementOperations_GetAllProfiles_InvalidJSON(t *testing.T) {
 	_, err := bot.GetAllProfiles(context.Background(), "tx-123")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestBotManagementOperations_GetAllProfiles_CommunityEdition(t *testing.T) {
@@ -314,7 +314,7 @@ func TestBotManagementOperations_GetAllCaptchas_InvalidJSON(t *testing.T) {
 	_, err := bot.GetAllCaptchas(context.Background(), "tx-123")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestBotManagementOperations_GetAllCaptchas_CommunityEdition(t *testing.T) {

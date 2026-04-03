@@ -56,12 +56,12 @@ func newOrchestrator(c *client.DataplaneClient, logger *slog.Logger) (*orchestra
 		logger.Info("Using Enterprise Edition parser for HAProxy EE")
 		p, err = enterprise.NewParser()
 		if err != nil {
-			return nil, fmt.Errorf("failed to create EE parser: %w", err)
+			return nil, fmt.Errorf("creating EE parser: %w", err)
 		}
 	} else {
 		p, err = parser.New()
 		if err != nil {
-			return nil, fmt.Errorf("failed to create parser: %w", err)
+			return nil, fmt.Errorf("creating parser: %w", err)
 		}
 	}
 

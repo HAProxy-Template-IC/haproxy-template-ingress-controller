@@ -101,7 +101,7 @@ func NewSingle(cfg *types.SingleWatcherConfig, k8sClient *client.Client) (*Singl
 
 	// Create informer
 	if err := w.createInformer(); err != nil {
-		return nil, fmt.Errorf("failed to create informer: %w", err)
+		return nil, fmt.Errorf("creating informer: %w", err)
 	}
 
 	return w, nil
@@ -139,7 +139,7 @@ func (w *SingleWatcher) createInformer() error {
 	// The Reflector handles retry automatically with exponential backoff,
 	// but we need visibility into when watch connections fail.
 	if err := w.informer.SetWatchErrorHandler(w.handleWatchError); err != nil {
-		return fmt.Errorf("failed to set watch error handler: %w", err)
+		return fmt.Errorf("setting watch error handler: %w", err)
 	}
 
 	// Add event handlers
@@ -149,7 +149,7 @@ func (w *SingleWatcher) createInformer() error {
 		DeleteFunc: w.handleDelete,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to add event handler: %w", err)
+		return fmt.Errorf("adding event handler: %w", err)
 	}
 
 	return nil
@@ -373,7 +373,7 @@ func (w *SingleWatcher) Start(ctx context.Context) error {
 
 		// Wait for cache sync
 		if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
-			startErr = fmt.Errorf("failed to sync cache")
+			startErr = fmt.Errorf("syncing cache")
 			return
 		}
 

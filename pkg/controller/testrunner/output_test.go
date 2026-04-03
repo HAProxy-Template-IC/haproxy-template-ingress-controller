@@ -414,7 +414,7 @@ func TestFormatResults_MultilineRenderError(t *testing.T) {
 				Description: "Test with multi-line Scriggo error",
 				Passed:      false,
 				Duration:    100 * time.Millisecond,
-				RenderError: "failed to render haproxy.cfg: interface conversion\n\nscriggo goroutine 1 [running]:\nmain.BackendServers()\n        util-backend-servers:???",
+				RenderError: "rendering haproxy.cfg: interface conversion\n\nscriggo goroutine 1 [running]:\nmain.BackendServers()\n        util-backend-servers:???",
 			},
 		},
 	}
@@ -424,7 +424,7 @@ func TestFormatResults_MultilineRenderError(t *testing.T) {
 
 	// Verify the error message is properly indented
 	assert.Contains(t, output, "✗ Template rendering failed")
-	assert.Contains(t, output, "    Error: failed to render haproxy.cfg: interface conversion")
+	assert.Contains(t, output, "    Error: rendering haproxy.cfg: interface conversion")
 	assert.Contains(t, output, "           scriggo goroutine 1 [running]:")
 	assert.Contains(t, output, "           main.BackendServers()")
 	assert.Contains(t, output, "                   util-backend-servers:???")

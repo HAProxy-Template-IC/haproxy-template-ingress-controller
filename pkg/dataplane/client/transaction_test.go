@@ -437,7 +437,7 @@ func TestTransaction_CommitAfterAbort(t *testing.T) {
 	result, err := tx.Commit(context.Background())
 	require.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "cannot commit aborted transaction")
+	assert.Contains(t, err.Error(), "committing aborted transaction")
 }
 
 func TestTransaction_IsCommittedIsAborted(t *testing.T) {
@@ -490,7 +490,7 @@ func TestCreateTransaction_InvalidJSON(t *testing.T) {
 	tx, err := client.CreateTransaction(context.Background(), 42)
 	require.Error(t, err)
 	assert.Nil(t, tx)
-	assert.Contains(t, err.Error(), "failed to parse transaction response")
+	assert.Contains(t, err.Error(), "parsing transaction response")
 }
 
 func TestTransaction_AbortIdempotent(t *testing.T) {

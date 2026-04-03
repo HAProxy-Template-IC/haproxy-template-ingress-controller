@@ -111,7 +111,7 @@ func (r *FileRegistry) Register(args ...any) (string, error) {
 	// Compute predicted path using path resolver (same logic as pathResolver.GetPath() method)
 	pathInterface, err := r.pathResolver.GetPath(filename, fileType)
 	if err != nil {
-		return "", fmt.Errorf("file_registry.Register: failed to compute path: %w", err)
+		return "", fmt.Errorf("file_registry.Register: computing path: %w", err)
 	}
 
 	path, ok := pathInterface.(string)

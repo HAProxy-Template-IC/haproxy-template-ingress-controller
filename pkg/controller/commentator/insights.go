@@ -28,8 +28,67 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		"timestamp", event.Timestamp(),
 	}
 
-	switch e := event.(type) {
+	switch event.(type) {
 	// Configuration Events
+	case *events.ConfigParsedEvent, *events.ConfigValidationRequest, *events.ConfigValidationResponse,
+		*events.ConfigValidatedEvent, *events.ConfigInvalidEvent,
+		*events.CertResourceChangedEvent, *events.CertParsedEvent:
+		return ec.configInsight(event, attrs)
+
+	// Resource Events
+	case *events.ResourceIndexUpdatedEvent, *events.ResourceSyncCompleteEvent,
+		*events.IndexSynchronizedEvent:
+		return ec.resourceInsight(event, attrs)
+
+	// Reconciliation Events
+	case *events.ReconciliationTriggeredEvent, *events.ReconciliationStartedEvent,
+		*events.ReconciliationCompletedEvent, *events.ReconciliationFailedEvent:
+		return ec.reconciliationInsight(event, attrs)
+
+	// Template Events
+	case *events.TemplateRenderedEvent, *events.TemplateRenderFailedEvent:
+		return ec.templateInsight(event, attrs)
+
+	// Validation Events
+	case *events.ValidationStartedEvent, *events.ValidationCompletedEvent,
+		*events.ValidationFailedEvent,
+		*events.ValidationTestsStartedEvent, *events.ValidationTestsCompletedEvent,
+		*events.ValidationTestsFailedEvent:
+		return ec.validationInsight(event, attrs)
+
+	// Deployment Events
+	case *events.DeploymentStartedEvent, *events.InstanceDeployedEvent,
+		*events.InstanceDeploymentFailedEvent, *events.DeploymentCompletedEvent:
+		return ec.deploymentInsight(event, attrs)
+
+	// HAProxy Pod Events
+	case *events.HAProxyPodsDiscoveredEvent, *events.HAProxyPodTerminatedEvent:
+		return ec.podInsight(event, attrs)
+
+	// Webhook Validation Events
+	case *events.WebhookValidationRequestEvent, *events.WebhookValidationAllowedEvent,
+		*events.WebhookValidationDeniedEvent, *events.WebhookValidationErrorEvent:
+		return ec.webhookInsight(event, attrs)
+
+	// Leader Election Events
+	case *events.LeaderElectionStartedEvent, *events.BecameLeaderEvent,
+		*events.LostLeadershipEvent, *events.NewLeaderObservedEvent:
+		return ec.leaderInsight(event, attrs)
+
+	// Status Update Events
+	case *events.StatusUpdateCompletedEvent, *events.StatusUpdateFailedEvent:
+		return ec.statusInsight(event, attrs)
+
+	default:
+		// Fallback for unknown event types
+		return fmt.Sprintf("Event: %s", eventType), attrs
+	}
+}
+
+// configInsight handles ConfigParsed, ConfigValidationRequest, ConfigValidationResponse,
+// ConfigValidated, ConfigInvalid, CertResourceChanged, and CertParsed events.
+func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.ConfigParsedEvent:
 		return fmt.Sprintf("Configuration parsed successfully (version %s)", e.Version),
 			append(attrs, "version", e.Version, "secret_version", e.SecretVersion)
@@ -120,7 +179,14 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		return fmt.Sprintf("Webhook certificates parsed successfully (version %s)", e.Version),
 			append(attrs, "version", e.Version, "cert_size", len(e.CertPEM), "key_size", len(e.KeyPEM))
 
-	// Resource Events
+	default:
+		return "", attrs
+	}
+}
+
+// resourceInsight handles ResourceIndexUpdated, ResourceSyncComplete, and IndexSynchronized events.
+func (ec *EventCommentator) resourceInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.ResourceIndexUpdatedEvent:
 		// Don't log during initial sync to reduce noise
 		if e.ChangeStats.IsInitialSync {
@@ -156,7 +222,15 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 				totalResources, len(e.ResourceCounts)),
 			append(attrs, "resource_types", len(e.ResourceCounts), "total_resources", totalResources)
 
-	// Reconciliation Events
+	default:
+		return "", attrs
+	}
+}
+
+// reconciliationInsight handles ReconciliationTriggered, ReconciliationStarted,
+// ReconciliationCompleted, and ReconciliationFailed events.
+func (ec *EventCommentator) reconciliationInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.ReconciliationTriggeredEvent:
 		// Correlate: when was the last reconciliation?
 		recentReconciliations := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationCompleted, reconciliationLookbackWindow)
@@ -190,7 +264,14 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		return fmt.Sprintf("Reconciliation failed in %s phase: %s", e.Phase, e.Error),
 			append(attrs, "phase", e.Phase, "error", e.Error)
 
-	// Template Events
+	default:
+		return "", attrs
+	}
+}
+
+// templateInsight handles TemplateRendered and TemplateRenderFailed events.
+func (ec *EventCommentator) templateInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.TemplateRenderedEvent:
 		sizeKB := float64(e.ConfigBytes) / 1024.0
 		triggerInfo := ""
@@ -206,7 +287,15 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		return fmt.Sprintf("Template rendering failed:\n%s", e.Error),
 			append(attrs, "template", e.TemplateName)
 
-	// Validation Events
+	default:
+		return "", attrs
+	}
+}
+
+// validationInsight handles ValidationStarted, ValidationCompleted, ValidationFailed,
+// ValidationTestsStarted, ValidationTestsCompleted, and ValidationTestsFailed events.
+func (ec *EventCommentator) validationInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.ValidationStartedEvent:
 		return "HAProxy configuration validation started",
 			attrs
@@ -253,7 +342,15 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 				"failed_count", len(e.FailedTests),
 				"failed_tests", e.FailedTests)
 
-	// Deployment Events
+	default:
+		return "", attrs
+	}
+}
+
+// deploymentInsight handles DeploymentStarted, InstanceDeployed, InstanceDeploymentFailed,
+// and DeploymentCompleted events.
+func (ec *EventCommentator) deploymentInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.DeploymentStartedEvent:
 		return fmt.Sprintf("Deployment started to %d HAProxy instances", len(e.Endpoints)),
 			append(attrs, "instance_count", len(e.Endpoints))
@@ -308,7 +405,14 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 
 		return "Reconciliation", attrs
 
-	// HAProxy Pod Events
+	default:
+		return "", attrs
+	}
+}
+
+// podInsight handles HAProxyPodsDiscovered and HAProxyPodTerminated events.
+func (ec *EventCommentator) podInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.HAProxyPodsDiscoveredEvent:
 		// Correlate: was this a change?
 		recentDiscoveries := ec.ringBuffer.FindByTypeInWindow(events.EventTypeHAProxyPodsDiscovered, discoveryLookbackWindow)
@@ -324,7 +428,15 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		return fmt.Sprintf("HAProxy pod terminated: %s/%s", e.PodNamespace, e.PodName),
 			append(attrs, "pod_name", e.PodName, "pod_namespace", e.PodNamespace)
 
-	// Webhook Validation Events
+	default:
+		return "", attrs
+	}
+}
+
+// webhookInsight handles WebhookValidationRequest, WebhookValidationAllowed,
+// WebhookValidationDenied, and WebhookValidationError events.
+func (ec *EventCommentator) webhookInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.WebhookValidationRequestEvent:
 		resourceRef := fmt.Sprintf("%s/%s", e.Namespace, e.Name)
 		if e.Namespace == "" {
@@ -378,7 +490,15 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 				"kind", e.Kind,
 				"error", e.Error)
 
-	// Leader Election Events
+	default:
+		return "", attrs
+	}
+}
+
+// leaderInsight handles LeaderElectionStarted, BecameLeader, LostLeadership,
+// and NewLeaderObserved events.
+func (ec *EventCommentator) leaderInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.LeaderElectionStartedEvent:
 		return fmt.Sprintf("Leader election started: identity=%s, lease=%s/%s",
 				e.Identity, e.LeaseNamespace, e.LeaseName),
@@ -412,7 +532,14 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 				"leader_identity", e.NewLeaderIdentity,
 				"is_self", e.IsSelf)
 
-	// Status Update Events
+	default:
+		return "", attrs
+	}
+}
+
+// statusInsight handles StatusUpdateCompleted and StatusUpdateFailed events.
+func (ec *EventCommentator) statusInsight(event busevents.Event, attrs []any) (insight string, args []any) {
+	switch e := event.(type) {
 	case *events.StatusUpdateCompletedEvent:
 		return fmt.Sprintf("Status patches applied (%s phase): %d applied, %d skipped (%dms)",
 				e.Phase, e.AppliedCount, e.SkippedCount, e.DurationMs),
@@ -437,7 +564,6 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 				"retriable", e.Retriable)
 
 	default:
-		// Fallback for unknown event types
-		return fmt.Sprintf("Event: %s", eventType), attrs
+		return "", attrs
 	}
 }

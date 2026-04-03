@@ -28,15 +28,15 @@ func buildMultipartFilePayload(filename, content string) (*bytes.Buffer, string,
 
 	part, err := writer.CreatePart(h)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create multipart part: %w", err)
+		return nil, "", fmt.Errorf("creating multipart part: %w", err)
 	}
 
 	if _, err := part.Write([]byte(content)); err != nil {
-		return nil, "", fmt.Errorf("failed to write file content: %w", err)
+		return nil, "", fmt.Errorf("writing file content: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("failed to close multipart writer: %w", err)
+		return nil, "", fmt.Errorf("closing multipart writer: %w", err)
 	}
 
 	return body, writer.FormDataContentType(), nil
@@ -55,20 +55,20 @@ func buildMultipartFilePayloadWithID(filename, content, id string) (*bytes.Buffe
 
 	part, err := writer.CreatePart(h)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create multipart part: %w", err)
+		return nil, "", fmt.Errorf("creating multipart part: %w", err)
 	}
 
 	if _, err := part.Write([]byte(content)); err != nil {
-		return nil, "", fmt.Errorf("failed to write file content: %w", err)
+		return nil, "", fmt.Errorf("writing file content: %w", err)
 	}
 
 	// Add id field
 	if err := writer.WriteField("id", id); err != nil {
-		return nil, "", fmt.Errorf("failed to write id field: %w", err)
+		return nil, "", fmt.Errorf("writing id field: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("failed to close multipart writer: %w", err)
+		return nil, "", fmt.Errorf("closing multipart writer: %w", err)
 	}
 
 	return body, writer.FormDataContentType(), nil
@@ -145,7 +145,7 @@ func readRawStorageContent(resp *http.Response, resourceType, name string) (stri
 		sb.Grow(int(resp.ContentLength))
 	}
 	if _, err := io.Copy(&sb, resp.Body); err != nil {
-		return "", fmt.Errorf("failed to read response body for %s '%s': %w", resourceType, name, err)
+		return "", fmt.Errorf("reading response body for %s '%s': %w", resourceType, name, err)
 	}
 
 	return sb.String(), nil

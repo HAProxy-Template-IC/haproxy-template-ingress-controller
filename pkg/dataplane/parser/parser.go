@@ -171,7 +171,7 @@ func logSectionParseError(sectionType, sectionName string, err error) {
 func New() (*Parser, error) {
 	p, err := parser.New()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create parser: %w", err)
+		return nil, fmt.Errorf("creating parser: %w", err)
 	}
 	return &Parser{
 		parser: p,
@@ -228,13 +228,13 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	// This keeps all config data in memory as required
 	// Syntax validation happens automatically during parsing
 	if err := p.parser.Process(strings.NewReader(config)); err != nil {
-		return nil, fmt.Errorf("failed to parse configuration: %w", err)
+		return nil, fmt.Errorf("parsing configuration: %w", err)
 	}
 
 	// Extract structured configuration from parser
 	conf, err := p.extractConfiguration()
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract configuration: %w", err)
+		return nil, fmt.Errorf("extracting configuration: %w", err)
 	}
 
 	// Normalize metadata before caching to ensure cached configs are immutable.
@@ -305,13 +305,13 @@ func (p *Parser) extractConfiguration() (*StructuredConfig, error) {
 func (p *Parser) extractCoreSections(conf *StructuredConfig) error {
 	global, err := p.extractGlobal()
 	if err != nil {
-		return fmt.Errorf("failed to extract global section: %w", err)
+		return fmt.Errorf("extracting global section: %w", err)
 	}
 	conf.Global = global
 
 	defaults, err := p.extractDefaults()
 	if err != nil {
-		return fmt.Errorf("failed to extract defaults sections: %w", err)
+		return fmt.Errorf("extracting defaults sections: %w", err)
 	}
 	conf.Defaults = defaults
 
@@ -333,19 +333,19 @@ func (p *Parser) extractPeerAndDiscoverySections(conf *StructuredConfig) {
 func (p *Parser) extractServiceSections(conf *StructuredConfig) error {
 	caches, err := p.extractCaches()
 	if err != nil {
-		return fmt.Errorf("failed to extract caches: %w", err)
+		return fmt.Errorf("extracting caches: %w", err)
 	}
 	conf.Caches = caches
 
 	rings, err := p.extractRings()
 	if err != nil {
-		return fmt.Errorf("failed to extract rings: %w", err)
+		return fmt.Errorf("extracting rings: %w", err)
 	}
 	conf.Rings = rings
 
 	httpErrors, err := p.extractHTTPErrors()
 	if err != nil {
-		return fmt.Errorf("failed to extract http-errors: %w", err)
+		return fmt.Errorf("extracting http-errors: %w", err)
 	}
 	conf.HTTPErrors = httpErrors
 
@@ -358,25 +358,25 @@ func (p *Parser) extractServiceSections(conf *StructuredConfig) error {
 func (p *Parser) extractProgramSections(conf *StructuredConfig) error {
 	programs, err := p.extractPrograms()
 	if err != nil {
-		return fmt.Errorf("failed to extract programs: %w", err)
+		return fmt.Errorf("extracting programs: %w", err)
 	}
 	conf.Programs = programs
 
 	logForwards, err := p.extractLogForwards()
 	if err != nil {
-		return fmt.Errorf("failed to extract log-forwards: %w", err)
+		return fmt.Errorf("extracting log-forwards: %w", err)
 	}
 	conf.LogForwards = logForwards
 
 	fcgiApps, err := p.extractFCGIApps()
 	if err != nil {
-		return fmt.Errorf("failed to extract fcgi-apps: %w", err)
+		return fmt.Errorf("extracting fcgi-apps: %w", err)
 	}
 	conf.FCGIApps = fcgiApps
 
 	crtStores, err := p.extractCrtStores()
 	if err != nil {
-		return fmt.Errorf("failed to extract crt-stores: %w", err)
+		return fmt.Errorf("extracting crt-stores: %w", err)
 	}
 	conf.CrtStores = crtStores
 
@@ -388,7 +388,7 @@ func (p *Parser) extractProgramSections(conf *StructuredConfig) error {
 func (p *Parser) extractObservabilitySections(conf *StructuredConfig) error {
 	logProfiles, err := p.extractLogProfiles()
 	if err != nil {
-		return fmt.Errorf("failed to extract log-profiles: %w", err)
+		return fmt.Errorf("extracting log-profiles: %w", err)
 	}
 	conf.LogProfiles = logProfiles
 
@@ -402,7 +402,7 @@ func (p *Parser) extractObservabilitySections(conf *StructuredConfig) error {
 func (p *Parser) extractCertificateSections(conf *StructuredConfig) error {
 	acmeProviders, err := p.extractAcmeProviders()
 	if err != nil {
-		return fmt.Errorf("failed to extract acme providers: %w", err)
+		return fmt.Errorf("extracting acme providers: %w", err)
 	}
 	conf.AcmeProviders = acmeProviders
 

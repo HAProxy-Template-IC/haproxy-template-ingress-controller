@@ -43,7 +43,7 @@ func createTestComponent(t *testing.T, bus *busevents.EventBus) *Component {
 	if err != nil {
 		// Check if it's because haproxy is not found
 		if strings.Contains(err.Error(), "haproxy binary not found") ||
-			strings.Contains(err.Error(), "failed to detect local HAProxy version") {
+			strings.Contains(err.Error(), "detecting local HAProxy version") {
 			t.Skipf("skipping test: haproxy not available: %v", err)
 		}
 		t.Fatalf("unexpected error creating discovery component: %v", err)

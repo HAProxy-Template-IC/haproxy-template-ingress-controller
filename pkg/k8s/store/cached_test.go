@@ -937,7 +937,7 @@ func TestCachedStore_CacheMissLogging(t *testing.T) {
 		IgnoreFields: []string{},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	gvr := schema.GroupVersionResource{

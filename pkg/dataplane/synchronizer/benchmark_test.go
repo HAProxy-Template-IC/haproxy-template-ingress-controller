@@ -71,12 +71,12 @@ func BenchmarkSync_NoChanges(b *testing.B) {
 
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(config)
 	if err != nil {
-		b.Fatalf("failed to parse config: %v", err)
+		b.Fatalf("parsing config: %v", err)
 	}
 
 	// Use same config for current and desired
@@ -110,17 +110,17 @@ func benchmarkSyncDryRunSmall(b *testing.B) {
 	b.Helper()
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateSmallConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateSmallConfigModified())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	sync := New(nil)
@@ -141,17 +141,17 @@ func benchmarkSyncDryRunMedium(b *testing.B) {
 	b.Helper()
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateMediumConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateMediumConfigWithChanges())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	sync := New(nil)
@@ -172,17 +172,17 @@ func benchmarkSyncDryRunLarge(b *testing.B) {
 	b.Helper()
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateLargeConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateLargeConfigWithChanges())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	sync := New(nil)
@@ -203,17 +203,17 @@ func benchmarkSyncDryRunScale(b *testing.B, backendCount int) {
 	b.Helper()
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateScaledConfig(backendCount, 3))
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateScaledConfigWithChanges(backendCount, 3))
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	sync := New(nil)

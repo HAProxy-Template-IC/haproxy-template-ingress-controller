@@ -44,7 +44,7 @@ func (c *DataplaneClient) GetAllSSLCertificates(ctx context.Context) ([]string, 
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get all SSL certificates: %w", err)
+		return nil, fmt.Errorf("getting all SSL certificates: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -60,7 +60,7 @@ func (c *DataplaneClient) GetAllSSLCertificates(ctx context.Context) ([]string, 
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiCerts); err != nil {
-		return nil, fmt.Errorf("failed to decode SSL certificates response: %w", err)
+		return nil, fmt.Errorf("decoding SSL certificates response: %w", err)
 	}
 
 	// Extract certificate names (no unsanitization)
@@ -115,7 +115,7 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get SSL certificate '%s': %w", name, err)
+		return "", fmt.Errorf("getting SSL certificate '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -130,7 +130,7 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 	// Read entire response body first to handle empty responses
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response body for SSL certificate '%s': %w", name, err)
+		return "", fmt.Errorf("reading response body for SSL certificate '%s': %w", name, err)
 	}
 
 	// Check if body is empty (can happen for empty certificates)
@@ -157,7 +157,7 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 		if len(bodySnippet) > 200 {
 			bodySnippet = bodySnippet[:200] + "..."
 		}
-		return "", fmt.Errorf("failed to decode SSL certificate response (body: %s): %w", bodySnippet, err)
+		return "", fmt.Errorf("decoding SSL certificate response (body: %s): %w", bodySnippet, err)
 	}
 
 	// Always use serial+issuers format for certificate identification.
@@ -196,7 +196,7 @@ func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, conten
 
 	body, contentType, err := buildMultipartFilePayload(sanitizedName, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to build payload for SSL certificate '%s': %w", name, err)
+		return "", fmt.Errorf("building payload for SSL certificate '%s': %w", name, err)
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
@@ -224,7 +224,7 @@ func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, conten
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to create SSL certificate '%s': %w", name, err)
+		return "", fmt.Errorf("creating SSL certificate '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -268,7 +268,7 @@ func (c *DataplaneClient) UpdateSSLCertificate(ctx context.Context, name, conten
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to update SSL certificate '%s': %w", name, err)
+		return "", fmt.Errorf("updating SSL certificate '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -308,7 +308,7 @@ func (c *DataplaneClient) DeleteSSLCertificate(ctx context.Context, name string)
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete SSL certificate '%s': %w", name, err)
+		return fmt.Errorf("deleting SSL certificate '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

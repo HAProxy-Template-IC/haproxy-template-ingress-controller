@@ -46,7 +46,7 @@ func (k *KeepalivedOperations) StartTransaction(ctx context.Context) (string, er
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to start Keepalived transaction: %w", err)
+		return "", fmt.Errorf("starting Keepalived transaction: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -56,7 +56,7 @@ func (k *KeepalivedOperations) StartTransaction(ctx context.Context) (string, er
 
 	var result KeepalivedTransaction
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode Keepalived transaction response: %w", err)
+		return "", fmt.Errorf("decoding Keepalived transaction response: %w", err)
 	}
 
 	if result.Id == nil {
@@ -82,11 +82,11 @@ func (k *KeepalivedOperations) CommitTransaction(ctx context.Context, txID strin
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to commit Keepalived transaction '%s': %w", txID, err)
+		return fmt.Errorf("committing Keepalived transaction '%s': %w", txID, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to commit Keepalived transaction '%s'", txID))
+	return checkResponseStatus(resp, fmt.Sprintf("committing Keepalived transaction '%s'", txID))
 }
 
 // DeleteTransaction deletes (cancels) a Keepalived configuration transaction.
@@ -103,11 +103,11 @@ func (k *KeepalivedOperations) DeleteTransaction(ctx context.Context, txID strin
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete Keepalived transaction '%s': %w", txID, err)
+		return fmt.Errorf("deleting Keepalived transaction '%s': %w", txID, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete Keepalived transaction '%s'", txID))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting Keepalived transaction '%s'", txID))
 }
 
 // GetTransaction retrieves a specific Keepalived transaction.
@@ -124,11 +124,11 @@ func (k *KeepalivedOperations) GetTransaction(ctx context.Context, txID string) 
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get Keepalived transaction '%s': %w", txID, err)
+		return nil, fmt.Errorf("getting Keepalived transaction '%s': %w", txID, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[KeepalivedTransaction](resp, fmt.Sprintf("failed to get Keepalived transaction '%s'", txID))
+	return decodeResponseOr404[KeepalivedTransaction](resp, fmt.Sprintf("getting Keepalived transaction '%s'", txID))
 }
 
 // VRRPInstance represents a VRRP instance configuration.
@@ -148,7 +148,7 @@ func (k *KeepalivedOperations) GetAllVRRPInstances(ctx context.Context) ([]VRRPI
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get VRRP instances: %w", err)
+		return nil, fmt.Errorf("getting VRRP instances: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -169,18 +169,18 @@ func (k *KeepalivedOperations) GetVRRPInstance(ctx context.Context, name string)
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get VRRP instance '%s': %w", name, err)
+		return nil, fmt.Errorf("getting VRRP instance '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[VRRPInstance](resp, fmt.Sprintf("failed to get VRRP instance '%s'", name))
+	return decodeResponseOr404[VRRPInstance](resp, fmt.Sprintf("getting VRRP instance '%s'", name))
 }
 
 // CreateVRRPInstance creates a new VRRP instance.
 func (k *KeepalivedOperations) CreateVRRPInstance(ctx context.Context, txID string, instance *VRRPInstance) error {
 	jsonData, err := json.Marshal(instance)
 	if err != nil {
-		return fmt.Errorf("failed to marshal VRRP instance: %w", err)
+		return fmt.Errorf("marshalling VRRP instance: %w", err)
 	}
 
 	resp, err := k.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -210,7 +210,7 @@ func (k *KeepalivedOperations) CreateVRRPInstance(ctx context.Context, txID stri
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create VRRP instance: %w", err)
+		return fmt.Errorf("creating VRRP instance: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -221,7 +221,7 @@ func (k *KeepalivedOperations) CreateVRRPInstance(ctx context.Context, txID stri
 func (k *KeepalivedOperations) ReplaceVRRPInstance(ctx context.Context, txID, name string, instance *VRRPInstance) error {
 	jsonData, err := json.Marshal(instance)
 	if err != nil {
-		return fmt.Errorf("failed to marshal VRRP instance: %w", err)
+		return fmt.Errorf("marshalling VRRP instance: %w", err)
 	}
 
 	resp, err := k.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -251,11 +251,11 @@ func (k *KeepalivedOperations) ReplaceVRRPInstance(ctx context.Context, txID, na
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to replace VRRP instance '%s': %w", name, err)
+		return fmt.Errorf("replacing VRRP instance '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to replace VRRP instance '%s'", name))
+	return checkResponseStatus(resp, fmt.Sprintf("replacing VRRP instance '%s'", name))
 }
 
 // DeleteVRRPInstance deletes a VRRP instance.
@@ -275,9 +275,9 @@ func (k *KeepalivedOperations) DeleteVRRPInstance(ctx context.Context, txID, nam
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete VRRP instance '%s': %w", name, err)
+		return fmt.Errorf("deleting VRRP instance '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete VRRP instance '%s'", name))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting VRRP instance '%s'", name))
 }

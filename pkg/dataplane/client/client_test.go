@@ -236,7 +236,7 @@ func TestNew_ServerNotReachable(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "failed to create clientset")
+	assert.Contains(t, err.Error(), "creating clientset")
 }
 
 func TestNew_InvalidVersionResponse(t *testing.T) {

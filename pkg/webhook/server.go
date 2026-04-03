@@ -106,7 +106,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Create TLS certificate
 	cert, err := tls.X509KeyPair(s.config.CertPEM, s.config.KeyPEM)
 	if err != nil {
-		return fmt.Errorf("failed to load TLS certificate: %w", err)
+		return fmt.Errorf("loading TLS certificate: %w", err)
 	}
 
 	// Create HTTP server
@@ -156,7 +156,7 @@ func (s *Server) handleValidation(w http.ResponseWriter, r *http.Request) {
 	// Read request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to read request: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("reading request: %v", err), http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
@@ -165,7 +165,7 @@ func (s *Server) handleValidation(w http.ResponseWriter, r *http.Request) {
 	review := &admissionv1.AdmissionReview{}
 	deserializer := codecs.UniversalDeserializer()
 	if _, _, err := deserializer.Decode(body, nil, review); err != nil {
-		http.Error(w, fmt.Sprintf("failed to decode request: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("decoding request: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -179,7 +179,7 @@ func (s *Server) handleValidation(w http.ResponseWriter, r *http.Request) {
 	// Encode response
 	responseBytes, err := json.Marshal(review)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("encoding response: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -212,7 +212,7 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 		return &admissionv1.AdmissionResponse{
 			Allowed: false,
 			Result: &metav1.Status{
-				Message: fmt.Sprintf("failed to parse object: %v", err),
+				Message: fmt.Sprintf("parsing object: %v", err),
 				Code:    http.StatusBadRequest,
 			},
 		}
@@ -226,7 +226,7 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 			return &admissionv1.AdmissionResponse{
 				Allowed: false,
 				Result: &metav1.Status{
-					Message: fmt.Sprintf("failed to parse old object: %v", err),
+					Message: fmt.Sprintf("parsing old object: %v", err),
 					Code:    http.StatusBadRequest,
 				},
 			}

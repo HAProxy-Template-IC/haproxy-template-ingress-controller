@@ -56,7 +56,7 @@ func newTestClient(t *testing.T, server *httptest.Server) *DataplaneClient {
 		Username: testUsername,
 		Password: testPassword,
 	})
-	require.NoError(t, err, "failed to create test client")
+	require.NoError(t, err, "creating test client")
 	return c
 }
 
@@ -169,7 +169,7 @@ func runGetAllStorageTests(t *testing.T, cfg *storageTestConfig, getAllFunc func
 
 		_, err := getAllFunc(context.Background(), client)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decode")
+		assert.Contains(t, err.Error(), "decoding")
 	})
 }
 

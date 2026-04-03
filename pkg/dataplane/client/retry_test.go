@@ -338,7 +338,7 @@ func TestIsConnectionError(t *testing.T) {
 		},
 		{
 			name:     "parsing error - should not retry",
-			err:      errors.New("failed to parse configuration"),
+			err:      errors.New("parsing configuration"),
 			expected: false,
 		},
 		{

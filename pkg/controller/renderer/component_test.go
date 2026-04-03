@@ -88,7 +88,7 @@ func TestNew_InvalidTemplate(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, renderer)
 	// Error comes directly from templating.New (CompilationError) without double wrapping
-	assert.Contains(t, err.Error(), "failed to compile template")
+	assert.Contains(t, err.Error(), "compiling template")
 }
 
 func TestRenderer_SuccessfulRendering(t *testing.T) {

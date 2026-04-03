@@ -58,26 +58,26 @@ func (c *DataplaneClient) GetVersion(ctx context.Context) (int64, error) {
 	})
 
 	if err != nil {
-		return 0, fmt.Errorf("failed to get configuration version: %w", err)
+		return 0, fmt.Errorf("getting configuration version: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("failed to get configuration version: status %d: %s", resp.StatusCode, string(body))
+		return 0, fmt.Errorf("getting configuration version: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse version from response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read version response: %w", err)
+		return 0, fmt.Errorf("reading version response: %w", err)
 	}
 
 	// Trim whitespace (including newlines) from the version string
 	versionStr := strings.TrimSpace(string(body))
 	version, err := strconv.ParseInt(versionStr, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse version: %w", err)
+		return 0, fmt.Errorf("parsing version: %w", err)
 	}
 
 	return version, nil
@@ -123,18 +123,18 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get raw configuration: %w", err)
+		return "", fmt.Errorf("getting raw configuration: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("failed to get raw configuration: status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("getting raw configuration: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read configuration response: %w", err)
+		return "", fmt.Errorf("reading configuration response: %w", err)
 	}
 
 	return string(body), nil
@@ -170,13 +170,13 @@ func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config strin
 	forceReload := true
 	resp, err := c.postHAProxyConfiguration(ctx, config, version, nil, &forceReload, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to push raw configuration: %w", err)
+		return "", fmt.Errorf("pushing raw configuration: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("failed to push raw configuration: status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("pushing raw configuration: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Extract reload ID from response header
@@ -196,7 +196,7 @@ func (c *DataplaneClient) PushRawConfigurationSkipReload(ctx context.Context, co
 	skipReload := true
 	resp, err := c.postHAProxyConfiguration(ctx, config, version, &skipReload, nil, &runtimeActions)
 	if err != nil {
-		return fmt.Errorf("failed to push raw configuration without reload: %w", err)
+		return fmt.Errorf("pushing raw configuration without reload: %w", err)
 	}
 	defer resp.Body.Close()
 	return CheckResponse(resp, "raw config push with skip_reload")
@@ -341,7 +341,7 @@ func (c *DataplaneClient) GetReloadStatus(ctx context.Context, reloadID string) 
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get reload status: %w", err)
+		return nil, fmt.Errorf("getting reload status: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -351,13 +351,13 @@ func (c *DataplaneClient) GetReloadStatus(ctx context.Context, reloadID string) 
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to get reload status: status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("getting reload status: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse JSON response into ReloadInfo
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read reload status response: %w", err)
+		return nil, fmt.Errorf("reading reload status response: %w", err)
 	}
 
 	var reload struct {
@@ -368,7 +368,7 @@ func (c *DataplaneClient) GetReloadStatus(ctx context.Context, reloadID string) 
 	}
 
 	if err := json.Unmarshal(body, &reload); err != nil {
-		return nil, fmt.Errorf("failed to parse reload status response: %w", err)
+		return nil, fmt.Errorf("parsing reload status response: %w", err)
 	}
 
 	info := &ReloadInfo{}

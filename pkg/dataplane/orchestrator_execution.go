@@ -305,7 +305,7 @@ func (o *orchestrator) executeRuntimeOperations(
 	// Fetch version once at start for caching
 	version, err := o.client.GetVersion(ctx)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to get initial version: %w", err)
+		return nil, 0, fmt.Errorf("getting initial version: %w", err)
 	}
 
 	for i, op := range operations {
@@ -371,7 +371,7 @@ func (o *orchestrator) executeServerUpdateWithRetry(
 
 		newVersion, fetchErr := o.client.GetVersion(ctx)
 		if fetchErr != nil {
-			return false, fmt.Errorf("failed to re-fetch version after conflict: %w", fetchErr)
+			return false, fmt.Errorf("re-fetching version after conflict: %w", fetchErr)
 		}
 		*version = newVersion
 	}

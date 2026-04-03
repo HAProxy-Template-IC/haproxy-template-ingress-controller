@@ -153,7 +153,7 @@ func decodeBase64SecretValue(value any) ([]byte, error) {
 		// Decode base64
 		decoded, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode base64: %w", err)
+			return nil, fmt.Errorf("decoding base64: %w", err)
 		}
 		return decoded, nil
 	case []byte:

@@ -23,7 +23,7 @@ type NamespaceDiscoveryError struct {
 }
 
 func (e *NamespaceDiscoveryError) Error() string {
-	return fmt.Sprintf("failed to discover namespace from %s: %v", e.Path, e.Cause)
+	return fmt.Sprintf("discovering namespace from %s: %v", e.Path, e.Cause)
 }
 
 func (e *NamespaceDiscoveryError) Unwrap() error {

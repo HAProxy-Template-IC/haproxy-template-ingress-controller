@@ -78,7 +78,7 @@ func (s *Synchronizer) Sync(ctx context.Context, current, desired *parser.Struct
 	// Step 1: Compare configurations
 	diff, err := s.comparator.Compare(current, desired)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compare configurations: %w", err)
+		return nil, fmt.Errorf("comparing configurations: %w", err)
 	}
 
 	// Check if there are any changes
@@ -217,18 +217,18 @@ func (s *Synchronizer) SyncFromStrings(ctx context.Context, currentConfig, desir
 	// Parse current config
 	p, err := parser.New()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create parser: %w", err)
+		return nil, fmt.Errorf("creating parser: %w", err)
 	}
 
 	current, err := p.ParseFromString(currentConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse current config: %w", err)
+		return nil, fmt.Errorf("parsing current config: %w", err)
 	}
 
 	// Parse desired config
 	desired, err := p.ParseFromString(desiredConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse desired config: %w", err)
+		return nil, fmt.Errorf("parsing desired config: %w", err)
 	}
 
 	return s.Sync(ctx, current, desired, opts)

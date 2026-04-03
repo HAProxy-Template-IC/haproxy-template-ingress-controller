@@ -110,13 +110,13 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 		Kubeconfig: configKubeconfig,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+		return fmt.Errorf("creating Kubernetes client: %w", err)
 	}
 
 	// Create CRD client using the REST config
 	crdClient, err := versioned.NewForConfig(k8sClient.RestConfig())
 	if err != nil {
-		return fmt.Errorf("failed to create CRD client: %w", err)
+		return fmt.Errorf("creating CRD client: %w", err)
 	}
 
 	// Determine namespace
@@ -140,7 +140,7 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 		HAProxyCfgs(namespace).
 		Get(ctx, runtimeConfigName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to get HAProxyCfg %s/%s: %w", namespace, runtimeConfigName, err)
+		return fmt.Errorf("getting HAProxyCfg %s/%s: %w", namespace, runtimeConfigName, err)
 	}
 
 	// Get content, decompressing if necessary
@@ -148,7 +148,7 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 	if haproxyCfg.Spec.Compressed {
 		decompressed, err := compression.Decompress(content)
 		if err != nil {
-			return fmt.Errorf("failed to decompress config: %w", err)
+			return fmt.Errorf("decompressing config: %w", err)
 		}
 		content = decompressed
 	}

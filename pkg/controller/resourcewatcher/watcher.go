@@ -179,7 +179,7 @@ func New(
 		// Create watcher (dereference pointer to pass value)
 		w, err := watcher.New(*watcherConfig, k8sClient, logger)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create watcher for %q: %w", resourceTypeName, err)
+			return nil, fmt.Errorf("creating watcher for %q: %w", resourceTypeName, err)
 		}
 
 		rwc.watchers[resourceTypeName] = w

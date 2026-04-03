@@ -98,7 +98,7 @@ func (s *HTTPStore) doFetch(
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to create request: %w", err)
+		return "", "", "", fmt.Errorf("creating request: %w", err)
 	}
 
 	// Add conditional request headers
@@ -136,7 +136,7 @@ func (s *HTTPStore) doFetch(
 		var body []byte
 		body, err = io.ReadAll(limitedReader)
 		if err != nil {
-			return "", "", "", fmt.Errorf("failed to read response body: %w", err)
+			return "", "", "", fmt.Errorf("reading response body: %w", err)
 		}
 
 		if len(body) > MaxContentSize {

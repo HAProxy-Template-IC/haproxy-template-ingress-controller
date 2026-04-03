@@ -147,7 +147,7 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 	// Load HAProxyTemplateConfig from file
 	configSpec, err := loadConfigFromFile(validateConfigFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
 	// Check if config has validation tests
@@ -202,7 +202,7 @@ func runValidationTests(
 	// Convert CRD spec to internal config format
 	cfg, err := conversion.ConvertSpec(configSpec)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert config: %w", err)
+		return nil, fmt.Errorf("converting config: %w", err)
 	}
 
 	// Create test runner
@@ -241,7 +241,7 @@ func outputResults(results *testrunner.TestResults, engine templating.Engine) er
 		Verbose: validateVerbose,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to format results: %w", err)
+		return fmt.Errorf("formatting results: %w", err)
 	}
 
 	// Print results to stdout
@@ -348,7 +348,7 @@ func loadConfigFromFile(filePath string) (*v1alpha1.HAProxyTemplateConfigSpec, e
 	// Read file
 	data, err := os.ReadFile(cleanPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
+		return nil, fmt.Errorf("reading file: %w", err)
 	}
 
 	// Parse as Kubernetes resource
@@ -369,7 +369,7 @@ func loadConfigFromFile(filePath string) (*v1alpha1.HAProxyTemplateConfigSpec, e
 	// Fallback: Try parsing as raw YAML (for spec-only files)
 	var spec v1alpha1.HAProxyTemplateConfigSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
-		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+		return nil, fmt.Errorf("parsing YAML: %w", err)
 	}
 
 	return &spec, nil
@@ -380,7 +380,7 @@ func createTemplateEngine(configSpec *v1alpha1.HAProxyTemplateConfigSpec, logger
 	// Convert CRD spec to internal config
 	cfg, err := conversion.ConvertSpec(configSpec)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert config spec: %w", err)
+		return nil, fmt.Errorf("converting config spec: %w", err)
 	}
 
 	// Log template compilation
@@ -402,7 +402,7 @@ func createTemplateEngine(configSpec *v1alpha1.HAProxyTemplateConfigSpec, logger
 
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, options)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile templates: %w", err)
+		return nil, fmt.Errorf("compiling templates: %w", err)
 	}
 
 	return engine, nil
@@ -423,21 +423,21 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	// CRT-list storage is only available in HAProxy 3.2+
 	localVersion, err := dataplane.DetectLocalVersion()
 	if err != nil {
-		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("failed to detect local HAProxy version: %w\nHint: Ensure 'haproxy' is in PATH", err)
+		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("detecting local HAProxy version: %w\nHint: Ensure 'haproxy' is in PATH", err)
 	}
 	capabilities = dataplane.CapabilitiesFromVersion(localVersion)
 
 	// Create temporary directory
 	tempDir, err := os.MkdirTemp("", "haproxy-validate-*")
 	if err != nil {
-		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("creating temp dir: %w", err)
 	}
 
 	// Convert CRD spec to internal config format to get dataplane configuration with defaults applied
 	cfg, err := conversion.ConvertSpec(configSpec)
 	if err != nil {
 		_ = os.RemoveAll(tempDir)
-		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("failed to convert config spec: %w", err)
+		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("converting config spec: %w", err)
 	}
 
 	// Derive subdirectory names from configured dataplane paths using filepath.Base()
@@ -463,7 +463,7 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	for _, dir := range dirsToCreate {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			_ = os.RemoveAll(tempDir)
-			return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("failed to create directory: %w", err)
+			return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("creating directory: %w", err)
 		}
 	}
 

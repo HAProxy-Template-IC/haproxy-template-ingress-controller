@@ -168,7 +168,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		// Unmarshal runtime.RawExtension JSON to map[string]interface{}
 		var extraContext map[string]any
 		if err := json.Unmarshal(spec.TemplatingSettings.ExtraContext.Raw, &extraContext); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal templating_settings.extra_context: %w", err)
+			return nil, fmt.Errorf("unmarshalling templating_settings.extra_context: %w", err)
 		}
 		templatingSettings.ExtraContext = extraContext
 	}
@@ -227,7 +227,7 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 		if len(crdTest.ExtraContext.Raw) > 0 {
 			var testExtraContext map[string]any
 			if err := json.Unmarshal(crdTest.ExtraContext.Raw, &testExtraContext); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal validation_tests[%s].extra_context: %w", testName, err)
+				return nil, fmt.Errorf("unmarshalling validation_tests[%s].extra_context: %w", testName, err)
 			}
 			testConfig.ExtraContext = testExtraContext
 		}

@@ -192,7 +192,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// Render main HAProxy config
 	haproxyConfig, err := s.engine.Render(ctx, names.MainTemplateName, renderContext)
 	if err != nil {
-		return nil, fmt.Errorf("failed to render %s: %w", names.MainTemplateName, err)
+		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files
@@ -341,7 +341,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 		g.Go(func() error {
 			rendered, err := s.engine.Render(ctx, name, renderCtx)
 			if err != nil {
-				return fmt.Errorf("failed to render map %s: %w", name, err)
+				return fmt.Errorf("rendering map %s: %w", name, err)
 			}
 			mu.Lock()
 			auxFiles.MapFiles = append(auxFiles.MapFiles, auxiliaryfiles.MapFile{
@@ -358,7 +358,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 		g.Go(func() error {
 			rendered, err := s.engine.Render(ctx, name, renderCtx)
 			if err != nil {
-				return fmt.Errorf("failed to render file %s: %w", name, err)
+				return fmt.Errorf("rendering file %s: %w", name, err)
 			}
 			mu.Lock()
 			auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
@@ -376,7 +376,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 		g.Go(func() error {
 			rendered, err := s.engine.Render(ctx, name, renderCtx)
 			if err != nil {
-				return fmt.Errorf("failed to render SSL certificate %s: %w", name, err)
+				return fmt.Errorf("rendering SSL certificate %s: %w", name, err)
 			}
 			mu.Lock()
 			auxFiles.SSLCertificates = append(auxFiles.SSLCertificates, auxiliaryfiles.SSLCertificate{

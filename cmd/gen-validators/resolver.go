@@ -30,7 +30,7 @@ func resolveSchema(spec *OpenAPISpec, schemaName string) (*ResolvedSchema, error
 
 	def, err := parseSchemaDefinition(raw)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse schema %q: %w", schemaName, err)
+		return nil, fmt.Errorf("parsing schema %q: %w", schemaName, err)
 	}
 
 	resolved := &ResolvedSchema{
@@ -59,7 +59,7 @@ func resolveAllOf(spec *OpenAPISpec, allOfItems []json.RawMessage, target *Resol
 	for _, allOfItem := range allOfItems {
 		subDef, err := parseSchemaDefinition(allOfItem)
 		if err != nil {
-			return fmt.Errorf("failed to parse allOf item: %w", err)
+			return fmt.Errorf("parsing allOf item: %w", err)
 		}
 
 		if subDef.Ref != "" {
@@ -69,7 +69,7 @@ func resolveAllOf(spec *OpenAPISpec, allOfItems []json.RawMessage, target *Resol
 		} else {
 			inlineResolved, err := resolveInlineSchema(subDef)
 			if err != nil {
-				return fmt.Errorf("failed to resolve inline schema: %w", err)
+				return fmt.Errorf("resolving inline schema: %w", err)
 			}
 			mergeSchema(target, inlineResolved)
 		}
@@ -82,7 +82,7 @@ func resolveRefIntoSchema(spec *OpenAPISpec, ref string, target *ResolvedSchema)
 	refName := extractRefName(ref)
 	refResolved, err := resolveSchema(spec, refName)
 	if err != nil {
-		return fmt.Errorf("failed to resolve $ref %q: %w", ref, err)
+		return fmt.Errorf("resolving $ref %q: %w", ref, err)
 	}
 	mergeSchema(target, refResolved)
 	return nil
@@ -100,7 +100,7 @@ func resolveInlineSchema(def *SchemaDefinition) (*ResolvedSchema, error) {
 	for propName, propData := range def.Properties {
 		prop, err := parsePropertyConstraints(propName, propData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse property %q: %w", propName, err)
+			return nil, fmt.Errorf("parsing property %q: %w", propName, err)
 		}
 		resolved.Properties[propName] = prop
 	}

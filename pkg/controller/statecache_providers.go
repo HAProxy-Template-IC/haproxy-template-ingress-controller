@@ -84,7 +84,7 @@ func (sc *StateCache) GetResourceCounts() (map[string]int, error) {
 	for name, store := range stores {
 		items, err := store.List()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list resources for %q: %w", name, err)
+			return nil, fmt.Errorf("listing resources for %q: %w", name, err)
 		}
 		counts[name] = len(items)
 	}

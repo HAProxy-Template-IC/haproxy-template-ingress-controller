@@ -42,7 +42,7 @@ func (c *DataplaneClient) GetAllCRTListFiles(ctx context.Context) ([]string, err
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get all crt-list files: %w", err)
+		return nil, fmt.Errorf("getting all crt-list files: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -58,7 +58,7 @@ func (c *DataplaneClient) GetAllCRTListFiles(ctx context.Context) ([]string, err
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiCRTLists); err != nil {
-		return nil, fmt.Errorf("failed to decode crt-list files response: %w", err)
+		return nil, fmt.Errorf("decoding crt-list files response: %w", err)
 	}
 
 	// Extract and unsanitize crt-list file names
@@ -96,7 +96,7 @@ func (c *DataplaneClient) GetCRTListFileContent(ctx context.Context, name string
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get crt-list file '%s': %w", name, err)
+		return "", fmt.Errorf("getting crt-list file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -119,7 +119,7 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 
 	body, contentType, err := buildMultipartFilePayload(sanitizedName, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to build payload for crt-list file '%s': %w", name, err)
+		return "", fmt.Errorf("building payload for crt-list file '%s': %w", name, err)
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -140,7 +140,7 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to create crt-list file '%s': %w", name, err)
+		return "", fmt.Errorf("creating crt-list file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -179,7 +179,7 @@ func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content s
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to update crt-list file '%s': %w", name, err)
+		return "", fmt.Errorf("updating crt-list file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -212,7 +212,7 @@ func (c *DataplaneClient) DeleteCRTListFile(ctx context.Context, name string) er
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete crt-list file '%s': %w", name, err)
+		return fmt.Errorf("deleting crt-list file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

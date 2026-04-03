@@ -85,7 +85,7 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 	// Create or update HAProxyCfg
 	runtimeConfig, err := p.createOrUpdateRuntimeConfig(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create/update runtime config: %w", err)
+		return nil, fmt.Errorf("creating/updating runtime config: %w", err)
 	}
 
 	result := &PublishResult{
@@ -197,7 +197,7 @@ func (p *Publisher) DeleteRuntimeConfig(ctx context.Context, namespace, name str
 		Delete(ctx, name, metav1.DeleteOptions{})
 
 	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete runtime config %s/%s: %w", namespace, name, err)
+		return fmt.Errorf("deleting runtime config %s/%s: %w", namespace, name, err)
 	}
 
 	if err == nil {

@@ -72,7 +72,7 @@ func ParseHAProxyVersionOutput(output string) (*Version, error) {
 	// Parse major.minor from "X.Y.Z" or "X.Y.Z-suffix"
 	major, minor, err := parseVersionParts(versionStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse version %q: %w", versionStr, err)
+		return nil, fmt.Errorf("parsing version %q: %w", versionStr, err)
 	}
 
 	return &Version{
@@ -135,7 +135,7 @@ func DetectLocalVersion() (*Version, error) {
 	cmd := exec.Command(haproxyBin, "-v")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to run haproxy -v: %w", err)
+		return nil, fmt.Errorf("running haproxy -v: %w", err)
 	}
 
 	return ParseHAProxyVersionOutput(string(output))
@@ -150,7 +150,7 @@ func VersionFromAPIInfo(info *client.VersionInfo) (*Version, error) {
 
 	major, minor, err := client.ParseVersion(info.API.Version)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse API version: %w", err)
+		return nil, fmt.Errorf("parsing API version: %w", err)
 	}
 
 	return &Version{

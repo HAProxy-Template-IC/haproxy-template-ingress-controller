@@ -32,7 +32,7 @@ func (p *Parser) extractGlobal() (*models.Global, error) {
 	// ParseGlobalSection handles the complete Global section including all nested structures
 	global, err := configuration.ParseGlobalSection(p.parser)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse global section: %w", err)
+		return nil, fmt.Errorf("parsing global section: %w", err)
 	}
 
 	// Parse log targets separately (nested structure)

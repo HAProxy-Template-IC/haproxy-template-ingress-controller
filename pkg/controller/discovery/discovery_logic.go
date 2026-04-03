@@ -224,13 +224,13 @@ func (c *Component) checkRemoteVersion(endpoint *dataplane.Endpoint) (*dataplane
 	// Call the exported DetectVersion function
 	versionInfo, err := client.DetectVersion(ctx, clientEndpoint, c.logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect version for pod %s: %w", endpoint.PodName, err)
+		return nil, fmt.Errorf("detecting version for pod %s: %w", endpoint.PodName, err)
 	}
 
 	// Convert to Version struct
 	version, err := dataplane.VersionFromAPIInfo(versionInfo)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse version for pod %s: %w", endpoint.PodName, err)
+		return nil, fmt.Errorf("parsing version for pod %s: %w", endpoint.PodName, err)
 	}
 
 	return version, nil

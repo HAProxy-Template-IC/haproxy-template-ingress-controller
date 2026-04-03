@@ -39,7 +39,7 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to get existing runtime config: %w", err)
+				return fmt.Errorf("getting existing runtime config: %w", err)
 			}
 			// Create new resource
 			created, createErr := p.createRuntimeConfig(ctx, req, runtimeConfig)
@@ -109,7 +109,7 @@ func (p *Publisher) createRuntimeConfig(ctx context.Context, req *PublishRequest
 		HAProxyCfgs(req.TemplateConfigNamespace).
 		Create(ctx, runtimeConfig, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create runtime config: %w", err)
+		return nil, fmt.Errorf("creating runtime config: %w", err)
 	}
 
 	// Set validation error status if this is an invalid config
@@ -160,7 +160,7 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 		HAProxyCfgs(req.TemplateConfigNamespace).
 		Update(ctx, existing, metav1.UpdateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to update runtime config: %w", err)
+		return nil, fmt.Errorf("updating runtime config: %w", err)
 	}
 
 	// Only update status on validation error state transitions (ok→error or error→ok).
@@ -179,7 +179,7 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 		HAProxyCfgs(runtimeConfig.Namespace).
 		Get(ctx, runtimeConfig.Name, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to get runtime config: %w", err)
+		return fmt.Errorf("getting runtime config: %w", err)
 	}
 
 	// Build new auxiliary file references
@@ -200,7 +200,7 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 		HAProxyCfgs(runtimeConfig.Namespace).
 		UpdateStatus(ctx, current, metav1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
+		return fmt.Errorf("updating status: %w", err)
 	}
 
 	return nil

@@ -59,7 +59,7 @@ func (w *WAFOperations) GetGlobal(ctx context.Context, txID string) (*WafGlobal,
 		// V31EE and V30EE don't have WAF Global
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get WAF global config: %w", err)
+		return nil, fmt.Errorf("getting WAF global config: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -82,7 +82,7 @@ func (w *WAFOperations) CreateGlobal(ctx context.Context, txID string, global *W
 		// V31EE and V30EE don't have WAF Global
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create WAF global config: %w", err)
+		return fmt.Errorf("creating WAF global config: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -105,7 +105,7 @@ func (w *WAFOperations) ReplaceGlobal(ctx context.Context, txID string, global *
 		// V31EE and V30EE don't have WAF Global
 	})
 	if err != nil {
-		return fmt.Errorf("failed to replace WAF global config: %w", err)
+		return fmt.Errorf("replacing WAF global config: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -128,7 +128,7 @@ func (w *WAFOperations) DeleteGlobal(ctx context.Context, txID string) error {
 		// V31EE and V30EE don't have WAF Global
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete WAF global config: %w", err)
+		return fmt.Errorf("deleting WAF global config: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -151,7 +151,7 @@ func (w *WAFOperations) GetAllProfiles(ctx context.Context, txID string) ([]WafP
 		// V31EE and V30EE don't have WAF Profiles
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get WAF profiles: %w", err)
+		return nil, fmt.Errorf("getting WAF profiles: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -174,11 +174,11 @@ func (w *WAFOperations) GetProfile(ctx context.Context, txID, name string) (*Waf
 		// V31EE and V30EE don't have WAF Profiles
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get WAF profile '%s': %w", name, err)
+		return nil, fmt.Errorf("getting WAF profile '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[WafProfile](resp, fmt.Sprintf("failed to get WAF profile '%s'", name))
+	return decodeResponseOr404[WafProfile](resp, fmt.Sprintf("getting WAF profile '%s'", name))
 }
 
 // CreateProfile creates a new WAF profile.
@@ -191,7 +191,7 @@ func (w *WAFOperations) CreateProfile(ctx context.Context, txID string, profile 
 
 	jsonData, err := json.Marshal(profile)
 	if err != nil {
-		return fmt.Errorf("failed to marshal WAF profile: %w", err)
+		return fmt.Errorf("marshalling WAF profile: %w", err)
 	}
 
 	resp, err := w.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -206,7 +206,7 @@ func (w *WAFOperations) CreateProfile(ctx context.Context, txID string, profile 
 		// V31EE and V30EE don't have WAF Profiles
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create WAF profile: %w", err)
+		return fmt.Errorf("creating WAF profile: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -223,7 +223,7 @@ func (w *WAFOperations) ReplaceProfile(ctx context.Context, txID, name string, p
 
 	jsonData, err := json.Marshal(profile)
 	if err != nil {
-		return fmt.Errorf("failed to marshal WAF profile: %w", err)
+		return fmt.Errorf("marshalling WAF profile: %w", err)
 	}
 
 	resp, err := w.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -238,11 +238,11 @@ func (w *WAFOperations) ReplaceProfile(ctx context.Context, txID, name string, p
 		// V31EE and V30EE don't have WAF Profiles
 	})
 	if err != nil {
-		return fmt.Errorf("failed to replace WAF profile '%s': %w", name, err)
+		return fmt.Errorf("replacing WAF profile '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to replace WAF profile '%s'", name))
+	return checkResponseStatus(resp, fmt.Sprintf("replacing WAF profile '%s'", name))
 }
 
 // DeleteProfile deletes a WAF profile.
@@ -261,9 +261,9 @@ func (w *WAFOperations) DeleteProfile(ctx context.Context, txID, name string) er
 		// V31EE and V30EE don't have WAF Profiles
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete WAF profile '%s': %w", name, err)
+		return fmt.Errorf("deleting WAF profile '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete WAF profile '%s'", name))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting WAF profile '%s'", name))
 }

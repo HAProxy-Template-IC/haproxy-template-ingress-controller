@@ -95,7 +95,7 @@ func scriggoToFloat(v any) (float64, error) {
 	case string:
 		return strconv.ParseFloat(val, 64)
 	default:
-		return 0, fmt.Errorf("cannot convert %T to float", v)
+		return 0, fmt.Errorf("converting %T to float", v)
 	}
 }
 

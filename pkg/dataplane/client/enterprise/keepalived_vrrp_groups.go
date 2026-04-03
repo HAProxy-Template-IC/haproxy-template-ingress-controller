@@ -29,7 +29,7 @@ func (k *KeepalivedOperations) GetAllVRRPSyncGroups(ctx context.Context) ([]VRRP
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get VRRP sync groups: %w", err)
+		return nil, fmt.Errorf("getting VRRP sync groups: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -50,18 +50,18 @@ func (k *KeepalivedOperations) GetVRRPSyncGroup(ctx context.Context, name string
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get VRRP sync group '%s': %w", name, err)
+		return nil, fmt.Errorf("getting VRRP sync group '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[VRRPSyncGroup](resp, fmt.Sprintf("failed to get VRRP sync group '%s'", name))
+	return decodeResponseOr404[VRRPSyncGroup](resp, fmt.Sprintf("getting VRRP sync group '%s'", name))
 }
 
 // CreateVRRPSyncGroup creates a new VRRP sync group.
 func (k *KeepalivedOperations) CreateVRRPSyncGroup(ctx context.Context, txID string, group *VRRPSyncGroup) error {
 	jsonData, err := json.Marshal(group)
 	if err != nil {
-		return fmt.Errorf("failed to marshal VRRP sync group: %w", err)
+		return fmt.Errorf("marshalling VRRP sync group: %w", err)
 	}
 
 	resp, err := k.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -91,7 +91,7 @@ func (k *KeepalivedOperations) CreateVRRPSyncGroup(ctx context.Context, txID str
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create VRRP sync group: %w", err)
+		return fmt.Errorf("creating VRRP sync group: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -115,11 +115,11 @@ func (k *KeepalivedOperations) DeleteVRRPSyncGroup(ctx context.Context, txID, na
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete VRRP sync group '%s': %w", name, err)
+		return fmt.Errorf("deleting VRRP sync group '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete VRRP sync group '%s'", name))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting VRRP sync group '%s'", name))
 }
 
 // VRRPScript represents a VRRP tracking script configuration.
@@ -139,7 +139,7 @@ func (k *KeepalivedOperations) GetAllVRRPScripts(ctx context.Context) ([]VRRPScr
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get VRRP scripts: %w", err)
+		return nil, fmt.Errorf("getting VRRP scripts: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -160,18 +160,18 @@ func (k *KeepalivedOperations) GetVRRPScript(ctx context.Context, name string) (
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get VRRP script '%s': %w", name, err)
+		return nil, fmt.Errorf("getting VRRP script '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[VRRPScript](resp, fmt.Sprintf("failed to get VRRP script '%s'", name))
+	return decodeResponseOr404[VRRPScript](resp, fmt.Sprintf("getting VRRP script '%s'", name))
 }
 
 // CreateVRRPScript creates a new VRRP script.
 func (k *KeepalivedOperations) CreateVRRPScript(ctx context.Context, txID string, script *VRRPScript) error {
 	jsonData, err := json.Marshal(script)
 	if err != nil {
-		return fmt.Errorf("failed to marshal VRRP script: %w", err)
+		return fmt.Errorf("marshalling VRRP script: %w", err)
 	}
 
 	resp, err := k.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -201,7 +201,7 @@ func (k *KeepalivedOperations) CreateVRRPScript(ctx context.Context, txID string
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create VRRP script: %w", err)
+		return fmt.Errorf("creating VRRP script: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -225,9 +225,9 @@ func (k *KeepalivedOperations) DeleteVRRPScript(ctx context.Context, txID, name 
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete VRRP script '%s': %w", name, err)
+		return fmt.Errorf("deleting VRRP script '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete VRRP script '%s'", name))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting VRRP script '%s'", name))
 }
