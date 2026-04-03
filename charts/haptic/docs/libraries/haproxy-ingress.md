@@ -1,12 +1,13 @@
-# HAProxy Ingress Library
+# haproxy-ingress Library
 
-The HAProxy Ingress library provides compatibility with the [HAProxy Ingress Controller](https://haproxy-ingress.github.io/) annotations for Kubernetes Ingress resources.
+The haproxy-ingress library implements `haproxy-ingress.github.io/*` annotations compatible with [jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/), a community HAProxy ingress controller. It supports path matching, backend configuration, session affinity, SSL features, access control, and more.
 
 ## Overview
 
-This library enables `haproxy-ingress.github.io/*` annotations on Ingress resources, providing a migration path for users coming from the HAProxy Ingress Controller. It supports path matching, backend configuration, session affinity, SSL features, access control, and more.
-
 This library is enabled by default.
+
+!!! note "Migrating from jcmoraisjr/haproxy-ingress"
+    If you are migrating from jcmoraisjr/haproxy-ingress, your existing `haproxy-ingress.github.io/*` annotations work without changes. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
 
 ## Configuration
 
@@ -21,7 +22,7 @@ controller:
 
 ### Extension Points Used
 
-The HAProxy Ingress library implements these extension points:
+The haproxy-ingress library implements these extension points:
 
 | Extension Point | This Library's Snippets | What They Generate |
 |-----------------|-------------------------|-------------------|

@@ -236,5 +236,5 @@ Run tests with:
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Extension points and routing infrastructure
 - [SSL Library](ssl.md) - TLS certificate management
-- [HAProxy Annotations Library](haproxytech.md) - Additional Ingress annotations
-- [HAProxy Ingress Library](haproxy-ingress.md) - Regex path type support
+- [haproxytech library](haproxytech.md) - Additional Ingress annotations
+- [haproxy-ingress library](haproxy-ingress.md) - Regex path type support

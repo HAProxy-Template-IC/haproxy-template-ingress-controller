@@ -887,4 +887,4 @@ Priority areas for future enhancement:
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Extension points and routing infrastructure
 - [SSL Library](ssl.md) - TLS certificate management
-- [HAProxy Annotations Library](haproxytech.md) - Annotation-based configuration
+- [haproxytech library](haproxytech.md) - Annotation-based configuration

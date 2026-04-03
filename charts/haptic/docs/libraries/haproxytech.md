@@ -1,10 +1,10 @@
-# HAProxy Annotations Library
+# haproxytech Library
 
-The HAProxy Annotations library provides support for `haproxy.org/*` annotations, enabling fine-grained control over HAProxy behavior through Kubernetes resource annotations.
+The haproxytech library implements `haproxy.org/*` annotations compatible with [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress), the official HAProxy ingress controller by HAProxy Technologies. This enables fine-grained control over HAProxy behavior through Kubernetes resource annotations.
 
 ## Overview
 
-The HAProxy Annotations library implements annotations compatible with the [HAProxy Kubernetes Ingress Controller](https://www.haproxy.com/documentation/kubernetes-ingress/). This enables:
+Supported features:
 
 - Basic authentication
 - SSL/TLS redirection
@@ -18,6 +18,9 @@ The HAProxy Annotations library implements annotations compatible with the [HAPr
 - Timeout customization
 
 This library is enabled by default.
+
+!!! note "Migrating from haproxytech/kubernetes-ingress"
+    If you are migrating from the official HAProxy Technologies ingress controller, your existing `haproxy.org/*` annotations work without changes. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
 
 **Important notes:**
 
@@ -39,7 +42,7 @@ controller:
 
 ### Extension Points Used
 
-The HAProxy Annotations library implements these extension points from base.yaml:
+The haproxytech library implements these extension points from base.yaml:
 
 | Extension Point | This Library's Snippets | What They Generate |
 |-----------------|-------------------------|-------------------|
