@@ -47,15 +47,7 @@ func (b *BotManagementOperations) GetAllProfiles(ctx context.Context, txID strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get bot management profiles failed with status %d", resp.StatusCode)
-	}
-
-	var result []BotmgmtProfile
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode bot management profiles response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[BotmgmtProfile](resp, "failed to get bot management profiles")
 }
 
 // GetProfile retrieves a specific bot management profile by name.
@@ -79,18 +71,7 @@ func (b *BotManagementOperations) GetProfile(ctx context.Context, txID, name str
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get bot management profile '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	var result BotmgmtProfile
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode bot management profile response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[BotmgmtProfile](resp, fmt.Sprintf("failed to get bot management profile '%s'", name))
 }
 
 // CreateProfile creates a new bot management profile.
@@ -131,10 +112,7 @@ func (b *BotManagementOperations) CreateProfile(ctx context.Context, txID string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create bot management profile failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create bot management profile")
 }
 
 // DeleteProfile deletes a bot management profile.
@@ -158,10 +136,7 @@ func (b *BotManagementOperations) DeleteProfile(ctx context.Context, txID, name 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete bot management profile '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete bot management profile '%s'", name))
 }
 
 // Captcha represents a CAPTCHA configuration.
@@ -188,15 +163,7 @@ func (b *BotManagementOperations) GetAllCaptchas(ctx context.Context, txID strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get CAPTCHAs failed with status %d", resp.StatusCode)
-	}
-
-	var result []Captcha
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode CAPTCHAs response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[Captcha](resp, "failed to get CAPTCHAs")
 }
 
 // GetCaptcha retrieves a specific CAPTCHA configuration by name.
@@ -220,18 +187,7 @@ func (b *BotManagementOperations) GetCaptcha(ctx context.Context, txID, name str
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get CAPTCHA '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	var result Captcha
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode CAPTCHA response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[Captcha](resp, fmt.Sprintf("failed to get CAPTCHA '%s'", name))
 }
 
 // CreateCaptcha creates a new CAPTCHA configuration.
@@ -272,10 +228,7 @@ func (b *BotManagementOperations) CreateCaptcha(ctx context.Context, txID string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create CAPTCHA failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create CAPTCHA")
 }
 
 // DeleteCaptcha deletes a CAPTCHA configuration.
@@ -299,8 +252,5 @@ func (b *BotManagementOperations) DeleteCaptcha(ctx context.Context, txID, name 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete CAPTCHA '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete CAPTCHA '%s'", name))
 }

@@ -55,43 +55,37 @@ func TestSanitizeSSLCertName(t *testing.T) {
 }
 
 // sslStorageConfig returns the test configuration for SSL storage tests.
-func sslStorageConfig() storageTestConfig {
-	return storageTestConfig{
-		endpoint:  "/services/haproxy/storage/ssl_certificates",
-		itemNames: []string{"example_com.pem", "test_org.pem"},
-		itemName:  "example_com.pem",
-		content:   "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----",
+func sslStorageConfig() *storageTestConfig {
+	return &storageTestConfig{
+		endpoint:         "/services/haproxy/storage/ssl_certificates",
+		itemNames:        []string{"example_com.pem", "test_org.pem"},
+		itemName:         "example_com.pem",
+		notFoundItemName: "missing_cert.pem",
+		content:          "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----",
 	}
 }
 
-func getAllSSLCertificates(ctx context.Context, c *DataplaneClient) ([]string, error) {
-	return c.GetAllSSLCertificates(ctx)
+func sslStorageFuncs() storageTestFuncs {
+	return storageTestFuncs{
+		getAll: func(ctx context.Context, c *DataplaneClient) ([]string, error) {
+			return c.GetAllSSLCertificates(ctx)
+		},
+		create: func(ctx context.Context, c *DataplaneClient, name, content string) error {
+			_, err := c.CreateSSLCertificate(ctx, name, content)
+			return err
+		},
+		update: func(ctx context.Context, c *DataplaneClient, name, content string) error {
+			_, err := c.UpdateSSLCertificate(ctx, name, content)
+			return err
+		},
+		delete: func(ctx context.Context, c *DataplaneClient, name string) error {
+			return c.DeleteSSLCertificate(ctx, name)
+		},
+	}
 }
 
-func createSSLCertificate(ctx context.Context, c *DataplaneClient, name, content string) error {
-	_, err := c.CreateSSLCertificate(ctx, name, content)
-	return err
-}
-
-func updateSSLCertificate(ctx context.Context, c *DataplaneClient, name, content string) error {
-	_, err := c.UpdateSSLCertificate(ctx, name, content)
-	return err
-}
-
-func deleteSSLCertificate(ctx context.Context, c *DataplaneClient, name string) error {
-	return c.DeleteSSLCertificate(ctx, name)
-}
-
-func TestGetAllSSLCertificates_Success(t *testing.T) {
-	runGetAllStorageSuccessTest(t, sslStorageConfig(), getAllSSLCertificates)
-}
-
-func TestGetAllSSLCertificates_Empty(t *testing.T) {
-	runGetAllStorageEmptyTest(t, sslStorageConfig(), getAllSSLCertificates)
-}
-
-func TestGetAllSSLCertificates_ServerError(t *testing.T) {
-	runGetAllStorageServerErrorTest(t, sslStorageConfig(), getAllSSLCertificates)
+func TestSSLCertificateStorage(t *testing.T) {
+	runAllStorageCRUDTests(t, sslStorageConfig(), sslStorageFuncs())
 }
 
 func TestGetSSLCertificateContent_Success(t *testing.T) {
@@ -166,34 +160,6 @@ func TestGetSSLCertificateContent_NoFingerprint(t *testing.T) {
 	fingerprint, err := client.GetSSLCertificateContent(context.Background(), "no.fingerprint.cert.pem")
 	require.NoError(t, err)
 	assert.Equal(t, "__NO_FINGERPRINT__", fingerprint)
-}
-
-func TestCreateSSLCertificate_Success(t *testing.T) {
-	runCreateStorageSuccessTest(t, sslStorageConfig(), createSSLCertificate)
-}
-
-func TestCreateSSLCertificate_AlreadyExists(t *testing.T) {
-	runCreateStorageConflictTest(t, sslStorageConfig(), createSSLCertificate)
-}
-
-func TestUpdateSSLCertificate_Success(t *testing.T) {
-	runUpdateStorageSuccessTest(t, sslStorageConfig(), updateSSLCertificate)
-}
-
-func TestUpdateSSLCertificate_NotFound(t *testing.T) {
-	cfg := sslStorageConfig()
-	cfg.itemName = "missing_cert.pem"
-	runUpdateStorageNotFoundTest(t, cfg, updateSSLCertificate)
-}
-
-func TestDeleteSSLCertificate_Success(t *testing.T) {
-	runDeleteStorageSuccessTest(t, sslStorageConfig(), deleteSSLCertificate)
-}
-
-func TestDeleteSSLCertificate_NotFound(t *testing.T) {
-	cfg := sslStorageConfig()
-	cfg.itemName = "missing_cert.pem"
-	runDeleteStorageNotFoundTest(t, cfg, deleteSSLCertificate)
 }
 
 func TestGetAllSSLCertificates_NilStorageNames(t *testing.T) {

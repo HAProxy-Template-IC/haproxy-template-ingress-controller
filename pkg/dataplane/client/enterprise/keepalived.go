@@ -86,10 +86,7 @@ func (k *KeepalivedOperations) CommitTransaction(ctx context.Context, txID strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("commit Keepalived transaction '%s' failed with status %d", txID, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to commit Keepalived transaction '%s'", txID))
 }
 
 // DeleteTransaction deletes (cancels) a Keepalived configuration transaction.
@@ -110,10 +107,7 @@ func (k *KeepalivedOperations) DeleteTransaction(ctx context.Context, txID strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete Keepalived transaction '%s' failed with status %d", txID, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete Keepalived transaction '%s'", txID))
 }
 
 // GetTransaction retrieves a specific Keepalived transaction.
@@ -134,18 +128,7 @@ func (k *KeepalivedOperations) GetTransaction(ctx context.Context, txID string) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get Keepalived transaction '%s' failed with status %d", txID, resp.StatusCode)
-	}
-
-	var result KeepalivedTransaction
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode Keepalived transaction response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[KeepalivedTransaction](resp, fmt.Sprintf("failed to get Keepalived transaction '%s'", txID))
 }
 
 // VRRPInstance represents a VRRP instance configuration.
@@ -169,15 +152,7 @@ func (k *KeepalivedOperations) GetAllVRRPInstances(ctx context.Context) ([]VRRPI
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get VRRP instances failed with status %d", resp.StatusCode)
-	}
-
-	var result []VRRPInstance
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode VRRP instances response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[VRRPInstance](resp, "failed to get VRRP instances")
 }
 
 // GetVRRPInstance retrieves a specific VRRP instance by name.
@@ -198,18 +173,7 @@ func (k *KeepalivedOperations) GetVRRPInstance(ctx context.Context, name string)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get VRRP instance '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	var result VRRPInstance
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode VRRP instance response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[VRRPInstance](resp, fmt.Sprintf("failed to get VRRP instance '%s'", name))
 }
 
 // CreateVRRPInstance creates a new VRRP instance.
@@ -250,10 +214,7 @@ func (k *KeepalivedOperations) CreateVRRPInstance(ctx context.Context, txID stri
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create VRRP instance failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create VRRP instance")
 }
 
 // ReplaceVRRPInstance replaces an existing VRRP instance.
@@ -294,10 +255,7 @@ func (k *KeepalivedOperations) ReplaceVRRPInstance(ctx context.Context, txID, na
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace VRRP instance '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to replace VRRP instance '%s'", name))
 }
 
 // DeleteVRRPInstance deletes a VRRP instance.
@@ -321,8 +279,5 @@ func (k *KeepalivedOperations) DeleteVRRPInstance(ctx context.Context, txID, nam
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete VRRP instance '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete VRRP instance '%s'", name))
 }

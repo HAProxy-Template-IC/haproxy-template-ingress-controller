@@ -2,7 +2,6 @@ package enterprise
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,15 +30,7 @@ func (w *WAFOperations) GetAllRulesets(ctx context.Context) ([]WafRuleset, error
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get WAF rulesets failed with status %d", resp.StatusCode)
-	}
-
-	var result []WafRuleset
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode WAF rulesets response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[WafRuleset](resp, "failed to get WAF rulesets")
 }
 
 // GetRuleset retrieves a specific WAF ruleset by name.
@@ -60,18 +51,7 @@ func (w *WAFOperations) GetRuleset(ctx context.Context, name string) (*WafRulese
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get WAF ruleset '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	var result WafRuleset
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode WAF ruleset response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[WafRuleset](resp, fmt.Sprintf("failed to get WAF ruleset '%s'", name))
 }
 
 // CreateRuleset creates a new WAF ruleset from a file.
@@ -92,10 +72,7 @@ func (w *WAFOperations) CreateRuleset(ctx context.Context, content io.Reader) er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create WAF ruleset failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create WAF ruleset")
 }
 
 // ReplaceRuleset replaces a WAF ruleset.
@@ -116,10 +93,7 @@ func (w *WAFOperations) ReplaceRuleset(ctx context.Context, name string, content
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace WAF ruleset '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to replace WAF ruleset '%s'", name))
 }
 
 // DeleteRuleset deletes a WAF ruleset.
@@ -140,10 +114,7 @@ func (w *WAFOperations) DeleteRuleset(ctx context.Context, name string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete WAF ruleset '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete WAF ruleset '%s'", name))
 }
 
 // GetAllRulesetFiles retrieves all files in a WAF ruleset.
@@ -167,15 +138,7 @@ func (w *WAFOperations) GetAllRulesetFiles(ctx context.Context, rulesetName, sub
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get WAF files for ruleset '%s' failed with status %d", rulesetName, resp.StatusCode)
-	}
-
-	var result []string
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode WAF files response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[string](resp, fmt.Sprintf("failed to get WAF files for ruleset '%s'", rulesetName))
 }
 
 // GetRulesetFile retrieves a specific file from a WAF ruleset.
@@ -203,7 +166,7 @@ func (w *WAFOperations) GetRulesetFile(ctx context.Context, rulesetName, fileNam
 		return nil, ErrNotFound
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get WAF file '%s' from ruleset '%s' failed with status %d", fileName, rulesetName, resp.StatusCode)
+		return nil, fmt.Errorf("failed to get WAF file '%s' from ruleset '%s': unexpected status %d", fileName, rulesetName, resp.StatusCode)
 	}
 
 	return io.ReadAll(resp.Body)
@@ -230,10 +193,7 @@ func (w *WAFOperations) CreateRulesetFile(ctx context.Context, rulesetName, subD
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create WAF file in ruleset '%s' failed with status %d", rulesetName, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to create WAF file in ruleset '%s'", rulesetName))
 }
 
 // ReplaceRulesetFile replaces a file in a WAF ruleset.
@@ -257,10 +217,7 @@ func (w *WAFOperations) ReplaceRulesetFile(ctx context.Context, rulesetName, fil
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace WAF file '%s' in ruleset '%s' failed with status %d", fileName, rulesetName, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to replace WAF file '%s' in ruleset '%s'", fileName, rulesetName))
 }
 
 // DeleteRulesetFile deletes a file from a WAF ruleset.
@@ -284,8 +241,5 @@ func (w *WAFOperations) DeleteRulesetFile(ctx context.Context, rulesetName, file
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete WAF file '%s' from ruleset '%s' failed with status %d", fileName, rulesetName, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete WAF file '%s' from ruleset '%s'", fileName, rulesetName))
 }

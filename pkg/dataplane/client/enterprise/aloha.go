@@ -43,15 +43,7 @@ func (a *ALOHAOperations) GetEndpoints(ctx context.Context) (*ALOHAEndpoints, er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get ALOHA endpoints failed with status %d", resp.StatusCode)
-	}
-
-	var result ALOHAEndpoints
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode ALOHA endpoints response: %w", err)
-	}
-	return &result, nil
+	return decodeResponse[ALOHAEndpoints](resp, "failed to get ALOHA endpoints")
 }
 
 // ALOHAAction represents an ALOHA action.
@@ -75,15 +67,7 @@ func (a *ALOHAOperations) GetAllActions(ctx context.Context) ([]ALOHAAction, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get ALOHA actions failed with status %d", resp.StatusCode)
-	}
-
-	var result []ALOHAAction
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode ALOHA actions response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[ALOHAAction](resp, "failed to get ALOHA actions")
 }
 
 // GetAction retrieves a specific ALOHA action by ID.
@@ -104,18 +88,7 @@ func (a *ALOHAOperations) GetAction(ctx context.Context, id string) (*ALOHAActio
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get ALOHA action '%s' failed with status %d", id, resp.StatusCode)
-	}
-
-	var result ALOHAAction
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode ALOHA action response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[ALOHAAction](resp, fmt.Sprintf("failed to get ALOHA action '%s'", id))
 }
 
 // ExecuteAction executes an ALOHA action.
@@ -153,13 +126,5 @@ func (a *ALOHAOperations) ExecuteAction(ctx context.Context, action *ALOHAAction
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("execute ALOHA action failed with status %d", resp.StatusCode)
-	}
-
-	var result ALOHAAction
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode ALOHA action response: %w", err)
-	}
-	return &result, nil
+	return decodeResponse[ALOHAAction](resp, "failed to execute ALOHA action")
 }

@@ -63,18 +63,7 @@ func (w *WAFOperations) GetGlobal(ctx context.Context, txID string) (*WafGlobal,
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get WAF global failed with status %d", resp.StatusCode)
-	}
-
-	var result WafGlobal
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode WAF global response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[WafGlobal](resp, "failed to get WAF global config")
 }
 
 // CreateGlobal creates the WAF global configuration.
@@ -97,10 +86,7 @@ func (w *WAFOperations) CreateGlobal(ctx context.Context, txID string, global *W
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create WAF global failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create WAF global config")
 }
 
 // ReplaceGlobal replaces the WAF global configuration.
@@ -123,10 +109,7 @@ func (w *WAFOperations) ReplaceGlobal(ctx context.Context, txID string, global *
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace WAF global failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to replace WAF global config")
 }
 
 // DeleteGlobal deletes the WAF global configuration.
@@ -149,10 +132,7 @@ func (w *WAFOperations) DeleteGlobal(ctx context.Context, txID string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete WAF global failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to delete WAF global config")
 }
 
 // GetAllProfiles retrieves all WAF profiles.
@@ -175,15 +155,7 @@ func (w *WAFOperations) GetAllProfiles(ctx context.Context, txID string) ([]WafP
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get WAF profiles failed with status %d", resp.StatusCode)
-	}
-
-	var result []WafProfile
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode WAF profiles response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[WafProfile](resp, "failed to get WAF profiles")
 }
 
 // GetProfile retrieves a specific WAF profile by name.
@@ -206,18 +178,7 @@ func (w *WAFOperations) GetProfile(ctx context.Context, txID, name string) (*Waf
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get WAF profile '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	var result WafProfile
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode WAF profile response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[WafProfile](resp, fmt.Sprintf("failed to get WAF profile '%s'", name))
 }
 
 // CreateProfile creates a new WAF profile.
@@ -249,10 +210,7 @@ func (w *WAFOperations) CreateProfile(ctx context.Context, txID string, profile 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create WAF profile failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create WAF profile")
 }
 
 // ReplaceProfile replaces an existing WAF profile.
@@ -284,10 +242,7 @@ func (w *WAFOperations) ReplaceProfile(ctx context.Context, txID, name string, p
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace WAF profile '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to replace WAF profile '%s'", name))
 }
 
 // DeleteProfile deletes a WAF profile.
@@ -310,8 +265,5 @@ func (w *WAFOperations) DeleteProfile(ctx context.Context, txID, name string) er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete WAF profile '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete WAF profile '%s'", name))
 }

@@ -33,15 +33,7 @@ func (k *KeepalivedOperations) GetAllVRRPSyncGroups(ctx context.Context) ([]VRRP
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get VRRP sync groups failed with status %d", resp.StatusCode)
-	}
-
-	var result []VRRPSyncGroup
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode VRRP sync groups response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[VRRPSyncGroup](resp, "failed to get VRRP sync groups")
 }
 
 // GetVRRPSyncGroup retrieves a specific VRRP sync group by name.
@@ -62,18 +54,7 @@ func (k *KeepalivedOperations) GetVRRPSyncGroup(ctx context.Context, name string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get VRRP sync group '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	var result VRRPSyncGroup
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode VRRP sync group response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[VRRPSyncGroup](resp, fmt.Sprintf("failed to get VRRP sync group '%s'", name))
 }
 
 // CreateVRRPSyncGroup creates a new VRRP sync group.
@@ -114,10 +95,7 @@ func (k *KeepalivedOperations) CreateVRRPSyncGroup(ctx context.Context, txID str
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create VRRP sync group failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create VRRP sync group")
 }
 
 // DeleteVRRPSyncGroup deletes a VRRP sync group.
@@ -141,10 +119,7 @@ func (k *KeepalivedOperations) DeleteVRRPSyncGroup(ctx context.Context, txID, na
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete VRRP sync group '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete VRRP sync group '%s'", name))
 }
 
 // VRRPScript represents a VRRP tracking script configuration.
@@ -168,15 +143,7 @@ func (k *KeepalivedOperations) GetAllVRRPScripts(ctx context.Context) ([]VRRPScr
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get VRRP scripts failed with status %d", resp.StatusCode)
-	}
-
-	var result []VRRPScript
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode VRRP scripts response: %w", err)
-	}
-	return result, nil
+	return decodeSliceResponse[VRRPScript](resp, "failed to get VRRP scripts")
 }
 
 // GetVRRPScript retrieves a specific VRRP script by name.
@@ -197,18 +164,7 @@ func (k *KeepalivedOperations) GetVRRPScript(ctx context.Context, name string) (
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get VRRP script '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	var result VRRPScript
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode VRRP script response: %w", err)
-	}
-	return &result, nil
+	return decodeResponseOr404[VRRPScript](resp, fmt.Sprintf("failed to get VRRP script '%s'", name))
 }
 
 // CreateVRRPScript creates a new VRRP script.
@@ -249,10 +205,7 @@ func (k *KeepalivedOperations) CreateVRRPScript(ctx context.Context, txID string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create VRRP script failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to create VRRP script")
 }
 
 // DeleteVRRPScript deletes a VRRP script.
@@ -276,8 +229,5 @@ func (k *KeepalivedOperations) DeleteVRRPScript(ctx context.Context, txID, name 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete VRRP script '%s' failed with status %d", name, resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, fmt.Sprintf("failed to delete VRRP script '%s'", name))
 }

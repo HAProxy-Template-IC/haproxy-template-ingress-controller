@@ -24,47 +24,37 @@ import (
 )
 
 // generalStorageConfig returns the test configuration for general storage tests.
-func generalStorageConfig() storageTestConfig {
-	return storageTestConfig{
-		endpoint:  "/services/haproxy/storage/general",
-		itemNames: []string{"500.http", "503.http"},
-		itemName:  "500.http",
-		content:   "HTTP/1.0 500 Internal Server Error\r\n\r\nError occurred",
+func generalStorageConfig() *storageTestConfig {
+	return &storageTestConfig{
+		endpoint:         "/services/haproxy/storage/general",
+		itemNames:        []string{"500.http", "503.http"},
+		itemName:         "500.http",
+		notFoundItemName: "nonexistent.http",
+		content:          "HTTP/1.0 500 Internal Server Error\r\n\r\nError occurred",
 	}
 }
 
-func getAllGeneralFiles(ctx context.Context, c *DataplaneClient) ([]string, error) {
-	return c.GetAllGeneralFiles(ctx)
+func generalStorageFuncs() storageTestFuncs {
+	return storageTestFuncs{
+		getAll: func(ctx context.Context, c *DataplaneClient) ([]string, error) {
+			return c.GetAllGeneralFiles(ctx)
+		},
+		create: func(ctx context.Context, c *DataplaneClient, name, content string) error {
+			_, err := c.CreateGeneralFile(ctx, name, content)
+			return err
+		},
+		update: func(ctx context.Context, c *DataplaneClient, name, content string) error {
+			_, err := c.UpdateGeneralFile(ctx, name, content)
+			return err
+		},
+		delete: func(ctx context.Context, c *DataplaneClient, name string) error {
+			return c.DeleteGeneralFile(ctx, name)
+		},
+	}
 }
 
-func createGeneralFile(ctx context.Context, c *DataplaneClient, name, content string) error {
-	_, err := c.CreateGeneralFile(ctx, name, content)
-	return err
-}
-
-func updateGeneralFile(ctx context.Context, c *DataplaneClient, name, content string) error {
-	_, err := c.UpdateGeneralFile(ctx, name, content)
-	return err
-}
-
-func deleteGeneralFile(ctx context.Context, c *DataplaneClient, name string) error {
-	return c.DeleteGeneralFile(ctx, name)
-}
-
-func TestGetAllGeneralFiles_Success(t *testing.T) {
-	runGetAllStorageSuccessTest(t, generalStorageConfig(), getAllGeneralFiles)
-}
-
-func TestGetAllGeneralFiles_Empty(t *testing.T) {
-	runGetAllStorageEmptyTest(t, generalStorageConfig(), getAllGeneralFiles)
-}
-
-func TestGetAllGeneralFiles_ServerError(t *testing.T) {
-	runGetAllStorageServerErrorTest(t, generalStorageConfig(), getAllGeneralFiles)
-}
-
-func TestGetAllGeneralFiles_InvalidJSON(t *testing.T) {
-	runGetAllStorageInvalidJSONTest(t, generalStorageConfig(), getAllGeneralFiles)
+func TestGeneralFileStorage(t *testing.T) {
+	runAllStorageCRUDTests(t, generalStorageConfig(), generalStorageFuncs())
 }
 
 func TestGetAllGeneralFiles_IdFallback(t *testing.T) {
@@ -120,32 +110,4 @@ func TestGetGeneralFileContent_NotFound(t *testing.T) {
 	_, err := client.GetGeneralFileContent(context.Background(), "nonexistent.http")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestCreateGeneralFile_Success(t *testing.T) {
-	runCreateStorageSuccessTest(t, generalStorageConfig(), createGeneralFile)
-}
-
-func TestCreateGeneralFile_Conflict(t *testing.T) {
-	runCreateStorageConflictTest(t, generalStorageConfig(), createGeneralFile)
-}
-
-func TestDeleteGeneralFile_Success(t *testing.T) {
-	runDeleteStorageSuccessTest(t, generalStorageConfig(), deleteGeneralFile)
-}
-
-func TestDeleteGeneralFile_NotFound(t *testing.T) {
-	cfg := generalStorageConfig()
-	cfg.itemName = "nonexistent.http"
-	runDeleteStorageNotFoundTest(t, cfg, deleteGeneralFile)
-}
-
-func TestUpdateGeneralFile_Success(t *testing.T) {
-	runUpdateStorageSuccessTest(t, generalStorageConfig(), updateGeneralFile)
-}
-
-func TestUpdateGeneralFile_NotFound(t *testing.T) {
-	cfg := generalStorageConfig()
-	cfg.itemName = "nonexistent.http"
-	runUpdateStorageNotFoundTest(t, cfg, updateGeneralFile)
 }

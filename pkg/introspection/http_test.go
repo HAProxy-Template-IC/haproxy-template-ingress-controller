@@ -108,18 +108,10 @@ func TestWriteError(t *testing.T) {
 	assert.Equal(t, "resource not found", response["error"])
 }
 
-func TestWriteText(t *testing.T) {
-	w := httptest.NewRecorder()
-	WriteText(w, "Hello, World!\n")
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))
-	assert.Equal(t, "Hello, World!\n", w.Body.String())
-}
-
 func TestRequireGET(t *testing.T) {
-	handler := requireGET(func(w http.ResponseWriter, r *http.Request) {
-		WriteText(w, "OK")
+	handler := requireGET(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("OK"))
 	})
 
 	tests := []struct {

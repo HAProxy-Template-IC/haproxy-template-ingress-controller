@@ -13,6 +13,13 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
+const (
+	opGetFacts                = "failed to get facts"
+	opPing                    = "ping failed"
+	opGetStructuredConfig     = "failed to get structured config"
+	opReplaceStructuredConfig = "failed to replace structured config"
+)
+
 // MiscOperations provides miscellaneous HAProxy Enterprise operations.
 type MiscOperations struct {
 	client *client.DataplaneClient
@@ -52,19 +59,11 @@ func (m *MiscOperations) GetFacts(ctx context.Context, refresh bool) (*Facts, er
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get facts: %w", err)
+		return nil, fmt.Errorf("%s: %w", opGetFacts, err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get facts failed with status %d", resp.StatusCode)
-	}
-
-	var result Facts
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode facts response: %w", err)
-	}
-	return &result, nil
+	return decodeResponse[Facts](resp, opGetFacts)
 }
 
 // ErrPingRequiresV32 is returned when Ping is called on v3.0 or v3.1.
@@ -84,14 +83,11 @@ func (m *MiscOperations) Ping(ctx context.Context) error {
 		// V31EE and V30EE don't have Ping endpoint
 	})
 	if err != nil {
-		return fmt.Errorf("ping failed: %w", err)
+		return fmt.Errorf("%s: %w", opPing, err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("ping failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, opPing)
 }
 
 // StructuredConfig represents the HAProxy configuration in structured format.
@@ -114,19 +110,11 @@ func (m *MiscOperations) GetStructuredConfig(ctx context.Context, txID string) (
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get structured config: %w", err)
+		return nil, fmt.Errorf("%s: %w", opGetStructuredConfig, err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get structured config failed with status %d", resp.StatusCode)
-	}
-
-	var result StructuredConfig
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode structured config response: %w", err)
-	}
-	return &result, nil
+	return decodeResponse[StructuredConfig](resp, opGetStructuredConfig)
 }
 
 // ReplaceStructuredConfig replaces the HAProxy configuration using structured format.
@@ -163,12 +151,9 @@ func (m *MiscOperations) ReplaceStructuredConfig(ctx context.Context, txID strin
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to replace structured config: %w", err)
+		return fmt.Errorf("%s: %w", opReplaceStructuredConfig, err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace structured config failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, opReplaceStructuredConfig)
 }

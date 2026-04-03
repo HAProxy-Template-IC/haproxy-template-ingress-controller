@@ -109,18 +109,6 @@ func WriteError(w http.ResponseWriter, code int, message string) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-// WriteText writes a plain text response.
-//
-// Useful for simple string responses or formatted text.
-//
-// Example:
-//
-//	WriteText(w, "OK\n")
-func WriteText(w http.ResponseWriter, text string) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte(text))
-}
-
 // requireGET wraps an HTTP handler to enforce GET method only.
 //
 // Returns 405 Method Not Allowed for non-GET requests.
