@@ -352,7 +352,7 @@ func TestDiscovery_DiscoverEndpoints_StoreListError(t *testing.T) {
 	endpoints, err := discovery.DiscoverEndpoints(mockStore, credentials)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to list pods")
+	assert.Contains(t, err.Error(), "listing pods")
 	assert.Nil(t, endpoints)
 }
 

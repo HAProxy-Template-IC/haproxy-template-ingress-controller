@@ -234,7 +234,7 @@ func (r *Runner) populateHAProxyPodsStore(storeInstance stores.Store, resources 
 
 		converted := indexer.ConvertResource(resource)
 		if err := storeInstance.Add(converted, keys); err != nil {
-			return fmt.Errorf("failed to add haproxy-pods fixture: %w", err)
+			return fmt.Errorf("adding haproxy-pods fixture: %w", err)
 		}
 	}
 
@@ -253,7 +253,7 @@ func (r *Runner) populateWatchedResourceStore(storeMap map[string]stores.Store, 
 		IgnoreFields: r.config.WatchedResourcesIgnoreFields,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create indexer for %s: %w", resourceType, err)
+		return fmt.Errorf("creating indexer for %s: %w", resourceType, err)
 	}
 
 	storeInstance := storeMap[resourceType]
@@ -283,12 +283,12 @@ func (r *Runner) populateWatchedResourceStore(storeMap map[string]stores.Store, 
 
 		keys, err := idx.ExtractKeys(resource)
 		if err != nil {
-			return fmt.Errorf("failed to extract index keys from fixture resource: %w", err)
+			return fmt.Errorf("extracting index keys from fixture resource: %w", err)
 		}
 
 		converted := indexer.ConvertResource(resource)
 		if err := storeInstance.Add(converted, keys); err != nil {
-			return fmt.Errorf("failed to add fixture resource to %s store: %w", resourceType, err)
+			return fmt.Errorf("adding fixture resource to %s store: %w", resourceType, err)
 		}
 	}
 

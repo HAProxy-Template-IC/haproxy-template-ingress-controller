@@ -43,7 +43,7 @@ func (b *BotManagementOperations) GetAllProfiles(ctx context.Context, txID strin
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bot management profiles: %w", err)
+		return nil, fmt.Errorf("getting bot management profiles: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -67,18 +67,18 @@ func (b *BotManagementOperations) GetProfile(ctx context.Context, txID, name str
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bot management profile '%s': %w", name, err)
+		return nil, fmt.Errorf("getting bot management profile '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[BotmgmtProfile](resp, fmt.Sprintf("failed to get bot management profile '%s'", name))
+	return decodeResponseOr404[BotmgmtProfile](resp, fmt.Sprintf("getting bot management profile '%s'", name))
 }
 
 // CreateProfile creates a new bot management profile.
 func (b *BotManagementOperations) CreateProfile(ctx context.Context, txID string, profile *BotmgmtProfile) error {
 	jsonData, err := json.Marshal(profile)
 	if err != nil {
-		return fmt.Errorf("failed to marshal bot management profile: %w", err)
+		return fmt.Errorf("marshalling bot management profile: %w", err)
 	}
 
 	resp, err := b.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -108,7 +108,7 @@ func (b *BotManagementOperations) CreateProfile(ctx context.Context, txID string
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create bot management profile: %w", err)
+		return fmt.Errorf("creating bot management profile: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -132,11 +132,11 @@ func (b *BotManagementOperations) DeleteProfile(ctx context.Context, txID, name 
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete bot management profile '%s': %w", name, err)
+		return fmt.Errorf("deleting bot management profile '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete bot management profile '%s'", name))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting bot management profile '%s'", name))
 }
 
 // Captcha represents a CAPTCHA configuration.
@@ -159,7 +159,7 @@ func (b *BotManagementOperations) GetAllCaptchas(ctx context.Context, txID strin
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get CAPTCHAs: %w", err)
+		return nil, fmt.Errorf("getting CAPTCHAs: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -183,18 +183,18 @@ func (b *BotManagementOperations) GetCaptcha(ctx context.Context, txID, name str
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get CAPTCHA '%s': %w", name, err)
+		return nil, fmt.Errorf("getting CAPTCHA '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[Captcha](resp, fmt.Sprintf("failed to get CAPTCHA '%s'", name))
+	return decodeResponseOr404[Captcha](resp, fmt.Sprintf("getting CAPTCHA '%s'", name))
 }
 
 // CreateCaptcha creates a new CAPTCHA configuration.
 func (b *BotManagementOperations) CreateCaptcha(ctx context.Context, txID string, captcha *Captcha) error {
 	jsonData, err := json.Marshal(captcha)
 	if err != nil {
-		return fmt.Errorf("failed to marshal CAPTCHA: %w", err)
+		return fmt.Errorf("marshalling CAPTCHA: %w", err)
 	}
 
 	resp, err := b.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -224,7 +224,7 @@ func (b *BotManagementOperations) CreateCaptcha(ctx context.Context, txID string
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create CAPTCHA: %w", err)
+		return fmt.Errorf("creating CAPTCHA: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -248,9 +248,9 @@ func (b *BotManagementOperations) DeleteCaptcha(ctx context.Context, txID, name 
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete CAPTCHA '%s': %w", name, err)
+		return fmt.Errorf("deleting CAPTCHA '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete CAPTCHA '%s'", name))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting CAPTCHA '%s'", name))
 }

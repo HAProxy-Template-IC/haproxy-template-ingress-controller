@@ -45,7 +45,7 @@ func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanu
 		HAProxyCfgs(cleanup.Namespace).
 		List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to list runtime configs: %w", err)
+		return fmt.Errorf("listing runtime configs: %w", err)
 	}
 
 	for i := range runtimeConfigs.Items {
@@ -127,7 +127,7 @@ func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 		if apierrors.IsNotFound(err) {
 			return nil // Resource deleted
 		}
-		return fmt.Errorf("failed to get runtime config: %w", err)
+		return fmt.Errorf("getting runtime config: %w", err)
 	}
 
 	// Find ALL stale pods in one pass
@@ -151,7 +151,7 @@ func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 		HAProxyCfgs(cfg.Namespace).
 		UpdateStatus(ctx, cfg, metav1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
+		return fmt.Errorf("updating status: %w", err)
 	}
 
 	return nil
@@ -190,7 +190,7 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 			if apierrors.IsNotFound(err) {
 				return nil // Resource deleted, nothing to clean up
 			}
-			return fmt.Errorf("failed to get runtime config: %w", err)
+			return fmt.Errorf("getting runtime config: %w", err)
 		}
 
 		// Remove pod from deployedToPods list
@@ -208,7 +208,7 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 			HAProxyCfgs(current.Namespace).
 			UpdateStatus(ctx, current, metav1.UpdateOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to update runtime config status: %w", err)
+			return fmt.Errorf("updating runtime config status: %w", err)
 		}
 
 		return nil

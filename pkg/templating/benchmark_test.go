@@ -83,7 +83,7 @@ func benchmarkRenderSimple(b *testing.B) {
 
 	engine, err := NewScriggo(templates, []string{"simple"}, nil, nil, nil)
 	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
+		b.Fatalf("creating engine: %v", err)
 	}
 
 	ctx := map[string]any{
@@ -114,7 +114,7 @@ server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}
 
 	engine, err := NewScriggo(templates, []string{"medium"}, nil, nil, nil)
 	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
+		b.Fatalf("creating engine: %v", err)
 	}
 
 	ctx := map[string]any{
@@ -186,7 +186,7 @@ backend {{ .backend.name }}
 
 	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
 	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
+		b.Fatalf("creating engine: %v", err)
 	}
 
 	ctx := map[string]any{
@@ -281,7 +281,7 @@ func benchmarkFilterSortBy(b *testing.B) {
 
 	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
 	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
+		b.Fatalf("creating engine: %v", err)
 	}
 
 	ctx := map[string]any{
@@ -320,7 +320,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 
 	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
 	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
+		b.Fatalf("creating engine: %v", err)
 	}
 
 	// Generate test data
@@ -362,7 +362,7 @@ func benchmarkCompileSmall(b *testing.B) {
 	for b.Loop() {
 		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
-			b.Fatalf("failed to create engine: %v", err)
+			b.Fatalf("creating engine: %v", err)
 		}
 	}
 	_ = engine
@@ -390,7 +390,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 	for b.Loop() {
 		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
-			b.Fatalf("failed to create engine: %v", err)
+			b.Fatalf("creating engine: %v", err)
 		}
 	}
 	_ = engine
@@ -441,7 +441,7 @@ frontend {{ .frontend.name }}
 	for b.Loop() {
 		engine, err = New(EngineTypeScriggo, templates, nil, nil, nil)
 		if err != nil {
-			b.Fatalf("failed to create engine: %v", err)
+			b.Fatalf("creating engine: %v", err)
 		}
 	}
 	_ = engine

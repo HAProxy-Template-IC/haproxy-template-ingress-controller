@@ -167,12 +167,12 @@ func loadSpec(path string) (*OpenAPISpec, error) {
 	cleanPath := filepath.Clean(path)
 	data, err := os.ReadFile(cleanPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read spec: %w", err)
+		return nil, fmt.Errorf("reading spec: %w", err)
 	}
 
 	var spec OpenAPISpec
 	if err := json.Unmarshal(data, &spec); err != nil {
-		return nil, fmt.Errorf("failed to parse spec: %w", err)
+		return nil, fmt.Errorf("parsing spec: %w", err)
 	}
 
 	return &spec, nil
@@ -184,7 +184,7 @@ func writeFormattedFile(path string, data []byte) error {
 	if err != nil {
 		// Write unformatted for debugging
 		_ = os.WriteFile(path+".unformatted", data, 0o600)
-		return fmt.Errorf("failed to format %s: %w (unformatted written to %s.unformatted)", path, err, path)
+		return fmt.Errorf("formatting %s: %w (unformatted written to %s.unformatted)", path, err, path)
 	}
 
 	return os.WriteFile(path, formatted, 0o600)

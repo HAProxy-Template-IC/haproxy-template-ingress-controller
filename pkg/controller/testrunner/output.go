@@ -229,7 +229,7 @@ func formatJSON(results *TestResults) (string, error) {
 
 	data, err := json.MarshalIndent(jr, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal JSON: %w", err)
+		return "", fmt.Errorf("marshalling JSON: %w", err)
 	}
 
 	return string(data), nil
@@ -283,7 +283,7 @@ func formatYAML(results *TestResults) (string, error) {
 
 	data, err := yaml.Marshal(yr)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal YAML: %w", err)
+		return "", fmt.Errorf("marshalling YAML: %w", err)
 	}
 
 	return string(data), nil

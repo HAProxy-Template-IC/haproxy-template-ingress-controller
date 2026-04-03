@@ -155,7 +155,7 @@ func New(
 	}
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create template engine: %w", err)
+		return nil, fmt.Errorf("creating template engine: %w", err)
 	}
 
 	// Note: Subscription happens in Start() using SubscribeTypesLeaderOnly() because

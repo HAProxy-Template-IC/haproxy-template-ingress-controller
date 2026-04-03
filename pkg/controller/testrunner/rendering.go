@@ -74,7 +74,7 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 
 	for _, dir := range dirsToCreate {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
-			return nil, fmt.Errorf("failed to create test directory %s: %w", dir, err)
+			return nil, fmt.Errorf("creating test directory %s: %w", dir, err)
 		}
 	}
 
@@ -117,13 +117,13 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 		haproxyConfig, err = engine.Render(context.Background(), names.MainTemplateName, renderCtx)
 	}
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to render %s: %w", names.MainTemplateName, err)
+		return "", nil, nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
 	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to render auxiliary files: %w", err)
+		return "", nil, nil, fmt.Errorf("rendering auxiliary files: %w", err)
 	}
 
 	// Extract dynamic files registered during template rendering
@@ -187,7 +187,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 	for name := range r.config.Maps {
 		rendered, err := engine.Render(context.Background(), name, renderCtx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render map file %s: %w", name, err)
+			return nil, fmt.Errorf("rendering map file %s: %w", name, err)
 		}
 
 		auxFiles.MapFiles = append(auxFiles.MapFiles, auxiliaryfiles.MapFile{
@@ -200,7 +200,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 	for name := range r.config.Files {
 		rendered, err := engine.Render(context.Background(), name, renderCtx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render general file %s: %w", name, err)
+			return nil, fmt.Errorf("rendering general file %s: %w", name, err)
 		}
 
 		auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
@@ -214,7 +214,7 @@ func (r *Runner) renderAuxiliaryFiles(engine templating.Engine, renderCtx map[st
 	for name := range r.config.SSLCertificates {
 		rendered, err := engine.Render(context.Background(), name, renderCtx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render SSL certificate %s: %w", name, err)
+			return nil, fmt.Errorf("rendering SSL certificate %s: %w", name, err)
 		}
 
 		auxFiles.SSLCertificates = append(auxFiles.SSLCertificates, auxiliaryfiles.SSLCertificate{

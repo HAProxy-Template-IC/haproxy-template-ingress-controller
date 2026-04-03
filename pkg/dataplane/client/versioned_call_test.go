@@ -149,7 +149,7 @@ func TestExecuteWithVersion_GetVersionFails(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get version")
+	assert.Contains(t, err.Error(), "getting version")
 }
 
 func TestExecuteWithVersionCustom(t *testing.T) {

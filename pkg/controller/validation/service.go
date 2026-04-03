@@ -269,7 +269,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	if err != nil {
 		return &ValidationResult{
 			Valid:      false,
-			Error:      fmt.Errorf("failed to create temp directory: %w", err),
+			Error:      fmt.Errorf("creating temp directory: %w", err),
 			Phase:      "setup",
 			DurationMs: time.Since(startTime).Milliseconds(),
 		}

@@ -60,7 +60,7 @@ func setupResourceWatchers(
 	// Create ResourceWatcherComponent
 	resourceWatcher, err := resourcewatcher.New(cfg, k8sClient, bus, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create resource watcher: %w", err)
+		return nil, fmt.Errorf("creating resource watcher: %w", err)
 	}
 
 	// Create IndexSynchronizationTracker
@@ -118,7 +118,7 @@ func setupConfigWatchers(
 		},
 	}, k8sClient)
 	if err != nil {
-		return fmt.Errorf("failed to create HAProxyTemplateConfig watcher: %w", err)
+		return fmt.Errorf("creating HAProxyTemplateConfig watcher: %w", err)
 	}
 
 	secretWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
@@ -143,7 +143,7 @@ func setupConfigWatchers(
 		},
 	}, k8sClient)
 	if err != nil {
-		return fmt.Errorf("failed to create Secret watcher: %w", err)
+		return fmt.Errorf("creating Secret watcher: %w", err)
 	}
 
 	// Start watchers (tracked by errgroup for graceful shutdown)
@@ -206,7 +206,7 @@ func setupCurrentConfigStore(
 	// Create CurrentConfigStore to cache parsed HAProxy config
 	store, err := currentconfigstore.New(logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create current config store: %w", err)
+		return nil, fmt.Errorf("creating current config store: %w", err)
 	}
 
 	// Sync fetch existing HAProxyCfg (if any)
@@ -215,7 +215,7 @@ func setupCurrentConfigStore(
 	haproxyCfgResource, err := k8sClient.GetResource(iterCtx, haproxyCfgGVR, haproxyCfgName)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("failed to fetch HAProxyCfg: %w", err)
+			return nil, fmt.Errorf("fetching HAProxyCfg: %w", err)
 		}
 		logger.Info("No existing HAProxyCfg found (first deployment)")
 	} else {
@@ -242,7 +242,7 @@ func setupCurrentConfigStore(
 		},
 	}, k8sClient)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HAProxyCfg watcher: %w", err)
+		return nil, fmt.Errorf("creating HAProxyCfg watcher: %w", err)
 	}
 
 	// Start HAProxyCfg watcher (tracked by errgroup for graceful shutdown)

@@ -52,7 +52,7 @@ func (c *DataplaneClient) GetCRTListEntries(ctx context.Context, crtListName str
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get crt-list entries for '%s': %w", crtListName, err)
+		return nil, fmt.Errorf("getting crt-list entries for '%s': %w", crtListName, err)
 	}
 	defer resp.Body.Close()
 
@@ -70,7 +70,7 @@ func (c *DataplaneClient) GetCRTListEntries(ctx context.Context, crtListName str
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiEntries); err != nil {
-		return nil, fmt.Errorf("failed to decode crt-list entries response: %w", err)
+		return nil, fmt.Errorf("decoding crt-list entries response: %w", err)
 	}
 
 	entries := make([]CRTListEntry, 0, len(apiEntries))
@@ -106,7 +106,7 @@ func (c *DataplaneClient) AddCRTListEntry(ctx context.Context, crtListName strin
 
 	jsonData, err := json.Marshal(entry)
 	if err != nil {
-		return fmt.Errorf("failed to marshal crt-list entry: %w", err)
+		return fmt.Errorf("marshalling crt-list entry: %w", err)
 	}
 
 	body := bytes.NewReader(jsonData)
@@ -132,7 +132,7 @@ func (c *DataplaneClient) AddCRTListEntry(ctx context.Context, crtListName strin
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to add crt-list entry to '%s': %w", crtListName, err)
+		return fmt.Errorf("adding crt-list entry to '%s': %w", crtListName, err)
 	}
 	defer resp.Body.Close()
 
@@ -179,7 +179,7 @@ func (c *DataplaneClient) DeleteCRTListEntry(ctx context.Context, crtListName, c
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete crt-list entry from '%s' (cert: %s, line: %d): %w", crtListName, certificate, lineNumber, err)
+		return fmt.Errorf("deleting crt-list entry from '%s' (cert: %s, line: %d): %w", crtListName, certificate, lineNumber, err)
 	}
 	defer resp.Body.Close()
 

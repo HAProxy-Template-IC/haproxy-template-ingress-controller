@@ -86,7 +86,7 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 		c.Logger().Error("Failed to extract Secret data field",
 			"error", err,
 			"version", version)
-		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("failed to extract Secret data: %v", err)))
+		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("extracting Secret data: %v", err)))
 		return
 	}
 	if !found {

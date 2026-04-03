@@ -79,7 +79,7 @@ func createReconciliationComponents(
 	// Detect local HAProxy version and compute capabilities
 	localVersion, err := dataplane.DetectLocalVersion()
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect local HAProxy version: %w", err)
+		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}
 	capabilities := dataplane.CapabilitiesFromVersion(localVersion)
 
@@ -109,7 +109,7 @@ func createReconciliationComponents(
 	}
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create template engine for reconciliation: %w", err)
+		return nil, fmt.Errorf("creating template engine for reconciliation: %w", err)
 	}
 
 	// Create RenderService with full dependencies for production rendering
@@ -182,7 +182,7 @@ func createReconciliationComponents(
 	// without knowing its local version for compatibility checking)
 	discoveryComponent, err := discovery.New(bus, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create discovery component: %w", err)
+		return nil, fmt.Errorf("creating discovery component: %w", err)
 	}
 	podStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
 	if podStore == nil {
@@ -194,7 +194,7 @@ func createReconciliationComponents(
 	// Publishes runtime config resources after successful validation
 	crdClientset, err := versioned.NewForConfig(k8sClient.RestConfig())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create CRD clientset: %w", err)
+		return nil, fmt.Errorf("creating CRD clientset: %w", err)
 	}
 
 	// Create publisher with informer-backed listers for cached reads

@@ -194,5 +194,5 @@ func TestGetSSLCertificateContent_InvalidJSON(t *testing.T) {
 
 	_, err := client.GetSSLCertificateContent(context.Background(), "invalid.cert.pem")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode SSL certificate response")
+	assert.Contains(t, err.Error(), "decoding SSL certificate response")
 }

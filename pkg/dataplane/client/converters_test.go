@@ -117,7 +117,7 @@ func TestMarshalForVersion_Unmarshalable(t *testing.T) {
 
 	_, err := MarshalForVersion(ch)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to marshal model")
+	assert.Contains(t, err.Error(), "marshalling model")
 }
 
 func TestConvertToVersioned_V32(t *testing.T) {
@@ -200,19 +200,19 @@ func TestConvertToVersioned_InvalidJSON(t *testing.T) {
 			name:        "v3.2 invalid JSON",
 			jsonData:    []byte(`{invalid}`),
 			minor:       2,
-			errContains: "failed to unmarshal for v3.2",
+			errContains: "unmarshalling for v3.2",
 		},
 		{
 			name:        "v3.1 invalid JSON",
 			jsonData:    []byte(`{invalid}`),
 			minor:       1,
-			errContains: "failed to unmarshal for v3.1",
+			errContains: "unmarshalling for v3.1",
 		},
 		{
 			name:        "v3.0 invalid JSON",
 			jsonData:    []byte(`{invalid}`),
 			minor:       0,
-			errContains: "failed to unmarshal for v3.0",
+			errContains: "unmarshalling for v3.0",
 		},
 	}
 

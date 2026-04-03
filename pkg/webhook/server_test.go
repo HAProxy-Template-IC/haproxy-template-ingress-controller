@@ -47,7 +47,7 @@ func generateTestCertificates() (certPEM, keyPEM []byte, err error) {
 	// Generate RSA key
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate private key: %w", err)
+		return nil, nil, fmt.Errorf("generating private key: %w", err)
 	}
 
 	// Create certificate template
@@ -68,7 +68,7 @@ func generateTestCertificates() (certPEM, keyPEM []byte, err error) {
 	// Create self-signed certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
+		return nil, nil, fmt.Errorf("creating certificate: %w", err)
 	}
 
 	// Encode certificate to PEM
@@ -536,7 +536,7 @@ func TestServer_HandleValidation_InvalidObject(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, responseReview.Response.Allowed)
-	assert.Contains(t, responseReview.Response.Result.Message, "failed to parse object")
+	assert.Contains(t, responseReview.Response.Result.Message, "parsing object")
 }
 
 func TestServer_HandleValidation_UpdateWithOldObject(t *testing.T) {
@@ -645,7 +645,7 @@ func TestServer_HandleValidation_InvalidOldObject(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, responseReview.Response.Allowed)
-	assert.Contains(t, responseReview.Response.Result.Message, "failed to parse old object")
+	assert.Contains(t, responseReview.Response.Result.Message, "parsing old object")
 }
 
 func TestServer_Start_InvalidCertificate(t *testing.T) {
@@ -660,7 +660,7 @@ func TestServer_Start_InvalidCertificate(t *testing.T) {
 
 	err := server.Start(ctx)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to load TLS certificate")
+	assert.Contains(t, err.Error(), "loading TLS certificate")
 }
 
 func TestServer_Start_ContextCancellation(t *testing.T) {

@@ -410,7 +410,7 @@ func (c *Component) deployToSingleEndpoint(
 	// Create client for this endpoint
 	client, err := dataplane.NewClient(ctx, endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client: %w", err)
+		return nil, fmt.Errorf("creating client: %w", err)
 	}
 	defer client.Close()
 

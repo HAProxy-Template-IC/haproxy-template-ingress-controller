@@ -113,7 +113,7 @@ func TestMiscOperations_GetFacts_InvalidJSON(t *testing.T) {
 	_, err := misc.GetFacts(context.Background(), false)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestMiscOperations_GetFacts_CommunityEdition(t *testing.T) {
@@ -271,7 +271,7 @@ func TestMiscOperations_GetStructuredConfig_InvalidJSON(t *testing.T) {
 	_, err := misc.GetStructuredConfig(context.Background(), "")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestMiscOperations_GetStructuredConfig_CommunityEdition(t *testing.T) {

@@ -34,7 +34,7 @@ type Store struct {
 func New(logger *slog.Logger) (*Store, error) {
 	p, err := parser.New()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create parser: %w", err)
+		return nil, fmt.Errorf("creating parser: %w", err)
 	}
 	return &Store{
 		parser: p,

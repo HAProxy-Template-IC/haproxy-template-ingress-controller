@@ -47,12 +47,12 @@ func BenchmarkCompare_NoChanges(b *testing.B) {
 
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(config)
 	if err != nil {
-		b.Fatalf("failed to parse config: %v", err)
+		b.Fatalf("parsing config: %v", err)
 	}
 
 	// Use same config for current and desired
@@ -74,17 +74,17 @@ func BenchmarkCompare_NoChanges(b *testing.B) {
 func BenchmarkCompare_OnlyAdditions(b *testing.B) {
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateSmallConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateMediumConfig())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	comp := New()
@@ -103,17 +103,17 @@ func BenchmarkCompare_OnlyAdditions(b *testing.B) {
 func BenchmarkCompare_OnlyDeletions(b *testing.B) {
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateMediumConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateSmallConfig())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	comp := New()
@@ -132,17 +132,17 @@ func BenchmarkCompare_OnlyDeletions(b *testing.B) {
 func BenchmarkCompare_MixedChanges(b *testing.B) {
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateMediumConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateMediumConfigWithChanges())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	comp := New()
@@ -186,17 +186,17 @@ func benchmarkCompareSmall(b *testing.B) {
 	b.Helper()
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateSmallConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateSmallConfigModified())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	comp := New()
@@ -216,17 +216,17 @@ func benchmarkCompareMedium(b *testing.B) {
 	b.Helper()
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateMediumConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateMediumConfigWithChanges())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	comp := New()
@@ -246,17 +246,17 @@ func benchmarkCompareLarge(b *testing.B) {
 	b.Helper()
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateLargeConfig())
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateLargeConfigWithChanges())
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	comp := New()
@@ -276,17 +276,17 @@ func benchmarkCompareBackendScale(b *testing.B, backendCount int) {
 	b.Helper()
 	p, err := parser.New()
 	if err != nil {
-		b.Fatalf("failed to create parser: %v", err)
+		b.Fatalf("creating parser: %v", err)
 	}
 
 	current, err := p.ParseFromString(generateScaledConfig(backendCount, 3))
 	if err != nil {
-		b.Fatalf("failed to parse current config: %v", err)
+		b.Fatalf("parsing current config: %v", err)
 	}
 
 	desired, err := p.ParseFromString(generateScaledConfigWithChanges(backendCount, 3))
 	if err != nil {
-		b.Fatalf("failed to parse desired config: %v", err)
+		b.Fatalf("parsing desired config: %v", err)
 	}
 
 	comp := New()

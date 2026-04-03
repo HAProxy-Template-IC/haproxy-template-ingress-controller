@@ -39,7 +39,7 @@ func (g *GitOperations) GetSettings(ctx context.Context) (*GitSettings, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get Git settings: %w", err)
+		return nil, fmt.Errorf("getting Git settings: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -50,7 +50,7 @@ func (g *GitOperations) GetSettings(ctx context.Context) (*GitSettings, error) {
 func (g *GitOperations) ReplaceSettings(ctx context.Context, settings *GitSettings) error {
 	jsonData, err := json.Marshal(settings)
 	if err != nil {
-		return fmt.Errorf("failed to marshal Git settings: %w", err)
+		return fmt.Errorf("marshalling Git settings: %w", err)
 	}
 
 	resp, err := g.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -80,7 +80,7 @@ func (g *GitOperations) ReplaceSettings(ctx context.Context, settings *GitSettin
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to replace Git settings: %w", err)
+		return fmt.Errorf("replacing Git settings: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -104,7 +104,7 @@ func (g *GitOperations) GetAllActions(ctx context.Context) ([]GitAction, error) 
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get Git actions: %w", err)
+		return nil, fmt.Errorf("getting Git actions: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -125,18 +125,18 @@ func (g *GitOperations) GetAction(ctx context.Context, id string) (*GitAction, e
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get Git action '%s': %w", id, err)
+		return nil, fmt.Errorf("getting Git action '%s': %w", id, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[GitAction](resp, fmt.Sprintf("failed to get Git action '%s'", id))
+	return decodeResponseOr404[GitAction](resp, fmt.Sprintf("getting Git action '%s'", id))
 }
 
 // ExecuteAction executes a Git action.
 func (g *GitOperations) ExecuteAction(ctx context.Context, action *GitAction) (*GitAction, error) {
 	jsonData, err := json.Marshal(action)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal Git action: %w", err)
+		return nil, fmt.Errorf("marshalling Git action: %w", err)
 	}
 
 	resp, err := g.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -163,7 +163,7 @@ func (g *GitOperations) ExecuteAction(ctx context.Context, action *GitAction) (*
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute Git action: %w", err)
+		return nil, fmt.Errorf("executing Git action: %w", err)
 	}
 	defer resp.Body.Close()
 

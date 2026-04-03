@@ -18,7 +18,7 @@ type CompilationError struct {
 
 // Error implements the error interface.
 func (e *CompilationError) Error() string {
-	return fmt.Sprintf("failed to compile template '%s': %v", e.TemplateName, e.Cause)
+	return fmt.Sprintf("compiling template '%s': %v", e.TemplateName, e.Cause)
 }
 
 // Unwrap returns the underlying cause for error unwrapping.
@@ -39,7 +39,7 @@ type RenderError struct {
 
 // Error implements the error interface.
 func (e *RenderError) Error() string {
-	return fmt.Sprintf("failed to render template '%s': %v", e.TemplateName, e.Cause)
+	return fmt.Sprintf("rendering template '%s': %v", e.TemplateName, e.Cause)
 }
 
 // Unwrap returns the underlying cause for error unwrapping.

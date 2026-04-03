@@ -50,13 +50,13 @@ func ParseCRD(resource *unstructured.Unstructured) (*config.Config, *v1alpha1.HA
 	// Convert unstructured to typed CRD
 	crd := &v1alpha1.HAProxyTemplateConfig{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.Object, crd); err != nil {
-		return nil, nil, fmt.Errorf("failed to convert unstructured to HAProxyTemplateConfig: %w", err)
+		return nil, nil, fmt.Errorf("converting unstructured to HAProxyTemplateConfig: %w", err)
 	}
 
 	// Convert CRD Spec to config.Config
 	cfg, err := ConvertSpec(&crd.Spec)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to convert CRD spec to config: %w", err)
+		return nil, nil, fmt.Errorf("converting CRD spec to config: %w", err)
 	}
 
 	return cfg, crd, nil

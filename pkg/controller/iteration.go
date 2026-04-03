@@ -143,7 +143,7 @@ func runIteration(
 		var err error
 		dryrunValidator, err = createDryRunValidator(cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, logger)
 		if err != nil && !errors.Is(err, errNoWebhookRules) {
-			return fmt.Errorf("failed to create dry-run validator: %w", err)
+			return fmt.Errorf("creating dry-run validator: %w", err)
 		}
 		if errors.Is(err, errNoWebhookRules) {
 			logger.Debug("DryRunValidator not created: no webhook validation rules configured")

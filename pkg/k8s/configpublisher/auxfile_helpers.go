@@ -52,7 +52,7 @@ func (p *Publisher) mapFileHandle(ctx context.Context, namespace, name string) (
 				HAProxyMapFiles(namespace).
 				UpdateStatus(ctx, mapFile, metav1.UpdateOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to update map file status: %w", err)
+				return fmt.Errorf("updating map file status: %w", err)
 			}
 			return nil
 		},
@@ -76,7 +76,7 @@ func (p *Publisher) generalFileHandle(ctx context.Context, namespace, name strin
 				HAProxyGeneralFiles(namespace).
 				UpdateStatus(ctx, generalFile, metav1.UpdateOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to update general file status: %w", err)
+				return fmt.Errorf("updating general file status: %w", err)
 			}
 			return nil
 		},
@@ -100,7 +100,7 @@ func (p *Publisher) crtListFileHandle(ctx context.Context, namespace, name strin
 				HAProxyCRTListFiles(namespace).
 				UpdateStatus(ctx, crtListFile, metav1.UpdateOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to update crt-list file status: %w", err)
+				return fmt.Errorf("updating crt-list file status: %w", err)
 			}
 			return nil
 		},
@@ -211,7 +211,7 @@ func updateAuxFileDeploymentStatus(
 			if apierrors.IsNotFound(err) {
 				return nil
 			}
-			return fmt.Errorf("failed to get %s: %w", fileType, err)
+			return fmt.Errorf("getting %s: %w", fileType, err)
 		}
 
 		originalStatus := copyPodStatuses(h.pods)

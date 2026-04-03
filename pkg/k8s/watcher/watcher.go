@@ -93,7 +93,7 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 		IgnoreFields: cfg.IgnoreFields,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create indexer: %w", err)
+		return nil, fmt.Errorf("creating indexer: %w", err)
 	}
 
 	// Create field selector matcher if configured
@@ -101,7 +101,7 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 	if cfg.FieldSelector != "" {
 		fieldSelectorMatcher, err = indexer.NewFieldSelectorMatcher(cfg.FieldSelector)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create field selector matcher: %w", err)
+			return nil, fmt.Errorf("creating field selector matcher: %w", err)
 		}
 	}
 
@@ -127,7 +127,7 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 			Logger:    logger,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create cached store: %w", err)
+			return nil, fmt.Errorf("creating cached store: %w", err)
 		}
 		resourceStore = cachedStore
 
@@ -155,7 +155,7 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 
 	// Create informer
 	if err := w.createInformer(); err != nil {
-		return nil, fmt.Errorf("failed to create informer: %w", err)
+		return nil, fmt.Errorf("creating informer: %w", err)
 	}
 
 	return w, nil
@@ -201,7 +201,7 @@ func (w *Watcher) createInformer() error {
 		DeleteFunc: w.handleDelete,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to add event handler: %w", err)
+		return fmt.Errorf("adding event handler: %w", err)
 	}
 
 	return nil
@@ -229,7 +229,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 	// Wait for cache sync
 	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
-		return fmt.Errorf("failed to sync cache")
+		return fmt.Errorf("syncing cache")
 	}
 
 	// Mark sync as complete and disable sync mode
@@ -285,7 +285,7 @@ func (w *Watcher) Store() types.Store {
 func (w *Watcher) WaitForSync(ctx context.Context) (int, error) {
 	// Wait for informer sync
 	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
-		return 0, fmt.Errorf("failed to sync cache")
+		return 0, fmt.Errorf("syncing cache")
 	}
 
 	// Mark sync as complete (idempotent - safe if Start() already did this)

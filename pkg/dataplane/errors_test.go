@@ -63,7 +63,7 @@ func TestConnectionError(t *testing.T) {
 	}
 
 	errMsg := connErr.Error()
-	assert.Contains(t, errMsg, "failed to connect to dataplane API")
+	assert.Contains(t, errMsg, "connecting to dataplane API")
 	assert.Contains(t, errMsg, "http://haproxy:5555")
 	assert.Contains(t, errMsg, "connection refused")
 
@@ -85,7 +85,7 @@ func TestParseError(t *testing.T) {
 				Line:          42,
 				Cause:         errors.New("unexpected token"),
 			},
-			contains: []string{"failed to parse current configuration", "near line 42", "unexpected token"},
+			contains: []string{"parsing current configuration", "near line 42", "unexpected token"},
 		},
 		{
 			name: "without line number",
@@ -93,7 +93,7 @@ func TestParseError(t *testing.T) {
 				ConfigType: "desired",
 				Cause:      errors.New("invalid directive"),
 			},
-			contains: []string{"failed to parse desired configuration", "invalid directive"},
+			contains: []string{"parsing desired configuration", "invalid directive"},
 		},
 	}
 
@@ -133,7 +133,7 @@ func TestOperationError(t *testing.T) {
 	}
 
 	errMsg := opErr.Error()
-	assert.Contains(t, errMsg, "failed to delete backend 'api-backend'")
+	assert.Contains(t, errMsg, "delete backend 'api-backend'")
 	assert.Contains(t, errMsg, "backend not found")
 
 	unwrapped := opErr.Unwrap()
@@ -359,7 +359,7 @@ func TestSimplifyRenderingError(t *testing.T) {
 		},
 		{
 			name: "fail function error",
-			err:  errors.New("failed to render haproxy.cfg: failed to render template 'haproxy.cfg': unable to execute template: invalid call to function 'fail': Service 'api-backend' not found in namespace 'default'"),
+			err:  errors.New("rendering haproxy.cfg: rendering template 'haproxy.cfg': unable to execute template: invalid call to function 'fail': Service 'api-backend' not found in namespace 'default'"),
 			want: "Service 'api-backend' not found in namespace 'default'",
 		},
 		{

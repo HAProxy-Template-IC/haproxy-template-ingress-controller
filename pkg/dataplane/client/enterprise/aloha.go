@@ -39,7 +39,7 @@ func (a *ALOHAOperations) GetEndpoints(ctx context.Context) (*ALOHAEndpoints, er
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ALOHA endpoints: %w", err)
+		return nil, fmt.Errorf("getting ALOHA endpoints: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -63,7 +63,7 @@ func (a *ALOHAOperations) GetAllActions(ctx context.Context) ([]ALOHAAction, err
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ALOHA actions: %w", err)
+		return nil, fmt.Errorf("getting ALOHA actions: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -84,18 +84,18 @@ func (a *ALOHAOperations) GetAction(ctx context.Context, id string) (*ALOHAActio
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ALOHA action '%s': %w", id, err)
+		return nil, fmt.Errorf("getting ALOHA action '%s': %w", id, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[ALOHAAction](resp, fmt.Sprintf("failed to get ALOHA action '%s'", id))
+	return decodeResponseOr404[ALOHAAction](resp, fmt.Sprintf("getting ALOHA action '%s'", id))
 }
 
 // ExecuteAction executes an ALOHA action.
 func (a *ALOHAOperations) ExecuteAction(ctx context.Context, action *ALOHAAction) (*ALOHAAction, error) {
 	jsonData, err := json.Marshal(action)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal ALOHA action: %w", err)
+		return nil, fmt.Errorf("marshalling ALOHA action: %w", err)
 	}
 
 	resp, err := a.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -122,7 +122,7 @@ func (a *ALOHAOperations) ExecuteAction(ctx context.Context, action *ALOHAAction
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute ALOHA action: %w", err)
+		return nil, fmt.Errorf("executing ALOHA action: %w", err)
 	}
 	defer resp.Body.Close()
 

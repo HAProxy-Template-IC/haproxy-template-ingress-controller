@@ -32,10 +32,10 @@ type EETestCase struct {
 func runParseTest(tc EETestCase) func(t *testing.T) {
 	return func(t *testing.T) {
 		p, err := enterprise.NewParser()
-		require.NoError(t, err, "failed to create parser")
+		require.NoError(t, err, "creating parser")
 
 		conf, err := p.ParseFromString(tc.Config)
-		require.NoError(t, err, "failed to parse config")
+		require.NoError(t, err, "parsing config")
 
 		tc.ValidateFunc(t, conf)
 	}

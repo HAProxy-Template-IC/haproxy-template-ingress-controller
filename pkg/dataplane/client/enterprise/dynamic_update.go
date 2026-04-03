@@ -39,7 +39,7 @@ func (d *DynamicUpdateOperations) GetSection(ctx context.Context, txID string) e
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to get dynamic update section: %w", err)
+		return fmt.Errorf("getting dynamic update section: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -69,7 +69,7 @@ func (d *DynamicUpdateOperations) CreateSection(ctx context.Context, txID string
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create dynamic update section: %w", err)
+		return fmt.Errorf("creating dynamic update section: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -93,7 +93,7 @@ func (d *DynamicUpdateOperations) DeleteSection(ctx context.Context, txID string
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete dynamic update section: %w", err)
+		return fmt.Errorf("deleting dynamic update section: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -120,7 +120,7 @@ func (d *DynamicUpdateOperations) GetAllRules(ctx context.Context, txID string) 
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dynamic update rules: %w", err)
+		return nil, fmt.Errorf("getting dynamic update rules: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -135,7 +135,7 @@ func (d *DynamicUpdateOperations) GetAllRules(ctx context.Context, txID string) 
 
 	var result []DynamicUpdateRule
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode dynamic update rules response: %w", err)
+		return nil, fmt.Errorf("decoding dynamic update rules response: %w", err)
 	}
 	return result, nil
 }
@@ -157,18 +157,18 @@ func (d *DynamicUpdateOperations) GetRule(ctx context.Context, txID string, inde
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dynamic update rule at index %d: %w", index, err)
+		return nil, fmt.Errorf("getting dynamic update rule at index %d: %w", index, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponseOr404[DynamicUpdateRule](resp, fmt.Sprintf("failed to get dynamic update rule at index %d", index))
+	return decodeResponseOr404[DynamicUpdateRule](resp, fmt.Sprintf("getting dynamic update rule at index %d", index))
 }
 
 // CreateRule creates a new dynamic update rule at the specified index.
 func (d *DynamicUpdateOperations) CreateRule(ctx context.Context, txID string, index int, rule *DynamicUpdateRule) error {
 	jsonData, err := json.Marshal(rule)
 	if err != nil {
-		return fmt.Errorf("failed to marshal dynamic update rule: %w", err)
+		return fmt.Errorf("marshalling dynamic update rule: %w", err)
 	}
 
 	resp, err := d.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -198,7 +198,7 @@ func (d *DynamicUpdateOperations) CreateRule(ctx context.Context, txID string, i
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create dynamic update rule: %w", err)
+		return fmt.Errorf("creating dynamic update rule: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -222,9 +222,9 @@ func (d *DynamicUpdateOperations) DeleteRule(ctx context.Context, txID string, i
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete dynamic update rule at index %d: %w", index, err)
+		return fmt.Errorf("deleting dynamic update rule at index %d: %w", index, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete dynamic update rule at index %d", index))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting dynamic update rule at index %d", index))
 }

@@ -52,7 +52,7 @@ func parseConfig(configYAML string) (*Config, error) {
 
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(configYAML), &cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
+		return nil, fmt.Errorf("unmarshalling YAML: %w", err)
 	}
 
 	return &cfg, nil

@@ -20,7 +20,7 @@ func TestFormatRenderError(t *testing.T) {
 	}{
 		{
 			name:         "unknown method error with location",
-			err:          errors.New("failed to render template 'host.map': unable to execute template: Unable to execute controlStructure at line 1: ForControlStructure(Line=1 Col=63): unable to evaluate 'call(['ingresses' {], map[])': invalid call to method 'get' of {'endpoints': [], 'ingresses': [], 'secrets': [], 'services': []}: unknown method 'get' for '{'endpoints': [], 'ingresses': [], 'secrets': [], 'services': []}'"),
+			err:          errors.New("rendering template 'host.map': unable to execute template: Unable to execute controlStructure at line 1: ForControlStructure(Line=1 Col=63): unable to evaluate 'call(['ingresses' {], map[])': invalid call to method 'get' of {'endpoints': [], 'ingresses': [], 'secrets': [], 'services': []}: unknown method 'get' for '{'endpoints': [], 'ingresses': [], 'secrets': [], 'services': []}'"),
 			templateName: "host.map",
 			templateContent: `{% for ingress in resources.ingresses.get() %}
 {{ ingress.name }}
@@ -389,7 +389,7 @@ func TestFormatRenderErrorShort(t *testing.T) {
 
 // Benchmark formatting to ensure it's fast enough for production use.
 func BenchmarkFormatRenderError(b *testing.B) {
-	err := errors.New("failed to render template 'host.map': unable to execute template: Unable to execute controlStructure at line 1: ForControlStructure(Line=1 Col=63): unable to evaluate 'call(['ingresses' {], map[])': invalid call to method 'get' of {'endpoints': [], 'ingresses': [], 'secrets': [], 'services': []}: unknown method 'get' for '{'endpoints': [], 'ingresses': [], 'secrets': [], 'services': []}'")
+	err := errors.New("rendering template 'host.map': unable to execute template: Unable to execute controlStructure at line 1: ForControlStructure(Line=1 Col=63): unable to evaluate 'call(['ingresses' {], map[])': invalid call to method 'get' of {'endpoints': [], 'ingresses': [], 'secrets': [], 'services': []}: unknown method 'get' for '{'endpoints': [], 'ingresses': [], 'secrets': [], 'services': []}'")
 	templateContent := `{% for ingress in resources.ingresses.get() %}
 {{ ingress.name }}
 {% endfor %}`
@@ -401,7 +401,7 @@ func BenchmarkFormatRenderError(b *testing.B) {
 }
 
 func BenchmarkFormatRenderErrorShort(b *testing.B) {
-	err := errors.New("failed to render template 'host.map': unable to execute at Line=1 Col=63: unknown method 'get'")
+	err := errors.New("rendering template 'host.map': unable to execute at Line=1 Col=63: unknown method 'get'")
 
 	b.ResetTimer()
 	for b.Loop() {

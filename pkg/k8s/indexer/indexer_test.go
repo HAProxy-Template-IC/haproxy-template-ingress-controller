@@ -55,7 +55,7 @@ func TestExtractKeys(t *testing.T) {
 		IndexBy: []string{"metadata.namespace", "metadata.name"},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	resource := map[string]any{
@@ -90,7 +90,7 @@ func TestFilterFields(t *testing.T) {
 		IgnoreFields: []string{"metadata.managedFields", "status"},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	resource := map[string]any{
@@ -135,7 +135,7 @@ func TestProcess(t *testing.T) {
 		IgnoreFields: []string{"metadata.managedFields"},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	resource := map[string]any{
@@ -191,7 +191,7 @@ func TestNumKeys(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			idx, err := New(Config{IndexBy: tt.indexBy})
 			if err != nil {
-				t.Fatalf("failed to create indexer: %v", err)
+				t.Fatalf("creating indexer: %v", err)
 			}
 
 			if idx.NumKeys() != tt.expected {
@@ -207,7 +207,7 @@ func TestIndexExpressions(t *testing.T) {
 
 	idx, err := New(Config{IndexBy: indexBy})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	exprs := idx.IndexExpressions()
@@ -313,7 +313,7 @@ func TestJSONPathEvaluator_Expression(t *testing.T) {
 
 	eval, err := NewJSONPathEvaluator(expr)
 	if err != nil {
-		t.Fatalf("failed to create evaluator: %v", err)
+		t.Fatalf("creating evaluator: %v", err)
 	}
 
 	if eval.Expression() != expr {
@@ -341,7 +341,7 @@ func TestReflectValueToString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			eval, err := NewJSONPathEvaluator("value")
 			if err != nil {
-				t.Fatalf("failed to create evaluator: %v", err)
+				t.Fatalf("creating evaluator: %v", err)
 			}
 
 			resource := map[string]any{"value": tt.value}
@@ -366,7 +366,7 @@ func TestProcessWithFilterError(t *testing.T) {
 		IgnoreFields: []string{"metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']"},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	// Test with a valid resource
@@ -417,7 +417,7 @@ func TestFilterFields_DeepNested(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	resource := map[string]any{
@@ -484,7 +484,7 @@ func TestFilterFields_NonExistentPath(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	resource := map[string]any{
@@ -518,7 +518,7 @@ func TestExtractKeys_MissingField(t *testing.T) {
 		IndexBy: []string{"metadata.namespace", "metadata.missingField"},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	resource := map[string]any{
@@ -542,7 +542,7 @@ func TestFilterFields_EmptyResource(t *testing.T) {
 		IgnoreFields: []string{"metadata.managedFields"},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	// Empty resource
@@ -559,7 +559,7 @@ func TestFilterFields_EmptyResource(t *testing.T) {
 func TestEvaluate_InvalidPath(t *testing.T) {
 	eval, err := NewJSONPathEvaluator("metadata.labels")
 	if err != nil {
-		t.Fatalf("failed to create evaluator: %v", err)
+		t.Fatalf("creating evaluator: %v", err)
 	}
 
 	// Resource without the path
@@ -582,7 +582,7 @@ func TestFilterWithUnstructured(t *testing.T) {
 		IgnoreFields: []string{"metadata.managedFields"},
 	})
 	if err != nil {
-		t.Fatalf("failed to create indexer: %v", err)
+		t.Fatalf("creating indexer: %v", err)
 	}
 
 	// Simulate unstructured.Unstructured.Object

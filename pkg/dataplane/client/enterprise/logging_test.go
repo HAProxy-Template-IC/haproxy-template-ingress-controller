@@ -86,7 +86,7 @@ func TestLoggingOperations_GetLogConfig_InvalidJSON(t *testing.T) {
 	_, err := logging.GetLogConfig(context.Background())
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestLoggingOperations_GetLogConfig_CommunityEdition(t *testing.T) {

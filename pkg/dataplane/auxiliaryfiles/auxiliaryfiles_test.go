@@ -477,7 +477,7 @@ func TestCompare_GetAllError(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to fetch current files")
+	assert.Contains(t, err.Error(), "fetching current files")
 }
 
 func TestCompare_GetContentError(t *testing.T) {
@@ -497,7 +497,7 @@ func TestCompare_GetContentError(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get content for file")
+	assert.Contains(t, err.Error(), "getting content for file")
 }
 
 func TestSync_NilDiff(t *testing.T) {
@@ -602,7 +602,7 @@ func TestSync_CreateError(t *testing.T) {
 
 	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create file")
+	assert.Contains(t, err.Error(), "creating file")
 }
 
 func TestSync_UpdateError(t *testing.T) {
@@ -620,7 +620,7 @@ func TestSync_UpdateError(t *testing.T) {
 
 	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to update file")
+	assert.Contains(t, err.Error(), "updating file")
 }
 
 func TestSync_DeleteError(t *testing.T) {
@@ -638,7 +638,7 @@ func TestSync_DeleteError(t *testing.T) {
 
 	_, err := Sync[GeneralFile](ctx, ops, diff)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to delete file")
+	assert.Contains(t, err.Error(), "deleting file")
 }
 
 func TestCalculateSHA256Fingerprint(t *testing.T) {

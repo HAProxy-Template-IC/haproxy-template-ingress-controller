@@ -89,7 +89,7 @@ server {{ item.(map[string]any)["name"] }} {{ item.(map[string]any)["address"] }
 	}
 	engine, err := NewScriggoWithDeclarations(templates, []string{"main"}, nil, nil, nil, declarations)
 	if err != nil {
-		b.Fatalf("failed to create engine: %v", err)
+		b.Fatalf("creating engine: %v", err)
 	}
 
 	// Split items into shardCount chunks, each passed as a separate shard.

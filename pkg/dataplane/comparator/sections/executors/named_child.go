@@ -327,7 +327,7 @@ func ServerUpdateWithReloadTracking(ctx context.Context, c *client.DataplaneClie
 	if version == 0 {
 		version, err = c.GetVersion(ctx)
 		if err != nil {
-			return false, fmt.Errorf("failed to get configuration version: %w", err)
+			return false, fmt.Errorf("getting configuration version: %w", err)
 		}
 	}
 	return serverUpdateWithVersion(ctx, c, backendName, childName, model, version)

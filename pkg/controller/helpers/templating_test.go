@@ -120,7 +120,7 @@ func TestNewEngineFromConfig_InvalidTemplate(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, engine)
 	// Error comes directly from templating.New (CompilationError) without double wrapping
-	assert.Contains(t, err.Error(), "failed to compile template")
+	assert.Contains(t, err.Error(), "compiling template")
 }
 
 func TestExtractTemplatesFromConfig_MainTemplate(t *testing.T) {

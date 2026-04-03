@@ -261,7 +261,7 @@ func TestDynamicUpdateOperations_GetAllRules_InvalidJSON(t *testing.T) {
 	_, err := du.GetAllRules(context.Background(), "tx-123")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestDynamicUpdateOperations_GetAllRules_CommunityEdition(t *testing.T) {

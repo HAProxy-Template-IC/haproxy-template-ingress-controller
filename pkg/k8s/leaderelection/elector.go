@@ -199,7 +199,7 @@ func (e *Elector) Start(ctx context.Context) error {
 	// Create leader elector
 	elector, err := leaderelection.NewLeaderElector(leConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create leader elector: %w", err)
+		return fmt.Errorf("creating leader elector: %w", err)
 	}
 
 	e.mu.Lock()

@@ -29,18 +29,18 @@ func (w *WAFOperations) GetAllBodyRulesBackend(ctx context.Context, txID, backen
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get WAF body rules for backend '%s': %w", backendName, err)
+		return nil, fmt.Errorf("getting WAF body rules for backend '%s': %w", backendName, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeSliceResponse[WafBodyRule](resp, fmt.Sprintf("failed to get WAF body rules for backend '%s'", backendName))
+	return decodeSliceResponse[WafBodyRule](resp, fmt.Sprintf("getting WAF body rules for backend '%s'", backendName))
 }
 
 // CreateBodyRuleBackend creates a new WAF body rule for a backend at the specified index.
 func (w *WAFOperations) CreateBodyRuleBackend(ctx context.Context, txID, backendName string, index int, rule *WafBodyRule) error {
 	jsonData, err := json.Marshal(rule)
 	if err != nil {
-		return fmt.Errorf("failed to marshal WAF body rule: %w", err)
+		return fmt.Errorf("marshalling WAF body rule: %w", err)
 	}
 
 	resp, err := w.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -70,18 +70,18 @@ func (w *WAFOperations) CreateBodyRuleBackend(ctx context.Context, txID, backend
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create WAF body rule for backend '%s': %w", backendName, err)
+		return fmt.Errorf("creating WAF body rule for backend '%s': %w", backendName, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to create WAF body rule for backend '%s'", backendName))
+	return checkResponseStatus(resp, fmt.Sprintf("creating WAF body rule for backend '%s'", backendName))
 }
 
 // ReplaceBodyRuleBackend replaces a WAF body rule for a backend at the specified index.
 func (w *WAFOperations) ReplaceBodyRuleBackend(ctx context.Context, txID, backendName string, index int, rule *WafBodyRule) error {
 	jsonData, err := json.Marshal(rule)
 	if err != nil {
-		return fmt.Errorf("failed to marshal WAF body rule: %w", err)
+		return fmt.Errorf("marshalling WAF body rule: %w", err)
 	}
 
 	resp, err := w.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -111,11 +111,11 @@ func (w *WAFOperations) ReplaceBodyRuleBackend(ctx context.Context, txID, backen
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to replace WAF body rule for backend '%s': %w", backendName, err)
+		return fmt.Errorf("replacing WAF body rule for backend '%s': %w", backendName, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to replace WAF body rule for backend '%s'", backendName))
+	return checkResponseStatus(resp, fmt.Sprintf("replacing WAF body rule for backend '%s'", backendName))
 }
 
 // DeleteBodyRuleBackend deletes a WAF body rule for a backend at the specified index.
@@ -135,11 +135,11 @@ func (w *WAFOperations) DeleteBodyRuleBackend(ctx context.Context, txID, backend
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete WAF body rule for backend '%s' at index %d: %w", backendName, index, err)
+		return fmt.Errorf("deleting WAF body rule for backend '%s' at index %d: %w", backendName, index, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete WAF body rule for backend '%s' at index %d", backendName, index))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting WAF body rule for backend '%s' at index %d", backendName, index))
 }
 
 // GetAllBodyRulesFrontend retrieves all WAF body rules for a frontend.
@@ -159,18 +159,18 @@ func (w *WAFOperations) GetAllBodyRulesFrontend(ctx context.Context, txID, front
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get WAF body rules for frontend '%s': %w", frontendName, err)
+		return nil, fmt.Errorf("getting WAF body rules for frontend '%s': %w", frontendName, err)
 	}
 	defer resp.Body.Close()
 
-	return decodeSliceResponse[WafBodyRule](resp, fmt.Sprintf("failed to get WAF body rules for frontend '%s'", frontendName))
+	return decodeSliceResponse[WafBodyRule](resp, fmt.Sprintf("getting WAF body rules for frontend '%s'", frontendName))
 }
 
 // CreateBodyRuleFrontend creates a new WAF body rule for a frontend at the specified index.
 func (w *WAFOperations) CreateBodyRuleFrontend(ctx context.Context, txID, frontendName string, index int, rule *WafBodyRule) error {
 	jsonData, err := json.Marshal(rule)
 	if err != nil {
-		return fmt.Errorf("failed to marshal WAF body rule: %w", err)
+		return fmt.Errorf("marshalling WAF body rule: %w", err)
 	}
 
 	resp, err := w.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -200,18 +200,18 @@ func (w *WAFOperations) CreateBodyRuleFrontend(ctx context.Context, txID, fronte
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create WAF body rule for frontend '%s': %w", frontendName, err)
+		return fmt.Errorf("creating WAF body rule for frontend '%s': %w", frontendName, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to create WAF body rule for frontend '%s'", frontendName))
+	return checkResponseStatus(resp, fmt.Sprintf("creating WAF body rule for frontend '%s'", frontendName))
 }
 
 // ReplaceBodyRuleFrontend replaces a WAF body rule for a frontend at the specified index.
 func (w *WAFOperations) ReplaceBodyRuleFrontend(ctx context.Context, txID, frontendName string, index int, rule *WafBodyRule) error {
 	jsonData, err := json.Marshal(rule)
 	if err != nil {
-		return fmt.Errorf("failed to marshal WAF body rule: %w", err)
+		return fmt.Errorf("marshalling WAF body rule: %w", err)
 	}
 
 	resp, err := w.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -241,11 +241,11 @@ func (w *WAFOperations) ReplaceBodyRuleFrontend(ctx context.Context, txID, front
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to replace WAF body rule for frontend '%s': %w", frontendName, err)
+		return fmt.Errorf("replacing WAF body rule for frontend '%s': %w", frontendName, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to replace WAF body rule for frontend '%s'", frontendName))
+	return checkResponseStatus(resp, fmt.Sprintf("replacing WAF body rule for frontend '%s'", frontendName))
 }
 
 // DeleteBodyRuleFrontend deletes a WAF body rule for a frontend at the specified index.
@@ -265,9 +265,9 @@ func (w *WAFOperations) DeleteBodyRuleFrontend(ctx context.Context, txID, fronte
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete WAF body rule for frontend '%s' at index %d: %w", frontendName, index, err)
+		return fmt.Errorf("deleting WAF body rule for frontend '%s' at index %d: %w", frontendName, index, err)
 	}
 	defer resp.Body.Close()
 
-	return checkResponseStatus(resp, fmt.Sprintf("failed to delete WAF body rule for frontend '%s' at index %d", frontendName, index))
+	return checkResponseStatus(resp, fmt.Sprintf("deleting WAF body rule for frontend '%s' at index %d", frontendName, index))
 }

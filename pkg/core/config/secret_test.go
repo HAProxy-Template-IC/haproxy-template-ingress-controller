@@ -35,7 +35,7 @@ func TestParseSecretData_InvalidBase64(t *testing.T) {
 
 	_, err := ParseSecretData(dataRaw)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode base64")
+	assert.Contains(t, err.Error(), "decoding base64")
 	assert.Contains(t, err.Error(), `"bad"`)
 }
 

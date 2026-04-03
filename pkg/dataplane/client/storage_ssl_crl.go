@@ -29,7 +29,7 @@ func (c *DataplaneClient) GetAllSSLCrlFiles(ctx context.Context) ([]string, erro
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get all SSL CRL files: %w", err)
+		return nil, fmt.Errorf("getting all SSL CRL files: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -45,7 +45,7 @@ func (c *DataplaneClient) GetAllSSLCrlFiles(ctx context.Context) ([]string, erro
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiCrlFiles); err != nil {
-		return nil, fmt.Errorf("failed to decode SSL CRL files response: %w", err)
+		return nil, fmt.Errorf("decoding SSL CRL files response: %w", err)
 	}
 
 	// Extract CRL file names
@@ -74,7 +74,7 @@ func (c *DataplaneClient) GetSSLCrlFileContent(ctx context.Context, name string)
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get SSL CRL file '%s': %w", name, err)
+		return "", fmt.Errorf("getting SSL CRL file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -91,7 +91,7 @@ func (c *DataplaneClient) CreateSSLCrlFile(ctx context.Context, name, content st
 
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to build payload for SSL CRL file '%s': %w", name, err)
+		return "", fmt.Errorf("building payload for SSL CRL file '%s': %w", name, err)
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -112,7 +112,7 @@ func (c *DataplaneClient) CreateSSLCrlFile(ctx context.Context, name, content st
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to create SSL CRL file '%s': %w", name, err)
+		return "", fmt.Errorf("creating SSL CRL file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -143,7 +143,7 @@ func (c *DataplaneClient) UpdateSSLCrlFile(ctx context.Context, name, content st
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to update SSL CRL file '%s': %w", name, err)
+		return "", fmt.Errorf("updating SSL CRL file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -165,7 +165,7 @@ func (c *DataplaneClient) DeleteSSLCrlFile(ctx context.Context, name string) err
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete SSL CRL file '%s': %w", name, err)
+		return fmt.Errorf("deleting SSL CRL file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

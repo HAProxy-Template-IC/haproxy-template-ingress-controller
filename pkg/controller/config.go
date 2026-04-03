@@ -70,7 +70,7 @@ func fetchAndValidateInitialConfig(
 		var err error
 		crdResource, err = k8sClient.GetResource(gCtx, crdGVR, crdName)
 		if err != nil {
-			return fmt.Errorf("failed to fetch HAProxyTemplateConfig %q: %w", crdName, err)
+			return fmt.Errorf("fetching HAProxyTemplateConfig %q: %w", crdName, err)
 		}
 		return nil
 	})
@@ -80,7 +80,7 @@ func fetchAndValidateInitialConfig(
 		var err error
 		secretResource, err = k8sClient.GetResource(gCtx, secretGVR, secretName)
 		if err != nil {
-			return fmt.Errorf("failed to fetch Secret %q: %w", secretName, err)
+			return fmt.Errorf("fetching Secret %q: %w", secretName, err)
 		}
 		return nil
 	})
@@ -91,7 +91,7 @@ func fetchAndValidateInitialConfig(
 			var err error
 			webhookCertSecretResource, err = k8sClient.GetResource(gCtx, secretGVR, webhookCertSecretName)
 			if err != nil {
-				return fmt.Errorf("failed to fetch webhook certificate Secret %q: %w", webhookCertSecretName, err)
+				return fmt.Errorf("fetching webhook certificate Secret %q: %w", webhookCertSecretName, err)
 			}
 			return nil
 		})
@@ -107,19 +107,19 @@ func fetchAndValidateInitialConfig(
 
 	cfg, crd, err := parseCRD(crdResource)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse initial HAProxyTemplateConfig: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("parsing initial HAProxyTemplateConfig: %w", err)
 	}
 
 	creds, err := parseSecret(secretResource)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse initial Secret: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("parsing initial Secret: %w", err)
 	}
 
 	var webhookCerts *WebhookCertificates
 	if webhookCertSecretResource != nil {
 		webhookCerts, err = parseWebhookCertSecret(webhookCertSecretResource)
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("failed to parse webhook certificate Secret: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("parsing webhook certificate Secret: %w", err)
 		}
 	}
 
@@ -228,7 +228,7 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 	// Extract Secret data field
 	dataRaw, found, err := unstructured.NestedMap(resource.Object, "data")
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract data field: %w", err)
+		return nil, fmt.Errorf("extracting data field: %w", err)
 	}
 	if !found {
 		return nil, fmt.Errorf("secret has no data field")
@@ -243,7 +243,7 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 	// Load credentials
 	creds, err := coreconfig.LoadCredentials(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load credentials: %w", err)
+		return nil, fmt.Errorf("loading credentials: %w", err)
 	}
 
 	return creds, nil
@@ -254,7 +254,7 @@ func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertif
 	// Extract Secret data field
 	dataRaw, found, err := unstructured.NestedMap(resource.Object, "data")
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract data field: %w", err)
+		return nil, fmt.Errorf("extracting data field: %w", err)
 	}
 	if !found {
 		return nil, fmt.Errorf("secret has no data field")
@@ -277,7 +277,7 @@ func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertif
 	if strValue, ok := tlsCertBase64.(string); ok {
 		certPEM, err = base64.StdEncoding.DecodeString(strValue)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode base64 tls.crt: %w", err)
+			return nil, fmt.Errorf("decoding base64 tls.crt: %w", err)
 		}
 	} else {
 		return nil, fmt.Errorf("tls.crt has invalid type: %T", tlsCertBase64)
@@ -288,7 +288,7 @@ func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertif
 	if strValue, ok := tlsKeyBase64.(string); ok {
 		keyPEM, err = base64.StdEncoding.DecodeString(strValue)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode base64 tls.key: %w", err)
+			return nil, fmt.Errorf("decoding base64 tls.key: %w", err)
 		}
 	} else {
 		return nil, fmt.Errorf("tls.key has invalid type: %T", tlsKeyBase64)

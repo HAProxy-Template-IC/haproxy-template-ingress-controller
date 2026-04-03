@@ -50,7 +50,7 @@ func (u *UDPLBOperations) GetAllUDPLbs(ctx context.Context, txID string) ([]UDPL
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get UDP load balancers: %w", err)
+		return nil, fmt.Errorf("getting UDP load balancers: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -74,7 +74,7 @@ func (u *UDPLBOperations) GetUDPLb(ctx context.Context, txID, name string) (*UDP
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get UDP load balancer '%s': %w", name, err)
+		return nil, fmt.Errorf("getting UDP load balancer '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -85,7 +85,7 @@ func (u *UDPLBOperations) GetUDPLb(ctx context.Context, txID, name string) (*UDP
 func (u *UDPLBOperations) CreateUDPLb(ctx context.Context, txID string, lb *UDPLb) error {
 	jsonData, err := json.Marshal(lb)
 	if err != nil {
-		return fmt.Errorf("failed to marshal UDP load balancer: %w", err)
+		return fmt.Errorf("marshalling UDP load balancer: %w", err)
 	}
 
 	resp, err := u.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -115,7 +115,7 @@ func (u *UDPLBOperations) CreateUDPLb(ctx context.Context, txID string, lb *UDPL
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create UDP load balancer: %w", err)
+		return fmt.Errorf("creating UDP load balancer: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -126,7 +126,7 @@ func (u *UDPLBOperations) CreateUDPLb(ctx context.Context, txID string, lb *UDPL
 func (u *UDPLBOperations) ReplaceUDPLb(ctx context.Context, txID, name string, lb *UDPLb) error {
 	jsonData, err := json.Marshal(lb)
 	if err != nil {
-		return fmt.Errorf("failed to marshal UDP load balancer: %w", err)
+		return fmt.Errorf("marshalling UDP load balancer: %w", err)
 	}
 
 	resp, err := u.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -156,7 +156,7 @@ func (u *UDPLBOperations) ReplaceUDPLb(ctx context.Context, txID, name string, l
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to replace UDP load balancer '%s': %w", name, err)
+		return fmt.Errorf("replacing UDP load balancer '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -180,7 +180,7 @@ func (u *UDPLBOperations) DeleteUDPLb(ctx context.Context, txID, name string) er
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete UDP load balancer '%s': %w", name, err)
+		return fmt.Errorf("deleting UDP load balancer '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -206,7 +206,7 @@ func (u *UDPLBOperations) GetAllACLsUDPLb(ctx context.Context, txID, lbName stri
 		// V31EE and V30EE don't have UDP LB ACL endpoints
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ACLs for UDP LB '%s': %w", lbName, err)
+		return nil, fmt.Errorf("getting ACLs for UDP LB '%s': %w", lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -223,7 +223,7 @@ func (u *UDPLBOperations) CreateACLUDPLb(ctx context.Context, txID, lbName strin
 
 	jsonData, err := json.Marshal(acl)
 	if err != nil {
-		return fmt.Errorf("failed to marshal ACL: %w", err)
+		return fmt.Errorf("marshalling ACL: %w", err)
 	}
 
 	resp, err := u.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -238,7 +238,7 @@ func (u *UDPLBOperations) CreateACLUDPLb(ctx context.Context, txID, lbName strin
 		// V31EE and V30EE don't have UDP LB ACL endpoints
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create ACL for UDP LB '%s': %w", lbName, err)
+		return fmt.Errorf("creating ACL for UDP LB '%s': %w", lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -261,7 +261,7 @@ func (u *UDPLBOperations) DeleteACLUDPLb(ctx context.Context, txID, lbName strin
 		// V31EE and V30EE don't have UDP LB ACL endpoints
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete ACL from UDP LB '%s' at index %d: %w", lbName, index, err)
+		return fmt.Errorf("deleting ACL from UDP LB '%s' at index %d: %w", lbName, index, err)
 	}
 	defer resp.Body.Close()
 
@@ -288,7 +288,7 @@ func (u *UDPLBOperations) GetAllDgramBindsUDPLb(ctx context.Context, txID, lbNam
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dgram binds for UDP LB '%s': %w", lbName, err)
+		return nil, fmt.Errorf("getting dgram binds for UDP LB '%s': %w", lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -299,7 +299,7 @@ func (u *UDPLBOperations) GetAllDgramBindsUDPLb(ctx context.Context, txID, lbNam
 func (u *UDPLBOperations) CreateDgramBindUDPLb(ctx context.Context, txID, lbName string, bind *DgramBind) error {
 	jsonData, err := json.Marshal(bind)
 	if err != nil {
-		return fmt.Errorf("failed to marshal dgram bind: %w", err)
+		return fmt.Errorf("marshalling dgram bind: %w", err)
 	}
 
 	resp, err := u.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -329,7 +329,7 @@ func (u *UDPLBOperations) CreateDgramBindUDPLb(ctx context.Context, txID, lbName
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create dgram bind for UDP LB '%s': %w", lbName, err)
+		return fmt.Errorf("creating dgram bind for UDP LB '%s': %w", lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -353,7 +353,7 @@ func (u *UDPLBOperations) DeleteDgramBindUDPLb(ctx context.Context, txID, lbName
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete dgram bind '%s' from UDP LB '%s': %w", bindName, lbName, err)
+		return fmt.Errorf("deleting dgram bind '%s' from UDP LB '%s': %w", bindName, lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -380,7 +380,7 @@ func (u *UDPLBOperations) GetAllLogTargetsUDPLb(ctx context.Context, txID, lbNam
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get log targets for UDP LB '%s': %w", lbName, err)
+		return nil, fmt.Errorf("getting log targets for UDP LB '%s': %w", lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -391,7 +391,7 @@ func (u *UDPLBOperations) GetAllLogTargetsUDPLb(ctx context.Context, txID, lbNam
 func (u *UDPLBOperations) CreateLogTargetUDPLb(ctx context.Context, txID, lbName string, index int, target *LogTarget) error {
 	jsonData, err := json.Marshal(target)
 	if err != nil {
-		return fmt.Errorf("failed to marshal log target: %w", err)
+		return fmt.Errorf("marshalling log target: %w", err)
 	}
 
 	resp, err := u.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -421,7 +421,7 @@ func (u *UDPLBOperations) CreateLogTargetUDPLb(ctx context.Context, txID, lbName
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create log target for UDP LB '%s': %w", lbName, err)
+		return fmt.Errorf("creating log target for UDP LB '%s': %w", lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -445,7 +445,7 @@ func (u *UDPLBOperations) DeleteLogTargetUDPLb(ctx context.Context, txID, lbName
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete log target from UDP LB '%s' at index %d: %w", lbName, index, err)
+		return fmt.Errorf("deleting log target from UDP LB '%s' at index %d: %w", lbName, index, err)
 	}
 	defer resp.Body.Close()
 
@@ -471,7 +471,7 @@ func (u *UDPLBOperations) GetAllServerSwitchingRulesUDPLb(ctx context.Context, t
 		// V31EE and V30EE don't have UDP LB server switching rule endpoints
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get server switching rules for UDP LB '%s': %w", lbName, err)
+		return nil, fmt.Errorf("getting server switching rules for UDP LB '%s': %w", lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -488,7 +488,7 @@ func (u *UDPLBOperations) CreateServerSwitchingRuleUDPLb(ctx context.Context, tx
 
 	jsonData, err := json.Marshal(rule)
 	if err != nil {
-		return fmt.Errorf("failed to marshal server switching rule: %w", err)
+		return fmt.Errorf("marshalling server switching rule: %w", err)
 	}
 
 	resp, err := u.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{
@@ -503,7 +503,7 @@ func (u *UDPLBOperations) CreateServerSwitchingRuleUDPLb(ctx context.Context, tx
 		// V31EE and V30EE don't have UDP LB server switching rule endpoints
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create server switching rule for UDP LB '%s': %w", lbName, err)
+		return fmt.Errorf("creating server switching rule for UDP LB '%s': %w", lbName, err)
 	}
 	defer resp.Body.Close()
 
@@ -526,7 +526,7 @@ func (u *UDPLBOperations) DeleteServerSwitchingRuleUDPLb(ctx context.Context, tx
 		// V31EE and V30EE don't have UDP LB server switching rule endpoints
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete server switching rule from UDP LB '%s' at index %d: %w", lbName, index, err)
+		return fmt.Errorf("deleting server switching rule from UDP LB '%s' at index %d: %w", lbName, index, err)
 	}
 	defer resp.Body.Close()
 

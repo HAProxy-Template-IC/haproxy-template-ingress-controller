@@ -41,21 +41,21 @@ func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *Valid
 	// Clear validation directories to remove any pre-existing files
 	clearStart := time.Now()
 	if err := clearValidationDirectories(paths); err != nil {
-		return fmt.Errorf("failed to clear validation directories: %w", err)
+		return fmt.Errorf("clearing validation directories: %w", err)
 	}
 	clearMs = time.Since(clearStart).Milliseconds()
 
 	// Write auxiliary files to their respective directories
 	writeAuxStart := time.Now()
 	if err := writeAuxiliaryFiles(auxFiles, paths); err != nil {
-		return fmt.Errorf("failed to write auxiliary files: %w", err)
+		return fmt.Errorf("writing auxiliary files: %w", err)
 	}
 	writeAuxMs = time.Since(writeAuxStart).Milliseconds()
 
 	// Write main configuration to ConfigFile path
 	writeConfigStart := time.Now()
 	if err := os.WriteFile(paths.ConfigFile, []byte(mainConfig), 0o600); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+		return fmt.Errorf("writing config file: %w", err)
 	}
 	writeConfigMs = time.Since(writeConfigStart).Milliseconds()
 
@@ -100,12 +100,12 @@ func clearValidationDirectories(paths *ValidationPaths) error {
 	// Create config directory if it doesn't exist
 	// (No need to clear it - we already cleared the specific validation directories above)
 	if err := os.MkdirAll(configDir, 0o750); err != nil {
-		return fmt.Errorf("failed to create config directory %s: %w", configDir, err)
+		return fmt.Errorf("creating config directory %s: %w", configDir, err)
 	}
 
 	// Remove old config file if it exists
 	if err := os.Remove(paths.ConfigFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove old config file: %w", err)
+		return fmt.Errorf("removing old config file: %w", err)
 	}
 
 	return nil
@@ -118,7 +118,7 @@ func clearDirectory(dir string) error {
 	var entries []os.DirEntry
 	for attempt := range 2 {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return fmt.Errorf("creating directory %s: %w", dir, err)
 		}
 
 		var err error
@@ -129,7 +129,7 @@ func clearDirectory(dir string) error {
 				// (race with concurrent cleanup), retry once
 				continue
 			}
-			return fmt.Errorf("failed to read directory %s: %w", dir, err)
+			return fmt.Errorf("reading directory %s: %w", dir, err)
 		}
 		break // Success
 	}
@@ -137,7 +137,7 @@ func clearDirectory(dir string) error {
 	for _, entry := range entries {
 		path := filepath.Join(dir, entry.Name())
 		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("failed to remove %s: %w", path, err)
+			return fmt.Errorf("removing %s: %w", path, err)
 		}
 	}
 
@@ -170,11 +170,11 @@ func resolveAuxiliaryFilePath(filePath, configDir, fallbackDir string) string {
 func writeFileWithDir(path, content, fileType string) error {
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return fmt.Errorf("failed to create directory for %s: %w", fileType, err)
+		return fmt.Errorf("creating directory for %s: %w", fileType, err)
 	}
 
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return fmt.Errorf("failed to write %s: %w", fileType, err)
+		return fmt.Errorf("writing %s: %w", fileType, err)
 	}
 
 	return nil
@@ -261,7 +261,7 @@ func runHAProxyCheck(configPath, configContent string, skipDNSValidation bool) e
 	// Get absolute path for config file
 	absConfigPath, err := filepath.Abs(configPath)
 	if err != nil {
-		return fmt.Errorf("failed to get absolute config path: %w", err)
+		return fmt.Errorf("getting absolute config path: %w", err)
 	}
 
 	// Build haproxy command arguments

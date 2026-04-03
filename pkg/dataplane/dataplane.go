@@ -200,7 +200,7 @@ type Client struct {
 //
 //	client, err := dataplane.NewClient(ctx, endpoint)
 //	if err != nil {
-//	    return fmt.Errorf("failed to create client: %w", err)
+//	    return fmt.Errorf("creating client: %w", err)
 //	}
 //	defer client.Close()
 //
@@ -227,7 +227,7 @@ func NewClient(ctx context.Context, endpoint *Endpoint) (*Client, error) {
 	// Create orchestrator with the same logger
 	orch, err := newOrchestrator(c, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
+		return nil, fmt.Errorf("creating orchestrator: %w", err)
 	}
 
 	return &Client{

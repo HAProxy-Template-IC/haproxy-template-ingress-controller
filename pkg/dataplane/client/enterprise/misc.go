@@ -121,7 +121,7 @@ func (m *MiscOperations) GetStructuredConfig(ctx context.Context, txID string) (
 func (m *MiscOperations) ReplaceStructuredConfig(ctx context.Context, txID string, config *StructuredConfig) error {
 	jsonData, err := json.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("failed to marshal structured config: %w", err)
+		return fmt.Errorf("marshalling structured config: %w", err)
 	}
 
 	resp, err := m.client.DispatchEnterpriseOnly(ctx, client.EnterpriseCallFunc[*http.Response]{

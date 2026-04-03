@@ -256,7 +256,7 @@ func (c *Component) resolveKind(apiGroup, apiVersion, resource string) (string, 
 
 	gvk, err := c.restMapper.KindFor(gvr)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve kind for %v: %w", gvr, err)
+		return "", fmt.Errorf("resolving kind for %v: %w", gvr, err)
 	}
 
 	c.logger.Debug("Resolved kind",

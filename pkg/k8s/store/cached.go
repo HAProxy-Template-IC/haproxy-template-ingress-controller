@@ -111,7 +111,7 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 
 	cache, err := lru.New[string, *cacheEntry](cfg.MaxCacheSize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create LRU cache: %w", err)
+		return nil, fmt.Errorf("creating LRU cache: %w", err)
 	}
 
 	return &CachedStore{

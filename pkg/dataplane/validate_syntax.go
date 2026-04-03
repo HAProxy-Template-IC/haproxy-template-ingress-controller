@@ -53,7 +53,7 @@ func validateSyntax(config string) (*parser.StructuredConfig, error) {
 		syntaxParser, syntaxParserErr = parser.New()
 	})
 	if syntaxParserErr != nil {
-		return nil, fmt.Errorf("failed to create parser: %w", syntaxParserErr)
+		return nil, fmt.Errorf("creating parser: %w", syntaxParserErr)
 	}
 
 	// Parse configuration - this validates syntax

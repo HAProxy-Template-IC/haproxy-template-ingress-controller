@@ -59,7 +59,7 @@ func TestNew_NilClientset(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, component)
-	assert.Contains(t, err.Error(), "failed to create elector")
+	assert.Contains(t, err.Error(), "creating elector")
 }
 
 func TestNew_NilEventBus(t *testing.T) {

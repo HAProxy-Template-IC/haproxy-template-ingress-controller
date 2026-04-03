@@ -1320,7 +1320,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		_, err = runner.renderAuxiliaryFiles(engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to render map file")
+		assert.Contains(t, err.Error(), "rendering map file")
 	})
 
 	t.Run("error on general file render failure", func(t *testing.T) {
@@ -1342,7 +1342,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		_, err = runner.renderAuxiliaryFiles(engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to render general file")
+		assert.Contains(t, err.Error(), "rendering general file")
 	})
 
 	t.Run("error on SSL certificate render failure", func(t *testing.T) {
@@ -1364,7 +1364,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 
 		_, err = runner.renderAuxiliaryFiles(engine, map[string]any{}, validationPaths)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to render SSL certificate")
+		assert.Contains(t, err.Error(), "rendering SSL certificate")
 	})
 }
 

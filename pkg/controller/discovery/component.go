@@ -119,7 +119,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) 
 	// Detect local HAProxy version at startup (fatal if fails)
 	localVersion, err := dataplane.DetectLocalVersion()
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect local HAProxy version: %w", err)
+		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}
 
 	componentLogger.Debug("detected local HAProxy version",

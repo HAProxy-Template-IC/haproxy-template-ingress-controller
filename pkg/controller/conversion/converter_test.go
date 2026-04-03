@@ -594,7 +594,7 @@ func TestConvertSpec_ExtraContextError(t *testing.T) {
 
 	cfg, err := ConvertSpec(&spec)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to unmarshal templating_settings.extra_context")
+	assert.Contains(t, err.Error(), "unmarshalling templating_settings.extra_context")
 	assert.Nil(t, cfg)
 }
 

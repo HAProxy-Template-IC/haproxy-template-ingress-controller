@@ -124,7 +124,7 @@ func (r *Registry) Register(c Component, opts ...Option) {
 //
 //	err := registry.StartAll(ctx, isLeader)
 //	if err != nil {
-//	    return fmt.Errorf("failed to start components: %w", err)
+//	    return fmt.Errorf("starting components: %w", err)
 //	}
 func (r *Registry) StartAll(ctx context.Context, isLeader bool) error {
 	r.mu.Lock()

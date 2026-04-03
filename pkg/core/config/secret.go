@@ -26,7 +26,7 @@ func ParseSecretData(dataRaw map[string]any) (map[string][]byte, error) {
 		}
 		decoded, err := base64.StdEncoding.DecodeString(strValue)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode base64 for key %q: %w", key, err)
+			return nil, fmt.Errorf("decoding base64 for key %q: %w", key, err)
 		}
 		data[key] = decoded
 	}

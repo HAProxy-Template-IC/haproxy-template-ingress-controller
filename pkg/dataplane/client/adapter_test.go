@@ -273,7 +273,7 @@ func TestExecuteTransaction_GetVersionFails(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get version")
+	assert.Contains(t, err.Error(), "getting version")
 }
 
 func TestExecuteTransactionWithVersion_Success(t *testing.T) {
@@ -566,7 +566,7 @@ func TestExecuteTransaction_CreateTransactionNonVersionError(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create transaction")
+	assert.Contains(t, err.Error(), "creating transaction")
 }
 
 func TestExecuteTransaction_CommitNonVersionError(t *testing.T) {
@@ -618,7 +618,7 @@ func TestExecuteTransaction_CommitNonVersionError(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to commit transaction")
+	assert.Contains(t, err.Error(), "committing transaction")
 	assert.Equal(t, int32(1), atomic.LoadInt32(&transactionAborted))
 }
 
@@ -762,7 +762,7 @@ func TestExecuteTransactionWithVersion_GetVersionFailsOnRetry(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get version on retry")
+	assert.Contains(t, err.Error(), "getting version on retry")
 }
 
 func TestExecuteTransactionWithVersion_CommitVersionConflict(t *testing.T) {
@@ -869,7 +869,7 @@ func TestExecuteTransactionWithVersion_CommitNonVersionError(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to commit transaction")
+	assert.Contains(t, err.Error(), "committing transaction")
 	assert.Equal(t, int32(1), atomic.LoadInt32(&transactionAborted))
 }
 
@@ -905,5 +905,5 @@ func TestExecuteTransactionWithVersion_CreateTransactionNonVersionError(t *testi
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create transaction")
+	assert.Contains(t, err.Error(), "creating transaction")
 }

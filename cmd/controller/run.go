@@ -166,7 +166,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		Kubeconfig: runKubeconfig,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+		return fmt.Errorf("creating Kubernetes client: %w", err)
 	}
 
 	logger.Info("Kubernetes client created successfully",

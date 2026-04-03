@@ -172,101 +172,6 @@ type ServerConfig struct {
 	WriteTimeout time.Duration
 }
 
-// CertConfig configures certificate generation and rotation.
-type CertConfig struct {
-	// Namespace where the webhook service runs.
-	// Required for DNS names in certificate.
-	Namespace string
-
-	// ServiceName is the name of the Kubernetes Service exposing the webhook.
-	// Required for DNS names in certificate.
-	ServiceName string
-
-	// CommonName for the generated certificates.
-	// Default: "<service>.<namespace>.svc"
-	CommonName string
-
-	// Organization for the CA certificate.
-	// Default: "haptic"
-	Organization string
-
-	// ValidityDuration is how long certificates are valid.
-	// Default: 365 days
-	ValidityDuration time.Duration
-
-	// RotationThreshold triggers rotation when certificate expires within this duration.
-	// Default: 30 days
-	RotationThreshold time.Duration
-}
-
-// Certificates holds a complete certificate chain for the webhook.
-type Certificates struct {
-	// CACert is the PEM-encoded CA certificate.
-	// This is injected into the ValidatingWebhookConfiguration.
-	CACert []byte
-
-	// CAKey is the PEM-encoded CA private key.
-	// Kept secret, used to sign server certificates.
-	CAKey []byte
-
-	// ServerCert is the PEM-encoded server certificate.
-	// Used by the webhook HTTPS server.
-	ServerCert []byte
-
-	// ServerKey is the PEM-encoded server private key.
-	// Used by the webhook HTTPS server.
-	ServerKey []byte
-
-	// ValidUntil is when the server certificate expires.
-	ValidUntil time.Time
-
-	// GeneratedAt is when these certificates were created.
-	GeneratedAt time.Time
-}
-
-// WebhookConfigSpec specifies how to configure the ValidatingWebhookConfiguration.
-type WebhookConfigSpec struct {
-	// Name of the ValidatingWebhookConfiguration resource.
-	// Required.
-	Name string
-
-	// Namespace where the webhook service runs.
-	// Required for webhook client config.
-	Namespace string
-
-	// ServiceName is the name of the Service exposing the webhook.
-	// Required for webhook client config.
-	ServiceName string
-
-	// Path is the URL path on the webhook server.
-	// Default: "/validate"
-	Path string
-
-	// CABundle is the PEM-encoded CA certificate to trust.
-	// Required. Obtained from certificate manager.
-	CABundle []byte
-
-	// Rules specify which resources to validate.
-	// Each rule maps to a webhook in the configuration.
-	Rules []WebhookRule
-
-	// FailurePolicy determines what happens if the webhook fails.
-	// Default: Fail (reject requests if webhook unavailable)
-	FailurePolicy *admissionv1.FailurePolicyType
-
-	// MatchPolicy determines how rules are matched.
-	// Default: Equivalent (match semantically equivalent requests)
-	MatchPolicy *admissionv1.MatchPolicyType
-
-	// SideEffects indicates whether the webhook has side effects.
-	// Default: None
-	SideEffects *admissionv1.SideEffectClass
-
-	// TimeoutSeconds is the maximum time to wait for a response.
-	// Default: 10
-	TimeoutSeconds *int32
-}
-
 // WebhookRule specifies which resources a webhook should intercept.
 type WebhookRule struct {
 	// APIGroups that this rule matches.
@@ -288,17 +193,4 @@ type WebhookRule struct {
 	// Scope restricts the rule to cluster or namespace-scoped resources.
 	// Default: "*" (all scopes)
 	Scope *admissionv1.ScopeType
-}
-
-// ValidationResult represents the outcome of a validation request.
-type ValidationResult struct {
-	// Allowed indicates whether the request should be admitted.
-	Allowed bool
-
-	// Reason provides a human-readable explanation for denial.
-	// Empty if Allowed is true.
-	Reason string
-
-	// Warnings are non-blocking messages shown to the user.
-	Warnings []string
 }

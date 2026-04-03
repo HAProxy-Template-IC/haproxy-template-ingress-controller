@@ -27,7 +27,7 @@ import (
 func MarshalForVersion(model any) ([]byte, error) {
 	jsonData, err := json.Marshal(model)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal model: %w", err)
+		return nil, fmt.Errorf("marshalling model: %w", err)
 	}
 
 	// Transform metadata from client-native (flat) to API (nested) format
@@ -50,19 +50,19 @@ func ConvertToVersioned[TV32, TV31, TV30 any](jsonData []byte, versionMinor int)
 	case versionMinor >= 2:
 		var m TV32
 		if err := json.Unmarshal(jsonData, &m); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal for v3.2: %w", err)
+			return nil, fmt.Errorf("unmarshalling for v3.2: %w", err)
 		}
 		return &m, nil
 	case versionMinor >= 1:
 		var m TV31
 		if err := json.Unmarshal(jsonData, &m); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal for v3.1: %w", err)
+			return nil, fmt.Errorf("unmarshalling for v3.1: %w", err)
 		}
 		return &m, nil
 	default:
 		var m TV30
 		if err := json.Unmarshal(jsonData, &m); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal for v3.0: %w", err)
+			return nil, fmt.Errorf("unmarshalling for v3.0: %w", err)
 		}
 		return &m, nil
 	}

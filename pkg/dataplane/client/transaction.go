@@ -97,7 +97,7 @@ func (c *DataplaneClient) CreateTransaction(ctx context.Context, version int64) 
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to start transaction: %w", err)
+		return nil, fmt.Errorf("starting transaction: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -122,18 +122,18 @@ func (c *DataplaneClient) CreateTransaction(ctx context.Context, version int64) 
 
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to start transaction: status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("starting transaction: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse transaction response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read transaction response: %w", err)
+		return nil, fmt.Errorf("reading transaction response: %w", err)
 	}
 
 	var txResp TransactionResponse
 	if err := json.Unmarshal(body, &txResp); err != nil {
-		return nil, fmt.Errorf("failed to parse transaction response: %w", err)
+		return nil, fmt.Errorf("parsing transaction response: %w", err)
 	}
 
 	return &Transaction{
@@ -184,7 +184,7 @@ func (tx *Transaction) Commit(ctx context.Context) (*CommitResult, error) {
 
 	// ERROR: Cannot commit aborted transaction
 	if tx.aborted {
-		return nil, fmt.Errorf("cannot commit aborted transaction %s", tx.ID)
+		return nil, fmt.Errorf("committing aborted transaction %s", tx.ID)
 	}
 
 	// Perform actual commit
@@ -215,7 +215,7 @@ func (tx *Transaction) Commit(ctx context.Context) (*CommitResult, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -240,7 +240,7 @@ func (tx *Transaction) Commit(ctx context.Context) (*CommitResult, error) {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to commit transaction: status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("committing transaction: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Extract reload information
@@ -300,7 +300,7 @@ func (tx *Transaction) Abort(ctx context.Context) error {
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to abort transaction: %w", err)
+		return fmt.Errorf("aborting transaction: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -312,7 +312,7 @@ func (tx *Transaction) Abort(ctx context.Context) error {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to abort transaction: status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("aborting transaction: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Mark as aborted

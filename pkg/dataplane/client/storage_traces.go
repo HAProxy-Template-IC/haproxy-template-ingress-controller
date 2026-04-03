@@ -58,7 +58,7 @@ func (c *DataplaneClient) GetTraces(ctx context.Context) (*Traces, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get traces: %w", err)
+		return nil, fmt.Errorf("getting traces: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -73,7 +73,7 @@ func (c *DataplaneClient) GetTraces(ctx context.Context) (*Traces, error) {
 
 	var traces Traces
 	if err := json.NewDecoder(resp.Body).Decode(&traces); err != nil {
-		return nil, fmt.Errorf("failed to decode traces response: %w", err)
+		return nil, fmt.Errorf("decoding traces response: %w", err)
 	}
 
 	return &traces, nil
@@ -89,7 +89,7 @@ func (c *DataplaneClient) CreateTraces(ctx context.Context, traces *Traces, tran
 
 	jsonData, err := json.Marshal(traces)
 	if err != nil {
-		return fmt.Errorf("failed to marshal traces: %w", err)
+		return fmt.Errorf("marshalling traces: %w", err)
 	}
 
 	body := bytes.NewReader(jsonData)
@@ -118,7 +118,7 @@ func (c *DataplaneClient) CreateTraces(ctx context.Context, traces *Traces, tran
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create traces: %w", err)
+		return fmt.Errorf("creating traces: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -135,7 +135,7 @@ func (c *DataplaneClient) CreateTraces(ctx context.Context, traces *Traces, tran
 func (c *DataplaneClient) ReplaceTraces(ctx context.Context, traces *Traces, transactionID string) error {
 	jsonData, err := json.Marshal(traces)
 	if err != nil {
-		return fmt.Errorf("failed to marshal traces: %w", err)
+		return fmt.Errorf("marshalling traces: %w", err)
 	}
 
 	body := bytes.NewReader(jsonData)
@@ -164,7 +164,7 @@ func (c *DataplaneClient) ReplaceTraces(ctx context.Context, traces *Traces, tra
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to replace traces: %w", err)
+		return fmt.Errorf("replacing traces: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -202,7 +202,7 @@ func (c *DataplaneClient) DeleteTraces(ctx context.Context, transactionID string
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete traces: %w", err)
+		return fmt.Errorf("deleting traces: %w", err)
 	}
 	defer resp.Body.Close()
 

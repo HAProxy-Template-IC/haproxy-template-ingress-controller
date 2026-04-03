@@ -60,7 +60,7 @@ func newDiscoveryEngine(dataplanePort int) (*Discovery, error) {
 	// Detect local HAProxy version at startup
 	localVer, err := dataplane.DetectLocalVersion()
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect local HAProxy version: %w", err)
+		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}
 
 	return &Discovery{
@@ -102,7 +102,7 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 func (d *Discovery) findDataplaneContainerName(pod *unstructured.Unstructured) (string, error) {
 	containersSpec, found, err := unstructured.NestedSlice(pod.Object, "spec", "containers")
 	if err != nil || !found {
-		return "", fmt.Errorf("failed to get containers spec: %w", err)
+		return "", fmt.Errorf("getting containers spec: %w", err)
 	}
 
 	for _, c := range containersSpec {
@@ -184,7 +184,7 @@ func checkContainerReady(pod *unstructured.Unstructured, containerName string, l
 		}
 
 		if err != nil {
-			return false, fmt.Errorf("failed to get ready status: %w", err)
+			return false, fmt.Errorf("getting ready status: %w", err)
 		}
 		if !found {
 			return false, nil
@@ -295,7 +295,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 
 	resources, err := podStore.List()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list pods: %w", err)
+		return nil, fmt.Errorf("listing pods: %w", err)
 	}
 
 	endpoints := make([]dataplane.Endpoint, 0, len(resources))
@@ -363,7 +363,7 @@ func (d *Discovery) evaluatePod(
 
 	ready, err := d.isDataplaneContainerReady(pod, logger)
 	if err != nil {
-		return zero, false, fmt.Errorf("failed to check dataplane container readiness for %s: %w",
+		return zero, false, fmt.Errorf("checking dataplane container readiness for %s: %w",
 			pod.GetName(), err)
 	}
 	if !ready {
@@ -397,7 +397,7 @@ func (d *Discovery) evaluatePod(
 func extractPodIP(pod *unstructured.Unstructured, logger *slog.Logger) (string, error) {
 	podIP, found, err := unstructured.NestedString(pod.Object, "status", "podIP")
 	if err != nil {
-		return "", fmt.Errorf("failed to extract pod IP from %s: %w", pod.GetName(), err)
+		return "", fmt.Errorf("extracting pod IP from %s: %w", pod.GetName(), err)
 	}
 	if !found || podIP == "" {
 		if logger != nil {
@@ -414,7 +414,7 @@ func extractPodIP(pod *unstructured.Unstructured, logger *slog.Logger) (string, 
 func extractPodPhase(pod *unstructured.Unstructured, logger *slog.Logger) (string, error) {
 	phase, found, err := unstructured.NestedString(pod.Object, "status", "phase")
 	if err != nil {
-		return "", fmt.Errorf("failed to extract pod phase from %s: %w", pod.GetName(), err)
+		return "", fmt.Errorf("extracting pod phase from %s: %w", pod.GetName(), err)
 	}
 	if !found || phase != "Running" {
 		if logger != nil {

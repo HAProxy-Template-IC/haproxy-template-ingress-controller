@@ -246,7 +246,7 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			matcher, err := NewFieldSelectorMatcher(tt.expression)
 			if err != nil {
-				t.Fatalf("failed to create matcher: %v", err)
+				t.Fatalf("creating matcher: %v", err)
 			}
 
 			matches, err := matcher.Matches(tt.resource)
@@ -265,7 +265,7 @@ func TestFieldSelectorMatcher_Matches(t *testing.T) {
 func TestFieldSelectorMatcher_MatchesIngress(t *testing.T) {
 	matcher, err := NewFieldSelectorMatcher("spec.ingressClassName=haproxy-internal")
 	if err != nil {
-		t.Fatalf("failed to create matcher: %v", err)
+		t.Fatalf("creating matcher: %v", err)
 	}
 
 	// Ingress with matching class

@@ -134,7 +134,7 @@ func createDryRunValidator(
 	}
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create template engine for dry-run validation: %w", err)
+		return nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
 	}
 
 	// Create validation paths (still needed for validation tests)

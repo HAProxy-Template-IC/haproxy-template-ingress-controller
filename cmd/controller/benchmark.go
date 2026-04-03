@@ -112,13 +112,13 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 	// Load config
 	configSpec, err := loadConfigFromFile(benchmarkConfigFile)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return fmt.Errorf("loading config: %w", err)
 	}
 
 	// Convert to internal config
 	cfg, err := conversion.ConvertSpec(configSpec)
 	if err != nil {
-		return fmt.Errorf("failed to convert config: %w", err)
+		return fmt.Errorf("converting config: %w", err)
 	}
 
 	// If no tests specified, run all (except _global)
@@ -154,7 +154,7 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 	compileStart := time.Now()
 	engine, err := compileTemplatesForBenchmark(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to compile templates: %w", err)
+		return fmt.Errorf("compiling templates: %w", err)
 	}
 	compilationTime := time.Since(compileStart)
 
@@ -196,7 +196,7 @@ func runSingleTestBenchmark(
 	// Create stores from fixtures
 	storeMap, err := createStoresForBenchmark(cfg, engine, fixtures)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create fixture stores: %w", err)
+		return nil, fmt.Errorf("creating fixture stores: %w", err)
 	}
 
 	// Create HTTP store
@@ -285,7 +285,7 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	// Render haproxy.cfg
 	fileResult, stats, err := renderSingleTemplate(engine, names.MainTemplateName, names.MainTemplateName, renderCtx)
 	if err != nil {
-		return result, fmt.Errorf("failed to render %s: %w", names.MainTemplateName, err)
+		return result, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 	result.FileResults = append(result.FileResults, fileResult)
 	allIncludeStats = append(allIncludeStats, stats...)
@@ -295,7 +295,7 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	for _, name := range mapNames {
 		fileResult, stats, err := renderSingleTemplate(engine, name, "map:"+name, renderCtx)
 		if err != nil {
-			return result, fmt.Errorf("failed to render map %s: %w", name, err)
+			return result, fmt.Errorf("rendering map %s: %w", name, err)
 		}
 		result.FileResults = append(result.FileResults, fileResult)
 		allIncludeStats = append(allIncludeStats, stats...)
@@ -306,7 +306,7 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	for _, name := range fileNames {
 		fileResult, stats, err := renderSingleTemplate(engine, name, "file:"+name, renderCtx)
 		if err != nil {
-			return result, fmt.Errorf("failed to render file %s: %w", name, err)
+			return result, fmt.Errorf("rendering file %s: %w", name, err)
 		}
 		result.FileResults = append(result.FileResults, fileResult)
 		allIncludeStats = append(allIncludeStats, stats...)
@@ -317,7 +317,7 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	for _, name := range certNames {
 		fileResult, stats, err := renderSingleTemplate(engine, name, "cert:"+name, renderCtx)
 		if err != nil {
-			return result, fmt.Errorf("failed to render cert %s: %w", name, err)
+			return result, fmt.Errorf("rendering cert %s: %w", name, err)
 		}
 		result.FileResults = append(result.FileResults, fileResult)
 		allIncludeStats = append(allIncludeStats, stats...)

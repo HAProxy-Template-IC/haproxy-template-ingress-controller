@@ -28,7 +28,7 @@ func (c *DataplaneClient) GetAllSSLCaFiles(ctx context.Context) ([]string, error
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get all SSL CA files: %w", err)
+		return nil, fmt.Errorf("getting all SSL CA files: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -44,7 +44,7 @@ func (c *DataplaneClient) GetAllSSLCaFiles(ctx context.Context) ([]string, error
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiCaFiles); err != nil {
-		return nil, fmt.Errorf("failed to decode SSL CA files response: %w", err)
+		return nil, fmt.Errorf("decoding SSL CA files response: %w", err)
 	}
 
 	// Extract CA file names
@@ -73,7 +73,7 @@ func (c *DataplaneClient) GetSSLCaFileContent(ctx context.Context, name string) 
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get SSL CA file '%s': %w", name, err)
+		return "", fmt.Errorf("getting SSL CA file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -90,7 +90,7 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to build payload for SSL CA file '%s': %w", name, err)
+		return "", fmt.Errorf("building payload for SSL CA file '%s': %w", name, err)
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -111,7 +111,7 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to create SSL CA file '%s': %w", name, err)
+		return "", fmt.Errorf("creating SSL CA file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -128,7 +128,7 @@ func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content str
 
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to build payload for SSL CA file '%s': %w", name, err)
+		return "", fmt.Errorf("building payload for SSL CA file '%s': %w", name, err)
 	}
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
@@ -149,7 +149,7 @@ func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content str
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to update SSL CA file '%s': %w", name, err)
+		return "", fmt.Errorf("updating SSL CA file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -171,7 +171,7 @@ func (c *DataplaneClient) DeleteSSLCaFile(ctx context.Context, name string) erro
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete SSL CA file '%s': %w", name, err)
+		return fmt.Errorf("deleting SSL CA file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

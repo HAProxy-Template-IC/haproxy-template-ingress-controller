@@ -32,7 +32,7 @@ func (c *DataplaneClient) GetAllMapFiles(ctx context.Context) ([]string, error) 
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get all map files: %w", err)
+		return nil, fmt.Errorf("getting all map files: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -48,7 +48,7 @@ func (c *DataplaneClient) GetAllMapFiles(ctx context.Context) ([]string, error) 
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiMaps); err != nil {
-		return nil, fmt.Errorf("failed to decode map files response: %w", err)
+		return nil, fmt.Errorf("decoding map files response: %w", err)
 	}
 
 	// Extract map file names
@@ -76,7 +76,7 @@ func (c *DataplaneClient) GetMapFileContent(ctx context.Context, name string) (s
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get map file '%s': %w", name, err)
+		return "", fmt.Errorf("getting map file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -89,7 +89,7 @@ func (c *DataplaneClient) GetMapFileContent(ctx context.Context, name string) (s
 func (c *DataplaneClient) CreateMapFile(ctx context.Context, name, content string) (string, error) {
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to build payload for map file '%s': %w", name, err)
+		return "", fmt.Errorf("building payload for map file '%s': %w", name, err)
 	}
 
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
@@ -117,7 +117,7 @@ func (c *DataplaneClient) CreateMapFile(ctx context.Context, name, content strin
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to create map file '%s': %w", name, err)
+		return "", fmt.Errorf("creating map file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -158,7 +158,7 @@ func (c *DataplaneClient) UpdateMapFile(ctx context.Context, name, content strin
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to update map file '%s': %w", name, err)
+		return "", fmt.Errorf("updating map file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 
@@ -179,7 +179,7 @@ func (c *DataplaneClient) DeleteMapFile(ctx context.Context, name string) error 
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete map file '%s': %w", name, err)
+		return fmt.Errorf("deleting map file '%s': %w", name, err)
 	}
 	defer resp.Body.Close()
 

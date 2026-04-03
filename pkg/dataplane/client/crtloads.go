@@ -113,7 +113,7 @@ func (c *DataplaneClient) GetAllCrtLoads(ctx context.Context, crtStoreName strin
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get crt-loads for crt-store '%s': %w", crtStoreName, err)
+		return nil, fmt.Errorf("getting crt-loads for crt-store '%s': %w", crtStoreName, err)
 	}
 	defer resp.Body.Close()
 
@@ -123,7 +123,7 @@ func (c *DataplaneClient) GetAllCrtLoads(ctx context.Context, crtStoreName strin
 
 	var apiLoads []crtLoadAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiLoads); err != nil {
-		return nil, fmt.Errorf("failed to decode crt-loads response: %w", err)
+		return nil, fmt.Errorf("decoding crt-loads response: %w", err)
 	}
 
 	loads := make([]CrtLoad, 0, len(apiLoads))
@@ -158,7 +158,7 @@ func (c *DataplaneClient) GetCrtLoad(ctx context.Context, crtStoreName, certific
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get crt-load '%s' from crt-store '%s': %w", certificate, crtStoreName, err)
+		return nil, fmt.Errorf("getting crt-load '%s' from crt-store '%s': %w", certificate, crtStoreName, err)
 	}
 	defer resp.Body.Close()
 
@@ -172,7 +172,7 @@ func (c *DataplaneClient) GetCrtLoad(ctx context.Context, crtStoreName, certific
 
 	var load CrtLoad
 	if err := json.NewDecoder(resp.Body).Decode(&load); err != nil {
-		return nil, fmt.Errorf("failed to decode crt-load response: %w", err)
+		return nil, fmt.Errorf("decoding crt-load response: %w", err)
 	}
 
 	return &load, nil
@@ -187,7 +187,7 @@ func (c *DataplaneClient) CreateCrtLoad(ctx context.Context, crtStoreName string
 
 	jsonData, err := json.Marshal(load)
 	if err != nil {
-		return fmt.Errorf("failed to marshal crt-load '%s': %w", load.Certificate, err)
+		return fmt.Errorf("marshalling crt-load '%s': %w", load.Certificate, err)
 	}
 
 	body := bytes.NewReader(jsonData)
@@ -222,7 +222,7 @@ func (c *DataplaneClient) CreateCrtLoad(ctx context.Context, crtStoreName string
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create crt-load '%s' in crt-store '%s': %w", load.Certificate, crtStoreName, err)
+		return fmt.Errorf("creating crt-load '%s' in crt-store '%s': %w", load.Certificate, crtStoreName, err)
 	}
 	defer resp.Body.Close()
 
@@ -238,7 +238,7 @@ func (c *DataplaneClient) CreateCrtLoad(ctx context.Context, crtStoreName string
 func (c *DataplaneClient) ReplaceCrtLoad(ctx context.Context, crtStoreName, certificate string, load *CrtLoad, transactionID string) error {
 	jsonData, err := json.Marshal(load)
 	if err != nil {
-		return fmt.Errorf("failed to marshal crt-load '%s': %w", certificate, err)
+		return fmt.Errorf("marshalling crt-load '%s': %w", certificate, err)
 	}
 
 	body := bytes.NewReader(jsonData)
@@ -273,7 +273,7 @@ func (c *DataplaneClient) ReplaceCrtLoad(ctx context.Context, crtStoreName, cert
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to replace crt-load '%s' in crt-store '%s': %w", certificate, crtStoreName, err)
+		return fmt.Errorf("replacing crt-load '%s' in crt-store '%s': %w", certificate, crtStoreName, err)
 	}
 	defer resp.Body.Close()
 
@@ -317,7 +317,7 @@ func (c *DataplaneClient) DeleteCrtLoad(ctx context.Context, crtStoreName, certi
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete crt-load '%s' from crt-store '%s': %w", certificate, crtStoreName, err)
+		return fmt.Errorf("deleting crt-load '%s' from crt-store '%s': %w", certificate, crtStoreName, err)
 	}
 	defer resp.Body.Close()
 

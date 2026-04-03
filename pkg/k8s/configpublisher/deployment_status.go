@@ -104,7 +104,7 @@ func (p *Publisher) updateRuntimeConfigDeploymentStatus(ctx context.Context, upd
 			)
 			return nil // Not an error - resource might not be published yet
 		}
-		return fmt.Errorf("failed to get runtime config: %w", err)
+		return fmt.Errorf("getting runtime config: %w", err)
 	}
 
 	// Store auxiliary files reference for updates after main status update
@@ -132,7 +132,7 @@ func (p *Publisher) updateRuntimeConfigDeploymentStatus(ctx context.Context, upd
 		HAProxyCfgs(update.RuntimeConfigNamespace).
 		UpdateStatus(ctx, runtimeConfig, metav1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to update runtime config status: %w", err)
+		return fmt.Errorf("updating runtime config status: %w", err)
 	}
 
 	return nil

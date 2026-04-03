@@ -240,7 +240,7 @@ func TestComponent_resolveKind_Error(t *testing.T) {
 
 	_, err := component.resolveKind("unknown", "v1", "unknowns")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to resolve kind")
+	assert.Contains(t, err.Error(), "resolving kind")
 }
 
 func TestConstants(t *testing.T) {

@@ -81,7 +81,7 @@ func TestGetAllLogProfiles_InvalidJSON(t *testing.T) {
 
 	_, err := client.GetAllLogProfiles(context.Background())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestGetAllLogProfiles_NilNames(t *testing.T) {
@@ -163,7 +163,7 @@ func TestGetLogProfile_InvalidJSON(t *testing.T) {
 
 	_, err := client.GetLogProfile(context.Background(), "default")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestCreateLogProfile_Success(t *testing.T) {

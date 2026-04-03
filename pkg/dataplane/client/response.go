@@ -28,7 +28,7 @@ import (
 //
 //	resp, err := c.Dispatch(ctx, callFunc)
 //	if err != nil {
-//	    return fmt.Errorf("failed to create backend: %w", err)
+//	    return fmt.Errorf("creating backend: %w", err)
 //	}
 //	defer resp.Body.Close()
 //

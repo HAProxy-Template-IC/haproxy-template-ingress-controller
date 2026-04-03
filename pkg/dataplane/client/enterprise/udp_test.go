@@ -86,7 +86,7 @@ func TestUDPLBOperations_GetAllUDPLbs_InvalidJSON(t *testing.T) {
 	_, err := udp.GetAllUDPLbs(context.Background(), "tx-123")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode")
+	assert.Contains(t, err.Error(), "decoding")
 }
 
 func TestUDPLBOperations_GetAllUDPLbs_CommunityEdition(t *testing.T) {
