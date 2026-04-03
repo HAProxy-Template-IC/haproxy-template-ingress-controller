@@ -43,7 +43,7 @@ func podStatusesEqual(a, b []haproxyv1alpha1.PodDeploymentStatus) bool {
 		return false
 	}
 
-	// Create map for efficient lookup (using pointers to avoid copying 144-byte structs)
+	// Create map for efficient lookup
 	statusMap := make(map[string]*haproxyv1alpha1.PodDeploymentStatus, len(a))
 	for i := range a {
 		statusMap[a[i].PodName] = &a[i]

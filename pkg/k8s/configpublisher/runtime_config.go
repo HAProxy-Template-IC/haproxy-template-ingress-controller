@@ -100,11 +100,6 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 		},
 	}
 
-	// Set validation error in status if provided
-	if req.ValidationError != "" {
-		runtimeConfig.Status.ValidationError = req.ValidationError
-	}
-
 	return runtimeConfig
 }
 
@@ -117,41 +112,27 @@ func (p *Publisher) createRuntimeConfig(ctx context.Context, req *PublishRequest
 		return nil, fmt.Errorf("failed to create runtime config: %w", err)
 	}
 
-	// Update status after creation if needed
+	// Set validation error status if this is an invalid config
 	if req.ValidationError != "" {
-		p.updateCreatedStatus(ctx, req, created)
-	} else {
-		p.logger.Debug("created new runtime config, status will be updated on first deployment",
-			"name", created.Name,
-			"namespace", created.Namespace,
-		)
+		p.updateValidationErrorStatus(ctx, created, req.ValidationError)
 	}
 
 	return created, nil
 }
 
-// updateCreatedStatus updates the status of a newly created HAProxyCfg.
-func (p *Publisher) updateCreatedStatus(ctx context.Context, req *PublishRequest, created *haproxyv1alpha1.HAProxyCfg) {
-	// Set validation error if provided
-	if req.ValidationError != "" {
-		created.Status.ValidationError = req.ValidationError
-	}
+// updateValidationErrorStatus sets or clears the ValidationError on a HAProxyCfg status.
+// Called only on validation error state transitions (ok→error or error→ok).
+func (p *Publisher) updateValidationErrorStatus(ctx context.Context, cfg *haproxyv1alpha1.HAProxyCfg, validationError string) {
+	cfg.Status.ValidationError = validationError
 
-	// Update status
 	_, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs(req.TemplateConfigNamespace).
-		UpdateStatus(ctx, created, metav1.UpdateOptions{})
+		HAProxyCfgs(cfg.Namespace).
+		UpdateStatus(ctx, cfg, metav1.UpdateOptions{})
 	if err != nil {
-		p.logger.Debug("status update conflict after creation (will retry on next reconciliation)",
+		p.logger.Debug("status update conflict (will retry on next reconciliation)",
 			"type", "runtime_config_status",
-			"name", created.Name,
+			"name", cfg.Name,
 			"error", err,
-		)
-	} else {
-		p.logger.Debug("created and updated runtime config status",
-			"name", created.Name,
-			"namespace", created.Namespace,
-			"has_validation_error", req.ValidationError != "",
 		)
 	}
 }
@@ -168,12 +149,12 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 		return existing, nil
 	}
 
+	// Check for validation error state transition before spec update
+	previousValidationError := existing.Status.ValidationError
+
 	// Update existing resource
 	existing.Spec = runtimeConfig.Spec
 	existing.Labels = runtimeConfig.Labels
-
-	// Capture previous validation error state before overwriting spec
-	previousValidationError := existing.Status.ValidationError
 
 	updated, err := p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(req.TemplateConfigNamespace).
@@ -182,39 +163,16 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 		return nil, fmt.Errorf("failed to update runtime config: %w", err)
 	}
 
-	// Only update status when the validation error state transitions (ok→error or error→ok).
-	// Per-event telemetry (RenderedAt, ValidatedAt) belongs in logs and metrics, not in the CRD
-	// status — each UpdateStatus writes the full ~509 KB object to etcd.
+	// Only update status on validation error state transitions (ok→error or error→ok).
+	// Each UpdateStatus writes the full ~509 KB object to etcd.
 	if previousValidationError != req.ValidationError {
-		p.updateExistingStatus(ctx, req, updated)
+		p.updateValidationErrorStatus(ctx, updated, req.ValidationError)
 	}
 	return updated, nil
 }
 
-// updateExistingStatus updates the status of an existing HAProxyCfg.
-func (p *Publisher) updateExistingStatus(ctx context.Context, req *PublishRequest, updated *haproxyv1alpha1.HAProxyCfg) {
-	// Update validation error (set or clear)
-	if req.ValidationError != "" {
-		updated.Status.ValidationError = req.ValidationError
-	} else {
-		// Clear validation error if not provided (transitioning from invalid to valid)
-		updated.Status.ValidationError = ""
-	}
-
-	_, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs(req.TemplateConfigNamespace).
-		UpdateStatus(ctx, updated, metav1.UpdateOptions{})
-	if err != nil {
-		p.logger.Debug("status update conflict (will retry on next reconciliation)",
-			"type", "runtime_config_status",
-			"name", updated.Name,
-			"error", err,
-		)
-	}
-}
-
 // updateRuntimeConfigStatus updates the HAProxyCfg status with child resource references.
-// Skips the UpdateStatus API call if the references and total size are unchanged.
+// Skips the UpdateStatus API call if the references are unchanged.
 func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, result *PublishResult) error {
 	// Get the latest version
 	current, err := p.crdClient.HaproxyTemplateICV1alpha1().
