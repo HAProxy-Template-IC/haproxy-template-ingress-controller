@@ -53,8 +53,6 @@ func TestPublishConfig_CreateNew(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles: &AuxiliaryFiles{
 			MapFiles: []auxiliaryfiles.MapFile{
 				{
@@ -136,8 +134,6 @@ func TestPublishConfig_Update(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &initialReq)
@@ -151,8 +147,6 @@ func TestPublishConfig_Update(t *testing.T) {
 		Config:                  "global\n  daemon\n  maxconn 1000\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "def456",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	result, err := publisher.PublishConfig(ctx, &updatedReq)
@@ -185,20 +179,16 @@ func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
 
 	// Update deployment status
-	deployedAt := time.Now()
 	update := DeploymentStatusUpdate{
 		RuntimeConfigName:      "test-config-haproxycfg",
 		RuntimeConfigNamespace: "default",
 		PodName:                "haproxy-0",
-		DeployedAt:             deployedAt,
 		Checksum:               "abc123",
 	}
 
@@ -232,8 +222,6 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
@@ -244,27 +232,26 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 		RuntimeConfigName:      "test-config-haproxycfg",
 		RuntimeConfigNamespace: "default",
 		PodName:                "haproxy-0",
-		DeployedAt:             time.Now(),
 		Checksum:               "abc123",
 	}
 
 	err = publisher.UpdateDeploymentStatus(ctx, &firstUpdate)
 	require.NoError(t, err)
 
-	// Update same pod with new checksum
+	// Update same pod with an error (error state transition triggers UpdateStatus)
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamp
 	secondUpdate := DeploymentStatusUpdate{
 		RuntimeConfigName:      "test-config-haproxycfg",
 		RuntimeConfigNamespace: "default",
 		PodName:                "haproxy-0",
-		DeployedAt:             time.Now(),
 		Checksum:               "def456",
+		Error:                  "sync failed",
 	}
 
 	err = publisher.UpdateDeploymentStatus(ctx, &secondUpdate)
 	require.NoError(t, err)
 
-	// Verify only one pod entry exists with updated checksum
+	// Verify only one pod entry exists with updated checksum and error
 	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
 		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
@@ -273,6 +260,7 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
 	assert.Equal(t, "haproxy-0", runtimeConfig.Status.DeployedToPods[0].PodName)
 	assert.Equal(t, "def456", runtimeConfig.Status.DeployedToPods[0].Checksum)
+	assert.Equal(t, "sync failed", runtimeConfig.Status.DeployedToPods[0].LastError)
 }
 
 func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
@@ -290,8 +278,6 @@ func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
@@ -304,7 +290,6 @@ func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 			RuntimeConfigName:      "test-config-haproxycfg",
 			RuntimeConfigNamespace: "default",
 			PodName:                podName,
-			DeployedAt:             time.Now(),
 			Checksum:               "abc123",
 		}
 
@@ -345,8 +330,6 @@ func TestCleanupPodReferences_RemovePod(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
@@ -358,7 +341,6 @@ func TestCleanupPodReferences_RemovePod(t *testing.T) {
 			RuntimeConfigName:      "test-config-haproxycfg",
 			RuntimeConfigNamespace: "default",
 			PodName:                podName,
-			DeployedAt:             time.Now(),
 			Checksum:               "abc123",
 		}
 
@@ -400,8 +382,6 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
@@ -439,7 +419,6 @@ func TestUpdateDeploymentStatus_RuntimeConfigNotFound(t *testing.T) {
 		RuntimeConfigName:      "nonexistent-runtime",
 		RuntimeConfigNamespace: "default",
 		PodName:                "haproxy-0",
-		DeployedAt:             time.Now(),
 		Checksum:               "abc123",
 	}
 
@@ -463,8 +442,6 @@ func TestPublishConfig_GeneralFiles(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles: &AuxiliaryFiles{
 			GeneralFiles: []auxiliaryfiles.GeneralFile{
 				{
@@ -509,8 +486,6 @@ func TestPublishConfig_CRTListFiles(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles: &AuxiliaryFiles{
 			CRTListFiles: []auxiliaryfiles.CRTListFile{
 				{
@@ -564,8 +539,6 @@ func TestPublishConfig_WithCompression(t *testing.T) {
 		Config:                  largeContent.String(),
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		CompressionThreshold:    1024, // 1KB threshold
 	}
 
@@ -607,8 +580,6 @@ func TestPublishConfig_CompressionDisabled(t *testing.T) {
 		Config:                  largeContent.String(),
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		CompressionThreshold:    0, // Disabled
 	}
 
@@ -641,8 +612,6 @@ func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		CompressionThreshold:    0, // Disabled - small content won't be compressed anyway
 		AuxiliaryFiles: &AuxiliaryFiles{
 			SSLCertificates: []auxiliaryfiles.SSLCertificate{
@@ -693,8 +662,6 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
@@ -706,7 +673,6 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 			RuntimeConfigName:      "test-config-haproxycfg",
 			RuntimeConfigNamespace: "default",
 			PodName:                podName,
-			DeployedAt:             time.Now(),
 			Checksum:               "abc123",
 		}
 
@@ -744,8 +710,6 @@ func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
@@ -757,7 +721,6 @@ func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 			RuntimeConfigName:      "test-config-haproxycfg",
 			RuntimeConfigNamespace: "default",
 			PodName:                podName,
-			DeployedAt:             time.Now(),
 			Checksum:               "abc123",
 		}
 
@@ -794,8 +757,6 @@ func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
@@ -807,7 +768,6 @@ func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 			RuntimeConfigName:      "test-config-haproxycfg",
 			RuntimeConfigNamespace: "default",
 			PodName:                podName,
-			DeployedAt:             time.Now(),
 			Checksum:               "abc123",
 		}
 
@@ -844,8 +804,6 @@ func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "abc123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 	}
 
 	_, err := publisher.PublishConfig(ctx, &req)
@@ -865,76 +823,36 @@ func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 	assert.Empty(t, runtimeConfig.Status.DeployedToPods)
 }
 
-func TestAddOrUpdatePodStatus_PreservesDeployedAt(t *testing.T) {
-	existingTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-
-	existing := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:    "haproxy-0",
-			DeployedAt: existingTime,
-			Checksum:   "old-checksum",
-		},
-	}
-
-	// Update with zero DeployedAt (simulates drift check with no operations)
-	newStatus := &haproxyv1alpha1.PodDeploymentStatus{
-		PodName:    "haproxy-0",
-		DeployedAt: metav1.Time{}, // Zero value
-		Checksum:   "new-checksum",
-	}
-
-	result := addOrUpdatePodStatus(existing, newStatus)
-
-	require.Len(t, result, 1)
-	assert.Equal(t, "haproxy-0", result[0].PodName)
-	assert.Equal(t, "new-checksum", result[0].Checksum)
-	// DeployedAt should be preserved from existing
-	assert.Equal(t, existingTime, result[0].DeployedAt, "existing deployedAt should be preserved")
-}
-
 func TestAddOrUpdatePodStatus_UpdatesExistingPod(t *testing.T) {
-	existingTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-	newTime := metav1.NewTime(time.Now())
-
 	existing := []haproxyv1alpha1.PodDeploymentStatus{
 		{
-			PodName:    "haproxy-0",
-			DeployedAt: existingTime,
-			Checksum:   "old-checksum",
+			PodName:  "haproxy-0",
+			Checksum: "old-checksum",
 		},
 	}
 
-	// Update with valid DeployedAt
 	newStatus := &haproxyv1alpha1.PodDeploymentStatus{
-		PodName:    "haproxy-0",
-		DeployedAt: newTime,
-		Checksum:   "new-checksum",
+		PodName:  "haproxy-0",
+		Checksum: "new-checksum",
 	}
 
 	result := addOrUpdatePodStatus(existing, newStatus)
 
 	require.Len(t, result, 1, "should update existing, not append")
 	assert.Equal(t, "new-checksum", result[0].Checksum)
-	assert.Equal(t, newTime, result[0].DeployedAt)
 }
 
 func TestAddOrUpdatePodStatus_AppendsDifferentPod(t *testing.T) {
-	existingTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-	newTime := metav1.NewTime(time.Now())
-
 	existing := []haproxyv1alpha1.PodDeploymentStatus{
 		{
-			PodName:    "haproxy-0",
-			DeployedAt: existingTime,
-			Checksum:   "checksum-0",
+			PodName:  "haproxy-0",
+			Checksum: "checksum-0",
 		},
 	}
 
-	// Add different pod
 	newStatus := &haproxyv1alpha1.PodDeploymentStatus{
-		PodName:    "haproxy-1",
-		DeployedAt: newTime,
-		Checksum:   "checksum-1",
+		PodName:  "haproxy-1",
+		Checksum: "checksum-1",
 	}
 
 	result := addOrUpdatePodStatus(existing, newStatus)
@@ -947,9 +865,8 @@ func TestAddOrUpdatePodStatus_AppendsDifferentPod(t *testing.T) {
 func TestCopyPodStatuses_ReturnsDeepCopy(t *testing.T) {
 	original := []haproxyv1alpha1.PodDeploymentStatus{
 		{
-			PodName:    "haproxy-0",
-			DeployedAt: metav1.NewTime(time.Now()),
-			Checksum:   "checksum-0",
+			PodName:  "haproxy-0",
+			Checksum: "checksum-0",
 		},
 	}
 
@@ -968,26 +885,17 @@ func TestCopyPodStatuses_NilInput(t *testing.T) {
 }
 
 func TestPodStatusesEqual_IdenticalStatuses(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-	reloadAt := metav1.NewTime(time.Now().Add(-5 * time.Minute))
-
 	a := []haproxyv1alpha1.PodDeploymentStatus{
 		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			LastReloadAt: &reloadAt,
-			LastReloadID: "reload-1",
+			PodName:  "haproxy-0",
+			Checksum: "abc123",
 		},
 	}
 
 	b := []haproxyv1alpha1.PodDeploymentStatus{
 		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			LastReloadAt: &reloadAt,
-			LastReloadID: "reload-1",
+			PodName:  "haproxy-0",
+			Checksum: "abc123",
 		},
 	}
 
@@ -995,57 +903,31 @@ func TestPodStatusesEqual_IdenticalStatuses(t *testing.T) {
 }
 
 func TestPodStatusesEqual_DifferentChecksum(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-
 	a := []haproxyv1alpha1.PodDeploymentStatus{
 		{
-			PodName:    "haproxy-0",
-			DeployedAt: now,
-			Checksum:   "abc123",
+			PodName:  "haproxy-0",
+			Checksum: "abc123",
 		},
 	}
 
 	b := []haproxyv1alpha1.PodDeploymentStatus{
 		{
-			PodName:    "haproxy-0",
-			DeployedAt: now,
-			Checksum:   "different",
+			PodName:  "haproxy-0",
+			Checksum: "different",
 		},
 	}
 
 	assert.False(t, podStatusesEqual(a, b), "different checksums should not be equal")
 }
 
-func TestPodStatusesEqual_DifferentDeployedAt(t *testing.T) {
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:    "haproxy-0",
-			DeployedAt: metav1.NewTime(time.Now()),
-			Checksum:   "abc123",
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:    "haproxy-0",
-			DeployedAt: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-			Checksum:   "abc123",
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "different deployment times should not be equal")
-}
-
 func TestPodStatusesEqual_DifferentLength(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-
 	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{PodName: "haproxy-0", DeployedAt: now, Checksum: "abc123"},
+		{PodName: "haproxy-0", Checksum: "abc123"},
 	}
 
 	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{PodName: "haproxy-0", DeployedAt: now, Checksum: "abc123"},
-		{PodName: "haproxy-1", DeployedAt: now, Checksum: "def456"},
+		{PodName: "haproxy-0", Checksum: "abc123"},
+		{PodName: "haproxy-1", Checksum: "def456"},
 	}
 
 	assert.False(t, podStatusesEqual(a, b), "different lengths should not be equal")
@@ -1058,285 +940,12 @@ func TestPodStatusesEqual_EmptySlices(t *testing.T) {
 	assert.True(t, podStatusesEqual(a, b), "empty slices should be equal")
 }
 
-func TestPodStatusesEqual_LastReloadAtNilVsSet(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-	reloadAt := metav1.NewTime(time.Now())
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			LastReloadAt: nil, // No reload recorded
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			LastReloadAt: &reloadAt, // Reload recorded
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "nil vs set LastReloadAt should not be equal")
-}
-
-func TestPodStatusesEqual_DifferentSyncDuration(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-	duration1 := metav1.Duration{Duration: 5 * time.Second}
-	duration2 := metav1.Duration{Duration: 10 * time.Second}
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			SyncDuration: &duration1,
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			SyncDuration: &duration2,
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "different SyncDuration should not be equal")
-}
-
-func TestPodStatusesEqual_SyncDurationNilVsSet(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-	duration := metav1.Duration{Duration: 5 * time.Second}
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			SyncDuration: nil,
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			SyncDuration: &duration,
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "nil vs set SyncDuration should not be equal")
-}
-
-func TestPodStatusesEqual_DifferentVersionConflictRetries(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:                "haproxy-0",
-			DeployedAt:             now,
-			Checksum:               "abc123",
-			VersionConflictRetries: 0,
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:                "haproxy-0",
-			DeployedAt:             now,
-			Checksum:               "abc123",
-			VersionConflictRetries: 3,
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "different VersionConflictRetries should not be equal")
-}
-
-func TestPodStatusesEqual_DifferentFallbackUsed(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			FallbackUsed: false,
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:      "haproxy-0",
-			DeployedAt:   now,
-			Checksum:     "abc123",
-			FallbackUsed: true,
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "different FallbackUsed should not be equal")
-}
-
-func TestPodStatusesEqual_DifferentConsecutiveErrors(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:           "haproxy-0",
-			DeployedAt:        now,
-			Checksum:          "abc123",
-			ConsecutiveErrors: 0,
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:           "haproxy-0",
-			DeployedAt:        now,
-			Checksum:          "abc123",
-			ConsecutiveErrors: 5,
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "different ConsecutiveErrors should not be equal")
-}
-
-func TestPodStatusesEqual_DifferentLastErrorAt(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-	errorAt1 := metav1.NewTime(time.Now().Add(-1 * time.Hour))
-	errorAt2 := metav1.NewTime(time.Now().Add(-2 * time.Hour))
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:     "haproxy-0",
-			DeployedAt:  now,
-			Checksum:    "abc123",
-			LastErrorAt: &errorAt1,
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:     "haproxy-0",
-			DeployedAt:  now,
-			Checksum:    "abc123",
-			LastErrorAt: &errorAt2,
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "different LastErrorAt should not be equal")
-}
-
-func TestPodStatusesEqual_LastErrorAtNilVsSet(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-	errorAt := metav1.NewTime(time.Now())
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:     "haproxy-0",
-			DeployedAt:  now,
-			Checksum:    "abc123",
-			LastErrorAt: nil,
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:     "haproxy-0",
-			DeployedAt:  now,
-			Checksum:    "abc123",
-			LastErrorAt: &errorAt,
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "nil vs set LastErrorAt should not be equal")
-}
-
-func TestPodStatusesEqual_DifferentLastOperationSummary(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:    "haproxy-0",
-			DeployedAt: now,
-			Checksum:   "abc123",
-			LastOperationSummary: &haproxyv1alpha1.OperationSummary{
-				TotalAPIOperations: 10,
-				BackendsAdded:      2,
-			},
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:    "haproxy-0",
-			DeployedAt: now,
-			Checksum:   "abc123",
-			LastOperationSummary: &haproxyv1alpha1.OperationSummary{
-				TotalAPIOperations: 15,
-				BackendsAdded:      3,
-			},
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "different LastOperationSummary should not be equal")
-}
-
-func TestPodStatusesEqual_LastOperationSummaryNilVsSet(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-
-	a := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:              "haproxy-0",
-			DeployedAt:           now,
-			Checksum:             "abc123",
-			LastOperationSummary: nil,
-		},
-	}
-
-	b := []haproxyv1alpha1.PodDeploymentStatus{
-		{
-			PodName:    "haproxy-0",
-			DeployedAt: now,
-			Checksum:   "abc123",
-			LastOperationSummary: &haproxyv1alpha1.OperationSummary{
-				TotalAPIOperations: 5,
-			},
-		},
-	}
-
-	assert.False(t, podStatusesEqual(a, b), "nil vs set LastOperationSummary should not be equal")
-}
-
 func TestPodStatusesEqual_IdenticalWithAllFields(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-	reloadAt := metav1.NewTime(time.Now().Add(-5 * time.Minute))
-	errorAt := metav1.NewTime(time.Now().Add(-10 * time.Minute))
-	duration := metav1.Duration{Duration: 5 * time.Second}
-
 	status := haproxyv1alpha1.PodDeploymentStatus{
-		PodName:                "haproxy-0",
-		DeployedAt:             now,
-		Checksum:               "abc123",
-		LastReloadAt:           &reloadAt,
-		LastReloadID:           "reload-1",
-		SyncDuration:           &duration,
-		VersionConflictRetries: 2,
-		FallbackUsed:           true,
-		LastOperationSummary: &haproxyv1alpha1.OperationSummary{
-			TotalAPIOperations: 10,
-			BackendsAdded:      2,
-			BackendsRemoved:    1,
-			ServersAdded:       5,
-		},
+		PodName:           "haproxy-0",
+		Checksum:          "abc123",
 		LastError:         "some error",
 		ConsecutiveErrors: 3,
-		LastErrorAt:       &errorAt,
 	}
 
 	a := []haproxyv1alpha1.PodDeploymentStatus{status}
@@ -1363,8 +972,6 @@ func TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles: &AuxiliaryFiles{
 			MapFiles:     []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
 			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "/etc/haproxy/lua/script.lua", Content: "-- lua script\n"}},
@@ -1397,7 +1004,7 @@ func TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum(t *testing.T) {
 	t.Run("initial deployment uses file-specific checksums", func(t *testing.T) {
 		err := publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
 			RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
-			PodName: "haproxy-0", DeployedAt: time.Now(), Checksum: "main-config-checksum-v1",
+			PodName: "haproxy-0", Checksum: "main-config-checksum-v1",
 		})
 		require.NoError(t, err)
 
@@ -1424,15 +1031,16 @@ func TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum(t *testing.T) {
 		assert.Equal(t, crtListFileChecksum, crtListFile.Status.DeployedToPods[0].Checksum, "crt-list file should use its own checksum")
 	})
 
-	t.Run("main config change does not update auxiliary file checksums", func(t *testing.T) {
-		// Simulate main config change (new checksum) but auxiliary files unchanged
+	t.Run("main config change updates main config checksum but not auxiliary file checksums", func(t *testing.T) {
+		// Simulate main config change (new checksum). Checksum is a state field
+		// so it triggers an UpdateStatus on the main config.
 		err := publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
 			RuntimeConfigName: "test-config-haproxycfg", RuntimeConfigNamespace: "default",
-			PodName: "haproxy-0", DeployedAt: time.Now(), Checksum: "main-config-checksum-v2",
+			PodName: "haproxy-0", Checksum: "main-config-checksum-v2",
 		})
 		require.NoError(t, err)
 
-		// Main config status should have updated checksum
+		// Main config status checksum IS updated (checksum is a state field)
 		runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
 		require.NoError(t, err)
 		assert.Equal(t, "main-config-checksum-v2", runtimeConfig.Status.DeployedToPods[0].Checksum)
@@ -1452,390 +1060,6 @@ func TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum(t *testing.T) {
 	})
 }
 
-// TestAuxiliaryFileStatus_NoUpdateWhenChecksumUnchanged verifies that auxiliary file
-// status is not updated when the file's checksum hasn't changed, even when main config
-// metrics (SyncDuration, LastOperationSummary, etc.) are different.
-func TestAuxiliaryFileStatus_NoUpdateWhenChecksumUnchanged(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	publisher := New(k8sClient, crdClient, testLogger())
-
-	// Create runtime config with a map file
-	result, err := publisher.PublishConfig(ctx, &PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
-		AuxiliaryFiles: &AuxiliaryFiles{
-			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
-		},
-	})
-	require.NoError(t, err)
-	require.Len(t, result.MapFileNames, 1)
-	mapFileName := result.MapFileNames[0]
-
-	// Initial deployment
-	deployTime := time.Now()
-	syncDuration := 100 * time.Millisecond
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             deployTime,
-		Checksum:               "main-config-checksum-v1",
-		SyncDuration:           &syncDuration,
-		OperationSummary: &OperationSummary{
-			TotalAPIOperations: 10,
-			BackendsAdded:      2,
-		},
-	})
-	require.NoError(t, err)
-
-	// Get the map file's resource version after initial deployment
-	mapFileV1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, mapFileName, metav1.GetOptions{})
-	require.NoError(t, err)
-	initialResourceVersion := mapFileV1.ResourceVersion
-
-	// Update with different main config metrics (but same auxiliary file checksum)
-	newSyncDuration := 200 * time.Millisecond
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             time.Now(), // Different time
-		Checksum:               "main-config-checksum-v1",
-		SyncDuration:           &newSyncDuration, // Different duration
-		OperationSummary: &OperationSummary{
-			TotalAPIOperations: 20, // Different operation count
-			BackendsAdded:      5,
-		},
-	})
-	require.NoError(t, err)
-
-	// Verify map file resource version didn't change (no update occurred)
-	mapFileV2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, mapFileName, metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, initialResourceVersion, mapFileV2.ResourceVersion,
-		"map file resource version should not change when checksum is unchanged")
-}
-
-// TestAuxiliaryFileStatus_UpdateWhenChecksumChanges verifies that auxiliary file
-// status IS updated when the file's checksum changes.
-func TestAuxiliaryFileStatus_UpdateWhenChecksumChanges(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	publisher := New(k8sClient, crdClient, testLogger())
-
-	// Create runtime config with a map file
-	result, err := publisher.PublishConfig(ctx, &PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
-		AuxiliaryFiles: &AuxiliaryFiles{
-			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
-		},
-	})
-	require.NoError(t, err)
-	require.Len(t, result.MapFileNames, 1)
-	mapFileName := result.MapFileNames[0]
-
-	// Initial deployment
-	initialDeployTime := time.Now()
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             initialDeployTime,
-		Checksum:               "main-config-checksum-v1",
-	})
-	require.NoError(t, err)
-
-	// Verify initial status
-	mapFileV1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, mapFileName, metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Len(t, mapFileV1.Status.DeployedToPods, 1)
-	initialStatusChecksum := mapFileV1.Status.DeployedToPods[0].Checksum
-	initialDeployedAt := mapFileV1.Status.DeployedToPods[0].DeployedAt
-
-	// Update the map file spec with different checksum (simulating content change)
-	mapFileV1.Spec.Entries = "example.com backend2\n" // Changed content
-	mapFileV1.Spec.Checksum = "new-map-file-checksum"
-	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Update(ctx, mapFileV1, metav1.UpdateOptions{})
-	require.NoError(t, err)
-
-	// Update deployment status - the file's spec checksum changed, so status should update
-	newDeployTime := time.Now().Add(time.Second)
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             newDeployTime,
-		Checksum:               "main-config-checksum-v1",
-	})
-	require.NoError(t, err)
-
-	// Verify status was updated with new checksum
-	mapFileV2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, mapFileName, metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Len(t, mapFileV2.Status.DeployedToPods, 1)
-
-	assert.NotEqual(t, initialStatusChecksum, mapFileV2.Status.DeployedToPods[0].Checksum,
-		"map file status checksum should be updated when spec checksum changes")
-	assert.Equal(t, "new-map-file-checksum", mapFileV2.Status.DeployedToPods[0].Checksum)
-
-	// DeployedAt should also be updated (new deployment)
-	assert.NotEqual(t, initialDeployedAt, mapFileV2.Status.DeployedToPods[0].DeployedAt,
-		"DeployedAt should be updated when checksum changes")
-}
-
-// TestAuxiliaryFileStatus_DoesNotInheritMainConfigMetrics verifies that auxiliary file
-// status does not include main config metrics like SyncDuration, LastOperationSummary, etc.
-func TestAuxiliaryFileStatus_DoesNotInheritMainConfigMetrics(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	publisher := New(k8sClient, crdClient, testLogger())
-
-	// Create runtime config with all three auxiliary file types
-	result, err := publisher.PublishConfig(ctx, &PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
-		AuxiliaryFiles: &AuxiliaryFiles{
-			MapFiles:     []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
-			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "/etc/haproxy/lua/script.lua", Content: "-- lua script\n"}},
-			CRTListFiles: []auxiliaryfiles.CRTListFile{{Path: "/etc/haproxy/ssl/crt-list.txt", Content: "default.pem\n"}},
-		},
-	})
-	require.NoError(t, err)
-
-	// Deploy with all main config metrics populated
-	syncDuration := 500 * time.Millisecond
-	reloadTime := time.Now()
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             time.Now(),
-		Checksum:               "main-config-checksum-v1",
-		SyncDuration:           &syncDuration,
-		LastReloadAt:           &reloadTime,
-		LastReloadID:           "reload-123",
-		VersionConflictRetries: 3,
-		FallbackUsed:           true,
-		OperationSummary: &OperationSummary{
-			TotalAPIOperations: 100,
-			BackendsAdded:      10,
-			ServersAdded:       50,
-		},
-	})
-	require.NoError(t, err)
-
-	// Verify main config has all metrics
-	mainConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Len(t, mainConfig.Status.DeployedToPods, 1)
-	mainStatus := mainConfig.Status.DeployedToPods[0]
-	assert.NotNil(t, mainStatus.SyncDuration, "main config should have SyncDuration")
-	assert.NotNil(t, mainStatus.LastReloadAt, "main config should have LastReloadAt")
-	assert.NotNil(t, mainStatus.LastOperationSummary, "main config should have LastOperationSummary")
-	assert.Equal(t, 3, mainStatus.VersionConflictRetries, "main config should have VersionConflictRetries")
-	assert.True(t, mainStatus.FallbackUsed, "main config should have FallbackUsed")
-
-	// Verify map file does NOT have main config metrics
-	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").Get(ctx, result.MapFileNames[0], metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Len(t, mapFile.Status.DeployedToPods, 1)
-	mapStatus := mapFile.Status.DeployedToPods[0]
-	assert.Nil(t, mapStatus.SyncDuration, "auxiliary file should NOT have SyncDuration")
-	assert.Nil(t, mapStatus.LastReloadAt, "auxiliary file should NOT have LastReloadAt")
-	assert.Nil(t, mapStatus.LastOperationSummary, "auxiliary file should NOT have LastOperationSummary")
-	assert.Equal(t, 0, mapStatus.VersionConflictRetries, "auxiliary file should NOT have VersionConflictRetries")
-	assert.False(t, mapStatus.FallbackUsed, "auxiliary file should NOT have FallbackUsed")
-	// But it should have the essential fields
-	assert.NotEmpty(t, mapStatus.PodName)
-	assert.NotEmpty(t, mapStatus.Checksum)
-	assert.False(t, mapStatus.DeployedAt.IsZero())
-
-	// Verify general file does NOT have main config metrics
-	generalFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default").Get(ctx, result.GeneralFileNames[0], metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Len(t, generalFile.Status.DeployedToPods, 1)
-	generalStatus := generalFile.Status.DeployedToPods[0]
-	assert.Nil(t, generalStatus.SyncDuration, "auxiliary file should NOT have SyncDuration")
-	assert.Nil(t, generalStatus.LastReloadAt, "auxiliary file should NOT have LastReloadAt")
-	assert.Nil(t, generalStatus.LastOperationSummary, "auxiliary file should NOT have LastOperationSummary")
-	assert.Equal(t, 0, generalStatus.VersionConflictRetries, "auxiliary file should NOT have VersionConflictRetries")
-	assert.False(t, generalStatus.FallbackUsed, "auxiliary file should NOT have FallbackUsed")
-
-	// Verify CRT list file does NOT have main config metrics
-	crtListFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default").Get(ctx, result.CRTListFileNames[0], metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Len(t, crtListFile.Status.DeployedToPods, 1)
-	crtStatus := crtListFile.Status.DeployedToPods[0]
-	assert.Nil(t, crtStatus.SyncDuration, "auxiliary file should NOT have SyncDuration")
-	assert.Nil(t, crtStatus.LastReloadAt, "auxiliary file should NOT have LastReloadAt")
-	assert.Nil(t, crtStatus.LastOperationSummary, "auxiliary file should NOT have LastOperationSummary")
-	assert.Equal(t, 0, crtStatus.VersionConflictRetries, "auxiliary file should NOT have VersionConflictRetries")
-	assert.False(t, crtStatus.FallbackUsed, "auxiliary file should NOT have FallbackUsed")
-}
-
-// TestRuntimeConfigStatus_NoUpdateWhenUnchanged verifies that HAProxyCfg status
-// is not updated when pod deployment status hasn't actually changed.
-func TestRuntimeConfigStatus_NoUpdateWhenUnchanged(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	publisher := New(k8sClient, crdClient, testLogger())
-
-	// Create runtime config
-	_, err := publisher.PublishConfig(ctx, &PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
-	})
-	require.NoError(t, err)
-
-	// Initial deployment
-	deployTime := time.Now()
-	syncDuration := 100 * time.Millisecond
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             deployTime,
-		Checksum:               "main-config-checksum-v1",
-		SyncDuration:           &syncDuration,
-		OperationSummary: &OperationSummary{
-			TotalAPIOperations: 10,
-			BackendsAdded:      2,
-		},
-	})
-	require.NoError(t, err)
-
-	// Get resource version after initial deployment
-	configV1, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
-	require.NoError(t, err)
-	initialResourceVersion := configV1.ResourceVersion
-
-	// Update with EXACTLY the same status (same checksum, same deployment time, same metrics)
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             deployTime, // Same time
-		Checksum:               "main-config-checksum-v1",
-		SyncDuration:           &syncDuration, // Same duration
-		OperationSummary: &OperationSummary{
-			TotalAPIOperations: 10,
-			BackendsAdded:      2,
-		},
-	})
-	require.NoError(t, err)
-
-	// Verify resource version didn't change (no update occurred)
-	configV2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, initialResourceVersion, configV2.ResourceVersion,
-		"HAProxyCfg resource version should not change when status is unchanged")
-}
-
-// TestRuntimeConfigStatus_UpdateWhenChanged verifies that HAProxyCfg status
-// IS updated when pod deployment status changes.
-func TestRuntimeConfigStatus_UpdateWhenChanged(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	publisher := New(k8sClient, crdClient, testLogger())
-
-	// Create runtime config
-	_, err := publisher.PublishConfig(ctx, &PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       types.UID("test-uid-123"),
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
-	})
-	require.NoError(t, err)
-
-	// Initial deployment
-	deployTime := time.Now()
-	syncDuration := 100 * time.Millisecond
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             deployTime,
-		Checksum:               "main-config-checksum-v1",
-		SyncDuration:           &syncDuration,
-		OperationSummary: &OperationSummary{
-			TotalAPIOperations: 10,
-			BackendsAdded:      2,
-		},
-	})
-	require.NoError(t, err)
-
-	// Update with DIFFERENT status (new checksum - simulating config change)
-	newDeployTime := time.Now().Add(time.Second)
-	newSyncDuration := 200 * time.Millisecond
-	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		DeployedAt:             newDeployTime,
-		Checksum:               "main-config-checksum-v2", // Changed checksum
-		SyncDuration:           &newSyncDuration,
-		OperationSummary: &OperationSummary{
-			TotalAPIOperations: 20,
-			BackendsAdded:      5,
-		},
-	})
-	require.NoError(t, err)
-
-	// Verify the status was updated with new values
-	configV2, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Len(t, configV2.Status.DeployedToPods, 1)
-
-	// Verify checksum was updated
-	assert.Equal(t, "main-config-checksum-v2", configV2.Status.DeployedToPods[0].Checksum,
-		"HAProxyCfg status checksum should be updated")
-
-	// Verify sync duration was updated
-	require.NotNil(t, configV2.Status.DeployedToPods[0].SyncDuration)
-	assert.Equal(t, newSyncDuration, configV2.Status.DeployedToPods[0].SyncDuration.Duration,
-		"HAProxyCfg status sync duration should be updated")
-
-	// Verify operation summary was updated
-	require.NotNil(t, configV2.Status.DeployedToPods[0].LastOperationSummary)
-	assert.Equal(t, 20, configV2.Status.DeployedToPods[0].LastOperationSummary.TotalAPIOperations,
-		"HAProxyCfg status operation summary should be updated")
-}
-
 // TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged verifies that auxiliary file
 // specs are not updated when the content checksum hasn't changed.
 func TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged(t *testing.T) {
@@ -1852,8 +1076,6 @@ func TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles: &AuxiliaryFiles{
 			MapFiles:     []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
 			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "/etc/haproxy/lua/script.lua", Filename: "script.lua", Content: "-- lua script\n"}},
@@ -1886,8 +1108,6 @@ func TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles: &AuxiliaryFiles{
 			MapFiles:     []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
 			GeneralFiles: []auxiliaryfiles.GeneralFile{{Path: "/etc/haproxy/lua/script.lua", Filename: "script.lua", Content: "-- lua script\n"}},
@@ -1929,8 +1149,6 @@ func TestAuxiliaryFileSpec_UpdateWhenChecksumChanges(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles: &AuxiliaryFiles{
 			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"}},
 		},
@@ -1951,8 +1169,6 @@ func TestAuxiliaryFileSpec_UpdateWhenChecksumChanges(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "main-config-checksum-v1",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles: &AuxiliaryFiles{
 			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com backend2\n"}}, // Different content
 		},

@@ -170,8 +170,6 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "checksum123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles:          nil,
 	})
 	require.NoError(t, err)
@@ -200,7 +198,6 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	pod := runtimeConfig.Status.DeployedToPods[0]
 	assert.Equal(t, "haproxy-pod-1", pod.PodName)
 	assert.Equal(t, "checksum123", pod.Checksum)
-	assert.NotNil(t, pod.DeployedAt)
 }
 
 func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
@@ -241,8 +238,6 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "checksum123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles:          nil,
 	})
 	require.NoError(t, err)
@@ -320,8 +315,6 @@ func TestComponent_MultiplePods(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "checksum123",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles:          nil,
 	})
 	require.NoError(t, err)
@@ -623,8 +616,6 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "checksum-sync",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles:          nil,
 	})
 	require.NoError(t, err)
@@ -666,14 +657,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 
 	pod := runtimeConfig.Status.DeployedToPods[0]
 	assert.Equal(t, "haproxy-pod-sync", pod.PodName)
-	assert.NotNil(t, pod.DeployedAt, "DeployedAt should be set when operations were performed")
-	assert.NotNil(t, pod.LastReloadAt, "LastReloadAt should be set when reload was triggered")
-	assert.Equal(t, "reload-123", pod.LastReloadID)
-	assert.NotNil(t, pod.SyncDuration)
-	assert.Equal(t, 2, pod.VersionConflictRetries)
-	assert.NotNil(t, pod.LastOperationSummary)
-	assert.Equal(t, 5, pod.LastOperationSummary.TotalAPIOperations)
-	assert.Equal(t, 2, pod.LastOperationSummary.BackendsAdded)
+	assert.Equal(t, "checksum-sync", pod.Checksum)
 }
 
 // Note: No-op drift checks are filtered at the Deployer level and never publish ConfigAppliedToPodEvent.
@@ -704,8 +688,6 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "checksum-drift",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles:          nil,
 	})
 	require.NoError(t, err)
@@ -739,102 +721,10 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 
 	pod := runtimeConfig.Status.DeployedToPods[0]
 	assert.Equal(t, "haproxy-pod-drift", pod.PodName)
-	assert.NotNil(t, pod.LastOperationSummary, "operation summary should be recorded")
-	assert.Equal(t, 1, pod.LastOperationSummary.TotalAPIOperations)
+	assert.Equal(t, "checksum-drift", pod.Checksum)
 }
 
 // do not update performance metrics like SyncDuration. This prevents status updates when no actual
-// deployment occurred.
-func TestComponent_ConfigAppliedToPodEvent_DriftCheck_NoChanges(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Setup
-	k8sClient := k8sfake.NewClientset()
-	crdClient := crdclientfake.NewSimpleClientset()
-	eventBus := busevents.NewEventBus(100)
-
-	publisher := configpublisher.New(k8sClient, crdClient, testLogger())
-	component := New(publisher, eventBus, testLogger())
-
-	// Start event bus and component
-	eventBus.Start()
-	go component.Start(ctx)
-
-	// Give component time to subscribe
-	time.Sleep(100 * time.Millisecond)
-
-	// First create a runtime config with existing pod status (simulating previous deployment)
-	_, err := publisher.PublishConfig(ctx, &configpublisher.PublishRequest{
-		TemplateConfigName:      "test-config",
-		TemplateConfigNamespace: "default",
-		TemplateConfigUID:       "test-uid-no-drift",
-		Config:                  "global\n  daemon\n",
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		Checksum:                "checksum-no-drift",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
-		AuxiliaryFiles:          nil,
-	})
-	require.NoError(t, err)
-
-	// Create initial pod status with known SyncDuration
-	initialSyncDuration := 200 * time.Millisecond
-	initialUpdate := &configpublisher.DeploymentStatusUpdate{
-		RuntimeConfigName:      "test-config-haproxycfg",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-pod-no-drift",
-		Checksum:               "checksum-no-drift",
-		DeployedAt:             time.Now(),
-		SyncDuration:           &initialSyncDuration,
-	}
-	err = publisher.UpdateDeploymentStatus(ctx, initialUpdate)
-	require.NoError(t, err)
-
-	// Verify initial state
-	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
-	assert.Equal(t, initialSyncDuration, runtimeConfig.Status.DeployedToPods[0].SyncDuration.Duration)
-
-	// Publish ConfigAppliedToPodEvent as drift check with NO operations (no drift detected)
-	// This simulates a drift check that confirmed the config is in sync
-	newSyncDuration := 50 * time.Millisecond
-	eventBus.Publish(events.NewConfigAppliedToPodEvent(
-		"test-config-haproxycfg",
-		"default",
-		"haproxy-pod-no-drift",
-		"haproxy-ns",
-		"checksum-no-drift",
-		true, // isDriftCheck
-		&events.SyncMetadata{
-			SyncDuration: newSyncDuration,
-			OperationCounts: events.OperationCounts{
-				TotalAPIOperations: 0, // No drift detected, no operations needed
-			},
-			// No error - this is a successful no-op drift check
-		},
-	))
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify SyncDuration was NOT updated (should remain at initial value)
-	runtimeConfig, err = crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs("default").
-		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
-
-	require.NoError(t, err)
-	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
-
-	pod := runtimeConfig.Status.DeployedToPods[0]
-	assert.Equal(t, "haproxy-pod-no-drift", pod.PodName)
-	// SyncDuration should remain at the initial value since no actual operations were performed
-	require.NotNil(t, pod.SyncDuration, "SyncDuration should exist from initial deployment")
-	assert.Equal(t, initialSyncDuration, pod.SyncDuration.Duration,
-		"SyncDuration should not be updated during drift checks with no changes")
-}
 
 func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -863,8 +753,6 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 		Config:                  "global\n  daemon\n",
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		Checksum:                "checksum-error",
-		RenderedAt:              time.Now(),
-		ValidatedAt:             time.Now(),
 		AuxiliaryFiles:          nil,
 	})
 	require.NoError(t, err)
@@ -903,7 +791,4 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	pod := runtimeConfig.Status.DeployedToPods[0]
 	assert.Equal(t, "haproxy-pod-error", pod.PodName)
 	assert.Equal(t, "connection refused to dataplane API", pod.LastError)
-	assert.True(t, pod.FallbackUsed)
-	// Error is recorded, other fields should be set correctly
-	assert.NotNil(t, pod.SyncDuration)
 }

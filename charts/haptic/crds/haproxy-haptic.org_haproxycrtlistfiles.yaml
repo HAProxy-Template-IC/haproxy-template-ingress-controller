@@ -192,22 +192,6 @@ spec:
                         High values indicate persistent problems requiring investigation.
                       minimum: 0
                       type: integer
-                    deployedAt:
-                      description: |-
-                        DeployedAt is the timestamp when configuration was last successfully
-                        synchronized to this pod.
-
-                        Updated when actual operations are performed (TotalOperations > 0) or when
-                        drift prevention verifies configuration matches expected state.
-                      format: date-time
-                      type: string
-                    fallbackUsed:
-                      description: |-
-                        FallbackUsed indicates whether the last sync used fallback mode.
-
-                        When true, indicates that incremental sync failed and a full raw configuration
-                        push was used instead. Frequent fallbacks may indicate sync logic issues.
-                      type: boolean
                     lastError:
                       description: |-
                         LastError contains the error message from the most recent failed sync attempt.
@@ -215,108 +199,11 @@ spec:
                         This field is cleared when a sync succeeds. Combined with ConsecutiveErrors,
                         this helps identify persistent vs transient issues.
                       type: string
-                    lastErrorAt:
-                      description: |-
-                        LastErrorAt is the timestamp of the most recent sync error.
-
-                        Used to determine how long a pod has been in an error state.
-                      format: date-time
-                      type: string
-                    lastOperationSummary:
-                      description: |-
-                        LastOperationSummary provides a breakdown of operations performed in the last sync.
-
-                        This shows the number of backends, servers, and other resources that were
-                        added, removed, or modified during synchronization.
-                      properties:
-                        backendsAdded:
-                          description: BackendsAdded is the number of backends added.
-                          minimum: 0
-                          type: integer
-                        backendsModified:
-                          description: BackendsModified is the number of backends
-                            modified.
-                          minimum: 0
-                          type: integer
-                        backendsRemoved:
-                          description: BackendsRemoved is the number of backends removed.
-                          minimum: 0
-                          type: integer
-                        frontendsAdded:
-                          description: FrontendsAdded is the number of frontends added.
-                          minimum: 0
-                          type: integer
-                        frontendsModified:
-                          description: FrontendsModified is the number of frontends
-                            modified.
-                          minimum: 0
-                          type: integer
-                        frontendsRemoved:
-                          description: FrontendsRemoved is the number of frontends
-                            removed.
-                          minimum: 0
-                          type: integer
-                        serversAdded:
-                          description: ServersAdded is the number of servers added
-                            across all backends.
-                          minimum: 0
-                          type: integer
-                        serversModified:
-                          description: ServersModified is the number of servers modified
-                            across all backends.
-                          minimum: 0
-                          type: integer
-                        serversRemoved:
-                          description: ServersRemoved is the number of servers removed
-                            across all backends.
-                          minimum: 0
-                          type: integer
-                        totalAPIOperations:
-                          description: |-
-                            TotalAPIOperations is the total count of HAProxy Dataplane API operations
-                            across ALL configuration sections (includes globals, defaults, acls, binds, etc.).
-
-                            This may be higher than the sum of specific operations shown below, as it includes
-                            operations on sections not individually tracked in this summary.
-                          minimum: 0
-                          type: integer
-                      type: object
-                    lastReloadAt:
-                      description: |-
-                        LastReloadAt is the timestamp when HAProxy was last reloaded for this pod.
-
-                        HAProxy reloads occur when structural configuration changes are made via
-                        the transaction API (status 202). Runtime-only changes do not trigger reloads.
-                      format: date-time
-                      type: string
-                    lastReloadID:
-                      description: |-
-                        LastReloadID is the reload identifier from the most recent HAProxy reload.
-
-                        This corresponds to the Reload-ID header returned by the HAProxy dataplane
-                        API when a reload is triggered.
-                      type: string
                     podName:
                       description: PodName is the name of the HAProxy pod.
                       minLength: 1
                       type: string
-                    syncDuration:
-                      description: |-
-                        SyncDuration is the duration of the most recent sync operation.
-
-                        This tracks how long it took to apply configuration changes to this pod,
-                        useful for performance monitoring and troubleshooting.
-                      type: string
-                    versionConflictRetries:
-                      description: |-
-                        VersionConflictRetries is the number of version conflict retries during the last sync.
-
-                        HAProxy's dataplane API uses optimistic concurrency control. This counter
-                        tracks retries due to version conflicts, indicating contention or race conditions.
-                      minimum: 0
-                      type: integer
                   required:
-                  - deployedAt
                   - podName
                   type: object
                 type: array

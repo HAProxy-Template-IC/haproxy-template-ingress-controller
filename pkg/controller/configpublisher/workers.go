@@ -169,8 +169,6 @@ func (c *Component) executePublish(work *publishWorkItem) {
 		Config:                  work.entry.config,
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		AuxiliaryFiles:          auxFiles,
-		RenderedAt:              work.entry.renderedAt,
-		ValidatedAt:             work.event.Timestamp(),
 		Checksum:                checksumHex,
 		CompressionThreshold:    c.getCompressionThreshold(work.templateConfig),
 	}
@@ -263,7 +261,6 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 		Config:                  work.entry.config,
 		ConfigPath:              "/etc/haproxy/haproxy.cfg",
 		AuxiliaryFiles:          auxFiles,
-		RenderedAt:              work.entry.renderedAt,
 		Checksum:                checksumHex,
 		NameSuffix:              "-invalid",
 		ValidationError:         validationError,
@@ -404,7 +401,6 @@ func (c *Component) processStatusWork(work *statusWorkItem) {
 	)
 
 	// Convert event to status update
-	timestamp := event.Timestamp()
 	update := configpublisher.DeploymentStatusUpdate{
 		RuntimeConfigName:      event.RuntimeConfigName,
 		RuntimeConfigNamespace: event.RuntimeConfigNamespace,
@@ -413,44 +409,8 @@ func (c *Component) processStatusWork(work *statusWorkItem) {
 		IsDriftCheck:           event.IsDriftCheck,
 	}
 
-	// Extract sync metadata if available
+	// Extract error information from sync metadata if available
 	if event.SyncMetadata != nil {
-		// Only set deployedAt when actual operations were performed successfully
-		if event.SyncMetadata.Error == "" && event.SyncMetadata.OperationCounts.TotalAPIOperations > 0 {
-			update.DeployedAt = timestamp
-		}
-
-		// Set performance metrics when actual work happened (operations performed or error occurred)
-		// Skip only for drift checks that found no drift (no operations, no error)
-		if event.SyncMetadata.OperationCounts.TotalAPIOperations > 0 || event.SyncMetadata.Error != "" {
-			update.SyncDuration = &event.SyncMetadata.SyncDuration
-			update.VersionConflictRetries = event.SyncMetadata.VersionConflictRetries
-			update.FallbackUsed = event.SyncMetadata.FallbackUsed
-		}
-
-		// Set reload information if reload was triggered
-		if event.SyncMetadata.ReloadTriggered {
-			update.LastReloadAt = &timestamp
-			update.LastReloadID = event.SyncMetadata.ReloadID
-		}
-
-		// Copy operation summary
-		if event.SyncMetadata.OperationCounts.TotalAPIOperations > 0 {
-			update.OperationSummary = &configpublisher.OperationSummary{
-				TotalAPIOperations: event.SyncMetadata.OperationCounts.TotalAPIOperations,
-				BackendsAdded:      event.SyncMetadata.OperationCounts.BackendsAdded,
-				BackendsRemoved:    event.SyncMetadata.OperationCounts.BackendsRemoved,
-				BackendsModified:   event.SyncMetadata.OperationCounts.BackendsModified,
-				ServersAdded:       event.SyncMetadata.OperationCounts.ServersAdded,
-				ServersRemoved:     event.SyncMetadata.OperationCounts.ServersRemoved,
-				ServersModified:    event.SyncMetadata.OperationCounts.ServersModified,
-				FrontendsAdded:     event.SyncMetadata.OperationCounts.FrontendsAdded,
-				FrontendsRemoved:   event.SyncMetadata.OperationCounts.FrontendsRemoved,
-				FrontendsModified:  event.SyncMetadata.OperationCounts.FrontendsModified,
-			}
-		}
-
-		// Copy error information
 		update.Error = event.SyncMetadata.Error
 	}
 
