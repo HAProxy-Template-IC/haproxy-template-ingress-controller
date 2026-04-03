@@ -406,7 +406,6 @@ func (c *Component) processStatusWork(work *statusWorkItem) {
 		RuntimeConfigNamespace: event.RuntimeConfigNamespace,
 		PodName:                event.PodName,
 		Checksum:               event.Checksum,
-		IsDriftCheck:           event.IsDriftCheck,
 	}
 
 	// Extract error information from sync metadata if available

@@ -124,10 +124,6 @@ type DeploymentStatusUpdate struct {
 	// Checksum is the checksum of the configuration deployed to the pod.
 	Checksum string
 
-	// IsDriftCheck indicates whether this was a drift prevention check (GET-only)
-	// or an actual sync operation (POST/PUT/DELETE).
-	IsDriftCheck bool
-
 	// Error contains the error message if sync failed.
 	// Empty string indicates success.
 	Error string
