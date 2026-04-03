@@ -128,4 +128,4 @@ By evaluating prefix matches before regex, most requests are routed without incu
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Default routing logic
-- [HAProxy Ingress Library](haproxy-ingress.md) - Regex path support
+- [haproxy-ingress library](haproxy-ingress.md) - Regex path support

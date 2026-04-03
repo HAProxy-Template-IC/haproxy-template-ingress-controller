@@ -19,8 +19,8 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 | [SSL](libraries/ssl.md) | Enabled | TLS certificate management, HTTPS frontend |
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTPRoute, GRPCRoute) support |
-| [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotation support |
-| [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotation support |
+| [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
+| [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
 | [Path Regex Last](libraries/path-regex-last.md) | Disabled | Performance-first path matching order |
 
 ## Enabling and Disabling Libraries
@@ -256,6 +256,6 @@ controller:
 - [SSL Library](libraries/ssl.md) - TLS certificate management and HTTPS frontend
 - [Ingress Library](libraries/ingress.md) - Kubernetes Ingress resource support
 - [Gateway API Library](libraries/gateway.md) - HTTPRoute and GRPCRoute support
-- [HAProxy Annotations Library](libraries/haproxytech.md) - `haproxy.org/*` annotation support
-- [HAProxy Ingress Library](libraries/haproxy-ingress.md) - `haproxy-ingress.github.io/*` annotation support
+- [haproxytech library](libraries/haproxytech.md) - `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat)
+- [haproxy-ingress library](libraries/haproxy-ingress.md) - `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat)
 - [Path Regex Last Library](libraries/path-regex-last.md) - Alternative path matching order

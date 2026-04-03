@@ -195,4 +195,4 @@ Run tests with:
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Core configuration infrastructure
 - [Ingress Library](ingress.md) - Ingress TLS configuration
-- [HAProxy Annotations Library](haproxytech.md) - SSL passthrough annotation
+- [haproxytech library](haproxytech.md) - SSL passthrough annotation
