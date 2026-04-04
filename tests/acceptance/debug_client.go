@@ -147,7 +147,7 @@ func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error
 }
 
 // GetConfig retrieves the current controller configuration from the debug server.
-func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]interface{}, error) {
+func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]any, error) {
 	return dc.getJSON(ctx, DebugPathConfig)
 }
 
@@ -191,17 +191,17 @@ func (dc *DebugClient) GetRenderedConfigWithRetry(ctx context.Context, timeout t
 }
 
 // GetEvents retrieves recent events from the debug server.
-func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]interface{}, error) {
+func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]any, error) {
 	data, err := dc.getJSON(ctx, DebugPathEvents)
 	if err != nil {
 		return nil, err
 	}
 
 	// Response is an array of events
-	if events, ok := data["events"].([]interface{}); ok {
-		result := make([]map[string]interface{}, 0, len(events))
+	if events, ok := data["events"].([]any); ok {
+		result := make([]map[string]any, 0, len(events))
 		for _, e := range events {
-			if eventMap, ok := e.(map[string]interface{}); ok {
+			if eventMap, ok := e.(map[string]any); ok {
 				result = append(result, eventMap)
 			}
 		}
@@ -224,8 +224,8 @@ func (dc *DebugClient) waitFor(ctx context.Context, timeout time.Duration, descr
 // This is useful during controller startup when the debug endpoint is running
 // but configuration hasn't been loaded yet. The method polls the debug endpoint
 // until configuration is available or the timeout expires.
-func (dc *DebugClient) WaitForConfig(ctx context.Context, timeout time.Duration) (map[string]interface{}, error) {
-	var result map[string]interface{}
+func (dc *DebugClient) WaitForConfig(ctx context.Context, timeout time.Duration) (map[string]any, error) {
+	var result map[string]any
 
 	cfg := testutil.DefaultWaitConfig()
 	cfg.Timeout = timeout
@@ -485,13 +485,13 @@ func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected str
 }
 
 // getJSON fetches JSON from the debug server via API proxy.
-func (dc *DebugClient) getJSON(ctx context.Context, path string) (map[string]interface{}, error) {
+func (dc *DebugClient) getJSON(ctx context.Context, path string) (map[string]any, error) {
 	body, err := dc.proxyGet(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch from debug server: %w", err)
 	}
 
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, fmt.Errorf("failed to decode JSON response: %w", err)
 	}
@@ -500,7 +500,7 @@ func (dc *DebugClient) getJSON(ctx context.Context, path string) (map[string]int
 }
 
 // GetAuxiliaryFiles retrieves the auxiliary files from the debug endpoint.
-func (dc *DebugClient) GetAuxiliaryFiles(ctx context.Context) (map[string]interface{}, error) {
+func (dc *DebugClient) GetAuxiliaryFiles(ctx context.Context) (map[string]any, error) {
 	return dc.getJSON(ctx, DebugPathAuxFiles)
 }
 
@@ -512,26 +512,26 @@ func (dc *DebugClient) GetGeneralFileContent(ctx context.Context, fileName strin
 		return "", fmt.Errorf("failed to get auxiliary files: %w", err)
 	}
 
-	files, ok := auxFiles["files"].(map[string]interface{})
+	files, ok := auxFiles["files"].(map[string]any)
 	if !ok {
 		return "", fmt.Errorf("files field not found or wrong type")
 	}
 
 	// The struct field is GeneralFiles (not general_files) - Go JSON serialization uses struct field names
-	// Note: When Go slice is nil, JSON marshals as null, which unmarshals to nil interface{}.
+	// Note: When Go slice is nil, JSON marshals as null, which unmarshals to nil any.
 	// Check for nil explicitly before type assertion.
 	generalFilesRaw := files["GeneralFiles"]
 	if generalFilesRaw == nil {
 		// No auxiliary files rendered yet - return file not found
 		return "", fmt.Errorf("file %s not found in auxiliary files (no files rendered yet)", fileName)
 	}
-	generalFiles, ok := generalFilesRaw.([]interface{})
+	generalFiles, ok := generalFilesRaw.([]any)
 	if !ok {
 		return "", fmt.Errorf("GeneralFiles field has unexpected type %T", generalFilesRaw)
 	}
 
 	for _, file := range generalFiles {
-		fileMap, ok := file.(map[string]interface{})
+		fileMap, ok := file.(map[string]any)
 		if !ok {
 			continue
 		}

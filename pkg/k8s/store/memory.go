@@ -1,8 +1,9 @@
 package store
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -101,14 +102,7 @@ func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 	}
 
 	// Sort for deterministic order (same as List())
-	sort.Slice(results, func(i, j int) bool {
-		nsI, nameI := extractNamespaceName(results[i])
-		nsJ, nameJ := extractNamespaceName(results[j])
-		if nsI != nsJ {
-			return nsI < nsJ
-		}
-		return nameI < nameJ
-	})
+	slices.SortFunc(results, compareByNamespaceName)
 
 	return results, nil
 }
@@ -126,16 +120,7 @@ func (s *MemoryStore) List() ([]any, error) {
 	}
 
 	// Sort items by namespace and name for deterministic order
-	sort.Slice(items, func(i, j int) bool {
-		nsI, nameI := extractNamespaceName(items[i])
-		nsJ, nameJ := extractNamespaceName(items[j])
-
-		// Sort by namespace first, then by name
-		if nsI != nsJ {
-			return nsI < nsJ
-		}
-		return nameI < nameJ
-	})
+	slices.SortFunc(items, compareByNamespaceName)
 
 	return items, nil
 }
@@ -169,14 +154,17 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
 // sortResourceSlice sorts a slice of resources by namespace and name.
 // Used to maintain sorted order at insert time for zero-copy reads.
 func sortResourceSlice(items []any) {
-	sort.Slice(items, func(i, j int) bool {
-		nsI, nameI := extractNamespaceName(items[i])
-		nsJ, nameJ := extractNamespaceName(items[j])
-		if nsI != nsJ {
-			return nsI < nsJ
-		}
-		return nameI < nameJ
-	})
+	slices.SortFunc(items, compareByNamespaceName)
+}
+
+// compareByNamespaceName compares two resources by namespace then name.
+func compareByNamespaceName(a, b any) int {
+	nsA, nameA := extractNamespaceName(a)
+	nsB, nameB := extractNamespaceName(b)
+	if c := cmp.Compare(nsA, nsB); c != 0 {
+		return c
+	}
+	return cmp.Compare(nameA, nameB)
 }
 
 // Update modifies an existing resource or adds it if it doesn't exist.

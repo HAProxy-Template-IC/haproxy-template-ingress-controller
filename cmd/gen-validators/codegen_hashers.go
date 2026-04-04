@@ -17,7 +17,7 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -36,7 +36,7 @@ func generateHasher(buf *bytes.Buffer, version, schemaName string, schema *Resol
 	for name := range schema.Properties {
 		propNames = append(propNames, name)
 	}
-	sort.Strings(propNames)
+	slices.Sort(propNames)
 
 	for _, propName := range propNames {
 		prop := schema.Properties[propName]
