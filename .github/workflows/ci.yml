@@ -380,8 +380,9 @@ jobs:
 
       - name: Fetch production site
         run: |
-          git clone --depth 1 https://github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git _site
-          rm -rf _site/.git
+          git clone --depth 1 https://github.com/HAProxy-Template-IC/haproxy-template-ic.github.io.git _site \
+            && rm -rf _site/.git \
+            || mkdir -p _site/shared
 
       - name: Copy shared CSS to stylesheets dirs
         run: |
