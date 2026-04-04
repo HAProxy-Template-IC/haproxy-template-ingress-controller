@@ -181,15 +181,8 @@ type GenericStoreGetter interface {
 // It allows wrapping a function as a StoreProvider.
 type StoreProviderFunc func(name string) Store
 
-// GetStore implements StoreProvider by calling the function.
-func (f StoreProviderFunc) GetStore(name string) Store {
-	return f(name)
-}
-
-// StoreNames is not implemented for function providers.
-func (f StoreProviderFunc) StoreNames() []string {
-	return nil
-}
+func (f StoreProviderFunc) GetStore(name string) Store { return f(name) }
+func (f StoreProviderFunc) StoreNames() []string       { return nil }
 
 // TypesStoreAdapter wraps any type implementing the Store interface methods.
 //
@@ -216,39 +209,19 @@ type TypesStoreAdapter struct {
 	}
 }
 
-// Get implements Store by delegating to Inner.
-func (a *TypesStoreAdapter) Get(keys ...string) ([]any, error) {
-	return a.Inner.Get(keys...)
-}
-
-// List implements Store by delegating to Inner.
-func (a *TypesStoreAdapter) List() ([]any, error) {
-	return a.Inner.List()
-}
-
-// Add implements Store by delegating to Inner.
+func (a *TypesStoreAdapter) Get(keys ...string) ([]any, error) { return a.Inner.Get(keys...) }
+func (a *TypesStoreAdapter) List() ([]any, error)              { return a.Inner.List() }
+func (a *TypesStoreAdapter) Delete(keys ...string) error       { return a.Inner.Delete(keys...) }
+func (a *TypesStoreAdapter) Clear() error                      { return a.Inner.Clear() }
 func (a *TypesStoreAdapter) Add(resource any, keys []string) error {
 	return a.Inner.Add(resource, keys)
 }
-
-// Update implements Store by delegating to Inner.
 func (a *TypesStoreAdapter) Update(resource any, keys []string) error {
 	return a.Inner.Update(resource, keys)
 }
 
-// Delete implements Store by delegating to Inner.
-func (a *TypesStoreAdapter) Delete(keys ...string) error {
-	return a.Inner.Delete(keys...)
-}
-
-// Clear implements Store by delegating to Inner.
-func (a *TypesStoreAdapter) Clear() error {
-	return a.Inner.Clear()
-}
-
-// ModCount implements ModCounter by delegating to Inner if it supports ModCount.
-// Returns (0, false) if the inner store does not support modification tracking,
-// which signals to callers that they MUST NOT cache based on the count.
+// ModCount delegates to Inner if it supports modification tracking.
+// Returns (0, false) if unsupported, signaling callers MUST NOT cache based on the count.
 func (a *TypesStoreAdapter) ModCount() (uint64, bool) {
 	if mc, ok := a.Inner.(interface{ ModCount() (uint64, bool) }); ok {
 		return mc.ModCount()
@@ -281,7 +254,6 @@ type getterStoreProvider struct {
 	storeNames []string
 }
 
-// GetStore returns the store for the given name, wrapped in TypesStoreAdapter.
 func (p *getterStoreProvider) GetStore(name string) Store {
 	store, exists := p.getter.GetStore(name)
 	if !exists || store == nil {
@@ -290,10 +262,7 @@ func (p *getterStoreProvider) GetStore(name string) Store {
 	return &TypesStoreAdapter{Inner: store}
 }
 
-// StoreNames returns the names of all available stores.
-func (p *getterStoreProvider) StoreNames() []string {
-	return p.storeNames
-}
+func (p *getterStoreProvider) StoreNames() []string { return p.storeNames }
 
 // StoreProvider provides access to stores by name.
 //
@@ -323,12 +292,8 @@ func NewRealStoreProvider(stores map[string]Store) *RealStoreProvider {
 	return &RealStoreProvider{stores: stores}
 }
 
-// GetStore returns the store for the given name.
-func (p *RealStoreProvider) GetStore(name string) Store {
-	return p.stores[name]
-}
+func (p *RealStoreProvider) GetStore(name string) Store { return p.stores[name] }
 
-// StoreNames returns the names of all available stores.
 func (p *RealStoreProvider) StoreNames() []string {
 	names := make([]string, 0, len(p.stores))
 	for name := range p.stores {
@@ -384,36 +349,15 @@ func (p *CompositeStoreProvider) GetStore(name string) Store {
 	return NewCompositeStore(baseStore, overlay)
 }
 
-// StoreNames returns the names of all available stores.
-// This includes stores from the base provider plus any overlay-only stores.
+// StoreNames returns the names of all available stores,
+// including stores from the base provider plus any overlay-only stores.
 func (p *CompositeStoreProvider) StoreNames() []string {
-	// Start with base store names
-	nameSet := make(map[string]struct{})
-	for _, name := range p.base.StoreNames() {
-		nameSet[name] = struct{}{}
-	}
-
-	// Add overlay store names (in case overlay adds new stores)
-	for name := range p.overlays {
-		nameSet[name] = struct{}{}
-	}
-
-	names := make([]string, 0, len(nameSet))
-	for name := range nameSet {
-		names = append(names, name)
-	}
-	return names
+	return mergeStoreNames(p.base.StoreNames(), p.overlays)
 }
 
-// Validate checks that all overlays reference valid stores.
-// Returns an error if any overlay references a store that doesn't exist in the base provider.
+// Validate checks that all overlays reference valid stores in the base provider.
 func (p *CompositeStoreProvider) Validate() error {
-	for name := range p.overlays {
-		if p.base.GetStore(name) == nil {
-			return fmt.Errorf("overlay references non-existent store: %s", name)
-		}
-	}
-	return nil
+	return validateOverlayStores(p.base, p.overlays)
 }
 
 // OverlayStoreProvider applies ValidationContext overlays to a base provider.
@@ -477,24 +421,10 @@ func (p *OverlayStoreProvider) GetStore(name string) Store {
 
 // StoreNames returns the names of all available stores.
 func (p *OverlayStoreProvider) StoreNames() []string {
-	// Start with base store names
-	nameSet := make(map[string]struct{})
-	for _, name := range p.base.StoreNames() {
-		nameSet[name] = struct{}{}
+	if p.context == nil || p.context.K8sOverlays == nil {
+		return p.base.StoreNames()
 	}
-
-	// Add any overlay store names (in case overlays reference stores not in base)
-	if p.context != nil && p.context.K8sOverlays != nil {
-		for name := range p.context.K8sOverlays {
-			nameSet[name] = struct{}{}
-		}
-	}
-
-	names := make([]string, 0, len(nameSet))
-	for name := range nameSet {
-		names = append(names, name)
-	}
-	return names
+	return mergeStoreNames(p.base.StoreNames(), p.context.K8sOverlays)
 }
 
 // GetHTTPOverlay returns the HTTP content overlay from the ValidationContext.
@@ -519,14 +449,37 @@ func (p *OverlayStoreProvider) IsValidationMode() bool {
 	return p.context != nil && !p.context.IsEmpty()
 }
 
-// Validate checks that all K8s overlays reference valid stores.
-// Returns an error if any overlay references a store that doesn't exist in the base provider.
+// Validate checks that all K8s overlays reference valid stores in the base provider.
 func (p *OverlayStoreProvider) Validate() error {
 	if p.context == nil || p.context.K8sOverlays == nil {
 		return nil
 	}
-	for name := range p.context.K8sOverlays {
-		if p.base.GetStore(name) == nil {
+	return validateOverlayStores(p.base, p.context.K8sOverlays)
+}
+
+// mergeStoreNames deduplicates base store names with additional overlay names.
+// The overlays parameter accepts any map keyed by string (works with both
+// map[string]*StoreOverlay used by CompositeStoreProvider and OverlayStoreProvider).
+func mergeStoreNames[V any](baseNames []string, overlays map[string]V) []string {
+	nameSet := make(map[string]struct{}, len(baseNames)+len(overlays))
+	for _, name := range baseNames {
+		nameSet[name] = struct{}{}
+	}
+	for name := range overlays {
+		nameSet[name] = struct{}{}
+	}
+	names := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		names = append(names, name)
+	}
+	return names
+}
+
+// validateOverlayStores checks that all overlay keys reference stores that exist
+// in the base provider. Returns an error for the first non-existent store found.
+func validateOverlayStores[V any](base StoreProvider, overlays map[string]V) error {
+	for name := range overlays {
+		if base.GetStore(name) == nil {
 			return fmt.Errorf("overlay references non-existent store: %s", name)
 		}
 	}
