@@ -274,25 +274,23 @@ func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertif
 	}
 
 	// Decode base64 certificate
-	var certPEM []byte
-	if strValue, ok := tlsCertBase64.(string); ok {
-		certPEM, err = base64.StdEncoding.DecodeString(strValue)
-		if err != nil {
-			return nil, fmt.Errorf("decoding base64 tls.crt: %w", err)
-		}
-	} else {
+	certStr, ok := tlsCertBase64.(string)
+	if !ok {
 		return nil, fmt.Errorf("tls.crt has invalid type: %T", tlsCertBase64)
+	}
+	certPEM, err := base64.StdEncoding.DecodeString(certStr)
+	if err != nil {
+		return nil, fmt.Errorf("decoding base64 tls.crt: %w", err)
 	}
 
 	// Decode base64 private key
-	var keyPEM []byte
-	if strValue, ok := tlsKeyBase64.(string); ok {
-		keyPEM, err = base64.StdEncoding.DecodeString(strValue)
-		if err != nil {
-			return nil, fmt.Errorf("decoding base64 tls.key: %w", err)
-		}
-	} else {
+	keyStr, ok := tlsKeyBase64.(string)
+	if !ok {
 		return nil, fmt.Errorf("tls.key has invalid type: %T", tlsKeyBase64)
+	}
+	keyPEM, err := base64.StdEncoding.DecodeString(keyStr)
+	if err != nil {
+		return nil, fmt.Errorf("decoding base64 tls.key: %w", err)
 	}
 
 	// Validate we have non-empty data

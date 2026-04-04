@@ -208,11 +208,7 @@ func (r *Registry) validateDependencies(components []*registeredComponent, start
 	}
 
 	// Check for cycles using DFS
-	if err := r.detectCycles(components); err != nil {
-		return err
-	}
-
-	return nil
+	return r.detectCycles(components)
 }
 
 // detectCycles uses DFS to detect circular dependencies.
