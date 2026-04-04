@@ -78,10 +78,7 @@ type EventBus struct {
 // Recommended: 100 for most applications.
 func NewEventBus(capacity int) *EventBus {
 	return &EventBus{
-		subscribers:      make([]subscriber, 0),
-		typedSubscribers: make([]*typedSubscription, 0),
-		started:          false,
-		preStartBuffer:   make([]Event, 0, capacity),
+		preStartBuffer: make([]Event, 0, capacity),
 	}
 }
 

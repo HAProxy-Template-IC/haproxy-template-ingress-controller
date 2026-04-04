@@ -67,7 +67,7 @@ func (e *ScriggoEngine) GetTraceOutput() string {
 	}
 
 	output := strings.Join(e.tracing.traces, "")
-	e.tracing.traces = make([]string, 0)
+	e.tracing.traces = nil
 	return output
 }
 

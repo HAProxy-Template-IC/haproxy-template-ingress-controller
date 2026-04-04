@@ -186,7 +186,7 @@ func (s *CachedStore) Get(keys ...string) ([]any, error) {
 // List returns all resources in the store.
 func (s *CachedStore) List() ([]any, error) {
 	s.mu.RLock()
-	allRefs := make([]resourceRef, 0)
+	var allRefs []resourceRef
 	for _, refs := range s.refs {
 		allRefs = append(allRefs, refs...)
 	}

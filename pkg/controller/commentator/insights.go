@@ -111,20 +111,7 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 
 		// Build metrics message based on validator type
 		var metricsMsg string
-		if e.Valid {
-			// For successful validation, show positive metrics
-			switch e.ValidatorName {
-			case "basic":
-				metricsMsg = ""
-			case "template":
-				// Template validator logs template_count
-				metricsMsg = ""
-			case "jsonpath":
-				// JSONPath validator logs expression_count
-				metricsMsg = ""
-			}
-		} else {
-			// For failures, show error count
+		if !e.Valid {
 			metricsMsg = fmt.Sprintf(", %d errors", len(e.Errors))
 		}
 
