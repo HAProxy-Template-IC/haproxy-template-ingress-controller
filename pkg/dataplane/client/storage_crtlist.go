@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -37,7 +36,7 @@ func (c *DataplaneClient) GetAllCRTListFiles(ctx context.Context) ([]string, err
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetAllStorageSSLCrtListFiles(ctx) },
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-list storage requires DataPlane API v3.2+")
+			return ErrCrtListRequiresV32
 		}
 		return nil
 	})
@@ -91,7 +90,7 @@ func (c *DataplaneClient) GetCRTListFileContent(ctx context.Context, name string
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-list storage requires DataPlane API v3.2+")
+			return ErrCrtListRequiresV32
 		}
 		return nil
 	})
@@ -135,7 +134,7 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-list storage requires DataPlane API v3.2+")
+			return ErrCrtListRequiresV32
 		}
 		return nil
 	})
@@ -174,7 +173,7 @@ func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content s
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-list storage requires DataPlane API v3.2+")
+			return ErrCrtListRequiresV32
 		}
 		return nil
 	})
@@ -207,7 +206,7 @@ func (c *DataplaneClient) DeleteCRTListFile(ctx context.Context, name string) er
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-list storage requires DataPlane API v3.2+")
+			return ErrCrtListRequiresV32
 		}
 		return nil
 	})

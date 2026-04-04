@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -53,7 +52,7 @@ func (c *DataplaneClient) GetTraces(ctx context.Context) (*Traces, error) {
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsTraces {
-			return errors.New("traces require DataPlane API v3.1+")
+			return ErrTracesRequireV31
 		}
 		return nil
 	})
@@ -113,7 +112,7 @@ func (c *DataplaneClient) CreateTraces(ctx context.Context, traces *Traces, tran
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsTraces {
-			return errors.New("traces require DataPlane API v3.1+")
+			return ErrTracesRequireV31
 		}
 		return nil
 	})
@@ -159,7 +158,7 @@ func (c *DataplaneClient) ReplaceTraces(ctx context.Context, traces *Traces, tra
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsTraces {
-			return errors.New("traces require DataPlane API v3.1+")
+			return ErrTracesRequireV31
 		}
 		return nil
 	})
@@ -197,7 +196,7 @@ func (c *DataplaneClient) DeleteTraces(ctx context.Context, transactionID string
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsTraces {
-			return errors.New("traces require DataPlane API v3.1+")
+			return ErrTracesRequireV31
 		}
 		return nil
 	})

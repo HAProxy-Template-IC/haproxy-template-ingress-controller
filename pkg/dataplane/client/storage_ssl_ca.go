@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -23,7 +22,7 @@ func (c *DataplaneClient) GetAllSSLCaFiles(ctx context.Context) ([]string, error
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetAllCaFiles(ctx) },
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCaFiles {
-			return errors.New("SSL CA file storage requires DataPlane API v3.2+")
+			return ErrSSLCaFilesRequireV32
 		}
 		return nil
 	})
@@ -68,7 +67,7 @@ func (c *DataplaneClient) GetSSLCaFileContent(ctx context.Context, name string) 
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetCaFile(ctx, name) },
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCaFiles {
-			return errors.New("SSL CA file storage requires DataPlane API v3.2+")
+			return ErrSSLCaFilesRequireV32
 		}
 		return nil
 	})
@@ -106,7 +105,7 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCaFiles {
-			return errors.New("SSL CA file storage requires DataPlane API v3.2+")
+			return ErrSSLCaFilesRequireV32
 		}
 		return nil
 	})
@@ -144,7 +143,7 @@ func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content str
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCaFiles {
-			return errors.New("SSL CA file storage requires DataPlane API v3.2+")
+			return ErrSSLCaFilesRequireV32
 		}
 		return nil
 	})
@@ -166,7 +165,7 @@ func (c *DataplaneClient) DeleteSSLCaFile(ctx context.Context, name string) erro
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.DeleteCaFile(ctx, name) },
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCaFiles {
-			return errors.New("SSL CA file storage requires DataPlane API v3.2+")
+			return ErrSSLCaFilesRequireV32
 		}
 		return nil
 	})

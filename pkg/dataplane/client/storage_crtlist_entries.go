@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -47,7 +46,7 @@ func (c *DataplaneClient) GetCRTListEntries(ctx context.Context, crtListName str
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-list entries require DataPlane API v3.2+")
+			return ErrCrtListEntriesRequireV32
 		}
 		return nil
 	})
@@ -127,7 +126,7 @@ func (c *DataplaneClient) AddCRTListEntry(ctx context.Context, crtListName strin
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-list entries require DataPlane API v3.2+")
+			return ErrCrtListEntriesRequireV32
 		}
 		return nil
 	})
@@ -174,7 +173,7 @@ func (c *DataplaneClient) DeleteCRTListEntry(ctx context.Context, crtListName, c
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-list entries require DataPlane API v3.2+")
+			return ErrCrtListEntriesRequireV32
 		}
 		return nil
 	})

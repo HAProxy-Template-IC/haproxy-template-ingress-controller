@@ -3,7 +3,6 @@ package executors
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/haproxytech/client-native/v6/models"
@@ -108,17 +107,17 @@ func DispatchCreate32Plus[TUnified any, TV33 any, TV32 any, TV32EE any](
 		v33Call,
 		v32Call,
 		func(_ struct{}) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		func(_ struct{}) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		v32eeCall,
 		func(_ struct{}) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		func(_ struct{}) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 	)
 }
@@ -138,17 +137,17 @@ func DispatchUpdate32Plus[TUnified any, TV33 any, TV32 any, TV32EE any](
 		v33Call,
 		v32Call,
 		func(_ string, _ struct{}) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		func(_ string, _ struct{}) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		v32eeCall,
 		func(_ string, _ struct{}) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		func(_ string, _ struct{}) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 	)
 }
@@ -167,17 +166,17 @@ func DispatchDelete32Plus(
 		v33Call,
 		v32Call,
 		func(_ string) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		func(_ string) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		v32eeCall,
 		func(_ string) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 		func(_ string) (*http.Response, error) {
-			return nil, errors.New("this feature requires DataPlane API v3.2+")
+			return nil, client.ErrFeatureRequiresV32
 		},
 	)
 }
