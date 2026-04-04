@@ -219,7 +219,10 @@ func setupLeaderElection(
 
 		if podName == "" {
 			logger.Warn("POD_NAME environment variable not set, using hostname as identity")
-			hostname, _ := os.Hostname()
+			hostname, err := os.Hostname()
+			if err != nil {
+				logger.Error("failed to get hostname for leader election identity", "error", err)
+			}
 			podName = hostname
 		}
 

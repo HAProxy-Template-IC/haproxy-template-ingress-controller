@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -140,7 +139,7 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(benchmarkTestNames) == 0 {
-		return errors.New("no validation tests found in config")
+		return errNoValidationTests
 	}
 
 	// Setup validation paths

@@ -140,12 +140,12 @@ func (c *Component) handleEvent(event pkgevents.Event) {
 	case *events.ReconciliationStartedEvent:
 		c.handleReconciliationStarted(e)
 	case *events.ReconciliationCompletedEvent:
-		c.metrics.RecordReconciliation(float64(e.DurationMs)/1000.0, true)
+		c.metrics.RecordReconciliation(msToSeconds(e.DurationMs), true)
 	case *events.ReconciliationFailedEvent:
 		delete(c.triggeredAt, e.CorrelationID()) // cleanup to prevent map growth
 		c.metrics.RecordReconciliation(0, false)
 	case *events.DeploymentCompletedEvent:
-		c.metrics.RecordDeployment(float64(e.DurationMs)/1000.0, e.Succeeded > 0)
+		c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
 	case *events.InstanceDeploymentFailedEvent:
 		c.metrics.RecordDeployment(0, false)
 	case *events.ValidationCompletedEvent:
@@ -153,7 +153,7 @@ func (c *Component) handleEvent(event pkgevents.Event) {
 	case *events.ValidationFailedEvent:
 		c.metrics.RecordValidation(false)
 	case *events.ValidationTestsCompletedEvent:
-		c.metrics.RecordValidationTests(e.TotalTests, e.PassedTests, e.FailedTests, float64(e.DurationMs)/1000.0)
+		c.metrics.RecordValidationTests(e.TotalTests, e.PassedTests, e.FailedTests, msToSeconds(e.DurationMs))
 	case *events.IndexSynchronizedEvent:
 		c.handleIndexSynchronized(e)
 	case *events.ResourceIndexUpdatedEvent:
@@ -212,4 +212,9 @@ func (c *Component) handleCertParsed(e *events.CertParsedEvent) {
 	if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
 		c.metrics.SetWebhookCertExpiry(cert.NotAfter.Unix())
 	}
+}
+
+// msToSeconds converts a duration in milliseconds to seconds.
+func msToSeconds(ms int64) float64 {
+	return float64(ms) / 1000.0
 }
