@@ -219,15 +219,23 @@ func finalizeConfigLoad(state *configState, setup *componentSetup, resourceVersi
 	setup.ConfigChangeHandler.SetInitialConfigVersion(resourceVersion)
 }
 
-// parseSecret extracts and parses credentials from a Secret resource.
-func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, error) {
-	// Extract Secret data field
+// extractSecretData extracts the raw data map from a Kubernetes Secret resource.
+func extractSecretData(resource *unstructured.Unstructured) (map[string]any, error) {
 	dataRaw, found, err := unstructured.NestedMap(resource.Object, "data")
 	if err != nil {
 		return nil, fmt.Errorf("extracting data field: %w", err)
 	}
 	if !found {
 		return nil, errors.New("secret has no data field")
+	}
+	return dataRaw, nil
+}
+
+// parseSecret extracts and parses credentials from a Secret resource.
+func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, error) {
+	dataRaw, err := extractSecretData(resource)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse Secret data (handles base64 decoding)
@@ -247,13 +255,9 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 
 // parseWebhookCertSecret extracts and decodes webhook TLS certificate data from a Secret.
 func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertificates, error) {
-	// Extract Secret data field
-	dataRaw, found, err := unstructured.NestedMap(resource.Object, "data")
+	dataRaw, err := extractSecretData(resource)
 	if err != nil {
-		return nil, fmt.Errorf("extracting data field: %w", err)
-	}
-	if !found {
-		return nil, errors.New("secret has no data field")
+		return nil, err
 	}
 
 	// Extract tls.crt (standard Kubernetes TLS Secret key)
