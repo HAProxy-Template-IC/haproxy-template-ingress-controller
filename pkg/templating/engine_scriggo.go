@@ -178,7 +178,7 @@ func newScriggoEngine(templates map[string]string, entryPoints []string, customF
 		postProcessors:    make(map[string][]PostProcessor),
 		tracing: &scriggoTracingConfig{
 			enabled: false,
-			traces:  make([]string, 0),
+			traces:  nil,
 		},
 		profilingEnabled: enableProfiling,
 	}

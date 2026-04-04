@@ -34,9 +34,7 @@ type RegistryBuilder struct {
 // Build creates a new RegistryBuilder for fluent registration.
 func (r *Registry) Build() *RegistryBuilder {
 	return &RegistryBuilder{
-		registry:   r,
-		allReplica: make([]Component, 0),
-		leaderOnly: make([]Component, 0),
+		registry: r,
 	}
 }
 

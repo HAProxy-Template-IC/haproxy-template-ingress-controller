@@ -115,7 +115,7 @@ func (s *MemoryStore) List() ([]any, error) {
 	defer s.mu.RUnlock()
 
 	// Build fresh slice from data map - eliminates race condition from lock upgrade
-	items := make([]any, 0)
+	var items []any
 	for _, resourceSlice := range s.data {
 		items = append(items, resourceSlice...)
 	}
