@@ -41,10 +41,6 @@ const (
 	EventBufferSize = 100
 )
 
-// DefaultDebounceInterval is re-exported from types for backward compatibility.
-// New code should use types.DefaultDebounceInterval directly.
-var DefaultDebounceInterval = types.DefaultDebounceInterval
-
 // ComponentName is the unique identifier for this component.
 const ComponentName = "reconciler"
 
@@ -83,7 +79,7 @@ type Reconciler struct {
 type Config struct {
 	// DebounceInterval is the minimum time between reconciliation triggers (refractory period).
 	// The first change triggers immediately, subsequent changes within this interval are batched.
-	// If not set, DefaultDebounceInterval is used.
+	// If not set, types.DefaultDebounceInterval is used.
 	DebounceInterval time.Duration
 }
 
@@ -97,7 +93,7 @@ type Config struct {
 // Returns:
 //   - A new Reconciler instance ready to be started
 func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config) *Reconciler {
-	debounceInterval := DefaultDebounceInterval
+	debounceInterval := types.DefaultDebounceInterval
 	if config != nil && config.DebounceInterval > 0 {
 		debounceInterval = config.DebounceInterval
 	}

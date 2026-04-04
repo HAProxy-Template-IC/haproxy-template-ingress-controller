@@ -464,7 +464,7 @@ func TestReconciler_DefaultConfig(t *testing.T) {
 	// Pass nil config to use defaults
 	reconciler := New(bus, logger, nil)
 
-	assert.Equal(t, DefaultDebounceInterval, reconciler.debounceInterval,
+	assert.Equal(t, types.DefaultDebounceInterval, reconciler.debounceInterval,
 		"Should use default debounce interval when config is nil")
 }
 
@@ -477,7 +477,7 @@ func TestReconciler_ZeroDebounceUsesDefault(t *testing.T) {
 
 	reconciler := New(bus, logger, config)
 
-	assert.Equal(t, DefaultDebounceInterval, reconciler.debounceInterval,
+	assert.Equal(t, types.DefaultDebounceInterval, reconciler.debounceInterval,
 		"Should use default debounce interval when config value is zero")
 }
 
