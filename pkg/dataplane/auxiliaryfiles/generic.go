@@ -3,9 +3,17 @@ package auxiliaryfiles
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"golang.org/x/sync/errgroup"
 )
+
+// isAlreadyExistsError checks whether err indicates that a resource already exists.
+// This is used across file operations to fall back to update when a create fails
+// because the file physically exists but wasn't in the storage listing.
+func isAlreadyExistsError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "already exists")
+}
 
 // FileItem represents any auxiliary file type (GeneralFile, SSLCertificate, MapFile).
 //

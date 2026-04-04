@@ -132,21 +132,6 @@ func UserlistName(u *models.Userlist) string { return u.Name }
 // FCGIAppName extracts the name from an FCGIApp model.
 func FCGIAppName(f *models.FCGIApp) string { return f.Name }
 
-// ACLName extracts the name from an ACL model.
-func ACLName(a *models.ACL) string { return a.ACLName }
-
-// BindName extracts the name from a Bind model.
-func BindName(b *models.Bind) string { return b.Name }
-
-// ServerName extracts the name from a Server model.
-func ServerName(s *models.Server) string { return s.Name }
-
-// ServerTemplateName extracts the prefix from a ServerTemplate model.
-func ServerTemplateName(s *models.ServerTemplate) string { return s.Prefix }
-
-// FilterType extracts the type from a Filter model (for description purposes).
-func FilterType(f *models.Filter) string { return f.Type }
-
 // UserName extracts the name from a User model.
 func UserName(u *models.User) string { return u.Username }
 
