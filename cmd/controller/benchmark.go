@@ -391,7 +391,7 @@ func outputAllBenchmarkResults(results []*BenchmarkResult, compilationTime time.
 
 	fmt.Println()
 	fmt.Println("BENCHMARK RESULTS")
-	fmt.Println(strings.Repeat("=", 80))
+	fmt.Println(separatorDouble)
 	fmt.Printf("\nCompilation: %.3fms\n\n", float64(compilationTime.Microseconds())/1000)
 
 	fileNames := extractFileNames(results)

@@ -14,9 +14,11 @@
 
 package httpstore
 
-import "slices"
+import (
+	"slices"
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+)
 
 // Compile-time assertion: HTTPOverlay implements stores.HTTPContentOverlay.
 var _ stores.HTTPContentOverlay = (*HTTPOverlay)(nil)
