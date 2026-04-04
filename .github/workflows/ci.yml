@@ -387,7 +387,16 @@ jobs:
       - name: Copy shared CSS to stylesheets dirs
         run: |
           cp docs/shared/colors.css docs/controller/docs/stylesheets/
+          cp docs/shared/colors.css docs/landing/docs/stylesheets/
           cp docs/shared/colors.css charts/haptic/docs/stylesheets/
+
+      - name: Build and overlay landing page
+        run: |
+          cd docs/landing
+          LANDING_TEMP=$(mktemp -d)
+          mkdocs build -d "$LANDING_TEMP"
+          cp -a "$LANDING_TEMP"/* ../../_site/
+          rm -rf "$LANDING_TEMP"
 
       - name: Build and overlay controller docs
         run: |
@@ -399,9 +408,9 @@ jobs:
           cd charts/haptic
           mkdocs build -d ../../_site/helm-chart/dev
 
-      - name: Update landing page and shared assets
+      - name: Copy shared assets
         run: |
-          cp docs/landing-page/index.html _site/index.html
+          mkdir -p _site/shared
           cp docs/shared/colors.css _site/shared/colors.css
 
       - uses: rossjrw/pr-preview-action@v1
