@@ -15,36 +15,16 @@ import (
 // to return the reload ID when an operation triggers a reload.
 const ReloadIDHeader = "Reload-Id"
 
-// buildMultipartFilePayload creates multipart form-data for file upload.
-// Returns the body buffer and content-type header.
-func buildMultipartFilePayload(filename, content string) (*bytes.Buffer, string, error) {
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-
-	// Add file content as a form file field
-	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file_upload"; filename=%q`, filename))
-	h.Set("Content-Type", "application/octet-stream")
-
-	part, err := writer.CreatePart(h)
-	if err != nil {
-		return nil, "", fmt.Errorf("creating multipart part: %w", err)
-	}
-
-	if _, err := part.Write([]byte(content)); err != nil {
-		return nil, "", fmt.Errorf("writing file content: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("closing multipart writer: %w", err)
-	}
-
-	return body, writer.FormDataContentType(), nil
+// multipartField represents an additional form field to include in a multipart payload.
+type multipartField struct {
+	name  string
+	value string
 }
 
-// buildMultipartFilePayloadWithID creates multipart form-data with an additional id field.
-// Used by general files which require the path as an "id" field.
-func buildMultipartFilePayloadWithID(filename, content, id string) (*bytes.Buffer, string, error) {
+// buildMultipartFilePayload creates multipart form-data for file upload.
+// Additional form fields can be included via the fields parameter.
+// Returns the body buffer and content-type header.
+func buildMultipartFilePayload(filename, content string, fields ...multipartField) (*bytes.Buffer, string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -62,9 +42,11 @@ func buildMultipartFilePayloadWithID(filename, content, id string) (*bytes.Buffe
 		return nil, "", fmt.Errorf("writing file content: %w", err)
 	}
 
-	// Add id field
-	if err := writer.WriteField("id", id); err != nil {
-		return nil, "", fmt.Errorf("writing id field: %w", err)
+	// Add additional form fields
+	for _, f := range fields {
+		if err := writer.WriteField(f.name, f.value); err != nil {
+			return nil, "", fmt.Errorf("writing %s field: %w", f.name, err)
+		}
 	}
 
 	if err := writer.Close(); err != nil {
