@@ -8,16 +8,19 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
-// convertCRTListsToGeneralFiles converts CRT-list files to general files for storage.
+// CRTListsToGeneralFiles converts CRT-list files to general files for storage.
 // CRT-list files are stored as general files because the native CRT-list API
 // (POST ssl_crt_lists) triggers a reload without supporting skip_reload parameter.
 // General file CREATE returns 201 without triggering a reload.
+//
+// This is also used by the orchestrator to merge CRT-lists into the unified
+// general files comparison, since both are stored in general file storage.
 //
 // IMPORTANT: Filenames are sanitized using client.SanitizeStorageName() to match
 // how the HAProxy Dataplane API stores them. Without sanitization, comparison
 // would fail because desired files (e.g., "example.com.txt") wouldn't match
 // current files (e.g., "example_com.txt" - dots replaced with underscores).
-func convertCRTListsToGeneralFiles(crtLists []CRTListFile) []GeneralFile {
+func CRTListsToGeneralFiles(crtLists []CRTListFile) []GeneralFile {
 	generalFiles := make([]GeneralFile, len(crtLists))
 	for i, crtList := range crtLists {
 		// Use the base filename as the identifier, sanitized to match API storage
@@ -31,20 +34,13 @@ func convertCRTListsToGeneralFiles(crtLists []CRTListFile) []GeneralFile {
 	return generalFiles
 }
 
-// CRTListsToGeneralFiles converts CRT-list files to general files format.
-// This is used by the orchestrator to merge CRT-lists into the unified
-// general files comparison, since both are stored in general file storage.
-func CRTListsToGeneralFiles(crtLists []CRTListFile) []GeneralFile {
-	return convertCRTListsToGeneralFiles(crtLists)
-}
-
 // convertCRTListDiffToFileDiff converts a CRTListDiff to a FileDiff for general file storage.
 // Note: ToDelete paths are already sanitized filenames returned by the comparison,
 // so they don't need additional sanitization here.
 func convertCRTListDiffToFileDiff(crtListDiff *CRTListDiff) *FileDiff {
 	return &FileDiff{
-		ToCreate: convertCRTListsToGeneralFiles(crtListDiff.ToCreate),
-		ToUpdate: convertCRTListsToGeneralFiles(crtListDiff.ToUpdate),
+		ToCreate: CRTListsToGeneralFiles(crtListDiff.ToCreate),
+		ToUpdate: CRTListsToGeneralFiles(crtListDiff.ToUpdate),
 		ToDelete: crtListDiff.ToDelete, // Already sanitized from API response
 	}
 }
@@ -74,7 +70,7 @@ func CompareCRTLists(ctx context.Context, c *client.DataplaneClient, desired []C
 	slog.Debug("using general file storage for CRT-lists to avoid reload on create")
 
 	// Convert CRT-list files to general files for storage
-	generalFiles := convertCRTListsToGeneralFiles(desired)
+	generalFiles := CRTListsToGeneralFiles(desired)
 
 	// Compare using general file storage
 	generalDiff, err := CompareGeneralFiles(ctx, c, generalFiles)
