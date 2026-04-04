@@ -310,7 +310,7 @@ func toString(v any) (string, error) {
 	}
 }
 
-// toMap converts an interface to map[string]interface{}.
+// toMap converts an interface to map[string]any.
 func toMap(v any) (map[string]any, bool) {
 	switch val := v.(type) {
 	case map[string]any:

@@ -62,7 +62,7 @@ func scriggoSortBy(items []any, criteria []string) ([]any, error) {
 
 // scriggoGlobMatch filters items that match a glob pattern.
 // Used for matching template snippet names.
-// Accepts both []string and []interface{} for flexibility.
+// Accepts both []string and []any for flexibility.
 // Returns []string for direct use in Scriggo range expressions without type casting.
 // Panics on invalid input to provide clear error messages.
 //
@@ -80,7 +80,7 @@ func scriggoGlobMatch(items any, pattern string) []string {
 	case []any:
 		return globMatchInterfaces(v, pattern)
 	default:
-		panic(fmt.Sprintf("glob_match: expected []string or []interface{}, got %T", items))
+		panic(fmt.Sprintf("glob_match: expected []string or []any, got %T", items))
 	}
 }
 
@@ -99,7 +99,7 @@ func globMatchStrings(items []string, pattern string) []string {
 	return result
 }
 
-// globMatchInterfaces matches a pattern against a slice of interface{} values.
+// globMatchInterfaces matches a pattern against a slice of any values.
 // Each item can be a string or a map with a "name" field.
 func globMatchInterfaces(items []any, pattern string) []string {
 	result := make([]string, 0, len(items))
@@ -119,7 +119,7 @@ func globMatchInterfaces(items []any, pattern string) []string {
 	return result
 }
 
-// extractStringName extracts a string name from an interface{} value.
+// extractStringName extracts a string name from an any value.
 // Supports string values directly or maps with a "name" field.
 func extractStringName(item any) string {
 	switch s := item.(type) {
@@ -133,7 +133,7 @@ func extractStringName(item any) string {
 	return ""
 }
 
-// scriggoSortStrings sorts a slice of interface{} values as strings.
+// scriggoSortStrings sorts a slice of any values as strings.
 // This is useful when working with []any slices that contain string values,
 // since Scriggo's built-in sort() requires typed slices.
 //
@@ -225,8 +225,8 @@ func writeToBuilder(b *strings.Builder, v any) {
 	}
 }
 
-// scriggoAppendAny appends an item to a slice, handling interface{} types.
-// This is necessary in Scriggo because map field access returns interface{},
+// scriggoAppendAny appends an item to a slice, handling any types.
+// This is necessary in Scriggo because map field access returns any,
 // and Go's append() requires a concrete slice type.
 //
 // Usage in Scriggo templates:
@@ -234,7 +234,7 @@ func writeToBuilder(b *strings.Builder, v any) {
 //	{# Works with nil (creates new slice) #}
 //	{%- var list = append(nil, "first") -%}
 //
-//	{# Works with interface{} from maps #}
+//	{# Works with any from maps #}
 //	{%- ns.flags = append(ns.flags, "flag") -%}
 //
 //	{# Works with []any directly #}
@@ -244,7 +244,7 @@ func scriggoAppendAny(slice, item any) []any {
 		return []any{item}
 	}
 
-	// Try to convert to []interface{} ([]any is an alias for []interface{})
+	// Try to convert to []any ([]any is an alias for []any)
 	if s, ok := slice.([]any); ok {
 		return append(s, item)
 	}

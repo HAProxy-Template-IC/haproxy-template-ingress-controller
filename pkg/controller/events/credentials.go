@@ -22,7 +22,7 @@ import "time"
 // The CredentialsLoaderComponent subscribes to this event and handles parsing.
 type SecretResourceChangedEvent struct {
 	// Resource contains the raw Secret resource.
-	// Type: interface{} to avoid circular dependencies.
+	// Type: any to avoid circular dependencies.
 	// Consumers should type-assert to *unstructured.Unstructured or *corev1.Secret.
 	Resource any
 
@@ -44,7 +44,7 @@ func (e *SecretResourceChangedEvent) Timestamp() time.Time { return e.timestamp 
 // loaded and validated from the Secret.
 type CredentialsUpdatedEvent struct {
 	// Credentials contains the validated credentials.
-	// Type: interface{} to avoid circular dependencies.
+	// Type: any to avoid circular dependencies.
 	// Consumers should type-assert to their expected credentials type.
 	Credentials any
 

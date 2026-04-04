@@ -107,7 +107,7 @@ const (
 	FuncTitle = "title"
 
 	// FuncIsNil checks if a value is nil, including typed nil pointers.
-	// In Go, a typed nil pointer stored in an interface{} is not equal to nil.
+	// In Go, a typed nil pointer stored in an any is not equal to nil.
 	// This function uses reflection to properly check for nil pointers.
 	// Syntax: isNil(value) returns bool.
 	FuncIsNil = "isNil"
@@ -147,7 +147,7 @@ const (
 	// Syntax: toSlice(value) - returns []any.
 	FuncToSlice = "toSlice"
 
-	// FuncAppendAny appends an item to a slice, handling interface{} types.
+	// FuncAppendAny appends an item to a slice, handling any types.
 	// Syntax: append(slice, item) - returns []any
 	// If slice is nil, creates a new slice with the item.
 	FuncAppendAny = "append"

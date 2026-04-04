@@ -123,8 +123,8 @@ func scriggoToStringSlice(items any) []string {
 	}
 }
 
-// scriggoToSlice converts any value to []interface{} for safe ranging.
-// Returns an empty slice if input is nil, otherwise converts to []interface{}.
+// scriggoToSlice converts any value to []any for safe ranging.
+// Returns an empty slice if input is nil, otherwise converts to []any.
 // This is necessary in Scriggo because Kubernetes resource fields may be nil
 // and we need to safely iterate over them.
 //
@@ -142,7 +142,7 @@ func scriggoToSlice(items any) []any {
 	return result
 }
 
-// toSlice converts an interface{} to []interface{}.
+// toSlice converts an any to []any.
 func toSlice(items any) ([]any, bool) {
 	if items == nil {
 		return nil, false
@@ -195,7 +195,7 @@ func scriggoSeq(n int) []int {
 }
 
 // isNilValue checks if a value is nil, including typed nil values like (*T)(nil).
-// In Go, a typed nil pointer stored in an interface{} is not equal to nil.
+// In Go, a typed nil pointer stored in an any is not equal to nil.
 // This function uses reflection to check for nil pointers, maps, slices, etc.
 func isNilValue(value any) bool {
 	if value == nil {

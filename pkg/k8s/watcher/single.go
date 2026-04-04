@@ -73,7 +73,7 @@ type SingleWatcher struct {
 //	    },
 //	    Namespace: "default",
 //	    Name:      "haproxy-config",
-//	    OnChange: func(obj interface{}) error {
+//	    OnChange: func(obj any) error {
 //	        cm := obj.(*corev1.ConfigMap)
 //	        // Process configuration
 //	        return nil

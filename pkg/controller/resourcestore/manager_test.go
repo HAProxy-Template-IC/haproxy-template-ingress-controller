@@ -62,7 +62,7 @@ func (m *mockStore) Clear() error {
 	return nil
 }
 
-// newMockResource creates a mock Kubernetes resource as map[string]interface{}.
+// newMockResource creates a mock Kubernetes resource as map[string]any.
 func newMockResource(namespace, name string) map[string]any {
 	return map[string]any{
 		"metadata": map[string]any{

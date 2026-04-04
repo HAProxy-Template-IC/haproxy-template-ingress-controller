@@ -527,7 +527,7 @@ func TestScriggoFileInfo(t *testing.T) {
 func TestScriggoEngine_SharedContextAccess(t *testing.T) {
 	// Test that templates can use SharedContext.ComputeIfAbsent and Get methods
 	templates := map[string]string{
-		"test": `{%- var _, _ = shared.ComputeIfAbsent("key", func() interface{} { return "value" }) -%}Result: {{ shared.Get("key") }}`,
+		"test": `{%- var _, _ = shared.ComputeIfAbsent("key", func() any { return "value" }) -%}Result: {{ shared.Get("key") }}`,
 	}
 
 	entryPoints := []string{"test"}
@@ -702,7 +702,7 @@ func TestScriggoEngine_SharedContextComputeIfAbsentPattern(t *testing.T) {
 	// This replaces the old has_cached/set_cached/shared["key"] patterns.
 	templates := map[string]string{
 		"test": `{#- Use ComputeIfAbsent to cache analysis once -#}
-{%- var analysis, wasComputed = shared.ComputeIfAbsent("ssl_analysis", func() interface{} {
+{%- var analysis, wasComputed = shared.ComputeIfAbsent("ssl_analysis", func() any {
   var result = map[string]any{"backends": []any{}}
   for _, ingress := range resources.ingresses.List() {
     var ssl = ingress | dig("metadata", "annotations", "haproxy.org/ssl-passthrough") | fallback("")

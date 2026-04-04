@@ -26,7 +26,7 @@ import (
 //
 // Example:
 //
-//	WriteJSON(w, map[string]interface{}{
+//	WriteJSON(w, map[string]any{
 //	    "status": "ok",
 //	    "count": 42,
 //	})
@@ -40,7 +40,7 @@ func WriteJSON(w http.ResponseWriter, data any) {
 //
 // Example:
 //
-//	WriteJSONWithStatus(w, http.StatusServiceUnavailable, map[string]interface{}{
+//	WriteJSONWithStatus(w, http.StatusServiceUnavailable, map[string]any{
 //	    "status": "degraded",
 //	    "components": components,
 //	})

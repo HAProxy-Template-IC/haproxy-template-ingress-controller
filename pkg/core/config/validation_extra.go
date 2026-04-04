@@ -28,8 +28,8 @@ import "fmt"
 //   - bool
 //   - float64 (all YAML numbers become float64)
 //   - string
-//   - []interface{} (arrays)
-//   - map[string]interface{} (objects)
+//   - []any (arrays)
+//   - map[string]any (objects)
 func ValidateExtraContext(ctx map[string]any) error {
 	for key, val := range ctx {
 		if err := validateJSONValue(val); err != nil {

@@ -350,7 +350,7 @@ func convertOverlayResource(obj runtime.Object) any {
 // are freshly deserialized from admission webhooks and owned by us.
 //
 // This is necessary because JSON unmarshaling converts all numbers to float64
-// when the target type is interface{}. For Kubernetes resources, this causes
+// when the target type is any. For Kubernetes resources, this causes
 // integer fields like ports (80) to appear as floats (80.0) in templates.
 // HAProxy configuration syntax requires integers (port 80), not floats (port 80.0).
 func convertFloatsToInts(data any) any {

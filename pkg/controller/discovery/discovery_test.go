@@ -358,7 +358,7 @@ func TestDiscovery_DiscoverEndpoints_StoreListError(t *testing.T) {
 
 // This is the actual format stored in production after float-to-int conversion.
 func TestDiscovery_DiscoverEndpoints_MapResources(t *testing.T) {
-	// Create pod as map[string]interface{} (production format after conversion)
+	// Create pod as map[string]any (production format after conversion)
 	pod := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Pod",

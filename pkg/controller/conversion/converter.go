@@ -165,7 +165,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		Engine: spec.TemplatingSettings.Engine, // Empty string defaults to "scriggo" at runtime
 	}
 	if len(spec.TemplatingSettings.ExtraContext.Raw) > 0 {
-		// Unmarshal runtime.RawExtension JSON to map[string]interface{}
+		// Unmarshal runtime.RawExtension JSON to map[string]any
 		var extraContext map[string]any
 		if err := json.Unmarshal(spec.TemplatingSettings.ExtraContext.Raw, &extraContext); err != nil {
 			return nil, fmt.Errorf("unmarshalling templating_settings.extra_context: %w", err)
@@ -238,7 +238,7 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 }
 
 // convertFixtures converts CRD fixtures to internal config format.
-// This converts from map[string][]runtime.RawExtension to map[string][]interface{}.
+// This converts from map[string][]runtime.RawExtension to map[string][]any.
 func convertFixtures(crdFixtures map[string][]runtime.RawExtension) map[string][]any {
 	fixtures := make(map[string][]any)
 	for resourceType, resources := range crdFixtures {

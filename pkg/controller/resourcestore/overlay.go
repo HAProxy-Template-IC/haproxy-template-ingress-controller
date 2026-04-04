@@ -162,10 +162,10 @@ func (o *OverlayStore) Clear() error {
 
 // extractMetadata extracts namespace and name from a Kubernetes resource.
 //
-// Handles both Unstructured objects (from base store) and map[string]interface{} (from overlay).
+// Handles both Unstructured objects (from base store) and map[string]any (from overlay).
 //
 // Parameters:
-//   - resource: The resource object (Unstructured or map[string]interface{})
+//   - resource: The resource object (Unstructured or map[string]any)
 //
 // Returns:
 //   - namespace: The resource namespace (empty string if not found)

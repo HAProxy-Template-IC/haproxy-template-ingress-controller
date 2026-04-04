@@ -734,7 +734,7 @@ func TestEventCommentator_GenerateInsight_CertEvents(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	t.Run("CertResourceChangedEvent", func(t *testing.T) {
-		// The event takes an interface{} representing the resource
+		// The event takes an any representing the resource
 		event := events.NewCertResourceChangedEvent("cert-secret")
 
 		insight, _ := ec.generateInsight(event)

@@ -159,7 +159,7 @@ func TestRenderer_WithAuxiliaryFiles(t *testing.T) {
 		},
 		Maps: map[string]config.MapFile{
 			"domains.map": {
-				Template: "{% for _, ingress := range resources.ingresses.List() %}{{ ingress.(map[string]interface{})[\"metadata\"].(map[string]interface{})[\"name\"] }}.example.com backend1\n{% end %}",
+				Template: "{% for _, ingress := range resources.ingresses.List() %}{{ ingress.(map[string]any)[\"metadata\"].(map[string]any)[\"name\"] }}.example.com backend1\n{% end %}",
 			},
 		},
 		Files: map[string]config.GeneralFile{

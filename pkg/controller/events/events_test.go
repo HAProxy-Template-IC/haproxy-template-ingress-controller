@@ -981,7 +981,7 @@ func TestCorrelation(t *testing.T) {
 	})
 
 	t.Run("PropagateCorrelation_FromNonCorrelatedEvent", func(t *testing.T) {
-		// Create a non-correlated source (just an interface{})
+		// Create a non-correlated source (just an any)
 		source := "not a correlated event"
 
 		opt := PropagateCorrelation(source)

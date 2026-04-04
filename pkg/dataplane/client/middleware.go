@@ -54,7 +54,7 @@ func (t *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 			t.logger.Warn("Failed to read request body for logging", "error", err)
 		}
 		// Restore the body for the actual request
-		req.Body = io.NopCloser(bytes.NewBuffer(requestBody))
+		req.Body = io.NopCloser(bytes.NewReader(requestBody))
 	}
 
 	// Execute the actual HTTP request
@@ -70,7 +70,7 @@ func (t *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 				t.logger.Warn("Failed to read response body for logging", "error", err)
 			}
 			// Restore the response body for the caller
-			resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+			resp.Body = io.NopCloser(bytes.NewReader(responseBody))
 		}
 
 		t.logger.Error("Dataplane API returned non-2xx status code",

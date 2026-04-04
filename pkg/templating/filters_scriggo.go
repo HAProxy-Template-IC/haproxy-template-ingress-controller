@@ -240,7 +240,7 @@ func registerScriggoBuiltinStrings(decl native.Declarations) {
 	decl["hasSuffix"] = builtin.HasSuffix
 	decl["index"] = builtin.Index
 	decl["indexAny"] = builtin.IndexAny
-	decl["join"] = scriggoJoin // Override builtin to support []interface{} from append()
+	decl["join"] = scriggoJoin // Override builtin to support []any from append()
 	decl["lastIndex"] = builtin.LastIndex
 	decl["replace"] = scriggoStringsReplace // Override builtin to support 3-arg syntax (replaces all)
 	decl["replaceAll"] = builtin.ReplaceAll
@@ -262,7 +262,7 @@ func registerScriggoBuiltinStrings(decl native.Declarations) {
 }
 
 // wrapFilterForScriggo wraps a FilterFunc to be callable from Scriggo templates.
-// FilterFunc signature: func(in interface{}, args ...interface{}) (interface{}, error)
+// FilterFunc signature: func(in any, args ...any) (any, error)
 // Scriggo needs a concrete function signature, so we wrap it.
 func wrapFilterForScriggo(filter FilterFunc) func(in any, args ...any) (any, error) {
 	return func(in any, args ...any) (any, error) {
