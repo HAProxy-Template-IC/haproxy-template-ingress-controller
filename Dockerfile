@@ -5,7 +5,7 @@
 ARG GO_VERSION=1.26
 # Must match DEFAULT_HAPROXY in versions.env
 # renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=semver
-ARG HAPROXY_VERSION=3.2
+ARG HAPROXY_VERSION=3.3
 ARG GIT_COMMIT=unknown
 ARG GIT_TAG=unknown
 ARG SOURCE_HASH=unknown

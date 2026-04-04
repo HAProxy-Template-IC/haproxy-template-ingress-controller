@@ -9,7 +9,7 @@
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.26
 # renovate: datasource=github-tags depName=haproxy/haproxy versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)$
-ARG HAPROXY_VERSION=3.2
+ARG HAPROXY_VERSION=3.3
 
 # Stage 1: Go toolchain source
 FROM golang:${GO_VERSION}-bookworm AS go-toolchain
