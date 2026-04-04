@@ -185,42 +185,46 @@ func (sc *StateCache) handleEvent(event busevents.Event) {
 }
 
 func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
-	if cfg, ok := e.Config.(*coreconfig.Config); ok {
-		sc.mu.Lock()
-		sc.currentConfig = cfg
-		sc.currentConfigVersion = e.Version
-		sc.mu.Unlock()
-
-		// Update log level dynamically if configured in ConfigMap
-		// Empty Level means use LOG_LEVEL env var (don't change)
-		if cfg.Logging.Level != "" {
-			oldLevel := logging.GetLevel()
-			logging.SetLevel(cfg.Logging.Level)
-			newLevel := logging.GetLevel()
-			if oldLevel != newLevel {
-				sc.logger.Info("Log level updated from config",
-					"old_level", oldLevel,
-					"new_level", newLevel)
-			}
-		}
-	} else {
+	cfg, ok := e.Config.(*coreconfig.Config)
+	if !ok {
 		sc.logger.Error("type assertion failed for ConfigValidatedEvent config",
 			"expected", "*coreconfig.Config",
 			"got", fmt.Sprintf("%T", e.Config))
+		return
+	}
+
+	sc.mu.Lock()
+	sc.currentConfig = cfg
+	sc.currentConfigVersion = e.Version
+	sc.mu.Unlock()
+
+	// Update log level dynamically if configured in ConfigMap
+	// Empty Level means use LOG_LEVEL env var (don't change)
+	if cfg.Logging.Level != "" {
+		oldLevel := logging.GetLevel()
+		logging.SetLevel(cfg.Logging.Level)
+		newLevel := logging.GetLevel()
+		if oldLevel != newLevel {
+			sc.logger.Info("Log level updated from config",
+				"old_level", oldLevel,
+				"new_level", newLevel)
+		}
 	}
 }
 
 func (sc *StateCache) handleCredentialsUpdated(e *events.CredentialsUpdatedEvent) {
-	if creds, ok := e.Credentials.(*coreconfig.Credentials); ok {
-		sc.mu.Lock()
-		sc.currentCreds = creds
-		sc.currentCredsVersion = e.SecretVersion
-		sc.mu.Unlock()
-	} else {
+	creds, ok := e.Credentials.(*coreconfig.Credentials)
+	if !ok {
 		sc.logger.Error("type assertion failed for CredentialsUpdatedEvent credentials",
 			"expected", "*coreconfig.Credentials",
 			"got", fmt.Sprintf("%T", e.Credentials))
+		return
 	}
+
+	sc.mu.Lock()
+	sc.currentCreds = creds
+	sc.currentCredsVersion = e.SecretVersion
+	sc.mu.Unlock()
 }
 
 func (sc *StateCache) handleTemplateRendered(e *events.TemplateRenderedEvent) {
@@ -333,12 +337,7 @@ func (sc *StateCache) handleInstanceDeploymentFailed(e *events.InstanceDeploymen
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	var endpointURL string
-	if stringer, ok := e.Endpoint.(fmt.Stringer); ok {
-		endpointURL = stringer.String()
-	} else {
-		endpointURL = fmt.Sprint(e.Endpoint)
-	}
+	endpointURL := fmt.Sprint(e.Endpoint)
 	sc.failedEndpoints = append(sc.failedEndpoints, debug.FailedEndpoint{
 		URL:   endpointURL,
 		Error: e.Error,

@@ -20,6 +20,13 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 )
 
+// Operation type string constants used in AppliedOperation and PlannedOperation.
+const (
+	opCreate = "create"
+	opUpdate = "update"
+	opDelete = "delete"
+)
+
 // Helper functions to convert internal types to public API types
 
 func convertOperationsToApplied(ops []comparator.Operation) []AppliedOperation {
@@ -52,11 +59,11 @@ func convertOperationsToPlanned(ops []comparator.Operation) []PlannedOperation {
 func operationTypeToString(opType sections.OperationType) string {
 	switch opType {
 	case sections.OperationCreate:
-		return "create"
+		return opCreate
 	case sections.OperationUpdate:
-		return "update"
+		return opUpdate
 	case sections.OperationDelete:
-		return "delete"
+		return opDelete
 	default:
 		return "unknown"
 	}
@@ -170,7 +177,7 @@ func fileDiffToOperations(diff *auxiliaryfiles.FileDiff) []AppliedOperation {
 	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
 	for _, f := range diff.ToCreate {
 		ops = append(ops, AppliedOperation{
-			Type:        "create",
+			Type:        opCreate,
 			Section:     "file",
 			Resource:    f.Filename,
 			Description: "Created general file " + f.Filename,
@@ -178,7 +185,7 @@ func fileDiffToOperations(diff *auxiliaryfiles.FileDiff) []AppliedOperation {
 	}
 	for _, f := range diff.ToUpdate {
 		ops = append(ops, AppliedOperation{
-			Type:        "update",
+			Type:        opUpdate,
 			Section:     "file",
 			Resource:    f.Filename,
 			Description: "Updated general file " + f.Filename,
@@ -186,7 +193,7 @@ func fileDiffToOperations(diff *auxiliaryfiles.FileDiff) []AppliedOperation {
 	}
 	for _, path := range diff.ToDelete {
 		ops = append(ops, AppliedOperation{
-			Type:        "delete",
+			Type:        opDelete,
 			Section:     "file",
 			Resource:    path,
 			Description: "Deleted general file " + path,
@@ -203,7 +210,7 @@ func sslDiffToOperations(diff *auxiliaryfiles.SSLCertificateDiff) []AppliedOpera
 	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
 	for _, c := range diff.ToCreate {
 		ops = append(ops, AppliedOperation{
-			Type:        "create",
+			Type:        opCreate,
 			Section:     "ssl-cert",
 			Resource:    c.Path,
 			Description: "Created SSL certificate " + c.Path,
@@ -211,7 +218,7 @@ func sslDiffToOperations(diff *auxiliaryfiles.SSLCertificateDiff) []AppliedOpera
 	}
 	for _, c := range diff.ToUpdate {
 		ops = append(ops, AppliedOperation{
-			Type:        "update",
+			Type:        opUpdate,
 			Section:     "ssl-cert",
 			Resource:    c.Path,
 			Description: "Updated SSL certificate " + c.Path,
@@ -219,7 +226,7 @@ func sslDiffToOperations(diff *auxiliaryfiles.SSLCertificateDiff) []AppliedOpera
 	}
 	for _, path := range diff.ToDelete {
 		ops = append(ops, AppliedOperation{
-			Type:        "delete",
+			Type:        opDelete,
 			Section:     "ssl-cert",
 			Resource:    path,
 			Description: "Deleted SSL certificate " + path,
@@ -236,7 +243,7 @@ func caFileDiffToOperations(diff *auxiliaryfiles.SSLCaFileDiff) []AppliedOperati
 	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
 	for _, c := range diff.ToCreate {
 		ops = append(ops, AppliedOperation{
-			Type:        "create",
+			Type:        opCreate,
 			Section:     "ssl-ca",
 			Resource:    c.Path,
 			Description: "Created SSL CA file " + c.Path,
@@ -244,7 +251,7 @@ func caFileDiffToOperations(diff *auxiliaryfiles.SSLCaFileDiff) []AppliedOperati
 	}
 	for _, c := range diff.ToUpdate {
 		ops = append(ops, AppliedOperation{
-			Type:        "update",
+			Type:        opUpdate,
 			Section:     "ssl-ca",
 			Resource:    c.Path,
 			Description: "Updated SSL CA file " + c.Path,
@@ -252,7 +259,7 @@ func caFileDiffToOperations(diff *auxiliaryfiles.SSLCaFileDiff) []AppliedOperati
 	}
 	for _, path := range diff.ToDelete {
 		ops = append(ops, AppliedOperation{
-			Type:        "delete",
+			Type:        opDelete,
 			Section:     "ssl-ca",
 			Resource:    path,
 			Description: "Deleted SSL CA file " + path,
@@ -269,7 +276,7 @@ func mapDiffToOperations(diff *auxiliaryfiles.MapFileDiff) []AppliedOperation {
 	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
 	for _, m := range diff.ToCreate {
 		ops = append(ops, AppliedOperation{
-			Type:        "create",
+			Type:        opCreate,
 			Section:     "map",
 			Resource:    m.Path,
 			Description: "Created map file " + m.Path,
@@ -277,7 +284,7 @@ func mapDiffToOperations(diff *auxiliaryfiles.MapFileDiff) []AppliedOperation {
 	}
 	for _, m := range diff.ToUpdate {
 		ops = append(ops, AppliedOperation{
-			Type:        "update",
+			Type:        opUpdate,
 			Section:     "map",
 			Resource:    m.Path,
 			Description: "Updated map file " + m.Path,
@@ -285,7 +292,7 @@ func mapDiffToOperations(diff *auxiliaryfiles.MapFileDiff) []AppliedOperation {
 	}
 	for _, path := range diff.ToDelete {
 		ops = append(ops, AppliedOperation{
-			Type:        "delete",
+			Type:        opDelete,
 			Section:     "map",
 			Resource:    path,
 			Description: "Deleted map file " + path,
@@ -302,7 +309,7 @@ func crtlistDiffToOperations(diff *auxiliaryfiles.CRTListDiff) []AppliedOperatio
 	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
 	for _, c := range diff.ToCreate {
 		ops = append(ops, AppliedOperation{
-			Type:        "create",
+			Type:        opCreate,
 			Section:     "crt-list",
 			Resource:    c.Path,
 			Description: "Created crt-list file " + c.Path,
@@ -310,7 +317,7 @@ func crtlistDiffToOperations(diff *auxiliaryfiles.CRTListDiff) []AppliedOperatio
 	}
 	for _, c := range diff.ToUpdate {
 		ops = append(ops, AppliedOperation{
-			Type:        "update",
+			Type:        opUpdate,
 			Section:     "crt-list",
 			Resource:    c.Path,
 			Description: "Updated crt-list file " + c.Path,
@@ -318,7 +325,7 @@ func crtlistDiffToOperations(diff *auxiliaryfiles.CRTListDiff) []AppliedOperatio
 	}
 	for _, path := range diff.ToDelete {
 		ops = append(ops, AppliedOperation{
-			Type:        "delete",
+			Type:        opDelete,
 			Section:     "crt-list",
 			Resource:    path,
 			Description: "Deleted crt-list file " + path,
