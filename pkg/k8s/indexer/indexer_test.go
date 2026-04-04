@@ -332,7 +332,7 @@ func TestReflectValueToString(t *testing.T) {
 		{name: "int", value: 42, expected: "42"},
 		{name: "int64", value: int64(123), expected: "123"},
 		{name: "uint", value: uint(10), expected: "10"},
-		{name: "float64", value: 3.14, expected: "3.140000"},
+		{name: "float64", value: 3.14, expected: "3.14"},
 		{name: "bool true", value: true, expected: "true"},
 		{name: "bool false", value: false, expected: "false"},
 	}
