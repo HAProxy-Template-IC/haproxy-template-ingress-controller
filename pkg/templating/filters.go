@@ -213,21 +213,21 @@ func convertToString(v any) string {
 //	{%- endfor %}
 //
 // Parameters:
-//   - in: List of strings to filter ([]interface{} or []string)
+//   - in: List of strings to filter ([]any or []string)
 //   - args: Single argument specifying glob pattern (supports * and ? wildcards)
 //
 // Returns:
 //   - Filtered list containing only matching strings
 //   - Error if input is not a list, pattern is missing, or pattern is invalid
 func GlobMatch(in any, args ...any) (any, error) {
-	// Convert input to []interface{}
+	// Convert input to []any
 	var list []any
 
 	switch v := in.(type) {
 	case []any:
 		list = v
 	case []string:
-		// Convert []string to []interface{}
+		// Convert []string to []any
 		list = make([]any, len(v))
 		for i, s := range v {
 			list[i] = s

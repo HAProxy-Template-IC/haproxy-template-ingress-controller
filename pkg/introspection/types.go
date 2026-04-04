@@ -28,7 +28,7 @@ import (
 // Example:
 //
 //	startTime := time.Now()
-//	registry.Publish("uptime", Func(func() (interface{}, error) {
+//	registry.Publish("uptime", Func(func() (any, error) {
 //	    return time.Since(startTime).String(), nil
 //	}))
 type Func func() (any, error)

@@ -221,7 +221,7 @@ func TestOverlayStore_ReadOnlyOperations(t *testing.T) {
 }
 
 func TestExtractMetadata(t *testing.T) {
-	t.Run("map[string]interface{}", func(t *testing.T) {
+	t.Run("map[string]any", func(t *testing.T) {
 		resource := newMockResource("test-ns", "test-name")
 
 		ns, name := extractMetadata(resource)

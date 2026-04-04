@@ -37,7 +37,7 @@ var _ templating.ResourceStore = (*StoreWrapper)(nil)
 // - fmt.Stringer: any type with String() method
 // - other types: formatted using fmt.Sprintf
 //
-// This allows template methods to accept interface{} arguments.
+// This allows template methods to accept any arguments.
 func toString(v any) string {
 	switch val := v.(type) {
 	case string:
@@ -114,11 +114,11 @@ func (w *StoreWrapper) List() []any {
 //
 // This will return ALL EndpointSlices for that service (typically multiple).
 //
-// Accepts interface{} arguments for template compatibility.
+// Accepts any arguments for template compatibility.
 //
 // If an error occurs, it's logged and an empty slice is returned.
 func (w *StoreWrapper) Fetch(keys ...any) []any {
-	// Convert interface{} arguments to strings
+	// Convert any arguments to strings
 	stringKeys := make([]string, len(keys))
 	for i, key := range keys {
 		stringKeys[i] = toString(key)
@@ -154,7 +154,7 @@ func (w *StoreWrapper) Fetch(keys ...any) []any {
 //	{% set ref = "namespace/name".split("/") %}
 //	{% set secret = resources.secrets.GetSingle(ref[0], ref[1]) %}
 //
-// Accepts interface{} arguments for template compatibility.
+// Accepts any arguments for template compatibility.
 //
 // Returns:
 //   - nil if no resources match (this is NOT an error - allows templates to check existence)
@@ -163,7 +163,7 @@ func (w *StoreWrapper) Fetch(keys ...any) []any {
 //
 // If an error occurs during the store operation, it's logged and nil is returned.
 func (w *StoreWrapper) GetSingle(keys ...any) any {
-	// Convert interface{} arguments to strings
+	// Convert any arguments to strings
 	stringKeys := make([]string, len(keys))
 	for i, key := range keys {
 		stringKeys[i] = toString(key)

@@ -25,7 +25,7 @@ package templating
 //
 // Example:
 //
-//	func upperFilter(in interface{}, args ...interface{}) (interface{}, error) {
+//	func upperFilter(in any, args ...any) (any, error) {
 //	    str, ok := in.(string)
 //	    if !ok {
 //	        return nil, errors.New("upper filter requires string input")
@@ -43,7 +43,7 @@ type FilterFunc func(in any, args ...any) (any, error)
 //
 // Example:
 //
-//	func mergeFunc(args ...interface{}) (interface{}, error) {
+//	func mergeFunc(args ...any) (any, error) {
 //	    if len(args) != 2 {
 //	        return nil, errors.New("merge requires exactly 2 arguments")
 //	    }

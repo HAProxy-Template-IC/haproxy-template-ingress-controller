@@ -30,7 +30,7 @@
 //
 //	// Publish variables
 //	registry.Publish("config", &ConfigVar{provider})
-//	registry.Publish("uptime", introspection.Func(func() (interface{}, error) {
+//	registry.Publish("uptime", introspection.Func(func() (any, error) {
 //	    return time.Since(startTime), nil
 //	}))
 //
@@ -56,7 +56,7 @@ package introspection
 //	    config *Config
 //	}
 //
-//	func (v *ConfigVar) Get() (interface{}, error) {
+//	func (v *ConfigVar) Get() (any, error) {
 //	    v.mu.RLock()
 //	    defer v.mu.RUnlock()
 //	    return v.config, nil

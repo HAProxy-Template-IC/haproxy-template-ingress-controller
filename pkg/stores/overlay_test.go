@@ -364,7 +364,7 @@ func TestCompositeStore_WithKeyExtractor(t *testing.T) {
 		}); ok {
 			return []string{accessor.GetNamespace(), accessor.GetName()}, nil
 		}
-		// Handle pre-converted map[string]interface{} (for unstructured resources)
+		// Handle pre-converted map[string]any (for unstructured resources)
 		if m, ok := resource.(map[string]any); ok {
 			if metadata, ok := m["metadata"].(map[string]any); ok {
 				ns, _ := metadata["namespace"].(string)

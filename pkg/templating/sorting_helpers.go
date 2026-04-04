@@ -210,13 +210,13 @@ func toFloat64(v any) (float64, bool) {
 	}
 }
 
-// convertToSlice tries to convert a value to []interface{}.
+// convertToSlice tries to convert a value to []any.
 func convertToSlice(v any) ([]any, bool) {
 	if v == nil {
 		return nil, false
 	}
 
-	// Direct type assertion for []interface{}
+	// Direct type assertion for []any
 	if slice, ok := v.([]any); ok {
 		return slice, true
 	}
@@ -234,7 +234,7 @@ func convertToSlice(v any) ([]any, bool) {
 	return result, true
 }
 
-// convertToMap tries to convert a value to map[string]interface{}.
+// convertToMap tries to convert a value to map[string]any.
 func convertToMap(v any) (map[string]any, bool) {
 	if v == nil {
 		return nil, false

@@ -26,12 +26,12 @@ import (
 // Validation occurs in a subsequent step.
 type ConfigParsedEvent struct {
 	// Config contains the parsed configuration.
-	// Type: interface{} to avoid circular dependencies.
+	// Type: any to avoid circular dependencies.
 	// Consumers should type-assert to their expected config type.
 	Config any
 
 	// TemplateConfig is the original HAProxyTemplateConfig CRD.
-	// Type: interface{} to avoid circular dependencies.
+	// Type: any to avoid circular dependencies.
 	// Needed by ConfigPublisher to extract Kubernetes metadata (name, namespace, UID).
 	TemplateConfig any
 
@@ -141,7 +141,7 @@ type ConfigValidatedEvent struct {
 	Config any
 
 	// TemplateConfig is the original HAProxyTemplateConfig CRD.
-	// Type: interface{} to avoid circular dependencies.
+	// Type: any to avoid circular dependencies.
 	// Needed by ConfigPublisher to extract Kubernetes metadata (name, namespace, UID).
 	TemplateConfig any
 
@@ -172,7 +172,7 @@ type ConfigInvalidEvent struct {
 	Version string
 
 	// TemplateConfig is the original HAProxyTemplateConfig CRD.
-	// Type: interface{} to avoid circular dependencies.
+	// Type: any to avoid circular dependencies.
 	// Used by status updater to set validation errors on the CRD status.
 	TemplateConfig any
 
@@ -214,7 +214,7 @@ func (e *ConfigInvalidEvent) Timestamp() time.Time { return e.timestamp }
 // The ConfigLoaderComponent subscribes to this event and handles parsing.
 type ConfigResourceChangedEvent struct {
 	// Resource contains the raw ConfigMap resource.
-	// Type: interface{} to avoid circular dependencies.
+	// Type: any to avoid circular dependencies.
 	// Consumers should type-assert to *unstructured.Unstructured or *corev1.ConfigMap.
 	Resource any
 

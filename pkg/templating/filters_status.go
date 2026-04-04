@@ -46,9 +46,9 @@ func getStatusPatchCollector(env native.Env) *StatusPatchCollector {
 // Usage in Scriggo templates:
 //
 //	{% statusPatch("default", "my-ingress", "networking.k8s.io/v1", "Ingress",
-//	    map[string]interface{}{
-//	        "deployed": map[string]interface{}{
-//	            "loadBalancer": map[string]interface{}{"ingress": addresses},
+//	    map[string]any{
+//	        "deployed": map[string]any{
+//	            "loadBalancer": map[string]any{"ingress": addresses},
 //	        },
 //	    }) %}
 func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string, variants map[string]any) string {
@@ -58,12 +58,12 @@ func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string
 		return ""
 	}
 
-	// Convert variants from map[string]interface{} to map[string]map[string]interface{}
+	// Convert variants from map[string]any to map[string]map[string]any
 	typedVariants := make(map[string]map[string]any, len(variants))
 	for phase, val := range variants {
 		statusMap, ok := val.(map[string]any)
 		if !ok {
-			env.Stop(fmt.Errorf("statusPatch: variant %q must be a map[string]interface{}, got %T", phase, val))
+			env.Stop(fmt.Errorf("statusPatch: variant %q must be a map[string]any, got %T", phase, val))
 			return ""
 		}
 		typedVariants[phase] = statusMap

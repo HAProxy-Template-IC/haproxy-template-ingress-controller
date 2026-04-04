@@ -239,7 +239,7 @@ func hasKey(m map[string]any, key string) bool {
 //
 // Resources in stores may be either:
 //   - *unstructured.Unstructured (legacy format, used in some tests)
-//   - map[string]interface{} (production format after float-to-int conversion)
+//   - map[string]any (production format after float-to-int conversion)
 //
 // Returns nil if the resource type is not supported.
 func resourceToPod(resource any) *unstructured.Unstructured {

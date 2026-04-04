@@ -39,7 +39,7 @@ import (
 //
 // Example:
 //
-//	config := map[string]interface{}{
+//	config := map[string]any{
 //	    "version": "1.2.3",
 //	    "templates": map[string]string{"main": "..."},
 //	}
@@ -80,7 +80,7 @@ func ExtractField(data any, jsonPathExpr string) (any, error) {
 		return nil, fmt.Errorf("executing jsonpath: %w", err)
 	}
 
-	// Parse the result back to interface{}
+	// Parse the result back to any
 	// The jsonpath library returns formatted text, so we need to parse it
 	var result any
 	if buf.Len() > 0 {

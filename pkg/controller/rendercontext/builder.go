@@ -152,7 +152,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "dataplane": Config.Dataplane,
 //	  "capabilities": map[string]bool (if set),
 //	  "currentConfig": *StructuredConfig (nil on first deployment),
-//	  "shared": map[string]interface{},
+//	  "shared": map[string]any,
 //	  "runtimeEnvironment": RuntimeEnvironment,
 //	  "http": HTTPFetcher (if set),
 //	  "extraContext": map from config,

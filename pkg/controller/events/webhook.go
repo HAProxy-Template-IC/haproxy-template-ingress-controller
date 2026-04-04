@@ -57,7 +57,7 @@ type WebhookValidationRequest struct {
 	Name string
 
 	// Object is the full resource object from the AdmissionRequest.
-	// Typically map[string]interface{} parsed from JSON.
+	// Typically map[string]any parsed from JSON.
 	Object any
 
 	// Operation indicates the admission operation type.
@@ -100,7 +100,7 @@ func NewWebhookValidationRequest(gvk, namespace, name string, obj any, operation
 		GVK:       gvk,
 		Namespace: namespace,
 		Name:      name,
-		Object:    obj, // Note: Object is interface{}, caller responsible for deep copy if needed
+		Object:    obj, // Note: Object is any, caller responsible for deep copy if needed
 		Operation: operation,
 		timestamp: time.Now(),
 	}

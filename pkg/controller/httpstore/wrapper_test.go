@@ -365,13 +365,13 @@ func TestToMap(t *testing.T) {
 		ok    bool
 	}{
 		{
-			name:  "map[string]interface{}",
+			name:  "map[string]any",
 			input: map[string]any{"key": "value"},
 			want:  map[string]any{"key": "value"},
 			ok:    true,
 		},
 		{
-			name: "map[interface{}]interface{} with string keys",
+			name: "map[any]any with string keys",
 			input: map[any]any{
 				"key1": "value1",
 				"key2": "value2",
@@ -383,7 +383,7 @@ func TestToMap(t *testing.T) {
 			ok: true,
 		},
 		{
-			name: "map[interface{}]interface{} with stringer keys",
+			name: "map[any]any with stringer keys",
 			input: map[any]any{
 				stringerType{"key1"}: "value1",
 			},

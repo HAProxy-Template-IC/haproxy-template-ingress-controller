@@ -77,7 +77,7 @@ func scriggoDig(obj any, keys ...string) any {
 		return obj
 	}
 
-	// Fast path: direct map[string]interface{} (99% of cases in K8s templates)
+	// Fast path: direct map[string]any (99% of cases in K8s templates)
 	// Avoids reflection overhead from isNilValue() on every iteration
 	if m, ok := obj.(map[string]any); ok {
 		return digMapFast(m, keys)
@@ -87,7 +87,7 @@ func scriggoDig(obj any, keys ...string) any {
 	return digReflect(obj, keys)
 }
 
-// digMapFast is the optimized path for map[string]interface{} traversal.
+// digMapFast is the optimized path for map[string]any traversal.
 // Handles nested maps without reflection overhead.
 func digMapFast(m map[string]any, keys []string) any {
 	for i, key := range keys {
@@ -123,7 +123,7 @@ func digMapFast(m map[string]any, keys []string) any {
 // digReflect handles typed nil pointers and other edge cases with reflection.
 // This is the slow path, used for non-standard map types.
 func digReflect(obj any, keys []string) any {
-	// Handle typed nil values (e.g., *map[string]interface{} with nil pointer)
+	// Handle typed nil values (e.g., *map[string]any with nil pointer)
 	if isNilValue(obj) {
 		return nil
 	}
@@ -242,7 +242,7 @@ func isValueInList(value, list any) bool {
 		return slices.Contains(strList, valueStr)
 	}
 
-	// Handle []interface{}
+	// Handle []any
 	if anyList, ok := list.([]any); ok {
 		for _, item := range anyList {
 			if scriggoToString(item) == valueStr {
@@ -252,7 +252,7 @@ func isValueInList(value, list any) bool {
 		return false
 	}
 
-	// Handle []any (same as []interface{})
+	// Handle []any (same as []any)
 	listSlice, ok := toSlice(list)
 	if !ok {
 		return false
@@ -323,8 +323,8 @@ func scriggoJoinKey(sep string, parts ...any) string {
 //
 // Usage in Scriggo templates:
 //
-//	{% var config = map[string]interface{}{"a": 1, "b": 2} %}
-//	{% config = merge(config, map[string]interface{}{"b": 3, "c": 4}) %}
+//	{% var config = map[string]any{"a": 1, "b": 2} %}
+//	{% config = merge(config, map[string]any{"b": 3, "c": 4}) %}
 //	{# Result: {"a": 1, "b": 3, "c": 4} #}
 func scriggoMerge(dict, updates map[string]any) map[string]any {
 	result := make(map[string]any, len(dict)+len(updates))
@@ -339,7 +339,7 @@ func scriggoMerge(dict, updates map[string]any) map[string]any {
 //
 // Usage in Scriggo templates:
 //
-//	{% var config = map[string]interface{}{"b": 2, "a": 1, "c": 3} %}
+//	{% var config = map[string]any{"b": 2, "a": 1, "c": 3} %}
 //	{% for _, key := range keys(config) %}
 //	{{ key }}: {{ config[key] }}
 //	{% end %}
@@ -408,7 +408,7 @@ func scriggoCoalesce(value, defaultVal any) any {
 }
 
 // scriggoJoin joins a string slice with a separator.
-// Accepts interface{} to handle both []string and []interface{} from templates.
+// Accepts any to handle both []string and []any from templates.
 //
 // Usage in Scriggo templates:
 //

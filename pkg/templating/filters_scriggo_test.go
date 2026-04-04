@@ -571,7 +571,7 @@ func TestBuildScriggoGlobals_NilInputs(t *testing.T) {
 // template rendering.
 
 // TestScriggo_BuiltinAppend verifies that Go's built-in append() works with
-// []interface{} slices in Scriggo templates. This is critical for the mutable
+// []any slices in Scriggo templates. This is critical for the mutable
 // state pattern.
 //
 // Note: Scriggo requires variables to be declared at compile time. Runtime
@@ -585,14 +585,14 @@ func TestScriggo_BuiltinAppend(t *testing.T) {
 	}{
 		{
 			name: "append single item to empty slice",
-			template: `{% var items = []interface{}{} %}
+			template: `{% var items = []any{} %}
 {% items = append(items, "first") %}
 count: {{ len(items) }}`,
 			expected: "count: 1",
 		},
 		{
 			name: "append multiple items",
-			template: `{% var items = []interface{}{} %}
+			template: `{% var items = []any{} %}
 {% items = append(items, "a") %}
 {% items = append(items, "b") %}
 {% items = append(items, "c") %}
@@ -601,7 +601,7 @@ count: {{ len(items) }}`,
 		},
 		{
 			name: "append in loop pattern",
-			template: `{% var items = []interface{}{} %}
+			template: `{% var items = []any{} %}
 {% for i := 0; i < 3; i++ %}
 {% items = append(items, i) %}
 {% end %}
@@ -610,7 +610,7 @@ count: {{ len(items) }}`,
 		},
 		{
 			name: "append string items and iterate",
-			template: `{% var items = []interface{}{} %}
+			template: `{% var items = []any{} %}
 {% items = append(items, "a") %}
 {% items = append(items, "b") %}
 {% for _, item := range items %}{{ item }}{% end %}`,
@@ -775,15 +775,15 @@ func TestScriggoMerge_Integration(t *testing.T) {
 	}{
 		{
 			name: "basic merge",
-			template: `{% var config = map[string]interface{}{"a": 1} %}
-{% config = merge(config, map[string]interface{}{"b": 2}) %}
+			template: `{% var config = map[string]any{"a": 1} %}
+{% config = merge(config, map[string]any{"b": 2}) %}
 a={{ config["a"] }}, b={{ config["b"] }}`,
 			expected: "a=1, b=2",
 		},
 		{
 			name: "merge with override",
-			template: `{% var config = map[string]interface{}{"a": 1, "b": 2} %}
-{% config = merge(config, map[string]interface{}{"b": 99}) %}
+			template: `{% var config = map[string]any{"a": 1, "b": 2} %}
+{% config = merge(config, map[string]any{"b": 99}) %}
 b={{ config["b"] }}`,
 			expected: "b=99",
 		},
@@ -843,13 +843,13 @@ func TestScriggoKeys_Integration(t *testing.T) {
 	}{
 		{
 			name: "iterate keys in sorted order",
-			template: `{% var config = map[string]interface{}{"c": 3, "a": 1, "b": 2} %}
+			template: `{% var config = map[string]any{"c": 3, "a": 1, "b": 2} %}
 {% for _, key := range keys(config) %}{{ key }}:{{ config[key] }} {% end %}`,
 			expected: "a:1 b:2 c:3",
 		},
 		{
 			name: "count keys",
-			template: `{% var config = map[string]interface{}{"x": 1, "y": 2, "z": 3} %}
+			template: `{% var config = map[string]any{"x": 1, "y": 2, "z": 3} %}
 count={{ len(keys(config)) }}`,
 			expected: "count=3",
 		},
@@ -871,7 +871,7 @@ count={{ len(keys(config)) }}`,
 func TestScriggoFirstSeen_Basic(t *testing.T) {
 	// Define data inside template since Scriggo requires compile-time type knowledge
 	templates := map[string]string{
-		"test": `{%- var items = []interface{}{"a", "b", "a", "c", "b", "a"} %}
+		"test": `{%- var items = []any{"a", "b", "a", "c", "b", "a"} %}
 {%- for _, item := range items %}
 {%- if first_seen("item", item) %}FIRST:{{ item }} {% end %}
 {%- end %}`,
@@ -890,8 +890,8 @@ func TestScriggoFirstSeen_Basic(t *testing.T) {
 func TestScriggoFirstSeen_CompositeKey(t *testing.T) {
 	// Define data inside template since Scriggo requires compile-time type knowledge
 	templates := map[string]string{
-		"test": `{%- var namespaces = []interface{}{"default", "default", "kube-system"} %}
-{%- var names = []interface{}{"svc1", "svc2"} %}
+		"test": `{%- var namespaces = []any{"default", "default", "kube-system"} %}
+{%- var names = []any{"svc1", "svc2"} %}
 {%- for _, ns := range namespaces %}
 {%- for _, name := range names %}
 {%- if first_seen("resource", ns, name) %}{{ ns }}/{{ name }} {% end %}
@@ -933,10 +933,10 @@ func TestScriggoFirstSeen_EmptyKey(t *testing.T) {
 
 func TestScriggoSelectAttr_ExistenceCheck(t *testing.T) {
 	templates := map[string]string{
-		"test": `{%- var items = []interface{}{
-			map[string]interface{}{"name": "a", "http": map[string]interface{}{"paths": []interface{}{}}},
-			map[string]interface{}{"name": "b"},
-			map[string]interface{}{"name": "c", "http": map[string]interface{}{}},
+		"test": `{%- var items = []any{
+			map[string]any{"name": "a", "http": map[string]any{"paths": []any{}}},
+			map[string]any{"name": "b"},
+			map[string]any{"name": "c", "http": map[string]any{}},
 		} %}
 {%- var filtered = selectattr(items, "http") %}
 count={{ len(filtered) }}`,
@@ -954,13 +954,13 @@ count={{ len(filtered) }}`,
 
 func TestScriggoSelectAttr_EqualTest(t *testing.T) {
 	templates := map[string]string{
-		"test": `{%- var items = []interface{}{
-			map[string]interface{}{"name": "a", "pathType": "Exact"},
-			map[string]interface{}{"name": "b", "pathType": "Prefix"},
-			map[string]interface{}{"name": "c", "pathType": "Exact"},
+		"test": `{%- var items = []any{
+			map[string]any{"name": "a", "pathType": "Exact"},
+			map[string]any{"name": "b", "pathType": "Prefix"},
+			map[string]any{"name": "c", "pathType": "Exact"},
 		} %}
 {%- var exact = selectattr(items, "pathType", "eq", "Exact") %}
-{%- for _, item := range exact %}{{ item.(map[string]interface{})["name"] }} {% end %}`,
+{%- for _, item := range exact %}{{ item.(map[string]any)["name"] }} {% end %}`,
 	}
 
 	entryPoints := []string{"test"}
@@ -976,13 +976,13 @@ func TestScriggoSelectAttr_EqualTest(t *testing.T) {
 
 func TestScriggoSelectAttr_NotEqualTest(t *testing.T) {
 	templates := map[string]string{
-		"test": `{%- var items = []interface{}{
-			map[string]interface{}{"name": "a", "status": "active"},
-			map[string]interface{}{"name": "b", "status": "inactive"},
-			map[string]interface{}{"name": "c", "status": "active"},
+		"test": `{%- var items = []any{
+			map[string]any{"name": "a", "status": "active"},
+			map[string]any{"name": "b", "status": "inactive"},
+			map[string]any{"name": "c", "status": "active"},
 		} %}
 {%- var notActive = selectattr(items, "status", "ne", "active") %}
-{%- for _, item := range notActive %}{{ item.(map[string]interface{})["name"] }} {% end %}`,
+{%- for _, item := range notActive %}{{ item.(map[string]any)["name"] }} {% end %}`,
 	}
 
 	entryPoints := []string{"test"}
@@ -998,15 +998,15 @@ func TestScriggoSelectAttr_NotEqualTest(t *testing.T) {
 
 func TestScriggoSelectAttr_InTest(t *testing.T) {
 	templates := map[string]string{
-		"test": `{%- var items = []interface{}{
-			map[string]interface{}{"name": "a", "pathType": "Exact"},
-			map[string]interface{}{"name": "b", "pathType": "Prefix"},
-			map[string]interface{}{"name": "c", "pathType": "ImplementationSpecific"},
-			map[string]interface{}{"name": "d", "pathType": "Regex"},
+		"test": `{%- var items = []any{
+			map[string]any{"name": "a", "pathType": "Exact"},
+			map[string]any{"name": "b", "pathType": "Prefix"},
+			map[string]any{"name": "c", "pathType": "ImplementationSpecific"},
+			map[string]any{"name": "d", "pathType": "Regex"},
 		} %}
 {%- var allowed = []string{"Exact", "Prefix"} %}
 {%- var filtered = selectattr(items, "pathType", "in", allowed) %}
-{%- for _, item := range filtered %}{{ item.(map[string]interface{})["name"] }} {% end %}`,
+{%- for _, item := range filtered %}{{ item.(map[string]any)["name"] }} {% end %}`,
 	}
 
 	entryPoints := []string{"test"}
