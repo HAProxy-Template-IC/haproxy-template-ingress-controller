@@ -214,7 +214,7 @@ func scriggoToJSON(value any) string {
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Sprintf("%v", value)
+		return fmt.Sprint(value)
 	}
 	return string(data)
 }
