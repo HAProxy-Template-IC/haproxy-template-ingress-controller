@@ -106,7 +106,7 @@ func fetchAndValidateInitialConfig(
 	// Parse initial configuration
 	logger.Info("Parsing initial configuration and credentials")
 
-	cfg, crd, err := parseCRD(crdResource)
+	cfg, crd, err := conversion.ParseCRD(crdResource)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("parsing initial HAProxyTemplateConfig: %w", err)
 	}
@@ -217,11 +217,6 @@ func checkConfigExists(ctx context.Context, k8sClient *client.Client, gvr schema
 func finalizeConfigLoad(state *configState, setup *componentSetup, resourceVersion string) {
 	state.SetLoaded()
 	setup.ConfigChangeHandler.SetInitialConfigVersion(resourceVersion)
-}
-
-// parseCRD extracts and converts configuration from a HAProxyTemplateConfig CRD resource.
-func parseCRD(resource *unstructured.Unstructured) (*coreconfig.Config, *v1alpha1.HAProxyTemplateConfig, error) {
-	return conversion.ParseCRD(resource)
 }
 
 // parseSecret extracts and parses credentials from a Secret resource.

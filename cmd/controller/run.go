@@ -143,8 +143,8 @@ func runController(_ *cobra.Command, _ []string) error {
 	}
 
 	logger.Info("HAProxy Template Ingress Controller starting",
-		"version", GetVersion(),
-		"source_hash", GetSourceHash(),
+		"version", getVersion(),
+		"source_hash", getSourceHash(),
 		"crd_name", runCRDName,
 		"secret", runSecretName,
 		"webhook_cert_secret", runWebhookCertSecretName,

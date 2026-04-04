@@ -6,11 +6,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceloader"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -95,7 +93,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	}
 
 	// Process CRD
-	cfg, templateConfig, err := processCRD(resource)
+	cfg, templateConfig, err := conversion.ParseCRD(resource)
 
 	if err != nil {
 		c.Logger().Error("Failed to process config resource",
@@ -116,14 +114,4 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	// the ValidationCoordinator correlates with credentials
 	parsedEvent := events.NewConfigParsedEvent(cfg, templateConfig, version, "")
 	c.EventBus().Publish(parsedEvent)
-}
-
-// processCRD converts a HAProxyTemplateConfig CRD to config.Config and returns both.
-//
-// Returns:
-//   - *config.Config: Parsed configuration for validation and rendering
-//   - *v1alpha1.HAProxyTemplateConfig: Original CRD for metadata (name, namespace, UID)
-//   - error: Conversion failure
-func processCRD(resource *unstructured.Unstructured) (*config.Config, *v1alpha1.HAProxyTemplateConfig, error) {
-	return conversion.ParseCRD(resource)
 }

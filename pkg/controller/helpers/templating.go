@@ -102,7 +102,7 @@ func NewEngineFromConfigWithOptions(
 		postProcessorConfigs = ExtractPostProcessorConfigs(cfg)
 	}
 
-	// Parse engine type (defaults to Scriggo if not specified)
+	// Validate engine type (defaults to Scriggo if not specified)
 	_, err := templating.ParseEngineType(cfg.TemplatingSettings.Engine)
 	if err != nil {
 		return nil, fmt.Errorf("invalid template engine type: %w", err)
