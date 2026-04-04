@@ -3,6 +3,7 @@ package indexer
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"k8s.io/client-go/util/jsonpath"
@@ -110,13 +111,13 @@ func reflectValueToString(v reflect.Value) string {
 	case reflect.String:
 		return v.String()
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return fmt.Sprintf("%d", v.Int())
+		return strconv.FormatInt(v.Int(), 10)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return fmt.Sprintf("%d", v.Uint())
+		return strconv.FormatUint(v.Uint(), 10)
 	case reflect.Float32, reflect.Float64:
-		return fmt.Sprintf("%f", v.Float())
+		return strconv.FormatFloat(v.Float(), 'f', -1, 64)
 	case reflect.Bool:
-		return fmt.Sprintf("%t", v.Bool())
+		return strconv.FormatBool(v.Bool())
 	default:
 		// For complex types, use fmt.Sprint
 		return fmt.Sprint(v.Interface())

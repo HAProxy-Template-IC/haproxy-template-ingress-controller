@@ -3,6 +3,7 @@ package templating
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -202,9 +203,8 @@ func parseCompilationError(errorStr string) parsedError {
 
 	// Try Scriggo compile error pattern first: "validation:1:5: expected '}'"
 	if matches := scriggoCompilePattern.FindStringSubmatch(errorStr); len(matches) == 4 {
-		var line, col int
-		_, _ = fmt.Sscanf(matches[1], "%d", &line)
-		_, _ = fmt.Sscanf(matches[2], "%d", &col)
+		line, _ := strconv.Atoi(matches[1])
+		col, _ := strconv.Atoi(matches[2])
 		parsed.Location = &errorLocation{Line: line, Column: col}
 		parsed.Problem = strings.TrimSpace(matches[3])
 	} else {
@@ -284,16 +284,14 @@ func parseTemplateError(errorStr string) parsedError {
 func extractLocation(errorStr string) *errorLocation {
 	// Try Line=X Col=Y pattern first (most specific)
 	if matches := lineColPattern.FindStringSubmatch(errorStr); len(matches) == 3 {
-		var line, col int
-		_, _ = fmt.Sscanf(matches[1], "%d", &line)
-		_, _ = fmt.Sscanf(matches[2], "%d", &col)
+		line, _ := strconv.Atoi(matches[1])
+		col, _ := strconv.Atoi(matches[2])
 		return &errorLocation{Line: line, Column: col}
 	}
 
 	// Fallback to "at line X" pattern
 	if matches := locationPattern.FindStringSubmatch(errorStr); len(matches) == 2 {
-		var line int
-		_, _ = fmt.Sscanf(matches[1], "%d", &line)
+		line, _ := strconv.Atoi(matches[1])
 		return &errorLocation{Line: line, Column: 0}
 	}
 
@@ -410,7 +408,7 @@ func extractTemplateContext(templateContent string, line, column int) string {
 
 	// Calculate the width needed for line numbers (for alignment)
 	maxLineNum := min(line+1, len(lines))
-	lineNumWidth := len(fmt.Sprintf("%d", maxLineNum))
+	lineNumWidth := len(strconv.Itoa(maxLineNum))
 
 	// Show line above (if it exists)
 	if lineIndex > 0 {

@@ -83,9 +83,11 @@ func WaitForCondition(ctx context.Context, cfg WaitConfig, condition func(contex
 	var lastErr error
 
 	// Check immediately before first wait
-	if done, err := condition(ctx); done {
+	done, err := condition(ctx)
+	if done {
 		return nil
-	} else if err != nil {
+	}
+	if err != nil {
 		lastErr = err
 	}
 
@@ -131,9 +133,11 @@ func WaitForConditionWithProgress(
 
 	// Check immediately before first wait
 	attempt++
-	if done, err := condition(ctx); done {
+	done, err := condition(ctx)
+	if done {
 		return nil
-	} else if err != nil {
+	}
+	if err != nil {
 		lastErr = err
 	}
 
@@ -183,9 +187,11 @@ func WaitForConditionWithDescription(
 
 	// Check immediately before first wait
 	attempt++
-	if done, err := condition(ctx); done {
+	done, err := condition(ctx)
+	if done {
 		return nil
-	} else if err != nil {
+	}
+	if err != nil {
 		lastErr = err
 	}
 
