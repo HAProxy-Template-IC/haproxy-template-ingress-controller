@@ -9,6 +9,7 @@ package testutil
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -205,7 +206,7 @@ func RunComponentContextCancel(t *testing.T, bus *busevents.EventBus, startFunc 
 	select {
 	case err := <-errChan:
 		// nil and context.Canceled are both acceptable for graceful shutdown
-		if err != nil && err != context.Canceled {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatalf("component Start returned unexpected error: %v", err)
 		}
 		// Success - component stopped cleanly

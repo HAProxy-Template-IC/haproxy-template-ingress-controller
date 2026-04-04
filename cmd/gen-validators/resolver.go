@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 )
 
@@ -93,7 +94,7 @@ func resolveInlineSchema(def *SchemaDefinition) (*ResolvedSchema, error) {
 	resolved := &ResolvedSchema{
 		Name:       "",
 		Properties: make(map[string]*Property),
-		Required:   append([]string{}, def.Required...),
+		Required:   slices.Clone(def.Required),
 	}
 
 	// Parse properties

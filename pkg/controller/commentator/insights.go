@@ -438,12 +438,8 @@ func (ec *EventCommentator) podInsight(event busevents.Event, attrs []any) (insi
 func (ec *EventCommentator) webhookInsight(event busevents.Event, attrs []any) (insight string, args []any) {
 	switch e := event.(type) {
 	case *events.WebhookValidationRequestEvent:
-		resourceRef := fmt.Sprintf("%s/%s", e.Namespace, e.Name)
-		if e.Namespace == "" {
-			resourceRef = e.Name
-		}
 		return fmt.Sprintf("Webhook validation request: %s %s %s",
-				e.Operation, e.Kind, resourceRef),
+				e.Operation, e.Kind, namespacedName(e.Namespace, e.Name)),
 			append(attrs,
 				"request_uid", e.RequestUID,
 				"kind", e.Kind,
@@ -452,11 +448,7 @@ func (ec *EventCommentator) webhookInsight(event busevents.Event, attrs []any) (
 				"operation", e.Operation)
 
 	case *events.WebhookValidationAllowedEvent:
-		resourceRef := fmt.Sprintf("%s/%s", e.Namespace, e.Name)
-		if e.Namespace == "" {
-			resourceRef = e.Name
-		}
-		return fmt.Sprintf("Webhook validation allowed: %s %s", e.Kind, resourceRef),
+		return fmt.Sprintf("Webhook validation allowed: %s %s", e.Kind, namespacedName(e.Namespace, e.Name)),
 			append(attrs,
 				"request_uid", e.RequestUID,
 				"kind", e.Kind,
@@ -464,17 +456,13 @@ func (ec *EventCommentator) webhookInsight(event busevents.Event, attrs []any) (
 				"namespace", e.Namespace)
 
 	case *events.WebhookValidationDeniedEvent:
-		resourceRef := fmt.Sprintf("%s/%s", e.Namespace, e.Name)
-		if e.Namespace == "" {
-			resourceRef = e.Name
-		}
 		// Truncate long reasons for log readability
 		reason := e.Reason
 		if len(reason) > maxErrorPreviewLength {
 			reason = reason[:maxErrorPreviewLength-3] + "..."
 		}
 		return fmt.Sprintf("Webhook validation denied: %s %s - %s",
-				e.Kind, resourceRef, reason),
+				e.Kind, namespacedName(e.Namespace, e.Name), reason),
 			append(attrs,
 				"request_uid", e.RequestUID,
 				"kind", e.Kind,
@@ -566,4 +554,13 @@ func (ec *EventCommentator) statusInsight(event busevents.Event, attrs []any) (i
 	default:
 		return "", attrs
 	}
+}
+
+// namespacedName returns "namespace/name" for namespaced resources, or just "name"
+// for cluster-scoped resources where namespace is empty.
+func namespacedName(namespace, name string) string {
+	if namespace == "" {
+		return name
+	}
+	return namespace + "/" + name
 }

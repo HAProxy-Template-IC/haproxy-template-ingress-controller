@@ -16,6 +16,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -356,7 +357,7 @@ func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent
 	err := <-errChan
 
 	// Update status after Start() returns
-	if err != nil && err != context.Canceled {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		r.updateStatus(name, StatusFailed, err)
 		r.logger.Error("Component failed", "name", name, "error", err)
 
@@ -621,7 +622,7 @@ func (r *Registry) StartLeaderOnlyComponentsAsync(ctx context.Context) (<-chan e
 	// Launch goroutine to track completion and propagate errors
 	go func() {
 		err := g.Wait()
-		if err != nil && err != context.Canceled {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 		close(errCh)
