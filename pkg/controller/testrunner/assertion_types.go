@@ -285,7 +285,7 @@ func (r *Runner) assertJSONPath(
 	}
 
 	// If Expected is provided, check against it
-	actualValue := fmt.Sprintf("%v", results[0][0].Interface())
+	actualValue := fmt.Sprint(results[0][0].Interface())
 	failed := false
 	if assertion.Expected != "" {
 		if actualValue != assertion.Expected {

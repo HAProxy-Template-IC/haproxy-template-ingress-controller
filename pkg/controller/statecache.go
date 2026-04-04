@@ -337,7 +337,7 @@ func (sc *StateCache) handleInstanceDeploymentFailed(e *events.InstanceDeploymen
 	if stringer, ok := e.Endpoint.(fmt.Stringer); ok {
 		endpointURL = stringer.String()
 	} else {
-		endpointURL = fmt.Sprintf("%v", e.Endpoint)
+		endpointURL = fmt.Sprint(e.Endpoint)
 	}
 	sc.failedEndpoints = append(sc.failedEndpoints, debug.FailedEndpoint{
 		URL:   endpointURL,

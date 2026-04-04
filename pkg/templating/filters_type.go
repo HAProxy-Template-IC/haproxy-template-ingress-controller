@@ -42,7 +42,7 @@ func scriggoToString(v any) string {
 	case bool:
 		return strconv.FormatBool(val)
 	default:
-		return fmt.Sprintf("%v", v)
+		return fmt.Sprint(v)
 	}
 }
 
@@ -97,7 +97,7 @@ func scriggoToFloat(v any) (float64, error) {
 }
 
 // scriggoToStringSlice converts []any to []string.
-// Each element is converted to string via fmt.Sprintf.
+// Each element is converted to string via fmt.Sprint.
 //
 // Usage in Scriggo templates:
 //
@@ -112,7 +112,7 @@ func scriggoToStringSlice(items any) []string {
 	case []any:
 		result := make([]string, len(v))
 		for i, item := range v {
-			result[i] = fmt.Sprintf("%v", item)
+			result[i] = fmt.Sprint(item)
 		}
 		return result
 	default:

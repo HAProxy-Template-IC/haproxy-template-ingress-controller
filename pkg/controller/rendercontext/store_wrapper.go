@@ -48,7 +48,7 @@ func toString(v any) string {
 		return val.String()
 	default:
 		// Fallback: format as string
-		return fmt.Sprintf("%v", v)
+		return fmt.Sprint(v)
 	}
 }
 

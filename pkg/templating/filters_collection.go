@@ -150,7 +150,7 @@ func scriggoSortStrings(items []any) []string {
 			result = append(result, v)
 		default:
 			// Convert non-string to string
-			result = append(result, fmt.Sprintf("%v", v))
+			result = append(result, fmt.Sprint(v))
 		}
 	}
 	slices.Sort(result)
