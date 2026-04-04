@@ -293,17 +293,6 @@ func ServerCreate(backendName string) func(ctx context.Context, c *client.Datapl
 	}
 }
 
-// ServerUpdate returns an executor for updating servers in backends.
-// When txID is empty, it uses version-based update (DataPlane API decides if reload is needed).
-// When txID is non-empty, it uses the Configuration API with transaction.
-func ServerUpdate(backendName string) func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, childName string, model *models.Server) error {
-	return func(ctx context.Context, c *client.DataplaneClient, txID string, _ string, childName string, model *models.Server) error {
-		// Pass 0 for version to let ServerUpdateWithReloadTracking fetch the current version
-		_, err := ServerUpdateWithReloadTracking(ctx, c, backendName, childName, model, txID, 0)
-		return err
-	}
-}
-
 // ServerUpdateWithReloadTracking updates a server and returns whether the operation triggered a reload.
 // This is the primary entry point for server updates that need to track reload status.
 //

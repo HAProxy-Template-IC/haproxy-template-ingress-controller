@@ -2,7 +2,6 @@ package auxiliaryfiles
 
 import (
 	"context"
-	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
@@ -22,7 +21,7 @@ func (o *mapFileOps) GetContent(ctx context.Context, id string) (string, error) 
 
 func (o *mapFileOps) Create(ctx context.Context, id, content string) (string, error) {
 	reloadID, err := o.client.CreateMapFile(ctx, id, content)
-	if err != nil && strings.Contains(err.Error(), "already exists") {
+	if isAlreadyExistsError(err) {
 		// File physically exists but wasn't in the storage listing (e.g., after a raw
 		// config push + reload). Fall back to update instead of failing.
 		return o.Update(ctx, id, content)

@@ -142,30 +142,6 @@ func TestServerUpdateWithReloadTracking_DispatchError(t *testing.T) {
 	assert.Contains(t, err.Error(), "500")
 }
 
-func TestServerUpdate_DelegatesToWithReloadTracking(t *testing.T) {
-	server := newMockServer(t, mockServerConfig{
-		handlers: map[string]http.HandlerFunc{
-			// ServerUpdate with version=0 will call GetVersion first
-			"/v3/services/haproxy/configuration/version":                          testutil.TextResponse(http.StatusOK, "5"),
-			"/v3/services/haproxy/configuration/backends/my-backend/servers/srv1": testutil.StatusResponse(http.StatusOK),
-		},
-	})
-	defer server.Close()
-
-	c := newTestClient(t, server)
-	executor := ServerUpdate("my-backend")
-	model := &models.Server{Name: "srv1", Address: "10.0.0.1", Port: ptrInt64(8080)}
-
-	err := executor(context.Background(), c, "", "", "srv1", model)
-
-	require.NoError(t, err)
-}
-
-//go:fix inline
-func ptrInt64(v int64) *int64 {
-	return new(v)
-}
-
 func TestServerUpdateWithReloadTracking_TransactionPath_ServerError(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{
@@ -182,4 +158,9 @@ func TestServerUpdateWithReloadTracking_TransactionPath_ServerError(t *testing.T
 	require.Error(t, err)
 	assert.False(t, reloadTriggered)
 	assert.Contains(t, err.Error(), fmt.Sprintf("%d", http.StatusInternalServerError))
+}
+
+//go:fix inline
+func ptrInt64(v int64) *int64 {
+	return new(v)
 }

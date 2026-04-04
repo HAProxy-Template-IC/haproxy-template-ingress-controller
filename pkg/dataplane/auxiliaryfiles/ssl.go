@@ -105,7 +105,7 @@ func (o *sslCertificateOps) Create(ctx context.Context, id, content string) (str
 	// Extract filename from path (API expects filename only)
 	filename := filepath.Base(id)
 	reloadID, err := o.client.CreateSSLCertificate(ctx, filename, content)
-	if err != nil && strings.Contains(err.Error(), "already exists") {
+	if isAlreadyExistsError(err) {
 		// Certificate already exists, fall back to update instead of failing.
 		// This handles the case where a previous deployment partially succeeded
 		// or where path normalization causes comparison mismatches.

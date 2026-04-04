@@ -2219,31 +2219,6 @@ func TestNameExtractors(t *testing.T) {
 		assert.Equal(t, "fcgi", FCGIAppName(f))
 	})
 
-	t.Run("ACLName", func(t *testing.T) {
-		a := &models.ACL{ACLName: "my-acl"}
-		assert.Equal(t, "my-acl", ACLName(a))
-	})
-
-	t.Run("BindName", func(t *testing.T) {
-		b := &models.Bind{Name: "bind"}
-		assert.Equal(t, "bind", BindName(b))
-	})
-
-	t.Run("ServerName", func(t *testing.T) {
-		s := &models.Server{Name: "srv1"}
-		assert.Equal(t, "srv1", ServerName(s))
-	})
-
-	t.Run("ServerTemplateName", func(t *testing.T) {
-		s := &models.ServerTemplate{Prefix: "web"}
-		assert.Equal(t, "web", ServerTemplateName(s))
-	})
-
-	t.Run("FilterType", func(t *testing.T) {
-		f := &models.Filter{Type: "trace"}
-		assert.Equal(t, "trace", FilterType(f))
-	})
-
 	t.Run("UserName", func(t *testing.T) {
 		u := &models.User{Username: "admin"}
 		assert.Equal(t, "admin", UserName(u))

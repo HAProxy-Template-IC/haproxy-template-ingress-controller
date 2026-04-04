@@ -35,7 +35,7 @@ func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) (stri
 	name := filepath.Base(id)
 	reloadID, err := o.create(ctx, name, content)
 	if err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+		if isAlreadyExistsError(err) {
 			// File already exists, fall back to update instead of failing.
 			return o.Update(ctx, id, content)
 		}
@@ -226,31 +226,11 @@ func newSSLCaOps(c *client.DataplaneClient) *sslStorageOps[SSLCaFile] {
 	}
 }
 
-// newSSLCrlOps creates a FileOperations adapter for SSL CRL files.
-func newSSLCrlOps(c *client.DataplaneClient) *sslStorageOps[SSLCrlFile] {
-	return &sslStorageOps[SSLCrlFile]{
-		getAll:     c.GetAllSSLCrlFiles,
-		getContent: c.GetSSLCrlFileContent,
-		create:     c.CreateSSLCrlFile,
-		update:     c.UpdateSSLCrlFile,
-		delete:     c.DeleteSSLCrlFile,
-	}
-}
-
 // newSSLCaConfig creates configuration for SSL CA file operations.
 func newSSLCaConfig(c *client.DataplaneClient) sslStorageConfig {
 	return sslStorageConfig{
 		fileType:        "SSL CA file",
 		isSupported:     func() bool { return c.Capabilities().SupportsSslCaFiles },
-		detectedVersion: c.DetectedVersion,
-	}
-}
-
-// newSSLCrlConfig creates configuration for SSL CRL file operations.
-func newSSLCrlConfig(c *client.DataplaneClient) sslStorageConfig {
-	return sslStorageConfig{
-		fileType:        "SSL CRL file",
-		isSupported:     func() bool { return c.Capabilities().SupportsSslCrlFiles },
 		detectedVersion: c.DetectedVersion,
 	}
 }
