@@ -16,6 +16,7 @@ package httpstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -116,7 +117,7 @@ func (w *HTTPStoreWrapper) Fetch(args ...any) (any, error) {
 // parseArgs extracts and validates URL, options, and auth from variadic arguments.
 func (w *HTTPStoreWrapper) parseArgs(args []any) (string, httpstore.FetchOptions, *httpstore.AuthConfig, error) {
 	if len(args) < 1 {
-		return "", httpstore.FetchOptions{}, nil, fmt.Errorf("http.Fetch requires at least 1 argument (url)")
+		return "", httpstore.FetchOptions{}, nil, errors.New("http.Fetch requires at least 1 argument (url)")
 	}
 
 	// Extract URL
@@ -282,7 +283,7 @@ func parseAuthConfig(m map[string]any) (*httpstore.AuthConfig, error) {
 	if v, ok := m["headers"]; ok {
 		headers, ok := toMap(v)
 		if !ok {
-			return nil, fmt.Errorf("invalid headers: expected map")
+			return nil, errors.New("invalid headers: expected map")
 		}
 		auth.Headers = make(map[string]string)
 		for k, val := range headers {

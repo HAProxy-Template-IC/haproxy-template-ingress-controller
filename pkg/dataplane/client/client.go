@@ -11,6 +11,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -80,13 +81,13 @@ type Config struct {
 //	})
 func New(ctx context.Context, cfg *Config) (*DataplaneClient, error) {
 	if cfg.BaseURL == "" {
-		return nil, fmt.Errorf("baseURL is required")
+		return nil, errors.New("baseURL is required")
 	}
 	if cfg.Username == "" {
-		return nil, fmt.Errorf("username is required")
+		return nil, errors.New("username is required")
 	}
 	if cfg.Password == "" {
-		return nil, fmt.Errorf("password is required")
+		return nil, errors.New("password is required")
 	}
 
 	logger := cfg.Logger

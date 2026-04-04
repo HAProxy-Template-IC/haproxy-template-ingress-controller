@@ -17,6 +17,7 @@ package httpstore
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -150,13 +151,13 @@ func (s *HTTPStore) doFetch(
 		return "", etag, lastModifiedResult, nil
 
 	case http.StatusUnauthorized:
-		return "", "", "", fmt.Errorf("authentication failed (401 Unauthorized)")
+		return "", "", "", errors.New("authentication failed (401 Unauthorized)")
 
 	case http.StatusForbidden:
-		return "", "", "", fmt.Errorf("access denied (403 Forbidden)")
+		return "", "", "", errors.New("access denied (403 Forbidden)")
 
 	case http.StatusNotFound:
-		return "", "", "", fmt.Errorf("resource not found (404 Not Found)")
+		return "", "", "", errors.New("resource not found (404 Not Found)")
 
 	default:
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {

@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -125,7 +126,7 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 		namespace = k8sClient.Namespace()
 	}
 	if namespace == "" {
-		return fmt.Errorf("namespace not specified and could not be auto-detected (use --namespace flag)")
+		return errors.New("namespace not specified and could not be auto-detected (use --namespace flag)")
 	}
 
 	// Compute the HAProxyCfg resource name from the template config name

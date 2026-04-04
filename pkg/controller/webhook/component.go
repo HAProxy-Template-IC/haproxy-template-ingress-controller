@@ -25,6 +25,7 @@ package webhook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -163,10 +164,10 @@ func (c *Component) Start(ctx context.Context) error {
 
 	// Validate certificates are present
 	if len(c.config.CertPEM) == 0 {
-		return fmt.Errorf("tls certificate is empty")
+		return errors.New("tls certificate is empty")
 	}
 	if len(c.config.KeyPEM) == 0 {
-		return fmt.Errorf("tls private key is empty")
+		return errors.New("tls private key is empty")
 	}
 
 	c.logger.Info("TLS certificates validated successfully",
@@ -418,7 +419,7 @@ func (c *Component) validateBasicStructure(object any) error {
 	generateName := obj.GetGenerateName()
 
 	if name == "" && generateName == "" {
-		return fmt.Errorf("metadata.name or metadata.generateName is required")
+		return errors.New("metadata.name or metadata.generateName is required")
 	}
 
 	return nil

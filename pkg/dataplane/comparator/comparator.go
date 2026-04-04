@@ -1,7 +1,7 @@
 package comparator
 
 import (
-	"fmt"
+	"errors"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
@@ -197,10 +197,10 @@ func compareNamedSections[T any](
 //	}
 func (c *Comparator) Compare(current, desired *parser.StructuredConfig) (*ConfigDiff, error) {
 	if current == nil {
-		return nil, fmt.Errorf("current configuration is nil")
+		return nil, errors.New("current configuration is nil")
 	}
 	if desired == nil {
-		return nil, fmt.Errorf("desired configuration is nil")
+		return nil, errors.New("desired configuration is nil")
 	}
 
 	summary := NewDiffSummary()

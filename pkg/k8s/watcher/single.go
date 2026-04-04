@@ -4,6 +4,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -88,7 +89,7 @@ func NewSingle(cfg *types.SingleWatcherConfig, k8sClient *client.Client) (*Singl
 	}
 
 	if k8sClient == nil {
-		return nil, fmt.Errorf("k8s client is nil")
+		return nil, errors.New("k8s client is nil")
 	}
 
 	w := &SingleWatcher{
@@ -117,7 +118,7 @@ func (w *SingleWatcher) createInformer() error {
 	// Get dynamic client
 	dynamicClient := w.client.DynamicClient()
 	if dynamicClient == nil {
-		return fmt.Errorf("dynamic client is nil")
+		return errors.New("dynamic client is nil")
 	}
 
 	// Create informer factory with field selector for specific resource name.
@@ -373,7 +374,7 @@ func (w *SingleWatcher) Start(ctx context.Context) error {
 
 		// Wait for cache sync
 		if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
-			startErr = fmt.Errorf("syncing cache")
+			startErr = errors.New("syncing cache")
 			return
 		}
 
@@ -455,7 +456,7 @@ func (w *SingleWatcher) WaitForSync(ctx context.Context) error {
 	case <-w.syncCh:
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("context cancelled while waiting for sync")
+		return errors.New("context cancelled while waiting for sync")
 	}
 }
 

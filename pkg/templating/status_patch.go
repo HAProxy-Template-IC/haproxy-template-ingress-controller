@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"sync"
@@ -74,11 +75,11 @@ func NewStatusPatchCollector() *StatusPatchCollector {
 //   - "deployFailed": applied when deployment fails
 func (c *StatusPatchCollector) Register(namespace, name, apiVersion, kind string, variants map[string]map[string]any) error {
 	if namespace == "" || name == "" || apiVersion == "" || kind == "" {
-		return fmt.Errorf("statusPatch: namespace, name, apiVersion, and kind are required")
+		return errors.New("statusPatch: namespace, name, apiVersion, and kind are required")
 	}
 
 	if len(variants) == 0 {
-		return fmt.Errorf("statusPatch: at least one variant is required")
+		return errors.New("statusPatch: at least one variant is required")
 	}
 
 	// Validate phase keys

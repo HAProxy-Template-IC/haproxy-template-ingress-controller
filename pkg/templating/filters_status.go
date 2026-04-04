@@ -16,6 +16,7 @@ package templating
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -53,7 +54,7 @@ func getStatusPatchCollector(env native.Env) *StatusPatchCollector {
 func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string, variants map[string]any) string {
 	collector := getStatusPatchCollector(env)
 	if collector == nil {
-		env.Stop(fmt.Errorf("statusPatch: statusPatchCollector not available in render context"))
+		env.Stop(errors.New("statusPatch: statusPatchCollector not available in render context"))
 		return ""
 	}
 

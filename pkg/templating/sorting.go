@@ -80,7 +80,7 @@ func (s *sortableItems) precomputeKeys() {
 		// Check for length operator in expression
 		if strings.Contains(expr, " | length") {
 			checkLength[ci] = true
-			expr = strings.Replace(expr, " | length", "", 1)
+			expr = strings.ReplaceAll(expr, " | length", "")
 		}
 
 		cleanCriteria[ci] = strings.TrimSpace(expr)

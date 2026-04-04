@@ -24,6 +24,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -290,7 +291,7 @@ func (d *Discovery) DiscoverEndpointsWithLogger(
 	logger *slog.Logger,
 ) ([]dataplane.Endpoint, error) {
 	if podStore == nil {
-		return nil, fmt.Errorf("pod store is nil")
+		return nil, errors.New("pod store is nil")
 	}
 
 	resources, err := podStore.List()

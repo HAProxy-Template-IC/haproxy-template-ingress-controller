@@ -16,6 +16,7 @@ package httpstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -58,7 +59,7 @@ func New(logger *slog.Logger, maxAge time.Duration) *HTTPStore {
 			// Don't follow redirects automatically - we want to handle them
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 10 {
-					return fmt.Errorf("too many redirects")
+					return errors.New("too many redirects")
 				}
 				return nil
 			},

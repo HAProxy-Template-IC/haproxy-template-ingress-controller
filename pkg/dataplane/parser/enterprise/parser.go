@@ -20,6 +20,7 @@
 package enterprise
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -77,7 +78,7 @@ type EEBackendData = parserconfig.EEBackendData
 // 3. EE reader captures EE directives within CE sections (filter waf, http-request waf-evaluate).
 func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	if config == "" {
-		return nil, fmt.Errorf("configuration string is empty")
+		return nil, errors.New("configuration string is empty")
 	}
 
 	parserMutex.Lock()

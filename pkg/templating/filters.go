@@ -17,6 +17,7 @@ package templating
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -237,7 +238,7 @@ func GlobMatch(in any, args ...any) (any, error) {
 
 	// Validate pattern argument
 	if len(args) == 0 {
-		return nil, fmt.Errorf("glob_match: pattern argument required")
+		return nil, errors.New("glob_match: pattern argument required")
 	}
 
 	pattern, ok := args[0].(string)

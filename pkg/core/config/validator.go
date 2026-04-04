@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -9,7 +10,7 @@ import (
 // Does NOT validate template syntax or JSONPath expressions.
 func ValidateStructure(cfg *Config) error {
 	if cfg == nil {
-		return fmt.Errorf("config is nil")
+		return errors.New("config is nil")
 	}
 
 	// Validate PodSelector
@@ -48,12 +49,12 @@ func ValidateStructure(cfg *Config) error {
 // validatePodSelector validates the pod selector configuration.
 func validatePodSelector(ps *PodSelector) error {
 	if len(ps.MatchLabels) == 0 {
-		return fmt.Errorf("match_labels cannot be empty")
+		return errors.New("match_labels cannot be empty")
 	}
 
 	for key, value := range ps.MatchLabels {
 		if key == "" {
-			return fmt.Errorf("match_labels key cannot be empty")
+			return errors.New("match_labels key cannot be empty")
 		}
 		if value == "" {
 			return fmt.Errorf("match_labels value for key %q cannot be empty", key)
@@ -118,7 +119,7 @@ func validateDataplaneConfig(dc *DataplaneConfig) error {
 // validateWatchedResources validates the watched resources configuration.
 func validateWatchedResources(resources map[string]WatchedResource) error {
 	if len(resources) == 0 {
-		return fmt.Errorf("at least one resource must be configured")
+		return errors.New("at least one resource must be configured")
 	}
 
 	for name, resource := range resources {
@@ -157,7 +158,7 @@ func validateWatchedResource(name string, resource *WatchedResource) error {
 // validateHAProxyConfig validates the HAProxy configuration.
 func validateHAProxyConfig(hc *HAProxyConfig) error {
 	if hc.Template == "" {
-		return fmt.Errorf("template cannot be empty")
+		return errors.New("template cannot be empty")
 	}
 
 	return nil
@@ -166,15 +167,15 @@ func validateHAProxyConfig(hc *HAProxyConfig) error {
 // ValidateCredentials ensures all required credential fields are present and non-empty.
 func ValidateCredentials(creds *Credentials) error {
 	if creds == nil {
-		return fmt.Errorf("credentials are nil")
+		return errors.New("credentials are nil")
 	}
 
 	if creds.DataplaneUsername == "" {
-		return fmt.Errorf("dataplane_username cannot be empty")
+		return errors.New("dataplane_username cannot be empty")
 	}
 
 	if creds.DataplanePassword == "" {
-		return fmt.Errorf("dataplane_password cannot be empty")
+		return errors.New("dataplane_password cannot be empty")
 	}
 
 	return nil

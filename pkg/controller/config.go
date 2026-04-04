@@ -17,6 +17,7 @@ package controller
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -231,7 +232,7 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 		return nil, fmt.Errorf("extracting data field: %w", err)
 	}
 	if !found {
-		return nil, fmt.Errorf("secret has no data field")
+		return nil, errors.New("secret has no data field")
 	}
 
 	// Parse Secret data (handles base64 decoding)
@@ -257,19 +258,19 @@ func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertif
 		return nil, fmt.Errorf("extracting data field: %w", err)
 	}
 	if !found {
-		return nil, fmt.Errorf("secret has no data field")
+		return nil, errors.New("secret has no data field")
 	}
 
 	// Extract tls.crt (standard Kubernetes TLS Secret key)
 	tlsCertBase64, ok := dataRaw["tls.crt"]
 	if !ok {
-		return nil, fmt.Errorf("secret data missing 'tls.crt' key")
+		return nil, errors.New("secret data missing 'tls.crt' key")
 	}
 
 	// Extract tls.key (standard Kubernetes TLS Secret key)
 	tlsKeyBase64, ok := dataRaw["tls.key"]
 	if !ok {
-		return nil, fmt.Errorf("secret data missing 'tls.key' key")
+		return nil, errors.New("secret data missing 'tls.key' key")
 	}
 
 	// Decode base64 certificate
@@ -296,10 +297,10 @@ func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertif
 
 	// Validate we have non-empty data
 	if len(certPEM) == 0 {
-		return nil, fmt.Errorf("tls.crt is empty")
+		return nil, errors.New("tls.crt is empty")
 	}
 	if len(keyPEM) == 0 {
-		return nil, fmt.Errorf("tls.key is empty")
+		return nil, errors.New("tls.key is empty")
 	}
 
 	return &WebhookCertificates{

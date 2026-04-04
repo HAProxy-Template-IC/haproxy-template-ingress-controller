@@ -28,7 +28,7 @@ package templating
 //	func upperFilter(in interface{}, args ...interface{}) (interface{}, error) {
 //	    str, ok := in.(string)
 //	    if !ok {
-//	        return nil, fmt.Errorf("upper filter requires string input")
+//	        return nil, errors.New("upper filter requires string input")
 //	    }
 //	    return strings.ToUpper(str), nil
 //	}
@@ -45,7 +45,7 @@ type FilterFunc func(in any, args ...any) (any, error)
 //
 //	func mergeFunc(args ...interface{}) (interface{}, error) {
 //	    if len(args) != 2 {
-//	        return nil, fmt.Errorf("merge requires exactly 2 arguments")
+//	        return nil, errors.New("merge requires exactly 2 arguments")
 //	    }
 //	    // ... merge logic
 //	}
