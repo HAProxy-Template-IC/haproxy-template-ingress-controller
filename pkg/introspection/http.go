@@ -49,9 +49,9 @@ func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data any) {
 	w.WriteHeader(statusCode)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// If encoding fails, not much we can do - headers already sent
-		// Log would be ideal but we don't have logger access here
-		_ = err
+		// Headers already sent, cannot change status code.
+		// The partial/empty response body signals the error to the client.
+		return
 	}
 }
 
