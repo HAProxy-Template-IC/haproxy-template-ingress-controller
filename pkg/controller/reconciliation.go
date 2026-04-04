@@ -92,7 +92,7 @@ func createReconciliationComponents(
 	// Get haproxy-pods store for pod-maxconn calculations in templates
 	haproxyPodStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
 	if haproxyPodStore == nil {
-		return nil, fmt.Errorf(names.HAProxyPodsResourceType + " store not found (should be auto-injected)")
+		return nil, fmt.Errorf("%s store not found (should be auto-injected)", names.HAProxyPodsResourceType)
 	}
 
 	// Create HTTPStore component for dynamic HTTP content fetching
@@ -186,7 +186,7 @@ func createReconciliationComponents(
 	}
 	podStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
 	if podStore == nil {
-		return nil, fmt.Errorf(names.HAProxyPodsResourceType + " store not found (should be auto-injected)")
+		return nil, fmt.Errorf("%s store not found (should be auto-injected)", names.HAProxyPodsResourceType)
 	}
 	discoveryComponent.SetPodStore(podStore)
 
