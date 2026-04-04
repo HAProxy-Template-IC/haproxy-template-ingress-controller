@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -42,7 +42,7 @@ var (
 	for p := range patterns {
 		sortedPatterns = append(sortedPatterns, p)
 	}
-	sort.Strings(sortedPatterns)
+	slices.Sort(sortedPatterns)
 
 	for _, pattern := range sortedPatterns {
 		varName := patternVarName(pattern)
@@ -80,7 +80,7 @@ import (
 	for name := range schemas {
 		schemaNames = append(schemaNames, name)
 	}
-	sort.Strings(schemaNames)
+	slices.Sort(schemaNames)
 
 	for _, schemaName := range schemaNames {
 		schema := schemas[schemaName]
@@ -116,7 +116,7 @@ func generateValidator(buf *bytes.Buffer, version, schemaName string, schema *Re
 	for name := range schema.Properties {
 		propNames = append(propNames, name)
 	}
-	sort.Strings(propNames)
+	slices.Sort(propNames)
 
 	for _, propName := range propNames {
 		prop := schema.Properties[propName]

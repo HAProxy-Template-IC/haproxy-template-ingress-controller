@@ -26,7 +26,7 @@ import (
 	"go/ast"
 	"go/types"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -64,7 +64,7 @@ var Analyzer = &analysis.Analyzer{
 	Run:      run,
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 
 	// Track the current receiver type and parameters
@@ -229,7 +229,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		for eventType := range eventTypes {
 			eventTypeList = append(eventTypeList, eventType)
 		}
-		sort.Strings(eventTypeList)
+		slices.Sort(eventTypeList)
 
 		fmt.Fprintf(os.Stderr, "Event immutability check [%s]:\n", pass.Pkg.Path())
 		fmt.Fprintf(os.Stderr, "  Event types: %s\n", strings.Join(eventTypeList, ", "))
