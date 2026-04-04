@@ -74,40 +74,42 @@ func TestBuildMultipartFilePayload(t *testing.T) {
 	}
 }
 
-func TestBuildMultipartFilePayloadWithID(t *testing.T) {
+func TestBuildMultipartFilePayload_WithFields(t *testing.T) {
 	tests := []struct {
 		name     string
 		filename string
 		content  string
-		id       string
+		fields   []multipartField
 	}{
 		{
 			name:     "general file with path ID",
 			filename: "error.http",
 			content:  "HTTP/1.0 500 Internal Server Error",
-			id:       "/etc/haproxy/errors/error.http",
+			fields:   []multipartField{{name: "id", value: "/etc/haproxy/errors/error.http"}},
 		},
 		{
 			name:     "file with simple ID",
 			filename: "test.txt",
 			content:  "content",
-			id:       "test-id",
+			fields:   []multipartField{{name: "id", value: "test-id"}},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			body, contentType, err := buildMultipartFilePayloadWithID(tt.filename, tt.content, tt.id)
+			body, contentType, err := buildMultipartFilePayload(tt.filename, tt.content, tt.fields...)
 
 			require.NoError(t, err)
 			require.NotNil(t, body)
 			assert.Contains(t, contentType, "multipart/form-data")
 
-			// Verify body contains the filename and ID
+			// Verify body contains the filename and field values
 			bodyStr := body.String()
 			assert.Contains(t, bodyStr, tt.filename)
 			assert.Contains(t, bodyStr, "file_upload")
-			assert.Contains(t, bodyStr, tt.id)
+			for _, f := range tt.fields {
+				assert.Contains(t, bodyStr, f.value)
+			}
 		})
 	}
 }

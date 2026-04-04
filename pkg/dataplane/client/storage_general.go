@@ -92,7 +92,7 @@ func (c *DataplaneClient) GetGeneralFileContent(ctx context.Context, path string
 // Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content string) (string, error) {
-	body, contentType, err := buildMultipartFilePayloadWithID(path, content, path)
+	body, contentType, err := buildMultipartFilePayload(path, content, multipartField{name: "id", value: path})
 	if err != nil {
 		return "", fmt.Errorf("building payload for general file '%s': %w", path, err)
 	}
