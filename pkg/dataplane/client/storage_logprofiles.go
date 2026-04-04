@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -42,7 +41,7 @@ func (c *DataplaneClient) GetAllLogProfiles(ctx context.Context) ([]string, erro
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsLogProfiles {
-			return errors.New("log profiles require DataPlane API v3.1+")
+			return ErrLogProfilesRequireV31
 		}
 		return nil
 	})
@@ -98,7 +97,7 @@ func (c *DataplaneClient) GetLogProfile(ctx context.Context, name string) (*LogP
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsLogProfiles {
-			return errors.New("log profiles require DataPlane API v3.1+")
+			return ErrLogProfilesRequireV31
 		}
 		return nil
 	})
@@ -156,7 +155,7 @@ func (c *DataplaneClient) CreateLogProfile(ctx context.Context, profile *LogProf
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsLogProfiles {
-			return errors.New("log profiles require DataPlane API v3.1+")
+			return ErrLogProfilesRequireV31
 		}
 		return nil
 	})
@@ -201,7 +200,7 @@ func (c *DataplaneClient) UpdateLogProfile(ctx context.Context, name string, pro
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsLogProfiles {
-			return errors.New("log profiles require DataPlane API v3.1+")
+			return ErrLogProfilesRequireV31
 		}
 		return nil
 	})
@@ -239,7 +238,7 @@ func (c *DataplaneClient) DeleteLogProfile(ctx context.Context, name, transactio
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsLogProfiles {
-			return errors.New("log profiles require DataPlane API v3.1+")
+			return ErrLogProfilesRequireV31
 		}
 		return nil
 	})

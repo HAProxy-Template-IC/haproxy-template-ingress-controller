@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -108,7 +107,7 @@ func (c *DataplaneClient) GetAllCrtLoads(ctx context.Context, crtStoreName strin
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-loads require DataPlane API v3.2+")
+			return ErrCrtLoadsRequireV32
 		}
 		return nil
 	})
@@ -153,7 +152,7 @@ func (c *DataplaneClient) GetCrtLoad(ctx context.Context, crtStoreName, certific
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-loads require DataPlane API v3.2+")
+			return ErrCrtLoadsRequireV32
 		}
 		return nil
 	})
@@ -217,7 +216,7 @@ func (c *DataplaneClient) CreateCrtLoad(ctx context.Context, crtStoreName string
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-loads require DataPlane API v3.2+")
+			return ErrCrtLoadsRequireV32
 		}
 		return nil
 	})
@@ -268,7 +267,7 @@ func (c *DataplaneClient) ReplaceCrtLoad(ctx context.Context, crtStoreName, cert
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-loads require DataPlane API v3.2+")
+			return ErrCrtLoadsRequireV32
 		}
 		return nil
 	})
@@ -312,7 +311,7 @@ func (c *DataplaneClient) DeleteCrtLoad(ctx context.Context, crtStoreName, certi
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsCrtList {
-			return errors.New("crt-loads require DataPlane API v3.2+")
+			return ErrCrtLoadsRequireV32
 		}
 		return nil
 	})

@@ -14,6 +14,14 @@ func abortContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 5*time.Second)
 }
 
+// abortTransaction performs transaction cleanup with a fresh context.
+// Uses abortContext to ensure cleanup proceeds even when the original context has timed out.
+func abortTransaction(tx *Transaction) {
+	abortCtx, abortCancel := abortContext()
+	defer abortCancel()
+	_ = tx.Abort(abortCtx)
+}
+
 // VersionAdapter wraps a DataplaneClient to provide automatic version management
 // and 409 conflict retry logic.
 //
@@ -106,10 +114,7 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 		// Execute operations within transaction
 		err = fn(ctx, tx)
 		if err != nil {
-			// Abort transaction on error (use fresh context in case original timed out)
-			abortCtx, abortCancel := abortContext()
-			_ = tx.Abort(abortCtx)
-			abortCancel()
+			abortTransaction(tx)
 			return nil, fmt.Errorf("transaction operation failed: %w", err)
 		}
 
@@ -119,14 +124,10 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 			if _, ok := errors.AsType[*VersionConflictError](err); ok {
 				// Version conflict on commit - retry with new version
 				lastErr = err
-				abortCtx, abortCancel := abortContext()
-				_ = tx.Abort(abortCtx)
-				abortCancel()
+				abortTransaction(tx)
 				continue
 			}
-			abortCtx, abortCancel := abortContext()
-			_ = tx.Abort(abortCtx)
-			abortCancel()
+			abortTransaction(tx)
 			return nil, fmt.Errorf("committing transaction: %w", err)
 		}
 
@@ -177,9 +178,7 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 		// Execute operations within transaction
 		err = fn(ctx, tx)
 		if err != nil {
-			abortCtx, abortCancel := abortContext()
-			_ = tx.Abort(abortCtx)
-			abortCancel()
+			abortTransaction(tx)
 			return fmt.Errorf("transaction operation failed: %w", err)
 		}
 
@@ -188,14 +187,10 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 		if err != nil {
 			if _, ok := errors.AsType[*VersionConflictError](err); ok {
 				lastErr = err
-				abortCtx, abortCancel := abortContext()
-				_ = tx.Abort(abortCtx)
-				abortCancel()
+				abortTransaction(tx)
 				continue
 			}
-			abortCtx, abortCancel := abortContext()
-			_ = tx.Abort(abortCtx)
-			abortCancel()
+			abortTransaction(tx)
 			return fmt.Errorf("committing transaction: %w", err)
 		}
 
