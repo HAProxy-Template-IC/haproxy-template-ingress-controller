@@ -208,7 +208,7 @@ func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, vers
 // ParseVersionFromHeader extracts the version number from a Configuration-Version header.
 func ParseVersionFromHeader(header string) (int64, error) {
 	if header == "" {
-		return 0, fmt.Errorf("empty version header")
+		return 0, errors.New("empty version header")
 	}
 
 	version, err := strconv.ParseInt(header, 10, 64)

@@ -11,6 +11,7 @@ package parser
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -203,7 +204,7 @@ func New() (*Parser, error) {
 //	structured, err := parser.ParseFromString(config)
 func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	if config == "" {
-		return nil, fmt.Errorf("configuration string is empty")
+		return nil, errors.New("configuration string is empty")
 	}
 
 	// Check cache first (fast path - no mutex needed for cache check)

@@ -16,7 +16,7 @@ package templating
 
 import (
 	"cmp"
-	"fmt"
+	"errors"
 	"io/fs"
 	"slices"
 	"strings"
@@ -88,7 +88,7 @@ type scriggoRootDir struct {
 }
 
 func (d *scriggoRootDir) Read(b []byte) (int, error) {
-	return 0, fmt.Errorf("reading directory")
+	return 0, errors.New("reading directory")
 }
 
 func (d *scriggoRootDir) Close() error {

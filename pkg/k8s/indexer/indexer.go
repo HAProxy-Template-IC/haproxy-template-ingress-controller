@@ -7,6 +7,7 @@
 package indexer
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -49,7 +50,7 @@ type Config struct {
 //	})
 func New(cfg Config) (*Indexer, error) {
 	if len(cfg.IndexBy) == 0 {
-		return nil, fmt.Errorf("at least one index expression is required")
+		return nil, errors.New("at least one index expression is required")
 	}
 
 	// Create JSONPath evaluators for index keys (fail-fast validation)

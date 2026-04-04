@@ -29,6 +29,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"go/format"
@@ -155,7 +156,7 @@ func findProjectRoot() (string, error) {
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("go.mod not found")
+			return "", errors.New("go.mod not found")
 		}
 		dir = parent
 	}

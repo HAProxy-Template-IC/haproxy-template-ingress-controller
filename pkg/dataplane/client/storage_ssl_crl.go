@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -23,7 +24,7 @@ func (c *DataplaneClient) GetAllSSLCrlFiles(ctx context.Context) ([]string, erro
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetAllCrl(ctx) },
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCrlFiles {
-			return fmt.Errorf("SSL CRL file storage requires DataPlane API v3.2+")
+			return errors.New("SSL CRL file storage requires DataPlane API v3.2+")
 		}
 		return nil
 	})
@@ -68,7 +69,7 @@ func (c *DataplaneClient) GetSSLCrlFileContent(ctx context.Context, name string)
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetCrl(ctx, name, nil) },
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCrlFiles {
-			return fmt.Errorf("SSL CRL file storage requires DataPlane API v3.2+")
+			return errors.New("SSL CRL file storage requires DataPlane API v3.2+")
 		}
 		return nil
 	})
@@ -106,7 +107,7 @@ func (c *DataplaneClient) CreateSSLCrlFile(ctx context.Context, name, content st
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCrlFiles {
-			return fmt.Errorf("SSL CRL file storage requires DataPlane API v3.2+")
+			return errors.New("SSL CRL file storage requires DataPlane API v3.2+")
 		}
 		return nil
 	})
@@ -137,7 +138,7 @@ func (c *DataplaneClient) UpdateSSLCrlFile(ctx context.Context, name, content st
 		},
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCrlFiles {
-			return fmt.Errorf("SSL CRL file storage requires DataPlane API v3.2+")
+			return errors.New("SSL CRL file storage requires DataPlane API v3.2+")
 		}
 		return nil
 	})
@@ -159,7 +160,7 @@ func (c *DataplaneClient) DeleteSSLCrlFile(ctx context.Context, name string) err
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.DeleteCrl(ctx, name) },
 	}, func(caps Capabilities) error {
 		if !caps.SupportsSslCrlFiles {
-			return fmt.Errorf("SSL CRL file storage requires DataPlane API v3.2+")
+			return errors.New("SSL CRL file storage requires DataPlane API v3.2+")
 		}
 		return nil
 	})

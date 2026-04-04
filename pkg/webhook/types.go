@@ -123,7 +123,7 @@ type ValidationContext struct {
 //	func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
 //	    // Access new object (already unstructured.Unstructured)
 //	    if ctx.Object == nil {
-//	        return false, "", fmt.Errorf("object is nil")
+//	        return false, "", errors.New("object is nil")
 //	    }
 //
 //	    // For UPDATE operations, compare with old object

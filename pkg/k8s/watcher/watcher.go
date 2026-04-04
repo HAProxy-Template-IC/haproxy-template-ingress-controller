@@ -7,6 +7,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -114,7 +115,7 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 	case types.StoreTypeCached:
 		dynamicClient := k8sClient.DynamicClient()
 		if dynamicClient == nil {
-			return nil, fmt.Errorf("cached store requires dynamic client")
+			return nil, errors.New("cached store requires dynamic client")
 		}
 
 		cachedStore, err := store.NewCachedStore(&store.CachedStoreConfig{
@@ -166,7 +167,7 @@ func (w *Watcher) createInformer() error {
 	// Get dynamic client
 	dynamicClient := w.client.DynamicClient()
 	if dynamicClient == nil {
-		return fmt.Errorf("dynamic client is nil")
+		return errors.New("dynamic client is nil")
 	}
 
 	// Create informer factory
@@ -229,7 +230,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 	// Wait for cache sync
 	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
-		return fmt.Errorf("syncing cache")
+		return errors.New("syncing cache")
 	}
 
 	// Mark sync as complete and disable sync mode
@@ -285,7 +286,7 @@ func (w *Watcher) Store() types.Store {
 func (w *Watcher) WaitForSync(ctx context.Context) (int, error) {
 	// Wait for informer sync
 	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
-		return 0, fmt.Errorf("syncing cache")
+		return 0, errors.New("syncing cache")
 	}
 
 	// Mark sync as complete (idempotent - safe if Start() already did this)

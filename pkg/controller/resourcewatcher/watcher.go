@@ -25,6 +25,7 @@ package resourcewatcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -74,16 +75,16 @@ func New(
 	logger *slog.Logger,
 ) (*ResourceWatcherComponent, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("config is nil")
+		return nil, errors.New("config is nil")
 	}
 	if k8sClient == nil {
-		return nil, fmt.Errorf("k8s client is nil")
+		return nil, errors.New("k8s client is nil")
 	}
 	if eventBus == nil {
-		return nil, fmt.Errorf("event bus is nil")
+		return nil, errors.New("event bus is nil")
 	}
 	if logger == nil {
-		return nil, fmt.Errorf("logger is nil")
+		return nil, errors.New("logger is nil")
 	}
 
 	rwc := &ResourceWatcherComponent{
@@ -330,10 +331,10 @@ func determineNamespace(resourceTypeName string, k8sClient *client.Client) strin
 // toGVR converts a WatchedResource configuration to a GroupVersionResource.
 func toGVR(wr *coreconfig.WatchedResource) (schema.GroupVersionResource, error) {
 	if wr.APIVersion == "" {
-		return schema.GroupVersionResource{}, fmt.Errorf("api_version is required")
+		return schema.GroupVersionResource{}, errors.New("api_version is required")
 	}
 	if wr.Resources == "" {
-		return schema.GroupVersionResource{}, fmt.Errorf("resources is required")
+		return schema.GroupVersionResource{}, errors.New("resources is required")
 	}
 
 	// Parse APIVersion into Group/Version

@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -69,12 +70,12 @@ func NewPostProcessor(config PostProcessorConfig) (PostProcessor, error) {
 	case PostProcessorTypeRegexReplace:
 		pattern, ok := config.Params["pattern"]
 		if !ok {
-			return nil, fmt.Errorf("regex_replace processor requires 'pattern' parameter")
+			return nil, errors.New("regex_replace processor requires 'pattern' parameter")
 		}
 
 		replace, ok := config.Params["replace"]
 		if !ok {
-			return nil, fmt.Errorf("regex_replace processor requires 'replace' parameter")
+			return nil, errors.New("regex_replace processor requires 'replace' parameter")
 		}
 
 		// Fast-path: indentation normalization without regex overhead

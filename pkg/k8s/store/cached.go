@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -89,13 +90,13 @@ type CachedStoreConfig struct {
 // NewCachedStore creates a new API-backed store with caching.
 func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 	if cfg.NumKeys < 1 {
-		return nil, fmt.Errorf("numKeys must be at least 1")
+		return nil, errors.New("numKeys must be at least 1")
 	}
 	if cfg.Client == nil {
-		return nil, fmt.Errorf("client is required")
+		return nil, errors.New("client is required")
 	}
 	if cfg.Indexer == nil {
-		return nil, fmt.Errorf("indexer is required")
+		return nil, errors.New("indexer is required")
 	}
 	if cfg.CacheTTL == 0 {
 		cfg.CacheTTL = 2*time.Minute + 10*time.Second
@@ -133,7 +134,7 @@ func (s *CachedStore) Get(keys ...string) ([]any, error) {
 		return nil, &StoreError{
 			Operation: "get",
 			Keys:      keys,
-			Cause:     fmt.Errorf("at least one key required"),
+			Cause:     errors.New("at least one key required"),
 		}
 	}
 

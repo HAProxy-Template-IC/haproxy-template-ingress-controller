@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -51,7 +52,7 @@ type TemplatePostProcessor struct {
 //   - The template has syntax errors (compilation failure)
 func NewTemplatePostProcessor(source string, globals native.Declarations) (*TemplatePostProcessor, error) {
 	if source == "" {
-		return nil, fmt.Errorf("template post-processor requires non-empty 'source' parameter")
+		return nil, errors.New("template post-processor requires non-empty 'source' parameter")
 	}
 
 	// Create a copy of globals and add the `input` runtime variable.

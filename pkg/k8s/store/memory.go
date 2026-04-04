@@ -2,6 +2,7 @@ package store
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -66,7 +67,7 @@ func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 		return nil, &StoreError{
 			Operation: "get",
 			Keys:      keys,
-			Cause:     fmt.Errorf("at least one key required"),
+			Cause:     errors.New("at least one key required"),
 		}
 	}
 

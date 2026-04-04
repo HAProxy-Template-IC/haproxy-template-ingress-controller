@@ -20,6 +20,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -199,7 +200,7 @@ func (c *Client) GetResource(ctx context.Context, gvr schema.GroupVersionResourc
 	if c.namespace == "" {
 		return nil, &ClientError{
 			Operation: "get resource",
-			Cause:     fmt.Errorf("no namespace available (not in cluster and not specified)"),
+			Cause:     errors.New("no namespace available (not in cluster and not specified)"),
 		}
 	}
 

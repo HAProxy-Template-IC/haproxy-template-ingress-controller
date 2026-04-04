@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -83,7 +84,7 @@ func executeRequest(ctx context.Context, bus *EventBus, request Request, opts Re
 
 	// Validate options
 	if len(opts.ExpectedResponders) == 0 {
-		return nil, fmt.Errorf("expected responders cannot be empty")
+		return nil, errors.New("expected responders cannot be empty")
 	}
 	if minResponses > len(opts.ExpectedResponders) {
 		return nil, fmt.Errorf("min responses (%d) cannot exceed expected responders (%d)", minResponses, len(opts.ExpectedResponders))

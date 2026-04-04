@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -69,7 +70,7 @@ func (f *FieldFilter) removeField(rv reflect.Value, pattern string) error {
 	// Example: "metadata.labels['app']" -> ["metadata", "labels", "app"]
 	segments := parseJSONPathPattern(pattern)
 	if len(segments) == 0 {
-		return fmt.Errorf("empty pattern")
+		return errors.New("empty pattern")
 	}
 
 	// Navigate to parent of target field
@@ -94,7 +95,7 @@ func (f *FieldFilter) navigateToField(rv reflect.Value, fieldName string) (refle
 	// Dereference pointers
 	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
 		if rv.IsNil() {
-			return reflect.Value{}, fmt.Errorf("nil pointer")
+			return reflect.Value{}, errors.New("nil pointer")
 		}
 		rv = rv.Elem()
 	}

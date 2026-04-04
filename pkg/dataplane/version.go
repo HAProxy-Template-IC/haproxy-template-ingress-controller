@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -47,7 +48,7 @@ func ParseHAProxyVersionOutput(output string) (*Version, error) {
 	// Get first line
 	lines := strings.Split(output, "\n")
 	if len(lines) == 0 {
-		return nil, fmt.Errorf("empty haproxy version output")
+		return nil, errors.New("empty haproxy version output")
 	}
 
 	firstLine := lines[0]
@@ -145,7 +146,7 @@ func DetectLocalVersion() (*Version, error) {
 // The API version string format is "vX.Y.Z commit" (e.g., "v3.2.6 87ad0bcf").
 func VersionFromAPIInfo(info *client.VersionInfo) (*Version, error) {
 	if info == nil {
-		return nil, fmt.Errorf("version info is nil")
+		return nil, errors.New("version info is nil")
 	}
 
 	major, minor, err := client.ParseVersion(info.API.Version)

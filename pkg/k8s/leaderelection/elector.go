@@ -2,6 +2,7 @@ package leaderelection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -80,27 +81,27 @@ func New(
 	logger *slog.Logger,
 ) (*Elector, error) {
 	if config == nil {
-		return nil, fmt.Errorf("config cannot be nil")
+		return nil, errors.New("config cannot be nil")
 	}
 
 	if !config.Enabled {
-		return nil, fmt.Errorf("leader election is not enabled in config")
+		return nil, errors.New("leader election is not enabled in config")
 	}
 
 	if config.Identity == "" {
-		return nil, fmt.Errorf("identity cannot be empty")
+		return nil, errors.New("identity cannot be empty")
 	}
 
 	if config.LeaseName == "" {
-		return nil, fmt.Errorf("lease name cannot be empty")
+		return nil, errors.New("lease name cannot be empty")
 	}
 
 	if config.LeaseNamespace == "" {
-		return nil, fmt.Errorf("lease namespace cannot be empty")
+		return nil, errors.New("lease namespace cannot be empty")
 	}
 
 	if clientset == nil {
-		return nil, fmt.Errorf("clientset cannot be nil")
+		return nil, errors.New("clientset cannot be nil")
 	}
 
 	if logger == nil {

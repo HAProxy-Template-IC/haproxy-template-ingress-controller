@@ -15,6 +15,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,7 +30,7 @@ func (sc *StateCache) GetConfig() (*coreconfig.Config, string, error) {
 	defer sc.mu.RUnlock()
 
 	if sc.currentConfig == nil {
-		return nil, "", fmt.Errorf("config not loaded yet")
+		return nil, "", errors.New("config not loaded yet")
 	}
 
 	return sc.currentConfig, sc.currentConfigVersion, nil
@@ -41,7 +42,7 @@ func (sc *StateCache) GetCredentials() (*coreconfig.Credentials, string, error) 
 	defer sc.mu.RUnlock()
 
 	if sc.currentCreds == nil {
-		return nil, "", fmt.Errorf("credentials not loaded yet")
+		return nil, "", errors.New("credentials not loaded yet")
 	}
 
 	return sc.currentCreds, sc.currentCredsVersion, nil
@@ -53,7 +54,7 @@ func (sc *StateCache) GetRenderedConfig() (string, time.Time, error) {
 	defer sc.mu.RUnlock()
 
 	if sc.lastRendered == "" {
-		return "", time.Time{}, fmt.Errorf("no config rendered yet")
+		return "", time.Time{}, errors.New("no config rendered yet")
 	}
 
 	return sc.lastRendered, sc.lastRenderedTime, nil
@@ -75,7 +76,7 @@ func (sc *StateCache) GetAuxiliaryFiles() (*dataplane.AuxiliaryFiles, time.Time,
 // GetResourceCounts implements debug.StateProvider.
 func (sc *StateCache) GetResourceCounts() (map[string]int, error) {
 	if sc.resourceWatcher == nil {
-		return nil, fmt.Errorf("resource watcher not initialized")
+		return nil, errors.New("resource watcher not initialized")
 	}
 
 	stores := sc.resourceWatcher.GetAllStores()
@@ -95,7 +96,7 @@ func (sc *StateCache) GetResourceCounts() (map[string]int, error) {
 // GetResourcesByType implements debug.StateProvider.
 func (sc *StateCache) GetResourcesByType(resourceType string) ([]any, error) {
 	if sc.resourceWatcher == nil {
-		return nil, fmt.Errorf("resource watcher not initialized")
+		return nil, errors.New("resource watcher not initialized")
 	}
 
 	stores := sc.resourceWatcher.GetAllStores()
@@ -171,7 +172,7 @@ func (sc *StateCache) GetValidatedConfig() (*debug.ValidatedConfigInfo, error) {
 	defer sc.mu.RUnlock()
 
 	if sc.lastValidatedConfig == "" {
-		return nil, fmt.Errorf("no config validated yet")
+		return nil, errors.New("no config validated yet")
 	}
 
 	return &debug.ValidatedConfigInfo{

@@ -14,9 +14,7 @@
 
 package resourcestore
 
-import (
-	"fmt"
-)
+import "errors"
 
 // OverlayStore wraps a base store and simulates a single resource change.
 //
@@ -144,22 +142,22 @@ func (o *OverlayStore) List() ([]any, error) {
 
 // Add is not supported on overlay stores (read-only).
 func (o *OverlayStore) Add(resource any, keys []string) error {
-	return fmt.Errorf("overlay store is read-only: Add not supported")
+	return errors.New("overlay store is read-only: Add not supported")
 }
 
 // Update is not supported on overlay stores (read-only).
 func (o *OverlayStore) Update(resource any, keys []string) error {
-	return fmt.Errorf("overlay store is read-only: Update not supported")
+	return errors.New("overlay store is read-only: Update not supported")
 }
 
 // Delete is not supported on overlay stores (read-only).
 func (o *OverlayStore) Delete(keys ...string) error {
-	return fmt.Errorf("overlay store is read-only: Delete not supported")
+	return errors.New("overlay store is read-only: Delete not supported")
 }
 
 // Clear is not supported on overlay stores (read-only).
 func (o *OverlayStore) Clear() error {
-	return fmt.Errorf("overlay store is read-only: Clear not supported")
+	return errors.New("overlay store is read-only: Clear not supported")
 }
 
 // extractMetadata extracts namespace and name from a Kubernetes resource.

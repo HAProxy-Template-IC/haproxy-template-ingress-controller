@@ -15,6 +15,7 @@
 package testrunner
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -69,7 +70,7 @@ func NewFixtureHTTPStoreWrapper(store *httpstore.HTTPStore, logger *slog.Logger)
 //   - Error if URL is not in fixtures
 func (w *FixtureHTTPStoreWrapper) Fetch(args ...any) (any, error) {
 	if len(args) < 1 {
-		return nil, fmt.Errorf("http.Fetch requires at least 1 argument (url)")
+		return nil, errors.New("http.Fetch requires at least 1 argument (url)")
 	}
 
 	// Extract URL from first argument

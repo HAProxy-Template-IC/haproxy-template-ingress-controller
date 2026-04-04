@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -25,7 +26,7 @@ type FieldSelectorMatcher struct {
 // Returns an error if the expression format is invalid or the JSONPath is malformed.
 func NewFieldSelectorMatcher(expression string) (*FieldSelectorMatcher, error) {
 	if expression == "" {
-		return nil, fmt.Errorf("empty field selector expression")
+		return nil, errors.New("empty field selector expression")
 	}
 
 	// Split on '=' to get field path and expected value

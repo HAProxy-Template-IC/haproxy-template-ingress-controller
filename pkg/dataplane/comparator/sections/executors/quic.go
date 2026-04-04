@@ -3,7 +3,7 @@ package executors
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/haproxytech/client-native/v6/models"
@@ -229,12 +229,12 @@ func DispatchCreateChild31Plus[TUnified any, TV33 any, TV32 any, TV31 any, TV32E
 		v32Call,
 		v31Call,
 		func(_ string, _ int, _ struct{}) (*http.Response, error) {
-			return nil, fmt.Errorf("this feature requires DataPlane API v3.1+")
+			return nil, errors.New("this feature requires DataPlane API v3.1+")
 		},
 		v32eeCall,
 		v31eeCall,
 		func(_ string, _ int, _ struct{}) (*http.Response, error) {
-			return nil, fmt.Errorf("this feature requires DataPlane API v3.1+")
+			return nil, errors.New("this feature requires DataPlane API v3.1+")
 		},
 	)
 }
@@ -257,12 +257,12 @@ func DispatchReplaceChild31Plus[TUnified any, TV33 any, TV32 any, TV31 any, TV32
 		v32Call,
 		v31Call,
 		func(_ string, _ int, _ struct{}) (*http.Response, error) {
-			return nil, fmt.Errorf("this feature requires DataPlane API v3.1+")
+			return nil, errors.New("this feature requires DataPlane API v3.1+")
 		},
 		v32eeCall,
 		v31eeCall,
 		func(_ string, _ int, _ struct{}) (*http.Response, error) {
-			return nil, fmt.Errorf("this feature requires DataPlane API v3.1+")
+			return nil, errors.New("this feature requires DataPlane API v3.1+")
 		},
 	)
 }
@@ -284,12 +284,12 @@ func DispatchDeleteChild31Plus(
 		v32Call,
 		v31Call,
 		func(_ string, _ int) (*http.Response, error) {
-			return nil, fmt.Errorf("this feature requires DataPlane API v3.1+")
+			return nil, errors.New("this feature requires DataPlane API v3.1+")
 		},
 		v32eeCall,
 		v31eeCall,
 		func(_ string, _ int) (*http.Response, error) {
-			return nil, fmt.Errorf("this feature requires DataPlane API v3.1+")
+			return nil, errors.New("this feature requires DataPlane API v3.1+")
 		},
 	)
 }

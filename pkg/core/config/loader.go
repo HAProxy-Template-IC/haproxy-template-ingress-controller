@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -47,7 +48,7 @@ func LoadConfig(configYAML string) (*Config, error) {
 // useful for testing parse behavior independently from default application.
 func parseConfig(configYAML string) (*Config, error) {
 	if configYAML == "" {
-		return nil, fmt.Errorf("config YAML is empty")
+		return nil, errors.New("config YAML is empty")
 	}
 
 	var cfg Config
@@ -65,18 +66,18 @@ func parseConfig(configYAML string) (*Config, error) {
 // Expected Secret keys: dataplane_username, dataplane_password.
 func LoadCredentials(secretData map[string][]byte) (*Credentials, error) {
 	if secretData == nil {
-		return nil, fmt.Errorf("secret data is nil")
+		return nil, errors.New("secret data is nil")
 	}
 
 	// Extract required fields
 	dataplaneUsername, ok := secretData["dataplane_username"]
 	if !ok || len(dataplaneUsername) == 0 {
-		return nil, fmt.Errorf("missing required secret key: dataplane_username")
+		return nil, errors.New("missing required secret key: dataplane_username")
 	}
 
 	dataplanePassword, ok := secretData["dataplane_password"]
 	if !ok || len(dataplanePassword) == 0 {
-		return nil, fmt.Errorf("missing required secret key: dataplane_password")
+		return nil, errors.New("missing required secret key: dataplane_password")
 	}
 
 	return &Credentials{

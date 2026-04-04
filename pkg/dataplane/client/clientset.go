@@ -10,6 +10,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -425,7 +426,7 @@ func DetectVersion(ctx context.Context, endpoint *Endpoint, _ *slog.Logger) (*Ve
 	}
 
 	if versionInfo.API.Version == "" {
-		return nil, fmt.Errorf("version string is empty in response")
+		return nil, errors.New("version string is empty in response")
 	}
 
 	return &versionInfo, nil
@@ -438,7 +439,7 @@ func ParseVersion(version string) (major, minor int, err error) {
 	// Split on whitespace to get version part (e.g., "v3.2.6")
 	parts := strings.Fields(version)
 	if len(parts) == 0 {
-		return 0, 0, fmt.Errorf("empty version string")
+		return 0, 0, errors.New("empty version string")
 	}
 
 	versionPart := parts[0]

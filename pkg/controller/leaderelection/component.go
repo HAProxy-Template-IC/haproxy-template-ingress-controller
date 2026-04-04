@@ -2,6 +2,7 @@ package leaderelection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -39,11 +40,11 @@ func New(
 	logger *slog.Logger,
 ) (*Component, error) {
 	if config == nil {
-		return nil, fmt.Errorf("config cannot be nil")
+		return nil, errors.New("config cannot be nil")
 	}
 
 	if eventBus == nil {
-		return nil, fmt.Errorf("event bus cannot be nil")
+		return nil, errors.New("event bus cannot be nil")
 	}
 
 	if logger == nil {

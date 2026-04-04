@@ -16,6 +16,7 @@ package introspection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -245,7 +246,7 @@ func (s *Server) Start(ctx context.Context) error {
 //	go server.Serve(ctx)
 func (s *Server) Serve(ctx context.Context) error {
 	if !s.setupDone {
-		return fmt.Errorf("Setup() must be called before Serve()")
+		return errors.New("Setup() must be called before Serve()")
 	}
 
 	s.server = &http.Server{

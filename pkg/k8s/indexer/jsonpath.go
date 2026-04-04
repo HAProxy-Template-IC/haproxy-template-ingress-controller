@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -23,7 +24,7 @@ type JSONPathEvaluator struct {
 // Returns an error if the expression is invalid (fail-fast).
 func NewJSONPathEvaluator(expression string) (*JSONPathEvaluator, error) {
 	if expression == "" {
-		return nil, fmt.Errorf("empty JSONPath expression")
+		return nil, errors.New("empty JSONPath expression")
 	}
 
 	// Create JSONPath parser
@@ -75,7 +76,7 @@ func (e *JSONPathEvaluator) Evaluate(resource any) (string, error) {
 		return "", &JSONPathError{
 			Expression: e.expression,
 			Operation:  "execute",
-			Cause:      fmt.Errorf("no results found"),
+			Cause:      errors.New("no results found"),
 		}
 	}
 

@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -152,7 +153,7 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 
 	// Check if config has validation tests
 	if len(configSpec.ValidationTests) == 0 {
-		return nil, fmt.Errorf("no validation tests found in config")
+		return nil, errors.New("no validation tests found in config")
 	}
 
 	// Setup validation paths in temp directory
@@ -363,7 +364,7 @@ func loadConfigFromFile(filePath string) (*v1alpha1.HAProxyTemplateConfigSpec, e
 		if config, ok := obj.(*v1alpha1.HAProxyTemplateConfig); ok {
 			return &config.Spec, nil
 		}
-		return nil, fmt.Errorf("file does not contain HAProxyTemplateConfig")
+		return nil, errors.New("file does not contain HAProxyTemplateConfig")
 	}
 
 	// Fallback: Try parsing as raw YAML (for spec-only files)

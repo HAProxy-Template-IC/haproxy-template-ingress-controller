@@ -3,6 +3,7 @@ package enterprise
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -60,7 +61,7 @@ func (k *KeepalivedOperations) StartTransaction(ctx context.Context) (string, er
 	}
 
 	if result.Id == nil {
-		return "", fmt.Errorf("no transaction ID in response")
+		return "", errors.New("no transaction ID in response")
 	}
 	return *result.Id, nil
 }
