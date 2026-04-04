@@ -16,6 +16,7 @@ package main
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -30,6 +31,9 @@ const (
 	// separatorSingle is a single-line separator for subsections.
 	separatorSingle = "--------------------------------------------------------------------------------"
 )
+
+// errNoValidationTests is returned when a config has no validation tests defined.
+var errNoValidationTests = errors.New("no validation tests found in config")
 
 // sortedKeys returns the keys of a map sorted in ascending order.
 func sortedKeys[V any](m map[string]V) []string {

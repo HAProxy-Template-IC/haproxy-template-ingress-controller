@@ -19,6 +19,18 @@ import (
 // on a HAProxy Community edition instance.
 var ErrEnterpriseRequired = errors.New("this operation requires HAProxy Enterprise edition")
 
+// errNotSupported returns an error indicating that the operation is not supported
+// by the given DataPlane API version (the version-specific function was nil).
+func errNotSupported(version string) error {
+	return fmt.Errorf("operation not supported by DataPlane API %s (%s function is nil)", version, version)
+}
+
+// errEnterpriseNotSupported returns an error indicating that the operation is not supported
+// by the given HAProxy Enterprise DataPlane API version.
+func errEnterpriseNotSupported(version string) error {
+	return fmt.Errorf("operation not supported by HAProxy Enterprise DataPlane API %s (%see function is nil)", version, version)
+}
+
 // CallFunc represents a versioned API call function.
 // Each field is a function that takes a version-specific client and returns a result of type T.
 // This allows type-safe dispatch to the appropriate client version based on runtime detection.
@@ -133,44 +145,44 @@ func (c *DataplaneClient) DispatchWithCapability(
 	// Community edition clients
 	case *v33.Client:
 		if call.V33 == nil {
-			return nil, errors.New("operation not supported by DataPlane API v3.3 (v3.3 function is nil)")
+			return nil, errNotSupported("v3.3")
 		}
 		return call.V33(client)
 
 	case *v32.Client:
 		if call.V32 == nil {
-			return nil, errors.New("operation not supported by DataPlane API v3.2 (v3.2 function is nil)")
+			return nil, errNotSupported("v3.2")
 		}
 		return call.V32(client)
 
 	case *v31.Client:
 		if call.V31 == nil {
-			return nil, errors.New("operation not supported by DataPlane API v3.1 (v3.1 function is nil)")
+			return nil, errNotSupported("v3.1")
 		}
 		return call.V31(client)
 
 	case *v30.Client:
 		if call.V30 == nil {
-			return nil, errors.New("operation not supported by DataPlane API v3.0 (v3.0 function is nil)")
+			return nil, errNotSupported("v3.0")
 		}
 		return call.V30(client)
 
 	// Enterprise edition clients
 	case *v32ee.Client:
 		if call.V32EE == nil {
-			return nil, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
+			return nil, errEnterpriseNotSupported("v3.2")
 		}
 		return call.V32EE(client)
 
 	case *v31ee.Client:
 		if call.V31EE == nil {
-			return nil, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.1 (v3.1ee function is nil)")
+			return nil, errEnterpriseNotSupported("v3.1")
 		}
 		return call.V31EE(client)
 
 	case *v30ee.Client:
 		if call.V30EE == nil {
-			return nil, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.0 (v3.0ee function is nil)")
+			return nil, errEnterpriseNotSupported("v3.0")
 		}
 		return call.V30EE(client)
 
@@ -209,28 +221,28 @@ func DispatchGeneric[T any](
 	case *v33.Client:
 		if call.V33 == nil {
 			var zero T
-			return zero, errors.New("operation not supported by DataPlane API v3.3 (v3.3 function is nil)")
+			return zero, errNotSupported("v3.3")
 		}
 		return call.V33(client)
 
 	case *v32.Client:
 		if call.V32 == nil {
 			var zero T
-			return zero, errors.New("operation not supported by DataPlane API v3.2 (v3.2 function is nil)")
+			return zero, errNotSupported("v3.2")
 		}
 		return call.V32(client)
 
 	case *v31.Client:
 		if call.V31 == nil {
 			var zero T
-			return zero, errors.New("operation not supported by DataPlane API v3.1 (v3.1 function is nil)")
+			return zero, errNotSupported("v3.1")
 		}
 		return call.V31(client)
 
 	case *v30.Client:
 		if call.V30 == nil {
 			var zero T
-			return zero, errors.New("operation not supported by DataPlane API v3.0 (v3.0 function is nil)")
+			return zero, errNotSupported("v3.0")
 		}
 		return call.V30(client)
 
@@ -238,21 +250,21 @@ func DispatchGeneric[T any](
 	case *v32ee.Client:
 		if call.V32EE == nil {
 			var zero T
-			return zero, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
+			return zero, errEnterpriseNotSupported("v3.2")
 		}
 		return call.V32EE(client)
 
 	case *v31ee.Client:
 		if call.V31EE == nil {
 			var zero T
-			return zero, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.1 (v3.1ee function is nil)")
+			return zero, errEnterpriseNotSupported("v3.1")
 		}
 		return call.V31EE(client)
 
 	case *v30ee.Client:
 		if call.V30EE == nil {
 			var zero T
-			return zero, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.0 (v3.0ee function is nil)")
+			return zero, errEnterpriseNotSupported("v3.0")
 		}
 		return call.V30EE(client)
 
@@ -331,22 +343,22 @@ func (c *DataplaneClient) DispatchEnterpriseOnly(
 		// No v33ee client yet (HAProxy Enterprise 3.3 not released).
 		// Fall through to v32ee which has the same API endpoints.
 		if call.V32EE == nil {
-			return nil, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
+			return nil, errEnterpriseNotSupported("v3.2")
 		}
 		return call.V32EE(c.clientset.V32EE())
 	case 2:
 		if call.V32EE == nil {
-			return nil, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
+			return nil, errEnterpriseNotSupported("v3.2")
 		}
 		return call.V32EE(c.clientset.V32EE())
 	case 1:
 		if call.V31EE == nil {
-			return nil, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.1 (v3.1ee function is nil)")
+			return nil, errEnterpriseNotSupported("v3.1")
 		}
 		return call.V31EE(c.clientset.V31EE())
 	default:
 		if call.V30EE == nil {
-			return nil, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.0 (v3.0ee function is nil)")
+			return nil, errEnterpriseNotSupported("v3.0")
 		}
 		return call.V30EE(c.clientset.V30EE())
 	}
@@ -387,22 +399,22 @@ func DispatchEnterpriseOnlyGeneric[T any](
 		// No v33ee client yet (HAProxy Enterprise 3.3 not released).
 		// Fall through to v32ee which has the same API endpoints.
 		if call.V32EE == nil {
-			return zero, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
+			return zero, errEnterpriseNotSupported("v3.2")
 		}
 		return call.V32EE(clientset.V32EE())
 	case 2:
 		if call.V32EE == nil {
-			return zero, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.2 (v3.2ee function is nil)")
+			return zero, errEnterpriseNotSupported("v3.2")
 		}
 		return call.V32EE(clientset.V32EE())
 	case 1:
 		if call.V31EE == nil {
-			return zero, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.1 (v3.1ee function is nil)")
+			return zero, errEnterpriseNotSupported("v3.1")
 		}
 		return call.V31EE(clientset.V31EE())
 	default:
 		if call.V30EE == nil {
-			return zero, errors.New("operation not supported by HAProxy Enterprise DataPlane API v3.0 (v3.0ee function is nil)")
+			return zero, errEnterpriseNotSupported("v3.0")
 		}
 		return call.V30EE(clientset.V30EE())
 	}

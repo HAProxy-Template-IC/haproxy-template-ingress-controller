@@ -152,7 +152,7 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 
 	// Check if config has validation tests
 	if len(configSpec.ValidationTests) == 0 {
-		return nil, errors.New("no validation tests found in config")
+		return nil, errNoValidationTests
 	}
 
 	// Setup validation paths in temp directory
