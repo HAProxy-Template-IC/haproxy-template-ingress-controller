@@ -36,13 +36,7 @@ type StoreOverlay struct {
 
 // NewStoreOverlay creates a new empty StoreOverlay.
 func NewStoreOverlay() *StoreOverlay {
-	return &StoreOverlay{
-		Additions:              make([]runtime.Object, 0),
-		Modifications:          make([]runtime.Object, 0),
-		Deletions:              make([]ktypes.NamespacedName, 0),
-		convertedAdditions:     make([]any, 0),
-		convertedModifications: make([]any, 0),
-	}
+	return &StoreOverlay{}
 }
 
 // NewStoreOverlayForCreate creates a StoreOverlay for a CREATE operation.
@@ -50,11 +44,8 @@ func NewStoreOverlay() *StoreOverlay {
 func NewStoreOverlayForCreate(obj runtime.Object) *StoreOverlay {
 	converted := convertOverlayResource(obj)
 	return &StoreOverlay{
-		Additions:              []runtime.Object{obj},
-		Modifications:          make([]runtime.Object, 0),
-		Deletions:              make([]ktypes.NamespacedName, 0),
-		convertedAdditions:     []any{converted},
-		convertedModifications: make([]any, 0),
+		Additions:          []runtime.Object{obj},
+		convertedAdditions: []any{converted},
 	}
 }
 
@@ -63,10 +54,7 @@ func NewStoreOverlayForCreate(obj runtime.Object) *StoreOverlay {
 func NewStoreOverlayForUpdate(obj runtime.Object) *StoreOverlay {
 	converted := convertOverlayResource(obj)
 	return &StoreOverlay{
-		Additions:              make([]runtime.Object, 0),
 		Modifications:          []runtime.Object{obj},
-		Deletions:              make([]ktypes.NamespacedName, 0),
-		convertedAdditions:     make([]any, 0),
 		convertedModifications: []any{converted},
 	}
 }
@@ -74,11 +62,7 @@ func NewStoreOverlayForUpdate(obj runtime.Object) *StoreOverlay {
 // NewStoreOverlayForDelete creates a StoreOverlay for a DELETE operation.
 func NewStoreOverlayForDelete(namespace, name string) *StoreOverlay {
 	return &StoreOverlay{
-		Additions:              make([]runtime.Object, 0),
-		Modifications:          make([]runtime.Object, 0),
-		Deletions:              []ktypes.NamespacedName{{Namespace: namespace, Name: name}},
-		convertedAdditions:     make([]any, 0),
-		convertedModifications: make([]any, 0),
+		Deletions: []ktypes.NamespacedName{{Namespace: namespace, Name: name}},
 	}
 }
 
