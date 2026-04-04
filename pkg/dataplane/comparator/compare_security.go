@@ -287,16 +287,11 @@ func (c *Comparator) compareCrtStores(current, desired *parser.StructuredConfig)
 	// Find modified crt-store sections
 	for name, desiredCrtStore := range desiredMap {
 		if currentCrtStore, exists := currentMap[name]; exists {
-			if !crtStoreEqual(currentCrtStore, desiredCrtStore) {
+			if !currentCrtStore.Equal(*desiredCrtStore) {
 				operations = append(operations, sections.NewCrtStoreUpdate(desiredCrtStore))
 			}
 		}
 	}
 
 	return operations
-}
-
-// crtStoreEqual compares two crt-store sections for equality.
-func crtStoreEqual(c1, c2 *models.CrtStore) bool {
-	return c1.Equal(*c2)
 }

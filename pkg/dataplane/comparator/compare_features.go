@@ -124,9 +124,3 @@ func (c *Comparator) compareTCPChecks(backendName string, currentChecks, desired
 
 	return operations
 }
-
-// serverTemplatesEqual checks if two server templates are equal.
-// Uses the HAProxy models' built-in Equal() method to compare ALL attributes.
-func serverTemplatesEqual(t1, t2 *models.ServerTemplate) bool {
-	return t1.Equal(*t2)
-}
