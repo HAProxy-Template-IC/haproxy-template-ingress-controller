@@ -231,17 +231,10 @@ func runSingleTestBenchmark(
 
 // compileTemplatesForBenchmark compiles templates with optional profiling.
 func compileTemplatesForBenchmark(cfg *config.Config) (templating.Engine, error) {
-	// Enable profiling if --profile-includes flag is set
-	options := helpers.EngineOptions{
-		EnableProfiling: benchmarkProfileIncludes,
-	}
 	// Benchmark doesn't need currentConfig type registration
-	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, nil, options)
-	if err != nil {
-		return nil, err
-	}
-
-	return engine, nil
+	return helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, nil, helpers.EngineOptions{
+		EnableProfiling: benchmarkProfileIncludes,
+	})
 }
 
 // renderSingleTemplate renders a single template and returns timing and profiling stats.
@@ -273,11 +266,15 @@ func renderSingleTemplate(
 	}, stats, nil
 }
 
+// templateGroup defines a group of templates to render with a display prefix.
+type templateGroup struct {
+	names  []string // sorted template names
+	prefix string   // display prefix (e.g., "map:", "file:", "cert:")
+}
+
 // renderAllFiles renders all templates (haproxy.cfg + maps + files + certs) and returns timing for each.
 func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[string]any) (IterationResult, error) {
-	result := IterationResult{
-		FileResults: make([]FileRenderResult, 0),
-	}
+	var result IterationResult
 	totalStart := time.Now()
 
 	// Collect all include stats across renders when profiling is enabled
@@ -291,37 +288,21 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 	result.FileResults = append(result.FileResults, fileResult)
 	allIncludeStats = append(allIncludeStats, stats...)
 
-	// Render map files (sorted for consistent output order)
-	mapNames := sortedKeys(cfg.Maps)
-	for _, name := range mapNames {
-		fileResult, stats, err := renderSingleTemplate(engine, name, "map:"+name, renderCtx)
-		if err != nil {
-			return result, fmt.Errorf("rendering map %s: %w", name, err)
-		}
-		result.FileResults = append(result.FileResults, fileResult)
-		allIncludeStats = append(allIncludeStats, stats...)
+	// Render auxiliary files (maps, general files, SSL certificates) in sorted order
+	groups := []templateGroup{
+		{names: sortedKeys(cfg.Maps), prefix: "map:"},
+		{names: sortedKeys(cfg.Files), prefix: "file:"},
+		{names: sortedKeys(cfg.SSLCertificates), prefix: "cert:"},
 	}
-
-	// Render general files (sorted for consistent output order)
-	fileNames := sortedKeys(cfg.Files)
-	for _, name := range fileNames {
-		fileResult, stats, err := renderSingleTemplate(engine, name, "file:"+name, renderCtx)
-		if err != nil {
-			return result, fmt.Errorf("rendering file %s: %w", name, err)
+	for _, group := range groups {
+		for _, name := range group.names {
+			fileResult, stats, err := renderSingleTemplate(engine, name, group.prefix+name, renderCtx)
+			if err != nil {
+				return result, fmt.Errorf("rendering %s%s: %w", group.prefix, name, err)
+			}
+			result.FileResults = append(result.FileResults, fileResult)
+			allIncludeStats = append(allIncludeStats, stats...)
 		}
-		result.FileResults = append(result.FileResults, fileResult)
-		allIncludeStats = append(allIncludeStats, stats...)
-	}
-
-	// Render SSL certificates (sorted for consistent output order)
-	certNames := sortedKeys(cfg.SSLCertificates)
-	for _, name := range certNames {
-		fileResult, stats, err := renderSingleTemplate(engine, name, "cert:"+name, renderCtx)
-		if err != nil {
-			return result, fmt.Errorf("rendering cert %s: %w", name, err)
-		}
-		result.FileResults = append(result.FileResults, fileResult)
-		allIncludeStats = append(allIncludeStats, stats...)
 	}
 
 	// Store aggregated include stats in result
@@ -413,11 +394,13 @@ func outputAllBenchmarkResults(results []*BenchmarkResult, compilationTime time.
 
 // extractFileNames gets file names from the first result (all tests render same files).
 func extractFileNames(results []*BenchmarkResult) []string {
-	fileNames := make([]string, 0)
-	if len(results[0].Iterations) > 0 {
-		for _, fr := range results[0].Iterations[0].FileResults {
-			fileNames = append(fileNames, fr.Name)
-		}
+	if len(results[0].Iterations) == 0 {
+		return nil
+	}
+	fileResults := results[0].Iterations[0].FileResults
+	fileNames := make([]string, 0, len(fileResults))
+	for _, fr := range fileResults {
+		fileNames = append(fileNames, fr.Name)
 	}
 	return fileNames
 }
