@@ -158,10 +158,7 @@ func initializeClusterResources(ctx context.Context, clusterName, kubeconfigPath
 	if err := installCRDs(ctx, kubeconfigPath); err != nil {
 		return err
 	}
-	if err := waitForCRDsEstablished(ctx, kubeconfigPath); err != nil {
-		return err
-	}
-	return nil
+	return waitForCRDsEstablished(ctx, kubeconfigPath)
 }
 
 // cleanupKubeconfig removes the test kubeconfig file (skipped in CI mode).

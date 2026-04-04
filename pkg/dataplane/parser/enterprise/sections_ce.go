@@ -59,11 +59,7 @@ func (p *Parser) extractCESections(conf *StructuredConfig) error {
 	}
 
 	// Extract certificate sections (v3.2+ features)
-	if err := p.extractCertificateSections(conf); err != nil {
-		return err
-	}
-
-	return nil
+	return p.extractCertificateSections(conf)
 }
 
 // extractGlobal extracts the global section using client-native's ParseGlobalSection.
