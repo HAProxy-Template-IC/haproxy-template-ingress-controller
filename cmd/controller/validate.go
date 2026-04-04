@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -268,9 +267,9 @@ func outputResults(results *testrunner.TestResults, engine templating.Engine) er
 
 // dumpRenderedContent prints all rendered content from test results.
 func dumpRenderedContent(results *testrunner.TestResults) {
-	fmt.Println("\n" + strings.Repeat("=", 80))
+	fmt.Println("\n" + separatorDouble)
 	fmt.Println("RENDERED CONTENT")
-	fmt.Println(strings.Repeat("=", 80))
+	fmt.Println(separatorDouble)
 
 	for i := range results.TestResults {
 		test := &results.TestResults[i]
@@ -278,18 +277,18 @@ func dumpRenderedContent(results *testrunner.TestResults) {
 
 		if test.RenderedConfig != "" {
 			fmt.Println("### haproxy.cfg")
-			fmt.Println(strings.Repeat("-", 80))
+			fmt.Println(separatorSingle)
 			fmt.Println(test.RenderedConfig)
-			fmt.Println(strings.Repeat("-", 80))
+			fmt.Println(separatorSingle)
 		}
 
 		if len(test.RenderedMaps) > 0 {
 			fmt.Println("\n### Map Files")
 			for name, content := range test.RenderedMaps {
 				fmt.Printf("\n#### %s\n", name)
-				fmt.Println(strings.Repeat("-", 80))
+				fmt.Println(separatorSingle)
 				fmt.Println(content)
-				fmt.Println(strings.Repeat("-", 80))
+				fmt.Println(separatorSingle)
 			}
 		}
 
@@ -297,9 +296,9 @@ func dumpRenderedContent(results *testrunner.TestResults) {
 			fmt.Println("\n### General Files")
 			for name, content := range test.RenderedFiles {
 				fmt.Printf("\n#### %s\n", name)
-				fmt.Println(strings.Repeat("-", 80))
+				fmt.Println(separatorSingle)
 				fmt.Println(content)
-				fmt.Println(strings.Repeat("-", 80))
+				fmt.Println(separatorSingle)
 			}
 		}
 
@@ -307,9 +306,9 @@ func dumpRenderedContent(results *testrunner.TestResults) {
 			fmt.Println("\n### SSL Certificates")
 			for name, content := range test.RenderedCerts {
 				fmt.Printf("\n#### %s\n", name)
-				fmt.Println(strings.Repeat("-", 80))
+				fmt.Println(separatorSingle)
 				fmt.Println(content)
-				fmt.Println(strings.Repeat("-", 80))
+				fmt.Println(separatorSingle)
 			}
 		}
 	}
@@ -319,9 +318,9 @@ func dumpRenderedContent(results *testrunner.TestResults) {
 func outputTemplateTrace(engine templating.Engine) {
 	trace := engine.GetTraceOutput()
 	if trace != "" {
-		fmt.Println("\n" + strings.Repeat("=", 80))
+		fmt.Println("\n" + separatorDouble)
 		fmt.Println("TEMPLATE EXECUTION TRACE")
-		fmt.Println(strings.Repeat("=", 80))
+		fmt.Println(separatorDouble)
 		fmt.Println(trace)
 	}
 }

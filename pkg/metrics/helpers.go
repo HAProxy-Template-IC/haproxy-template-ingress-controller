@@ -166,7 +166,6 @@ func NewCounterVec(registry prometheus.Registerer, name, help string, labels []s
 	)
 }
 
-
 // DurationBuckets returns histogram buckets suitable for duration metrics in seconds.
 //
 // The buckets cover a range from 10ms to 10s, which is appropriate for most

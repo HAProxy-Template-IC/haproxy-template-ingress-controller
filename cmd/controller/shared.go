@@ -19,9 +19,16 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+)
+
+const (
+	// separatorDouble is a double-line separator for major sections.
+	separatorDouble = "================================================================================"
+
+	// separatorSingle is a single-line separator for subsections.
+	separatorSingle = "--------------------------------------------------------------------------------"
 )
 
 // sortedKeys returns the keys of a map sorted in ascending order.
@@ -80,11 +87,11 @@ func aggregateIncludeStatsFromSlices(statSlices [][]templating.IncludeStats) []t
 
 // printIncludeProfile prints the formatted include timing profile.
 func printIncludeProfile(stats []templating.IncludeStats) {
-	fmt.Println("\n" + strings.Repeat("=", 80))
+	fmt.Println("\n" + separatorDouble)
 	fmt.Println("INCLUDE TIMING PROFILE (Top 20 slowest)")
-	fmt.Println(strings.Repeat("=", 80))
+	fmt.Println(separatorDouble)
 	fmt.Printf("%-45s %8s %10s %10s %10s\n", "Include", "Count", "Total(ms)", "Avg(ms)", "Max(ms)")
-	fmt.Println(strings.Repeat("-", 80))
+	fmt.Println(separatorSingle)
 
 	limit := min(len(stats), 20)
 
@@ -101,6 +108,6 @@ func printIncludeProfile(stats []templating.IncludeStats) {
 		totalTime += stat.TotalMs
 		totalCalls += stat.Count
 	}
-	fmt.Println(strings.Repeat("-", 80))
+	fmt.Println(separatorSingle)
 	fmt.Printf("%-45s %8d %10.2f\n", "TOTAL", totalCalls, totalTime)
 }
