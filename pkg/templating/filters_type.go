@@ -40,10 +40,7 @@ func scriggoToString(v any) string {
 	case float64:
 		return strconv.FormatFloat(val, 'f', -1, 64)
 	case bool:
-		if val {
-			return "true"
-		}
-		return "false"
+		return strconv.FormatBool(val)
 	default:
 		return fmt.Sprintf("%v", v)
 	}

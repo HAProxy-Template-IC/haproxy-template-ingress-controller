@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -169,40 +168,6 @@ func (pr *PathResolver) GetPath(args ...any) (any, error) {
 	return fullPath, nil
 }
 
-// convertToString converts any value to its string representation.
-// This is used by shared filter implementations for lenient type conversion.
-//
-// Conversion rules:
-//   - nil → ""
-//   - string → unchanged
-//   - int → decimal representation
-//   - int64 → decimal representation
-//   - float64 → decimal representation
-//   - bool → "true" or "false"
-//   - other → fmt.Sprintf("%v", value)
-func convertToString(v any) string {
-	if v == nil {
-		return ""
-	}
-	switch val := v.(type) {
-	case string:
-		return val
-	case int:
-		return strconv.Itoa(val)
-	case int64:
-		return strconv.FormatInt(val, 10)
-	case float64:
-		return strconv.FormatFloat(val, 'f', -1, 64)
-	case bool:
-		if val {
-			return "true"
-		}
-		return "false"
-	default:
-		return fmt.Sprintf("%v", v)
-	}
-}
-
 // GlobMatch filters a list of strings by glob pattern.
 //
 // Usage in templates:
@@ -285,7 +250,7 @@ func GlobMatch(in any, args ...any) (any, error) {
 // Note: Kubernetes secrets automatically base64-encode all data values,
 // so this filter is needed to access the plain-text content.
 func B64Decode(in any, args ...any) (any, error) {
-	str := convertToString(in)
+	str := scriggoToString(in)
 
 	decoded, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {

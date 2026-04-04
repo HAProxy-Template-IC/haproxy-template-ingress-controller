@@ -137,11 +137,9 @@ func runController(_ *cobra.Command, _ []string) error {
 
 	// Log detected resource limits for observability
 	gomaxprocs := runtime.GOMAXPROCS(0)
-	var gomemlimit string
+	gomemlimit := "unlimited"
 	if limit := debug.SetMemoryLimit(-1); limit != math.MaxInt64 {
 		gomemlimit = fmt.Sprintf("%d bytes (%.2f MiB)", limit, float64(limit)/(1024*1024))
-	} else {
-		gomemlimit = "unlimited"
 	}
 
 	logger.Info("HAProxy Template Ingress Controller starting",
