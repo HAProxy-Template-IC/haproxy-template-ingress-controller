@@ -46,18 +46,13 @@ func (c *Comparator) compareHTTPErrors(current, desired *parser.StructuredConfig
 	for name, desiredHTTPError := range desiredMap {
 		if currentHTTPError, exists := currentMap[name]; exists {
 			// Compare http-errors sections using Equal() method
-			if !httpErrorsEqual(currentHTTPError, desiredHTTPError) {
+			if !currentHTTPError.Equal(*desiredHTTPError) {
 				operations = append(operations, sections.NewHTTPErrorsSectionUpdate(desiredHTTPError))
 			}
 		}
 	}
 
 	return operations
-}
-
-// httpErrorsEqual compares two http-errors sections for equality.
-func httpErrorsEqual(h1, h2 *models.HTTPErrorsSection) bool {
-	return h1.Equal(*h2)
 }
 
 // compareMailers compares mailers sections between current and desired configurations.
@@ -338,18 +333,13 @@ func (c *Comparator) compareCaches(current, desired *parser.StructuredConfig) []
 	// Find modified cache sections
 	for name, desiredCache := range desiredMap {
 		if currentCache, exists := currentMap[name]; exists {
-			if !cacheEqual(currentCache, desiredCache) {
+			if !currentCache.Equal(*desiredCache) {
 				operations = append(operations, sections.NewCacheUpdate(desiredCache))
 			}
 		}
 	}
 
 	return operations
-}
-
-// cacheEqual compares two cache sections for equality.
-func cacheEqual(c1, c2 *models.Cache) bool {
-	return c1.Equal(*c2)
 }
 
 // compareRings compares ring sections between current and desired configurations.
@@ -390,18 +380,13 @@ func (c *Comparator) compareRings(current, desired *parser.StructuredConfig) []O
 	// Find modified ring sections
 	for name, desiredRing := range desiredMap {
 		if currentRing, exists := currentMap[name]; exists {
-			if !ringEqual(currentRing, desiredRing) {
+			if !currentRing.Equal(*desiredRing) {
 				operations = append(operations, sections.NewRingUpdate(desiredRing))
 			}
 		}
 	}
 
 	return operations
-}
-
-// ringEqual compares two ring sections for equality.
-func ringEqual(r1, r2 *models.Ring) bool {
-	return r1.Equal(*r2)
 }
 
 // comparePrograms compares program sections between current and desired configurations.
@@ -442,18 +427,13 @@ func (c *Comparator) comparePrograms(current, desired *parser.StructuredConfig) 
 	// Find modified program sections
 	for name, desiredProgram := range desiredMap {
 		if currentProgram, exists := currentMap[name]; exists {
-			if !programEqual(currentProgram, desiredProgram) {
+			if !currentProgram.Equal(*desiredProgram) {
 				operations = append(operations, sections.NewProgramUpdate(desiredProgram))
 			}
 		}
 	}
 
 	return operations
-}
-
-// programEqual compares two program sections for equality.
-func programEqual(p1, p2 *models.Program) bool {
-	return p1.Equal(*p2)
 }
 
 // compareFCGIApps compares fcgi-app sections between current and desired configurations.
@@ -494,16 +474,11 @@ func (c *Comparator) compareFCGIApps(current, desired *parser.StructuredConfig) 
 	// Find modified fcgi-app sections
 	for name, desiredFCGIApp := range desiredMap {
 		if currentFCGIApp, exists := currentMap[name]; exists {
-			if !fcgiAppEqual(currentFCGIApp, desiredFCGIApp) {
+			if !currentFCGIApp.Equal(*desiredFCGIApp) {
 				operations = append(operations, sections.NewFCGIAppUpdate(desiredFCGIApp))
 			}
 		}
 	}
 
 	return operations
-}
-
-// fcgiAppEqual compares two fcgi-app sections for equality.
-func fcgiAppEqual(f1, f2 *models.FCGIApp) bool {
-	return f1.Equal(*f2)
 }

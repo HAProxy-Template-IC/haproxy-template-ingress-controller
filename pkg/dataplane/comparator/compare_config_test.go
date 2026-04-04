@@ -253,13 +253,13 @@ func TestHTTPErrorsEqual(t *testing.T) {
 	t.Run("equal sections", func(t *testing.T) {
 		h1 := &models.HTTPErrorsSection{Name: "errors"}
 		h2 := &models.HTTPErrorsSection{Name: "errors"}
-		assert.True(t, httpErrorsEqual(h1, h2))
+		assert.True(t, h1.Equal(*h2))
 	})
 
 	t.Run("different names", func(t *testing.T) {
 		h1 := &models.HTTPErrorsSection{Name: "errors1"}
 		h2 := &models.HTTPErrorsSection{Name: "errors2"}
-		assert.False(t, httpErrorsEqual(h1, h2))
+		assert.False(t, h1.Equal(*h2))
 	})
 }
 
@@ -597,13 +597,13 @@ func TestCacheEqual(t *testing.T) {
 	t.Run("equal caches", func(t *testing.T) {
 		c1 := &models.Cache{Name: new("cache")}
 		c2 := &models.Cache{Name: new("cache")}
-		assert.True(t, cacheEqual(c1, c2))
+		assert.True(t, c1.Equal(*c2))
 	})
 
 	t.Run("different names", func(t *testing.T) {
 		c1 := &models.Cache{Name: new("cache1")}
 		c2 := &models.Cache{Name: new("cache2")}
-		assert.False(t, cacheEqual(c1, c2))
+		assert.False(t, c1.Equal(*c2))
 	})
 }
 
@@ -663,13 +663,13 @@ func TestRingEqual(t *testing.T) {
 	t.Run("equal rings", func(t *testing.T) {
 		r1 := &models.Ring{RingBase: models.RingBase{Name: "ring"}}
 		r2 := &models.Ring{RingBase: models.RingBase{Name: "ring"}}
-		assert.True(t, ringEqual(r1, r2))
+		assert.True(t, r1.Equal(*r2))
 	})
 
 	t.Run("different names", func(t *testing.T) {
 		r1 := &models.Ring{RingBase: models.RingBase{Name: "ring1"}}
 		r2 := &models.Ring{RingBase: models.RingBase{Name: "ring2"}}
-		assert.False(t, ringEqual(r1, r2))
+		assert.False(t, r1.Equal(*r2))
 	})
 }
 
@@ -729,13 +729,13 @@ func TestProgramEqual(t *testing.T) {
 	t.Run("equal programs", func(t *testing.T) {
 		p1 := &models.Program{Name: "prog", Command: new("/usr/bin/test")}
 		p2 := &models.Program{Name: "prog", Command: new("/usr/bin/test")}
-		assert.True(t, programEqual(p1, p2))
+		assert.True(t, p1.Equal(*p2))
 	})
 
 	t.Run("different commands", func(t *testing.T) {
 		p1 := &models.Program{Name: "prog", Command: new("/usr/bin/old")}
 		p2 := &models.Program{Name: "prog", Command: new("/usr/bin/new")}
-		assert.False(t, programEqual(p1, p2))
+		assert.False(t, p1.Equal(*p2))
 	})
 }
 
@@ -795,13 +795,13 @@ func TestFCGIAppEqual(t *testing.T) {
 	t.Run("equal fcgi-apps", func(t *testing.T) {
 		f1 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: new("/var/www")}}
 		f2 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: new("/var/www")}}
-		assert.True(t, fcgiAppEqual(f1, f2))
+		assert.True(t, f1.Equal(*f2))
 	})
 
 	t.Run("different docroot", func(t *testing.T) {
 		f1 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: new("/var/www/old")}}
 		f2 := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi", Docroot: new("/var/www/new")}}
-		assert.False(t, fcgiAppEqual(f1, f2))
+		assert.False(t, f1.Equal(*f2))
 	})
 }
 

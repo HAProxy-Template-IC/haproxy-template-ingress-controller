@@ -258,7 +258,7 @@ func (c *Comparator) compareModifiedServersWithIndex(backendName string, current
 		}
 
 		// Compare server attributes using built-in Equal() method
-		if !serversEqual(currentServer, desiredServer) {
+		if !currentServer.Equal(*desiredServer) {
 			operations = append(operations, sections.NewServerUpdate(backendName, currentServer, desiredServer))
 			if summary.ServersModified[backendName] == nil {
 				summary.ServersModified[backendName] = []string{}
@@ -297,20 +297,12 @@ func (c *Comparator) compareServerTemplatesWithIndex(backendName string, current
 			continue
 		}
 		// Compare server template attributes using Equal() method
-		if !serverTemplatesEqual(currentTemplate, desiredTemplate) {
+		if !currentTemplate.Equal(*desiredTemplate) {
 			operations = append(operations, sections.NewServerTemplateUpdate(backendName, desiredTemplate))
 		}
 	}
 
 	return operations
-}
-
-// serversEqual checks if two servers are equal.
-// Uses the HAProxy models' built-in Equal() method to compare ALL attributes.
-// This approach automatically handles current and future server parameters without
-// maintenance burden, since we sync the entire server line anyway.
-func serversEqual(s1, s2 *models.Server) bool {
-	return s1.Equal(*s2)
 }
 
 // clearNestedCollections zeroes all nested collection fields on a Backend copy

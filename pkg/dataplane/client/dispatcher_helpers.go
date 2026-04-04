@@ -29,6 +29,36 @@ import (
 	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
+// unmarshalAndCall unmarshals JSON data into a version-specific model and calls the provided function.
+// This eliminates the repetitive unmarshal+call pattern across dispatch helpers.
+func unmarshalAndCall[T any](jsonData []byte, version string, call func(T) (*http.Response, error)) (*http.Response, error) {
+	var model T
+	if err := json.Unmarshal(jsonData, &model); err != nil {
+		return nil, fmt.Errorf("unmarshalling model for %s: %w", version, err)
+	}
+	return call(model)
+}
+
+// unmarshalAndCallNamed unmarshals JSON data into a version-specific model and calls the provided
+// function with a resource name argument (used for update/replace operations).
+func unmarshalAndCallNamed[T any](jsonData []byte, version, name string, call func(string, T) (*http.Response, error)) (*http.Response, error) {
+	var model T
+	if err := json.Unmarshal(jsonData, &model); err != nil {
+		return nil, fmt.Errorf("unmarshalling model for %s: %w", version, err)
+	}
+	return call(name, model)
+}
+
+// unmarshalAndCallChild unmarshals JSON data into a version-specific model and calls the provided
+// function with parent name and index arguments (used for child resource operations).
+func unmarshalAndCallChild[T any](jsonData []byte, version, parentName string, index int, call func(string, int, T) (*http.Response, error)) (*http.Response, error) {
+	var model T
+	if err := json.Unmarshal(jsonData, &model); err != nil {
+		return nil, fmt.Errorf("unmarshalling model for %s: %w", version, err)
+	}
+	return call(parentName, index, model)
+}
+
 // DispatchCreate is a generic helper for create operations that handles:
 // - JSON marshaling of the unified API model
 // - JSON unmarshaling into version-specific types
@@ -94,55 +124,27 @@ func DispatchCreate[TUnified any, TV33 any, TV32 any, TV31 any, TV30 any, TV32EE
 	// Dispatch to version-specific client with automatic unmarshaling
 	return c.Dispatch(ctx, CallFunc[*http.Response]{
 		// Community edition callbacks
-		V33: func(client *v33.Client) (*http.Response, error) {
-			var model TV33
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.3: %w", err)
-			}
-			return v33Call(model)
+		V33: func(_ *v33.Client) (*http.Response, error) {
+			return unmarshalAndCall(jsonData, "v3.3", v33Call)
 		},
-		V32: func(client *v32.Client) (*http.Response, error) {
-			var model TV32
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.2: %w", err)
-			}
-			return v32Call(model)
+		V32: func(_ *v32.Client) (*http.Response, error) {
+			return unmarshalAndCall(jsonData, "v3.2", v32Call)
 		},
-		V31: func(client *v31.Client) (*http.Response, error) {
-			var model TV31
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.1: %w", err)
-			}
-			return v31Call(model)
+		V31: func(_ *v31.Client) (*http.Response, error) {
+			return unmarshalAndCall(jsonData, "v3.1", v31Call)
 		},
-		V30: func(client *v30.Client) (*http.Response, error) {
-			var model TV30
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.0: %w", err)
-			}
-			return v30Call(model)
+		V30: func(_ *v30.Client) (*http.Response, error) {
+			return unmarshalAndCall(jsonData, "v3.0", v30Call)
 		},
 		// Enterprise edition callbacks
-		V32EE: func(client *v32ee.Client) (*http.Response, error) {
-			var model TV32EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.2ee: %w", err)
-			}
-			return v32eeCall(model)
+		V32EE: func(_ *v32ee.Client) (*http.Response, error) {
+			return unmarshalAndCall(jsonData, "v3.2ee", v32eeCall)
 		},
-		V31EE: func(client *v31ee.Client) (*http.Response, error) {
-			var model TV31EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.1ee: %w", err)
-			}
-			return v31eeCall(model)
+		V31EE: func(_ *v31ee.Client) (*http.Response, error) {
+			return unmarshalAndCall(jsonData, "v3.1ee", v31eeCall)
 		},
-		V30EE: func(client *v30ee.Client) (*http.Response, error) {
-			var model TV30EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.0ee: %w", err)
-			}
-			return v30eeCall(model)
+		V30EE: func(_ *v30ee.Client) (*http.Response, error) {
+			return unmarshalAndCall(jsonData, "v3.0ee", v30eeCall)
 		},
 	})
 }
@@ -203,55 +205,27 @@ func DispatchUpdate[TUnified any, TV33 any, TV32 any, TV31 any, TV30 any, TV32EE
 	// Dispatch to version-specific client with automatic unmarshaling
 	return c.Dispatch(ctx, CallFunc[*http.Response]{
 		// Community edition callbacks
-		V33: func(client *v33.Client) (*http.Response, error) {
-			var model TV33
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.3: %w", err)
-			}
-			return v33Call(name, model)
+		V33: func(_ *v33.Client) (*http.Response, error) {
+			return unmarshalAndCallNamed(jsonData, "v3.3", name, v33Call)
 		},
-		V32: func(client *v32.Client) (*http.Response, error) {
-			var model TV32
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.2: %w", err)
-			}
-			return v32Call(name, model)
+		V32: func(_ *v32.Client) (*http.Response, error) {
+			return unmarshalAndCallNamed(jsonData, "v3.2", name, v32Call)
 		},
-		V31: func(client *v31.Client) (*http.Response, error) {
-			var model TV31
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.1: %w", err)
-			}
-			return v31Call(name, model)
+		V31: func(_ *v31.Client) (*http.Response, error) {
+			return unmarshalAndCallNamed(jsonData, "v3.1", name, v31Call)
 		},
-		V30: func(client *v30.Client) (*http.Response, error) {
-			var model TV30
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.0: %w", err)
-			}
-			return v30Call(name, model)
+		V30: func(_ *v30.Client) (*http.Response, error) {
+			return unmarshalAndCallNamed(jsonData, "v3.0", name, v30Call)
 		},
 		// Enterprise edition callbacks
-		V32EE: func(client *v32ee.Client) (*http.Response, error) {
-			var model TV32EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.2ee: %w", err)
-			}
-			return v32eeCall(name, model)
+		V32EE: func(_ *v32ee.Client) (*http.Response, error) {
+			return unmarshalAndCallNamed(jsonData, "v3.2ee", name, v32eeCall)
 		},
-		V31EE: func(client *v31ee.Client) (*http.Response, error) {
-			var model TV31EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.1ee: %w", err)
-			}
-			return v31eeCall(name, model)
+		V31EE: func(_ *v31ee.Client) (*http.Response, error) {
+			return unmarshalAndCallNamed(jsonData, "v3.1ee", name, v31eeCall)
 		},
-		V30EE: func(client *v30ee.Client) (*http.Response, error) {
-			var model TV30EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.0ee: %w", err)
-			}
-			return v30eeCall(name, model)
+		V30EE: func(_ *v30ee.Client) (*http.Response, error) {
+			return unmarshalAndCallNamed(jsonData, "v3.0ee", name, v30eeCall)
 		},
 	})
 }
@@ -456,54 +430,26 @@ func dispatchChildWithModel[TUnified any, TV33 any, TV32 any, TV31 any, TV30 any
 	}
 
 	return c.Dispatch(ctx, CallFunc[*http.Response]{
-		V33: func(client *v33.Client) (*http.Response, error) {
-			var model TV33
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.3: %w", err)
-			}
-			return v33Call(parentName, index, model)
+		V33: func(_ *v33.Client) (*http.Response, error) {
+			return unmarshalAndCallChild(jsonData, "v3.3", parentName, index, v33Call)
 		},
-		V32: func(client *v32.Client) (*http.Response, error) {
-			var model TV32
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.2: %w", err)
-			}
-			return v32Call(parentName, index, model)
+		V32: func(_ *v32.Client) (*http.Response, error) {
+			return unmarshalAndCallChild(jsonData, "v3.2", parentName, index, v32Call)
 		},
-		V31: func(client *v31.Client) (*http.Response, error) {
-			var model TV31
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.1: %w", err)
-			}
-			return v31Call(parentName, index, model)
+		V31: func(_ *v31.Client) (*http.Response, error) {
+			return unmarshalAndCallChild(jsonData, "v3.1", parentName, index, v31Call)
 		},
-		V30: func(client *v30.Client) (*http.Response, error) {
-			var model TV30
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.0: %w", err)
-			}
-			return v30Call(parentName, index, model)
+		V30: func(_ *v30.Client) (*http.Response, error) {
+			return unmarshalAndCallChild(jsonData, "v3.0", parentName, index, v30Call)
 		},
-		V32EE: func(client *v32ee.Client) (*http.Response, error) {
-			var model TV32EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.2ee: %w", err)
-			}
-			return v32eeCall(parentName, index, model)
+		V32EE: func(_ *v32ee.Client) (*http.Response, error) {
+			return unmarshalAndCallChild(jsonData, "v3.2ee", parentName, index, v32eeCall)
 		},
-		V31EE: func(client *v31ee.Client) (*http.Response, error) {
-			var model TV31EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.1ee: %w", err)
-			}
-			return v31eeCall(parentName, index, model)
+		V31EE: func(_ *v31ee.Client) (*http.Response, error) {
+			return unmarshalAndCallChild(jsonData, "v3.1ee", parentName, index, v31eeCall)
 		},
-		V30EE: func(client *v30ee.Client) (*http.Response, error) {
-			var model TV30EE
-			if err := json.Unmarshal(jsonData, &model); err != nil {
-				return nil, fmt.Errorf("unmarshalling model for v3.0ee: %w", err)
-			}
-			return v30eeCall(parentName, index, model)
+		V30EE: func(_ *v30ee.Client) (*http.Response, error) {
+			return unmarshalAndCallChild(jsonData, "v3.0ee", parentName, index, v30eeCall)
 		},
 	})
 }

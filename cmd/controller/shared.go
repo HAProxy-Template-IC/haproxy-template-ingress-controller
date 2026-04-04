@@ -42,19 +42,21 @@ func sortedKeys[V any](m map[string]V) []string {
 
 // mergeIncludeStat merges a single include stat into the aggregation map.
 func mergeIncludeStat(aggregated map[string]*templating.IncludeStats, stat templating.IncludeStats) {
-	if existing, ok := aggregated[stat.Name]; ok {
-		existing.Count += stat.Count
-		existing.TotalMs += stat.TotalMs
-		if stat.MaxMs > existing.MaxMs {
-			existing.MaxMs = stat.MaxMs
-		}
-	} else {
+	existing, ok := aggregated[stat.Name]
+	if !ok {
 		aggregated[stat.Name] = &templating.IncludeStats{
 			Name:    stat.Name,
 			Count:   stat.Count,
 			TotalMs: stat.TotalMs,
 			MaxMs:   stat.MaxMs,
 		}
+		return
+	}
+
+	existing.Count += stat.Count
+	existing.TotalMs += stat.TotalMs
+	if stat.MaxMs > existing.MaxMs {
+		existing.MaxMs = stat.MaxMs
 	}
 }
 
