@@ -1,0 +1,3099 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Helm chart for deploying HAPTIC, a template-driven HAProxy ingress controller for Kubernetes.">
+      
+      
+      
+        <link rel="canonical" href="https://haproxy-haptic.org/helm-chart/libraries/haproxy-ingress/">
+      
+      
+        <link rel="prev" href="../haproxytech/">
+      
+      
+        <link rel="next" href="../nginx-ingress/">
+      
+      
+        
+          <link rel="alternate" href="https://haproxy-haptic.org/controller/latest/" hreflang="controller">
+        
+      
+      
+      <link rel="icon" href="../../assets/logo-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>HAProxy Ingress - HAPTIC Helm Chart</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="light-blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#haproxy-ingress-library" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="HAPTIC Helm Chart" class="md-header__button md-logo" aria-label="HAPTIC Helm Chart" data-md-component="logo">
+      
+  <img src="../../assets/logo-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HAPTIC Helm Chart
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              HAProxy Ingress
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="light-blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="light-blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m19 2-5 4.5v11l5-4.5zM6.5 5C4.55 5 2.45 5.4 1 6.5v14.66c0 .25.25.5.5.5.1 0 .15-.07.25-.07 1.35-.65 3.3-1.09 4.75-1.09 1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.31 4.75 1.06.1.05.15.03.25.03.25 0 .5-.25.5-.5V6.5c-.6-.45-1.25-.75-2-1V19c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V6.5C10.55 5.4 8.45 5 6.5 5"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="https://haproxy-haptic.org/controller/latest/" hreflang="controller" class="md-select__link">
+              Controller Docs
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://gitlab.com/haproxy-haptic/haptic" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    haproxy-haptic/haptic
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="HAPTIC Helm Chart" class="md-nav__button md-logo" aria-label="HAPTIC Helm Chart" data-md-component="logo">
+      
+  <img src="../../assets/logo-icon.svg" alt="logo">
+
+    </a>
+    HAPTIC Helm Chart
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://gitlab.com/haproxy-haptic/haptic" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    haproxy-haptic/haptic
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ingress-class/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IngressClass
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway-class/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GatewayClass
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ssl-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SSL Certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../annotations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../haproxy-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HAProxy Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Template Libraries
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Template Libraries
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../template-libraries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Libraries
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Libraries
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../base/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Base
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ssl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SSL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ingress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../haproxytech/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HAProxy Annotations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HAProxy Ingress
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HAProxy Ingress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extension-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Points
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Extension Points">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#extension-points-used" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Points Used
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#path-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path Matching
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Path Matching">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiopath-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/path-type
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Backend Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeouts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiobalance-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/balance-algorithm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection Limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health Checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioproxy-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/proxy-protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#backend-ssl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend SSL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioinitial-weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/initial-weight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioconfig-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/config-backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-affinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Affinity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Session Affinity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioaffinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/affinity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access Control
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Access Control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioallowlist-source-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/allowlist-source-range
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiodenylist-source-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/denylist-source-range
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#redirects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redirects
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Redirects">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiossl-redirect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/ssl-redirect
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioapp-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/app-root
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioredirect-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/redirect-to
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hsts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HSTS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HSTS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiohsts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/hsts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CORS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CORS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiocors-enable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/cors-enable
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Headers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioforwardfor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/forwardfor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioheaders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/headers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ssl-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSL Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SSL Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiossl-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/ssl-passthrough
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioauth-secret" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/auth-secret
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#watched-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Watched Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-status-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Status Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nginx-ingress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nginx Ingress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../path-regex-last/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Path Regex Last
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/high-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    High Availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Networking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extension-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Points
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Extension Points">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#extension-points-used" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Points Used
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#path-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path Matching
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Path Matching">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiopath-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/path-type
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Backend Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeouts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiobalance-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/balance-algorithm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection Limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health Checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioproxy-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/proxy-protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#backend-ssl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend SSL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioinitial-weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/initial-weight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioconfig-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/config-backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-affinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Affinity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Session Affinity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioaffinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/affinity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access Control
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Access Control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioallowlist-source-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/allowlist-source-range
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiodenylist-source-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/denylist-source-range
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#redirects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redirects
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Redirects">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiossl-redirect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/ssl-redirect
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioapp-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/app-root
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioredirect-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/redirect-to
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hsts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HSTS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HSTS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiohsts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/hsts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CORS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CORS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiocors-enable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/cors-enable
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Headers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioforwardfor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/forwardfor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioheaders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/headers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ssl-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSL Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SSL Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubiossl-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/ssl-passthrough
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#haproxy-ingressgithubioauth-secret" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        haproxy-ingress.github.io/auth-secret
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#watched-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Watched Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-status-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Status Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="haproxy-ingress-library">haproxy-ingress Library<a class="headerlink" href="#haproxy-ingress-library" title="Permanent link">&para;</a></h1>
+<p>The haproxy-ingress library implements <code>haproxy-ingress.github.io/*</code> annotations compatible with <a href="https://haproxy-ingress.github.io/">jcmoraisjr/haproxy-ingress</a>, a community HAProxy ingress controller. It supports path matching, backend configuration, session affinity, SSL features, access control, and more.</p>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>This library is enabled by default.</p>
+<div class="admonition note">
+<p class="admonition-title">Migrating from jcmoraisjr/haproxy-ingress</p>
+<p>If you are migrating from jcmoraisjr/haproxy-ingress, your existing <code>haproxy-ingress.github.io/*</code> annotations work without changes. See <a href="../../annotations/">Annotations</a> for the full feature comparison between annotation libraries.</p>
+</div>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">controller</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">templateLibraries</span><span class="p">:</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">haproxyIngress</span><span class="p">:</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">  </span><span class="c1"># Enabled by default</span>
+</code></pre></div>
+<h2 id="extension-points">Extension Points<a class="headerlink" href="#extension-points" title="Permanent link">&para;</a></h2>
+<h3 id="extension-points-used">Extension Points Used<a class="headerlink" href="#extension-points-used" title="Permanent link">&para;</a></h3>
+<p>The haproxy-ingress library implements these extension points:</p>
+<table>
+<thead>
+<tr>
+<th>Extension Point</th>
+<th>This Library's Snippets</th>
+<th>What They Generate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Path Regex Map</td>
+<td><code>map-path-regex-600-haproxy-ingress</code></td>
+<td>Regex path map entries</td>
+</tr>
+<tr>
+<td>Path Exact Map</td>
+<td><code>map-path-exact-600-haproxy-ingress</code></td>
+<td>Exact path map entries</td>
+</tr>
+<tr>
+<td>Path Prefix Map</td>
+<td><code>map-path-prefix-600-haproxy-ingress</code></td>
+<td>Prefix path map entries</td>
+</tr>
+<tr>
+<td>Path Prefix Map</td>
+<td><code>map-path-prefix-600-haproxy-ingress-begin</code></td>
+<td>Begin path map entries</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-600-haproxy-ingress-*</code></td>
+<td>Timeouts, load balancing, health checks</td>
+</tr>
+<tr>
+<td>Backends</td>
+<td><code>backends-600-haproxy-ingress-affinity</code></td>
+<td>Session affinity configuration</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-600-haproxy-ingress-*</code></td>
+<td>Access control, redirects, CORS, headers</td>
+</tr>
+<tr>
+<td>Features</td>
+<td><code>features-600-haproxy-ingress-ssl-passthrough</code></td>
+<td>SSL passthrough backends</td>
+</tr>
+<tr>
+<td>Global Top</td>
+<td><code>global-top-600-haproxy-ingress-userlist</code></td>
+<td>Userlist definitions for basic auth</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="path-matching">Path Matching<a class="headerlink" href="#path-matching" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubiopath-type">haproxy-ingress.github.io/path-type<a class="headerlink" href="#haproxy-ingressgithubiopath-type" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Controls how path matching is performed for paths with <code>pathType: ImplementationSpecific</code>.</p>
+<p><strong>Valid values</strong>: <code>regex</code>, <code>exact</code>, <code>prefix</code>, <code>begin</code></p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path-matching-example</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">haproxy-ingress.github.io/path-type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;regex&quot;</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="nt">ingressClassName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">haproxy</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="nt">rules</span><span class="p">:</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">api.example.com</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">      </span><span class="nt">http</span><span class="p">:</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">        </span><span class="nt">paths</span><span class="p">:</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;^/api/v[0-9]+/users/[0-9]+$&quot;</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">            </span><span class="nt">pathType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ImplementationSpecific</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">            </span><span class="nt">backend</span><span class="p">:</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">              </span><span class="nt">service</span><span class="p">:</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">                </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">users-service</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">                </span><span class="nt">port</span><span class="p">:</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">                  </span><span class="nt">number</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
+</code></pre></div>
+<p><strong>Path type behaviors</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Behavior</th>
+<th>Example Path</th>
+<th>Matches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>regex</code></td>
+<td>Regular expression matching</td>
+<td><code>^/api/v[0-9]+/</code></td>
+<td><code>/api/v1/</code>, <code>/api/v2/users</code></td>
+</tr>
+<tr>
+<td><code>exact</code></td>
+<td>Exact string match</td>
+<td><code>/api/users</code></td>
+<td>Only <code>/api/users</code></td>
+</tr>
+<tr>
+<td><code>prefix</code></td>
+<td>Path prefix (with segment boundaries)</td>
+<td><code>/api/</code></td>
+<td><code>/api/</code>, <code>/api/users</code>, <code>/api/v1/</code></td>
+</tr>
+<tr>
+<td><code>begin</code></td>
+<td>Legacy prefix (simple string prefix)</td>
+<td><code>/api</code></td>
+<td><code>/api</code>, <code>/api/users</code>, <code>/apikey</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Standard Path Types</p>
+<p>For <code>pathType: Exact</code> or <code>pathType: Prefix</code>, the annotation is ignored. The annotation only affects <code>pathType: ImplementationSpecific</code> paths.</p>
+</div>
+<hr />
+<h2 id="backend-configuration">Backend Configuration<a class="headerlink" href="#backend-configuration" title="Permanent link">&para;</a></h2>
+<h3 id="timeouts">Timeouts<a class="headerlink" href="#timeouts" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>timeout-connect</code></td>
+<td>Backend connection timeout</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>timeout-server</code></td>
+<td>Backend response timeout</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>timeout-queue</code></td>
+<td>Queue wait timeout</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>timeout-tunnel</code></td>
+<td>Tunnel/WebSocket timeout</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>timeout-http-request</code></td>
+<td>HTTP request timeout</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>timeout-keep-alive</code></td>
+<td>Keep-alive timeout</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/timeout-server</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;60s&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/timeout-connect</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;10s&quot;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/timeout-queue</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;30s&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>backend my-backend
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    timeout server 60s
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    timeout connect 10s
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    timeout queue 30s
+</code></pre></div>
+<hr />
+<h3 id="haproxy-ingressgithubiobalance-algorithm">haproxy-ingress.github.io/balance-algorithm<a class="headerlink" href="#haproxy-ingressgithubiobalance-algorithm" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Load balancing algorithm for the backend.</p>
+<p><strong>Valid values</strong>: <code>roundrobin</code>, <code>leastconn</code>, <code>source</code>, <code>first</code>, <code>random</code>, <code>static-rr</code>, <code>uri</code>, <code>url_param</code>, <code>hdr</code>, <code>rdp-cookie</code></p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/balance-algorithm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;leastconn&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>backend my-backend
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    balance leastconn
+</code></pre></div>
+<hr />
+<h3 id="connection-limits">Connection Limits<a class="headerlink" href="#connection-limits" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>maxconn-server</code></td>
+<td>Maximum connections per server</td>
+</tr>
+<tr>
+<td><code>maxqueue-server</code></td>
+<td>Maximum queue size per server</td>
+</tr>
+<tr>
+<td><code>limit-connections</code></td>
+<td>Backend fullconn limit</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/maxconn-server</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;100&quot;</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/maxqueue-server</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;50&quot;</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/limit-connections</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1000&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="health-checks">Health Checks<a class="headerlink" href="#health-checks" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>backend-check-interval</code></td>
+<td>Health check interval (e.g., <code>5s</code>)</td>
+</tr>
+<tr>
+<td><code>health-check-uri</code></td>
+<td>HTTP health check path</td>
+</tr>
+<tr>
+<td><code>health-check-port</code></td>
+<td>Custom health check port</td>
+</tr>
+<tr>
+<td><code>health-check-fall-count</code></td>
+<td>Failures before marking down</td>
+</tr>
+<tr>
+<td><code>health-check-rise-count</code></td>
+<td>Successes before marking up</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/health-check-uri</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/healthz&quot;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/backend-check-interval</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;5s&quot;</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/health-check-fall-count</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3&quot;</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/health-check-rise-count</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>backend my-backend
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    option httpchk GET /healthz
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    server SRV_1 10.0.0.1:8080 check inter 5s fall 3 rise 2
+</code></pre></div>
+<hr />
+<h3 id="haproxy-ingressgithubioproxy-protocol">haproxy-ingress.github.io/proxy-protocol<a class="headerlink" href="#haproxy-ingressgithubioproxy-protocol" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable PROXY protocol when connecting to backend servers.</p>
+<p><strong>Valid values</strong>: <code>v1</code>, <code>v2</code>, <code>v2-ssl</code>, <code>v2-ssl-cn</code></p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/proxy-protocol</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;v2&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>server SRV_1 10.0.0.1:8080 send-proxy-v2
+</code></pre></div>
+<hr />
+<h3 id="backend-ssl">Backend SSL<a class="headerlink" href="#backend-ssl" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>secure-backends</code></td>
+<td>Enable SSL to backend (<code>true</code>/<code>false</code>)</td>
+</tr>
+<tr>
+<td><code>backend-protocol</code></td>
+<td>Protocol: <code>h1</code>, <code>h2</code>, <code>h1-ssl</code>, <code>h2-ssl</code></td>
+</tr>
+<tr>
+<td><code>secure-sni</code></td>
+<td>SNI value for backend connection</td>
+</tr>
+<tr>
+<td><code>secure-verify-hostname</code></td>
+<td>Hostname for certificate verification</td>
+</tr>
+<tr>
+<td><code>secure-verify-ca-secret</code></td>
+<td>CA secret for backend verification</td>
+</tr>
+<tr>
+<td><code>secure-crt-secret</code></td>
+<td>Client certificate for mTLS</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/secure-backends</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/backend-protocol</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;h2&quot;</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/secure-verify-ca-secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;backend-ca&quot;</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/secure-crt-secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;client-cert&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>server SRV_1 10.0.0.1:8443 ssl alpn h2 ca-file /path/to/ca.pem crt /path/to/client.pem verify required
+</code></pre></div>
+<hr />
+<h3 id="haproxy-ingressgithubioinitial-weight">haproxy-ingress.github.io/initial-weight<a class="headerlink" href="#haproxy-ingressgithubioinitial-weight" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Initial weight for backend servers (0-256).</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/initial-weight</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;100&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="haproxy-ingressgithubioconfig-backend">haproxy-ingress.github.io/config-backend<a class="headerlink" href="#haproxy-ingressgithubioconfig-backend" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Raw HAProxy configuration to inject into the backend section.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/config-backend</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="no">http-send-name-header X-Backend-Server</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="no">retries 5</span>
+</code></pre></div>
+<hr />
+<h2 id="session-affinity">Session Affinity<a class="headerlink" href="#session-affinity" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubioaffinity">haproxy-ingress.github.io/affinity<a class="headerlink" href="#haproxy-ingressgithubioaffinity" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable cookie-based session affinity.</p>
+<p><strong>Valid values</strong>: <code>cookie</code></p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>session-cookie-name</code></td>
+<td>Cookie name</td>
+<td><code>INGRESSCOOKIE</code></td>
+</tr>
+<tr>
+<td><code>session-cookie-strategy</code></td>
+<td><code>insert</code>, <code>rewrite</code>, <code>prefix</code></td>
+<td><code>insert</code></td>
+</tr>
+<tr>
+<td><code>session-cookie-dynamic</code></td>
+<td>Use dynamic cookie key</td>
+<td><code>true</code></td>
+</tr>
+<tr>
+<td><code>session-cookie-keywords</code></td>
+<td>Additional cookie options</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>session-cookie-domain</code></td>
+<td>Cookie domain</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>session-cookie-same-site</code></td>
+<td><code>None</code>, <code>Lax</code>, <code>Strict</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>session-cookie-preserve</code></td>
+<td>Preserve backend cookies</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/affinity</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;cookie&quot;</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/session-cookie-name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;SERVERID&quot;</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/session-cookie-strategy</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;insert&quot;</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/session-cookie-same-site</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Lax&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>backend my-backend
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    cookie SERVERID insert indirect nocache dynamic attr &quot;SameSite=Lax&quot;
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    dynamic-cookie-key &lt;generated-key&gt;
+</code></pre></div>
+<hr />
+<h2 id="access-control">Access Control<a class="headerlink" href="#access-control" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubioallowlist-source-range">haproxy-ingress.github.io/allowlist-source-range<a class="headerlink" href="#haproxy-ingressgithubioallowlist-source-range" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Comma-separated list of CIDRs allowed to access this ingress.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/allowlist-source-range</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;10.0.0.0/8,</span><span class="nv"> </span><span class="s">192.168.0.0/16&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>http-request deny unless { src 10.0.0.0/8 } or { src 192.168.0.0/16 }
+</code></pre></div>
+<hr />
+<h3 id="haproxy-ingressgithubiodenylist-source-range">haproxy-ingress.github.io/denylist-source-range<a class="headerlink" href="#haproxy-ingressgithubiodenylist-source-range" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Comma-separated list of CIDRs denied access to this ingress.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/denylist-source-range</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;203.0.113.0/24&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="redirects">Redirects<a class="headerlink" href="#redirects" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubiossl-redirect">haproxy-ingress.github.io/ssl-redirect<a class="headerlink" href="#haproxy-ingressgithubiossl-redirect" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Redirect HTTP requests to HTTPS.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ssl-redirect</code></td>
+<td>Enable SSL redirect</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>ssl-redirect-code</code></td>
+<td>HTTP status code</td>
+<td><code>302</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/ssl-redirect</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/ssl-redirect-code</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;301&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="haproxy-ingressgithubioapp-root">haproxy-ingress.github.io/app-root<a class="headerlink" href="#haproxy-ingressgithubioapp-root" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Redirect requests to root path (<code>/</code>) to the specified path.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/app-root</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/dashboard&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="haproxy-ingressgithubioredirect-to">haproxy-ingress.github.io/redirect-to<a class="headerlink" href="#haproxy-ingressgithubioredirect-to" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Redirect all requests to the specified URL.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>redirect-to</code></td>
+<td>Target URL</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>redirect-to-code</code></td>
+<td>HTTP status code</td>
+<td><code>302</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/redirect-to</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://new.example.com&quot;</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/redirect-to-code</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;301&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="hsts">HSTS<a class="headerlink" href="#hsts" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubiohsts">haproxy-ingress.github.io/hsts<a class="headerlink" href="#haproxy-ingressgithubiohsts" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable HTTP Strict Transport Security headers.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hsts</code></td>
+<td>Enable HSTS</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>hsts-max-age</code></td>
+<td>Max-age in seconds</td>
+<td><code>15768000</code></td>
+</tr>
+<tr>
+<td><code>hsts-include-subdomains</code></td>
+<td>Include subdomains</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>hsts-preload</code></td>
+<td>Enable preload</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/hsts</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/hsts-max-age</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;31536000&quot;</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/hsts-include-subdomains</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/hsts-preload</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>http-response set-header Strict-Transport-Security &quot;max-age=31536000; includeSubDomains; preload&quot;
+</code></pre></div>
+<hr />
+<h2 id="cors">CORS<a class="headerlink" href="#cors" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubiocors-enable">haproxy-ingress.github.io/cors-enable<a class="headerlink" href="#haproxy-ingressgithubiocors-enable" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable CORS handling for the ingress.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cors-enable</code></td>
+<td>Enable CORS</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>cors-allow-origin</code></td>
+<td>Allowed origins</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>cors-allow-methods</code></td>
+<td>Allowed methods</td>
+<td><code>GET, PUT, POST, DELETE, PATCH, OPTIONS</code></td>
+</tr>
+<tr>
+<td><code>cors-allow-headers</code></td>
+<td>Allowed headers</td>
+<td>Common headers</td>
+</tr>
+<tr>
+<td><code>cors-allow-credentials</code></td>
+<td>Allow credentials</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>cors-expose-headers</code></td>
+<td>Exposed headers</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>cors-max-age</code></td>
+<td>Preflight cache time</td>
+<td><code>86400</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/cors-enable</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/cors-allow-origin</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://example.com&quot;</span>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/cors-allow-credentials</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="headers">Headers<a class="headerlink" href="#headers" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubioforwardfor">haproxy-ingress.github.io/forwardfor<a class="headerlink" href="#haproxy-ingressgithubioforwardfor" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Configure X-Forwarded-For header handling.</p>
+<p><strong>Valid values</strong>: <code>add</code>, <code>update</code>, <code>ignore</code>, <code>ifmissing</code></p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/forwardfor</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;add&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="haproxy-ingressgithubioheaders">haproxy-ingress.github.io/headers<a class="headerlink" href="#haproxy-ingressgithubioheaders" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Add request headers. Pipe-separated <code>name:value</code> pairs.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/headers</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;X-Custom-Header:value|X-Another:test&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="ssl-features">SSL Features<a class="headerlink" href="#ssl-features" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubiossl-passthrough">haproxy-ingress.github.io/ssl-passthrough<a class="headerlink" href="#haproxy-ingressgithubiossl-passthrough" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable TCP-level SSL passthrough (Layer 4) where HAProxy routes based on SNI without terminating SSL.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ssl-passthrough-example</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a><span class="w">    </span><span class="nt">haproxy-ingress.github.io/ssl-passthrough</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a><span class="w">  </span><span class="nt">tls</span><span class="p">:</span>
+<a id="__codelineno-28-9" name="__codelineno-28-9" href="#__codelineno-28-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">hosts</span><span class="p">:</span>
+<a id="__codelineno-28-10" name="__codelineno-28-10" href="#__codelineno-28-10"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secure.example.com</span>
+<a id="__codelineno-28-11" name="__codelineno-28-11" href="#__codelineno-28-11"></a><span class="w">  </span><span class="nt">rules</span><span class="p">:</span>
+<a id="__codelineno-28-12" name="__codelineno-28-12" href="#__codelineno-28-12"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secure.example.com</span>
+<a id="__codelineno-28-13" name="__codelineno-28-13" href="#__codelineno-28-13"></a><span class="w">      </span><span class="nt">http</span><span class="p">:</span>
+<a id="__codelineno-28-14" name="__codelineno-28-14" href="#__codelineno-28-14"></a><span class="w">        </span><span class="nt">paths</span><span class="p">:</span>
+<a id="__codelineno-28-15" name="__codelineno-28-15" href="#__codelineno-28-15"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/</span>
+<a id="__codelineno-28-16" name="__codelineno-28-16" href="#__codelineno-28-16"></a><span class="w">            </span><span class="nt">pathType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Prefix</span>
+<a id="__codelineno-28-17" name="__codelineno-28-17" href="#__codelineno-28-17"></a><span class="w">            </span><span class="nt">backend</span><span class="p">:</span>
+<a id="__codelineno-28-18" name="__codelineno-28-18" href="#__codelineno-28-18"></a><span class="w">              </span><span class="nt">service</span><span class="p">:</span>
+<a id="__codelineno-28-19" name="__codelineno-28-19" href="#__codelineno-28-19"></a><span class="w">                </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secure-backend</span>
+<a id="__codelineno-28-20" name="__codelineno-28-20" href="#__codelineno-28-20"></a><span class="w">                </span><span class="nt">port</span><span class="p">:</span>
+<a id="__codelineno-28-21" name="__codelineno-28-21" href="#__codelineno-28-21"></a><span class="w">                  </span><span class="nt">number</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">443</span>
+</code></pre></div>
+<p><strong>Implementation notes</strong>:</p>
+<ul>
+<li>Uses SNI-based routing in TCP mode</li>
+<li>Backend receives encrypted traffic and terminates SSL</li>
+<li>HTTP-level features (headers, path rewriting) are not available for passthrough traffic</li>
+<li>Mixed passthrough and termination on different hosts is supported</li>
+</ul>
+<hr />
+<h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
+<h3 id="haproxy-ingressgithubioauth-secret">haproxy-ingress.github.io/auth-secret<a class="headerlink" href="#haproxy-ingressgithubioauth-secret" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable basic authentication using credentials from a Kubernetes Secret.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth-secret</code></td>
+<td>Secret name (or <code>namespace/name</code>)</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>auth-realm</code></td>
+<td>Authentication realm</td>
+<td><code>Restricted</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/auth-secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic-auth&quot;</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="w">  </span><span class="nt">haproxy-ingress.github.io/auth-realm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Protected</span><span class="nv"> </span><span class="s">Area&quot;</span>
+</code></pre></div>
+<p><strong>Secret format</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">basic-auth</span>
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Opaque</span>
+<a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a><span class="nt">data</span><span class="p">:</span>
+<a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a><span class="w">  </span><span class="c1"># Key: username, Value: base64-encoded bcrypt hash (NOT htpasswd format)</span>
+<a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a><span class="w">  </span><span class="nt">admin</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX</span>
+</code></pre></div>
+<p><strong>Generate password hash</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>htpasswd<span class="w"> </span>-nbB<span class="w"> </span>admin<span class="w"> </span>mypassword<span class="w"> </span><span class="p">|</span><span class="w"> </span>cut<span class="w"> </span>-d:<span class="w"> </span>-f2<span class="w"> </span><span class="p">|</span><span class="w"> </span>base64<span class="w"> </span>-w0
+</code></pre></div>
+<hr />
+<h2 id="watched-resources">Watched Resources<a class="headerlink" href="#watched-resources" title="Permanent link">&para;</a></h2>
+<p>This library does not add additional watched resources. It uses Ingress resources already watched by the <a href="../ingress/">Ingress library</a>.</p>
+<h2 id="implementation-status-summary">Implementation Status Summary<a class="headerlink" href="#implementation-status-summary" title="Permanent link">&para;</a></h2>
+<p><strong>Total annotations</strong>: 47</p>
+<ul>
+<li>✅ <strong>Fully Supported</strong>: 47 (100%)</li>
+<li>Path Matching: 4 values (regex, exact, prefix, begin)</li>
+<li>Timeouts: 6 annotations</li>
+<li>Load Balancing: 1 annotation</li>
+<li>Connection Limits: 3 annotations</li>
+<li>Health Checks: 5 annotations</li>
+<li>Backend SSL: 6 annotations</li>
+<li>PROXY Protocol: 1 annotation</li>
+<li>Session Affinity: 8 annotations</li>
+<li>Access Control: 2 annotations</li>
+<li>SSL Redirect: 2 annotations</li>
+<li>HSTS: 4 annotations</li>
+<li>App Root: 1 annotation</li>
+<li>Redirects: 2 annotations</li>
+<li>CORS: 7 annotations</li>
+<li>Headers: 2 annotations</li>
+<li>SSL Passthrough: 1 annotation</li>
+<li>Basic Auth: 2 annotations</li>
+<li>Backend Config: 2 annotations</li>
+</ul>
+<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../template-libraries/">Template Libraries Overview</a> - How template libraries work</li>
+<li><a href="../base/">Base Library</a> - Path matching infrastructure</li>
+<li><a href="../ingress/">Ingress Library</a> - Standard Ingress support</li>
+<li><a href="../haproxytech/">HAProxyTech Library</a> - <code>haproxy.org/*</code> annotations</li>
+<li><a href="../path-regex-last/">Path Regex Last Library</a> - Alternative path matching order</li>
+<li><a href="https://haproxy-ingress.github.io/docs/configuration/keys/">HAProxy Ingress Documentation</a> - Original annotation reference</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.expand", "navigation.top", "navigation.indexes", "search.highlight", "search.suggest", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/stable-version.js"></script>
+      
+    
+  </body>
+</html>

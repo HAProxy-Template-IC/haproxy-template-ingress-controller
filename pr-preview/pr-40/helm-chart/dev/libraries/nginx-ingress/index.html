@@ -1,0 +1,3435 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Helm chart for deploying HAPTIC, a template-driven HAProxy ingress controller for Kubernetes.">
+      
+      
+      
+        <link rel="canonical" href="https://haproxy-haptic.org/helm-chart/libraries/nginx-ingress/">
+      
+      
+        <link rel="prev" href="../haproxy-ingress/">
+      
+      
+        <link rel="next" href="../path-regex-last/">
+      
+      
+        
+          <link rel="alternate" href="https://haproxy-haptic.org/controller/latest/" hreflang="controller">
+        
+      
+      
+      <link rel="icon" href="../../assets/logo-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Nginx Ingress - HAPTIC Helm Chart</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="light-blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#nginx-ingress-library" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="HAPTIC Helm Chart" class="md-header__button md-logo" aria-label="HAPTIC Helm Chart" data-md-component="logo">
+      
+  <img src="../../assets/logo-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HAPTIC Helm Chart
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Nginx Ingress
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="light-blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="light-blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m19 2-5 4.5v11l5-4.5zM6.5 5C4.55 5 2.45 5.4 1 6.5v14.66c0 .25.25.5.5.5.1 0 .15-.07.25-.07 1.35-.65 3.3-1.09 4.75-1.09 1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.31 4.75 1.06.1.05.15.03.25.03.25 0 .5-.25.5-.5V6.5c-.6-.45-1.25-.75-2-1V19c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V6.5C10.55 5.4 8.45 5 6.5 5"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="https://haproxy-haptic.org/controller/latest/" hreflang="controller" class="md-select__link">
+              Controller Docs
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://gitlab.com/haproxy-haptic/haptic" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    haproxy-haptic/haptic
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="HAPTIC Helm Chart" class="md-nav__button md-logo" aria-label="HAPTIC Helm Chart" data-md-component="logo">
+      
+  <img src="../../assets/logo-icon.svg" alt="logo">
+
+    </a>
+    HAPTIC Helm Chart
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://gitlab.com/haproxy-haptic/haptic" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    haproxy-haptic/haptic
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ingress-class/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IngressClass
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway-class/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GatewayClass
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ssl-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SSL Certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../annotations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../haproxy-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HAProxy Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Template Libraries
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Template Libraries
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../template-libraries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Libraries
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Libraries
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../base/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Base
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ssl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SSL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ingress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../haproxytech/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HAProxy Annotations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../haproxy-ingress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HAProxy Ingress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nginx Ingress
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nginx Ingress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extension-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Points
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Extension Points">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#extension-points-used" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Points Used
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Backend Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeouts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioload-balance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/load-balance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioproxy-body-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/proxy-body-size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiobackend-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/backend-protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiouse-proxy-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/use-proxy-protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioconfiguration-snippet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/configuration-snippet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioupstream-hash-by" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/upstream-hash-by
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection Limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-affinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Affinity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Session Affinity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioaffinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/affinity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#url-rewriting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        URL Rewriting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="URL Rewriting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiorewrite-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/rewrite-target
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioapp-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/app-root
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#redirects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redirects
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Redirects">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiossl-redirect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/ssl-redirect
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiopermanent-redirect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/permanent-redirect
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiotemporal-redirect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/temporal-redirect
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hsts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HSTS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HSTS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiohsts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/hsts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CORS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CORS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioenable-cors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/enable-cors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access Control
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Access Control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiowhitelist-source-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/whitelist-source-range
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiodenylist-source-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/denylist-source-range
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Headers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Custom Headers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-request-and-response-headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Request and Response Headers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioauth-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/auth-type
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ssl-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSL Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SSL Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiossl-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/ssl-passthrough
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#canary-deployments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canary Deployments
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Canary Deployments">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiocanary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/canary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#client-certificate-auth-mtls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Client Certificate Auth (mTLS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Client Certificate Auth (mTLS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mtls-certificate-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mTLS Certificate Passthrough
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unsupported-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unsupported Annotations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#watched-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Watched Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-status-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Status Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../path-regex-last/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Path Regex Last
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/high-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    High Availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Networking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extension-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Points
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Extension Points">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#extension-points-used" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Points Used
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Backend Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeouts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioload-balance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/load-balance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioproxy-body-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/proxy-body-size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiobackend-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/backend-protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiouse-proxy-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/use-proxy-protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioconfiguration-snippet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/configuration-snippet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioupstream-hash-by" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/upstream-hash-by
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection Limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-affinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Affinity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Session Affinity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioaffinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/affinity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#url-rewriting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        URL Rewriting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="URL Rewriting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiorewrite-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/rewrite-target
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioapp-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/app-root
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#redirects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redirects
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Redirects">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiossl-redirect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/ssl-redirect
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiopermanent-redirect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/permanent-redirect
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiotemporal-redirect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/temporal-redirect
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hsts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HSTS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HSTS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiohsts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/hsts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CORS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CORS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioenable-cors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/enable-cors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access Control
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Access Control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiowhitelist-source-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/whitelist-source-range
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiodenylist-source-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/denylist-source-range
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Headers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Custom Headers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-request-and-response-headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Request and Response Headers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesioauth-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/auth-type
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ssl-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSL Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SSL Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiossl-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/ssl-passthrough
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#canary-deployments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canary Deployments
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Canary Deployments">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nginxingresskubernetesiocanary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx.ingress.kubernetes.io/canary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#client-certificate-auth-mtls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Client Certificate Auth (mTLS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Client Certificate Auth (mTLS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mtls-certificate-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mTLS Certificate Passthrough
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unsupported-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unsupported Annotations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#watched-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Watched Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-status-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Status Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="nginx-ingress-library">Nginx Ingress Library<a class="headerlink" href="#nginx-ingress-library" title="Permanent link">&para;</a></h1>
+<p>The Nginx Ingress library provides compatibility with the <a href="https://kubernetes.github.io/ingress-nginx/">nginx-ingress controller</a> annotations for Kubernetes Ingress resources.</p>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>This library enables <code>nginx.ingress.kubernetes.io/*</code> annotations on Ingress resources, providing a migration path for users coming from the nginx-ingress controller. It supports backend configuration, session affinity, rate limiting, URL rewriting, redirects, CORS, access control, canary deployments, authentication, SSL passthrough, and mTLS certificate passthrough.</p>
+<p>This library is disabled by default.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">controller</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">templateLibraries</span><span class="p">:</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">nginxIngress</span><span class="p">:</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">  </span><span class="c1"># Disabled by default</span>
+</code></pre></div>
+<h2 id="extension-points">Extension Points<a class="headerlink" href="#extension-points" title="Permanent link">&para;</a></h2>
+<h3 id="extension-points-used">Extension Points Used<a class="headerlink" href="#extension-points-used" title="Permanent link">&para;</a></h3>
+<p>The Nginx Ingress library implements these extension points:</p>
+<table>
+<thead>
+<tr>
+<th>Extension Point</th>
+<th>This Library's Snippets</th>
+<th>What They Generate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-670-nginx-ingress-session-affinity</code></td>
+<td>Cookie-based session affinity</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-700-nginx-ingress-timeouts</code></td>
+<td>Backend timeouts</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-710-nginx-ingress-load-balance</code></td>
+<td>Load balancing algorithm</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-720-nginx-ingress-proxy-body-size</code></td>
+<td>Request body size limit</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-730-nginx-ingress-backend-protocol</code></td>
+<td>Backend protocol (HTTPS, gRPC)</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-740-nginx-ingress-proxy-protocol</code></td>
+<td>PROXY protocol to backend</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-750-nginx-ingress-rewrite-target</code></td>
+<td>URL rewriting</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-760-nginx-ingress-auth</code></td>
+<td>Basic auth enforcement</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-770-nginx-ingress-rate-limiting</code></td>
+<td>Rate limiting / connection limiting</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-780-nginx-ingress-upstream-hash</code></td>
+<td>Hash-based load balancing</td>
+</tr>
+<tr>
+<td>Backend Directives</td>
+<td><code>backend-directives-900-nginx-ingress-config-snippet</code></td>
+<td>Raw backend config injection</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-700-nginx-ingress-access-control</code></td>
+<td>IP allowlist/denylist</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-710-nginx-ingress-ssl-redirect</code></td>
+<td>HTTP to HTTPS redirect</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-720-nginx-ingress-hsts</code></td>
+<td>HSTS headers</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-730-nginx-ingress-cors</code></td>
+<td>CORS headers</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-740-nginx-ingress-custom-headers</code></td>
+<td>Custom request/response headers</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-750-nginx-ingress-app-root</code></td>
+<td>Root path redirect</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-760-nginx-ingress-permanent-redirect</code></td>
+<td>Permanent redirect (301)</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-770-nginx-ingress-temporal-redirect</code></td>
+<td>Temporal redirect (302)</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-780-nginx-ingress-canary</code></td>
+<td>Canary routing rules</td>
+</tr>
+<tr>
+<td>Frontend Filters</td>
+<td><code>frontend-filters-790-nginx-ingress-mtls-error</code></td>
+<td>mTLS error page and cert passthrough</td>
+</tr>
+<tr>
+<td>Features</td>
+<td><code>features-100-nginx-ingress-ssl-passthrough</code></td>
+<td>SSL passthrough registration</td>
+</tr>
+<tr>
+<td>Backends</td>
+<td><code>backends-501-nginx-ingress-ssl-passthrough</code></td>
+<td>SSL passthrough backends</td>
+</tr>
+<tr>
+<td>Global Top</td>
+<td><code>global-top-700-nginx-ingress-auth</code></td>
+<td>Userlist definitions for basic auth</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="backend-configuration">Backend Configuration<a class="headerlink" href="#backend-configuration" title="Permanent link">&para;</a></h2>
+<h3 id="timeouts">Timeouts<a class="headerlink" href="#timeouts" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>proxy-connect-timeout</code></td>
+<td>Backend connection timeout (seconds)</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>proxy-read-timeout</code></td>
+<td>Backend response timeout (seconds)</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>proxy-send-timeout</code></td>
+<td>Backend send timeout (seconds)</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Timeout Value Format</p>
+<p>Nginx-ingress timeout values are plain seconds (e.g., <code>"60"</code>). The library automatically appends the <code>s</code> suffix for HAProxy.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Server Timeout Mapping</p>
+<p>Both <code>proxy-read-timeout</code> and <code>proxy-send-timeout</code> map to HAProxy's single <code>timeout server</code> directive. If both are set, the larger value is used.</p>
+</div>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/proxy-connect-timeout</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;10&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/proxy-read-timeout</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;60&quot;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/proxy-send-timeout</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;30&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>backend my-backend
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    timeout connect 10s
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    timeout server 60s
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesioload-balance">nginx.ingress.kubernetes.io/load-balance<a class="headerlink" href="#nginxingresskubernetesioload-balance" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Load balancing algorithm for the backend.</p>
+<p><strong>Valid values</strong>: <code>round_robin</code>, <code>least_conn</code>, <code>ip_hash</code>, <code>random</code>, <code>ewma</code></p>
+<p><strong>Mapping to HAProxy</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Nginx Value</th>
+<th>HAProxy Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>round_robin</code></td>
+<td><code>roundrobin</code></td>
+</tr>
+<tr>
+<td><code>least_conn</code></td>
+<td><code>leastconn</code></td>
+</tr>
+<tr>
+<td><code>ip_hash</code></td>
+<td><code>source</code></td>
+</tr>
+<tr>
+<td><code>random</code></td>
+<td><code>random</code></td>
+</tr>
+<tr>
+<td><code>ewma</code></td>
+<td><code>leastconn</code> (closest equivalent)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/load-balance</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;least_conn&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>backend my-backend
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    balance leastconn
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesioproxy-body-size">nginx.ingress.kubernetes.io/proxy-body-size<a class="headerlink" href="#nginxingresskubernetesioproxy-body-size" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Maximum allowed request body size. Requests exceeding this limit receive a 413 response.</p>
+<p><strong>Valid values</strong>: Plain number (bytes), or with <code>k</code>/<code>m</code>/<code>g</code> suffix. Value <code>0</code> means unlimited (no directive emitted).</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/proxy-body-size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;10m&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>backend my-backend
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    http-request deny deny_status 413 if { req.body_size gt 10485760 }
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesiobackend-protocol">nginx.ingress.kubernetes.io/backend-protocol<a class="headerlink" href="#nginxingresskubernetesiobackend-protocol" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Protocol used to communicate with the backend.</p>
+<p><strong>Valid values</strong>: <code>HTTP</code>, <code>HTTPS</code>, <code>GRPC</code>, <code>GRPCS</code></p>
+<p><strong>Mapping to HAProxy server options</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>HAProxy Server Flags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HTTP</code></td>
+<td>(default, no additional flags)</td>
+</tr>
+<tr>
+<td><code>HTTPS</code></td>
+<td><code>ssl verify none</code></td>
+</tr>
+<tr>
+<td><code>GRPC</code></td>
+<td><code>proto h2</code></td>
+</tr>
+<tr>
+<td><code>GRPCS</code></td>
+<td><code>ssl verify none proto h2</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Unsupported Protocols</p>
+<p><code>AJP</code> and <code>FCGI</code> are not supported by HAProxy and will fail with an error.</p>
+</div>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/backend-protocol</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;GRPC&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesiouse-proxy-protocol">nginx.ingress.kubernetes.io/use-proxy-protocol<a class="headerlink" href="#nginxingresskubernetesiouse-proxy-protocol" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Send PROXY protocol v2 header to the backend.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/use-proxy-protocol</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>server SRV_1 10.0.0.1:8080 send-proxy-v2
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesioconfiguration-snippet">nginx.ingress.kubernetes.io/configuration-snippet<a class="headerlink" href="#nginxingresskubernetesioconfiguration-snippet" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Raw HAProxy configuration to inject into the backend section.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/configuration-snippet</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="no">http-send-name-header X-Backend-Server</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="no">retries 5</span>
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesioupstream-hash-by">nginx.ingress.kubernetes.io/upstream-hash-by<a class="headerlink" href="#nginxingresskubernetesioupstream-hash-by" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Hash-based load balancing using a nginx variable or HAProxy fetch expression.</p>
+<p><strong>Supported nginx variable translations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Nginx Variable</th>
+<th>HAProxy Fetch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$request_uri</code></td>
+<td><code>url</code></td>
+</tr>
+<tr>
+<td><code>$remote_addr</code></td>
+<td><code>src</code></td>
+</tr>
+<tr>
+<td><code>$cookie_XXXX</code></td>
+<td><code>req.cook(XXXX)</code></td>
+</tr>
+<tr>
+<td><code>$http_xxxx</code></td>
+<td><code>req.hdr(xxxx)</code> (underscores replaced with hyphens)</td>
+</tr>
+<tr>
+<td><code>$arg_XXXX</code></td>
+<td><code>url_param(XXXX)</code></td>
+</tr>
+</tbody>
+</table>
+<p>Values not starting with <code>$</code> are passed through as-is (assumed to be HAProxy fetch expressions). Unrecognized <code>$variables</code> will fail with an error.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/upstream-hash-by</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$request_uri&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>backend my-backend
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    balance hash url
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    hash-type consistent
+</code></pre></div>
+<hr />
+<h3 id="connection-limits">Connection Limits<a class="headerlink" href="#connection-limits" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>limit-rps</code></td>
+<td>Maximum requests per second per source IP</td>
+</tr>
+<tr>
+<td><code>limit-connections</code></td>
+<td>Maximum concurrent connections per source IP</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Mutual Exclusivity</p>
+<p>HAProxy supports only one stick-table per backend. If both <code>limit-rps</code> and <code>limit-connections</code> are set, <code>limit-rps</code> takes precedence. Exceeding the limit returns HTTP 429.</p>
+</div>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/limit-rps</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;100&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>backend my-backend
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    stick-table type ip size 100k expire 1s store http_req_rate(1s)
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    http-request track-sc0 src
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    http-request deny deny_status 429 if { sc_http_req_rate(0) gt 100 }
+</code></pre></div>
+<hr />
+<h2 id="session-affinity">Session Affinity<a class="headerlink" href="#session-affinity" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesioaffinity">nginx.ingress.kubernetes.io/affinity<a class="headerlink" href="#nginxingresskubernetesioaffinity" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable cookie-based session affinity.</p>
+<p><strong>Valid values</strong>: <code>cookie</code></p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>session-cookie-name</code></td>
+<td>Cookie name</td>
+<td><code>INGRESSCOOKIE</code></td>
+</tr>
+<tr>
+<td><code>session-cookie-hash</code></td>
+<td>Hash algorithm (<code>md5</code>, <code>sha1</code>, <code>index</code>)</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>session-cookie-path</code></td>
+<td>Cookie path</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/affinity</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;cookie&quot;</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/session-cookie-name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;SERVERID&quot;</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/session-cookie-path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/app&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>backend my-backend
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    cookie SERVERID insert indirect nocache dynamic path /app
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    dynamic-cookie-key &lt;sha256-of-namespace/name&gt;
+</code></pre></div>
+<hr />
+<h2 id="url-rewriting">URL Rewriting<a class="headerlink" href="#url-rewriting" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesiorewrite-target">nginx.ingress.kubernetes.io/rewrite-target<a class="headerlink" href="#nginxingresskubernetesiorewrite-target" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Rewrite the URL path before forwarding to the backend.</p>
+<div class="admonition note">
+<p class="admonition-title">Capture Group Translation</p>
+<p>Nginx capture groups use <code>$1</code>, <code>$2</code>, etc. The library automatically translates these to HAProxy's <code>\1</code>, <code>\2</code> syntax.</p>
+</div>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/rewrite-target</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/$1&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>backend my-backend
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>    http-request replace-path (.*) /\1
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesioapp-root">nginx.ingress.kubernetes.io/app-root<a class="headerlink" href="#nginxingresskubernetesioapp-root" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Redirect requests to root path (<code>/</code>) to the specified path.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/app-root</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/dashboard&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>http-request redirect location /dashboard code 302 if { path / } { hdr(host) -i example.com }
+</code></pre></div>
+<hr />
+<h2 id="redirects">Redirects<a class="headerlink" href="#redirects" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesiossl-redirect">nginx.ingress.kubernetes.io/ssl-redirect<a class="headerlink" href="#nginxingresskubernetesiossl-redirect" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Redirect HTTP requests to HTTPS.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Redirect Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ssl-redirect</code></td>
+<td>Enable SSL redirect</td>
+<td><code>301</code></td>
+</tr>
+<tr>
+<td><code>force-ssl-redirect</code></td>
+<td>Force SSL redirect</td>
+<td><code>308</code></td>
+</tr>
+</tbody>
+</table>
+<p>If both are set, <code>force-ssl-redirect</code> takes precedence (code 308).</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/ssl-redirect</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>http-request redirect scheme https code 301 if !{ ssl_fc } { hdr(host) -i example.com }
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesiopermanent-redirect">nginx.ingress.kubernetes.io/permanent-redirect<a class="headerlink" href="#nginxingresskubernetesiopermanent-redirect" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Redirect all requests to the specified URL with code 301.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/permanent-redirect</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://new.example.com&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesiotemporal-redirect">nginx.ingress.kubernetes.io/temporal-redirect<a class="headerlink" href="#nginxingresskubernetesiotemporal-redirect" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Redirect all requests to the specified URL with code 302.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/temporal-redirect</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://maintenance.example.com&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="hsts">HSTS<a class="headerlink" href="#hsts" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesiohsts">nginx.ingress.kubernetes.io/hsts<a class="headerlink" href="#nginxingresskubernetesiohsts" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable HTTP Strict Transport Security headers.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hsts</code></td>
+<td>Enable HSTS</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>hsts-max-age</code></td>
+<td>Max-age in seconds</td>
+<td><code>15724800</code></td>
+</tr>
+<tr>
+<td><code>hsts-include-subdomains</code></td>
+<td>Include subdomains</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>hsts-preload</code></td>
+<td>Enable preload</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/hsts</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/hsts-max-age</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;31536000&quot;</span>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/hsts-include-subdomains</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/hsts-preload</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>http-response set-header Strict-Transport-Security &quot;max-age=31536000; includeSubDomains; preload&quot; if { ssl_fc } { hdr(host) -i example.com }
+</code></pre></div>
+<hr />
+<h2 id="cors">CORS<a class="headerlink" href="#cors" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesioenable-cors">nginx.ingress.kubernetes.io/enable-cors<a class="headerlink" href="#nginxingresskubernetesioenable-cors" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable CORS handling for the ingress.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enable-cors</code></td>
+<td>Enable CORS</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>cors-allow-origin</code></td>
+<td>Allowed origins</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>cors-allow-methods</code></td>
+<td>Allowed methods</td>
+<td><code>GET, PUT, POST, DELETE, PATCH, OPTIONS</code></td>
+</tr>
+<tr>
+<td><code>cors-allow-headers</code></td>
+<td>Allowed headers</td>
+<td>Common headers</td>
+</tr>
+<tr>
+<td><code>cors-allow-credentials</code></td>
+<td>Allow credentials</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>cors-expose-headers</code></td>
+<td>Exposed headers</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>cors-max-age</code></td>
+<td>Preflight cache time</td>
+<td><code>1728000</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/enable-cors</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/cors-allow-origin</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://example.com&quot;</span>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/cors-allow-credentials</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="access-control">Access Control<a class="headerlink" href="#access-control" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesiowhitelist-source-range">nginx.ingress.kubernetes.io/whitelist-source-range<a class="headerlink" href="#nginxingresskubernetesiowhitelist-source-range" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Comma-separated list of CIDRs allowed to access this ingress.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/whitelist-source-range</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;10.0.0.0/8,</span><span class="nv"> </span><span class="s">192.168.0.0/16&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>acl ni_allowlist_default_my-ingress src 10.0.0.0/8 192.168.0.0/16
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>http-request deny if { hdr(host) -i example.com } !ni_allowlist_default_my-ingress
+</code></pre></div>
+<hr />
+<h3 id="nginxingresskubernetesiodenylist-source-range">nginx.ingress.kubernetes.io/denylist-source-range<a class="headerlink" href="#nginxingresskubernetesiodenylist-source-range" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Comma-separated list of CIDRs denied access to this ingress.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/denylist-source-range</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;203.0.113.0/24&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="custom-headers">Custom Headers<a class="headerlink" href="#custom-headers" title="Permanent link">&para;</a></h2>
+<h3 id="custom-request-and-response-headers">Custom Request and Response Headers<a class="headerlink" href="#custom-request-and-response-headers" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>custom-request-headers</code></td>
+<td>Pipe-separated <code>name:value</code> pairs for request headers</td>
+</tr>
+<tr>
+<td><code>custom-response-headers</code></td>
+<td>Pipe-separated <code>name:value</code> pairs for response headers</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/custom-request-headers</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;X-Custom-Header:value|X-Another:test&quot;</span>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/custom-response-headers</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;X-Frame-Options:DENY&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>http-request set-header X-Custom-Header &#39;value&#39; if { hdr(host) -i example.com }
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>http-request set-header X-Another &#39;test&#39; if { hdr(host) -i example.com }
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>http-response set-header X-Frame-Options &#39;DENY&#39; if { hdr(host) -i example.com }
+</code></pre></div>
+<hr />
+<h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesioauth-type">nginx.ingress.kubernetes.io/auth-type<a class="headerlink" href="#nginxingresskubernetesioauth-type" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable basic authentication using credentials from a Kubernetes Secret.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth-type</code></td>
+<td>Authentication type (only <code>basic</code> supported)</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>auth-secret</code></td>
+<td>Secret name (or <code>namespace/name</code>)</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>auth-realm</code></td>
+<td>Authentication realm</td>
+<td><code>Restricted</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Secret Format</p>
+<p>Nginx-ingress uses htpasswd format. The Secret must have a single key named <code>auth</code> containing <code>username:hash</code> entries separated by newlines. This differs from the haproxy-ingress library which uses one key per user.</p>
+</div>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/auth-type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic&quot;</span>
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/auth-secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic-auth&quot;</span>
+<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/auth-realm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Protected</span><span class="nv"> </span><span class="s">Area&quot;</span>
+</code></pre></div>
+<p><strong>Secret format</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">basic-auth</span>
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Opaque</span>
+<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a><span class="nt">stringData</span><span class="p">:</span>
+<a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a><span class="w">  </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a><span class="w">    </span><span class="no">admin:$2y$05$mO1VWak5QnbhNgJ4QwdAdXbfz.8b3ceH6U5KOVCKxR2IkNAfJgLi5pIKW</span>
+<a id="__codelineno-34-9" name="__codelineno-34-9" href="#__codelineno-34-9"></a><span class="w">    </span><span class="no">user:$2y$05$anotherBcryptHash</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>userlist ni_auth_default_basic-auth
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>  user admin password &#39;$2y$05$mO1VWak5QnbhNgJ4QwdAdXbfz.8b3ceH6U5KOVCKxR2IkNAfJgLi5pIKW&#39;
+<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>  user user password &#39;$2y$05$anotherBcryptHash&#39;
+<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a>
+<a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a>backend my-backend
+<a id="__codelineno-35-6" name="__codelineno-35-6" href="#__codelineno-35-6"></a>    http-request auth realm &quot;Protected Area&quot; unless { http_auth(ni_auth_default_basic-auth) }
+</code></pre></div>
+<hr />
+<h2 id="ssl-features">SSL Features<a class="headerlink" href="#ssl-features" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesiossl-passthrough">nginx.ingress.kubernetes.io/ssl-passthrough<a class="headerlink" href="#nginxingresskubernetesiossl-passthrough" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Enable TCP-level SSL passthrough (Layer 4) where HAProxy routes based on SNI without terminating SSL.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ssl-passthrough-example</span>
+<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a><span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-36-6" name="__codelineno-36-6" href="#__codelineno-36-6"></a><span class="w">    </span><span class="nt">nginx.ingress.kubernetes.io/ssl-passthrough</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-36-7" name="__codelineno-36-7" href="#__codelineno-36-7"></a><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-36-8" name="__codelineno-36-8" href="#__codelineno-36-8"></a><span class="w">  </span><span class="nt">tls</span><span class="p">:</span>
+<a id="__codelineno-36-9" name="__codelineno-36-9" href="#__codelineno-36-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">hosts</span><span class="p">:</span>
+<a id="__codelineno-36-10" name="__codelineno-36-10" href="#__codelineno-36-10"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secure.example.com</span>
+<a id="__codelineno-36-11" name="__codelineno-36-11" href="#__codelineno-36-11"></a><span class="w">  </span><span class="nt">rules</span><span class="p">:</span>
+<a id="__codelineno-36-12" name="__codelineno-36-12" href="#__codelineno-36-12"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secure.example.com</span>
+<a id="__codelineno-36-13" name="__codelineno-36-13" href="#__codelineno-36-13"></a><span class="w">      </span><span class="nt">http</span><span class="p">:</span>
+<a id="__codelineno-36-14" name="__codelineno-36-14" href="#__codelineno-36-14"></a><span class="w">        </span><span class="nt">paths</span><span class="p">:</span>
+<a id="__codelineno-36-15" name="__codelineno-36-15" href="#__codelineno-36-15"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/</span>
+<a id="__codelineno-36-16" name="__codelineno-36-16" href="#__codelineno-36-16"></a><span class="w">            </span><span class="nt">pathType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Prefix</span>
+<a id="__codelineno-36-17" name="__codelineno-36-17" href="#__codelineno-36-17"></a><span class="w">            </span><span class="nt">backend</span><span class="p">:</span>
+<a id="__codelineno-36-18" name="__codelineno-36-18" href="#__codelineno-36-18"></a><span class="w">              </span><span class="nt">service</span><span class="p">:</span>
+<a id="__codelineno-36-19" name="__codelineno-36-19" href="#__codelineno-36-19"></a><span class="w">                </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secure-backend</span>
+<a id="__codelineno-36-20" name="__codelineno-36-20" href="#__codelineno-36-20"></a><span class="w">                </span><span class="nt">port</span><span class="p">:</span>
+<a id="__codelineno-36-21" name="__codelineno-36-21" href="#__codelineno-36-21"></a><span class="w">                  </span><span class="nt">number</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">443</span>
+</code></pre></div>
+<p><strong>Implementation notes</strong>:</p>
+<ul>
+<li>Uses SNI-based routing in TCP mode</li>
+<li>Backend receives encrypted traffic and terminates SSL</li>
+<li>HTTP-level features (headers, path rewriting) are not available for passthrough traffic</li>
+</ul>
+<hr />
+<h2 id="canary-deployments">Canary Deployments<a class="headerlink" href="#canary-deployments" title="Permanent link">&para;</a></h2>
+<h3 id="nginxingresskubernetesiocanary">nginx.ingress.kubernetes.io/canary<a class="headerlink" href="#nginxingresskubernetesiocanary" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Description</strong>: Route a percentage or subset of traffic to a canary backend.</p>
+<p><strong>Related annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>canary</code></td>
+<td>Mark this Ingress as a canary (<code>"true"</code>)</td>
+</tr>
+<tr>
+<td><code>canary-by-header</code></td>
+<td>Route to canary when this header is present</td>
+</tr>
+<tr>
+<td><code>canary-by-header-value</code></td>
+<td>Required header value (default: <code>always</code>)</td>
+</tr>
+<tr>
+<td><code>canary-by-header-pattern</code></td>
+<td>Regex pattern for header matching</td>
+</tr>
+<tr>
+<td><code>canary-by-cookie</code></td>
+<td>Route to canary when cookie value is <code>always</code></td>
+</tr>
+<tr>
+<td><code>canary-weight</code></td>
+<td>Percentage of traffic to route to canary (0-100)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Priority order</strong>: header &gt; cookie &gt; weight</p>
+<p>The canary Ingress must share a host with a non-canary (main) Ingress. Mark the secondary Ingress with <code>canary: "true"</code> and it routes to the parent's host.</p>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">networking.k8s.io/v1</span>
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ingress</span>
+<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-app-canary</span>
+<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a><span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a><span class="w">    </span><span class="nt">nginx.ingress.kubernetes.io/canary</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a><span class="w">    </span><span class="nt">nginx.ingress.kubernetes.io/canary-by-header</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;X-Canary&quot;</span>
+<a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a><span class="w">    </span><span class="nt">nginx.ingress.kubernetes.io/canary-weight</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;20&quot;</span>
+<a id="__codelineno-37-9" name="__codelineno-37-9" href="#__codelineno-37-9"></a><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-37-10" name="__codelineno-37-10" href="#__codelineno-37-10"></a><span class="w">  </span><span class="nt">ingressClassName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">haproxy</span>
+<a id="__codelineno-37-11" name="__codelineno-37-11" href="#__codelineno-37-11"></a><span class="w">  </span><span class="nt">rules</span><span class="p">:</span>
+<a id="__codelineno-37-12" name="__codelineno-37-12" href="#__codelineno-37-12"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">app.example.com</span>
+<a id="__codelineno-37-13" name="__codelineno-37-13" href="#__codelineno-37-13"></a><span class="w">      </span><span class="nt">http</span><span class="p">:</span>
+<a id="__codelineno-37-14" name="__codelineno-37-14" href="#__codelineno-37-14"></a><span class="w">        </span><span class="nt">paths</span><span class="p">:</span>
+<a id="__codelineno-37-15" name="__codelineno-37-15" href="#__codelineno-37-15"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/</span>
+<a id="__codelineno-37-16" name="__codelineno-37-16" href="#__codelineno-37-16"></a><span class="w">            </span><span class="nt">pathType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Prefix</span>
+<a id="__codelineno-37-17" name="__codelineno-37-17" href="#__codelineno-37-17"></a><span class="w">            </span><span class="nt">backend</span><span class="p">:</span>
+<a id="__codelineno-37-18" name="__codelineno-37-18" href="#__codelineno-37-18"></a><span class="w">              </span><span class="nt">service</span><span class="p">:</span>
+<a id="__codelineno-37-19" name="__codelineno-37-19" href="#__codelineno-37-19"></a><span class="w">                </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-app-canary</span>
+<a id="__codelineno-37-20" name="__codelineno-37-20" href="#__codelineno-37-20"></a><span class="w">                </span><span class="nt">port</span><span class="p">:</span>
+<a id="__codelineno-37-21" name="__codelineno-37-21" href="#__codelineno-37-21"></a><span class="w">                  </span><span class="nt">number</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>use_backend default_my-app-canary_svc_my-app-canary_http if { req.hdr(X-Canary) -m str always } { hdr(host) -i app.example.com }
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>use_backend default_my-app-canary_svc_my-app-canary_http if { rand(100) lt 20 } { hdr(host) -i app.example.com }
+</code></pre></div>
+<hr />
+<h2 id="client-certificate-auth-mtls">Client Certificate Auth (mTLS)<a class="headerlink" href="#client-certificate-auth-mtls" title="Permanent link">&para;</a></h2>
+<h3 id="mtls-certificate-passthrough">mTLS Certificate Passthrough<a class="headerlink" href="#mtls-certificate-passthrough" title="Permanent link">&para;</a></h3>
+<p><strong>Status</strong>: ✅ Supported</p>
+<p><strong>Annotations</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth-tls-pass-certificate-to-upstream</code></td>
+<td>Pass client certificate and subject DN as headers</td>
+</tr>
+<tr>
+<td><code>auth-tls-error-page</code></td>
+<td>Redirect URL on client certificate verification failure</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Partial mTLS Support</p>
+<p><code>auth-tls-secret</code>, <code>auth-tls-verify-client</code>, and <code>auth-tls-verify-depth</code> are supported via crt-list per-entry options but are not yet implemented.</p>
+</div>
+<p><strong>Usage</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;true&quot;</span>
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a><span class="w">  </span><span class="nt">nginx.ingress.kubernetes.io/auth-tls-error-page</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://example.com/auth-error&quot;</span>
+</code></pre></div>
+<p><strong>Generated HAProxy Configuration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a>http-request redirect location https://example.com/auth-error code 302 if { ssl_c_verify gt 0 } { hdr(host) -i example.com }
+<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a>http-request set-header ssl-client-cert %[ssl_c_der,base64] if { hdr(host) -i example.com }
+<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a>http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { hdr(host) -i example.com }
+</code></pre></div>
+<hr />
+<h2 id="unsupported-annotations">Unsupported Annotations<a class="headerlink" href="#unsupported-annotations" title="Permanent link">&para;</a></h2>
+<p>The following nginx-ingress annotations are not supported:</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth-url</code>, <code>auth-signin</code>, <code>auth-response-headers</code></td>
+<td>External auth requires Lua, not achievable with pure templates</td>
+</tr>
+<tr>
+<td><code>enable-modsecurity</code>, <code>modsecurity-*</code></td>
+<td>ModSecurity integration requires SPOE agent</td>
+</tr>
+<tr>
+<td><code>mirror-*</code></td>
+<td>Traffic mirroring has no native HAProxy equivalent</td>
+</tr>
+<tr>
+<td><code>enable-opentelemetry</code>, <code>opentelemetry-*</code></td>
+<td>Requires OpenTelemetry module</td>
+</tr>
+<tr>
+<td><code>enable-opentracing</code>, <code>opentracing-*</code></td>
+<td>Requires OpenTracing module</td>
+</tr>
+<tr>
+<td><code>server-snippet</code></td>
+<td>Nginx server-level directives have no HAProxy equivalent</td>
+</tr>
+<tr>
+<td><code>proxy-max-temp-file-size</code></td>
+<td>HAProxy uses in-memory buffering, no temp file concept</td>
+</tr>
+<tr>
+<td><code>stream-snippet</code></td>
+<td>Nginx stream directives have no HAProxy equivalent</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="watched-resources">Watched Resources<a class="headerlink" href="#watched-resources" title="Permanent link">&para;</a></h2>
+<p>This library watches the following additional resources:</p>
+<ul>
+<li><strong>Secrets</strong> (<code>v1/secrets</code>) - Used for basic auth credential lookup</li>
+</ul>
+<hr />
+<h2 id="implementation-status-summary">Implementation Status Summary<a class="headerlink" href="#implementation-status-summary" title="Permanent link">&para;</a></h2>
+<p><strong>Total annotations</strong>: 48</p>
+<ul>
+<li>✅ <strong>Fully Supported</strong>: 48</li>
+<li>Timeouts: 3 annotations</li>
+<li>Load Balancing: 1 annotation</li>
+<li>Body Size Limit: 1 annotation</li>
+<li>Backend Protocol: 1 annotation</li>
+<li>Proxy Protocol: 1 annotation</li>
+<li>Rewrite Target: 1 annotation</li>
+<li>Upstream Hash: 1 annotation</li>
+<li>Config Snippet: 1 annotation</li>
+<li>Session Affinity: 4 annotations</li>
+<li>Rate Limiting: 2 annotations</li>
+<li>Access Control: 2 annotations</li>
+<li>SSL Redirect: 2 annotations</li>
+<li>HSTS: 4 annotations</li>
+<li>CORS: 7 annotations</li>
+<li>Custom Headers: 2 annotations</li>
+<li>App Root: 1 annotation</li>
+<li>Redirects: 2 annotations</li>
+<li>Authentication: 3 annotations</li>
+<li>SSL Passthrough: 1 annotation</li>
+<li>Canary: 6 annotations</li>
+<li>mTLS: 2 annotations</li>
+</ul>
+<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../template-libraries/">Template Libraries Overview</a> - How template libraries work</li>
+<li><a href="../base/">Base Library</a> - Core HAProxy template</li>
+<li><a href="../ingress/">Ingress Library</a> - Standard Ingress support</li>
+<li><a href="../haproxy-ingress/">HAProxy Ingress Library</a> - <code>haproxy-ingress.github.io/*</code> annotations</li>
+<li><a href="../haproxytech/">HAProxyTech Library</a> - <code>haproxy.org/*</code> annotations</li>
+<li><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/">Nginx Ingress Documentation</a> - Original annotation reference</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.expand", "navigation.top", "navigation.indexes", "search.highlight", "search.suggest", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/stable-version.js"></script>
+      
+    
+  </body>
+</html>
