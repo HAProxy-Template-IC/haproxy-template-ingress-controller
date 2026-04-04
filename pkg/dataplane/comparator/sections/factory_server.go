@@ -150,7 +150,7 @@ func (op *ServerUpdateOp) IsFullyRuntimeEligible() bool {
 
 func (op *ServerUpdateOp) Type() OperationType { return OperationUpdate }
 func (op *ServerUpdateOp) Section() string     { return "server" }
-func (op *ServerUpdateOp) Priority() int       { return PriorityServer * 1000 }
+func (op *ServerUpdateOp) Priority() int       { return PriorityServer * PriorityMultiplier }
 func (op *ServerUpdateOp) Describe() string {
 	return DescribeNamedChild(OperationUpdate, "server", op.server.Name, "backend", op.backendName)()
 }

@@ -953,7 +953,7 @@ func TestConvertCRTListsToGeneralFiles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertCRTListsToGeneralFiles(tt.input)
+			result := CRTListsToGeneralFiles(tt.input)
 			require.Len(t, result, len(tt.expected))
 			for i, expected := range tt.expected {
 				assert.Equal(t, expected.Filename, result[i].Filename)
