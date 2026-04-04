@@ -577,7 +577,7 @@ coverage-combined:
         [ -f "$f" ] && PROFILES="$PROFILES $f"
       done
       echo "Merging coverage profiles: $PROFILES"
-      go run github.com/wadey/gocovmerge@latest $PROFILES > coverage/combined.out
+      go run github.com/wadey/gocovmerge@b5bfa59ec0adc420475f97f89b58045c721d761c $PROFILES > coverage/combined.out
     - |
       echo "Combined coverage:"
       go tool cover -func=coverage/combined.out | tail -1

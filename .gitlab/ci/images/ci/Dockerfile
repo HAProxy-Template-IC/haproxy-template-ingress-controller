@@ -43,6 +43,14 @@ ARG GORELEASER_VERSION=2.15.2
 ARG COSIGN_VERSION=3.0.5
 # renovate: datasource=github-releases depName=anchore/syft
 ARG SYFT_VERSION=1.42.3
+# renovate: datasource=github-releases depName=helm/helm versioning=semver allowedVersions=<4
+ARG HELM_VERSION=3.20.1
+# renovate: datasource=github-releases depName=kubernetes/kubernetes
+ARG KUBECTL_VERSION=1.35.3
+# renovate: datasource=github-releases depName=mikefarah/yq
+ARG YQ_VERSION=4.52.5
+# renovate: datasource=github-releases depName=boumenot/gocover-cobertura
+ARG GOCOVER_COBERTURA_VERSION=1.4.0
 
 # Install git (for go modules), Docker CLI, and other build dependencies
 RUN apt-get update \
@@ -70,22 +78,22 @@ RUN curl -fsSL -o /usr/local/bin/kind \
     "https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64" \
     && chmod +x /usr/local/bin/kind
 
-# Install kubectl (latest stable)
-# Use retry flags to handle transient 503 errors from dl.k8s.io
+# Install kubectl
 RUN curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /usr/local/bin/kubectl \
-    "https://dl.k8s.io/release/$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
     && chmod +x /usr/local/bin/kubectl
 
 # Install Helm
-RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+RUN curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
+    | tar xzf - -C /usr/local/bin --strip-components=1 linux-amd64/helm
 
 # Install yq
 RUN curl -fsSL -o /usr/local/bin/yq \
-    "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" \
+    "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
     && chmod +x /usr/local/bin/yq
 
 # Install gocover-cobertura for coverage report conversion
-RUN go install github.com/boumenot/gocover-cobertura@latest
+RUN go install github.com/boumenot/gocover-cobertura@v${GOCOVER_COBERTURA_VERSION}
 
 # Install chart-testing (ct) with configuration files
 RUN mkdir -p /etc/ct \
