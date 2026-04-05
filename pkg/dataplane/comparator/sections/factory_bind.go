@@ -22,39 +22,25 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
-// describeBindWithSSL creates a description for bind operations that includes SSL info.
-// This matches the legacy behavior where bind descriptions included SSL certificate paths.
-func describeBindWithSSL(opType OperationType, bind *models.Bind, frontendName string) string {
-	// Format bind description based on address and port
-	bindDesc := ""
+// bindIdentifier creates a descriptive identifier for a bind that includes address, port, and SSL info.
+func bindIdentifier(bind *models.Bind) string {
+	desc := ""
 	if bind.Address != "" && bind.Port != nil {
-		bindDesc = fmt.Sprintf("%s:%d", bind.Address, *bind.Port)
+		desc = fmt.Sprintf("%s:%d", bind.Address, *bind.Port)
 	} else if bind.Port != nil {
-		bindDesc = fmt.Sprintf("*:%d", *bind.Port)
+		desc = fmt.Sprintf("*:%d", *bind.Port)
 	} else if bind.Name != "" {
-		bindDesc = bind.Name
+		desc = bind.Name
 	}
 
-	// Add SSL info if present
 	if bind.Ssl {
-		sslInfo := " ssl"
+		desc += " ssl"
 		if bind.SslCertificate != "" {
-			sslInfo += fmt.Sprintf(" crt %s", bind.SslCertificate)
+			desc += fmt.Sprintf(" crt %s", bind.SslCertificate)
 		}
-		bindDesc += sslInfo
 	}
 
-	// Use appropriate verb based on operation type
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create bind '%s' in frontend '%s'", bindDesc, frontendName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update bind '%s' in frontend '%s'", bindDesc, frontendName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete bind '%s' from frontend '%s'", bindDesc, frontendName)
-	default:
-		return fmt.Sprintf("Unknown operation on bind '%s' in frontend '%s'", bindDesc, frontendName)
-	}
+	return desc
 }
 
 // NewBindFrontendCreate creates an operation to create a bind in a frontend.
@@ -68,7 +54,7 @@ func NewBindFrontendCreate(frontendName, bindName string, bind *models.Bind) Ope
 		bind,
 		Identity[*models.Bind],
 		executors.BindFrontendCreate(frontendName),
-		func() string { return describeBindWithSSL(OperationCreate, bind, frontendName) },
+		DescribeNamedChild(OperationCreate, "bind", bindIdentifier(bind), "frontend", frontendName),
 	)
 }
 
@@ -83,7 +69,7 @@ func NewBindFrontendUpdate(frontendName, bindName string, bind *models.Bind) Ope
 		bind,
 		Identity[*models.Bind],
 		executors.BindFrontendUpdate(frontendName),
-		func() string { return describeBindWithSSL(OperationUpdate, bind, frontendName) },
+		DescribeNamedChild(OperationUpdate, "bind", bindIdentifier(bind), "frontend", frontendName),
 	)
 }
 
@@ -98,6 +84,6 @@ func NewBindFrontendDelete(frontendName, bindName string, bind *models.Bind) Ope
 		bind,
 		Nil[*models.Bind],
 		executors.BindFrontendDelete(frontendName),
-		func() string { return describeBindWithSSL(OperationDelete, bind, frontendName) },
+		DescribeNamedChild(OperationDelete, "bind", bindIdentifier(bind), "frontend", frontendName),
 	)
 }

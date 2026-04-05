@@ -22,24 +22,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
-// describeBackendSwitchingRule creates a descriptive string for backend switching rule operations.
-// Uses the rule's Name field which contains the condition expression, falls back to index if not available.
-func describeBackendSwitchingRule(opType OperationType, rule *models.BackendSwitchingRule, frontendName string, index int) string {
-	identifier := fmt.Sprintf("at index %d", index)
-	if rule != nil && rule.Name != "" {
-		identifier = fmt.Sprintf("(%s)", rule.Name)
+// backendSwitchingRuleIdentifier extracts the name identifier from a BackendSwitchingRule model.
+func backendSwitchingRuleIdentifier(rule *models.BackendSwitchingRule) string {
+	if rule != nil {
+		return rule.Name
 	}
-
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create backend switching rule %s in frontend '%s'", identifier, frontendName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update backend switching rule %s in frontend '%s'", identifier, frontendName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete backend switching rule %s from frontend '%s'", identifier, frontendName)
-	default:
-		return fmt.Sprintf("Unknown operation on backend switching rule %s in frontend '%s'", identifier, frontendName)
-	}
+	return ""
 }
 
 // NewBackendSwitchingRuleFrontendCreate creates an operation to create a backend switching rule.
@@ -53,7 +41,7 @@ func NewBackendSwitchingRuleFrontendCreate(frontendName string, rule *models.Bac
 		rule,
 		Identity[*models.BackendSwitchingRule],
 		executors.BackendSwitchingRuleCreate(),
-		func() string { return describeBackendSwitchingRule(OperationCreate, rule, frontendName, index) },
+		DescribeTypedChild(OperationCreate, "backend switching rule", backendSwitchingRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -68,7 +56,7 @@ func NewBackendSwitchingRuleFrontendUpdate(frontendName string, rule *models.Bac
 		rule,
 		Identity[*models.BackendSwitchingRule],
 		executors.BackendSwitchingRuleUpdate(),
-		func() string { return describeBackendSwitchingRule(OperationUpdate, rule, frontendName, index) },
+		DescribeTypedChild(OperationUpdate, "backend switching rule", backendSwitchingRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -83,29 +71,12 @@ func NewBackendSwitchingRuleFrontendDelete(frontendName string, rule *models.Bac
 		rule,
 		Nil[*models.BackendSwitchingRule],
 		executors.BackendSwitchingRuleDelete(),
-		func() string { return describeBackendSwitchingRule(OperationDelete, rule, frontendName, index) },
+		DescribeTypedChild(OperationDelete, "backend switching rule", backendSwitchingRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
-// describeServerSwitchingRule generates a human-readable description for a server switching rule operation.
-func describeServerSwitchingRule(opType OperationType, rule *models.ServerSwitchingRule, backendName string, index int) string {
-	identifier := rule.TargetServer
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create server switching rule %s in backend '%s'", identifier, backendName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update server switching rule %s in backend '%s'", identifier, backendName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete server switching rule %s from backend '%s'", identifier, backendName)
-	default:
-		return fmt.Sprintf("Unknown operation on server switching rule %s in backend '%s'", identifier, backendName)
-	}
-}
+// serverSwitchingRuleIdentifier extracts the target server identifier from a ServerSwitchingRule model.
+func serverSwitchingRuleIdentifier(rule *models.ServerSwitchingRule) string { return rule.TargetServer }
 
 // NewServerSwitchingRuleBackendCreate creates an operation to create a server switching rule in a backend.
 func NewServerSwitchingRuleBackendCreate(backendName string, rule *models.ServerSwitchingRule, index int) Operation {
@@ -118,7 +89,7 @@ func NewServerSwitchingRuleBackendCreate(backendName string, rule *models.Server
 		rule,
 		Identity[*models.ServerSwitchingRule],
 		executors.ServerSwitchingRuleBackendCreate(),
-		func() string { return describeServerSwitchingRule(OperationCreate, rule, backendName, index) },
+		DescribeTypedChild(OperationCreate, "server switching rule", serverSwitchingRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -133,7 +104,7 @@ func NewServerSwitchingRuleBackendUpdate(backendName string, rule *models.Server
 		rule,
 		Identity[*models.ServerSwitchingRule],
 		executors.ServerSwitchingRuleBackendUpdate(),
-		func() string { return describeServerSwitchingRule(OperationUpdate, rule, backendName, index) },
+		DescribeTypedChild(OperationUpdate, "server switching rule", serverSwitchingRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -148,6 +119,6 @@ func NewServerSwitchingRuleBackendDelete(backendName string, rule *models.Server
 		rule,
 		Nil[*models.ServerSwitchingRule],
 		executors.ServerSwitchingRuleBackendDelete(),
-		func() string { return describeServerSwitchingRule(OperationDelete, rule, backendName, index) },
+		DescribeTypedChild(OperationDelete, "server switching rule", serverSwitchingRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }

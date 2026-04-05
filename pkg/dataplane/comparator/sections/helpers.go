@@ -60,6 +60,24 @@ func DescribeACL(op OperationType, aclName, parentType, parentName string) func(
 	}
 }
 
+// DescribeTypedChild returns a description function for typed child operations
+// where the identifier is extracted from a model field.
+// If identifier is empty, the fallback is used (e.g. "at index 3").
+// Non-empty identifiers are wrapped in parentheses (e.g. "(request)").
+func DescribeTypedChild(op OperationType, childType, identifier, fallback, parentType, parentName string) func() string {
+	verb := opVerb(op)
+	preposition := opPreposition(op)
+
+	display := fallback
+	if identifier != "" {
+		display = fmt.Sprintf("(%s)", identifier)
+	}
+
+	return func() string {
+		return fmt.Sprintf("%s %s %s %s %s '%s'", verb, childType, display, preposition, parentType, parentName)
+	}
+}
+
 // Prepositions for description text.
 const (
 	prepositionIn   = "in"

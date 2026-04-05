@@ -22,146 +22,26 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
-// describeCapture generates a human-readable description for a capture operation.
-func describeCapture(opType OperationType, capture *models.Capture, frontendName string, index int) string {
-	identifier := capture.Type
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create capture %s in frontend '%s'", identifier, frontendName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update capture %s in frontend '%s'", identifier, frontendName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete capture %s from frontend '%s'", identifier, frontendName)
-	default:
-		return fmt.Sprintf("Unknown operation on capture %s in frontend '%s'", identifier, frontendName)
-	}
-}
+// captureIdentifier extracts the type identifier from a Capture model.
+func captureIdentifier(capture *models.Capture) string { return capture.Type }
 
-// describeTCPRequestRule generates a human-readable description for a TCP request rule operation.
-func describeTCPRequestRule(opType OperationType, rule *models.TCPRequestRule, parentType, parentName string, index int) string {
-	identifier := rule.Type
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create TCP request rule %s in %s '%s'", identifier, parentType, parentName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update TCP request rule %s in %s '%s'", identifier, parentType, parentName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete TCP request rule %s from %s '%s'", identifier, parentType, parentName)
-	default:
-		return fmt.Sprintf("Unknown operation on TCP request rule %s in %s '%s'", identifier, parentType, parentName)
-	}
-}
+// tcpRequestRuleIdentifier extracts the type identifier from a TCPRequestRule model.
+func tcpRequestRuleIdentifier(rule *models.TCPRequestRule) string { return rule.Type }
 
-// describeTCPResponseRule generates a human-readable description for a TCP response rule operation.
-// TCP response rules can only exist in backends.
-func describeTCPResponseRule(opType OperationType, rule *models.TCPResponseRule, parentName string, index int) string {
-	identifier := rule.Type
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create TCP response rule %s in backend '%s'", identifier, parentName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update TCP response rule %s in backend '%s'", identifier, parentName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete TCP response rule %s from backend '%s'", identifier, parentName)
-	default:
-		return fmt.Sprintf("Unknown operation on TCP response rule %s in backend '%s'", identifier, parentName)
-	}
-}
+// tcpResponseRuleIdentifier extracts the type identifier from a TCPResponseRule model.
+func tcpResponseRuleIdentifier(rule *models.TCPResponseRule) string { return rule.Type }
 
-// describeHTTPCheck generates a human-readable description for an HTTP check operation.
-func describeHTTPCheck(opType OperationType, check *models.HTTPCheck, backendName string, index int) string {
-	identifier := check.Type
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create HTTP check %s in backend '%s'", identifier, backendName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update HTTP check %s in backend '%s'", identifier, backendName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete HTTP check %s from backend '%s'", identifier, backendName)
-	default:
-		return fmt.Sprintf("Unknown operation on HTTP check %s in backend '%s'", identifier, backendName)
-	}
-}
+// httpCheckIdentifier extracts the type identifier from an HTTPCheck model.
+func httpCheckIdentifier(check *models.HTTPCheck) string { return check.Type }
 
-// describeTCPCheck generates a human-readable description for a TCP check operation.
-func describeTCPCheck(opType OperationType, check *models.TCPCheck, backendName string, index int) string {
-	identifier := check.Action
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create TCP check %s in backend '%s'", identifier, backendName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update TCP check %s in backend '%s'", identifier, backendName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete TCP check %s from backend '%s'", identifier, backendName)
-	default:
-		return fmt.Sprintf("Unknown operation on TCP check %s in backend '%s'", identifier, backendName)
-	}
-}
+// tcpCheckIdentifier extracts the action identifier from a TCPCheck model.
+func tcpCheckIdentifier(check *models.TCPCheck) string { return check.Action }
 
-// describeStickRule generates a human-readable description for a stick rule operation.
-func describeStickRule(opType OperationType, rule *models.StickRule, backendName string, index int) string {
-	identifier := rule.Type
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create stick rule %s in backend '%s'", identifier, backendName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update stick rule %s in backend '%s'", identifier, backendName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete stick rule %s from backend '%s'", identifier, backendName)
-	default:
-		return fmt.Sprintf("Unknown operation on stick rule %s in backend '%s'", identifier, backendName)
-	}
-}
+// stickRuleIdentifier extracts the type identifier from a StickRule model.
+func stickRuleIdentifier(rule *models.StickRule) string { return rule.Type }
 
-// describeHTTPAfterResponseRule generates a human-readable description for an HTTP after response rule operation.
-func describeHTTPAfterResponseRule(opType OperationType, rule *models.HTTPAfterResponseRule, backendName string, index int) string {
-	identifier := rule.Type
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create HTTP after response rule %s in backend '%s'", identifier, backendName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update HTTP after response rule %s in backend '%s'", identifier, backendName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete HTTP after response rule %s from backend '%s'", identifier, backendName)
-	default:
-		return fmt.Sprintf("Unknown operation on HTTP after response rule %s in backend '%s'", identifier, backendName)
-	}
-}
+// httpAfterResponseRuleIdentifier extracts the type identifier from an HTTPAfterResponseRule model.
+func httpAfterResponseRuleIdentifier(rule *models.HTTPAfterResponseRule) string { return rule.Type }
 
 // NewTCPRequestRuleFrontendCreate creates an operation to create a TCP request rule in a frontend.
 func NewTCPRequestRuleFrontendCreate(frontendName string, rule *models.TCPRequestRule, index int) Operation {
@@ -174,7 +54,7 @@ func NewTCPRequestRuleFrontendCreate(frontendName string, rule *models.TCPReques
 		rule,
 		Identity[*models.TCPRequestRule],
 		executors.TCPRequestRuleFrontendCreate(),
-		func() string { return describeTCPRequestRule(OperationCreate, rule, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -189,7 +69,7 @@ func NewTCPRequestRuleFrontendUpdate(frontendName string, rule *models.TCPReques
 		rule,
 		Identity[*models.TCPRequestRule],
 		executors.TCPRequestRuleFrontendUpdate(),
-		func() string { return describeTCPRequestRule(OperationUpdate, rule, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationUpdate, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -204,7 +84,7 @@ func NewTCPRequestRuleFrontendDelete(frontendName string, rule *models.TCPReques
 		rule,
 		Nil[*models.TCPRequestRule],
 		executors.TCPRequestRuleFrontendDelete(),
-		func() string { return describeTCPRequestRule(OperationDelete, rule, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationDelete, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -219,7 +99,7 @@ func NewTCPRequestRuleBackendCreate(backendName string, rule *models.TCPRequestR
 		rule,
 		Identity[*models.TCPRequestRule],
 		executors.TCPRequestRuleBackendCreate(),
-		func() string { return describeTCPRequestRule(OperationCreate, rule, "backend", backendName, index) },
+		DescribeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -234,7 +114,7 @@ func NewTCPRequestRuleBackendUpdate(backendName string, rule *models.TCPRequestR
 		rule,
 		Identity[*models.TCPRequestRule],
 		executors.TCPRequestRuleBackendUpdate(),
-		func() string { return describeTCPRequestRule(OperationUpdate, rule, "backend", backendName, index) },
+		DescribeTypedChild(OperationUpdate, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -249,7 +129,7 @@ func NewTCPRequestRuleBackendDelete(backendName string, rule *models.TCPRequestR
 		rule,
 		Nil[*models.TCPRequestRule],
 		executors.TCPRequestRuleBackendDelete(),
-		func() string { return describeTCPRequestRule(OperationDelete, rule, "backend", backendName, index) },
+		DescribeTypedChild(OperationDelete, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -264,7 +144,7 @@ func NewTCPResponseRuleBackendCreate(backendName string, rule *models.TCPRespons
 		rule,
 		Identity[*models.TCPResponseRule],
 		executors.TCPResponseRuleBackendCreate(),
-		func() string { return describeTCPResponseRule(OperationCreate, rule, backendName, index) },
+		DescribeTypedChild(OperationCreate, "TCP response rule", tcpResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -279,7 +159,7 @@ func NewTCPResponseRuleBackendUpdate(backendName string, rule *models.TCPRespons
 		rule,
 		Identity[*models.TCPResponseRule],
 		executors.TCPResponseRuleBackendUpdate(),
-		func() string { return describeTCPResponseRule(OperationUpdate, rule, backendName, index) },
+		DescribeTypedChild(OperationUpdate, "TCP response rule", tcpResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -294,7 +174,7 @@ func NewTCPResponseRuleBackendDelete(backendName string, rule *models.TCPRespons
 		rule,
 		Nil[*models.TCPResponseRule],
 		executors.TCPResponseRuleBackendDelete(),
-		func() string { return describeTCPResponseRule(OperationDelete, rule, backendName, index) },
+		DescribeTypedChild(OperationDelete, "TCP response rule", tcpResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -309,7 +189,7 @@ func NewStickRuleBackendCreate(backendName string, rule *models.StickRule, index
 		rule,
 		Identity[*models.StickRule],
 		executors.StickRuleBackendCreate(),
-		func() string { return describeStickRule(OperationCreate, rule, backendName, index) },
+		DescribeTypedChild(OperationCreate, "stick rule", stickRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -324,7 +204,7 @@ func NewStickRuleBackendUpdate(backendName string, rule *models.StickRule, index
 		rule,
 		Identity[*models.StickRule],
 		executors.StickRuleBackendUpdate(),
-		func() string { return describeStickRule(OperationUpdate, rule, backendName, index) },
+		DescribeTypedChild(OperationUpdate, "stick rule", stickRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -339,7 +219,7 @@ func NewStickRuleBackendDelete(backendName string, rule *models.StickRule, index
 		rule,
 		Nil[*models.StickRule],
 		executors.StickRuleBackendDelete(),
-		func() string { return describeStickRule(OperationDelete, rule, backendName, index) },
+		DescribeTypedChild(OperationDelete, "stick rule", stickRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -354,7 +234,7 @@ func NewHTTPAfterResponseRuleBackendCreate(backendName string, rule *models.HTTP
 		rule,
 		Identity[*models.HTTPAfterResponseRule],
 		executors.HTTPAfterResponseRuleBackendCreate(),
-		func() string { return describeHTTPAfterResponseRule(OperationCreate, rule, backendName, index) },
+		DescribeTypedChild(OperationCreate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -369,7 +249,7 @@ func NewHTTPAfterResponseRuleBackendUpdate(backendName string, rule *models.HTTP
 		rule,
 		Identity[*models.HTTPAfterResponseRule],
 		executors.HTTPAfterResponseRuleBackendUpdate(),
-		func() string { return describeHTTPAfterResponseRule(OperationUpdate, rule, backendName, index) },
+		DescribeTypedChild(OperationUpdate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -384,7 +264,7 @@ func NewHTTPAfterResponseRuleBackendDelete(backendName string, rule *models.HTTP
 		rule,
 		Nil[*models.HTTPAfterResponseRule],
 		executors.HTTPAfterResponseRuleBackendDelete(),
-		func() string { return describeHTTPAfterResponseRule(OperationDelete, rule, backendName, index) },
+		DescribeTypedChild(OperationDelete, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -399,7 +279,7 @@ func NewHTTPCheckBackendCreate(backendName string, check *models.HTTPCheck, inde
 		check,
 		Identity[*models.HTTPCheck],
 		executors.HTTPCheckBackendCreate(),
-		func() string { return describeHTTPCheck(OperationCreate, check, backendName, index) },
+		DescribeTypedChild(OperationCreate, "HTTP check", httpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -414,7 +294,7 @@ func NewHTTPCheckBackendUpdate(backendName string, check *models.HTTPCheck, inde
 		check,
 		Identity[*models.HTTPCheck],
 		executors.HTTPCheckBackendUpdate(),
-		func() string { return describeHTTPCheck(OperationUpdate, check, backendName, index) },
+		DescribeTypedChild(OperationUpdate, "HTTP check", httpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -429,7 +309,7 @@ func NewHTTPCheckBackendDelete(backendName string, check *models.HTTPCheck, inde
 		check,
 		Nil[*models.HTTPCheck],
 		executors.HTTPCheckBackendDelete(),
-		func() string { return describeHTTPCheck(OperationDelete, check, backendName, index) },
+		DescribeTypedChild(OperationDelete, "HTTP check", httpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -444,7 +324,7 @@ func NewTCPCheckBackendCreate(backendName string, check *models.TCPCheck, index 
 		check,
 		Identity[*models.TCPCheck],
 		executors.TCPCheckBackendCreate(),
-		func() string { return describeTCPCheck(OperationCreate, check, backendName, index) },
+		DescribeTypedChild(OperationCreate, "TCP check", tcpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -459,7 +339,7 @@ func NewTCPCheckBackendUpdate(backendName string, check *models.TCPCheck, index 
 		check,
 		Identity[*models.TCPCheck],
 		executors.TCPCheckBackendUpdate(),
-		func() string { return describeTCPCheck(OperationUpdate, check, backendName, index) },
+		DescribeTypedChild(OperationUpdate, "TCP check", tcpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -474,7 +354,7 @@ func NewTCPCheckBackendDelete(backendName string, check *models.TCPCheck, index 
 		check,
 		Nil[*models.TCPCheck],
 		executors.TCPCheckBackendDelete(),
-		func() string { return describeTCPCheck(OperationDelete, check, backendName, index) },
+		DescribeTypedChild(OperationDelete, "TCP check", tcpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -489,7 +369,7 @@ func NewCaptureFrontendCreate(frontendName string, capture *models.Capture, inde
 		capture,
 		Identity[*models.Capture],
 		executors.DeclareCaptureFrontendCreate(),
-		func() string { return describeCapture(OperationCreate, capture, frontendName, index) },
+		DescribeTypedChild(OperationCreate, "capture", captureIdentifier(capture), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -504,7 +384,7 @@ func NewCaptureFrontendUpdate(frontendName string, capture *models.Capture, inde
 		capture,
 		Identity[*models.Capture],
 		executors.DeclareCaptureFrontendUpdate(),
-		func() string { return describeCapture(OperationUpdate, capture, frontendName, index) },
+		DescribeTypedChild(OperationUpdate, "capture", captureIdentifier(capture), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -519,6 +399,6 @@ func NewCaptureFrontendDelete(frontendName string, capture *models.Capture, inde
 		capture,
 		Nil[*models.Capture],
 		executors.DeclareCaptureFrontendDelete(),
-		func() string { return describeCapture(OperationDelete, capture, frontendName, index) },
+		DescribeTypedChild(OperationDelete, "capture", captureIdentifier(capture), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
