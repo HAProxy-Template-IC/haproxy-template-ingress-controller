@@ -51,29 +51,7 @@ func (c *DataplaneClient) GetAllLogProfiles(ctx context.Context) ([]string, erro
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get all log profiles failed with status %d", resp.StatusCode)
-	}
-
-	// Parse response body - the API returns an array of log profile objects
-	var apiLogProfiles []struct {
-		Name   *string `json:"name"`
-		LogTag *string `json:"log_tag"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiLogProfiles); err != nil {
-		return nil, fmt.Errorf("decoding log profiles response: %w", err)
-	}
-
-	// Extract log profile names
-	names := make([]string, 0, len(apiLogProfiles))
-	for _, profile := range apiLogProfiles {
-		if profile.Name != nil {
-			names = append(names, *profile.Name)
-		}
-	}
-
-	return names, nil
+	return decodeNameList(resp, "log profiles")
 }
 
 // GetLogProfile retrieves a specific log profile by name.

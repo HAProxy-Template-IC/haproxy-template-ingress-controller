@@ -32,7 +32,7 @@ type CRTListEntry struct {
 // CRT-list entries are only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetCRTListEntries(ctx context.Context, crtListName string) ([]CRTListEntry, error) {
 	// Sanitize the name for the API
-	sanitizedName := sanitizeCRTListName(crtListName)
+	sanitizedName := SanitizeStorageName(crtListName)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
@@ -102,7 +102,7 @@ func (c *DataplaneClient) AddCRTListEntry(ctx context.Context, crtListName strin
 	}
 
 	// Sanitize the name for the API
-	sanitizedName := sanitizeCRTListName(crtListName)
+	sanitizedName := SanitizeStorageName(crtListName)
 
 	jsonData, err := json.Marshal(entry)
 	if err != nil {
@@ -147,7 +147,7 @@ func (c *DataplaneClient) AddCRTListEntry(ctx context.Context, crtListName strin
 // CRT-list entries are only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) DeleteCRTListEntry(ctx context.Context, crtListName, certificate string, lineNumber int) error {
 	// Sanitize the name for the API
-	sanitizedName := sanitizeCRTListName(crtListName)
+	sanitizedName := SanitizeStorageName(crtListName)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {

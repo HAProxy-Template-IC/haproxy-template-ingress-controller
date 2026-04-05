@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -36,30 +35,7 @@ func (c *DataplaneClient) GetAllMapFiles(ctx context.Context) ([]string, error) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get all map files failed with status %d", resp.StatusCode)
-	}
-
-	// Parse response body
-	var apiMaps []struct {
-		StorageName *string `json:"storage_name"`
-		Description *string `json:"description"`
-		File        *string `json:"file"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiMaps); err != nil {
-		return nil, fmt.Errorf("decoding map files response: %w", err)
-	}
-
-	// Extract map file names
-	names := make([]string, 0, len(apiMaps))
-	for _, apiMap := range apiMaps {
-		if apiMap.StorageName != nil {
-			names = append(names, *apiMap.StorageName)
-		}
-	}
-
-	return names, nil
+	return decodeStorageNameList(resp, "map files")
 }
 
 // GetMapFileContent retrieves the content of a specific map file by name.

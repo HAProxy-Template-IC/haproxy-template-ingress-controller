@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -11,19 +10,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
-
-// sanitizeCRTListName sanitizes a crt-list file name for HAProxy Data Plane API storage.
-// The API replaces dots in the filename (excluding the extension) with underscores.
-// For example: "example.com.crtlist" becomes "example_com.crtlist".
-func sanitizeCRTListName(name string) string {
-	return SanitizeStorageName(name)
-}
-
-// unsanitizeCRTListName attempts to reverse the sanitization.
-// This is a best-effort conversion and may not be perfect for all cases.
-func unsanitizeCRTListName(name string) string {
-	return UnsanitizeStorageName(name)
-}
 
 // GetAllCRTListFiles retrieves all crt-list file names from the storage.
 // Note: This returns only crt-list file names, not the file contents.
@@ -46,29 +32,14 @@ func (c *DataplaneClient) GetAllCRTListFiles(ctx context.Context) ([]string, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get all crt-list files failed with status %d", resp.StatusCode)
+	names, err := decodeStorageNameList(resp, "crt-list files")
+	if err != nil {
+		return nil, err
 	}
 
-	// Parse response body
-	var apiCRTLists []struct {
-		StorageName *string `json:"storage_name"`
-		Description *string `json:"description"`
-		File        *string `json:"file"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiCRTLists); err != nil {
-		return nil, fmt.Errorf("decoding crt-list files response: %w", err)
-	}
-
-	// Extract and unsanitize crt-list file names
-	names := make([]string, 0, len(apiCRTLists))
-	for _, apiCRTList := range apiCRTLists {
-		if apiCRTList.StorageName != nil {
-			// Unsanitize the name to restore dots (e.g., "example_com.crtlist" -> "example.com.crtlist")
-			unsanitizedName := unsanitizeCRTListName(*apiCRTList.StorageName)
-			names = append(names, unsanitizedName)
-		}
+	// Unsanitize names to restore dots (e.g., "example_com.crtlist" -> "example.com.crtlist")
+	for i, name := range names {
+		names[i] = UnsanitizeStorageName(name)
 	}
 
 	return names, nil
@@ -80,7 +51,7 @@ func (c *DataplaneClient) GetAllCRTListFiles(ctx context.Context) ([]string, err
 // CRT-list storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) GetCRTListFileContent(ctx context.Context, name string) (string, error) {
 	// Sanitize the name for the API (e.g., "example.com.crtlist" -> "example_com.crtlist")
-	sanitizedName := sanitizeCRTListName(name)
+	sanitizedName := SanitizeStorageName(name)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) { return c.GetOneStorageSSLCrtListFile(ctx, sanitizedName) },
@@ -115,7 +86,7 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 	}
 
 	// Sanitize the name for the API (e.g., "example.com.crtlist" -> "example_com.crtlist")
-	sanitizedName := sanitizeCRTListName(name)
+	sanitizedName := SanitizeStorageName(name)
 
 	body, contentType, err := buildMultipartFilePayload(sanitizedName, content)
 	if err != nil {
@@ -156,7 +127,7 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 // CRT-list storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content string) (string, error) {
 	// Sanitize the name for the API (e.g., "example.com.crtlist" -> "example_com.crtlist")
-	sanitizedName := sanitizeCRTListName(name)
+	sanitizedName := SanitizeStorageName(name)
 
 	// Use text/plain content-type for UPDATE (API v3 requirement)
 	body := bytes.NewReader([]byte(content))
@@ -192,7 +163,7 @@ func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content s
 // CRT-list storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) DeleteCRTListFile(ctx context.Context, name string) error {
 	// Sanitize the name for the API (e.g., "example.com.crtlist" -> "example_com.crtlist")
-	sanitizedName := sanitizeCRTListName(name)
+	sanitizedName := SanitizeStorageName(name)
 
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {

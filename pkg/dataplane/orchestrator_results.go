@@ -155,180 +155,54 @@ func auxDiffsToOperations(auxDiffs *auxiliaryFileDiffs) []AppliedOperation {
 		return nil
 	}
 
-	fileOps := fileDiffToOperations(auxDiffs.fileDiff)
-	sslOps := sslDiffToOperations(auxDiffs.sslDiff)
-	caOps := caFileDiffToOperations(auxDiffs.caFileDiff)
-	mapOps := mapDiffToOperations(auxDiffs.mapDiff)
-	crtlistOps := crtlistDiffToOperations(auxDiffs.crtlistDiff)
-	ops := make([]AppliedOperation, 0, len(fileOps)+len(sslOps)+len(caOps)+len(mapOps)+len(crtlistOps))
-	ops = append(ops, fileOps...)
-	ops = append(ops, sslOps...)
-	ops = append(ops, caOps...)
-	ops = append(ops, mapOps...)
-	ops = append(ops, crtlistOps...)
-	return ops
-}
-
-// fileDiffToOperations converts general file diffs to AppliedOperations.
-func fileDiffToOperations(diff *auxiliaryfiles.FileDiff) []AppliedOperation {
-	if diff == nil {
-		return nil
+	var ops []AppliedOperation
+	if d := auxDiffs.fileDiff; d != nil {
+		ops = append(ops, auxFileDiffToOperations(d.ToCreate, d.ToUpdate, d.ToDelete, "file", "general file")...)
 	}
-	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
-	for _, f := range diff.ToCreate {
-		ops = append(ops, AppliedOperation{
-			Type:        opCreate,
-			Section:     "file",
-			Resource:    f.Filename,
-			Description: "Created general file " + f.Filename,
-		})
+	if d := auxDiffs.sslDiff; d != nil {
+		ops = append(ops, auxFileDiffToOperations(d.ToCreate, d.ToUpdate, d.ToDelete, "ssl-cert", "SSL certificate")...)
 	}
-	for _, f := range diff.ToUpdate {
-		ops = append(ops, AppliedOperation{
-			Type:        opUpdate,
-			Section:     "file",
-			Resource:    f.Filename,
-			Description: "Updated general file " + f.Filename,
-		})
+	if d := auxDiffs.caFileDiff; d != nil {
+		ops = append(ops, auxFileDiffToOperations(d.ToCreate, d.ToUpdate, d.ToDelete, "ssl-ca", "SSL CA file")...)
 	}
-	for _, path := range diff.ToDelete {
-		ops = append(ops, AppliedOperation{
-			Type:        opDelete,
-			Section:     "file",
-			Resource:    path,
-			Description: "Deleted general file " + path,
-		})
+	if d := auxDiffs.mapDiff; d != nil {
+		ops = append(ops, auxFileDiffToOperations(d.ToCreate, d.ToUpdate, d.ToDelete, "map", "map file")...)
+	}
+	if d := auxDiffs.crtlistDiff; d != nil {
+		ops = append(ops, auxFileDiffToOperations(d.ToCreate, d.ToUpdate, d.ToDelete, "crt-list", "crt-list file")...)
 	}
 	return ops
 }
 
-// sslDiffToOperations converts SSL certificate diffs to AppliedOperations.
-func sslDiffToOperations(diff *auxiliaryfiles.SSLCertificateDiff) []AppliedOperation {
-	if diff == nil {
-		return nil
-	}
-	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
-	for _, c := range diff.ToCreate {
+// auxFileDiffToOperations converts any auxiliary file diff to AppliedOperations.
+// The section and label parameters identify the file type (e.g., "file"/"general file",
+// "ssl-cert"/"SSL certificate").
+func auxFileDiffToOperations[T auxiliaryfiles.FileItem](toCreate, toUpdate []T, toDelete []string, section, label string) []AppliedOperation {
+	ops := make([]AppliedOperation, 0, len(toCreate)+len(toUpdate)+len(toDelete))
+	for _, f := range toCreate {
+		id := f.GetIdentifier()
 		ops = append(ops, AppliedOperation{
 			Type:        opCreate,
-			Section:     "ssl-cert",
-			Resource:    c.Path,
-			Description: "Created SSL certificate " + c.Path,
+			Section:     section,
+			Resource:    id,
+			Description: "Created " + label + " " + id,
 		})
 	}
-	for _, c := range diff.ToUpdate {
+	for _, f := range toUpdate {
+		id := f.GetIdentifier()
 		ops = append(ops, AppliedOperation{
 			Type:        opUpdate,
-			Section:     "ssl-cert",
-			Resource:    c.Path,
-			Description: "Updated SSL certificate " + c.Path,
+			Section:     section,
+			Resource:    id,
+			Description: "Updated " + label + " " + id,
 		})
 	}
-	for _, path := range diff.ToDelete {
+	for _, path := range toDelete {
 		ops = append(ops, AppliedOperation{
 			Type:        opDelete,
-			Section:     "ssl-cert",
+			Section:     section,
 			Resource:    path,
-			Description: "Deleted SSL certificate " + path,
-		})
-	}
-	return ops
-}
-
-// caFileDiffToOperations converts SSL CA file diffs to AppliedOperations.
-func caFileDiffToOperations(diff *auxiliaryfiles.SSLCaFileDiff) []AppliedOperation {
-	if diff == nil {
-		return nil
-	}
-	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
-	for _, c := range diff.ToCreate {
-		ops = append(ops, AppliedOperation{
-			Type:        opCreate,
-			Section:     "ssl-ca",
-			Resource:    c.Path,
-			Description: "Created SSL CA file " + c.Path,
-		})
-	}
-	for _, c := range diff.ToUpdate {
-		ops = append(ops, AppliedOperation{
-			Type:        opUpdate,
-			Section:     "ssl-ca",
-			Resource:    c.Path,
-			Description: "Updated SSL CA file " + c.Path,
-		})
-	}
-	for _, path := range diff.ToDelete {
-		ops = append(ops, AppliedOperation{
-			Type:        opDelete,
-			Section:     "ssl-ca",
-			Resource:    path,
-			Description: "Deleted SSL CA file " + path,
-		})
-	}
-	return ops
-}
-
-// mapDiffToOperations converts map file diffs to AppliedOperations.
-func mapDiffToOperations(diff *auxiliaryfiles.MapFileDiff) []AppliedOperation {
-	if diff == nil {
-		return nil
-	}
-	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
-	for _, m := range diff.ToCreate {
-		ops = append(ops, AppliedOperation{
-			Type:        opCreate,
-			Section:     "map",
-			Resource:    m.Path,
-			Description: "Created map file " + m.Path,
-		})
-	}
-	for _, m := range diff.ToUpdate {
-		ops = append(ops, AppliedOperation{
-			Type:        opUpdate,
-			Section:     "map",
-			Resource:    m.Path,
-			Description: "Updated map file " + m.Path,
-		})
-	}
-	for _, path := range diff.ToDelete {
-		ops = append(ops, AppliedOperation{
-			Type:        opDelete,
-			Section:     "map",
-			Resource:    path,
-			Description: "Deleted map file " + path,
-		})
-	}
-	return ops
-}
-
-// crtlistDiffToOperations converts CRT-list file diffs to AppliedOperations.
-func crtlistDiffToOperations(diff *auxiliaryfiles.CRTListDiff) []AppliedOperation {
-	if diff == nil {
-		return nil
-	}
-	ops := make([]AppliedOperation, 0, len(diff.ToCreate)+len(diff.ToUpdate)+len(diff.ToDelete))
-	for _, c := range diff.ToCreate {
-		ops = append(ops, AppliedOperation{
-			Type:        opCreate,
-			Section:     "crt-list",
-			Resource:    c.Path,
-			Description: "Created crt-list file " + c.Path,
-		})
-	}
-	for _, c := range diff.ToUpdate {
-		ops = append(ops, AppliedOperation{
-			Type:        opUpdate,
-			Section:     "crt-list",
-			Resource:    c.Path,
-			Description: "Updated crt-list file " + c.Path,
-		})
-	}
-	for _, path := range diff.ToDelete {
-		ops = append(ops, AppliedOperation{
-			Type:        opDelete,
-			Section:     "crt-list",
-			Resource:    path,
-			Description: "Deleted crt-list file " + path,
+			Description: "Deleted " + label + " " + path,
 		})
 	}
 	return ops
