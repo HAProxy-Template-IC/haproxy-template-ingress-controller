@@ -24,6 +24,10 @@ func TestAuxiliaryFiles_Sort(t *testing.T) {
 			{Path: "/certs/b.pem", Content: "cert b"},
 			{Path: "/certs/a.pem", Content: "cert a"},
 		},
+		SSLCaFiles: []auxiliaryfiles.SSLCaFile{
+			{Path: "/ca/b-ca.pem", Content: "ca b"},
+			{Path: "/ca/a-ca.pem", Content: "ca a"},
+		},
 		CRTListFiles: []auxiliaryfiles.CRTListFile{
 			{Path: "/crt-list/b.txt", Content: "list b"},
 			{Path: "/crt-list/a.txt", Content: "list a"},
@@ -40,6 +44,8 @@ func TestAuxiliaryFiles_Sort(t *testing.T) {
 	assert.Equal(t, "/maps/b.map", aux.MapFiles[1].Path)
 	assert.Equal(t, "/certs/a.pem", aux.SSLCertificates[0].Path)
 	assert.Equal(t, "/certs/b.pem", aux.SSLCertificates[1].Path)
+	assert.Equal(t, "/ca/a-ca.pem", aux.SSLCaFiles[0].Path)
+	assert.Equal(t, "/ca/b-ca.pem", aux.SSLCaFiles[1].Path)
 	assert.Equal(t, "/crt-list/a.txt", aux.CRTListFiles[0].Path)
 	assert.Equal(t, "/crt-list/b.txt", aux.CRTListFiles[1].Path)
 }
@@ -62,6 +68,10 @@ func TestComputeContentChecksum_DeterministicAfterSort(t *testing.T) {
 			{Path: "/certs/a.pem", Content: "cert a"},
 			{Path: "/certs/b.pem", Content: "cert b"},
 		},
+		SSLCaFiles: []auxiliaryfiles.SSLCaFile{
+			{Path: "/ca/a-ca.pem", Content: "ca a"},
+			{Path: "/ca/b-ca.pem", Content: "ca b"},
+		},
 		CRTListFiles: []auxiliaryfiles.CRTListFile{
 			{Path: "/crt-list/a.txt", Content: "list a"},
 			{Path: "/crt-list/b.txt", Content: "list b"},
@@ -81,6 +91,10 @@ func TestComputeContentChecksum_DeterministicAfterSort(t *testing.T) {
 		SSLCertificates: []auxiliaryfiles.SSLCertificate{
 			{Path: "/certs/b.pem", Content: "cert b"},
 			{Path: "/certs/a.pem", Content: "cert a"},
+		},
+		SSLCaFiles: []auxiliaryfiles.SSLCaFile{
+			{Path: "/ca/b-ca.pem", Content: "ca b"},
+			{Path: "/ca/a-ca.pem", Content: "ca a"},
 		},
 		CRTListFiles: []auxiliaryfiles.CRTListFile{
 			{Path: "/crt-list/b.txt", Content: "list b"},

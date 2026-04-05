@@ -27,6 +27,7 @@ func ComputeContentChecksum(haproxyConfig string, auxFiles *AuxiliaryFiles) stri
 		hashGeneralFiles(h, auxFiles.GeneralFiles)
 		hashMapFiles(h, auxFiles.MapFiles)
 		hashSSLCertificates(h, auxFiles.SSLCertificates)
+		hashSSLCaFiles(h, auxFiles.SSLCaFiles)
 		hashCRTListFiles(h, auxFiles.CRTListFiles)
 	}
 
@@ -52,6 +53,14 @@ func hashMapFiles(h hash.Hash, files []auxiliaryfiles.MapFile) {
 
 // hashSSLCertificates hashes SSL certificates in order (must be pre-sorted by Path).
 func hashSSLCertificates(h hash.Hash, files []auxiliaryfiles.SSLCertificate) {
+	for _, f := range files {
+		h.Write([]byte(f.Path))
+		h.Write([]byte(f.Content))
+	}
+}
+
+// hashSSLCaFiles hashes SSL CA files in order (must be pre-sorted by Path).
+func hashSSLCaFiles(h hash.Hash, files []auxiliaryfiles.SSLCaFile) {
 	for _, f := range files {
 		h.Write([]byte(f.Path))
 		h.Write([]byte(f.Content))
