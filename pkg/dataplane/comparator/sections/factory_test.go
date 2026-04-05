@@ -1796,7 +1796,7 @@ func TestCaptureFactoryFunctions(t *testing.T) {
 }
 
 func TestDescribeHelperFunctions(t *testing.T) {
-	t.Run("describeBindWithSSL", func(t *testing.T) {
+	t.Run("bindIdentifier", func(t *testing.T) {
 		ptrInt64 := func(i int64) *int64 { return &i }
 
 		tests := []struct {
@@ -1846,7 +1846,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				got := describeBindWithSSL(tt.opType, tt.bind, tt.frontendName)
+				got := DescribeNamedChild(tt.opType, "bind", bindIdentifier(tt.bind), "frontend", tt.frontendName)()
 				for _, want := range tt.wantContains {
 					assert.Contains(t, got, want)
 				}
@@ -1854,97 +1854,97 @@ func TestDescribeHelperFunctions(t *testing.T) {
 		}
 	})
 
-	t.Run("describeLogTarget", func(t *testing.T) {
+	t.Run("DescribeTypedChild_logTarget", func(t *testing.T) {
 		logTarget := &models.LogTarget{Address: "127.0.0.1", Facility: "local0"}
 
-		desc := describeLogTarget(OperationCreate, logTarget, "frontend", "http", 0)
+		desc := DescribeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), "at index 0", "frontend", "http")()
 		assert.Contains(t, desc, "Create log target")
 		assert.Contains(t, desc, "frontend 'http'")
 	})
 
-	t.Run("describeFilter", func(t *testing.T) {
+	t.Run("DescribeTypedChild_filter", func(t *testing.T) {
 		filter := &models.Filter{Type: "trace"}
 
-		desc := describeFilter(OperationUpdate, filter, "backend", "api", 0)
+		desc := DescribeTypedChild(OperationUpdate, "filter", filterIdentifier(filter), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Update filter")
 		assert.Contains(t, desc, "trace")
 		assert.Contains(t, desc, "backend 'api'")
 	})
 
-	t.Run("describeCapture", func(t *testing.T) {
+	t.Run("DescribeTypedChild_capture", func(t *testing.T) {
 		capture := &models.Capture{Type: "request"}
 
-		desc := describeCapture(OperationDelete, capture, "http", 0)
+		desc := DescribeTypedChild(OperationDelete, "capture", captureIdentifier(capture), "at index 0", "frontend", "http")()
 		assert.Contains(t, desc, "Delete capture")
 		assert.Contains(t, desc, "request")
 		assert.Contains(t, desc, "frontend 'http'")
 	})
 
-	t.Run("describeTCPRequestRule", func(t *testing.T) {
+	t.Run("DescribeTypedChild_tcpRequestRule", func(t *testing.T) {
 		rule := &models.TCPRequestRule{Type: "inspect-delay"}
 
-		desc := describeTCPRequestRule(OperationCreate, rule, "frontend", "tcp", 0)
+		desc := DescribeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), "at index 0", "frontend", "tcp")()
 		assert.Contains(t, desc, "Create TCP request rule")
 		assert.Contains(t, desc, "inspect-delay")
 		assert.Contains(t, desc, "frontend 'tcp'")
 	})
 
-	t.Run("describeTCPResponseRule", func(t *testing.T) {
+	t.Run("DescribeTypedChild_tcpResponseRule", func(t *testing.T) {
 		rule := &models.TCPResponseRule{Type: "content"}
 
-		desc := describeTCPResponseRule(OperationUpdate, rule, "api", 0)
+		desc := DescribeTypedChild(OperationUpdate, "TCP response rule", tcpResponseRuleIdentifier(rule), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Update TCP response rule")
 		assert.Contains(t, desc, "content")
 		assert.Contains(t, desc, "backend 'api'")
 	})
 
-	t.Run("describeHTTPCheck", func(t *testing.T) {
+	t.Run("DescribeTypedChild_httpCheck", func(t *testing.T) {
 		check := &models.HTTPCheck{Type: "send"}
 
-		desc := describeHTTPCheck(OperationDelete, check, "api", 0)
+		desc := DescribeTypedChild(OperationDelete, "HTTP check", httpCheckIdentifier(check), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Delete HTTP check")
 		assert.Contains(t, desc, "send")
 		assert.Contains(t, desc, "backend 'api'")
 	})
 
-	t.Run("describeTCPCheck", func(t *testing.T) {
+	t.Run("DescribeTypedChild_tcpCheck", func(t *testing.T) {
 		check := &models.TCPCheck{Action: "connect"}
 
-		desc := describeTCPCheck(OperationCreate, check, "api", 0)
+		desc := DescribeTypedChild(OperationCreate, "TCP check", tcpCheckIdentifier(check), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Create TCP check")
 		assert.Contains(t, desc, "connect")
 		assert.Contains(t, desc, "backend 'api'")
 	})
 
-	t.Run("describeStickRule", func(t *testing.T) {
+	t.Run("DescribeTypedChild_stickRule", func(t *testing.T) {
 		rule := &models.StickRule{Type: "store-request"}
 
-		desc := describeStickRule(OperationUpdate, rule, "api", 0)
+		desc := DescribeTypedChild(OperationUpdate, "stick rule", stickRuleIdentifier(rule), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Update stick rule")
 		assert.Contains(t, desc, "store-request")
 		assert.Contains(t, desc, "backend 'api'")
 	})
 
-	t.Run("describeServerSwitchingRule", func(t *testing.T) {
+	t.Run("DescribeTypedChild_serverSwitchingRule", func(t *testing.T) {
 		rule := &models.ServerSwitchingRule{TargetServer: "srv1"}
 
-		desc := describeServerSwitchingRule(OperationDelete, rule, "api", 0)
+		desc := DescribeTypedChild(OperationDelete, "server switching rule", serverSwitchingRuleIdentifier(rule), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Delete server switching rule")
 		assert.Contains(t, desc, "srv1")
 		assert.Contains(t, desc, "backend 'api'")
 	})
 
-	t.Run("describeHTTPAfterResponseRule", func(t *testing.T) {
+	t.Run("DescribeTypedChild_httpAfterResponseRule", func(t *testing.T) {
 		rule := &models.HTTPAfterResponseRule{Type: "set-header"}
 
-		desc := describeHTTPAfterResponseRule(OperationCreate, rule, "api", 0)
+		desc := DescribeTypedChild(OperationCreate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Create HTTP after response rule")
 		assert.Contains(t, desc, "set-header")
 		assert.Contains(t, desc, "backend 'api'")
 	})
 
-	// Test describeHTTPRequestRule with all operation types
-	t.Run("describeHTTPRequestRule", func(t *testing.T) {
+	// Test DescribeTypedChild with all operation types
+	t.Run("DescribeTypedChild_httpRequestRule_all_ops", func(t *testing.T) {
 		rule := &models.HTTPRequestRule{Type: "add-header"}
 
 		tests := []struct {
@@ -1954,25 +1954,25 @@ func TestDescribeHelperFunctions(t *testing.T) {
 			{OperationCreate, "Create HTTP request rule"},
 			{OperationUpdate, "Update HTTP request rule"},
 			{OperationDelete, "Delete HTTP request rule"},
-			{OperationType(99), "Unknown operation on HTTP request rule"},
+			{OperationType(99), "Process HTTP request rule"},
 		}
 
 		for _, tt := range tests {
-			desc := describeHTTPRequestRule(tt.opType, rule, "frontend", "http", 0)
+			desc := DescribeTypedChild(tt.opType, "HTTP request rule", httpRequestRuleIdentifier(rule), "at index 0", "frontend", "http")()
 			assert.Contains(t, desc, tt.wantContains)
 			assert.Contains(t, desc, "add-header")
 		}
 	})
 
-	// Test describeHTTPRequestRule with nil type - uses index fallback
-	t.Run("describeHTTPRequestRule_nil_type", func(t *testing.T) {
+	// Test DescribeTypedChild with empty identifier - uses fallback
+	t.Run("DescribeTypedChild_httpRequestRule_empty_type", func(t *testing.T) {
 		rule := &models.HTTPRequestRule{}
-		desc := describeHTTPRequestRule(OperationCreate, rule, "frontend", "http", 5)
+		desc := DescribeTypedChild(OperationCreate, "HTTP request rule", httpRequestRuleIdentifier(rule), "at index 5", "frontend", "http")()
 		assert.Contains(t, desc, "at index 5")
 	})
 
-	// Test describeHTTPResponseRule with all operation types
-	t.Run("describeHTTPResponseRule_all_ops", func(t *testing.T) {
+	// Test DescribeTypedChild for HTTP response rule
+	t.Run("DescribeTypedChild_httpResponseRule_all_ops", func(t *testing.T) {
 		rule := &models.HTTPResponseRule{Type: "set-header"}
 
 		tests := []struct {
@@ -1982,17 +1982,17 @@ func TestDescribeHelperFunctions(t *testing.T) {
 			{OperationCreate, "Create HTTP response rule"},
 			{OperationUpdate, "Update HTTP response rule"},
 			{OperationDelete, "Delete HTTP response rule"},
-			{OperationType(99), "Unknown operation on HTTP response rule"},
+			{OperationType(99), "Process HTTP response rule"},
 		}
 
 		for _, tt := range tests {
-			desc := describeHTTPResponseRule(tt.opType, rule, "backend", "api")
+			desc := DescribeTypedChild(tt.opType, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "backend", "api")()
 			assert.Contains(t, desc, tt.wantContains)
 		}
 	})
 
-	// Test describeBackendSwitchingRule with all operation types
-	t.Run("describeBackendSwitchingRule_all_ops", func(t *testing.T) {
+	// Test DescribeTypedChild for backend switching rule
+	t.Run("DescribeTypedChild_backendSwitchingRule_all_ops", func(t *testing.T) {
 		rule := &models.BackendSwitchingRule{Name: "api_backend"}
 
 		tests := []struct {
@@ -2002,154 +2002,93 @@ func TestDescribeHelperFunctions(t *testing.T) {
 			{OperationCreate, "Create backend switching rule"},
 			{OperationUpdate, "Update backend switching rule"},
 			{OperationDelete, "Delete backend switching rule"},
-			{OperationType(99), "Unknown operation on backend switching rule"},
+			{OperationType(99), "Process backend switching rule"},
 		}
 
 		for _, tt := range tests {
-			desc := describeBackendSwitchingRule(tt.opType, rule, "http", 0)
+			desc := DescribeTypedChild(tt.opType, "backend switching rule", backendSwitchingRuleIdentifier(rule), "at index 0", "frontend", "http")()
 			assert.Contains(t, desc, tt.wantContains)
 			assert.Contains(t, desc, "api_backend")
 		}
 	})
 
-	// Test describeBackendSwitchingRule with empty name - uses index fallback
-	t.Run("describeBackendSwitchingRule_empty_name", func(t *testing.T) {
+	// Test DescribeTypedChild with empty identifier - uses index fallback
+	t.Run("DescribeTypedChild_backendSwitchingRule_empty_name", func(t *testing.T) {
 		rule := &models.BackendSwitchingRule{}
-		desc := describeBackendSwitchingRule(OperationCreate, rule, "http", 3)
+		desc := DescribeTypedChild(OperationCreate, "backend switching rule", backendSwitchingRuleIdentifier(rule), "at index 3", "frontend", "http")()
 		assert.Contains(t, desc, "at index 3")
 	})
 
-	// Test default operation type branches for remaining describe functions
-	t.Run("describeLogTarget_unknown_op", func(t *testing.T) {
-		logTarget := &models.LogTarget{Address: "127.0.0.1"}
-		desc := describeLogTarget(OperationType(99), logTarget, "frontend", "http", 0)
-		assert.Contains(t, desc, "Unknown operation on log target")
-	})
-
-	t.Run("describeFilter_unknown_op", func(t *testing.T) {
-		filter := &models.Filter{Type: "trace"}
-		desc := describeFilter(OperationType(99), filter, "backend", "api", 0)
-		assert.Contains(t, desc, "Unknown operation on filter")
-	})
-
-	t.Run("describeCapture_unknown_op", func(t *testing.T) {
-		capture := &models.Capture{Type: "request"}
-		desc := describeCapture(OperationType(99), capture, "http", 0)
-		assert.Contains(t, desc, "Unknown operation on capture")
-	})
-
-	t.Run("describeTCPRequestRule_unknown_op", func(t *testing.T) {
-		rule := &models.TCPRequestRule{Type: "inspect-delay"}
-		desc := describeTCPRequestRule(OperationType(99), rule, "frontend", "tcp", 0)
-		assert.Contains(t, desc, "Unknown operation on TCP request rule")
-	})
-
-	t.Run("describeTCPResponseRule_unknown_op", func(t *testing.T) {
-		rule := &models.TCPResponseRule{Type: "content"}
-		desc := describeTCPResponseRule(OperationType(99), rule, "api", 0)
-		assert.Contains(t, desc, "Unknown operation on TCP response rule")
-	})
-
-	t.Run("describeHTTPCheck_unknown_op", func(t *testing.T) {
-		check := &models.HTTPCheck{Type: "send"}
-		desc := describeHTTPCheck(OperationType(99), check, "api", 0)
-		assert.Contains(t, desc, "Unknown operation on HTTP check")
-	})
-
-	t.Run("describeTCPCheck_unknown_op", func(t *testing.T) {
-		check := &models.TCPCheck{Action: "connect"}
-		desc := describeTCPCheck(OperationType(99), check, "api", 0)
-		assert.Contains(t, desc, "Unknown operation on TCP check")
-	})
-
-	t.Run("describeStickRule_unknown_op", func(t *testing.T) {
-		rule := &models.StickRule{Type: "store-request"}
-		desc := describeStickRule(OperationType(99), rule, "api", 0)
-		assert.Contains(t, desc, "Unknown operation on stick rule")
-	})
-
-	t.Run("describeServerSwitchingRule_unknown_op", func(t *testing.T) {
-		rule := &models.ServerSwitchingRule{TargetServer: "srv1"}
-		desc := describeServerSwitchingRule(OperationType(99), rule, "api", 0)
-		assert.Contains(t, desc, "Unknown operation on server switching rule")
-	})
-
-	t.Run("describeHTTPAfterResponseRule_unknown_op", func(t *testing.T) {
-		rule := &models.HTTPAfterResponseRule{Type: "set-header"}
-		desc := describeHTTPAfterResponseRule(OperationType(99), rule, "api", 0)
-		assert.Contains(t, desc, "Unknown operation on HTTP after response rule")
-	})
-
-	// Test nil type/empty identifier branches
-	t.Run("describeLogTarget_empty", func(t *testing.T) {
+	// Test empty identifier branches - fallback to index
+	t.Run("DescribeTypedChild_logTarget_empty", func(t *testing.T) {
 		logTarget := &models.LogTarget{}
-		desc := describeLogTarget(OperationCreate, logTarget, "frontend", "http", 5)
+		desc := DescribeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), "at index 5", "frontend", "http")()
 		assert.Contains(t, desc, "at index 5")
 	})
 
-	t.Run("describeFilter_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_filter_empty", func(t *testing.T) {
 		filter := &models.Filter{}
-		desc := describeFilter(OperationCreate, filter, "backend", "api", 3)
+		desc := DescribeTypedChild(OperationCreate, "filter", filterIdentifier(filter), "at index 3", "backend", "api")()
 		assert.Contains(t, desc, "at index 3")
 	})
 
-	t.Run("describeCapture_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_capture_empty", func(t *testing.T) {
 		capture := &models.Capture{}
-		desc := describeCapture(OperationCreate, capture, "http", 2)
+		desc := DescribeTypedChild(OperationCreate, "capture", captureIdentifier(capture), "at index 2", "frontend", "http")()
 		assert.Contains(t, desc, "at index 2")
 	})
 
-	t.Run("describeTCPRequestRule_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_tcpRequestRule_empty", func(t *testing.T) {
 		rule := &models.TCPRequestRule{}
-		desc := describeTCPRequestRule(OperationCreate, rule, "frontend", "tcp", 4)
+		desc := DescribeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), "at index 4", "frontend", "tcp")()
 		assert.Contains(t, desc, "at index 4")
 	})
 
-	t.Run("describeTCPResponseRule_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_tcpResponseRule_empty", func(t *testing.T) {
 		rule := &models.TCPResponseRule{}
-		desc := describeTCPResponseRule(OperationCreate, rule, "api", 1)
+		desc := DescribeTypedChild(OperationCreate, "TCP response rule", tcpResponseRuleIdentifier(rule), "at index 1", "backend", "api")()
 		assert.Contains(t, desc, "at index 1")
 	})
 
-	t.Run("describeHTTPCheck_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_httpCheck_empty", func(t *testing.T) {
 		check := &models.HTTPCheck{}
-		desc := describeHTTPCheck(OperationCreate, check, "api", 6)
+		desc := DescribeTypedChild(OperationCreate, "HTTP check", httpCheckIdentifier(check), "at index 6", "backend", "api")()
 		assert.Contains(t, desc, "at index 6")
 	})
 
-	t.Run("describeTCPCheck_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_tcpCheck_empty", func(t *testing.T) {
 		check := &models.TCPCheck{}
-		desc := describeTCPCheck(OperationCreate, check, "api", 7)
+		desc := DescribeTypedChild(OperationCreate, "TCP check", tcpCheckIdentifier(check), "at index 7", "backend", "api")()
 		assert.Contains(t, desc, "at index 7")
 	})
 
-	t.Run("describeStickRule_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_stickRule_empty", func(t *testing.T) {
 		rule := &models.StickRule{}
-		desc := describeStickRule(OperationCreate, rule, "api", 8)
+		desc := DescribeTypedChild(OperationCreate, "stick rule", stickRuleIdentifier(rule), "at index 8", "backend", "api")()
 		assert.Contains(t, desc, "at index 8")
 	})
 
-	t.Run("describeServerSwitchingRule_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_serverSwitchingRule_empty", func(t *testing.T) {
 		rule := &models.ServerSwitchingRule{}
-		desc := describeServerSwitchingRule(OperationCreate, rule, "api", 9)
+		desc := DescribeTypedChild(OperationCreate, "server switching rule", serverSwitchingRuleIdentifier(rule), "at index 9", "backend", "api")()
 		assert.Contains(t, desc, "at index 9")
 	})
 
-	t.Run("describeHTTPAfterResponseRule_empty", func(t *testing.T) {
+	t.Run("DescribeTypedChild_httpAfterResponseRule_empty", func(t *testing.T) {
 		rule := &models.HTTPAfterResponseRule{}
-		desc := describeHTTPAfterResponseRule(OperationCreate, rule, "api", 10)
+		desc := DescribeTypedChild(OperationCreate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), "at index 10", "backend", "api")()
 		assert.Contains(t, desc, "at index 10")
 	})
 
-	// Test describeBindWithSSL unknown operation type
-	t.Run("describeBindWithSSL_unknown_op", func(t *testing.T) {
+	// Test DescribeNamedChild for bind with unknown operation type
+	t.Run("bindIdentifier_unknown_op", func(t *testing.T) {
 		ptrInt64 := func(i int64) *int64 { return &i }
 		bind := &models.Bind{
 			Address: "*",
 			Port:    ptrInt64(80),
 		}
-		desc := describeBindWithSSL(OperationType(99), bind, "http")
-		assert.Contains(t, desc, "Unknown operation on bind")
+		desc := DescribeNamedChild(OperationType(99), "bind", bindIdentifier(bind), "frontend", "http")()
+		assert.Contains(t, desc, "Process bind")
 	})
 }
 

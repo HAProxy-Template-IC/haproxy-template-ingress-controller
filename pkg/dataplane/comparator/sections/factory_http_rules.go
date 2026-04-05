@@ -22,24 +22,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
-// describeHTTPRequestRule creates a descriptive string for HTTP request rule operations.
-// Uses the rule's Type field for identification, falls back to index if not available.
-func describeHTTPRequestRule(opType OperationType, rule *models.HTTPRequestRule, parentType, parentName string, index int) string {
-	identifier := fmt.Sprintf("at index %d", index)
-	if rule != nil && rule.Type != "" {
-		identifier = fmt.Sprintf("(%s)", rule.Type)
+// httpRequestRuleIdentifier extracts the type identifier from an HTTPRequestRule model.
+func httpRequestRuleIdentifier(rule *models.HTTPRequestRule) string {
+	if rule != nil {
+		return rule.Type
 	}
-
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create HTTP request rule %s in %s '%s'", identifier, parentType, parentName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update HTTP request rule %s in %s '%s'", identifier, parentType, parentName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete HTTP request rule %s from %s '%s'", identifier, parentType, parentName)
-	default:
-		return fmt.Sprintf("Unknown operation on HTTP request rule %s in %s '%s'", identifier, parentType, parentName)
-	}
+	return ""
 }
 
 // NewHTTPRequestRuleFrontendCreate creates an operation to create an HTTP request rule in a frontend.
@@ -53,7 +41,7 @@ func NewHTTPRequestRuleFrontendCreate(frontendName string, rule *models.HTTPRequ
 		rule,
 		Identity[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleFrontendCreate(),
-		func() string { return describeHTTPRequestRule(OperationCreate, rule, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationCreate, "HTTP request rule", httpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -68,7 +56,7 @@ func NewHTTPRequestRuleFrontendUpdate(frontendName string, rule *models.HTTPRequ
 		rule,
 		Identity[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleFrontendUpdate(),
-		func() string { return describeHTTPRequestRule(OperationUpdate, rule, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationUpdate, "HTTP request rule", httpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -83,7 +71,7 @@ func NewHTTPRequestRuleFrontendDelete(frontendName string, rule *models.HTTPRequ
 		rule,
 		Nil[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleFrontendDelete(),
-		func() string { return describeHTTPRequestRule(OperationDelete, rule, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationDelete, "HTTP request rule", httpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -98,7 +86,7 @@ func NewHTTPRequestRuleBackendCreate(backendName string, rule *models.HTTPReques
 		rule,
 		Identity[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleBackendCreate(),
-		func() string { return describeHTTPRequestRule(OperationCreate, rule, "backend", backendName, index) },
+		DescribeTypedChild(OperationCreate, "HTTP request rule", httpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -113,7 +101,7 @@ func NewHTTPRequestRuleBackendUpdate(backendName string, rule *models.HTTPReques
 		rule,
 		Identity[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleBackendUpdate(),
-		func() string { return describeHTTPRequestRule(OperationUpdate, rule, "backend", backendName, index) },
+		DescribeTypedChild(OperationUpdate, "HTTP request rule", httpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -128,28 +116,18 @@ func NewHTTPRequestRuleBackendDelete(backendName string, rule *models.HTTPReques
 		rule,
 		Nil[*models.HTTPRequestRule],
 		executors.HTTPRequestRuleBackendDelete(),
-		func() string { return describeHTTPRequestRule(OperationDelete, rule, "backend", backendName, index) },
+		DescribeTypedChild(OperationDelete, "HTTP request rule", httpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
-// describeHTTPResponseRule creates a descriptive string for HTTP response rule operations.
-// Uses the rule's Type field for identification.
-func describeHTTPResponseRule(opType OperationType, rule *models.HTTPResponseRule, parentType, parentName string) string {
-	identifier := unknownIdentifier
+// httpResponseRuleIdentifier extracts the type identifier from an HTTPResponseRule model.
+// Falls back to unknownIdentifier if the type is empty, to ensure a non-empty identifier
+// is always displayed (HTTP response rules always have a type in practice).
+func httpResponseRuleIdentifier(rule *models.HTTPResponseRule) string {
 	if rule != nil && rule.Type != "" {
-		identifier = rule.Type
+		return rule.Type
 	}
-
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create HTTP response rule (%s) in %s '%s'", identifier, parentType, parentName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update HTTP response rule (%s) in %s '%s'", identifier, parentType, parentName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete HTTP response rule (%s) from %s '%s'", identifier, parentType, parentName)
-	default:
-		return fmt.Sprintf("Unknown operation on HTTP response rule (%s) in %s '%s'", identifier, parentType, parentName)
-	}
+	return unknownIdentifier
 }
 
 // NewHTTPResponseRuleFrontendCreate creates an operation to create an HTTP response rule in a frontend.
@@ -163,7 +141,7 @@ func NewHTTPResponseRuleFrontendCreate(frontendName string, rule *models.HTTPRes
 		rule,
 		Identity[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleFrontendCreate(),
-		func() string { return describeHTTPResponseRule(OperationCreate, rule, "frontend", frontendName) },
+		DescribeTypedChild(OperationCreate, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "frontend", frontendName),
 	)
 }
 
@@ -178,7 +156,7 @@ func NewHTTPResponseRuleFrontendUpdate(frontendName string, rule *models.HTTPRes
 		rule,
 		Identity[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleFrontendUpdate(),
-		func() string { return describeHTTPResponseRule(OperationUpdate, rule, "frontend", frontendName) },
+		DescribeTypedChild(OperationUpdate, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "frontend", frontendName),
 	)
 }
 
@@ -193,7 +171,7 @@ func NewHTTPResponseRuleFrontendDelete(frontendName string, rule *models.HTTPRes
 		rule,
 		Nil[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleFrontendDelete(),
-		func() string { return describeHTTPResponseRule(OperationDelete, rule, "frontend", frontendName) },
+		DescribeTypedChild(OperationDelete, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "frontend", frontendName),
 	)
 }
 
@@ -208,7 +186,7 @@ func NewHTTPResponseRuleBackendCreate(backendName string, rule *models.HTTPRespo
 		rule,
 		Identity[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleBackendCreate(),
-		func() string { return describeHTTPResponseRule(OperationCreate, rule, "backend", backendName) },
+		DescribeTypedChild(OperationCreate, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "backend", backendName),
 	)
 }
 
@@ -223,7 +201,7 @@ func NewHTTPResponseRuleBackendUpdate(backendName string, rule *models.HTTPRespo
 		rule,
 		Identity[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleBackendUpdate(),
-		func() string { return describeHTTPResponseRule(OperationUpdate, rule, "backend", backendName) },
+		DescribeTypedChild(OperationUpdate, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "backend", backendName),
 	)
 }
 
@@ -238,6 +216,6 @@ func NewHTTPResponseRuleBackendDelete(backendName string, rule *models.HTTPRespo
 		rule,
 		Nil[*models.HTTPResponseRule],
 		executors.HTTPResponseRuleBackendDelete(),
-		func() string { return describeHTTPResponseRule(OperationDelete, rule, "backend", backendName) },
+		DescribeTypedChild(OperationDelete, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "backend", backendName),
 	)
 }

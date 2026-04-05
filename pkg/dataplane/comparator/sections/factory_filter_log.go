@@ -22,25 +22,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
-// describeFilter generates a human-readable description for a filter operation.
-func describeFilter(opType OperationType, filter *models.Filter, parentType, parentName string, index int) string {
-	identifier := filter.Type
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create filter %s in %s '%s'", identifier, parentType, parentName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update filter %s in %s '%s'", identifier, parentType, parentName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete filter %s from %s '%s'", identifier, parentType, parentName)
-	default:
-		return fmt.Sprintf("Unknown operation on filter %s in %s '%s'", identifier, parentType, parentName)
-	}
-}
+// filterIdentifier extracts the type identifier from a Filter model.
+func filterIdentifier(filter *models.Filter) string { return filter.Type }
 
 // NewFilterFrontendCreate creates an operation to create a filter in a frontend.
 func NewFilterFrontendCreate(frontendName string, filter *models.Filter, index int) Operation {
@@ -53,7 +36,7 @@ func NewFilterFrontendCreate(frontendName string, filter *models.Filter, index i
 		filter,
 		Identity[*models.Filter],
 		executors.FilterFrontendCreate(),
-		func() string { return describeFilter(OperationCreate, filter, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationCreate, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -68,7 +51,7 @@ func NewFilterFrontendUpdate(frontendName string, filter *models.Filter, index i
 		filter,
 		Identity[*models.Filter],
 		executors.FilterFrontendUpdate(),
-		func() string { return describeFilter(OperationUpdate, filter, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationUpdate, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -83,7 +66,7 @@ func NewFilterFrontendDelete(frontendName string, filter *models.Filter, index i
 		filter,
 		Nil[*models.Filter],
 		executors.FilterFrontendDelete(),
-		func() string { return describeFilter(OperationDelete, filter, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationDelete, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -98,7 +81,7 @@ func NewFilterBackendCreate(backendName string, filter *models.Filter, index int
 		filter,
 		Identity[*models.Filter],
 		executors.FilterBackendCreate(),
-		func() string { return describeFilter(OperationCreate, filter, "backend", backendName, index) },
+		DescribeTypedChild(OperationCreate, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -113,7 +96,7 @@ func NewFilterBackendUpdate(backendName string, filter *models.Filter, index int
 		filter,
 		Identity[*models.Filter],
 		executors.FilterBackendUpdate(),
-		func() string { return describeFilter(OperationUpdate, filter, "backend", backendName, index) },
+		DescribeTypedChild(OperationUpdate, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -128,33 +111,12 @@ func NewFilterBackendDelete(backendName string, filter *models.Filter, index int
 		filter,
 		Nil[*models.Filter],
 		executors.FilterBackendDelete(),
-		func() string { return describeFilter(OperationDelete, filter, "backend", backendName, index) },
+		DescribeTypedChild(OperationDelete, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
-// describeLogTarget generates a human-readable description for a log target operation.
-// Uses the Address field if available (e.g., "ring@myring"), falls back to index.
-func describeLogTarget(opType OperationType, logTarget *models.LogTarget, parentType, parentName string, index int) string {
-	// Use Address if available (e.g., "ring@myring", "127.0.0.1:514")
-	identifier := logTarget.Address
-	if identifier == "" {
-		identifier = fmt.Sprintf("at index %d", index)
-	} else {
-		identifier = fmt.Sprintf("(%s)", identifier)
-	}
-
-	// Use appropriate verb based on operation type
-	switch opType {
-	case OperationCreate:
-		return fmt.Sprintf("Create log target %s in %s '%s'", identifier, parentType, parentName)
-	case OperationUpdate:
-		return fmt.Sprintf("Update log target %s in %s '%s'", identifier, parentType, parentName)
-	case OperationDelete:
-		return fmt.Sprintf("Delete log target %s from %s '%s'", identifier, parentType, parentName)
-	default:
-		return fmt.Sprintf("Unknown operation on log target %s in %s '%s'", identifier, parentType, parentName)
-	}
-}
+// logTargetIdentifier extracts the address identifier from a LogTarget model.
+func logTargetIdentifier(logTarget *models.LogTarget) string { return logTarget.Address }
 
 // NewLogTargetFrontendCreate creates an operation to create a log target in a frontend.
 func NewLogTargetFrontendCreate(frontendName string, logTarget *models.LogTarget, index int) Operation {
@@ -167,7 +129,7 @@ func NewLogTargetFrontendCreate(frontendName string, logTarget *models.LogTarget
 		logTarget,
 		Identity[*models.LogTarget],
 		executors.LogTargetFrontendCreate(),
-		func() string { return describeLogTarget(OperationCreate, logTarget, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -182,7 +144,7 @@ func NewLogTargetFrontendUpdate(frontendName string, logTarget *models.LogTarget
 		logTarget,
 		Identity[*models.LogTarget],
 		executors.LogTargetFrontendUpdate(),
-		func() string { return describeLogTarget(OperationUpdate, logTarget, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationUpdate, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -197,7 +159,7 @@ func NewLogTargetFrontendDelete(frontendName string, logTarget *models.LogTarget
 		logTarget,
 		Nil[*models.LogTarget],
 		executors.LogTargetFrontendDelete(),
-		func() string { return describeLogTarget(OperationDelete, logTarget, "frontend", frontendName, index) },
+		DescribeTypedChild(OperationDelete, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "frontend", frontendName),
 	)
 }
 
@@ -212,7 +174,7 @@ func NewLogTargetBackendCreate(backendName string, logTarget *models.LogTarget, 
 		logTarget,
 		Identity[*models.LogTarget],
 		executors.LogTargetBackendCreate(),
-		func() string { return describeLogTarget(OperationCreate, logTarget, "backend", backendName, index) },
+		DescribeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -227,7 +189,7 @@ func NewLogTargetBackendUpdate(backendName string, logTarget *models.LogTarget, 
 		logTarget,
 		Identity[*models.LogTarget],
 		executors.LogTargetBackendUpdate(),
-		func() string { return describeLogTarget(OperationUpdate, logTarget, "backend", backendName, index) },
+		DescribeTypedChild(OperationUpdate, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
@@ -242,7 +204,7 @@ func NewLogTargetBackendDelete(backendName string, logTarget *models.LogTarget, 
 		logTarget,
 		Nil[*models.LogTarget],
 		executors.LogTargetBackendDelete(),
-		func() string { return describeLogTarget(OperationDelete, logTarget, "backend", backendName, index) },
+		DescribeTypedChild(OperationDelete, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "backend", backendName),
 	)
 }
 
