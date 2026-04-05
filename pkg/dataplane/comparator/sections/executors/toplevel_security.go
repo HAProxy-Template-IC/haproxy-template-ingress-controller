@@ -6,6 +6,7 @@ package executors
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/haproxytech/client-native/v6/models"
@@ -134,6 +135,15 @@ func CrtStoreDelete() func(ctx context.Context, c *client.DataplaneClient, txID 
 			},
 		)
 		return dispatchAndCheck(resp, err, "crt-store deletion")
+	}
+}
+
+// UserlistUpdate returns an executor for updating userlist sections.
+// The HAProxy Dataplane API does not support updating userlist sections directly,
+// so this executor always returns an error.
+func UserlistUpdate() func(ctx context.Context, c *client.DataplaneClient, txID string, model *models.Userlist, name string) error {
+	return func(_ context.Context, _ *client.DataplaneClient, _ string, _ *models.Userlist, name string) error {
+		return fmt.Errorf("userlist updates are not supported by HAProxy Dataplane API (section: %s)", name)
 	}
 }
 
