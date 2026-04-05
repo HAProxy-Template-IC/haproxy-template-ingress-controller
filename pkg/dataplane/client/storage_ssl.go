@@ -48,33 +48,7 @@ func (c *DataplaneClient) GetAllSSLCertificates(ctx context.Context) ([]string, 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get all SSL certificates failed with status %d", resp.StatusCode)
-	}
-
-	// Parse response body
-	var apiCerts []struct {
-		StorageName *string `json:"storage_name"`
-		Description *string `json:"description"`
-		File        *string `json:"file"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiCerts); err != nil {
-		return nil, fmt.Errorf("decoding SSL certificates response: %w", err)
-	}
-
-	// Extract certificate names (no unsanitization)
-	// Note: We keep names as-is from the API to match how templates generate them.
-	// Templates use namespace_secretname patterns which already contain underscores,
-	// so unsanitizing would incorrectly convert these to dots.
-	names := make([]string, 0, len(apiCerts))
-	for _, apiCert := range apiCerts {
-		if apiCert.StorageName != nil {
-			names = append(names, *apiCert.StorageName)
-		}
-	}
-
-	return names, nil
+	return decodeStorageNameList(resp, "SSL certificates")
 }
 
 // GetSSLCertificateContent retrieves the SHA256 fingerprint for a specific SSL certificate by name.

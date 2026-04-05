@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -32,30 +31,7 @@ func (c *DataplaneClient) GetAllSSLCaFiles(ctx context.Context) ([]string, error
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get all SSL CA files failed with status %d", resp.StatusCode)
-	}
-
-	// Parse response body - the API returns an array of SslCaFile objects
-	var apiCaFiles []struct {
-		StorageName *string `json:"storage_name"`
-		File        *string `json:"file"`
-		Count       *string `json:"count"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiCaFiles); err != nil {
-		return nil, fmt.Errorf("decoding SSL CA files response: %w", err)
-	}
-
-	// Extract CA file names
-	names := make([]string, 0, len(apiCaFiles))
-	for _, apiCaFile := range apiCaFiles {
-		if apiCaFile.StorageName != nil {
-			names = append(names, *apiCaFile.StorageName)
-		}
-	}
-
-	return names, nil
+	return decodeStorageNameList(resp, "SSL CA files")
 }
 
 // GetSSLCaFileContent retrieves the content of a specific SSL CA file by name.

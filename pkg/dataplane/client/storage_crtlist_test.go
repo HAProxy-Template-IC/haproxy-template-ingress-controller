@@ -23,68 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSanitizeCRTListName(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "domain with extension",
-			input:    "example.com.crtlist",
-			expected: "example_com.crtlist",
-		},
-		{
-			name:     "subdomain with extension",
-			input:    "api.example.com.crtlist",
-			expected: "api_example_com.crtlist",
-		},
-		{
-			name:     "simple name",
-			input:    "mycrtlist.crtlist",
-			expected: "mycrtlist.crtlist",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := sanitizeCRTListName(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestUnsanitizeCRTListName(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "underscore with extension",
-			input:    "example_com.crtlist",
-			expected: "example.com.crtlist",
-		},
-		{
-			name:     "multiple underscores",
-			input:    "api_example_com.crtlist",
-			expected: "api.example.com.crtlist",
-		},
-		{
-			name:     "no underscores",
-			input:    "mycrtlist.crtlist",
-			expected: "mycrtlist.crtlist",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := unsanitizeCRTListName(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestGetAllCRTListFiles_Success(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{

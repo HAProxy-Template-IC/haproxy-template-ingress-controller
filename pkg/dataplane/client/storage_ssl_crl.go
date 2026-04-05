@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -33,30 +32,7 @@ func (c *DataplaneClient) GetAllSSLCrlFiles(ctx context.Context) ([]string, erro
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get all SSL CRL files failed with status %d", resp.StatusCode)
-	}
-
-	// Parse response body - the API returns an array of SslCrl objects
-	var apiCrlFiles []struct {
-		StorageName *string `json:"storage_name"`
-		File        *string `json:"file"`
-		Description *string `json:"description"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiCrlFiles); err != nil {
-		return nil, fmt.Errorf("decoding SSL CRL files response: %w", err)
-	}
-
-	// Extract CRL file names
-	names := make([]string, 0, len(apiCrlFiles))
-	for _, apiCrlFile := range apiCrlFiles {
-		if apiCrlFile.StorageName != nil {
-			names = append(names, *apiCrlFile.StorageName)
-		}
-	}
-
-	return names, nil
+	return decodeStorageNameList(resp, "SSL CRL files")
 }
 
 // GetSSLCrlFileContent retrieves the content of a specific SSL CRL file by name.

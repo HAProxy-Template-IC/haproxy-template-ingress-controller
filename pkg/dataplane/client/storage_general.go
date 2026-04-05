@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -35,35 +34,7 @@ func (c *DataplaneClient) GetAllGeneralFiles(ctx context.Context) ([]string, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get all general files failed with status %d", resp.StatusCode)
-	}
-
-	// Parse response body
-	var apiFiles []struct {
-		Id          *string `json:"id"`
-		Description *string `json:"description"`
-		Size        *int    `json:"size"`
-		StorageName *string `json:"storage_name"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiFiles); err != nil {
-		return nil, fmt.Errorf("decoding general files response: %w", err)
-	}
-
-	// Extract paths
-	// The API may populate either 'storage_name' or 'id', we check both
-	paths := make([]string, 0, len(apiFiles))
-	for _, apiFile := range apiFiles {
-		// Prefer storage_name (consistent with SSL certificates), fallback to id
-		if apiFile.StorageName != nil {
-			paths = append(paths, *apiFile.StorageName)
-		} else if apiFile.Id != nil {
-			paths = append(paths, *apiFile.Id)
-		}
-	}
-
-	return paths, nil
+	return decodeStorageNameListWithFallback(resp, "general files")
 }
 
 // GetGeneralFileContent retrieves the content of a specific general file by path.
