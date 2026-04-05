@@ -46,14 +46,6 @@ type SSLCertificate struct {
 
 	// Content is the PEM-encoded certificate and key data.
 	Content string
-
-	// Description is an optional human-readable description of the certificate.
-	Description string
-
-	// Future fields that might be added:
-	// - Expiry time
-	// - Certificate metadata (issuer, subject, etc.)
-	// - Certificate chain information
 }
 
 // GetIdentifier implements the FileItem interface.
@@ -75,11 +67,6 @@ type MapFile struct {
 
 	// Content is the map file contents (one key-value pair per line).
 	Content string
-
-	// Future fields that might be added:
-	// - Map type/format
-	// - Validation rules
-	// - Update frequency hints
 }
 
 // GetIdentifier implements the FileItem interface.
@@ -103,11 +90,6 @@ type CRTListFile struct {
 	// Format: <cert-path> [ssl-options] [sni-filter]
 	// Example: "/etc/haproxy/ssl/cert.pem [ocsp-update on] example.com"
 	Content string
-
-	// Future fields that might be added:
-	// - Parsed entries for validation
-	// - Certificate metadata
-	// - OCSP stapling configuration
 }
 
 // GetIdentifier implements the FileItem interface.

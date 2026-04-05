@@ -11,8 +11,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
-// sslStorageOps provides a generic FileOperations implementation for SSL storage files (CA, CRL).
-// This reduces duplication between ssl_ca.go and ssl_crl.go.
+// sslStorageOps provides a generic FileOperations implementation for SSL storage files.
 type sslStorageOps[T FileItem] struct {
 	getAll     func(ctx context.Context) ([]string, error)
 	getContent func(ctx context.Context, id string) (string, error)

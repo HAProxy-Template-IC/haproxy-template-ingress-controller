@@ -31,8 +31,6 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 		o.logger.Info("Deleting obsolete general files", "count", len(fileDiff.ToDelete))
 
 		postConfigDiff := &auxiliaryfiles.FileDiff{
-			ToCreate: nil,
-			ToUpdate: nil,
 			ToDelete: fileDiff.ToDelete,
 		}
 
@@ -48,8 +46,6 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 		o.logger.Info("Deleting obsolete SSL certificates", "count", len(sslDiff.ToDelete))
 
 		postConfigSSL := &auxiliaryfiles.SSLCertificateDiff{
-			ToCreate: nil,
-			ToUpdate: nil,
 			ToDelete: sslDiff.ToDelete,
 		}
 
@@ -65,8 +61,6 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 		o.logger.Info("Deleting obsolete SSL CA files", "count", len(caFileDiff.ToDelete))
 
 		postConfigCA := &auxiliaryfiles.SSLCaFileDiff{
-			ToCreate: nil,
-			ToUpdate: nil,
 			ToDelete: caFileDiff.ToDelete,
 		}
 
@@ -82,8 +76,6 @@ func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDi
 		o.logger.Info("Deleting obsolete map files", "count", len(mapDiff.ToDelete))
 
 		postConfigMap := &auxiliaryfiles.MapFileDiff{
-			ToCreate: nil,
-			ToUpdate: nil,
 			ToDelete: mapDiff.ToDelete,
 		}
 
