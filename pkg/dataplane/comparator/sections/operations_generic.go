@@ -195,7 +195,7 @@ func (op *TopLevelOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Datap
 	apiModel := op.transformFn(op.model)
 	var zero TAPI
 	if any(apiModel) == any(zero) {
-		return fmt.Errorf("transforming %s", op.sectionName)
+		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
 	}
 
 	return op.executeFn(ctx, c, txID, apiModel, name)
@@ -271,7 +271,7 @@ func (op *IndexChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Dat
 	apiModel := op.transformFn(op.model)
 	var zero TAPI
 	if any(apiModel) == any(zero) {
-		return fmt.Errorf("transforming %s", op.sectionName)
+		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
 	}
 
 	return op.executeFn(ctx, c, txID, op.parentName, op.index, apiModel)
@@ -334,7 +334,7 @@ func (op *NameChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Data
 	apiModel := op.transformFn(op.model)
 	var zero TAPI
 	if any(apiModel) == any(zero) {
-		return fmt.Errorf("transforming %s", op.sectionName)
+		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
 	}
 
 	return op.executeFn(ctx, c, txID, op.parentName, op.childName, apiModel)
@@ -390,7 +390,7 @@ func (op *SingletonOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Data
 	apiModel := op.transformFn(op.model)
 	var zero TAPI
 	if any(apiModel) == any(zero) {
-		return fmt.Errorf("transforming %s", op.sectionName)
+		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
 	}
 
 	return op.executeFn(ctx, c, txID, apiModel)
@@ -455,7 +455,7 @@ func (op *ContainerChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client
 	apiModel := op.transformFn(op.model)
 	var zero TAPI
 	if any(apiModel) == any(zero) {
-		return fmt.Errorf("transforming %s", op.sectionName)
+		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
 	}
 
 	return op.executeFn(ctx, c, txID, op.containerName, childName, apiModel)
