@@ -16,7 +16,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"runtime"
 	"strings"
@@ -89,7 +88,8 @@ func startInErrGroup(
 // waitForGoroutinesToFinish waits for all goroutines in errgroup to finish with a timeout.
 // This is CRITICAL for lease release - elector needs time to call ReleaseOnCancel.
 func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, prefix string) {
-	logger.Info(fmt.Sprintf("Waiting for goroutines to finish %s...", strings.ToLower(prefix)),
+	logger.Info("Waiting for goroutines to finish",
+		"phase", strings.ToLower(prefix),
 		"goroutine_count", runtime.NumGoroutine())
 
 	done := make(chan error, 1)
@@ -109,7 +109,8 @@ func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, pr
 		case err := <-done:
 			elapsed := time.Since(startTime)
 			if err != nil {
-				logger.Warn(fmt.Sprintf("Goroutines finished with error during %s", strings.ToLower(prefix)),
+				logger.Warn("Goroutines finished with error",
+					"phase", strings.ToLower(prefix),
 					"error", err,
 					"elapsed_ms", elapsed.Milliseconds(),
 					"goroutine_count", runtime.NumGoroutine())
@@ -122,13 +123,15 @@ func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, pr
 
 		case <-ticker.C:
 			elapsed := time.Since(startTime)
-			logger.Info(fmt.Sprintf("%s: still waiting for goroutines...", prefix),
+			logger.Info("Still waiting for goroutines",
+				"phase", prefix,
 				"elapsed_s", int(elapsed.Seconds()),
 				"remaining_s", int((ShutdownTimeout - elapsed).Seconds()),
 				"goroutine_count", runtime.NumGoroutine())
 
 		case <-timeoutCh:
-			logger.Warn(fmt.Sprintf("%s timeout exceeded - some goroutines may not have finished", prefix),
+			logger.Warn("Timeout exceeded - some goroutines may not have finished",
+				"phase", prefix,
 				"timeout_s", int(ShutdownTimeout.Seconds()),
 				"goroutine_count", runtime.NumGoroutine())
 			return
