@@ -104,6 +104,12 @@ const (
 	// (e.g., leader failover, pod recreation after deletion).
 	PodRestartTimeout = 90 * time.Second
 
+	// FailoverReadyTimeout is the timeout for waiting for a controller to become
+	// ready after a leader failover. This is longer than DefaultPodReadyTimeout
+	// because failover involves pod deletion, rescheduling, leader election, and
+	// full reconciliation, which can be slow in CI environments.
+	FailoverReadyTimeout = 4 * time.Minute
+
 	// WebhookCertSecretName is the name of the webhook certificate secret.
 	WebhookCertSecretName = "haproxy-webhook-certs"
 )

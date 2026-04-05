@@ -479,7 +479,7 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 
 			// Wait for new leader to complete first reconciliation (renderer is leader-only)
 			t.Log("Waiting for new leader to complete reconciliation...")
-			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
+			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, FailoverReadyTimeout)
 			require.NoError(t, err)
 			t.Log("New leader completed reconciliation")
 
